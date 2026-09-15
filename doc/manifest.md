@@ -132,43 +132,168 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
 所有測試都在 Docker 內執行(host 不安裝任何套件);執行方式見
 [`structure.md`](structure.md)。
 
-## 如何人工測試(M2)
+## 如何人工驗證(M2,從 clone 到 assemble)
 
-自動測試已全數通過(local + CI);以下是人類要親自複驗時的步驟。
+以下是從零開始、端到端親自複驗 M2(盒子清單格式 + 最小 assemble 包裝器)的完整流程。
+全程只需要 **docker**:不需要安裝 `just`(`justfile.ci` 只是 `./script/ci/ci.sh` 的薄
+包裝),也不需要 `distrobox`(M2 以 dry-run 驗證,真實 assemble 延到 M5)。每個指令都可
+直接複製貼上。
 
-### 1. 跑自動測試(需 Docker,不需 distrobox)
+### 0. 前置
 
+- 已安裝並可用 docker,且**目前使用者**可直接執行(例如 `docker run --rm hello-world`
+  能成功),不需要 `sudo`。
+- 不需要 root、不需要 `just`、不需要 `distrobox`。
+
+### 1. 取得原始碼
+
+```bash
+git clone https://github.com/ycpss91255/worktool.git
+cd worktool
+git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 main 即可
 ```
-just -f justfile.ci lint
-just -f justfile.ci test-unit
-just -f justfile.ci test-integration
+
+### 2. 自動測試(全部在 Docker 內,不需 just / distrobox)
+
+入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑三道 gate:
+
+```bash
+./script/ci/ci.sh --build              # (選用) 先建 worktool-test:local 測試映像
+./script/ci/ci.sh --lint-only          # ShellCheck(*.sh + *.bats)
+./script/ci/ci.sh --unit-only          # 單元 bats(test/unit/)
+./script/ci/ci.sh --integration-only   # 整合 bats(test/integration/)
 ```
 
-預期:lint 為 ShellCheck OK;test-unit 全數 ok(含空白/引號 image 與區段歸屬案例);
-test-integration 全數 ok(含「無效 manifest 絕不呼叫 distrobox」負向測試)。
+- `--build` 是選用的:後面三道 gate 若發現映像不存在會自動建。想先暖快取、或快速驗
+  Dockerfile 有沒有壞掉,才需要先手動 `--build`。
+- 預期輸出:
+  - `--lint-only`:結尾出現 `[ci] ShellCheck OK`,沒有任何 ShellCheck 違規。
+  - `--unit-only`:所有測項 `ok`(涵蓋缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
+    引號內純空白 image / image 出現在區段之前 / 多區段等案例),結尾 `[ci] unit bats OK`。
+  - `--integration-only`:所有測項 `ok`(含「無效 manifest 絕不呼叫 distrobox」負向
+    測試),結尾 `[ci] integration bats OK`。
+- 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束。
 
-### 2. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
+### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 
-- 正常 dry-run:
-  ```
-  WORKTOOL_DRY_RUN=1 bash script/assemble.sh
-  ```
-  預期:印出 `distrobox assemble create --file <絕對路徑>/box/dev.ini`,且不執行。
-- 從 repo 以外呼叫(驗證路徑一致):
-  ```
-  cd /tmp && WORKTOOL_DRY_RUN=1 bash <repo 路徑>/script/assemble.sh
-  ```
-  預期:清單路徑為解析後的絕對路徑,與驗證所用一致。
-- 無效清單(缺 image):
-  ```
-  printf '[dev]\n' > /tmp/bad.ini
-  bash script/assemble.sh --manifest /tmp/bad.ini
-  ```
-  預期:報 missing image、以非零結束、完全不呼叫 distrobox。
-- 空白繞過(應被拒):`[   ]`、`image="   "`、`image= "   "` 皆應驗證失敗。
-- 含空白/特殊字元的清單路徑:dry-run 輸出應逐參數 `%q` 跳脫,可安全複製再執行。
+`WORKTOOL_DRY_RUN=1` 會把「將要執行的 distrobox 指令」印到 **STDOUT** 而**不執行**;
+診斷訊息一律走 STDERR。指定清單的旗標是 **`--file`**(不是 `--manifest`)。下面每步都
+保持在 repo 根目錄執行(除了 3b 特意換到別的目錄)。
 
-### 3. 真實 assemble(選用,需 docker + distrobox)
+**3a. 正常 dry-run(從 repo 根目錄)**
 
-M2 不要求真實 assemble(依 design.md 延到 M5 的 DinD)。若手邊已有 docker+distrobox,
-可執行 `bash script/assemble.sh` 實際建出 dev 盒以主觀確認。
+```bash
+WORKTOOL_DRY_RUN=1 bash script/assemble.sh
+```
+
+預期(從 repo 根目錄執行時,預設清單保留相對路徑,且不呼叫 distrobox):
+
+```text
+distrobox assemble create --file box/dev.ini
+```
+
+**3b. 從 repo 以外呼叫(驗證路徑一致)**
+
+```bash
+cd /tmp
+WORKTOOL_DRY_RUN=1 bash /path/to/worktool/script/assemble.sh   # 換成你的 repo 絕對路徑
+```
+
+預期:目前目錄找不到 `box/dev.ini`,包裝器會回退到 repo 內的**絕對路徑**,而且驗證與
+dry-run 輸出用的是同一條解析後的路徑(三者一致):
+
+```text
+distrobox assemble create --file /path/to/worktool/box/dev.ini
+```
+
+**3c. 無效清單(缺 image)應被拒,且完全不呼叫 distrobox**
+
+```bash
+printf '[dev]\n' > /tmp/bad.ini
+bash script/assemble.sh --file /tmp/bad.ini; echo "exit=$?"
+```
+
+預期:STDERR 印出
+`[ERROR] manifest missing required key 'image' in section [dev]: /tmp/bad.ini`、
+STDOUT 為空、`exit=1`,而且完全不呼叫 distrobox。
+
+**3d. 空白繞過應被拒**
+
+```bash
+printf '[   ]\nimage=ubuntu:26.04\n' > /tmp/ws-name.ini   # 純空白名稱
+printf '[dev]\nimage="   "\n'         > /tmp/ws-img.ini    # 引號內純空白
+printf '[dev]\nimage= "   "\n'        > /tmp/ws-img2.ini   # 空格後才是引號
+for f in /tmp/ws-name.ini /tmp/ws-img.ini /tmp/ws-img2.ini; do
+  bash script/assemble.sh --file "$f"; echo "  ($f) exit=$?"
+done
+```
+
+預期:三者都以 `exit=1` 被拒。名稱與 image 值都會先去除前後空白再判斷是否為空,因此:
+- `[   ]` 判為缺盒子名稱:`[ERROR] manifest missing box name ...`。
+- `image="   "` 與 `image= "   "` 判為缺 image:`[ERROR] manifest missing required key 'image' ...`。
+
+**3e. 多區段應被拒(單一盒子規則)**
+
+```bash
+printf '[dev]\nimage=ubuntu:26.04\n[other]\nimage=debian:13\n' > /tmp/multi.ini
+bash script/assemble.sh --file /tmp/multi.ini; echo "exit=$?"
+```
+
+預期:`[ERROR] manifest declares multiple sections; worktool supports a single box: ...`、`exit=1`。
+
+**3f. 含空白/特殊字元的清單路徑(路徑安全)**
+
+dry-run 輸出採逐一參數的 `%q` 跳脫,所以含空白、`;` 或 `$()` 的路徑會被表示成單一安全
+參數,可直接複製貼上忠實重跑,不會被再次拆分或解讀。
+
+**3g.(選用)一鍵自檢**
+
+想一次跑完上面的 dry-run 斷言,可在 repo 根目錄執行下列腳本(全綠即通過):
+
+```bash
+bash -c '
+set -uo pipefail
+root="$(pwd -P)"; tmp="$(mktemp -d)"; trap "rm -rf -- \"$tmp\"" EXIT; fail=0
+
+# 3a 正常 dry-run:相對路徑
+out="$(WORKTOOL_DRY_RUN=1 bash script/assemble.sh)"
+[ "$out" = "distrobox assemble create --file box/dev.ini" ] \
+  && echo "PASS 3a" || { echo "FAIL 3a: $out"; fail=1; }
+
+# 3b repo 外呼叫:絕對路徑
+out="$(cd "$tmp" && WORKTOOL_DRY_RUN=1 bash "$root/script/assemble.sh")"
+[ "$out" = "distrobox assemble create --file $root/box/dev.ini" ] \
+  && echo "PASS 3b" || { echo "FAIL 3b: $out"; fail=1; }
+
+# 負向案例:應 exit=1、STDOUT 為空、STDERR 含指定訊息
+check() { # <file> <expected-msg>
+  local o e rc=0
+  o="$(bash script/assemble.sh --file "$1" 2>"$tmp/err")" || rc=$?
+  e="$(cat "$tmp/err")"
+  { [ "$rc" -eq 1 ] && [ -z "$o" ] && case "$e" in *"$2"*) true;; *) false;; esac; } \
+    && echo "PASS $1" || { echo "FAIL $1 (rc=$rc): $e"; fail=1; }
+}
+printf "[dev]\n"                                   > "$tmp/no-image.ini"
+printf "[   ]\nimage=ubuntu:26.04\n"               > "$tmp/blank-name.ini"
+printf "[dev]\nimage=\"   \"\n"                    > "$tmp/blank-image.ini"
+printf "[dev]\nimage= \"   \"\n"                   > "$tmp/spaced-image.ini"
+printf "[dev]\nimage=ubuntu:26.04\n[b]\nimage=x\n" > "$tmp/multi.ini"
+check "$tmp/no-image.ini"    "missing required key '"'"'image'"'"'"
+check "$tmp/blank-name.ini"  "missing box name"
+check "$tmp/blank-image.ini" "missing required key '"'"'image'"'"'"
+check "$tmp/spaced-image.ini" "missing required key '"'"'image'"'"'"
+check "$tmp/multi.ini"       "multiple sections"
+
+[ "$fail" -eq 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }
+'
+```
+
+### 4. 真實 assemble(選用,M2 非必須)
+
+M2 **不要求**真實建盒:真正的 `distrobox assemble` 需要在容器內同時有 distrobox 與
+docker/podman(docker-in-docker),依 [`design.md`](design.md) 延到 **M5**。若手邊已有
+docker + distrobox,可拿掉 dry-run 實際建出 dev 盒以主觀確認:
+
+```bash
+bash script/assemble.sh   # 需要 PATH 上有 distrobox;否則會以 [ERROR] ... 與 exit=127 結束
+```
