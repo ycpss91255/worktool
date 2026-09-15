@@ -1,0 +1,73 @@
+#!/usr/bin/env bats
+# test/unit/assemble_spec.bats - script/assemble.sh command construction (M2)
+#
+# Written test-first (RED) before script/assemble.sh exists, then the wrapper
+# is implemented to pass (GREEN).
+#
+# Contract under test:
+#   - In dry-run mode (WORKTOOL_DRY_RUN=1 or --dry-run) the wrapper prints the
+#     EXACT distrobox invocation to STDOUT and executes NOTHING.
+#   - The default manifest is box/dev.ini, so the emitted command is
+#     `distrobox assemble create --file box/dev.ini`.
+#   - A `--file <path>` overrides the manifest and is reflected verbatim in the
+#     emitted command.
+#   - An invalid manifest fails before any command is emitted.
+
+load "${BATS_TEST_DIRNAME}/../helper/common"
+
+setup() {
+    ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
+    TMP="${BATS_TEST_TMPDIR}"
+    VALID="${TMP}/valid.ini"
+    printf '[dev]\nimage=ubuntu:26.04\nadditional_packages="ripgrep fzf"\n' \
+        >"${VALID}"
+
+    # A poisoned `distrobox` on PATH: if dry-run ever executes it, the marker
+    # file appears and the "does not execute" assertions catch it.
+    MARKER="${TMP}/executed"
+    MOCKBIN="${TMP}/bin"
+    mkdir -p "${MOCKBIN}"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'touch "%s"\n' "${MARKER}"
+    } >"${MOCKBIN}/distrobox"
+    chmod +x "${MOCKBIN}/distrobox"
+    PATH="${MOCKBIN}:${PATH}"
+}
+
+# --- dry-run via env var -----------------------------------------------------
+
+@test "WORKTOOL_DRY_RUN=1 prints the distrobox command and executes nothing" {
+    run env WORKTOOL_DRY_RUN=1 "${ASSEMBLE}" --file "${VALID}"
+    assert_success
+    assert_output "distrobox assemble create --file ${VALID}"
+    assert [ ! -f "${MARKER}" ]
+}
+
+# --- dry-run via flag --------------------------------------------------------
+
+@test "--dry-run flag prints the distrobox command and executes nothing" {
+    run "${ASSEMBLE}" --dry-run --file "${VALID}"
+    assert_success
+    assert_output "distrobox assemble create --file ${VALID}"
+    assert [ ! -f "${MARKER}" ]
+}
+
+# --- default manifest --------------------------------------------------------
+
+@test "dry-run with the default manifest emits box/dev.ini" {
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --dry-run
+    assert_success
+    assert_output "distrobox assemble create --file box/dev.ini"
+}
+
+# --- validation fails fast ---------------------------------------------------
+
+@test "dry-run on an invalid manifest fails and emits no command" {
+    printf '[dev]\n' >"${TMP}/noimg.ini"
+    run "${ASSEMBLE}" --dry-run --file "${TMP}/noimg.ini"
+    assert_failure
+    refute_output --partial "distrobox assemble create"
+    assert_output --partial "missing required key 'image'"
+}
