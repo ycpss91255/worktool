@@ -5,7 +5,7 @@
 # test/unit/system_real_entry_spec.bats.
 #
 # Usage:
-#   entry_driver.sh <entry.sh> <pidfile> <live|dead|none> <pending-rc> <function>
+#   entry_driver.sh <entry.sh> <pidfile> <live|dead|none> <pending-rc> <function> [arg...]
 #
 # Sources the entry script (its main() is guarded), installs a stand-in
 # dockerd in DOCKERD_PID according to $3:
@@ -15,7 +15,8 @@
 #   none  DOCKERD_PID stays empty, as when the trap fires before
 #         _start_dockerd
 # then sets the pending exit status to <pending-rc> (what `_cleanup` reads
-# from `$?`) and calls <function>. Exit status is the function's.
+# from `$?`) and calls <function> with any remaining [arg...]. Exit status
+# is the function's.
 
 set -uo pipefail
 
@@ -24,6 +25,7 @@ pidfile="$2"
 stand_in="$3"
 pending_rc="$4"
 fn="$5"
+shift 5
 
 # shellcheck source=../../../script/ci/system-real-entry.sh
 source "${entry}"
@@ -39,4 +41,4 @@ if [[ "${stand_in}" != "none" ]]; then
 fi
 
 (exit "${pending_rc}")
-"${fn}"
+"${fn}" "$@"
