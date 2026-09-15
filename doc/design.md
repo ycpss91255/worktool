@@ -37,7 +37,7 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 
 ## Open 項目(建議預設,待確認 / 修正)
 
-1. 盒子 base image:`ubuntu:24.04`。
+1. 盒子 base image:`ubuntu:26.04`(已定)。
 2. bootstrap 順序:host 裝 docker+distrobox -> host install script(驅動/GUI)
    -> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
