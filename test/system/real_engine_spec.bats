@@ -38,8 +38,11 @@
 # TIMEOUTS
 #   Pulling ubuntu:26.04 and apt-installing distrobox's own dependencies plus
 #   ripgrep/fzf inside the box take minutes. Every long step is wrapped in
-#   `timeout` with a generous but bounded budget; on failure the daemon log
-#   and the box's own log are printed so a red run is diagnosable.
+#   `timeout` with a generous but bounded budget, and every short engine
+#   query (info / ps / inspect / logs, diagnostics included) goes through
+#   `_docker`, which bounds it too - a wedged daemon cannot hold a case or
+#   its failure diagnostics open. On failure the daemon log and the box's
+#   own log are printed so a red run is diagnosable.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -48,6 +51,7 @@ ASSEMBLE_TIMEOUT=600      # image pull + docker create (no start yet)
 FIRST_ENTER_TIMEOUT=900   # first start: distrobox-init + apt installs
 ENTER_TIMEOUT=300         # subsequent enters (box already initialised)
 RM_TIMEOUT=120
+QUERY_TIMEOUT=60          # short engine queries: info / ps / inspect / logs
 
 setup() {
     ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
@@ -65,11 +69,18 @@ setup() {
     export DBX_CONTAINER_GENERATE_ENTRY=0
 }
 
-# --- diagnostics ------------------------------------------------------------
+# --- bounded engine queries + diagnostics ------------------------------------
+
+# Every short engine query goes through here: a hard bound (SIGTERM at
+# QUERY_TIMEOUT, SIGKILL 5s later) so a wedged daemon cannot hang a case or
+# the diagnostics that run when one fails.
+_docker() {
+    timeout -k 5 "${QUERY_TIMEOUT}" docker "$@"
+}
 
 # Names of every container the nested daemon knows about, one per line.
 _container_names() {
-    docker ps -a --format '{{.Names}}'
+    _docker ps -a --format '{{.Names}}'
 }
 
 # Count of containers named exactly $1.
@@ -82,21 +93,21 @@ _count_named() {
 # output). bats shows a failed case's output, so plain echo is enough.
 _diag() {
     echo "--- docker ps -a"
-    docker ps -a 2>&1 || true
+    _docker ps -a 2>&1 || true
     if [[ -n "${WORKTOOL_DOCKERD_LOG:-}" && -f "${WORKTOOL_DOCKERD_LOG}" ]]; then
         echo "--- dockerd log (tail): ${WORKTOOL_DOCKERD_LOG}"
         tail -n 60 "${WORKTOOL_DOCKERD_LOG}" 2>&1 || true
     fi
     if [[ "$(_count_named dev)" -gt 0 ]]; then
         echo "--- docker logs dev (tail)"
-        docker logs --tail 80 dev 2>&1 || true
+        _docker logs --tail 80 dev 2>&1 || true
     fi
 }
 
 # --- preflight: a live engine and the pinned distrobox -----------------------
 
 @test "preflight: a real docker engine is live inside the runner" {
-    run docker info --format '{{.ServerVersion}} driver={{.Driver}} cgroup={{.CgroupDriver}}/{{.CgroupVersion}}'
+    run _docker info --format '{{.ServerVersion}} driver={{.Driver}} cgroup={{.CgroupDriver}}/{{.CgroupVersion}}'
     assert_success
     assert_output --regexp '^[0-9]+\.[0-9]+\.[0-9]+ driver=.+ cgroup=.+'
     echo "engine: ${output}"
@@ -129,7 +140,7 @@ _diag() {
     run _count_named dev
     assert_output "1"
     # ... created from the manifest's image, managed by distrobox.
-    run docker inspect dev --format '{{.Config.Image}} {{index .Config.Labels "manager"}}'
+    run _docker inspect dev --format '{{.Config.Image}} {{index .Config.Labels "manager"}}'
     assert_success
     assert_output "ubuntu:26.04 distrobox"
 }
@@ -143,7 +154,7 @@ _diag() {
     assert_success
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
     # The box is now a running, initialised container.
-    run docker inspect dev --format '{{.State.Status}}'
+    run _docker inspect dev --format '{{.State.Status}}'
     assert_output "running"
 }
 

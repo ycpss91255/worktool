@@ -19,7 +19,11 @@ worktool/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
 │   │   ├── manifest_spec.bats    清單驗證與欄位擷取
-│   │   └── assemble_spec.bats    assemble 指令組裝(dry-run)
+│   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)
+│   │   ├── ci_gate_spec.bats     ci.sh 每層必要 spec 防漏:在 repo 副本上刪檔/空檔必紅、正常樹必綠
+│   │   ├── system_real_entry_spec.bats  DinD runner 入口:docker 卡死時等待/清理仍在期限內結束
+│   │   └── fixture/
+│   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   └── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
@@ -125,8 +129,17 @@ just -f justfile.ci test
 則以 `docker run --rm --privileged` 啟動 DinD runner,由 runner 入口
 `script/ci/system-real-entry.sh` 起巢狀 dockerd、等 `docker info` 就緒後再呼叫
 `--ci-system-real`,結束時清理盒子並停掉 dockerd(全部隨 runner 容器銷毀,host
-daemon 零殘留)。每一層 bats gate(含兩個系統組)都要求「至少跑了一個案例、無
-失敗、無 `skip`、spec 存在」:被 `skip` 或不存在的必要案例不會被當成綠燈。
+daemon 零殘留;入口對 `docker info` / `docker ps` / `distrobox rm` / `docker rm`
+的每一次呼叫都各自包在 `timeout` 內,等待迴圈以 `WORKTOOL_DOCKERD_READY_TIMEOUT`
+為權威總期限,daemon 卡死也不會把本機執行拖過期限)。每一層 bats gate(含兩個
+系統組)都在 `ci.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
+`manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`;
+integration:`smoke_spec`、`assemble_spec`;system shim:`real_assemble_spec`;
+system-real:`real_engine_spec`;acceptance:`m2_selfcheck_spec`),bats 跑之前
+逐檔確認**存在且至少定義一個案例**(`bats --count`),跑完再確認 TAP 計畫涵蓋這些
+案例、至少跑了一個、無失敗、無 `skip`:必要 spec 被刪、被清空、被 `skip` 都不會
+因為同層還有別的 spec 而被當成綠燈;非必要的額外 spec 照常一起跑。
+`test/unit/ci_gate_spec.bats` 在 repo 副本上以刪檔/空檔負向案例證明這條規則。
 
 ## CI
 
