@@ -73,7 +73,9 @@ case "${FAKE_MODE:-}" in
             if [[ ! -f "${FAKE_LOG}.failed-once" ]]; then
                 : >"${FAKE_LOG}.failed-once"; exit 1
             fi
-            trap '' TERM
+            # Record the ignored SIGTERM: the only way this process ends is
+            # the SIGKILL `timeout -k` sends KILL_GRACE later.
+            trap 'printf "fake: SIGTERM ignored\n" >>"${FAKE_LOG}"' TERM
             while :; do sleep 1; done
         fi ;;
 esac
@@ -174,6 +176,9 @@ _with_entry() {
     assert_output --partial "[system-real] ERROR: dockerd not ready after ${_ready}s"
     # Both probes ran: the fast failure and the one that had to be killed.
     assert [ "$(grep -c '^docker info' "${FAKE_LOG}")" -eq 2 ]
+    # The second probe saw SIGTERM and ignored it, yet the run ended: only
+    # the SIGKILL escalation explains that.
+    assert [ "$(grep -c '^fake: SIGTERM ignored' "${FAKE_LOG}")" -ge 1 ]
     assert [ "${_elapsed_ms}" -le "$(( (_ready + KILL_GRACE + 1) * 1000 ))" ]
 }
 
