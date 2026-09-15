@@ -184,9 +184,10 @@ _engine_details() {
 # shorter of DOCKER_CALL_TIMEOUT and the time left, so a probe that hangs
 # on a wedged socket cannot push the loop past its deadline, and after a
 # successful probe the deadline is re-checked so the engine-details query
-# gets only what remains (_engine_details). Worst case for the whole
-# function, ready or not: deadline + KILL_GRACE + 1s (the +1s is the
-# integer granularity of SECONDS).
+# gets only what remains (_engine_details). A failed probe re-checks the
+# deadline before sleeping, so the last (killed) probe is never followed by
+# another sleep. Worst case for the whole function, ready or not:
+# deadline + KILL_GRACE + 1s (the +1s is the integer granularity of SECONDS).
 _wait_dockerd() {
     local _start="${SECONDS}"
     local _deadline=$(( _start + DOCKERD_READY_TIMEOUT ))
@@ -207,6 +208,10 @@ _wait_dockerd() {
             _engine_details "${_deadline}"
             return 0
         fi
+        # A probe that failed (or was killed) at the deadline must not buy
+        # the loop one more second of sleep: that second is what would push
+        # the failure path past deadline + KILL_GRACE + 1s.
+        (( SECONDS < _deadline )) || break
         sleep 1
     done
     _tail_dockerd_log
