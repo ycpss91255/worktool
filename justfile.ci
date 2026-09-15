@@ -1,0 +1,32 @@
+# justfile.ci - worktool CI entry points
+#
+# Invoke with `just -f justfile.ci <recipe>` (mirrors init_ubuntu's calling
+# convention; the bare `justfile` stays the user-facing, auto-discovered one).
+#
+# Every gate runs inside Docker (doc/design.md: Docker only). These recipes
+# are a thin wrapper over ./script/ci/ci.sh, which builds the test image and
+# runs the gate in a throwaway container against a bind-mounted /source.
+
+# Show available recipes.
+default:
+    @just -f justfile.ci --list
+
+# Build the test image (worktool-test:local). Optional - the gates build it
+# on demand; useful to warm the cache or fail fast on a broken Dockerfile.
+build:
+    ./script/ci/ci.sh --build
+
+# ShellCheck over all *.sh and *.bats, inside the container.
+lint:
+    ./script/ci/ci.sh --lint-only
+
+# Run unit bats (test/unit/*.bats) inside the container.
+test-unit:
+    ./script/ci/ci.sh --unit-only
+
+# Run integration bats (test/integration/*.bats) inside the container.
+test-integration:
+    ./script/ci/ci.sh --integration-only
+
+# Convenience: lint + unit + integration in sequence.
+test: lint test-unit test-integration

@@ -1,0 +1,16 @@
+# --- worktree / agent scratch ---
+.worktree/
+.worktree_*.log
+
+# --- container / CI artifacts ---
+coverage/
+*.log
+
+# --- editor / OS noise ---
+*.swp
+*~
+.DS_Store
+
+# --- local env overrides ---
+.env
+.env.local
