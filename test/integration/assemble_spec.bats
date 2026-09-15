@@ -6,9 +6,11 @@
 # without needing real distrobox: a MOCK `distrobox` on PATH records the
 # arguments it was called with, and the spec asserts on them.
 #
-# A real `distrobox assemble` (distrobox + docker/podman, docker-in-docker)
-# is the system-level check deferred to M5 (see doc/design.md); this
-# integration test verifies the wiring, not a real container build.
+# A real `distrobox assemble` against a real engine is the system tier's
+# job and lives in M2: test/system/real_engine_spec.bats (docker-in-docker)
+# proves the delivered manifest builds a usable box; M5 keeps only the
+# broader environment matrix (real hardware, non-root user, other images).
+# This integration test verifies the wiring, not a real container build.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 

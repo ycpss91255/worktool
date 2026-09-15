@@ -11,15 +11,18 @@
 # worktool ships a single shared "dev" box (doc/design.md), so a manifest is
 # expected to declare exactly ONE section, and its required `image=` must live
 # inside that box's own section. Whitespace-only names/values are not real
-# values and are rejected.
+# values and are rejected - including a quoted blank ("   " or '   '):
+# distrobox-assemble sources each value as a shell assignment, so single and
+# double quotes are both quoting there.
 #
 # Public API (all read-only; none mutate the manifest):
 #   manifest_name     <file>  -> prints the first [section] header's name,
 #                                trimmed; returns 1 if there is no header or
 #                                the name is empty/whitespace-only
 #   manifest_image    <file>  -> prints the `image=` value that belongs to the
-#                                box's (first) section, unquoted and trimmed;
-#                                a whitespace-only value prints empty
+#                                box's (first) section, one paired outer pair
+#                                of quotes (" or ') stripped and trimmed; a
+#                                whitespace-only value prints empty
 #   manifest_validate <file>  -> 0 if the manifest has a name, exactly one
 #                                section, AND a non-empty image inside that
 #                                section; otherwise logs a clear [ERROR] to
@@ -53,6 +56,31 @@ _manifest_trim() {
     local _s
     _s="$(_manifest_ltrim "$1")"
     _manifest_rtrim "${_s}"
+}
+
+# Strip ONE outer pair of quotes from an already-trimmed value.
+#
+# distrobox-assemble writes each `key=value` line into a tmpfile and sources
+# it as a shell assignment, so BOTH "..." and '...' are valid quoting there.
+# The pair is stripped only when the first and last character are the SAME
+# quote character (both " or both '); a lone quote is an empty pair (both
+# ends are that one character). Anything else - a mismatched pair ('...")
+# or a one-sided quote ("...) - is NOT quoting: the value is returned
+# verbatim, quotes included. worktool is a pre-flight, not a shell parser;
+# distrobox reports malformed quoting itself when it sources the value.
+_manifest_unquote() {
+    local _s="$1" _q
+    [[ -n "${_s}" ]] || return 0
+    _q="${_s:0:1}"
+    case "${_q}" in
+        \"|\')
+            if [[ "${_s: -1}" == "${_q}" ]]; then
+                _s="${_s#"${_q}"}"
+                _s="${_s%"${_q}"}"
+            fi
+            ;;
+    esac
+    printf '%s' "${_s}"
 }
 
 # Count the number of section headers (`[...]`) in a manifest, skipping
@@ -96,9 +124,10 @@ manifest_name() {
 }
 
 # manifest_image <file>: print the `image=` value that belongs to the box's
-# own (first) section - a single pair of surrounding double quotes stripped and
-# surrounding whitespace trimmed, so a quoted whitespace-only value prints
-# empty. An `image=` that appears before the first section header, or inside a
+# own (first) section - one paired outer pair of quotes (double OR single,
+# see _manifest_unquote) stripped and surrounding whitespace trimmed, so a
+# quoted whitespace-only value prints empty.
+# An `image=` that appears before the first section header, or inside a
 # later section, does NOT belong to the box and is ignored. Returns 1 if the
 # box section has no `image=` line at all (an empty value still prints an empty
 # line and returns 0 - the caller decides whether empty is acceptable).
@@ -123,11 +152,12 @@ manifest_image() {
                 [[ "${_state}" == "in" ]] || continue
                 _val="${_line#image=}"
                 # Trim the whole value FIRST so a leading space before an opening
-                # quote (image= "   ") cannot leave a stray quote that reads as a
-                # non-empty image; then strip paired outer quotes and trim again.
+                # quote (image= "   " / image= '   ') cannot leave a stray quote
+                # that reads as a non-empty image; then strip ONE paired outer
+                # pair of quotes (" or ', see _manifest_unquote) and trim again
+                # so a quoted whitespace-only value ends up empty.
                 _val="$(_manifest_trim "${_val}")"
-                _val="${_val#\"}"
-                _val="${_val%\"}"
+                _val="$(_manifest_unquote "${_val}")"
                 _val="$(_manifest_trim "${_val}")"
                 printf '%s\n' "${_val}"
                 return 0

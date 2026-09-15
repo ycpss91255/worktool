@@ -16,7 +16,10 @@
 # needs it; see issue #129 for the DinD-vs-DooD-vs-podman decision). Every
 # container / image / volume the test creates lives in the nested daemon,
 # whose /var/lib/docker is an anonymous volume the dind image declares, so
-# `--rm` destroys all of it with the runner: zero leftover on the host daemon.
+# `--rm` destroys all of it with the runner: nothing the test creates reaches
+# the host daemon. What the host daemon does keep is this runner image itself
+# (worktool-system-real:local, plus its docker:dind base layers) and the
+# Docker build cache - the same footprint as worktool-test:local.
 # --privileged is used ONLY for this runner (ci.sh --system-real-only, CI job
 # test-system-real).
 #
