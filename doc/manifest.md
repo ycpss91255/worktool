@@ -111,9 +111,10 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
 ## 測試對應
 
 四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 四層**全部落地**,每一
-層都是 CI 的必要 gate;下面逐層寫明**驗證什麼**與**延後什麼**,M2 的邊界是誠實
-的:**沒有任何一層宣稱「可用的盒子」已被驗證**(那需要真正的容器管理器,延後到
-M5)。
+層都是 CI 的必要 gate;下面逐層寫明**驗證什麼**與**延後什麼**。系統層分成**兩組**:
+shim 組(建立請求正確性,快)與 real-engine 組(真正可用的 dev 盒,docker-in-docker,
+慢);「可用的盒子」由 real-engine 組**真的驗證**(2026-09-16 人類決策採 DinD,見
+issue #129),不再延後到 M5。
 
 - 單元(`test/unit/manifest_spec.bats`、`test/unit/assemble_spec.bats`):
   - **驗證什麼**:清單驗證(有效通過;缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
@@ -131,15 +132,15 @@ M5)。
     結束」。證明包裝器到 distrobox 的接線。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
-- 系統(`test/system/real_assemble_spec.bats`):在測試映像內執行**真正的、鎖定
-  版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,建置時驗證
-  tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
+- 系統,**shim 組**(`test/system/real_assemble_spec.bats`):在測試映像內執行
+  **真正的、鎖定版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,
+  建置時驗證 tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
   (`test/system/fixture/fake_container_manager.sh`,以
   `DBX_CONTAINER_MANAGER=docker` 選用、symlink 到 PATH 最前面):它回答 distrobox
   實際會發出的探測(`ps` / `inspect` / `pull` / `create`)、**逐一參數**
   (NUL 分隔,非 `$*`)記錄每一次呼叫、遇到不支援的子指令一律以非零失敗(不是
   一律 exit 0),並可用 `FAKE_CM_FAIL_CREATE=1` 注入 `create` 失敗。**不需要
-  docker-in-docker**。
+  docker-in-docker**,快。
   - **驗證什麼**:以真實(非 dry-run)模式跑包裝器,斷言**真正抵達容器管理器的
     create 請求**帶有容器名 `dev`、映像 `ubuntu:26.04`(緊接在
     `--entrypoint /usr/bin/entrypoint` 之後),且清單的 `additional_packages`
@@ -149,13 +150,52 @@ M5)。
     `distrobox assemble create --dry-run --file box/dev.ini` 解析出名稱/映像正確
     的 create 指令;管理器 `create` 失敗時包裝器以非零結束、失敗訊息來自上游。
     一句話:**清單被真實 distrobox 1.8.2.5 解析成預期的 create 請求**。
-  - **不證明什麼(延後)**:映像真的拉得下來、套件真的裝進盒(distrobox-init 在
-    這裡從未執行,沒有任何容器被啟動)、盒子可用
-    (`distrobox enter dev -- rg --version`)。這些需要真正的容器管理器(CI 內
-    DinD),依 [`design.md`](design.md) 延後到 **M5**。
+  - **不證明什麼**:映像真的拉得下來、套件真的裝進盒(distrobox-init 在這裡從未
+    執行,沒有任何容器被啟動)、盒子可用。這些交給下面的 real-engine 組。
   - gate:`just -f justfile.ci test-system`(CI `test-system` job,必要)。
     `script/ci/ci.sh` 對每一層 bats gate 都要求「至少跑了一個案例、無失敗、無
     `skip`」,被 skip 或不存在的必要案例**不會**被當成綠燈。
+- 系統,**real-engine 組**(`test/system/real_engine_spec.bats`):以**真正的
+  docker 引擎**證明 M2 的「可用 dev 盒」承諾。做法是 **docker-in-docker**
+  (2026-09-16 人類決策;三種做法的研究與比較見 issue #129):一個專用的系統測試
+  runner 映像 `dockerfile/Dockerfile.system-real`,以官方 `docker:29.8.0-dind`
+  為基底(內含 dockerd、containerd、runc、docker CLI),加上 bash、bats 1.14.0
+  (+ bats-support v0.3.0 / bats-assert v2.1.0)與**同一份**鎖定的 distrobox
+  1.8.2.5(同一個 tarball、同一個 sha256、同一個上游安裝器);所有版本皆鎖定。
+  runner 以 `docker run --rm --privileged` 啟動(巢狀 dockerd 需要;**這是唯一
+  使用 `--privileged` 的地方**),入口 `script/ci/system-real-entry.sh` 在容器內
+  背景啟動一個獨立的 dockerd(沿用 dind 映像自己的 `dockerd-entrypoint.sh`:
+  cgroup v2 巢狀、`mount --make-rshared /`、tmpfs `/tmp`),有界等待 `docker info`
+  就緒(逾時即帶著 daemon 日誌大聲失敗),再經 `ci.sh --ci-system-real` 跑這支
+  spec;結束時盡力 `distrobox rm -f dev` 並停掉 dockerd。測試建立的每個容器/映像/
+  volume 都住在巢狀 daemon 裡(其 `/var/lib/docker` 是 dind 映像宣告的匿名
+  volume),隨 runner 一起被 `--rm` 銷毀:**host 的 docker daemon 從頭到尾看不到
+  dev 盒、host 不安裝任何東西、零殘留**。
+  - **驗證什麼**:(a) 前置:runner 內真的有活著的引擎(`docker info`)、跑的是
+    鎖定版 distrobox、巢狀 daemon 起初沒有 `dev`;(b) 以真實(非 dry-run)模式、
+    `DBX_CONTAINER_MANAGER=docker`、**交付的** `box/dev.ini` 跑
+    `script/assemble.sh`:exit 0、印出上游的 `Distrobox 'dev' successfully
+    created.`、`docker ps -a` 恰好列出一個 `dev`,且它由 `ubuntu:26.04` 建出、帶
+    `manager=distrobox` 標籤;(c) 盒子可用:`distrobox enter dev -- rg --version`
+    印出 `ripgrep <版本>`(第一次 enter 會啟動容器並執行 distrobox-init:apt 安裝
+    distrobox 依賴與 `ripgrep fzf`,約 2 分鐘)、`distrobox enter dev -- fzf
+    --version` 印出版本,容器狀態為 `running`;(d) 冪等:第二次
+    `script/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
+    恰好一個、仍可 `rg --version`;(e) 清理:`distrobox rm -f dev` exit 0 後
+    `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
+    第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
+    `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
+    且要跨案例存活,放在 per-file 的 `BATS_FILE_TMPDIR`)、
+    `DBX_CONTAINER_GENERATE_ENTRY=0`。distrobox 在 runner 內以 root 執行(uid 0),
+    上游視為「以 root 登入的 rootful」:不會前綴 sudo、盒內使用者即 root、HOME
+    為上述全新目錄;這對本證明沒有影響,一般使用者(非 root)的情境留給 M3/M5 與
+    人類清單。一句話:**交付的清單經真實 distrobox 1.8.2.5 與真實 docker 引擎,
+    建出可用的 dev 盒(ubuntu:26.04 + ripgrep + fzf)**。
+  - **不證明什麼(延後)**:效能目標(進盒延遲,M3)、終端自動進盒(M3)、更廣的
+    環境矩陣(真實硬體、非 root 使用者、GPU 等,M5 與人類清單)。
+  - gate:`just -f justfile.ci test-system-real`(CI `test-system-real` job,
+    必要,被 `ci-passed` 彙總要求;慢,約 2-3 分鐘、CI 上限 40 分鐘)。同樣適用
+    「至少一個案例、無失敗、無 `skip`、spec 不存在即失敗」的規則。
 - 交付/驗收(`test/acceptance/m2_selfcheck_spec.bats`):
   - **驗證什麼**:以使用者拿到交付品的方式驗證 —— 直接執行交付的公開入口
     **`script/selfcheck.sh`**(就是下方 3g 要使用者跑的那支;測試**不**在 bats 裡
@@ -164,8 +204,9 @@ M5)。
     案例證明它的判定不是空的:清單壞掉(缺 image)時、以及包裝器被換成「跳過驗證、
     永遠印成功指令」的版本時,都必須報 `SOME FAILED` 且 exit 1;`--root` 指到
     不是 worktool checkout 的目錄時給出清楚錯誤。
-  - **不證明什麼(延後)**:真實硬體上可用的盒子(進盒、工具可執行、效能目標)——
-    留在下方「M2 驗收紀錄」的人類清單,並延後到 **M5**。
+  - **不證明什麼(延後)**:真實硬體上的盒子(效能目標、非 root 使用者、GPU 等)——
+    留在下方「M2 驗收紀錄」的人類清單與 **M3/M5**;「盒子可用」本身已由系統層
+    real-engine 組在 CI 內證明。
   - gate:`just -f justfile.ci test-acceptance`(CI `test-acceptance` job,必要)。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);執行方式見
@@ -175,21 +216,21 @@ M5)。
 
 M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的 commit SHA;「結果」
 填 PASS / FAIL / 延後;「證據」填可回溯的連結或指令輸出。**能自動化的已自動化**
-(前兩列由 CI 與 `script/selfcheck.sh` 產生證據);需要真實機器的項目誠實標為延後,
-並寫明延到哪個 milestone。
+(三列全部由 CI、`script/selfcheck.sh` 與 CI 內的 docker-in-docker 系統測試產生
+證據);仍需要真實機器的部分(效能、非 root、GPU)誠實留給 M3/M5。
 
 | 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
 |------|--------------|------|------|------|------|
-| 自動化四層全綠(lint + unit + integration + system + acceptance) | PR #20 head(審核時填 SHA) | GitHub Actions `ubuntu-latest`,Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5) | `ci-passed` 綠:五個 gate 皆 `success`,無 skip、無零案例 | 待審核填寫 | PR #20 的 checks 頁面(`ci-passed` job 記錄) |
+| 自動化全綠(lint + unit + integration + system + system-real + acceptance) | PR #20 head(審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | PR #20 的 checks 頁面(`ci-passed` job 記錄) |
 | 一鍵自檢 `./script/selfcheck.sh` 印出 `ALL PASS` | PR #20 head(審核時填 SHA) | 任一有 bash 的機器(clone 後於 repo 根目錄執行;不需 distrobox) | 7 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `./script/selfcheck.sh; echo rc=$?` 的輸出 |
-| 真實可用盒(`bash script/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行) | — | 真實機器:docker + distrobox | 盒子建立、`ripgrep` / `fzf` 可用 | **延後 —— M5**(自動化走 CI 內 docker-in-docker 系統測試;見 [`design.md`](design.md)) | —(不在 M2 範圍;M2 只證明清單被真實 distrobox 解析成正確的 create 請求) |
+| 真實可用盒(`script/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理) | PR #20 head(審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just -f justfile.ci test-system-real` 同一 runner | `test/system/real_engine_spec.bats` 8 案例全 `ok`:盒子由 `ubuntu:26.04` 建出、`ripgrep` / `fzf` 版本可印出、冪等、可清理;host daemon 零殘留 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..8` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
 以下是從零開始、端到端親自複驗 M2(盒子清單格式 + 最小 assemble 包裝器)的完整流程。
 全程只需要 **docker**:不需要安裝 `just`(`justfile.ci` 只是 `./script/ci/ci.sh` 的薄
 包裝),也不需要在 host 裝 `distrobox`(系統測試用的 distrobox 已鎖定版本、烘進測試
-映像;真實可用盒的驗證延到 M5)。每個指令都可直接複製貼上。
+映像與 DinD runner;真實可用盒的驗證也在 Docker 內完成)。每個指令都可直接複製貼上。
 
 ### 0. 前置
 
@@ -207,19 +248,23 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
 
 ### 2. 自動測試(全部在 Docker 內,不需 just / distrobox)
 
-入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑五道 gate:
+入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑六道 gate:
 
 ```bash
 ./script/ci/ci.sh --build              # (選用) 先建 worktool-test:local 測試映像
 ./script/ci/ci.sh --lint-only          # ShellCheck(*.sh + *.bats)
 ./script/ci/ci.sh --unit-only          # 單元 bats(test/unit/)
 ./script/ci/ci.sh --integration-only   # 整合 bats(test/integration/)
-./script/ci/ci.sh --system-only        # 系統 bats(test/system/;真實 distrobox + 假容器管理器)
+./script/ci/ci.sh --system-only        # 系統 bats,shim 組(test/system/;真實 distrobox + 假容器管理器)
 ./script/ci/ci.sh --acceptance-only    # 驗收 bats(test/acceptance/;跑交付的 script/selfcheck.sh)
+./script/ci/ci.sh --system-real-only   # 系統 bats,real-engine 組(docker-in-docker,--privileged;慢,約 2-3 分鐘)
 ```
 
 - `--build` 是選用的:後面的 gate 若發現映像不存在會自動建。想先暖快取、或快速驗
-  Dockerfile 有沒有壞掉,才需要先手動 `--build`。
+  Dockerfile 有沒有壞掉,才需要先手動 `--build`。`--system-real-only` 每次都會(以
+  快取)建 `worktool-system-real:local` runner 映像,並以 `docker run --rm --privileged`
+  執行;這是唯一需要 `--privileged` 的 gate,結束後 host daemon 上不會留下任何容器、
+  映像或 volume(`ubuntu:26.04` 與 `dev` 盒都只存在於 runner 內的巢狀 daemon)。
 - 預期輸出:
   - `--lint-only`:結尾出現 `[ci] ShellCheck OK`,沒有任何 ShellCheck 違規。
   - `--unit-only`:所有測項 `ok`(涵蓋缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
@@ -232,6 +277,10 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
   - `--acceptance-only`:所有測項 `ok`(交付的 `script/selfcheck.sh` 對交付的 repo
     印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
     `[ci] acceptance bats OK`。
+  - `--system-real-only`:先看到 `[system-real] dockerd ready after Ns` 與
+    `[system-real] engine 29.8.0 ...`,接著 `1..8` 且 8 項全 `ok`(建盒、`rg --version`、
+    `fzf --version`、冪等、`distrobox rm`),結尾 `[ci] system-real bats OK`、
+    `[system-real] cleanup: containers left in the nested daemon: 0`。
 - 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
   或根本沒跑到任何案例,同樣視為失敗。
 
@@ -337,13 +386,16 @@ checkout 用 `./script/selfcheck.sh --root <repo>`(指到不是 worktool checkou
 會以 `[ERROR]`、`rc=2` 結束)。驗收層測試(`test/acceptance/`)跑的就是這支腳本,
 並且以「清單壞掉」與「包裝器跳過驗證」兩個負向案例證明它會誠實地報 `SOME FAILED`。
 
-### 4. 真實 assemble(選用,M2 非必須)
+### 4. 真實 assemble(已自動化;host 上手動為選用)
 
-M2 **不要求**真實建盒:系統測試已證明清單會被真實 distrobox 解析成正確的 create 請求
-(見「測試對應」),但「映像拉得下來、套件裝得進去、盒子可用」需要真正的容器管理器
-(CI 內 docker-in-docker),依 [`design.md`](design.md) 延到 **M5**。若手邊已有
-docker + distrobox,可拿掉 dry-run 實際建出 dev 盒以主觀確認:
+「映像拉得下來、套件裝得進去、盒子可用」已由系統層 real-engine 組在 Docker 內以真實
+docker 引擎證明(`./script/ci/ci.sh --system-real-only`,見「測試對應」),host 不需要
+distrobox。若手邊已有 docker + distrobox、想在 host 上主觀確認,可拿掉 dry-run 實際
+建出 dev 盒(這會在 host 的 docker 上留下 `dev` 容器,用 `distrobox rm -f dev` 清掉):
 
 ```bash
 bash script/assemble.sh   # 需要 PATH 上有 distrobox;否則會以 [ERROR] ... 與 exit=127 結束
+distrobox enter dev -- rg --version
+distrobox enter dev -- fzf --version
+distrobox rm -f dev
 ```
