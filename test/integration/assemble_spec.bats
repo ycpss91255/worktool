@@ -78,3 +78,16 @@ setup() {
     assert_failure
     assert [ ! -f "${RECORD}" ]
 }
+
+@test "an image with an unbalanced quote never invokes distrobox" {
+    # distrobox-assemble sources `image='ubuntu:26.04"` as a shell
+    # assignment, where the unbalanced quote is a syntax error. worktool's
+    # pre-flight must reject it (exit 1, its own clear message) so distrobox
+    # is never called: the mock records zero calls.
+    local _bad="${BATS_TEST_TMPDIR}/unbalanced.ini"
+    printf "[dev]\nimage='ubuntu:26.04\"\n" >"${_bad}"
+    run "${ASSEMBLE}" --file "${_bad}"
+    assert_failure 1
+    assert_output --partial "unbalanced quote"
+    assert [ ! -f "${RECORD}" ]
+}

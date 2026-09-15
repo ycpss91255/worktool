@@ -49,12 +49,13 @@ _make_repo_copy() {
     refute_line --regexp '^FAIL'
     refute_line "SOME FAILED"
     # Every documented check reported PASS: the two dry-run contracts and the
-    # six invalid-manifest rejections (doc/manifest.md 3a-3e, including the
-    # single-quoted blank image).
+    # seven invalid-manifest rejections (doc/manifest.md 3a-3e, including the
+    # single-quoted blank image and the unbalanced-quote image).
     assert_line "PASS 3a"
     assert_line "PASS 3b"
     assert_line "PASS reject single-quoted-image.ini"
-    assert_equal "$(printf '%s\n' "${lines[@]}" | grep -c '^PASS ')" "8"
+    assert_line "PASS reject unbalanced-quote-image.ini"
+    assert_equal "$(printf '%s\n' "${lines[@]}" | grep -c '^PASS ')" "9"
 }
 
 @test "selfcheck works from outside the repo (defaults to its own checkout)" {
