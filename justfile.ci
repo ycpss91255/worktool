@@ -33,5 +33,11 @@ test-integration:
 test-system:
     ./script/ci/ci.sh --system-only
 
-# Convenience: lint + unit + integration + system in sequence.
-test: lint test-unit test-integration test-system
+# Run acceptance bats (test/acceptance/*.bats) inside the container: the
+# delivered public entry point (script/selfcheck.sh) against the delivered
+# repo.
+test-acceptance:
+    ./script/ci/ci.sh --acceptance-only
+
+# Convenience: all five gates in sequence.
+test: lint test-unit test-integration test-system test-acceptance
