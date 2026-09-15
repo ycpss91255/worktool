@@ -21,13 +21,15 @@
 #   (NUL-delimited argv files + a calls.log index), fails loudly on anything
 #   unexpected, and can inject a `create` failure (FAKE_CM_FAIL_CREATE=1).
 #
-# WHAT THIS DOES NOT PROVE (deferred, see doc/manifest.md)
+# WHAT THIS DOES NOT PROVE (see doc/manifest.md)
 #   - that ubuntu:26.04 can actually be pulled,
 #   - that ripgrep/fzf actually install inside the box (distrobox-init never
 #     runs here - no container is ever started),
 #   - that the resulting box is usable (`distrobox enter dev -- rg --version`).
-#   Those need a real container manager (docker-in-docker in CI) and are
-#   deferred per doc/design.md.
+#   Those need a real container manager and are proven by the real-engine
+#   group of this tier, test/system/real_engine_spec.bats, which runs in the
+#   docker-in-docker runner (ci.sh --system-real-only). This shim group stays
+#   the fast, daemon-free half.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 

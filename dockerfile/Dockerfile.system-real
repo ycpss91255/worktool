@@ -1,0 +1,114 @@
+# Dockerfile.system-real - docker-in-docker runner for the REAL-ENGINE group
+# of the system tier (M2).
+#
+# The plain test image (Dockerfile.test) runs the real distrobox against a
+# FAKE container manager, which proves the manifest is parsed into the
+# expected create request but cannot prove the box is usable. This image
+# proves that: it ships a REAL docker engine (the official docker:dind image:
+# dockerd + containerd + runc + docker CLI) plus bash, bats and the SAME
+# pinned distrobox as Dockerfile.test (same tarball, same sha256, same
+# upstream installer). script/ci/system-real-entry.sh starts dockerd inside
+# the container, waits for it, and runs test/system/real_engine_spec.bats,
+# which assembles the delivered box/dev.ini into a real `dev` box
+# (ubuntu:26.04 + ripgrep fzf) and enters it.
+#
+# It MUST be started with `docker run --rm --privileged` (a nested dockerd
+# needs it; see issue #129 for the DinD-vs-DooD-vs-podman decision). Every
+# container / image / volume the test creates lives in the nested daemon,
+# whose /var/lib/docker is an anonymous volume the dind image declares, so
+# `--rm` destroys all of it with the runner: zero leftover on the host daemon.
+# --privileged is used ONLY for this runner (ci.sh --system-real-only, CI job
+# test-system-real).
+#
+# Usage:
+#   docker build -t worktool-system-real:local -f dockerfile/Dockerfile.system-real .
+#   docker run --rm --privileged -v "$PWD:/source" -w /source \
+#     worktool-system-real:local ./script/ci/system-real-entry.sh
+
+# Every version is pinned. DOCKER_DIND_TAG is the official docker image's
+# dind variant (alpine based). DISTROBOX_* is the single source of truth
+# shared with Dockerfile.test (keep them identical).
+ARG DOCKER_DIND_TAG=29.8.0-dind
+ARG BATS_TAG=1.14.0
+ARG ALPINE_TAG=3.24
+ARG DISTROBOX_VERSION=1.8.2.5
+ARG DISTROBOX_SHA256=0c3bc4785ee3be3b89f93abb7cc0a9f60e56989e81319af140a4b60403b18f80
+
+FROM bats/bats:${BATS_TAG} AS bats-src
+
+FROM alpine:${ALPINE_TAG} AS bats-extensions
+# hadolint ignore=DL3018
+RUN apk add --no-cache git && \
+    git clone --depth 1 -b v0.3.0 \
+        https://github.com/bats-core/bats-support /bats/bats-support && \
+    git clone --depth 1 -b v2.1.0 \
+        https://github.com/bats-core/bats-assert /bats/bats-assert
+
+# Pinned distrobox release (identical to Dockerfile.test): fetch the tagged
+# source archive, verify its checksum, install with upstream's own installer.
+FROM alpine:${ALPINE_TAG} AS distrobox-src
+ARG DISTROBOX_VERSION
+ARG DISTROBOX_SHA256
+# hadolint ignore=DL3018
+RUN apk add --no-cache curl coreutils && \
+    curl -fsSL -o /tmp/distrobox.tar.gz \
+        "https://github.com/89luca89/distrobox/archive/refs/tags/${DISTROBOX_VERSION}.tar.gz" && \
+    echo "${DISTROBOX_SHA256}  /tmp/distrobox.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/distrobox.tar.gz -C /tmp && \
+    cd "/tmp/distrobox-${DISTROBOX_VERSION}" && \
+    ./install --prefix /opt/distrobox
+
+# Final stage: the official docker-in-docker image. It brings dockerd,
+# containerd, runc, the docker CLI, iptables, and the entry helpers
+# (dockerd-entrypoint.sh -> dind wrapper: cgroup v2 nesting, tmpfs /tmp,
+# `mount --make-rshared /`) that the runner entry reuses instead of
+# re-implementing.
+FROM docker:${DOCKER_DIND_TAG}
+ARG DISTROBOX_VERSION
+# bash    - bats, the worktool scripts and the runner entry need it
+# git     - test fixtures / future harness
+# grep + coreutils - GNU variants; distrobox's host-side scripts rely on GNU
+#           `base64 -w`, `realpath`, `id -r*`, `mktemp -u`; `timeout` bounds
+#           the long steps in the spec
+# ncurses - `tput`-style terminal queries stay sane under a non-tty harness
+# hadolint ignore=DL3018
+RUN apk add --no-cache \
+        bash \
+        git \
+        grep coreutils \
+        ncurses
+
+# bats core + extensions (bats-support / bats-assert)
+COPY --from=bats-src /opt/bats /opt/bats
+COPY --from=bats-src /usr/lib/bats /usr/lib/bats
+COPY --from=bats-extensions /bats /usr/lib/bats
+
+# distrobox (pinned; scripts only). distrobox-create locates distrobox-init /
+# -export / -host-exec next to itself, so they all land in the same dir.
+COPY --from=distrobox-src /opt/distrobox/bin/ /usr/local/bin/
+ENV DISTROBOX_VERSION=${DISTROBOX_VERSION}
+
+# The nested daemon is reached over its unix socket only: disable the dind
+# image's default TLS certificate generation (DOCKER_TLS_CERTDIR=/certs) so
+# no tcp listener and no cert material are set up.
+ENV DOCKER_TLS_CERTDIR=
+
+# Expose bats on PATH (the bats image keeps it under /opt/bats/bin only).
+RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
+
+# Smoke check baked into the image so a corrupted build fails fast at build
+# time rather than mid-run. distrobox must report exactly the pinned version;
+# the engine binaries the entry relies on must be present.
+RUN bash --version >/dev/null && \
+    bats --version >/dev/null && \
+    timeout --version >/dev/null && \
+    dockerd --version >/dev/null && \
+    docker --version >/dev/null && \
+    [ -x /usr/local/bin/dockerd-entrypoint.sh ] && \
+    [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
+
+WORKDIR /source
+# The runner entry (script/ci/system-real-entry.sh, bind-mounted with the
+# repo) starts dockerd itself, so the dind image's dockerd ENTRYPOINT is
+# replaced by a plain shell, matching Dockerfile.test.
+ENTRYPOINT ["/bin/bash"]
