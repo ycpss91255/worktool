@@ -81,7 +81,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 把 `box/dev.ini` 建成可用的 dev 盒、`rg` / `fzf` 可執行)**從 M5 提前到 M2**,做法
 採 docker-in-docker(三種做法 —— DinD / DooD / 容器內 rootless podman —— 的研究與
 比較記錄在該 issue;DinD 是唯一同時滿足「distrobox 與 daemon 看到同一套路徑」、
-「host 零殘留」、「GitHub Actions 與本機一致」的做法)。系統層因此分成 shim 組
+「測試建立的容器/映像/volume 不落在 host daemon 上」(host 只留 runner 映像與建置
+快取)、「GitHub Actions 與本機一致」的做法)。系統層因此分成 shim 組
 (建立請求正確性,快)與 real-engine 組(可用 dev 盒,DinD、`--privileged`、慢),
 兩組皆為 CI 必要 gate;`--privileged` 僅限 real-engine 這一個 job/recipe。M5 保留
 更廣的環境矩陣(真實硬體、非 root 使用者、其他映像、效能量測),不再負責「盒子

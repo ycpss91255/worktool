@@ -123,6 +123,102 @@ setup() {
     assert_output --partial "missing required key 'image'"
 }
 
+# --- single-quoted values ----------------------------------------------------
+# distrobox-assemble writes each `key=value` line into a tmpfile and sources it
+# as a SHELL ASSIGNMENT, so single quotes are valid quoting there: image=''
+# and image='   ' are blank images exactly like their double-quoted twins and
+# must be rejected the same way, not read as a non-empty "'   '" string.
+#
+# Quote rule under test (see manifest_image): after trimming the whole value,
+# ONE outer pair of quotes is stripped only when the first and last character
+# are the SAME quote character (both " or both '); a lone quote is an empty
+# pair. A mismatched pair ('...") or a one-sided quote ("...) is NOT quoting:
+# the value is kept verbatim (quotes included) and, being non-empty, passes
+# validation - worktool is not a shell parser; distrobox sources the value
+# and reports malformed quoting itself.
+
+@test "manifest_image treats a single-quoted empty value as empty" {
+    printf "[dev]\nimage=''\n" >"${TMP}/sqempty.ini"
+    run manifest_image "${TMP}/sqempty.ini"
+    assert_success
+    assert_output ""
+}
+
+@test "a single-quoted empty image fails validation as missing image" {
+    printf "[dev]\nimage=''\n" >"${TMP}/sqempty.ini"
+    run manifest_validate "${TMP}/sqempty.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+@test "manifest_image treats a single-quoted whitespace-only value as empty" {
+    printf "[dev]\nimage='   '\n" >"${TMP}/sqws.ini"
+    run manifest_image "${TMP}/sqws.ini"
+    assert_success
+    assert_output ""
+}
+
+@test "a single-quoted whitespace-only image fails validation as missing image" {
+    printf "[dev]\nimage='   '\n" >"${TMP}/sqws.ini"
+    run manifest_validate "${TMP}/sqws.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+@test "manifest_image treats a space-then-single-quoted whitespace value as empty" {
+    printf "[dev]\nimage= '   '\n" >"${TMP}/sqws2.ini"
+    run manifest_image "${TMP}/sqws2.ini"
+    assert_success
+    assert_output ""
+}
+
+@test "a space-then-single-quoted whitespace image fails validation as missing image" {
+    printf "[dev]\nimage= '   '\n" >"${TMP}/sqws2.ini"
+    run manifest_validate "${TMP}/sqws2.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+@test "manifest_image unquotes a single-quoted real image value" {
+    printf "[dev]\nimage='ubuntu:26.04'\n" >"${TMP}/sqok.ini"
+    run manifest_image "${TMP}/sqok.ini"
+    assert_success
+    assert_output "ubuntu:26.04"
+}
+
+@test "a lone quote is an empty pair and fails validation as missing image" {
+    printf "[dev]\nimage='\n" >"${TMP}/lonesq.ini"
+    run manifest_validate "${TMP}/lonesq.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+
+    printf '[dev]\nimage="\n' >"${TMP}/lonedq.ini"
+    run manifest_validate "${TMP}/lonedq.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+@test "mismatched outer quotes are not quoting: value kept verbatim, non-empty" {
+    # Opening ' but closing ": not a pair, so nothing is stripped.
+    printf "[dev]\nimage='ubuntu:26.04\"\n" >"${TMP}/mixed.ini"
+    run manifest_image "${TMP}/mixed.ini"
+    assert_success
+    assert_output "'ubuntu:26.04\""
+    # Non-empty, so worktool's pre-flight passes; distrobox itself rejects
+    # the malformed shell assignment.
+    run manifest_validate "${TMP}/mixed.ini"
+    assert_success
+}
+
+@test "a one-sided quote is not quoting: value kept verbatim, non-empty" {
+    printf '[dev]\nimage="ubuntu:26.04\n' >"${TMP}/onesided.ini"
+    run manifest_image "${TMP}/onesided.ini"
+    assert_success
+    assert_output '"ubuntu:26.04'
+    run manifest_validate "${TMP}/onesided.ini"
+    assert_success
+}
+
 # --- section-membership validation -------------------------------------------
 
 @test "an image before any section header is rejected as missing" {
