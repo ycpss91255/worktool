@@ -131,3 +131,44 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);執行方式見
 [`structure.md`](structure.md)。
+
+## 如何人工測試(M2)
+
+自動測試已全數通過(local + CI);以下是人類要親自複驗時的步驟。
+
+### 1. 跑自動測試(需 Docker,不需 distrobox)
+
+```
+just -f justfile.ci lint
+just -f justfile.ci test-unit
+just -f justfile.ci test-integration
+```
+
+預期:lint 為 ShellCheck OK;test-unit 全數 ok(含空白/引號 image 與區段歸屬案例);
+test-integration 全數 ok(含「無效 manifest 絕不呼叫 distrobox」負向測試)。
+
+### 2. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
+
+- 正常 dry-run:
+  ```
+  WORKTOOL_DRY_RUN=1 bash script/assemble.sh
+  ```
+  預期:印出 `distrobox assemble create --file <絕對路徑>/box/dev.ini`,且不執行。
+- 從 repo 以外呼叫(驗證路徑一致):
+  ```
+  cd /tmp && WORKTOOL_DRY_RUN=1 bash <repo 路徑>/script/assemble.sh
+  ```
+  預期:清單路徑為解析後的絕對路徑,與驗證所用一致。
+- 無效清單(缺 image):
+  ```
+  printf '[dev]\n' > /tmp/bad.ini
+  bash script/assemble.sh --manifest /tmp/bad.ini
+  ```
+  預期:報 missing image、以非零結束、完全不呼叫 distrobox。
+- 空白繞過(應被拒):`[   ]`、`image="   "`、`image= "   "` 皆應驗證失敗。
+- 含空白/特殊字元的清單路徑:dry-run 輸出應逐參數 `%q` 跳脫,可安全複製再執行。
+
+### 3. 真實 assemble(選用,需 docker + distrobox)
+
+M2 不要求真實 assemble(依 design.md 延到 M5 的 DinD)。若手邊已有 docker+distrobox,
+可執行 `bash script/assemble.sh` 實際建出 dev 盒以主觀確認。
