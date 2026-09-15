@@ -50,16 +50,23 @@ M2 的 assemble 包裝器(`script/assemble.sh`)在動作前會驗證清單,最�
 - **拒絕純空白值**:`[   ]` 這種只有空白的名稱會被當成缺少盒子名稱;
   `image="   "`、`image='   '`、`image=''` 這種(引號內只有空白或什麼都沒有)
   會被當成空的 image。名稱與 image 值都會先去除前後空白再判斷是否為空。
-- **引號規則(單/雙引號一視同仁)**:distrobox-assemble 會把每一行 `鍵=值` 寫進
-  暫存檔再以 shell 的 `.` source 進來,也就是**值被當成 shell 指派**解讀,因此
-  單引號與雙引號在上游都是有效的引號。worktool 的處理是:先去除整個值的前後
-  空白(所以 `image= '   '` 這種引號前有空格的寫法也一樣),再檢查**第一個字元
-  與最後一個字元是否為同一種引號**(都是 `"` 或都是 `'`):是,就去掉這一對外層
-  引號、再去除一次前後空白;單獨一個引號(`image='` / `image="`)視為一對空引號,
-  結果為空。**只剩這種「明確成對」的情況會被當成引號**;引號種類不一致
-  (`image='ubuntu:26.04"`)或只有一邊有引號(`image="ubuntu:26.04`)**不視為引號**,
-  值原樣保留(含引號)、因為非空而通過 worktool 的驗證 —— worktool 只做前置檢查、
-  不重做 shell parser,這種寫法交給 distrobox 自己在 source 時報錯。
+- **引號規則(單/雙引號一視同仁;只認「成對」)**:distrobox-assemble 會把每一行
+  `鍵=值` 寫進暫存檔再以 shell 的 `.` source 進來,也就是**值被當成 shell 指派**
+  解讀,因此單引號與雙引號在上游都是有效的引號 —— 反過來說,**沒有結尾、或兩端
+  種類不一致的引號,在上游就是 shell 語法錯誤**。worktool 的處理是:先去除整個
+  值的前後空白(所以 `image= '   '` 這種引號前有空格的寫法也一樣),接著只要
+  **第一個或最後一個字元是引號**(`"` 或 `'`),就要求它必須是**成對的**:兩端是
+  **同一種**引號、且**長度至少 2**(也就是真的有開有關);符合,就去掉這**一對**
+  外層引號(只剝一層)、再去除一次前後空白,結果為空就走上面的「空 image」拒絕。
+  其他任何以引號開頭或結尾的寫法都是**格式錯誤**,一律以清楚的訊息
+  `[ERROR] manifest image value has an unbalanced quote: <值> ...` 拒絕、exit 1,
+  且完全不呼叫 distrobox:單獨一個引號(`image='` / `image="`)、種類不一致
+  (`image='ubuntu:26.04"`)、只有一邊有引號(`image="ubuntu:26.04` /
+  `image=ubuntu:26.04"`)都屬此類。理由:上游把值當 shell 指派來 source,這些寫法
+  到了 distrobox 只會變成一句難懂的 shell 錯誤,由 worktool 的前置檢查提早、明確地
+  擋下更穩健。合法寫法 `image=ubuntu:26.04`、`image="ubuntu:26.04"`、
+  `image='ubuntu:26.04'` 三者結果都是 `ubuntu:26.04`;**不在兩端**的引號(值中間)
+  一律不處理、原樣保留。
 
 ### 常用的 distrobox-assemble 欄位(可用,非必要)
 
@@ -127,10 +134,11 @@ shim 組(建立請求正確性,快)與 real-engine 組(真正可用的 dev 盒,d
 issue #129),不再延後到 M5。
 
 - 單元(`test/unit/manifest_spec.bats`、`test/unit/assemble_spec.bats`):
-  - **驗證什麼**:清單驗證(有效通過;缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
-    雙引號或單引號內純空白或全空的 image(含引號前有空格、單獨一個引號)/
-    引號不成對或只有一邊時值原樣保留 / image 出現在區段之前 / 多區段,皆以正確
-    訊息失敗)與指令組裝
+  - **驗證什麼**:清單驗證(有效通過,含不加引號 / 雙引號 / 單引號三種合法寫法都
+    得到同一個 image 值;缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
+    雙引號或單引號內純空白或全空的 image(含引號前有空格)/ 引號不成對(單獨一個
+    引號、種類不一致、只有一邊)以 `unbalanced quote` 訊息拒絕 / image 出現在
+    區段之前 / 多區段,皆以正確訊息失敗)與指令組裝
     (dry-run 印出正確的 `distrobox assemble create --file ...`,且不執行;從 repo
     以外執行時輸出解析後的絕對路徑;含空白與 shell 特殊字元的路徑經跳脫後可還原成
     單一參數)。純 bash、完全可 mock。
@@ -140,8 +148,8 @@ issue #129),不再延後到 M5。
   - **驗證什麼**:把一支 **mock `distrobox`** 放到 PATH(**逐一參數**、每行一個地
     記錄自己被呼叫的參數),以真實(非 dry-run)模式跑包裝器,斷言它確實以
     `assemble create --file <解析後的清單>` 呼叫 distrobox;另外斷言「從 repo 以外
-    執行會傳入解析後的絕對路徑」以及「清單無效時完全不呼叫 distrobox 且以非零
-    結束」。證明包裝器到 distrobox 的接線。
+    執行會傳入解析後的絕對路徑」以及「清單無效時(缺 image、image 引號不成對)
+    完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
 - 系統,**shim 組**(`test/system/real_assemble_spec.bats`):在測試映像內執行
@@ -222,7 +230,7 @@ issue #129),不再延後到 M5。
   - **驗證什麼**:以使用者拿到交付品的方式驗證 —— 直接執行交付的公開入口
     **`script/selfcheck.sh`**(就是下方 3g 要使用者跑的那支;測試**不**在 bats 裡
     重寫它的檢查),斷言它 exit 0 且印出 `ALL PASS`(3a/3b 的 dry-run 契約 + 3c-3e
-    六個無效清單的拒絕,共 8 個 `PASS`),從 repo 內或 repo 外執行皆然;並以負向
+    七個無效清單的拒絕,共 9 個 `PASS`),從 repo 內或 repo 外執行皆然;並以負向
     案例證明它的判定不是空的:清單壞掉(缺 image)時、以及包裝器被換成「跳過驗證、
     永遠印成功指令」的版本時,都必須報 `SOME FAILED` 且 exit 1;`--root` 指到
     不是 worktool checkout 的目錄時給出清楚錯誤。
@@ -244,7 +252,7 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 | 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
 |------|--------------|------|------|------|------|
 | 自動化全綠(lint + unit + integration + system + system-real + acceptance) | PR #20 head(審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | PR #20 的 checks 頁面(`ci-passed` job 記錄) |
-| 一鍵自檢 `./script/selfcheck.sh` 印出 `ALL PASS` | PR #20 head(審核時填 SHA) | 任一有 bash 的機器(clone 後於 repo 根目錄執行;不需 distrobox) | 8 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `./script/selfcheck.sh; echo rc=$?` 的輸出 |
+| 一鍵自檢 `./script/selfcheck.sh` 印出 `ALL PASS` | PR #20 head(審核時填 SHA) | 任一有 bash 的機器(clone 後於 repo 根目錄執行;不需 distrobox) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `./script/selfcheck.sh; echo rc=$?` 的輸出 |
 | 真實可用盒(`script/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理) | PR #20 head(審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just -f justfile.ci test-system-real` 同一 runner | `test/system/real_engine_spec.bats` 8 案例全 `ok`:盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf` 版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..8` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
@@ -292,10 +300,10 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
 - 預期輸出:
   - `--lint-only`:結尾出現 `[ci] ShellCheck OK`,沒有任何 ShellCheck 違規。
   - `--unit-only`:所有測項 `ok`(涵蓋缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
-    單或雙引號內純空白 image / image 出現在區段之前 / 多區段等案例),結尾
-    `[ci] unit bats OK`。
-  - `--integration-only`:所有測項 `ok`(含「無效 manifest 絕不呼叫 distrobox」負向
-    測試),結尾 `[ci] integration bats OK`。
+    單或雙引號內純空白 image / 引號不成對的 image / image 出現在區段之前 / 多區段
+    等案例),結尾 `[ci] unit bats OK`。
+  - `--integration-only`:所有測項 `ok`(含「無效 manifest(缺 image、引號不成對)
+    絕不呼叫 distrobox」負向測試),結尾 `[ci] integration bats OK`。
   - `--system-only`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成
     帶 `dev` / `ubuntu:26.04` / `ripgrep fzf` 的 create 請求;管理器失敗會傳回非零),
     結尾 `[ci] system bats OK`。
@@ -353,23 +361,28 @@ bash script/assemble.sh --file /tmp/bad.ini; echo "exit=$?"
 `[ERROR] manifest missing required key 'image' in section [dev]: /tmp/bad.ini`、
 STDOUT 為空、`exit=1`,而且完全不呼叫 distrobox。
 
-**3d. 空白繞過應被拒**
+**3d. 空白繞過與不成對引號應被拒**
 
 ```bash
-printf '[   ]\nimage=ubuntu:26.04\n' > /tmp/ws-name.ini   # 純空白名稱
-printf '[dev]\nimage="   "\n'         > /tmp/ws-img.ini    # 雙引號內純空白
-printf '[dev]\nimage= "   "\n'        > /tmp/ws-img2.ini   # 空格後才是引號
-printf "[dev]\nimage='   '\n"         > /tmp/ws-img3.ini   # 單引號內純空白
-for f in /tmp/ws-name.ini /tmp/ws-img.ini /tmp/ws-img2.ini /tmp/ws-img3.ini; do
+printf '[   ]\nimage=ubuntu:26.04\n'   > /tmp/ws-name.ini    # 純空白名稱
+printf '[dev]\nimage="   "\n'           > /tmp/ws-img.ini     # 雙引號內純空白
+printf '[dev]\nimage= "   "\n'          > /tmp/ws-img2.ini    # 空格後才是引號
+printf "[dev]\nimage='   '\n"           > /tmp/ws-img3.ini    # 單引號內純空白
+printf "[dev]\nimage='ubuntu:26.04\"\n" > /tmp/unbalanced.ini # 引號種類不一致
+for f in /tmp/ws-name.ini /tmp/ws-img.ini /tmp/ws-img2.ini /tmp/ws-img3.ini /tmp/unbalanced.ini; do
   bash script/assemble.sh --file "$f"; echo "  ($f) exit=$?"
 done
 ```
 
-預期:四者都以 `exit=1` 被拒。名稱與 image 值都會先去除前後空白再判斷是否為空,
-成對的單/雙引號一視同仁(見「驗證規則」的引號規則),因此:
+預期:五者都以 `exit=1` 被拒,且完全不呼叫 distrobox。名稱與 image 值都會先去除
+前後空白再判斷是否為空,成對的單/雙引號一視同仁、不成對的引號是格式錯誤(見
+「驗證規則」的引號規則),因此:
 - `[   ]` 判為缺盒子名稱:`[ERROR] manifest missing box name ...`。
 - `image="   "`、`image= "   "` 與 `image='   '` 都判為缺 image:
   `[ERROR] manifest missing required key 'image' ...`。
+- `image='ubuntu:26.04"` 判為引號不成對:
+  `[ERROR] manifest image value has an unbalanced quote: 'ubuntu:26.04" (section [dev]): /tmp/unbalanced.ini`。
+  單獨一個引號(`image='`)或只有一邊有引號(`image="ubuntu:26.04`)也是同一個訊息。
 
 **3e. 多區段應被拒(單一盒子規則)**
 
@@ -405,6 +418,7 @@ PASS reject blank-name.ini
 PASS reject blank-image.ini
 PASS reject spaced-image.ini
 PASS reject single-quoted-image.ini
+PASS reject unbalanced-quote-image.ini
 PASS reject multi.ini
 ALL PASS
 rc=0
