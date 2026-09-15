@@ -7,8 +7,8 @@ name: CI
 #
 # Every gate is REQUIRED: the `ci-passed` aggregator fails unless every gate
 # job finished with `success` - a skipped, cancelled or missing gate does not
-# read as green. (Inside each bats gate, ci.sh likewise fails on skipped or
-# zero cases.)
+# read as green. (Inside each bats gate, ci.sh likewise fails on a missing
+# or emptied required spec, on skipped cases and on zero cases.)
 #
 # --privileged is used by the test-system-real job ONLY: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
