@@ -39,8 +39,10 @@ test-system:
 # started with `docker run --rm --privileged` - the ONLY privileged recipe):
 # a real dockerd inside the runner, the real pinned distrobox assembles the
 # delivered box/dev.ini into a real dev box (ubuntu:26.04 + ripgrep fzf) and
-# enters it. Slow (image pull + apt inside the box: minutes). Zero leftover
-# on the host daemon.
+# enters it. Slow (image pull + apt inside the box: minutes). Everything the
+# test creates lives in the nested daemon and dies with the runner; the host
+# daemon keeps only the runner image (worktool-system-real:local) and the
+# Docker build cache, like worktool-test:local.
 test-system-real:
     ./script/ci/ci.sh --system-real-only
 
