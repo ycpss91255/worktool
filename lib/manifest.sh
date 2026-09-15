@@ -122,7 +122,10 @@ manifest_image() {
             image=*)
                 [[ "${_state}" == "in" ]] || continue
                 _val="${_line#image=}"
-                _val="$(_manifest_rtrim "${_val}")"
+                # Trim the whole value FIRST so a leading space before an opening
+                # quote (image= "   ") cannot leave a stray quote that reads as a
+                # non-empty image; then strip paired outer quotes and trim again.
+                _val="$(_manifest_trim "${_val}")"
                 _val="${_val#\"}"
                 _val="${_val%\"}"
                 _val="$(_manifest_trim "${_val}")"
