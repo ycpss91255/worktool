@@ -1,7 +1,12 @@
 name: CI
 
-# worktool M1 CI: lint + unit + integration, all inside Docker.
+# worktool CI: lint + unit + integration + system, all inside Docker.
 # Runs on push and pull_request to main.
+#
+# Every gate is REQUIRED: the `ci-passed` aggregator fails unless every gate
+# job finished with `success` - a skipped, cancelled or missing gate does not
+# read as green. (Inside each bats gate, ci.sh likewise fails on skipped or
+# zero cases.)
 
 on:
   push:
@@ -44,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: [lint, test-unit, test-integration]
+        gate: [lint, test-unit, test-integration, test-system]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,3 +70,22 @@ jobs:
         env:
           TEST_IMAGE_PREBUILT: "1"
         run: just -f justfile.ci ${{ matrix.gate }}
+
+  # Single required status: green only if the image built AND every matrix
+  # gate succeeded. `if: always()` makes it run even when a gate failed or was
+  # skipped, so that state is reported as a failure rather than as "no check".
+  ci-passed:
+    name: ci-passed
+    runs-on: ubuntu-latest
+    needs: [build-image, gate]
+    if: always()
+    steps:
+      - name: Verify every gate succeeded
+        env:
+          BUILD_RESULT: ${{ needs.build-image.result }}
+          GATE_RESULT: ${{ needs.gate.result }}
+        run: |
+          echo "build-image: ${BUILD_RESULT}"
+          echo "gate (all matrix legs): ${GATE_RESULT}"
+          [ "${BUILD_RESULT}" = "success" ] || exit 1
+          [ "${GATE_RESULT}" = "success" ] || exit 1
