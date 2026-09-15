@@ -28,10 +28,21 @@ test-unit:
 test-integration:
     ./script/ci/ci.sh --integration-only
 
-# Run system bats (test/system/*.bats) inside the container: the real pinned
-# distrobox against the fake container-manager shim (no docker-in-docker).
+# Run system bats, shim group (test/system/*.bats except real_engine_spec)
+# inside the container: the real pinned distrobox against the fake
+# container-manager shim (no docker-in-docker). Fast.
 test-system:
     ./script/ci/ci.sh --system-only
+
+# Run system bats, real-engine group (test/system/real_engine_spec.bats) in
+# the dedicated docker-in-docker runner (dockerfile/Dockerfile.system-real,
+# started with `docker run --rm --privileged` - the ONLY privileged recipe):
+# a real dockerd inside the runner, the real pinned distrobox assembles the
+# delivered box/dev.ini into a real dev box (ubuntu:26.04 + ripgrep fzf) and
+# enters it. Slow (image pull + apt inside the box: minutes). Zero leftover
+# on the host daemon.
+test-system-real:
+    ./script/ci/ci.sh --system-real-only
 
 # Run acceptance bats (test/acceptance/*.bats) inside the container: the
 # delivered public entry point (script/selfcheck.sh) against the delivered
@@ -39,5 +50,6 @@ test-system:
 test-acceptance:
     ./script/ci/ci.sh --acceptance-only
 
-# Convenience: all five gates in sequence.
-test: lint test-unit test-integration test-system test-acceptance
+# Convenience: all six gates in sequence (test-system-real last: it is the
+# slow one).
+test: lint test-unit test-integration test-system test-acceptance test-system-real
