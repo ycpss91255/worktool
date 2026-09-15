@@ -131,7 +131,12 @@ just -f justfile.ci test
 `--ci-system-real`,結束時清理盒子並停掉 dockerd(全部隨 runner 容器銷毀,host
 daemon 零殘留;入口對 `docker info` / `docker ps` / `distrobox rm` / `docker rm`
 的每一次呼叫都各自包在 `timeout` 內,等待迴圈以 `WORKTOOL_DOCKERD_READY_TIMEOUT`
-為權威總期限,daemon 卡死也不會把本機執行拖過期限)。每一層 bats gate(含兩個
+為權威總期限——就緒探測失敗或成功都一樣:探測成功後的引擎資訊查詢只拿得到**剩餘**
+的就緒預算,預算用完就直接略過並說明,整個等待的最壞情況固定為期限 + 5 秒 kill 寬限
++ 1 秒,daemon 卡死也不會把本機執行拖過期限;`WORKTOOL_DOCKERD_READY_TIMEOUT` /
+`WORKTOOL_DOCKER_CALL_TIMEOUT` 在起 dockerd 之前就先驗證必須是正整數,`0`(等於
+`timeout` 無上限)、負數、非數字一律直接失敗;清理時若查不到剩餘容器數(`docker ps`
+失敗或逾時)會如實印出 `unknown (query failed)` 而不是假的 `0`)。每一層 bats gate(含兩個
 系統組)都在 `ci.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`;
 integration:`smoke_spec`、`assemble_spec`;system shim:`real_assemble_spec`;

@@ -206,6 +206,17 @@ EOF
     refute_output --regexp '^1\.\.[0-9]+$'
 }
 
+@test "system (shim): a header-only real_assemble_spec (no @test left) fails the tier even with a decoy spec present" {
+    _make_repo_copy
+    _write_header_only_spec "${COPY}/test/system/real_assemble_spec.bats"
+    _write_one_case_spec "${COPY}/test/system/decoy_spec.bats" "decoy"
+
+    _run_copy_gate --ci-system
+    assert_failure
+    assert_output --partial "[ci] ERROR: system required spec defines zero cases: test/system/real_assemble_spec.bats"
+    refute_output --regexp '^1\.\.[0-9]+$'
+}
+
 @test "system-real: an emptied real_engine_spec fails the group without needing a daemon" {
     _make_repo_copy
     : >"${COPY}/test/system/real_engine_spec.bats"
