@@ -42,8 +42,28 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
    -> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
 4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
-5. CI:install script 走單元測試;盒子 assemble 走 docker-in-docker 冒煙;細節
-   於 M15。
+5. 測試層級(已定):完整測試金字塔 —— 單元 -> 整合 -> 系統 -> 交付/驗收,
+   全部都要有。詳見下方「測試策略」。
+
+## 測試策略(完整測試金字塔,已定)
+
+每個 milestone 的 Definition of Done 都包含對應層級的測試(TDD:先寫測試)。
+四個層級全部都要有:
+
+- 單元測試(unit):個別函式/腳本隔離測試 —— bash 函式、清單解析、install
+  script 的 helper,以 mock 隔離外部。快、量最多。
+- 整合測試(integration):元件協作 —— 例如「從清單 assemble 一個盒子並驗證
+  套件就位」、「bootstrap 正確裝上 distrobox」。在 Docker / docker-in-docker
+  內以真實但受控的方式跑。
+- 系統測試(system):端到端全流程 —— 全新環境 -> bootstrap -> 盒子 assemble
+  -> 終端自動進盒 -> 工具可用,在受控容器(DinD)內跑。
+- 交付/驗收測試(acceptance):驗證交付品達成目標與 UX —— 效能目標達標(進盒
+  延遲、工具呼叫負擔)、日常 driver 流程可用、工具從盒內正常運作。可自動化的
+  自動化;需真實硬體/顯示的部分(GPU、GUI、顯示器剪貼簿)以人類驗收清單補足
+  (比照 init_ubuntu 的 real-hardware 驗收清單)。
+
+測試環境維持 Docker-only(unit/integration/system 走 Docker/DinD);只有需要
+真實硬體的驗收項目走人類清單。
 
 ## Milestone 計畫(細化;每個結束有人類 gate)
 
@@ -87,7 +107,9 @@ host 層(依重要性):
 
 - M13 新前端 UX 設計:規格 + 原型(design checkpoint)。
 - M14 新前端實作:install/remove/list/doctor,效能達標。
-- M15 CI/測試完整:Docker-only 測試策略全面落地 + conformance。
+- M15 CI/測試完整:完整測試金字塔(unit -> integration -> system ->
+  acceptance)全面落地 + conformance + 交付/驗收清單。
+  註:各 milestone 已隨附其層級測試;M15 是補齊系統/交付層級與整體 CI 收斂。
 - M16 文件/遷移對照:使用文件、與 init_ubuntu 的對照、退場說明。
 - M17 release 2.0.0(人類 RELEASE gate,唯一需人類同意的 release)。
 
