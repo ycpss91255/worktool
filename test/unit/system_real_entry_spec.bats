@@ -66,6 +66,16 @@ case "${FAKE_MODE:-}" in
     hang)        exec sleep 1000 ;;
     hang-format) [[ "${1:-}" == info && "$*" == *--format* ]] && exec sleep 1000 ;;
     hang-ps)     [[ "${1:-}" == ps ]] && exec sleep 1000 ;;
+    # First probe fails at once; every later probe ignores SIGTERM and
+    # hangs, so `timeout` has to escalate to SIGKILL after its kill grace.
+    fail-then-hang-ignore-term)
+        if [[ "${1:-}" == info ]]; then
+            if [[ ! -f "${FAKE_LOG}.failed-once" ]]; then
+                : >"${FAKE_LOG}.failed-once"; exit 1
+            fi
+            trap '' TERM
+            while :; do sleep 1; done
+        fi ;;
 esac
 case "${1:-}" in
     info) exit 0 ;;
@@ -146,6 +156,25 @@ _with_entry() {
     assert_success
     assert_output --partial "[system-real] dockerd ready after"
     assert_output --partial "[system-real] engine details unavailable"
+}
+
+@test "_wait_dockerd never sleeps past an exhausted deadline: a failed probe followed by a TERM-ignoring hang ends within deadline + kill grace + 1s" {
+    local _ready=3
+    # Timeline with per-call budget (20s) > readiness budget (3s):
+    # t=0 probe fails fast -> sleep 1 -> t=1 probe gets the remaining 2s,
+    # ignores SIGTERM at t=3, is SIGKILLed at t=3+KILL_GRACE=8. The loop must
+    # stop right there: one more unconditional `sleep 1` would land past
+    # the documented worst case (deadline + KILL_GRACE + 1s = 9s).
+    local _t0="${EPOCHREALTIME}"
+    FAKE_MODE=fail-then-hang-ignore-term WORKTOOL_DOCKERD_READY_TIMEOUT="${_ready}" \
+        WORKTOOL_DOCKER_CALL_TIMEOUT=20 _with_entry _wait_dockerd
+    local _elapsed_ms
+    _elapsed_ms="$(awk -v a="${_t0}" -v b="${EPOCHREALTIME}" 'BEGIN { printf "%d", (b - a) * 1000 }')"
+    assert_failure 1
+    assert_output --partial "[system-real] ERROR: dockerd not ready after ${_ready}s"
+    # Both probes ran: the fast failure and the one that had to be killed.
+    assert [ "$(grep -c '^docker info' "${FAKE_LOG}")" -eq 2 ]
+    assert [ "${_elapsed_ms}" -le "$(( (_ready + KILL_GRACE + 1) * 1000 ))" ]
 }
 
 @test "_engine_details skips the query (and says so) when the readiness budget is already spent" {
