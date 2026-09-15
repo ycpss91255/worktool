@@ -15,13 +15,21 @@
 #   3. waits until `docker info` succeeds (bounded; fails loudly with the
 #      daemon log on timeout or early death);
 #   4. runs the real-engine bats gate through ci.sh --ci-system-real, so the
-#      tier rules (specs must exist, at least one case, no failure, no skip)
-#      apply to this group exactly like every other tier;
+#      tier rules (required spec present and non-empty, at least one case,
+#      no failure, no skip) apply to this group exactly like every other
+#      tier;
 #   5. on exit, best-effort cleanup: `distrobox rm -f dev`, remove any
 #      leftover container, stop dockerd. Everything lives in this container
 #      (the nested daemon's /var/lib/docker is an anonymous volume of the
 #      dind image) and dies with it under --rm, so the host daemon never
 #      sees the box.
+#
+# Every engine call this entry makes (`docker info` probes, `docker ps`,
+# `distrobox rm`, `docker rm`) runs under its own `timeout` (_bounded), so
+# a daemon that wedges can never hold a local run past the deadlines below:
+# the wait loop's total (WORKTOOL_DOCKERD_READY_TIMEOUT) is authoritative
+# and the cleanup trap is capped at a known worst case. CI's job timeout is
+# the last resort, not the first.
 #
 # Environment (all optional):
 #   WORKTOOL_DOCKERD_LOG            path of the nested daemon log
@@ -29,7 +37,9 @@
 #                                   NOT under /tmp, which the dind wrapper
 #                                   re-mounts as tmpfs at daemon start)
 #   WORKTOOL_DOCKERD_READY_TIMEOUT  seconds to wait for `docker info`
-#                                   (default 90)
+#                                   (default 90; authoritative total)
+#   WORKTOOL_DOCKER_CALL_TIMEOUT    seconds per short engine query
+#                                   (`docker info` / `docker ps`; default 10)
 #
 # Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`);
 # failures are surfaced explicitly via _die so a nonzero exit is always
@@ -46,6 +56,15 @@ DOCKERD_READY_TIMEOUT="${WORKTOOL_DOCKERD_READY_TIMEOUT:-90}"
 DOCKERD_STOP_TIMEOUT=20
 DOCKERD_SOCKET="unix:///var/run/docker.sock"
 BOX_NAME="dev"
+
+# Per-call bounds (seconds). Short queries (`docker info` / `docker ps`) get
+# DOCKER_CALL_TIMEOUT; the two removals in the cleanup trap get their own,
+# larger budgets. KILL_GRACE is how long after SIGTERM `timeout` escalates
+# to SIGKILL, so the bound is hard even for a CLI stuck in a socket read.
+DOCKER_CALL_TIMEOUT="${WORKTOOL_DOCKER_CALL_TIMEOUT:-10}"
+DISTROBOX_RM_TIMEOUT=60
+DOCKER_RM_TIMEOUT=30
+KILL_GRACE=5
 
 # Exported so the spec can print the daemon log on failure.
 export WORKTOOL_DOCKERD_LOG="${DOCKERD_LOG}"
@@ -66,6 +85,15 @@ _tail_dockerd_log() {
         tail -n 60 "${DOCKERD_LOG}" >&2 || true
         _info "--- end of dockerd log"
     fi
+}
+
+# Run "$@" under a hard bound of $1 seconds: SIGTERM at the deadline,
+# SIGKILL KILL_GRACE seconds later if it is still there. Exit status is the
+# command's (124 on timeout), so callers keep their `|| ...` handling.
+_bounded() {
+    local _secs="$1"
+    shift
+    timeout -k "${KILL_GRACE}" "${_secs}" "$@"
 }
 
 # --- Preflight ---------------------------------------------------------------
@@ -107,17 +135,27 @@ _start_dockerd() {
     DOCKERD_PID=$!
 }
 
+# Wait for the nested daemon to answer `docker info`. DOCKERD_READY_TIMEOUT
+# is the authoritative total: each probe is bounded by the shorter of
+# DOCKER_CALL_TIMEOUT and the time left, so a probe that hangs on a wedged
+# socket cannot push the loop past its deadline (worst case: deadline +
+# KILL_GRACE + 1s).
 _wait_dockerd() {
     local _start="${SECONDS}"
     local _deadline=$(( _start + DOCKERD_READY_TIMEOUT ))
+    local _left
     while (( SECONDS < _deadline )); do
         if ! kill -0 "${DOCKERD_PID}" 2>/dev/null; then
             _tail_dockerd_log
             _die "dockerd exited before becoming ready"
         fi
-        if docker info >/dev/null 2>&1; then
+        _left=$(( _deadline - SECONDS ))
+        (( _left > DOCKER_CALL_TIMEOUT )) && _left="${DOCKER_CALL_TIMEOUT}"
+        # `timeout 0` would mean "no bound" - never let the clock tick to it.
+        (( _left < 1 )) && _left=1
+        if _bounded "${_left}" docker info >/dev/null 2>&1; then
             _info "dockerd ready after $(( SECONDS - _start ))s"
-            docker info --format \
+            _bounded "${DOCKER_CALL_TIMEOUT}" docker info --format \
                 '[system-real] engine {{.ServerVersion}} driver={{.Driver}} cgroup={{.CgroupDriver}}/{{.CgroupVersion}}' >&2 \
                 || true
             return 0
@@ -144,18 +182,24 @@ _stop_dockerd() {
 }
 
 # Best-effort teardown; never fails the run (the gate's own exit code is
-# already decided) and never blocks for long.
+# already decided) and never blocks for long: every engine call is bounded,
+# so even against a wedged daemon the trap is capped at about
+# 3 x DOCKER_CALL_TIMEOUT + DISTROBOX_RM_TIMEOUT + DOCKER_RM_TIMEOUT +
+# DOCKERD_STOP_TIMEOUT (+ KILL_GRACE per escalation) seconds.
 _cleanup() {
     local _rc=$?
     trap - EXIT
-    if [[ -n "${DOCKERD_PID}" ]] && docker info >/dev/null 2>&1; then
-        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${BOX_NAME}"; then
+    if [[ -n "${DOCKERD_PID}" ]] \
+        && _bounded "${DOCKER_CALL_TIMEOUT}" docker info >/dev/null 2>&1; then
+        if _bounded "${DOCKER_CALL_TIMEOUT}" docker ps -a --format '{{.Names}}' 2>/dev/null \
+            | grep -qx "${BOX_NAME}"; then
             _info "cleanup: box '${BOX_NAME}' still present - removing"
-            DBX_CONTAINER_MANAGER=docker timeout 60 distrobox rm -f "${BOX_NAME}" \
+            _bounded "${DISTROBOX_RM_TIMEOUT}" \
+                env DBX_CONTAINER_MANAGER=docker distrobox rm -f "${BOX_NAME}" \
                 >/dev/null 2>&1 </dev/null || true
-            docker rm -f "${BOX_NAME}" >/dev/null 2>&1 || true
+            _bounded "${DOCKER_RM_TIMEOUT}" docker rm -f "${BOX_NAME}" >/dev/null 2>&1 || true
         fi
-        _info "cleanup: containers left in the nested daemon: $(docker ps -aq 2>/dev/null | wc -l)"
+        _info "cleanup: containers left in the nested daemon: $(_bounded "${DOCKER_CALL_TIMEOUT}" docker ps -aq 2>/dev/null | wc -l)"
     fi
     _stop_dockerd
     if [[ "${_rc}" -ne 0 ]]; then
