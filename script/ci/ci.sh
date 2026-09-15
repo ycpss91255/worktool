@@ -7,21 +7,27 @@
 #   Host side  - builds the test image if needed, then runs THIS script
 #                back inside a throwaway container with the /source bind
 #                mount. Selected by --lint-only / --unit-only /
-#                --integration-only.
+#                --integration-only / --system-only.
 #   Container  - runs the actual gate against the mounted source. Selected
-#                by --ci-lint / --ci-unit / --ci-integration.
+#                by --ci-lint / --ci-unit / --ci-integration / --ci-system.
 #
 # All test execution happens inside the container (doc/design.md: Docker
 # only). The host never installs packages.
+#
+# A bats tier gate is green ONLY if at least one case ran and none was
+# skipped: bats exits 0 on skips, so the TAP stream is scanned and a skipped
+# or missing required case fails the gate instead of reading as green.
 #
 # Usage:
 #   ./script/ci/ci.sh --lint-only          # host: route lint into container
 #   ./script/ci/ci.sh --unit-only          # host: route unit bats
 #   ./script/ci/ci.sh --integration-only   # host: route integration bats
+#   ./script/ci/ci.sh --system-only        # host: route system bats
 #   ./script/ci/ci.sh --build              # host: (re)build the test image
 #   ./script/ci/ci.sh --ci-lint            # inside container: shellcheck
 #   ./script/ci/ci.sh --ci-unit            # inside container: unit bats
 #   ./script/ci/ci.sh --ci-integration     # inside container: integration bats
+#   ./script/ci/ci.sh --ci-system          # inside container: system bats
 #
 # Exit-code-contract script: default guards are `set -uo pipefail`
 # (no `-e`); failures are surfaced explicitly via _die so a nonzero exit
@@ -107,25 +113,40 @@ _run_shellcheck() {
     _info "ShellCheck OK"
 }
 
-_run_unit() {
-    _info "Running unit bats (test/unit/)"
-    local _dir="${REPO_ROOT}/test/unit"
+# Run one bats tier (test/<tier>/*.bats) as a gate. $1 = tier name.
+#
+# Green requires: specs exist, at least one case ran (no "1..0" plan), no
+# case failed, and no case was skipped. The TAP stream is captured (and
+# echoed) so skips can be detected - bats itself exits 0 on a skip.
+_run_bats_tier() {
+    local _tier="$1"
+    local _dir="${REPO_ROOT}/test/${_tier}"
+    _info "Running ${_tier} bats (test/${_tier}/)"
     if ! compgen -G "${_dir}/*.bats" >/dev/null; then
-        _die "no unit specs found under ${_dir}"
+        _die "no ${_tier} specs found under ${_dir}"
     fi
-    bats -r "${_dir}" || _die "unit bats failed"
-    _info "unit bats OK"
+
+    local _tap
+    _tap="$(mktemp)" || _die "mktemp failed"
+    if ! bats --formatter tap -r "${_dir}" | tee "${_tap}"; then
+        rm -f "${_tap}"
+        _die "${_tier} bats failed"
+    fi
+    if grep -qE '^1\.\.0$' "${_tap}"; then
+        rm -f "${_tap}"
+        _die "${_tier} bats ran zero cases - a missing required case is not green"
+    fi
+    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+        rm -f "${_tap}"
+        _die "${_tier} bats has skipped case(s) - a skipped required case is not green"
+    fi
+    rm -f "${_tap}"
+    _info "${_tier} bats OK"
 }
 
-_run_integration() {
-    _info "Running integration bats (test/integration/)"
-    local _dir="${REPO_ROOT}/test/integration"
-    if ! compgen -G "${_dir}/*.bats" >/dev/null; then
-        _die "no integration specs found under ${_dir}"
-    fi
-    bats -r "${_dir}" || _die "integration bats failed"
-    _info "integration bats OK"
-}
+_run_unit()        { _run_bats_tier unit; }
+_run_integration() { _run_bats_tier integration; }
+_run_system()      { _run_bats_tier system; }
 
 # --- Dispatch ----------------------------------------------------------------
 main() {
@@ -136,10 +157,12 @@ main() {
         --ci-lint)         _run_shellcheck ;;
         --ci-unit)         _run_unit ;;
         --ci-integration)  _run_integration ;;
+        --ci-system)       _run_system ;;
         # Host-side routes into the container.
         --lint-only)        _run_in_container --ci-lint ;;
         --unit-only)        _run_in_container --ci-unit ;;
         --integration-only) _run_in_container --ci-integration ;;
+        --system-only)      _run_in_container --ci-system ;;
         --build)            _ensure_image ;;
         *) _die "unknown mode: ${_mode}" ;;
     esac

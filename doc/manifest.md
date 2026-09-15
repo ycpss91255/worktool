@@ -123,11 +123,31 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
   包裝器,斷言它確實以 `assemble create --file <解析後的清單>` 呼叫 distrobox;另外
   斷言「從 repo 以外執行會傳入解析後的絕對路徑」以及「清單無效時完全不呼叫
   distrobox 且以非零結束」。證明端到端接線,而不需要真正的 distrobox。
-- 系統(`test/system/real_assemble_spec.bats`):真正的 `distrobox assemble` 需要
-  在測試容器內同時有 distrobox 與 docker/podman(docker-in-docker)。在 CI 內架起
-  DinD 是已知的可行性挑戰,依 [`design.md`](design.md) **延後到 M5**。M2 以一個
-  被 `skip` 的佔位測試記錄「真實 assemble 未來如何驗證」,並且不把它接進 CI
-  gate,因此不會阻擋 M2 的 CI。
+- 系統(`test/system/real_assemble_spec.bats`):在測試映像內執行**真正的、鎖定
+  版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,建置時驗證
+  tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
+  (`test/system/fixture/fake_container_manager.sh`,以
+  `DBX_CONTAINER_MANAGER=docker` 選用、symlink 到 PATH 最前面):它回答 distrobox
+  實際會發出的探測(`ps` / `inspect` / `pull` / `create`)、**逐一參數**
+  (NUL 分隔,非 `$*`)記錄每一次呼叫、遇到不支援的子指令一律以非零失敗(不是
+  一律 exit 0),並可用 `FAKE_CM_FAIL_CREATE=1` 注入 `create` 失敗。**不需要
+  docker-in-docker**。
+  - **驗證什麼**:以真實(非 dry-run)模式跑包裝器,斷言**真正抵達容器管理器的
+    create 請求**帶有容器名 `dev`、映像 `ubuntu:26.04`(緊接在
+    `--entrypoint /usr/bin/entrypoint` 之後),且清單的 `additional_packages`
+    (`ripgrep fzf`)被 distrobox 交給盒內 entrypoint(distrobox-init)的
+    `--additional-packages`(位於映像之後、恰好一次);`pull` 請求的映像同為
+    `ubuntu:26.04` 且發生在 create 之前;上游自己的
+    `distrobox assemble create --dry-run --file box/dev.ini` 解析出名稱/映像正確
+    的 create 指令;管理器 `create` 失敗時包裝器以非零結束、失敗訊息來自上游。
+    一句話:**清單被真實 distrobox 1.8.2.5 解析成預期的 create 請求**。
+  - **不證明什麼(延後)**:映像真的拉得下來、套件真的裝進盒(distrobox-init 在
+    這裡從未執行,沒有任何容器被啟動)、盒子可用
+    (`distrobox enter dev -- rg --version`)。這些需要真正的容器管理器(CI 內
+    DinD),依 [`design.md`](design.md) 延後到 **M5**。
+  - gate:`just -f justfile.ci test-system`(CI `test-system` job,必要)。
+    `script/ci/ci.sh` 對每一層 bats gate 都要求「至少跑了一個案例、無失敗、無
+    `skip`」,被 skip 或不存在的必要案例**不會**被當成綠燈。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);執行方式見
 [`structure.md`](structure.md)。
@@ -136,14 +156,14 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
 
 以下是從零開始、端到端親自複驗 M2(盒子清單格式 + 最小 assemble 包裝器)的完整流程。
 全程只需要 **docker**:不需要安裝 `just`(`justfile.ci` 只是 `./script/ci/ci.sh` 的薄
-包裝),也不需要 `distrobox`(M2 以 dry-run 驗證,真實 assemble 延到 M5)。每個指令都可
-直接複製貼上。
+包裝),也不需要在 host 裝 `distrobox`(系統測試用的 distrobox 已鎖定版本、烘進測試
+映像;真實可用盒的驗證延到 M5)。每個指令都可直接複製貼上。
 
 ### 0. 前置
 
 - 已安裝並可用 docker,且**目前使用者**可直接執行(例如 `docker run --rm hello-world`
   能成功),不需要 `sudo`。
-- 不需要 root、不需要 `just`、不需要 `distrobox`。
+- 不需要 root、不需要 `just`、host 上不需要 `distrobox`。
 
 ### 1. 取得原始碼
 
@@ -155,16 +175,17 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
 
 ### 2. 自動測試(全部在 Docker 內,不需 just / distrobox)
 
-入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑三道 gate:
+入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑四道 gate:
 
 ```bash
 ./script/ci/ci.sh --build              # (選用) 先建 worktool-test:local 測試映像
 ./script/ci/ci.sh --lint-only          # ShellCheck(*.sh + *.bats)
 ./script/ci/ci.sh --unit-only          # 單元 bats(test/unit/)
 ./script/ci/ci.sh --integration-only   # 整合 bats(test/integration/)
+./script/ci/ci.sh --system-only        # 系統 bats(test/system/;真實 distrobox + 假容器管理器)
 ```
 
-- `--build` 是選用的:後面三道 gate 若發現映像不存在會自動建。想先暖快取、或快速驗
+- `--build` 是選用的:後面的 gate 若發現映像不存在會自動建。想先暖快取、或快速驗
   Dockerfile 有沒有壞掉,才需要先手動 `--build`。
 - 預期輸出:
   - `--lint-only`:結尾出現 `[ci] ShellCheck OK`,沒有任何 ShellCheck 違規。
@@ -172,7 +193,11 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
     引號內純空白 image / image 出現在區段之前 / 多區段等案例),結尾 `[ci] unit bats OK`。
   - `--integration-only`:所有測項 `ok`(含「無效 manifest 絕不呼叫 distrobox」負向
     測試),結尾 `[ci] integration bats OK`。
-- 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束。
+  - `--system-only`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成
+    帶 `dev` / `ubuntu:26.04` / `ripgrep fzf` 的 create 請求;管理器失敗會傳回非零),
+    結尾 `[ci] system bats OK`。
+- 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
+  或根本沒跑到任何案例,同樣視為失敗。
 
 ### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 
@@ -290,8 +315,9 @@ check "$tmp/multi.ini"       "multiple sections"
 
 ### 4. 真實 assemble(選用,M2 非必須)
 
-M2 **不要求**真實建盒:真正的 `distrobox assemble` 需要在容器內同時有 distrobox 與
-docker/podman(docker-in-docker),依 [`design.md`](design.md) 延到 **M5**。若手邊已有
+M2 **不要求**真實建盒:系統測試已證明清單會被真實 distrobox 解析成正確的 create 請求
+(見「測試對應」),但「映像拉得下來、套件裝得進去、盒子可用」需要真正的容器管理器
+(CI 內 docker-in-docker),依 [`design.md`](design.md) 延到 **M5**。若手邊已有
 docker + distrobox,可拿掉 dry-run 實際建出 dev 盒以主觀確認:
 
 ```bash
