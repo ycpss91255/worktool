@@ -1,0 +1,67 @@
+name: CI
+
+# worktool M1 CI: lint + unit + integration, all inside Docker.
+# Runs on push and pull_request to main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-image:
+    name: Build test image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build worktool-test image
+        run: docker build -t worktool-test:local -f dockerfile/Dockerfile.test .
+
+      - name: Save image
+        run: docker save worktool-test:local -o /tmp/worktool-test.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worktool-test-image
+          path: /tmp/worktool-test.tar
+          retention-days: 1
+
+  gate:
+    name: ${{ matrix.gate }}
+    runs-on: ubuntu-latest
+    needs: build-image
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [lint, test-unit, test-integration]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download test image
+        uses: actions/download-artifact@v4
+        with:
+          name: worktool-test-image
+          path: /tmp
+
+      - name: Load test image
+        run: docker load -i /tmp/worktool-test.tar
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Run gate (${{ matrix.gate }})
+        env:
+          TEST_IMAGE_PREBUILT: "1"
+        run: just -f justfile.ci ${{ matrix.gate }}
