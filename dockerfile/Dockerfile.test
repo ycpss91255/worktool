@@ -1,0 +1,70 @@
+# Dockerfile.test - lightweight lint/test image for worktool (M1)
+#
+# Bundles bash + bats (+ bats-support / bats-assert) + shellcheck so the
+# whole test pyramid runs in Docker only (doc/design.md test strategy).
+# Modelled on init_ubuntu's test-tools image, stripped to M1 essentials:
+# no kcov, fish, TUI, gum, or module-lifecycle tooling yet.
+#
+# Usage:
+#   docker build -t worktool-test:local -f dockerfile/Dockerfile.test .
+#   docker run --rm -v "$PWD:/source" -w /source worktool-test:local \
+#     ./script/ci/ci.sh --ci-unit
+
+FROM bats/bats:latest AS bats-src
+
+FROM alpine:latest AS bats-extensions
+# hadolint ignore=DL3018
+RUN apk add --no-cache git && \
+    git clone --depth 1 -b v0.3.0 \
+        https://github.com/bats-core/bats-support /bats/bats-support && \
+    git clone --depth 1 -b v2.1.0 \
+        https://github.com/bats-core/bats-assert /bats/bats-assert
+
+FROM alpine:latest AS lint-tools
+# TARGETARCH is auto-populated by BuildKit (docker 23+). Do NOT set a
+# default - a default shadows BuildKit's auto-inject (moby/buildkit#3403).
+ARG TARGETARCH
+# hadolint ignore=DL3018
+RUN apk add --no-cache curl xz && \
+    case "${TARGETARCH}" in \
+      amd64)  sc_arch="x86_64" ;; \
+      arm64)  sc_arch="aarch64" ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL \
+        "https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.${sc_arch}.tar.xz" \
+        | tar -xJ -C /tmp && \
+    mv "/tmp/shellcheck-v0.10.0/shellcheck" /usr/local/bin/shellcheck
+
+# Final stage.
+FROM alpine:latest
+# bash    - bats and worktool shell scripts need it
+# git     - test fixtures / future harness
+# grep + coreutils - GNU variants so `grep -P` etc. behave like the targets
+# ncurses - `tput`-style terminal queries stay sane under a non-tty harness
+# hadolint ignore=DL3018
+RUN apk add --no-cache \
+        bash \
+        git \
+        grep coreutils \
+        ncurses
+
+# bats core + extensions (bats-support / bats-assert)
+COPY --from=bats-src /opt/bats /opt/bats
+COPY --from=bats-src /usr/lib/bats /usr/lib/bats
+COPY --from=bats-extensions /bats /usr/lib/bats
+
+# shellcheck
+COPY --from=lint-tools /usr/local/bin/shellcheck /usr/local/bin/
+
+# Expose bats on PATH (alpine image keeps it under /opt/bats/bin only).
+RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
+
+# Smoke check baked into the image so a corrupted build fails fast at CI
+# rather than mid-test-run.
+RUN bash --version >/dev/null && \
+    bats --version >/dev/null && \
+    shellcheck --version >/dev/null
+
+WORKDIR /source
+ENTRYPOINT ["/bin/bash"]
