@@ -109,6 +109,20 @@ setup() {
     assert_output --partial "missing required key 'image'"
 }
 
+@test "manifest_image treats a space-then-quoted whitespace value as empty" {
+    printf '[dev]\nimage= "   "\n' >"${TMP}/wsimg2.ini"
+    run manifest_image "${TMP}/wsimg2.ini"
+    assert_success
+    assert_output ""
+}
+
+@test "a space-then-quoted whitespace image fails validation as missing image" {
+    printf '[dev]\nimage= "   "\n' >"${TMP}/wsimg2.ini"
+    run manifest_validate "${TMP}/wsimg2.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
 # --- section-membership validation -------------------------------------------
 
 @test "an image before any section header is rejected as missing" {
