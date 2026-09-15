@@ -34,8 +34,9 @@ source "${LIB_DIR}/log.sh"
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
 
-# Default manifest, expressed relative so the emitted command stays stable
-# and portable (e.g. `distrobox assemble create --file box/dev.ini`).
+# Default manifest, relative to the repo root. It is resolved to a concrete
+# path at run time (see _resolve_manifest): `box/dev.ini` when invoked from the
+# repo root, or the absolute `${REPO_ROOT}/box/dev.ini` when invoked elsewhere.
 DEFAULT_MANIFEST="box/dev.ini"
 
 # --- Helpers -----------------------------------------------------------------
@@ -96,15 +97,23 @@ assemble_run() {
         shift
     done
 
+    # Resolve the manifest path ONCE and reuse that exact path everywhere:
+    # validation, the dry-run output, and the real distrobox call. This keeps
+    # the three consistent - validation can no longer pass against a resolved
+    # path while distrobox is handed a different (possibly non-existent) one.
     local _resolved
     _resolved="$(_resolve_manifest "${_manifest_arg}")"
     manifest_validate "${_resolved}" || return 1
 
-    # Keep the argument as-given so the command is stable and relative.
-    local _cmd=(distrobox assemble create --file "${_manifest_arg}")
+    local _cmd=(distrobox assemble create --file "${_resolved}")
 
     if [[ "${_dry_run}" -eq 1 ]]; then
-        printf '%s\n' "${_cmd[*]}"
+        # Print with per-argument shell escaping so the line is faithfully
+        # re-runnable: a path containing spaces, `;` or `$()` is represented
+        # as a single safe argument, not split or interpreted on replay.
+        local _quoted
+        printf -v _quoted ' %q' "${_cmd[@]}"
+        printf '%s\n' "${_quoted# }"
         return 0
     fi
 
@@ -113,7 +122,7 @@ assemble_run() {
         return 127
     fi
 
-    log_info "assembling box from ${_manifest_arg}"
+    log_info "assembling box from ${_resolved}"
     "${_cmd[@]}"
 }
 
