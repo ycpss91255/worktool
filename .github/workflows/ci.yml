@@ -1,7 +1,7 @@
 name: CI
 
-# worktool CI: lint + unit + integration + system, all inside Docker.
-# Runs on push and pull_request to main.
+# worktool CI: lint + unit + integration + system + acceptance, all inside
+# Docker. Runs on push and pull_request to main.
 #
 # Every gate is REQUIRED: the `ci-passed` aggregator fails unless every gate
 # job finished with `success` - a skipped, cancelled or missing gate does not
@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: [lint, test-unit, test-integration, test-system]
+        gate: [lint, test-unit, test-integration, test-system, test-acceptance]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

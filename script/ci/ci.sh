@@ -7,9 +7,10 @@
 #   Host side  - builds the test image if needed, then runs THIS script
 #                back inside a throwaway container with the /source bind
 #                mount. Selected by --lint-only / --unit-only /
-#                --integration-only / --system-only.
+#                --integration-only / --system-only / --acceptance-only.
 #   Container  - runs the actual gate against the mounted source. Selected
-#                by --ci-lint / --ci-unit / --ci-integration / --ci-system.
+#                by --ci-lint / --ci-unit / --ci-integration / --ci-system /
+#                --ci-acceptance.
 #
 # All test execution happens inside the container (doc/design.md: Docker
 # only). The host never installs packages.
@@ -23,11 +24,13 @@
 #   ./script/ci/ci.sh --unit-only          # host: route unit bats
 #   ./script/ci/ci.sh --integration-only   # host: route integration bats
 #   ./script/ci/ci.sh --system-only        # host: route system bats
+#   ./script/ci/ci.sh --acceptance-only    # host: route acceptance bats
 #   ./script/ci/ci.sh --build              # host: (re)build the test image
 #   ./script/ci/ci.sh --ci-lint            # inside container: shellcheck
 #   ./script/ci/ci.sh --ci-unit            # inside container: unit bats
 #   ./script/ci/ci.sh --ci-integration     # inside container: integration bats
 #   ./script/ci/ci.sh --ci-system          # inside container: system bats
+#   ./script/ci/ci.sh --ci-acceptance      # inside container: acceptance bats
 #
 # Exit-code-contract script: default guards are `set -uo pipefail`
 # (no `-e`); failures are surfaced explicitly via _die so a nonzero exit
@@ -147,6 +150,7 @@ _run_bats_tier() {
 _run_unit()        { _run_bats_tier unit; }
 _run_integration() { _run_bats_tier integration; }
 _run_system()      { _run_bats_tier system; }
+_run_acceptance()  { _run_bats_tier acceptance; }
 
 # --- Dispatch ----------------------------------------------------------------
 main() {
@@ -158,11 +162,13 @@ main() {
         --ci-unit)         _run_unit ;;
         --ci-integration)  _run_integration ;;
         --ci-system)       _run_system ;;
+        --ci-acceptance)   _run_acceptance ;;
         # Host-side routes into the container.
         --lint-only)        _run_in_container --ci-lint ;;
         --unit-only)        _run_in_container --ci-unit ;;
         --integration-only) _run_in_container --ci-integration ;;
         --system-only)      _run_in_container --ci-system ;;
+        --acceptance-only)  _run_in_container --ci-acceptance ;;
         --build)            _ensure_image ;;
         *) _die "unknown mode: ${_mode}" ;;
     esac
