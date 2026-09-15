@@ -20,8 +20,9 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 - 效能是一級非功能需求:shell 進入與工具呼叫都不能緩慢。
 - 語言:issue / PR / PRD / ADR / 設計文件以 zh-TW 撰寫;commit message、程式碼
   與註解以英文撰寫。
-- milestone 排序鎖定:前一個 milestone 未通過人類 gate 前,後續 milestone 的
-  GitHub issue 保持鎖定(locked);通過後才解鎖下一個,確保逐一、不可跨越。
+- milestone 排序:所有 milestone issue 保持開放(全貌可見);逐一、不可跨越的
+  順序由 milestone 間的人類審核 gate 落實 —— 前一個 milestone 未通過人類 gate
+  前,不開始下一個 milestone 的開發。不使用 issue lock。
 - 追蹤:每個 milestone 對應一個 GitHub Milestone 與一個 issue(見 epic #1);
   該 milestone 的實作 PR 掛在對應的 Milestone 下,merge 前不自動合併(等人類
   gate)。
