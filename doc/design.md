@@ -50,8 +50,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 ## Open 項目(建議預設,待確認 / 修正)
 
 1. 盒子 base image:`ubuntu:26.04`(已定)。
-2. bootstrap 順序:host 裝 docker+distrobox -> host install script(驅動/GUI)
-   -> assemble 盒子 -> 設定終端自動進盒。
+2. bootstrap 順序:host 裝 docker+distrobox(+ `just`,見「決策」)-> host
+   install script(驅動/GUI)-> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
 4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
 5. 測試層級(已定):完整測試金字塔 —— 單元 -> 整合 -> 系統 -> 交付/驗收,
@@ -88,6 +88,55 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 更廣的環境矩陣(真實硬體、非 root 使用者、其他映像、效能量測),不再負責「盒子
 可用」的基本證明。細節見 [`manifest.md`](manifest.md)「測試對應」。
 
+## 決策
+
+「已定共識」之後、以日期記錄的個別決策。與測試策略直接相關的(2026-09-16
+docker-in-docker 提前到 M2)記在上方「測試策略」;其餘集中於此。
+
+### 2026-09-16:just 是使用者的通用介面
+
+**決策**:`just` 是 worktool **使用者的通用介面**。所有使用者可執行的動作都以
+`just <動詞> [受詞]` 暴露;腳本(`script/ci/ci.sh`、`script/selfcheck.sh`、
+`script/assemble.sh`)是**實作、不是介面**。
+
+**理由**(維護者原話):使用者的通用輸入應該一致(`just test`、`just test unit`),
+直接呼叫腳本很麻煩。
+
+**規則**:
+
+1. 所有使用者可執行的動作都以 `just <動詞> [受詞]` 暴露;腳本是實作、不是介面。
+   文件與 README 以 `just ...` 為主要用法,腳本形式只作為「沒有 just 時」的
+   底層備援(fallback)一併標出。
+2. 每個 milestone 新增的使用者動作都要有對應的 recipe,並有 justfile 測試
+   (recipe 的存在、參數驗證、對應到正確的腳本旗標)。
+3. 單一 `justfile`:`justfile.ci` 移除,不再有 `just -f justfile.ci <recipe>`
+   這第二套呼叫方式;CI 跑的與使用者跑的是同一個 `just check`。
+4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
+   M4 之前為**前置需求**(host 需自行安裝 docker + just)。腳本在沒有 `just`
+   時仍可直接執行,但那是實作細節,不是文件化的主要用法。
+
+**介面文法**(固定):
+
+| 指令 | 作用 |
+|------|------|
+| `just` | 列出所有 recipe |
+| `just build` | 建置測試映像(選用;gate 會按需自動建) |
+| `just lint` | ShellCheck gate(Docker 內) |
+| `just test [tier]` | tier = `unit` / `integration` / `system` / `system-real` / `acceptance` / `all`(預設 `all`)。`all` 依序跑 unit、integration、system、acceptance、system-real(system-real 最後:docker-in-docker、`--privileged`、慢)。無效的 tier:清楚的錯誤訊息、exit 1、什麼都不跑 |
+| `just check` | lint + test all(= CI 跑的內容,一模一樣) |
+| `just selfcheck` | `./script/selfcheck.sh`(交付自檢) |
+| `just assemble [mode]` | mode = `run`(預設;在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、什麼都不執行) |
+
+對應的實作(recipe 呼叫的底層腳本;沒有 `just` 時可直接執行):
+`script/ci/ci.sh --lint-only | --unit-only | --integration-only | --system-only |
+--acceptance-only | --system-real-only | --build`、`script/selfcheck.sh`、
+`script/assemble.sh [--dry-run]`。
+
+**來源**:此做法承襲自 init_ubuntu(該 repo 的 ADR-0022「`just` replaces `make`
+as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci` 雙檔與
+`just -f justfile.ci <recipe>` 的呼叫慣例,但在 worktool 層級一直沒有正式決策;
+本條補上,並以「單一 justfile、`just <動詞> [受詞]` 文法」取代沿用的形式。
+
 ## Milestone 計畫(細化;每個結束有人類 gate)
 
 > 草案,供討論。定稿後才進 M1。前半(M1-M4)是基礎框架,依相依順序;後半的
@@ -103,7 +152,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
 - M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
-- M4 host bootstrap:install.sh 在 host 裝 docker+distrobox(冪等、可重跑)。
+- M4 host bootstrap:install.sh 在 host 裝 docker+distrobox+`just`(冪等、
+  可重跑;`just` 在此之前為前置需求,見「決策」)。
   Checkpoint:全新機器一鍵到「盒子可 assemble」。Exit:人類審核。
 
 ### 後半:移植(依重要順序,最常用先)
