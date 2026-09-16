@@ -139,6 +139,13 @@ setup() {
     assert [ ! -f "${MARKER}" ]
 }
 
+@test "an unknown option is refused even when combined with --help: exit 2 and no usage" {
+    run "${ASSEMBLE}" --help --bogus
+    assert_failure 2
+    assert_output "assemble.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage:"
+}
+
 @test "an unknown option is refused even when combined with --dry-run: no command is emitted" {
     run "${ASSEMBLE}" --dry-run --bogus --file "${VALID}"
     assert_failure 2
