@@ -412,13 +412,15 @@ main() {
         esac
         shift
     done
+    # Every rule about the command line runs before help is served.
+    if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
+        _usage_error "internal flag ${_ci} takes no other option"
+    fi
     if [[ "${_help}" -eq 1 ]]; then
         _usage
         return 0
     fi
     if [[ -n "${_ci}" ]]; then
-        [[ "${#_steps[@]}" -eq 0 ]] \
-            || _usage_error "internal flag ${_ci} takes no other option"
         _run_ci_gate "${_ci}"
         return $?
     fi

@@ -106,6 +106,14 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh --help --ci-unit --unit is refused as a whole: the flag-combination rule wins over help" {
+    run "${TEST_SH}" --help --ci-unit --unit
+    assert_failure 2
+    assert_output "test.sh: internal flag --ci-unit takes no other option (see --help)"
+    refute_output --partial "Usage:"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 @test "test.sh --unit --bogus is refused as a whole: the unit gate never runs" {
     run "${TEST_SH}" --unit --bogus
     assert_failure 2
