@@ -85,7 +85,12 @@ _stub_delegates() {
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
 _line="${_me}"
-[[ $# -gt 0 ]] && _line+=" $*"
+# One %q per argument: argv boundaries survive in the record (a path with
+# spaces shows as ONE backslash-escaped word, three words if it was split).
+_args=""
+[[ $# -gt 0 ]] && printf -v _args ' %q' "$@"
+_line+="${_args}"
+printf '%s\n' "$#" >>"${STUB_CALLS}.argc"
 [[ -n "${WORKTOOL_DRY_RUN:-}" ]] && _line+=" WORKTOOL_DRY_RUN=${WORKTOOL_DRY_RUN}"
 printf '%s\n' "${_line}" >>"${STUB_CALLS}"
 printf 'STUB %s\n' "${_line}"
@@ -328,7 +333,8 @@ ALL_TIERS_DRY_RUN="$(printf '%s\n' \
 @test "just test (all) stops at the first failing tier" {
     _stub_delegates
     STUB_FAIL_ON=--system-only _just test
-    assert_failure
+    # The failing tier's exit status (stub: 7) is what `just` reports.
+    assert_failure 7
     assert_equal "$(_stub_calls)" "$(printf '%s\n' \
         'ci.sh --unit-only' 'ci.sh --integration-only' 'ci.sh --system-only')"
 }
@@ -343,7 +349,7 @@ ALL_TIERS_DRY_RUN="$(printf '%s\n' \
 @test "just check stops when lint fails: no tier runs" {
     _stub_delegates
     STUB_FAIL_ON=--lint-only _just check
-    assert_failure
+    assert_failure 7
     assert_equal "$(_stub_calls)" "ci.sh --lint-only"
 }
 
@@ -379,7 +385,10 @@ ALL_TIERS_DRY_RUN="$(printf '%s\n' \
     _stub_delegates
     _just assemble dry-run "/tmp/my box/a b.ini"
     assert_success
-    assert_equal "$(_stub_calls)" "assemble.sh --file /tmp/my box/a b.ini WORKTOOL_DRY_RUN=1"
+    # %q-escaped: one word with escaped spaces, not three words.
+    assert_equal "$(_stub_calls)" "assemble.sh --file /tmp/my\\ box/a\\ b.ini WORKTOOL_DRY_RUN=1"
+    # And the stub saw exactly two arguments: --file and the whole path.
+    assert_equal "$(tail -n1 "${STUB_CALLS}.argc")" "2"
 }
 
 # --- real assemble.sh, dry-run: the delegate wiring end to end (no distrobox)

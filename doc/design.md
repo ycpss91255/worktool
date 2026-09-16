@@ -125,7 +125,7 @@ docker-in-docker 提前到 M2)記在上方「測試策略」;其餘集中於此�
 | `just test [tier]` | tier = `unit` / `integration` / `system` / `system-real` / `acceptance` / `all`(預設 `all`)。`all` 依序跑 unit、integration、system、acceptance、system-real(system-real 最後:docker-in-docker、`--privileged`、慢)。無效的 tier:清楚的錯誤訊息、exit 1、什麼都不跑 |
 | `just check` | lint + test all(= CI 跑的內容,一模一樣) |
 | `just selfcheck` | `./script/selfcheck.sh`(交付自檢) |
-| `just assemble [mode]` | mode = `run`(預設;在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、什麼都不執行) |
+| `just assemble [mode] [file]` | mode = `run`(預設;在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、什麼都不執行);file = 清單路徑,預設 `box/dev.ini`(要指定清單就必須明寫 mode,例如 `just assemble dry-run box/other.ini`) |
 
 對應的實作(recipe 呼叫的底層腳本;沒有 `just` 時可直接執行):
 `script/ci/ci.sh --lint-only | --unit-only | --integration-only | --system-only |

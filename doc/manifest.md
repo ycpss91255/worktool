@@ -110,16 +110,21 @@ distrobox,由 distrobox 自己管理容器。
 
 ### 用法
 
-使用者介面是 `just assemble [mode]`(`just` 是使用者的通用介面,見
-[`design.md`](design.md)「決策」);`script/assemble.sh` 是 recipe 底下的實作。
+使用者介面是 `just assemble [mode] [file]`(`mode` = `run`(預設)| `dry-run`;`file`
+預設 `box/dev.ini`;`just` 是使用者的通用介面,見 [`design.md`](design.md)「決策」);
+`script/assemble.sh` 是 recipe 底下的實作。
 
 ```bash
 # 試跑:只印出指令,不執行(單元測試就是斷言這個輸出)
 just assemble dry-run
 # -> distrobox assemble create --file box/dev.ini
 
+# 指定其他清單(mode 必須明寫)
+just assemble dry-run box/other.ini
+
 # 實際 assemble(mode 預設 run;需要 host 上有 distrobox)
 just assemble
+just assemble run box/other.ini
 ```
 
 底層指令(recipe 呼叫的就是這些;沒有 `just` 時可直接執行):
@@ -128,7 +133,7 @@ just assemble
 ./script/assemble.sh --dry-run             # = just assemble dry-run
 WORKTOOL_DRY_RUN=1 ./script/assemble.sh    # 以環境變數試跑,同上
 ./script/assemble.sh                       # = just assemble
-./script/assemble.sh --file box/other.ini  # 指定其他清單(只有腳本形式提供)
+./script/assemble.sh --file box/other.ini  # = just assemble run box/other.ini
 ```
 
 ## 測試對應
@@ -340,9 +345,10 @@ system-real)或 `just check`(lint + test all,和 CI 跑的一模一樣)。`just 
 
 ### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 
-使用者介面是 `just assemble dry-run`(3a)。3b-3f 刻意直接呼叫底層的
-`script/assemble.sh`:它們驗證的是腳本層的行為(從 repo 以外執行的路徑解析、
-`--file` 指定其他清單),而 `just assemble [mode]` 只暴露 mode,不暴露這些選項。
+使用者介面是 `just assemble dry-run [file]`(3a 用預設清單;指定其他清單就是
+`just assemble dry-run <file>`)。3b-3f 刻意直接呼叫底層的 `script/assemble.sh`:它們
+驗證的是腳本層本身的行為(從 repo 以外的目錄執行時的路徑解析、`--file` 旗標),
+人類驗收清單(`doc/acceptance.md` M2 節)則全部以 `just` 形式提供對應步驟。
 `WORKTOOL_DRY_RUN=1`(或 `--dry-run`)會把「將要執行的 distrobox 指令」印到
 **STDOUT** 而**不執行**;診斷訊息一律走 STDERR。指定清單的旗標是 **`--file`**
 (不是 `--manifest`)。下面每步都保持在 repo 根目錄執行(除了 3b 特意換到別的目錄)。
