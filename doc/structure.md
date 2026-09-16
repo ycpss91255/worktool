@@ -22,6 +22,7 @@ worktool/
 │   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)
 │   │   ├── ci_gate_spec.bats     ci.sh 每層必要 spec 防漏:在 repo 副本上刪檔/空檔必紅、正常樹必綠
 │   │   ├── system_real_entry_spec.bats  DinD runner 入口:docker 卡死時等待/清理仍在期限內結束
+│   │   ├── justfile_spec.bats    justfile 文法:--list 內容、-n 印出的委派、以 stub 腳本驗證真實派發、壞參數不碰 ci.sh/docker
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -43,16 +44,15 @@ worktool/
 │       ├── ci.sh        CI 進入點:在容器內跑 lint / unit / integration / system / system-real / acceptance
 │       └── system-real-entry.sh  DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
 ├── dockerfile/
-│   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + 鎖定版 distrobox)
+│   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + 鎖定版 distrobox)
 │   └── Dockerfile.system-real  DinD runner 映像(docker:29.8.0-dind + bash + bats 1.14.0 + 同一鎖定版 distrobox)
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   └── structure.md     本文件
-├── justfile             使用者面向的 task runner(委派到 justfile.ci)
-├── justfile.ci          CI gate 定義(lint / test-unit / test-integration / test-system / test-system-real / test-acceptance)
+├── justfile             使用者介面:build / lint / test [tier] / check / selfcheck / assemble [mode];每個 recipe 都薄薄委派到 script/
 └── .github/workflows/
-    └── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + ci-passed 彙總
+    └── ci.yml           GitHub Actions:push / PR 到 main 時以同一套 just 文法跑全部 gate + ci-passed 彙總
 ```
 
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
@@ -92,41 +92,89 @@ worktool/
   機器的驗收項目(效能、非 root、GPU)留在 [`manifest.md`](manifest.md)「M2 驗收
   紀錄」與 M3/M5。
 
+## 使用者介面:`just`
+
+`just` 就是 worktool 的使用者介面:repo 根目錄只有一個 `justfile`,每個
+recipe 都是薄薄一層,委派到 `script/` 下的腳本(gate 走 `script/ci/ci.sh`、
+自檢走 `script/selfcheck.sh`、建盒走 `script/assemble.sh`);實作都在腳本裡,
+`justfile` 只提供文法。`just`(不帶參數)列出全部 recipe 與說明。
+
+| 指令 | 做什麼 | 實際執行 |
+|------|--------|----------|
+| `just` | 列出 recipe | `just --list` |
+| `just build` | 建置測試映像 `worktool-test:local` | `./script/ci/ci.sh --build` |
+| `just lint` | ShellCheck 檢查所有 `*.sh` 與 `*.bats` | `./script/ci/ci.sh --lint-only` |
+| `just test [tier]` | 跑一層測試;`tier` 省略即 `all` | 見下 |
+| `just check` | lint 再 test all,**與 CI 完全相同** | `just lint` + `just test all` |
+| `just selfcheck` | 跑交付的一鍵自檢 | `./script/selfcheck.sh` |
+| `just assemble [mode] [file]` | 從清單建 dev 盒;`mode` 省略即 `run`(`dry-run` 只印 distrobox 指令),`file` 省略即 `box/dev.ini` | `./script/assemble.sh --file <file>`;`dry-run` 時前面加 `WORKTOOL_DRY_RUN=1` |
+
+`just assemble` 的例子:`just assemble dry-run` 印出 `distrobox assemble create
+--file box/dev.ini`;`just assemble dry-run /tmp/a.ini` 對 `/tmp/a.ini` 做驗證
+(壞清單會以 exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
+`just assemble run /tmp/x.ini` 真的用該清單建盒。`just` 可以在 repo 的任何
+子目錄執行(例如 `cd doc && just assemble dry-run`):just 會往上找到
+`justfile` 並在它所在的目錄執行 recipe,所以 `box/dev.ini`、`./script/...`
+這些相對路徑永遠以 repo 根目錄解析。
+
+`just test` 的 `tier`:
+
+| tier | 內容 | 實際執行 |
+|------|------|----------|
+| `unit` | 單元測試(`test/unit/*.bats`) | `./script/ci/ci.sh --unit-only` |
+| `integration` | 整合測試(`test/integration/*.bats`) | `./script/ci/ci.sh --integration-only` |
+| `system` | 系統測試 shim 組(`test/system/*.bats` 扣除 `real_engine_spec`;真實 distrobox + 假容器管理器) | `./script/ci/ci.sh --system-only` |
+| `system-real` | 系統測試 real-engine 組(`test/system/real_engine_spec.bats`;docker-in-docker、`--privileged`、慢;唯一需要 `--privileged` 的 tier) | `./script/ci/ci.sh --system-real-only` |
+| `acceptance` | 交付/驗收測試(`test/acceptance/*.bats`;跑交付的 `script/selfcheck.sh`) | `./script/ci/ci.sh --acceptance-only` |
+| `all`(預設) | 依序 unit、integration、system、acceptance、system-real(慢的 DinD 放最後),遇到第一個失敗就停 | 上述五個依序 |
+
+tier / mode 打錯會在**任何腳本或 docker 被呼叫之前**就以 exit 1 拒絕,並在
+stderr 印出 `just test: unknown tier '<x>' (valid: unit integration system
+system-real acceptance all)` / `just assemble: unknown mode '<x>' (valid: run
+dry-run)`。`just -n <recipe> [arg]`(`--dry-run`)會印出該次執行實際會呼叫的
+腳本指令而不執行——`test/unit/justfile_spec.bats` 以此加上 stub 腳本驗證整套
+文法。
+
 ## 執行 gate(全部在 Docker 內)
 
 所有測試都在 Docker 容器內執行,host 不安裝任何套件。前置需求:host 需有
-`docker` 與 `just`。
+`docker`;`just` 是**便利層**的前置需求——沒有 `just` 時,直接呼叫
+`./script/ci/ci.sh --lint-only` / `--unit-only` / `--integration-only` /
+`--system-only` / `--system-real-only` / `--acceptance-only` 效果完全相同。
 
 ```bash
 # ShellCheck 檢查所有 *.sh 與 *.bats
-just -f justfile.ci lint
+just lint
 
 # 單元測試(test/unit/*.bats)
-just -f justfile.ci test-unit
+just test unit
 
 # 整合測試(test/integration/*.bats)
-just -f justfile.ci test-integration
+just test integration
 
 # 系統測試,shim 組(test/system/*.bats 扣除 real_engine_spec;真實 distrobox + 假容器管理器)
-just -f justfile.ci test-system
+just test system
 
 # 交付/驗收測試(test/acceptance/*.bats;跑交付的 script/selfcheck.sh)
-just -f justfile.ci test-acceptance
+just test acceptance
 
 # 系統測試,real-engine 組(test/system/real_engine_spec.bats;docker-in-docker,
-# --privileged,慢;唯一需要 --privileged 的 recipe)
-just -f justfile.ci test-system-real
+# --privileged,慢;唯一需要 --privileged 的 tier)
+just test system-real
 
-# 依序跑全部(test-system-real 最後)
-just -f justfile.ci test
+# 依序跑全部測試層(system-real 最後)
+just test
+
+# lint + 全部測試層:與 CI 完全相同
+just check
 ```
 
 首次執行會自動建置測試映像 `worktool-test:local`;之後靠 Docker 快取加速。
-可用 `just -f justfile.ci build` 預先建置或在 Dockerfile 壞掉時快速失敗。
-`test-system-real` 每次都會(以快取)建 DinD runner 映像
+可用 `just build` 預先建置或在 Dockerfile 壞掉時快速失敗。
+`just test system-real` 每次都會(以快取)建 DinD runner 映像
 `worktool-system-real:local`(`dockerfile/Dockerfile.system-real`)。
 
-底層由 `script/ci/ci.sh` 驅動:host 端旗標(`--lint-only` /`--unit-only` /
+底層由 `script/ci/ci.sh` 驅動(`just` 只是它的介面):host 端旗標(`--lint-only` /`--unit-only` /
 `--integration-only` /`--system-only` /`--acceptance-only`)會把對應的容器內
 旗標(`--ci-lint` /`--ci-unit` /`--ci-integration` /`--ci-system` /
 `--ci-acceptance`)丟進掛載 `/source` 的一次性容器執行;`--system-real-only`
@@ -160,3 +208,10 @@ system-real:`real_engine_spec`;acceptance:`m2_selfcheck_spec`),bats 跑之前
 分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
 **且** `test-system-real` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
 失敗。全綠才視為 milestone gate 通過,交由人類審核合併。
+
+每個 job 跑的就是使用者打的同一套 `just` 文法(matrix 把 job 名稱對應到
+recipe:`lint` -> `just lint`、`test-unit` -> `just test unit`、`test-integration`
+-> `just test integration`、`test-system` -> `just test system`、`test-acceptance`
+-> `just test acceptance`;`test-system-real` -> `just test system-real`);job
+名稱本身不變,branch protection 與 `ci-passed` 都以它們為準。本機 `just check`
+= lint + 全部 tier,與 CI 等價。
