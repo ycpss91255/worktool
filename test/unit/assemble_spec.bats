@@ -144,6 +144,7 @@ setup() {
     assert_failure 2
     assert_output "assemble.sh: unknown option '--bogus' (see --help)"
     refute_output --partial "Usage:"
+    assert [ ! -f "${MARKER}" ]
 }
 
 @test "an unknown option is refused even when combined with --dry-run: no command is emitted" {
