@@ -104,7 +104,8 @@ _required_specs() {
                 unit/manifest_spec.bats \
                 unit/assemble_spec.bats \
                 unit/ci_gate_spec.bats \
-                unit/system_real_entry_spec.bats
+                unit/system_real_entry_spec.bats \
+                unit/justfile_spec.bats
             ;;
         integration)
             printf '%s\n' \
