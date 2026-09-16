@@ -98,7 +98,8 @@ _required_specs() {
                 unit/ci_gate_spec.bats \
                 unit/system_real_entry_spec.bats \
                 unit/test_sh_spec.bats \
-                unit/selfcheck_spec.bats
+                unit/selfcheck_spec.bats \
+                unit/justfile_spec.bats
             ;;
         integration)
             printf '%s\n' \
