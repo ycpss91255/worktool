@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # test/unit/fixture/entry_driver.sh - drive ONE function of
-# script/ci/system-real-entry.sh in isolation, for
+# script/test/system-real-entry.sh in isolation, for
 # test/unit/system_real_entry_spec.bats.
 #
 # Usage:
@@ -27,7 +27,7 @@ pending_rc="$4"
 fn="$5"
 shift 5
 
-# shellcheck source=../../../script/ci/system-real-entry.sh
+# shellcheck source=../../../script/test/system-real-entry.sh
 source "${entry}"
 
 if [[ "${stand_in}" != "none" ]]; then

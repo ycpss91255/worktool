@@ -3,12 +3,12 @@
 # self-check passes against the delivered repo, and fails when it should.
 #
 # The acceptance tier verifies the DELIVERABLE the way a user receives it:
-# it invokes the real public entry point `script/selfcheck.sh` (the one
+# it invokes the real public entry point `script/test/selfcheck.sh` (the one
 # doc/manifest.md tells users to run) and asserts on its verdict. It does
 # NOT re-implement the checks in bats - the script under test is the
 # original file at its original path.
 #
-# What this proves: after a clean clone, `./script/selfcheck.sh` exits 0
+# What this proves: after a clean clone, `./script/test/selfcheck.sh` exits 0
 # and prints ALL PASS (M2 acceptance criterion: dry-run assemble contract +
 # every documented invalid-manifest rejection), from inside or outside the
 # repo; and its verdict is not vacuous - a broken manifest and a wrapper
@@ -22,7 +22,7 @@
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    SELFCHECK="${REPO_ROOT}/script/selfcheck.sh"
+    SELFCHECK="${REPO_ROOT}/script/test/selfcheck.sh"
     TMP="${BATS_TEST_TMPDIR}"
 }
 
@@ -91,8 +91,8 @@ _make_repo_copy() {
     {
         printf '#!/usr/bin/env bash\n'
         printf 'printf "distrobox assemble create --file box/dev.ini\\n"\n'
-    } >"${_copy}/script/assemble.sh"
-    chmod +x "${_copy}/script/assemble.sh"
+    } >"${_copy}/script/box/assemble.sh"
+    chmod +x "${_copy}/script/box/assemble.sh"
 
     run "${SELFCHECK}" --root "${_copy}"
     assert_failure 1

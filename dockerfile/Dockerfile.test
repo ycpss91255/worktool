@@ -6,11 +6,14 @@
 # stripped to essentials: no kcov, fish, TUI, gum, or module-lifecycle
 # tooling.
 #
-# just (M2): the repo-root justfile IS the user interface (`just test unit`,
-# `just check`, ...). The alpine package is enough for the unit spec that
-# exercises it (test/unit/justfile_spec.bats: --list / --dry-run / real
-# dispatch against stubbed scripts); the justfile itself must stay within
-# what that packaged version and just >= 1.53 on the host both support.
+# just (M2): `just` IS the user interface - the repo-root justfile mod?s the
+# `test` and `box` namespaces (script/test/justfile.test,
+# script/box/justfile.box: `just test unit`, `just box assemble`, ...). The
+# alpine package is enough for the unit spec that exercises them
+# (test/unit/justfile_spec.bats: --list / real dispatch against stubbed
+# scripts); the justfiles must stay within what that packaged version and
+# just >= 1.53 on the host both support (mod?, source_file(),
+# set working-directory, set positional-arguments).
 #
 # distrobox (system tier, M2): the upstream release is a bundle of POSIX
 # shell scripts, so it runs on alpine as-is. It is installed with its own
@@ -20,7 +23,7 @@
 # Usage:
 #   docker build -t worktool-test:local -f dockerfile/Dockerfile.test .
 #   docker run --rm -v "$PWD:/source" -w /source worktool-test:local \
-#     ./script/ci/ci.sh --ci-unit
+#     ./script/test/test.sh --ci-unit
 
 # Single source of truth for the pinned distrobox release (also exported as
 # ENV DISTROBOX_VERSION in the final stage so specs can assert on it).
@@ -77,9 +80,9 @@ ARG DISTROBOX_VERSION
 #           distrobox's host-side scripts also rely on GNU `base64 -w`,
 #           `realpath`, `id -r*`, `mktemp -u`
 # ncurses - `tput`-style terminal queries stay sane under a non-tty harness
-# just    - the user-facing task runner (repo-root justfile); exercised by
-#           test/unit/justfile_spec.bats, never used to launch the gates
-#           from inside the container
+# just    - the user-facing task runner (root justfile + the test / box
+#           namespace modules); exercised by test/unit/justfile_spec.bats,
+#           never used to launch the gates from inside the container
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
         bash \

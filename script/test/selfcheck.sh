@@ -19,19 +19,28 @@
 # errors exit 2 with an [ERROR] on stderr. The acceptance tier
 # (test/acceptance/) runs this exact script and asserts on that contract.
 #
-# Usage:
-#   ./script/selfcheck.sh                 # check the checkout this script lives in
-#   ./script/selfcheck.sh --root <repo>   # check another checkout
+# Usage (the backing script of `just test selfcheck`, which forwards its
+# arguments here verbatim; it also runs on its own):
+#   ./script/test/selfcheck.sh                 # check the checkout this script lives in
+#   ./script/test/selfcheck.sh --root <repo>   # check another checkout
+#   ./script/test/selfcheck.sh --help          # usage
+#
+# This script owns its option validation: an unknown option is refused with
+# `selfcheck.sh: unknown option '<x>' (see --help)` on stderr, exit 2,
+# before any check runs.
 #
 # Exit-code-contract script: `set -uo pipefail` (no -e); every exit is
 # explicit.
 
-# shellcheck source-path=SCRIPTDIR/../lib
+# shellcheck source-path=SCRIPTDIR/../../lib
 set -uo pipefail
 
 # --- Paths -------------------------------------------------------------------
+# The repo root is two levels up from script/test/; the wrapper under test
+# lives at script/box/assemble.sh relative to whichever root is checked.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-SELF_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SELF_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+ASSEMBLE_REL="script/box/assemble.sh"
 
 # shellcheck source=log.sh
 source "${SELF_ROOT}/lib/log.sh"
@@ -48,8 +57,14 @@ Usage: selfcheck.sh [--root <repo>]
 
   --root <repo>  worktool checkout to check (default: the one this script
                  lives in).
-  -h, --help     Show this help.
+  -h, --help     Show this help and exit.
 EOF
+}
+
+# Refuse the command line: one line on stderr (the caller returns 2; no
+# check has run yet).
+_usage_error() {
+    printf 'selfcheck.sh: %s (see --help)\n' "$1" >&2
 }
 
 _cleanup() {
@@ -87,7 +102,7 @@ _check_reject() {
     _label="reject $(basename -- "${_manifest}")"
     _err="${SELFCHECK_TMP}/$(basename -- "${_manifest}").err"
     _out="$(cd -- "${SELFCHECK_ROOT}" \
-        && bash script/assemble.sh --file "${_manifest}" 2>"${_err}")" || _rc=$?
+        && bash "${ASSEMBLE_REL}" --file "${_manifest}" 2>"${_err}")" || _rc=$?
     local _errtext
     _errtext="$(cat "${_err}")"
     if [[ "${_rc}" -eq 1 && -z "${_out}" && "${_errtext}" == *"${_expected_msg}"* ]]; then
@@ -98,65 +113,56 @@ _check_reject() {
 }
 
 # --- Main --------------------------------------------------------------------
-selfcheck_run() {
-    SELFCHECK_ROOT="${SELF_ROOT}"
-    SELFCHECK_FAILED=0
-
+# Parse the command line into SELFCHECK_ROOT. The whole line is parsed
+# before any check runs, so an unknown option anywhere in it refuses the
+# run as a whole. Returns 0 to continue, 3 when --help was served (the
+# caller exits 0), 2 on a usage error.
+_parse_options() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --root)
                 shift
                 if [[ $# -eq 0 ]]; then
-                    log_error "--root requires a path argument"
+                    _usage_error "--root requires a path argument"
                     return 2
                 fi
                 SELFCHECK_ROOT="$1"
                 ;;
             --root=*) SELFCHECK_ROOT="${1#*=}" ;;
-            -h|--help) _usage; return 0 ;;
+            -h|--help) _usage; return 3 ;;
             *)
-                log_error "unknown argument: $1"
-                _usage
+                _usage_error "unknown option '$1'"
                 return 2
                 ;;
         esac
         shift
     done
+    return 0
+}
 
-    # The root must be a worktool checkout: a directory holding the wrapper
-    # under test. Anything else is a usage error, not a FAIL.
+# The root must be a worktool checkout: a directory holding the wrapper
+# under test. Anything else is a usage error (2), not a FAIL. Normalises
+# SELFCHECK_ROOT to an absolute path.
+_resolve_root() {
     if [[ ! -d "${SELFCHECK_ROOT}" ]]; then
         log_error "--root is not a directory: ${SELFCHECK_ROOT}"
         return 2
     fi
     SELFCHECK_ROOT="$(cd -- "${SELFCHECK_ROOT}" && pwd -P)"
-    if [[ ! -f "${SELFCHECK_ROOT}/script/assemble.sh" ]]; then
-        log_error "not a worktool checkout (missing script/assemble.sh): ${SELFCHECK_ROOT}"
+    if [[ ! -f "${SELFCHECK_ROOT}/${ASSEMBLE_REL}" ]]; then
+        log_error "not a worktool checkout (missing ${ASSEMBLE_REL}): ${SELFCHECK_ROOT}"
         return 2
     fi
+    return 0
+}
 
-    SELFCHECK_TMP="$(mktemp -d)" || { log_error "mktemp failed"; return 2; }
-    trap _cleanup EXIT
-
-    log_info "self-checking ${SELFCHECK_ROOT}"
-
-    # 3a: from the repo root the default manifest stays relative.
-    _check_dry_run 3a "${SELFCHECK_ROOT}" "script/assemble.sh" \
-        "distrobox assemble create --file box/dev.ini"
-
-    # 3b: from outside the repo the wrapper resolves (and emits) the absolute
-    # path, shell-escaped per argument exactly as the wrapper prints it.
-    local _abs_quoted
-    printf -v _abs_quoted '%q' "${SELFCHECK_ROOT}/box/dev.ini"
-    _check_dry_run 3b "${SELFCHECK_TMP}" "${SELFCHECK_ROOT}/script/assemble.sh" \
-        "distrobox assemble create --file ${_abs_quoted}"
-
-    # 3c-3e: documented invalid manifests are rejected (exit 1, empty stdout,
-    # documented [ERROR] message), and never reach distrobox. The
-    # single-quoted blank matters because distrobox-assemble sources each
-    # value as a shell assignment, where '   ' is as blank as "   "; for the
-    # same reason an unbalanced outer quote ('ubuntu:26.04") is a shell
-    # syntax error upstream and must be caught here, with its own message.
+# 3c-3e: documented invalid manifests are rejected (exit 1, empty stdout,
+# documented [ERROR] message), and never reach distrobox. The
+# single-quoted blank matters because distrobox-assemble sources each
+# value as a shell assignment, where '   ' is as blank as "   "; for the
+# same reason an unbalanced outer quote ('ubuntu:26.04") is a shell
+# syntax error upstream and must be caught here, with its own message.
+_check_documented_rejections() {
     printf '[dev]\n'                                    >"${SELFCHECK_TMP}/no-image.ini"
     printf '[   ]\nimage=ubuntu:26.04\n'                >"${SELFCHECK_TMP}/blank-name.ini"
     printf '[dev]\nimage="   "\n'                       >"${SELFCHECK_TMP}/blank-image.ini"
@@ -171,6 +177,36 @@ selfcheck_run() {
     _check_reject "${SELFCHECK_TMP}/single-quoted-image.ini"    "missing required key 'image'"
     _check_reject "${SELFCHECK_TMP}/unbalanced-quote-image.ini" "unbalanced quote"
     _check_reject "${SELFCHECK_TMP}/multi.ini"                  "multiple sections"
+}
+
+selfcheck_run() {
+    SELFCHECK_ROOT="${SELF_ROOT}"
+    SELFCHECK_FAILED=0
+
+    local _rc=0
+    _parse_options "$@" || _rc=$?
+    [[ "${_rc}" -ne 3 ]] || return 0
+    [[ "${_rc}" -eq 0 ]] || return "${_rc}"
+    _resolve_root || return $?
+
+    SELFCHECK_TMP="$(mktemp -d)" || { log_error "mktemp failed"; return 2; }
+    trap _cleanup EXIT
+
+    log_info "self-checking ${SELFCHECK_ROOT}"
+
+    # 3a: from the repo root the default manifest stays relative.
+    _check_dry_run 3a "${SELFCHECK_ROOT}" "${ASSEMBLE_REL}" \
+        "distrobox assemble create --file box/dev.ini"
+
+    # 3b: from outside the repo the wrapper resolves (and emits) the absolute
+    # path, shell-escaped per argument exactly as the wrapper prints it.
+    local _abs_quoted
+    printf -v _abs_quoted '%q' "${SELFCHECK_ROOT}/box/dev.ini"
+    _check_dry_run 3b "${SELFCHECK_TMP}" "${SELFCHECK_ROOT}/${ASSEMBLE_REL}" \
+        "distrobox assemble create --file ${_abs_quoted}"
+
+    # 3c-3e.
+    _check_documented_rejections
 
     if [[ "${SELFCHECK_FAILED}" -eq 0 ]]; then
         printf 'ALL PASS\n'

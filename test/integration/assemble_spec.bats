@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # test/integration/assemble_spec.bats - assemble -> distrobox wiring (M2)
 #
-# Proves the real (non-dry-run) path wires script/assemble.sh to the
+# Proves the real (non-dry-run) path wires script/box/assemble.sh to the
 # `distrobox assemble create --file box/dev.ini` invocation end-to-end,
 # without needing real distrobox: a MOCK `distrobox` on PATH records the
 # arguments it was called with, and the spec asserts on them.
@@ -15,7 +15,7 @@
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
+    ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
     MOCKBIN="${BATS_TEST_TMPDIR}/bin"
     RECORD="${BATS_TEST_TMPDIR}/distrobox.args"
     mkdir -p "${MOCKBIN}"
