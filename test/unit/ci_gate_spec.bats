@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
-# test/unit/ci_gate_spec.bats - script/ci/ci.sh bats-tier gate: required
+# test/unit/ci_gate_spec.bats - script/test/test.sh bats-tier gate: required
 # specs per tier (M2 review, codex finding: a deleted required spec still
 # read as green while another spec in the same tier kept the tier non-empty)
 #
 # WHAT THIS PROVES
-#   Every bats tier of ci.sh declares its REQUIRED spec files, and the tier
+#   Every bats tier of test.sh declares its REQUIRED spec files, and the tier
 #   is red - before bats even runs - when any of them is deleted or emptied,
 #   even if other specs in the same tier still contribute cases. A normal
 #   tree passes, additional (non-required) specs still run on top of the
@@ -13,7 +13,7 @@
 # HOW
 #   Each case builds an independent COPY of the checkout (script/ lib/ box/
 #   test/) under BATS_TEST_TMPDIR, breaks ONE thing in the copy, then runs
-#   the copy's own ci.sh in its container-side mode (--ci-unit /
+#   the copy's own test.sh in its container-side mode (--ci-unit /
 #   --ci-integration / ...), exactly as the CI job does. The real tree is
 #   never touched. Negative cases die before bats runs, so they need no
 #   daemon; the positive cases nest a bats run of a FAST tier of the copy
@@ -21,7 +21,7 @@
 #
 #   RECURSION GUARD: the copy's test/unit/ci_gate_spec.bats is replaced by a
 #   one-case stub of the same name. A nested unit-tier run of the copy
-#   (which the unit negative cases DO trigger whenever ci.sh regresses and
+#   (which the unit negative cases DO trigger whenever test.sh regresses and
 #   lets a deleted required spec through) therefore terminates instead of
 #   running this file inside itself without bound. The real unit tier's
 #   positive run is the outer CI job that executes this file.
@@ -29,13 +29,13 @@
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    CI_SH="${REPO_ROOT}/script/ci/ci.sh"
+    TEST_SH="${REPO_ROOT}/script/test/test.sh"
     COPY="${BATS_TEST_TMPDIR}/copy"
     THIS_SPEC="test/unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
 # Independent checkout copy (script/ lib/ box/ test/) at $COPY. cp -R keeps
-# the executable bits, so the copy's ci.sh runs exactly like the real one
+# the executable bits, so the copy's test.sh runs exactly like the real one
 # and resolves REPO_ROOT to the copy. This spec is stubbed in the copy (see
 # RECURSION GUARD above).
 _make_repo_copy() {
@@ -45,15 +45,15 @@ _make_repo_copy() {
     _write_one_case_spec "${COPY}/${THIS_SPEC}" "ci_gate stub (recursion guard)"
 }
 
-# Run the copy's ci.sh in container-side mode $1 (e.g. --ci-integration).
+# Run the copy's test.sh in container-side mode $1 (e.g. --ci-integration).
 _run_copy_gate() {
-    run "${COPY}/script/ci/ci.sh" "$1"
+    run "${COPY}/script/test/test.sh" "$1"
 }
 
-# Print the required spec list ci.sh declares for tier $1 (test/-relative,
-# one per line). Sourced in a throwaway shell: ci.sh guards its main().
+# Print the required spec list test.sh declares for tier $1 (test/-relative,
+# one per line). Sourced in a throwaway shell: test.sh guards its main().
 _declared() {
-    bash -c 'source "$1" && _required_specs "$2"' _ "${CI_SH}" "$1"
+    bash -c 'source "$1" && _required_specs "$2"' _ "${TEST_SH}" "$1"
 }
 
 # Write a one-case spec at $1 whose case is named $2 (a decoy / extra spec).
@@ -75,7 +75,7 @@ EOF
 
 # --- the declared required lists ---------------------------------------------
 
-@test "ci.sh declares the M2 required specs of the unit tier" {
+@test "test.sh declares the M2 required specs of the unit tier" {
     run _declared unit
     assert_success
     assert_line "unit/log_spec.bats"
@@ -84,16 +84,18 @@ EOF
     # The harness specs guard themselves too.
     assert_line "unit/ci_gate_spec.bats"
     assert_line "unit/system_real_entry_spec.bats"
+    assert_line "unit/test_sh_spec.bats"
+    assert_line "unit/selfcheck_spec.bats"
 }
 
-@test "ci.sh declares the M2 required specs of the integration tier" {
+@test "test.sh declares the M2 required specs of the integration tier" {
     run _declared integration
     assert_success
     assert_line "integration/smoke_spec.bats"
     assert_line "integration/assemble_spec.bats"
 }
 
-@test "ci.sh declares the M2 required specs of both system groups" {
+@test "test.sh declares the M2 required specs of both system groups" {
     run _declared system
     assert_success
     assert_line "system/real_assemble_spec.bats"
@@ -104,13 +106,13 @@ EOF
     assert_output "system/real_engine_spec.bats"
 }
 
-@test "ci.sh declares the M2 required spec of the acceptance tier" {
+@test "test.sh declares the M2 required spec of the acceptance tier" {
     run _declared acceptance
     assert_success
     assert_output "acceptance/m2_selfcheck_spec.bats"
 }
 
-@test "ci.sh declares no required specs for an unknown tier (non-zero)" {
+@test "test.sh declares no required specs for an unknown tier (non-zero)" {
     run _declared no-such-tier
     assert_failure
     assert_output ""

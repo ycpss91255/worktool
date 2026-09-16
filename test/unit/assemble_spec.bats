@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
-# test/unit/assemble_spec.bats - script/assemble.sh command construction (M2)
+# test/unit/assemble_spec.bats - script/box/assemble.sh command construction
+# and CLI (M2)
 #
-# Written test-first (RED) before script/assemble.sh exists, then the wrapper
-# is implemented to pass (GREEN).
+# Written test-first (RED) before the wrapper exists, then the wrapper is
+# implemented to pass (GREEN).
 #
 # Contract under test:
 #   - In dry-run mode (WORKTOOL_DRY_RUN=1 or --dry-run) the wrapper prints the
@@ -12,11 +13,15 @@
 #   - A `--file <path>` overrides the manifest and is reflected verbatim in the
 #     emitted command.
 #   - An invalid manifest fails before any command is emitted.
+#   - The wrapper owns its CLI: `--help` / `-h` print usage and exit 0;
+#     an unknown option is refused with `assemble.sh: unknown option '<x>'
+#     (see --help)` on stderr, exit 2, nothing on stdout, and distrobox is
+#     never called (the justfile in front of it validates nothing).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
+    ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
     TMP="${BATS_TEST_TMPDIR}"
     VALID="${TMP}/valid.ini"
     printf '[dev]\nimage=ubuntu:26.04\nadditional_packages="ripgrep fzf"\n' \
@@ -100,4 +105,42 @@ setup() {
     eval "set -- ${output}"
     assert_equal "$#" 5
     assert_equal "$5" "${_mani}"
+}
+
+# --- the wrapper owns its CLI: --help and unknown options ---------------------
+
+@test "--help exits 0, names --dry-run / --file / --help, and executes nothing" {
+    run "${ASSEMBLE}" --help
+    assert_success
+    assert_output --partial "--dry-run"
+    assert_output --partial "--file"
+    assert_output --partial "--help"
+    # No dry-run command line was emitted (that would be a bare line).
+    refute_line --regexp '^distrobox assemble create '
+    assert [ ! -f "${MARKER}" ]
+}
+
+@test "-h is the same as --help" {
+    run "${ASSEMBLE}" --help
+    local _long="${output}"
+    run "${ASSEMBLE}" -h
+    assert_success
+    assert_output "${_long}"
+}
+
+@test "an unknown option exits 2 with the documented message on stderr, nothing on stdout, and executes nothing" {
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --bogus >"$2" 2>"$3"' _ "${ASSEMBLE}" "${_out}" "${_err}"
+    assert_failure 2
+    run cat "${_out}"
+    assert_output ""
+    run cat "${_err}"
+    assert_output "assemble.sh: unknown option '--bogus' (see --help)"
+    assert [ ! -f "${MARKER}" ]
+}
+
+@test "an unknown option is refused even when combined with --dry-run: no command is emitted" {
+    run "${ASSEMBLE}" --dry-run --bogus --file "${VALID}"
+    assert_failure 2
+    assert_output "assemble.sh: unknown option '--bogus' (see --help)"
 }
