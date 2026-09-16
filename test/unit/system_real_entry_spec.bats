@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test/unit/system_real_entry_spec.bats - script/ci/system-real-entry.sh:
+# test/unit/system_real_entry_spec.bats - script/test/system-real-entry.sh:
 # every engine call in the dockerd wait loop and the cleanup trap is bounded
 # (M2 review, codex non-blocking finding: a hung daemon could wedge a local
 # run past the runner's own deadlines), the readiness deadline is
@@ -46,7 +46,7 @@ OUTER_TIMEOUT=45
 KILL_GRACE=5
 
 setup() {
-    ENTRY="${REPO_ROOT}/script/ci/system-real-entry.sh"
+    ENTRY="${REPO_ROOT}/script/test/system-real-entry.sh"
     DRIVER="${REPO_ROOT}/test/unit/fixture/entry_driver.sh"
     FAKEBIN="${BATS_TEST_TMPDIR}/bin"
     FAKE_LOG="${BATS_TEST_TMPDIR}/calls.log"

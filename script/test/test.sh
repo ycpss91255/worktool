@@ -1,31 +1,34 @@
 #!/usr/bin/env bash
-# ci.sh - worktool CI pipeline entry (ShellCheck + Bats), Docker only.
+# test.sh - worktool self-test runner (ShellCheck + Bats), Docker only.
 #
+# The backing script of the `just test` namespace (script/test/justfile.test
+# forwards every `just test ...` here verbatim); it also runs on its own.
 # Two sides of the same script (adapted, minimally, from init_ubuntu's
 # script/ci/ci.sh shape):
 #
 #   Host side  - builds the test image if needed, then runs THIS script
 #                back inside a throwaway container with the /source bind
-#                mount. Selected by --lint-only / --unit-only /
-#                --integration-only / --system-only / --system-real-only /
-#                --acceptance-only.
+#                mount. Selected by --lint / --unit / --integration /
+#                --system / --system-real / --acceptance; NO option runs
+#                all of them, in that order, stopping at the first failure.
 #   Container  - runs the actual gate against the mounted source. Selected
 #                by --ci-lint / --ci-unit / --ci-integration / --ci-system /
-#                --ci-system-real / --ci-acceptance.
+#                --ci-system-real / --ci-acceptance (internal).
 #
 # All test execution happens inside the container (doc/design.md: Docker
 # only). The host never installs packages.
 #
 # The system tier has two groups (doc/manifest.md 測試對應):
-#   shim        (--system-only)      every test/system/*.bats except the
+#   shim        (--system)      every test/system/*.bats except the
 #               real-engine spec; the real pinned distrobox against the fake
 #               container manager, in the plain test image. Fast.
-#   real-engine (--system-real-only) test/system/real_engine_spec.bats only;
+#   real-engine (--system-real) test/system/real_engine_spec.bats only;
 #               needs a live docker daemon, so it runs in the dedicated
 #               docker-in-docker runner image (dockerfile/Dockerfile.system-real)
 #               started with `docker run --rm --privileged`, whose entry
-#               (script/ci/system-real-entry.sh) starts dockerd and then calls
-#               back into --ci-system-real. --privileged is used ONLY here.
+#               (script/test/system-real-entry.sh) starts dockerd and then
+#               calls back into --ci-system-real. --privileged is used ONLY
+#               here.
 #
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
@@ -37,20 +40,9 @@
 # the gate instead of reading as green. Additional (non-required) specs in a
 # tier still run on top. This applies to both system groups.
 #
-# Usage:
-#   ./script/ci/ci.sh --lint-only          # host: route lint into container
-#   ./script/ci/ci.sh --unit-only          # host: route unit bats
-#   ./script/ci/ci.sh --integration-only   # host: route integration bats
-#   ./script/ci/ci.sh --system-only        # host: route system bats (shim group)
-#   ./script/ci/ci.sh --system-real-only   # host: real-engine group, DinD runner (--privileged)
-#   ./script/ci/ci.sh --acceptance-only    # host: route acceptance bats
-#   ./script/ci/ci.sh --build              # host: (re)build the test image
-#   ./script/ci/ci.sh --ci-lint            # inside container: shellcheck
-#   ./script/ci/ci.sh --ci-unit            # inside container: unit bats
-#   ./script/ci/ci.sh --ci-integration     # inside container: integration bats
-#   ./script/ci/ci.sh --ci-system          # inside container: system bats (shim group)
-#   ./script/ci/ci.sh --ci-system-real     # inside the DinD runner: real-engine bats
-#   ./script/ci/ci.sh --ci-acceptance      # inside container: acceptance bats
+# Usage: `./script/test/test.sh --help` (see _usage). This script owns its
+# option validation: an unknown option is refused with exit 2 before
+# anything runs, so the justfile in front of it never has to.
 #
 # Exit-code-contract script: default guards are `set -uo pipefail`
 # (no `-e`); failures are surfaced explicitly via _die so a nonzero exit
@@ -70,7 +62,7 @@ DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 # never shared with the other gates, since it is the only --privileged one).
 SYSTEM_REAL_IMAGE="${SYSTEM_REAL_IMAGE:-worktool-system-real:local}"
 SYSTEM_REAL_DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.system-real"
-SYSTEM_REAL_ENTRY="./script/ci/system-real-entry.sh"
+SYSTEM_REAL_ENTRY="./script/test/system-real-entry.sh"
 
 # The one system spec that needs a real engine (real-engine group). Every
 # other test/system/*.bats is the shim group. The test/-relative form is the
@@ -105,7 +97,8 @@ _required_specs() {
                 unit/assemble_spec.bats \
                 unit/ci_gate_spec.bats \
                 unit/system_real_entry_spec.bats \
-                unit/justfile_spec.bats
+                unit/test_sh_spec.bats \
+                unit/selfcheck_spec.bats
             ;;
         integration)
             printf '%s\n' \
@@ -172,7 +165,7 @@ _run_in_container() {
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
-        ./script/ci/ci.sh "${_flag}"
+        ./script/test/test.sh "${_flag}"
 }
 
 # Build the docker-in-docker runner image (always built here: it is not part
@@ -325,28 +318,110 @@ _run_system() {
 # must exist, run at least one case, and skip nothing.
 _run_system_real() { _run_bats_tier system-real "${SYSTEM_REAL_SPEC}"; }
 
+# --- Usage -------------------------------------------------------------------
+_usage() {
+    cat >&2 <<'EOF'
+Usage: test.sh [OPTION...]
+
+Run the worktool self-test. Everything runs inside Docker; the host only
+needs docker. With no option, every step below runs in this order and the
+run stops at the first failure:
+
+  lint, unit, integration, system, acceptance, system-real
+
+Options (each selects one step; several may be given and run in the order
+given):
+  --build         (Re)build the test image (worktool-test:local).
+  --lint          ShellCheck over every *.sh and *.bats, in the container.
+  --unit          Unit bats (test/unit/).
+  --integration   Integration bats (test/integration/).
+  --system        System bats, shim group (test/system/ minus the real-engine
+                  spec; real distrobox + fake container manager).
+  --system-real   System bats, real-engine group (test/system/real_engine_spec
+                  .bats) in the docker-in-docker runner - the ONLY step that
+                  uses --privileged; slow.
+  --acceptance    Acceptance bats (test/acceptance/).
+  -h, --help      Show this help and exit.
+
+Internal (what the steps above run inside the container; not for hosts):
+  --ci-lint --ci-unit --ci-integration --ci-system --ci-system-real
+  --ci-acceptance
+
+Environment:
+  TEST_IMAGE             test image tag (default worktool-test:local)
+  TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
+  SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+EOF
+}
+
+# Refuse the command line: one line on stderr, exit 2, nothing has run.
+_usage_error() {
+    printf 'test.sh: %s (see --help)\n' "$1" >&2
+    exit 2
+}
+
 # --- Dispatch ----------------------------------------------------------------
-main() {
-    local _mode="${1:-}"
-    [[ -n "${_mode}" ]] || _die "no mode given (see header for usage)"
-    case "${_mode}" in
-        # Inside-container gates.
+
+# The host-side steps a bare `test.sh` runs, in this order (system-real
+# last: it is the slow, privileged one).
+HOST_STEPS=(lint unit integration system acceptance system-real)
+
+# Run the in-container gate selected by internal flag $1.
+_run_ci_gate() {
+    case "$1" in
         --ci-lint)         _run_shellcheck ;;
         --ci-unit)         _run_unit ;;
         --ci-integration)  _run_integration ;;
         --ci-system)       _run_system ;;
         --ci-system-real)  _run_system_real ;;
         --ci-acceptance)   _run_acceptance ;;
-        # Host-side routes into the container.
-        --lint-only)        _run_in_container --ci-lint ;;
-        --unit-only)        _run_in_container --ci-unit ;;
-        --integration-only) _run_in_container --ci-integration ;;
-        --system-only)      _run_in_container --ci-system ;;
-        --system-real-only) _run_system_real_in_runner ;;
-        --acceptance-only)  _run_in_container --ci-acceptance ;;
-        --build)            _ensure_image ;;
-        *) _die "unknown mode: ${_mode}" ;;
     esac
+}
+
+# Run host-side step $1 (a HOST_STEPS entry, or `build`). Returns the step's
+# own exit status so the caller can stop at the first failure.
+_run_host_step() {
+    case "$1" in
+        build)       _ensure_image ;;
+        lint)        _run_in_container --ci-lint ;;
+        unit)        _run_in_container --ci-unit ;;
+        integration) _run_in_container --ci-integration ;;
+        system)      _run_in_container --ci-system ;;
+        acceptance)  _run_in_container --ci-acceptance ;;
+        system-real) _run_system_real_in_runner ;;
+    esac
+}
+
+# Parse the WHOLE command line before running anything, so an unknown option
+# anywhere in it refuses the run as a whole. Host steps accumulate in the
+# order given (none = HOST_STEPS); an internal --ci-* flag selects the
+# container gate instead and stands alone.
+main() {
+    local _steps=() _ci="" _step _rc
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) _usage; return 0 ;;
+            --ci-lint|--ci-unit|--ci-integration|--ci-system|--ci-system-real|--ci-acceptance)
+                _ci="$1" ;;
+            --build|--lint|--unit|--integration|--system|--system-real|--acceptance)
+                _steps+=("${1#--}") ;;
+            *) _usage_error "unknown option '$1'" ;;
+        esac
+        shift
+    done
+    if [[ -n "${_ci}" ]]; then
+        [[ "${#_steps[@]}" -eq 0 ]] \
+            || _usage_error "internal flag ${_ci} takes no other option"
+        _run_ci_gate "${_ci}"
+        return $?
+    fi
+    [[ "${#_steps[@]}" -gt 0 ]] || _steps=("${HOST_STEPS[@]}")
+    for _step in "${_steps[@]}"; do
+        _run_host_step "${_step}"
+        _rc=$?
+        [[ "${_rc}" -eq 0 ]] || return "${_rc}"
+    done
+    return 0
 }
 
 # Guard: only run main when executed directly, not when sourced.

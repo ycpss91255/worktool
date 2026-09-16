@@ -3,7 +3,7 @@
 # REAL-ENGINE group of the system tier (M2).
 #
 # Runs INSIDE the worktool-system-real image (dockerfile/Dockerfile.system-real,
-# based on docker:dind), which ci.sh --system-real-only starts with
+# based on docker:dind), which test.sh --system-real starts with
 # `docker run --rm --privileged -v <repo>:/source -w /source`. It:
 #
 #   1. validates the overridable timeouts (positive integers only), then
@@ -15,7 +15,7 @@
 #      selection, tini as pid 1 of the daemon), logging to DOCKERD_LOG;
 #   3. waits until `docker info` succeeds (bounded; fails loudly with the
 #      daemon log on timeout or early death);
-#   4. runs the real-engine bats gate through ci.sh --ci-system-real, so the
+#   4. runs the real-engine bats gate through test.sh --ci-system-real, so the
 #      tier rules (required spec present and non-empty, at least one case,
 #      no failure, no skip) apply to this group exactly like every other
 #      tier;
@@ -57,7 +57,7 @@ set -uo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-CI_SH="${SCRIPT_DIR}/ci.sh"
+TEST_SH="${SCRIPT_DIR}/test.sh"
 
 DOCKERD_LOG="${WORKTOOL_DOCKERD_LOG:-/var/log/worktool-dockerd.log}"
 DOCKERD_READY_TIMEOUT="${WORKTOOL_DOCKERD_READY_TIMEOUT:-90}"
@@ -143,7 +143,7 @@ _preflight() {
     command -v dockerd >/dev/null 2>&1 || _die "dockerd not found in the runner image"
     command -v docker >/dev/null 2>&1 || _die "docker CLI not found in the runner image"
     command -v distrobox >/dev/null 2>&1 || _die "distrobox not found in the runner image"
-    [[ -x "${CI_SH}" ]] || _die "ci.sh not found at ${CI_SH} (is the repo mounted at /source?)"
+    [[ -x "${TEST_SH}" ]] || _die "test.sh not found at ${TEST_SH} (is the repo mounted at /source?)"
 }
 
 # --- Nested daemon lifecycle -------------------------------------------------
@@ -284,7 +284,7 @@ main() {
     _start_dockerd
     _wait_dockerd
     _info "running the real-engine system gate"
-    "${CI_SH}" --ci-system-real
+    "${TEST_SH}" --ci-system-real
 }
 
 # Guard: only run main when executed directly, not when sourced.

@@ -4,7 +4,7 @@
 #
 # WHAT THIS PROVES
 #   M2's "usable dev box" promise, end to end, against a REAL container
-#   engine: the delivered wrapper `script/assemble.sh` with the DELIVERED
+#   engine: the delivered wrapper `script/box/assemble.sh` with the DELIVERED
 #   manifest box/dev.ini, through the REAL pinned distrobox (1.8.2.5), makes
 #   a REAL dockerd create the `dev` box from ubuntu:26.04, distrobox-init
 #   actually runs inside it and installs the manifest's additional_packages
@@ -17,8 +17,8 @@
 #   This spec runs ONLY inside the dedicated runner image
 #   (dockerfile/Dockerfile.system-real, based on the official docker:dind
 #   image) started with `docker run --rm --privileged` by
-#   `script/ci/ci.sh --system-real-only`. The runner's entry script
-#   (script/ci/system-real-entry.sh) starts an isolated dockerd inside the
+#   `script/test/test.sh --system-real`. The runner's entry script
+#   (script/test/system-real-entry.sh) starts an isolated dockerd inside the
 #   runner container, waits for it, then runs this spec through the normal
 #   bats tier gate (--ci-system-real). Every container, image and volume the
 #   test creates lives in that nested daemon and dies with the runner
@@ -54,7 +54,7 @@ RM_TIMEOUT=120
 QUERY_TIMEOUT=60          # short engine queries: info / ps / inspect / logs
 
 setup() {
-    ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
+    ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
 
     # Hermetic distrobox environment: a fresh HOME (no ~/.distroboxrc, no
     # cache), docker selected explicitly, no desktop entry generation.
