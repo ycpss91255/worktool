@@ -1,0 +1,38 @@
+# justfile.box - the `box` namespace of the worktool just interface.
+#
+# `mod?`d by the root justfile as `box`: `just box` lists the box verbs,
+# `just box assemble [args]` forwards to ./script/box/assemble.sh. Base
+# model (ycpss91255-docker/base ADR-00000005/10/11): thin forwarders only -
+# `set positional-arguments` + "$@" hands the arguments over VERBATIM (argv
+# boundaries intact), nothing is validated here and no usage text lives
+# here: `just box help` is `assemble.sh --help`, and an unknown option is
+# refused by assemble.sh itself (`assemble.sh: unknown option '<x>' (see
+# --help)`, exit 2). M2 has assemble as the only verb; M3 adds enter / rm.
+#
+# The one-line comment above each recipe is what `just --list` shows.
+
+# Recipes run from the repo root (relative ./script/..., box/dev.ini),
+# whether reached via the `box` module or a direct `just -f`. `../..` is
+# relative to this file's directory (script/box), i.e. the repo root.
+set working-directory := '../..'
+
+# Expose the recipe arguments as "$@" so `*args` is forwarded per argument,
+# not re-split by the shell.
+set positional-arguments
+
+# source_file() is THIS module's file: inside a mod?'d module `justfile`
+# resolves to the root entry, so listing that would show the namespaces
+# instead of the box verbs.
+# List the box verbs.
+default:
+    @just --justfile '{{source_file()}}' --list
+
+# Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+assemble *args:
+    ./script/box/assemble.sh "$@"
+
+alias h := help
+
+# Show the box wrapper help (assemble.sh --help).
+help:
+    ./script/box/assemble.sh --help
