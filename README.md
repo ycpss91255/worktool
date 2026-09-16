@@ -34,7 +34,7 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 | `just test [tier]` | 跑測試;tier = `unit` / `integration` / `system` / `system-real` / `acceptance` / `all`(預設 `all`;`system-real` 最後跑:docker-in-docker、`--privileged`、慢)。無效的 tier 會清楚報錯、exit 1、什麼都不跑 |
 | `just check` | lint + test all(= CI 跑的內容) |
 | `just selfcheck` | 交付自檢(`script/selfcheck.sh`) |
-| `just assemble [mode]` | 從 `box/dev.ini` assemble dev 盒;mode = `run`(預設,在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、不執行) |
+| `just assemble [mode] [file]` | 從清單 assemble dev 盒;mode = `run`(預設,在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、不執行);file 預設 `box/dev.ini`(例:`just assemble dry-run box/other.ini`) |
 
 所有測試都在 Docker 內執行,host 不安裝任何套件。每個 gate 的預期輸出與
 沒有 `just` 時的底層備援指令,見 [`doc/manifest.md`](doc/manifest.md)

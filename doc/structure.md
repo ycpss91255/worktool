@@ -50,7 +50,7 @@ worktool/
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   └── structure.md     本文件
-├── justfile             使用者介面:build / lint / test [tier] / check / selfcheck / assemble [mode];每個 recipe 都薄薄委派到 script/
+├── justfile             使用者介面:build / lint / test [tier] / check / selfcheck / assemble [mode] [file];每個 recipe 都薄薄委派到 script/
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時以同一套 just 文法跑全部 gate + ci-passed 彙總
 ```
@@ -138,8 +138,8 @@ dry-run)`。`just -n <recipe> [arg]`(`--dry-run`)會印出該次執行實際會�
 ## 執行 gate(全部在 Docker 內)
 
 所有測試都在 Docker 容器內執行,host 不安裝任何套件。前置需求:host 需有
-`docker`;`just` 是**便利層**的前置需求——沒有 `just` 時,直接呼叫
-`./script/ci/ci.sh --lint-only` / `--unit-only` / `--integration-only` /
+`docker` 與 `just`(`just` 是使用者的通用介面,見 design.md「決策」);沒有 `just`
+的機器上可直接呼叫底層實作 `./script/ci/ci.sh --lint-only` / `--unit-only` / `--integration-only` /
 `--system-only` / `--system-real-only` / `--acceptance-only` 效果完全相同。
 
 ```bash
