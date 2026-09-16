@@ -98,6 +98,14 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh --help --bogus is refused as a whole: exit 2, no usage, no docker call" {
+    run "${TEST_SH}" --help --bogus
+    assert_failure 2
+    assert_output "test.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage:"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 @test "test.sh --unit --bogus is refused as a whole: the unit gate never runs" {
     run "${TEST_SH}" --unit --bogus
     assert_failure 2

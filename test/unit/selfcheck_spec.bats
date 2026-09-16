@@ -49,6 +49,14 @@ _make_repo_copy() {
     refute_output --partial "FAIL"
 }
 
+@test "selfcheck.sh --help --bogus is refused as a whole: exit 2, no usage, no check" {
+    run "${SELFCHECK}" --help --bogus
+    assert_failure 2
+    assert_output "selfcheck.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage:"
+    refute_output --partial "PASS"
+}
+
 @test "selfcheck.sh finds script/box/assemble.sh in its own checkout from script/test/" {
     cd "${BATS_TEST_TMPDIR}"
     run "${SELFCHECK}"

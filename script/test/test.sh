@@ -398,10 +398,12 @@ _run_host_step() {
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
 # container gate instead and stands alone.
 main() {
-    local _steps=() _ci="" _step _rc
+    local _steps=() _ci="" _step _rc _help=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) _usage; return 0 ;;
+            # Recorded, not served: the rest of the line is still validated
+            # (`--help --bogus` is a usage error, not help).
+            -h|--help) _help=1 ;;
             --ci-lint|--ci-unit|--ci-integration|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
             --build|--lint|--unit|--integration|--system|--system-real|--acceptance)
@@ -410,6 +412,10 @@ main() {
         esac
         shift
     done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
     if [[ -n "${_ci}" ]]; then
         [[ "${#_steps[@]}" -eq 0 ]] \
             || _usage_error "internal flag ${_ci} takes no other option"

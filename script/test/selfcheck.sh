@@ -118,6 +118,7 @@ _check_reject() {
 # run as a whole. Returns 0 to continue, 3 when --help was served (the
 # caller exits 0), 2 on a usage error.
 _parse_options() {
+    local _help=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --root)
@@ -129,7 +130,8 @@ _parse_options() {
                 SELFCHECK_ROOT="$1"
                 ;;
             --root=*) SELFCHECK_ROOT="${1#*=}" ;;
-            -h|--help) _usage; return 3 ;;
+            # Recorded, not served: `--help --bogus` is a usage error.
+            -h|--help) _help=1 ;;
             *)
                 _usage_error "unknown option '$1'"
                 return 2
@@ -137,6 +139,10 @@ _parse_options() {
         esac
         shift
     done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 3
+    fi
     return 0
 }
 
