@@ -152,19 +152,22 @@ default:
     @just --list
 ```
 
-**namespace `test`**(`script/test/justfile.test`,`set working-directory := '../..'`):
+**namespace `test`**(`script/test/justfile.test`,`set working-directory := '../..'`,
+`set positional-arguments`:recipe 以 `"$@"` 原樣轉發額外參數 —— 不用 `{{args}}`,因為它會先
+把參數以空白接成一個字串再交給 shell 重切,含空白的路徑會被拆開;下表「轉發到」欄就是
+recipe 原文,也是 `just` 執行時回顯的那一行):
 
 | 指令 | 轉發到 |
 |------|--------|
 | `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
-| `just test build [args]` | `./script/test/test.sh --build {{args}}` |
-| `just test lint [args]` | `./script/test/test.sh --lint {{args}}` |
-| `just test unit [args]` | `./script/test/test.sh --unit {{args}}` |
-| `just test integration [args]` | `./script/test/test.sh --integration {{args}}` |
-| `just test system [args]` | `./script/test/test.sh --system {{args}}` |
-| `just test system-real [args]` | `./script/test/test.sh --system-real {{args}}` |
-| `just test acceptance [args]` | `./script/test/test.sh --acceptance {{args}}` |
-| `just test selfcheck [args]` | `./script/test/selfcheck.sh {{args}}`(交付自檢;`--root X` 原樣傳入) |
+| `just test build [args]` | `./script/test/test.sh --build "$@"` |
+| `just test lint [args]` | `./script/test/test.sh --lint "$@"` |
+| `just test unit [args]` | `./script/test/test.sh --unit "$@"` |
+| `just test integration [args]` | `./script/test/test.sh --integration "$@"` |
+| `just test system [args]` | `./script/test/test.sh --system "$@"` |
+| `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
+| `just test acceptance [args]` | `./script/test/test.sh --acceptance "$@"` |
+| `just test selfcheck [args]` | `./script/test/selfcheck.sh "$@"`(交付自檢;`--root X` 原樣傳入) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 
 **namespace `box`**(`script/box/justfile.box`,`set working-directory := '../..'`):
@@ -172,7 +175,7 @@ default:
 | 指令 | 轉發到 |
 |------|--------|
 | `just box` | 列出 box 的動詞:`@just --justfile '{{source_file()}}' --list` |
-| `just box assemble [args]` | `./script/box/assemble.sh {{args}}`(args:`--dry-run`、`--file <manifest>`、`--help`) |
+| `just box assemble [args]` | `./script/box/assemble.sh "$@"`(args:`--dry-run`、`--file <manifest>`、`--help`) |
 | `just box help` / `just box h` | `./script/box/assemble.sh --help`(M2 只有 assemble 一個動詞) |
 
 **腳本佈局**(module 檔與它轉發的腳本住在同一個 `script/<ns>/`;`script/ci/` 不再

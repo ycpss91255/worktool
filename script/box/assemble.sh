@@ -89,7 +89,7 @@ _resolve_manifest() {
 # --- Main --------------------------------------------------------------------
 assemble_run() {
     local _manifest_arg="${DEFAULT_MANIFEST}"
-    local _dry_run=0
+    local _dry_run=0 _help=0
     [[ "${WORKTOOL_DRY_RUN:-}" == "1" ]] && _dry_run=1
 
     # The whole command line is parsed before anything runs, so an unknown
@@ -106,7 +106,8 @@ assemble_run() {
                 ;;
             --file=*) _manifest_arg="${1#*=}" ;;
             --dry-run) _dry_run=1 ;;
-            -h|--help) _usage; return 0 ;;
+            # Recorded, not served: `--help --bogus` is a usage error.
+            -h|--help) _help=1 ;;
             *)
                 _usage_error "unknown option '$1'"
                 return 2
@@ -114,6 +115,10 @@ assemble_run() {
         esac
         shift
     done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
 
     # Resolve the manifest path ONCE and reuse that exact path everywhere:
     # validation, the dry-run output, and the real distrobox call. This keeps
