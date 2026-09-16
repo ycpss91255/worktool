@@ -5,6 +5,13 @@ name: CI
 # docker-in-docker runner. All inside Docker. Runs on push and pull_request
 # to main.
 #
+# Every gate is driven through the repo-root justfile, i.e. the same grammar
+# a user types (`just lint`, `just test unit`, ..., `just test system-real`;
+# together: `just check`). The job NAMES stay lint / test-unit /
+# test-integration / test-system / test-acceptance / test-system-real: branch
+# protection and the ci-passed aggregator key on them, so the matrix maps
+# each name to its `just` recipe instead of reusing the name as the recipe.
+#
 # Every gate is REQUIRED: the `ci-passed` aggregator fails unless every gate
 # job finished with `success` - a skipped, cancelled or missing gate does not
 # read as green. (Inside each bats gate, ci.sh likewise fails on a missing
@@ -56,7 +63,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: [lint, test-unit, test-integration, test-system, test-acceptance]
+        # gate   = job name (unchanged; branch protection keys on it)
+        # recipe = the `just` invocation that job runs
+        include:
+          - gate: lint
+            recipe: lint
+          - gate: test-unit
+            recipe: test unit
+          - gate: test-integration
+            recipe: test integration
+          - gate: test-system
+            recipe: test system
+          - gate: test-acceptance
+            recipe: test acceptance
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,17 +92,18 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
-      - name: Run gate (${{ matrix.gate }})
+      - name: Run gate (${{ matrix.gate }} = just ${{ matrix.recipe }})
         env:
           TEST_IMAGE_PREBUILT: "1"
-        run: just -f justfile.ci ${{ matrix.gate }}
+        run: just ${{ matrix.recipe }}
 
   # Real-engine system group: docker-in-docker. Builds its own runner image
   # (dockerfile/Dockerfile.system-real, independent of the shared test image)
-  # and runs it with `docker run --rm --privileged` via ci.sh
-  # --system-real-only. This is the ONLY job that uses --privileged
-  # (GitHub-hosted ubuntu runners allow it). Slow: image pull + apt inside
-  # the box; the runner itself bounds every step, and the job is capped too.
+  # and runs it with `docker run --rm --privileged` via `just test
+  # system-real` (= ci.sh --system-real-only). This is the ONLY job that
+  # uses --privileged (GitHub-hosted ubuntu runners allow it). Slow: image
+  # pull + apt inside the box; the runner itself bounds every step, and the
+  # job is capped too.
   test-system-real:
     name: test-system-real
     runs-on: ubuntu-latest
@@ -95,8 +115,8 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
-      - name: Run gate (test-system-real, docker-in-docker, --privileged)
-        run: just -f justfile.ci test-system-real
+      - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
+        run: just test system-real
 
   # Single required status: green only if the image built AND every matrix
   # gate AND the real-engine gate succeeded. `if: always()` makes it run even
