@@ -159,7 +159,10 @@ _listed_names() {
 }
 
 @test "no justfile prints usage or a valid: list of its own" {
-    run grep -nE 'valid:|Usage' "${REPO_ROOT}/justfile" \
+    # Comment lines are allowed to TALK about the rule; recipe bodies and
+    # settings must not carry usage text or option lists (case-insensitive).
+    run bash -c "grep -vhE '^[[:space:]]*#' \"\$@\" | grep -niE 'valid:|usage'" _ \
+        "${REPO_ROOT}/justfile" \
         "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box"
     assert_failure
     assert_output ""
@@ -325,7 +328,7 @@ _listed_names() {
 @test "just test bogus fails with just's own recipe error, never reaching test.sh or docker" {
     # REAL test.sh in the copy: reaching it would hit the fake docker on PATH.
     _just test bogus
-    assert_failure
+    assert_failure 1
     assert_output --regexp 'does not contain recipe.*bogus'
     refute_output --partial "valid:"
     refute_output --partial "Usage"
@@ -342,7 +345,7 @@ _listed_names() {
 @test "just box bogus fails the same way" {
     _stub_scripts
     _just box bogus
-    assert_failure
+    assert_failure 1
     assert_output --regexp 'does not contain recipe.*bogus'
     assert_equal "$(_stub_calls)" ""
 }
