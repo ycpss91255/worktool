@@ -19,26 +19,36 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 - **just**:使用者介面(下方)。M4 host bootstrap 起由 install script 一併安裝;
   在那之前請自行安裝。
 - host **不需要** distrobox:測試用的 distrobox 已鎖定版本、烘進 Docker 測試映像;
-  只有 `just assemble` 在 host 上真的建盒時才需要。
+  只有 `just box assemble` 在 host 上真的建盒時才需要。
 
 ## 使用方式
 
-`just` 是 worktool 的使用者通用介面:所有可執行的動作都是 `just <動詞> [受詞]`,
-腳本是實作、不是介面(決策見 [`doc/design.md`](doc/design.md)「決策」)。
+`just` 是 worktool 的使用者通用介面,命令模型比照 `ycpss91255-docker/base`
+(ADR-00000005/10/11):零特例、每個動作都住在一個以動作命名的 namespace
+(`just <namespace> <recipe> [選項]`),裸指令跑最大範圍、子 recipe 與選項只收窄,
+justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完整對照表見
+[`doc/design.md`](doc/design.md)「決策」)。
+
+裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明。
 
 | 指令 | 說明 |
 |------|------|
-| `just` | 列出所有 recipe |
-| `just build` | 建置測試映像(選用;gate 會按需自動建) |
-| `just lint` | ShellCheck gate(Docker 內) |
-| `just test [tier]` | 跑測試;tier = `unit` / `integration` / `system` / `system-real` / `acceptance` / `all`(預設 `all`;`system-real` 最後跑:docker-in-docker、`--privileged`、慢)。無效的 tier 會清楚報錯、exit 1、什麼都不跑 |
-| `just check` | lint + test all(= CI 跑的內容) |
-| `just selfcheck` | 交付自檢(`script/selfcheck.sh`) |
-| `just assemble [mode] [file]` | 從清單 assemble dev 盒;mode = `run`(預設,在 host 上真的呼叫 distrobox)/ `dry-run`(只印出 distrobox 指令、不執行);file 預設 `box/dev.ini`(例:`just assemble dry-run box/other.ini`) |
+| `just test` | 跑 CI 會跑的**全部**:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
+| `just test build` | 建置測試映像(選用;gate 會按需自動建) |
+| `just test lint` | ShellCheck gate(Docker 內) |
+| `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試 |
+| `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
+| `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
+| `just box` | 列出 box 的動詞(M2 只有 `assemble`) |
+| `just box assemble [--dry-run] [--file <manifest>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`) |
+| `just box help`(或 `h`) | 印 `script/box/assemble.sh` 的 usage |
 
-所有測試都在 Docker 內執行,host 不安裝任何套件。每個 gate 的預期輸出與
-沒有 `just` 時的底層備援指令,見 [`doc/manifest.md`](doc/manifest.md)
-「如何人工驗證」。
+打錯 recipe 名(`just test bogus`)得到 `just` 自己的錯誤、exit 1;給了腳本不認得的
+選項(`just box assemble --bogus`)得到腳本自己的 `unknown option ... (see --help)`、
+exit 2;兩者都什麼都不跑。
+
+所有測試都在 Docker 內執行,host 不安裝任何套件。每個 gate 的預期輸出與每個
+recipe 底層轉發到的腳本,見 [`doc/manifest.md`](doc/manifest.md)「如何人工驗證」。
 
 文件語言:設計文件(PRD / ADR / 計畫等 user 會看到的)以 zh-TW 撰寫;commit
 message、PR 內文、程式碼與註解以英文撰寫。
