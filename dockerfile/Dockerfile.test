@@ -1,14 +1,24 @@
-# Dockerfile.test - lightweight lint/test image for worktool (M1)
+# Dockerfile.test - lightweight lint/test image for worktool (M1/M2)
 #
-# Bundles bash + bats (+ bats-support / bats-assert) + shellcheck so the
-# whole test pyramid runs in Docker only (doc/design.md test strategy).
-# Modelled on init_ubuntu's test-tools image, stripped to M1 essentials:
-# no kcov, fish, TUI, gum, or module-lifecycle tooling yet.
+# Bundles bash + bats (+ bats-support / bats-assert) + shellcheck + a pinned
+# real distrobox so the whole test pyramid runs in Docker only (doc/design.md
+# test strategy). Modelled on init_ubuntu's test-tools image, stripped to
+# essentials: no kcov, fish, TUI, gum, or module-lifecycle tooling.
+#
+# distrobox (system tier, M2): the upstream release is a bundle of POSIX
+# shell scripts, so it runs on alpine as-is. It is installed with its own
+# `install` script and pointed at a FAKE container manager by the system
+# tests (test/system/) - no docker daemon and no docker-in-docker needed.
 #
 # Usage:
 #   docker build -t worktool-test:local -f dockerfile/Dockerfile.test .
 #   docker run --rm -v "$PWD:/source" -w /source worktool-test:local \
 #     ./script/ci/ci.sh --ci-unit
+
+# Single source of truth for the pinned distrobox release (also exported as
+# ENV DISTROBOX_VERSION in the final stage so specs can assert on it).
+ARG DISTROBOX_VERSION=1.8.2.5
+ARG DISTROBOX_SHA256=0c3bc4785ee3be3b89f93abb7cc0a9f60e56989e81319af140a4b60403b18f80
 
 FROM bats/bats:latest AS bats-src
 
@@ -36,11 +46,29 @@ RUN apk add --no-cache curl xz && \
         | tar -xJ -C /tmp && \
     mv "/tmp/shellcheck-v0.10.0/shellcheck" /usr/local/bin/shellcheck
 
+# Pinned distrobox release: fetch the tagged source archive, verify its
+# checksum, and install the script bundle with upstream's own installer
+# (arch-independent; only the distrobox-* scripts are carried forward).
+FROM alpine:latest AS distrobox-src
+ARG DISTROBOX_VERSION
+ARG DISTROBOX_SHA256
+# hadolint ignore=DL3018
+RUN apk add --no-cache curl coreutils && \
+    curl -fsSL -o /tmp/distrobox.tar.gz \
+        "https://github.com/89luca89/distrobox/archive/refs/tags/${DISTROBOX_VERSION}.tar.gz" && \
+    echo "${DISTROBOX_SHA256}  /tmp/distrobox.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/distrobox.tar.gz -C /tmp && \
+    cd "/tmp/distrobox-${DISTROBOX_VERSION}" && \
+    ./install --prefix /opt/distrobox
+
 # Final stage.
 FROM alpine:latest
+ARG DISTROBOX_VERSION
 # bash    - bats and worktool shell scripts need it
 # git     - test fixtures / future harness
-# grep + coreutils - GNU variants so `grep -P` etc. behave like the targets
+# grep + coreutils - GNU variants so `grep -P` etc. behave like the targets;
+#           distrobox's host-side scripts also rely on GNU `base64 -w`,
+#           `realpath`, `id -r*`, `mktemp -u`
 # ncurses - `tput`-style terminal queries stay sane under a non-tty harness
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
@@ -57,14 +85,20 @@ COPY --from=bats-extensions /bats /usr/lib/bats
 # shellcheck
 COPY --from=lint-tools /usr/local/bin/shellcheck /usr/local/bin/
 
+# distrobox (pinned; scripts only). distrobox-create locates distrobox-init /
+# -export / -host-exec next to itself, so they all land in the same dir.
+COPY --from=distrobox-src /opt/distrobox/bin/ /usr/local/bin/
+ENV DISTROBOX_VERSION=${DISTROBOX_VERSION}
+
 # Expose bats on PATH (alpine image keeps it under /opt/bats/bin only).
 RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
 
 # Smoke check baked into the image so a corrupted build fails fast at CI
-# rather than mid-test-run.
+# rather than mid-test-run. distrobox must report exactly the pinned version.
 RUN bash --version >/dev/null && \
     bats --version >/dev/null && \
-    shellcheck --version >/dev/null
+    shellcheck --version >/dev/null && \
+    [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
 
 WORKDIR /source
 ENTRYPOINT ["/bin/bash"]

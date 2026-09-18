@@ -23,23 +23,26 @@ worktool/
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   └── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
-│   ├── system/          系統測試(bats):端到端
-│   │   └── real_assemble_spec.bats  真實 assemble(skip;延後到 M5)
+│   ├── system/          系統測試(bats):真實 distrobox 端到端(不需 DinD)
+│   │   ├── real_assemble_spec.bats  真實 distrobox 1.8.2.5 + 假容器管理器
+│   │   └── fixture/
+│   │       └── fake_container_manager.sh  假 docker:逐一參數記錄、可注入失敗
 │   └── helper/          bats 共用 helper
 │       └── common.bash  路徑常數 + bats-support / bats-assert 載入
 ├── script/
 │   ├── assemble.sh      從清單 assemble dev 盒的薄包裝器(dry-run / 真跑)
 │   └── ci/
-│       └── ci.sh        CI 進入點:在容器內跑 lint / unit / integration
+│       └── ci.sh        CI 進入點:在容器內跑 lint / unit / integration / system
 ├── dockerfile/
-│   └── Dockerfile.test  輕量測試映像(bash + bats + shellcheck)
+│   └── Dockerfile.test  測試映像(bash + bats + shellcheck + 鎖定版 distrobox)
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
+│   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   └── structure.md     本文件
 ├── justfile             使用者面向的 task runner(委派到 justfile.ci)
-├── justfile.ci          CI gate 定義(lint / test-unit / test-integration)
+├── justfile.ci          CI gate 定義(lint / test-unit / test-integration / test-system)
 └── .github/workflows/
-    └── ci.yml           GitHub Actions:push / PR 到 main 時跑三個 gate
+    └── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + ci-passed 彙總
 ```
 
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
@@ -47,8 +50,8 @@ worktool/
 
 ## 測試策略對應
 
-四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 落地前三層(單元 /
-整合 / 系統佔位),盒子清單細節見 [`manifest.md`](manifest.md):
+四層測試金字塔見 [`design.md`](design.md)「測試策略」;每一層驗證什麼、延後
+什麼,詳見 [`manifest.md`](manifest.md)「測試對應」。M2 落地:
 
 - 單元(unit):`test/unit/*.bats` —— `log_spec.bats` 驗證 `lib/log.sh`;
   `manifest_spec.bats` 驗證清單解析/驗證;`assemble_spec.bats` 驗證 dry-run 的
@@ -56,10 +59,12 @@ worktool/
 - 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明 Docker
   harness 能跑;`assemble_spec.bats` 以 mock `distrobox` 證明 assemble 端到端接線
   (`distrobox assemble create --file box/dev.ini`)。
-- 系統(system):`test/system/real_assemble_spec.bats` —— 真實 assemble 需要
-  docker-in-docker,依 [`design.md`](design.md) 延後到 M5;目前以被 `skip` 的佔位
-  測試記錄未來驗證方式,且未接進 CI gate。
-- 交付/驗收(acceptance):後續 milestone 補齊。
+- 系統(system):`test/system/real_assemble_spec.bats` —— 在測試映像內跑**真正
+  的、鎖定版本的 distrobox**(1.8.2.5),容器管理器換成假的 `docker`
+  (`test/system/fixture/fake_container_manager.sh`),斷言真正抵達管理器的
+  create 請求帶有 `dev` / `ubuntu:26.04` / `ripgrep fzf`;不需要 docker-in-docker。
+  不證明映像可拉、套件可裝、盒子可用(延後到 M5)。
+- 交付/驗收(acceptance):後續 commit 補齊。
 
 ## 執行 gate(全部在 Docker 內)
 
@@ -76,7 +81,10 @@ just -f justfile.ci test-unit
 # 整合測試(test/integration/*.bats)
 just -f justfile.ci test-integration
 
-# 依序跑三者
+# 系統測試(test/system/*.bats;真實 distrobox + 假容器管理器)
+just -f justfile.ci test-system
+
+# 依序跑全部
 just -f justfile.ci test
 ```
 
@@ -84,11 +92,14 @@ just -f justfile.ci test
 可用 `just -f justfile.ci build` 預先建置或在 Dockerfile 壞掉時快速失敗。
 
 底層由 `script/ci/ci.sh` 驅動:host 端旗標(`--lint-only` /`--unit-only` /
-`--integration-only`)會把對應的容器內旗標(`--ci-lint` /`--ci-unit` /
-`--ci-integration`)丟進掛載 `/source` 的一次性容器執行。
+`--integration-only` /`--system-only`)會把對應的容器內旗標(`--ci-lint` /
+`--ci-unit` /`--ci-integration` /`--ci-system`)丟進掛載 `/source` 的一次性容器
+執行。每一層 bats gate 都要求「至少跑了一個案例、無失敗、無 `skip`」:被
+`skip` 或不存在的必要案例不會被當成綠燈。
 
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-依序跑 lint、test-unit、test-integration。三者皆綠才視為 M1 gate 通過,交由人類
-審核合併。
+跑 lint、test-unit、test-integration、test-system,並以 `ci-passed` 彙總
+job 收斂:只有映像建置成功**且**每個 gate 都 `success` 才綠;被 skip、取消或
+缺席的 gate 一律視為失敗。全綠才視為 milestone gate 通過,交由人類審核合併。

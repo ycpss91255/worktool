@@ -28,5 +28,10 @@ test-unit:
 test-integration:
     ./script/ci/ci.sh --integration-only
 
-# Convenience: lint + unit + integration in sequence.
-test: lint test-unit test-integration
+# Run system bats (test/system/*.bats) inside the container: the real pinned
+# distrobox against the fake container-manager shim (no docker-in-docker).
+test-system:
+    ./script/ci/ci.sh --system-only
+
+# Convenience: lint + unit + integration + system in sequence.
+test: lint test-unit test-integration test-system
