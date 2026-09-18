@@ -5,7 +5,7 @@
 #   The delivered manifest (box/dev.ini) is parsed by the REAL, pinned
 #   distrobox (baked into the test image, see dockerfile/Dockerfile.test and
 #   ${DISTROBOX_VERSION}) into the expected container-manager create request:
-#   the wrapper `script/assemble.sh` runs in real (non-dry-run) mode, real
+#   the wrapper `script/box/assemble.sh` runs in real (non-dry-run) mode, real
 #   `distrobox assemble create` -> real `distrobox-create` run, and the
 #   request that actually reaches the container manager carries container
 #   name `dev`, image `ubuntu:26.04`, and the manifest's additional_packages
@@ -28,13 +28,13 @@
 #   - that the resulting box is usable (`distrobox enter dev -- rg --version`).
 #   Those need a real container manager and are proven by the real-engine
 #   group of this tier, test/system/real_engine_spec.bats, which runs in the
-#   docker-in-docker runner (ci.sh --system-real-only). This shim group stays
+#   docker-in-docker runner (test.sh --system-real). This shim group stays
 #   the fast, daemon-free half.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    ASSEMBLE="${REPO_ROOT}/script/assemble.sh"
+    ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
     SHIM="${REPO_ROOT}/test/system/fixture/fake_container_manager.sh"
 
     # Fake manager first on PATH, under the name distrobox will resolve.

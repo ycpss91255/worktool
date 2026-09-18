@@ -1,0 +1,67 @@
+# justfile.test - the `test` namespace of the worktool just interface.
+#
+# `mod?`d by the root justfile as `test`: `just test` (bare = everything CI
+# runs) and `just test <recipe> [args]` narrow to one step. Base model
+# (ycpss91255-docker/base ADR-00000005/10/11): every recipe is a thin
+# forwarder to ./script/test/test.sh (or selfcheck.sh) with the arguments
+# passed VERBATIM - `set positional-arguments` + "$@" keeps argv boundaries
+# (a path with spaces stays one argument). Nothing is validated here and no
+# usage text lives here: `just test help` is `test.sh --help`, and an
+# unknown option is refused by test.sh itself (`test.sh: unknown option
+# '<x>' (see --help)`, exit 2) before anything runs. An unknown recipe
+# name (`just test bogus`) is refused by just itself.
+#
+# The one-line comment above each recipe is what `just --list` shows.
+# Must stay within what the alpine-packaged just in the test image
+# (dockerfile/Dockerfile.test) and just >= 1.53 on the host both support.
+
+# Recipes run from the repo root (relative ./script/..., box/dev.ini),
+# whether reached via the `test` module or a direct `just -f`. `../..` is
+# relative to this file's directory (script/test), i.e. the repo root.
+set working-directory := '../..'
+
+# Expose the recipe arguments as "$@" so `*args` is forwarded per argument,
+# not re-split by the shell.
+set positional-arguments
+
+# Everything CI runs: lint, unit, integration, system, acceptance, system-real, in order, stop at the first failure.
+default:
+    ./script/test/test.sh
+
+# Build the test image (worktool-test:local); the gates build it on demand anyway.
+build *args:
+    ./script/test/test.sh --build "$@"
+
+# ShellCheck over every *.sh and *.bats, inside the test container.
+lint *args:
+    ./script/test/test.sh --lint "$@"
+
+# Unit bats (test/unit/).
+unit *args:
+    ./script/test/test.sh --unit "$@"
+
+# Integration bats (test/integration/).
+integration *args:
+    ./script/test/test.sh --integration "$@"
+
+# System bats, shim group (real distrobox + fake container manager; no daemon).
+system *args:
+    ./script/test/test.sh --system "$@"
+
+# System bats, real-engine group (docker-in-docker runner, --privileged, slow).
+system-real *args:
+    ./script/test/test.sh --system-real "$@"
+
+# Acceptance bats (test/acceptance/): the delivered self-check against the delivered repo.
+acceptance *args:
+    ./script/test/test.sh --acceptance "$@"
+
+# Host-direct delivery self-check (dry-run contract + invalid-manifest rejections); --root X checks another checkout.
+selfcheck *args:
+    ./script/test/selfcheck.sh "$@"
+
+alias h := help
+
+# Show the test runner help (test.sh --help): every flag, the default order, the environment knobs.
+help:
+    ./script/test/test.sh --help

@@ -1,34 +1,21 @@
-# justfile - worktool user-facing task runner (auto-discovered by `just`).
+# justfile - worktool user interface entry (auto-discovered by `just`).
 #
-# CI gates live in justfile.ci and are invoked as `just -f justfile.ci
-# <recipe>` (lint / test-unit / test-integration / test-system /
-# test-system-real / test-acceptance), matching init_ubuntu. This file just
-# points at them so `just` with no args is self-documenting.
+# `just` IS the interface, modelled on ycpss91255-docker/base
+# (ADR-00000005/10/11): zero special cases - every action is a namespace
+# declared with `mod?` below and nothing else lives at this level; the
+# namespaces are action-named (test, box; never ci/cd); bare `just <ns>`
+# runs the most (`just test` = everything CI runs) and sub-recipes only
+# narrow; every recipe is a thin forwarder that hands its arguments to the
+# script under script/<ns>/ verbatim - ALL validation, usage text and
+# --help live in those scripts. Bare `just` lists the namespaces.
+#
+# The doc comment above each `mod?` is what `just --list` shows for it.
 
-# Show available recipes.
+# Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+mod? test 'script/test/justfile.test'
+# Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+mod? box 'script/box/justfile.box'
+
+# Default: list the namespaces.
 default:
     @just --list
-
-# Show the CI recipes (lint / test-unit / ... / test-acceptance / ...).
-ci-help:
-    @just -f justfile.ci --list
-
-# Delegate to the CI gates for convenience.
-lint:
-    @just -f justfile.ci lint
-
-test-unit:
-    @just -f justfile.ci test-unit
-
-test-integration:
-    @just -f justfile.ci test-integration
-
-test-system:
-    @just -f justfile.ci test-system
-
-# Real-engine system group (docker-in-docker, --privileged, slow).
-test-system-real:
-    @just -f justfile.ci test-system-real
-
-test-acceptance:
-    @just -f justfile.ci test-acceptance

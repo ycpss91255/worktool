@@ -50,8 +50,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 ## Open 項目(建議預設,待確認 / 修正)
 
 1. 盒子 base image:`ubuntu:26.04`(已定)。
-2. bootstrap 順序:host 裝 docker+distrobox -> host install script(驅動/GUI)
-   -> assemble 盒子 -> 設定終端自動進盒。
+2. bootstrap 順序:host 裝 docker+distrobox(+ `just`,見「決策」)-> host
+   install script(驅動/GUI)-> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
 4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
 5. 測試層級(已定):完整測試金字塔 —— 單元 -> 整合 -> 系統 -> 交付/驗收,
@@ -88,6 +88,148 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 更廣的環境矩陣(真實硬體、非 root 使用者、其他映像、效能量測),不再負責「盒子
 可用」的基本證明。細節見 [`manifest.md`](manifest.md)「測試對應」。
 
+## 決策
+
+「已定共識」之後、以日期記錄的個別決策。與測試策略直接相關的(2026-09-16
+docker-in-docker 提前到 M2)記在上方「測試策略」;其餘集中於此。
+
+### 2026-09-16:just 是使用者的通用介面(命令模型比照 base)
+
+**決策**:`just` 是 worktool **使用者的通用介面**。所有使用者可執行的動作都以
+`just <namespace> [recipe] [選項]` 暴露;腳本(`script/test/test.sh`、
+`script/test/selfcheck.sh`、`script/box/assemble.sh`)是**實作、不是介面**。命令
+模型**完全比照**維護者的 `ycpss91255-docker/base` repo,不另創一套:
+ADR-00000005「Adopt `just` over the Makefile wrapper」(`just` 作為唯一的使用者
+入口、recipe 是薄轉發器)、ADR-00000010「Layered `just` entry」(`mod?` namespace
+是唯一免名稱衝突的機制)、ADR-00000011「`just` command model: zero-special-case
+namespaces, generic tooling, min->max coverage」(零特例、以動作命名、min->max、
+`--help` 住在腳本、每個 module 有 `help`)。
+
+**理由**(維護者原話):使用者的通用輸入應該一致(`just test`、`just test unit`),
+直接呼叫腳本很麻煩。比照 base 的理由:同一位維護者的所有 repo 只需要記一種
+文法;base 的模型是三次修正(00000005 -> 00000010 -> 00000011)後收斂的結果,
+每一條規則都對應一個踩過的坑,worktool 沒有理由再踩一次。
+
+**模型**(五條規則,全部出自 base ADR-00000011):
+
+1. **零特例:每個動作都是一個 namespace**。root `justfile` 只有 `mod?` 行加一個
+   `default`,**沒有任何**頂層動作 recipe;動作一律是 `just <namespace> <recipe>`;
+   裸 `just` 就是 `just --list`,列出 namespaces。代價是多打一個字,換來一條沒有
+   例外的規則(base ADR-00000011 §1:頂層 docker recipe 這個「特例」正是讓模型難教、
+   難擴充的原因;重複 recipe 名在 `just` 是硬錯誤,`mod?` 是唯一免衝突的機制,
+   ADR-00000010)。
+2. **namespace 以動作命名**:`test`(所有 CI 檢查,**含 lint**)、`box`(盒子
+   生命週期)。**不用** `ci` / `cd` 這類描述機制、不描述動作的名字(base
+   ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
+   同儕,而是 `just test lint`。
+3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
+   **全部**(lint、unit、integration、system、acceptance、system-real,依序,遇到第一個
+   失敗即停);`just test unit` 只跑單元層;`just box assemble --dry-run` 只印指令、
+   不執行(base ADR-00000011 §3)。
+4. **justfile 是薄轉發器**:每個 recipe 就是把 `*args` **原樣**傳給對應腳本的一行
+   (`just` 不吃 `--flag` 與 `VAR=VALUE`,這正是 base ADR-00000005 捨棄 make 的原因)。
+   **所有**參數驗證、usage 文字、選項清單與 `--help` 都住在腳本;justfile **不印**
+   任何 usage 或「valid: ...」清單。因此 `just test bogus` 得到的是 `just` 自己的
+   「Justfile does not contain recipe `bogus`」(exit 1、什麼都不跑);
+   `just box assemble --bogus` 得到的是 `assemble.sh` 自己的
+   `assemble.sh: unknown option '--bogus' (see --help)`(exit 2、什麼都不跑)。
+5. **每個 module 都有自己的 `default` 與 `help`(alias `h`)**,並以
+   `set working-directory := '../..'` 讓 recipe 一律在 repo 根目錄執行(module 檔住在
+   `script/<ns>/`,`just` 預設以 module 檔所在目錄為 cwd)。namespace 層級的說明是
+   `just <ns>` 或 `just <ns> help`;recipe 層級的 `--help` 由 recipe 原樣轉發給腳本
+   (base ADR-00000011 §6:`just <ns> --help` 這種帶橫線的名字不會被 `just` 當成
+   recipe,所以 namespace 說明走 `help` recipe)。recipe 上方那一行英文註解就是
+   `just --list` 顯示的說明,保持一行。
+
+**root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
+
+```just
+mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+
+# Default: list the namespaces.
+default:
+    @just --list
+```
+
+**namespace `test`**(`script/test/justfile.test`,`set working-directory := '../..'`,
+`set positional-arguments`:recipe 以 `"$@"` 原樣轉發額外參數 —— 不用 `{{args}}`,因為它會先
+把參數以空白接成一個字串再交給 shell 重切,含空白的路徑會被拆開;下表「轉發到」欄就是
+recipe 原文,也是 `just` 執行時回顯的那一行):
+
+| 指令 | 轉發到 |
+|------|--------|
+| `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
+| `just test build [args]` | `./script/test/test.sh --build "$@"` |
+| `just test lint [args]` | `./script/test/test.sh --lint "$@"` |
+| `just test unit [args]` | `./script/test/test.sh --unit "$@"` |
+| `just test integration [args]` | `./script/test/test.sh --integration "$@"` |
+| `just test system [args]` | `./script/test/test.sh --system "$@"` |
+| `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
+| `just test acceptance [args]` | `./script/test/test.sh --acceptance "$@"` |
+| `just test selfcheck [args]` | `./script/test/selfcheck.sh "$@"`(交付自檢;`--root X` 原樣傳入) |
+| `just test help` / `just test h` | `./script/test/test.sh --help` |
+
+**namespace `box`**(`script/box/justfile.box`,`set working-directory := '../..'`):
+
+| 指令 | 轉發到 |
+|------|--------|
+| `just box` | 列出 box 的動詞:`@just --justfile '{{source_file()}}' --list` |
+| `just box assemble [args]` | `./script/box/assemble.sh "$@"`(args:`--dry-run`、`--file <manifest>`、`--help`) |
+| `just box help` / `just box h` | `./script/box/assemble.sh --help`(M2 只有 assemble 一個動詞) |
+
+**腳本佈局**(module 檔與它轉發的腳本住在同一個 `script/<ns>/`;`script/ci/` 不再
+存在,`script/selfcheck.sh` 與 `script/assemble.sh` 搬進 namespace 目錄):
+
+```text
+script/
+├── test/
+│   ├── justfile.test           namespace test
+│   ├── test.sh                 Docker-only gate(原 script/ci/ci.sh):host 旗標 --build / --lint / --unit /
+│   │                           --integration / --system / --system-real / --acceptance;不帶旗標 = 全部;
+│   │                           --help;未知選項 -> `test.sh: unknown option '<x>' (see --help)`、exit 2
+│   ├── selfcheck.sh            交付自檢(原 script/selfcheck.sh;--root <repo>、--help)
+│   └── system-real-entry.sh    DinD runner 入口(原 script/ci/system-real-entry.sh)
+└── box/
+    ├── justfile.box            namespace box
+    └── assemble.sh             assemble 包裝器(原 script/assemble.sh):--dry-run / --file <manifest> /
+                                --help;未知選項 -> `assemble.sh: unknown option '<x>' (see --help)`、exit 2
+```
+
+腳本在沒有 `just` 時仍可直接執行(`./script/test/test.sh --unit`),但那是實作細節;
+文件與 README 以 `just ...` 為主要用法,腳本形式只作為底層一併標出。
+
+**取代同日稍早的扁平設計**:本條第一版(同日)採扁平的單一 `justfile`:`just build` /
+`just lint` / `just test [tier]` / `just check` / `just selfcheck` /
+`just assemble [mode] [file]`,tier 與 mode 的驗證(`case` 加「valid: ...」清單)寫在
+justfile 裡、以位置參數選模式。對照 base 審視後,同日改為本模型:那一版的頂層
+recipe 全是特例(規則 1)、`lint` 與 `check` 是 `test` 的頂層同儕(規則 2)、位置參數
+`[mode] [file]` 的意義靠位置記(規則 3;base ADR-00000011 明確拒絕
+`just test foo.bats` 這種裸位置參數,改用 `--file`)、驗證與 usage 住在 justfile
+(規則 4)。
+
+**來源**:`just` 本身承襲自 init_ubuntu(該 repo 的 ADR-0022「`just` replaces `make`
+as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci` 雙檔與
+`just -f justfile.ci <recipe>` 的呼叫慣例,但在 worktool 層級一直沒有正式決策;
+本條補上,命令模型則以 base ADR-00000005/10/11 為準。
+
+**規則(往後每個 milestone)**:
+
+1. 一個新的使用者動作 = **對的 namespace 裡的一個 recipe**(或一個新的 `mod?`
+   namespace,附自己的 `justfile.<ns>` 與 `script/<ns>/`)+ **一個 justfile spec
+   案例**(`test/unit/justfile_spec.bats`:recipe 存在、`*args` 原樣抵達腳本、壞參數
+   由腳本而非 justfile 拒絕)+ **腳本自己擁有 `--help`**(usage、選項驗證、錯誤
+   訊息)。三者缺一不可。例如 M3 的 `enter` / `rm` 就是 `box` namespace 的兩個
+   recipe 加各自的腳本。
+2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
+3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
+   (lint、test-unit、test-integration、test-system、test-acceptance、
+   test-system-real、ci-passed),matrix 以 `just test <tier>` 執行(tier 為 lint /
+   unit / integration / system / acceptance),real job 以 `just test system-real`
+   執行。
+4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
+   M4 之前為**前置需求**(host 需自行安裝 docker + just)。
+
 ## Milestone 計畫(細化;每個結束有人類 gate)
 
 > 草案,供討論。定稿後才進 M1。前半(M1-M4)是基礎框架,依相依順序;後半的
@@ -103,7 +245,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
 - M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
-- M4 host bootstrap:install.sh 在 host 裝 docker+distrobox(冪等、可重跑)。
+- M4 host bootstrap:install.sh 在 host 裝 docker+distrobox+`just`(冪等、
+  可重跑;`just` 在此之前為前置需求,見「決策」)。
   Checkpoint:全新機器一鍵到「盒子可 assemble」。Exit:人類審核。
 
 ### 後半:移植(依重要順序,最常用先)

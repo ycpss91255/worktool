@@ -1,0 +1,189 @@
+#!/usr/bin/env bats
+# test/unit/test_sh_spec.bats - script/test/test.sh host-side CLI (M2)
+#
+# WHAT THIS PROVES
+#   The test runner owns its own usage and validation (the justfiles are
+#   thin forwarders and print nothing of their own):
+#
+#     --help / -h    usage on its own, exit 0, every host flag named, no
+#                    docker call
+#     --bogus        `test.sh: unknown option '--bogus' (see --help)` on
+#                    stderr, exit 2, nothing on stdout, no docker call -
+#                    validation happens BEFORE anything runs
+#     (no flag)      everything CI runs, in this order: lint, unit,
+#                    integration, system, acceptance, system-real; the
+#                    run stops at the first failing step
+#     --<tier>       exactly that one gate, nothing else
+#     --build        the test image build only
+#
+# HOW
+#   The REAL script/test/test.sh runs with a FAKE `docker` first on PATH
+#   that records every call (one line per call) and answers as told:
+#   exit 0, or exit 1 when the call mentions $FAKE_DOCKER_FAIL_ON. Every
+#   host-side route ends in a docker call (a `docker run` of the in-container
+#   flag, or the DinD runner's `docker build` + `docker run --privileged`), so
+#   the recorded sequence IS the order the runner dispatched. No container
+#   is ever started. TEST_IMAGE_PREBUILT=1 skips the test-image build, as CI
+#   does, so the record holds only the gate calls (plus the runner image
+#   build that --system-real always does).
+
+load "${BATS_TEST_DIRNAME}/../helper/common"
+
+setup() {
+    TEST_SH="${REPO_ROOT}/script/test/test.sh"
+    FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
+    export FAKE_DOCKER_CALLS="${BATS_TEST_TMPDIR}/docker.calls"
+    unset FAKE_DOCKER_FAIL_ON
+    mkdir -p "${FAKE_BIN}"
+    cat >"${FAKE_BIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"${FAKE_DOCKER_CALLS}"
+if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
+    exit 1
+fi
+exit 0
+EOF
+    chmod +x "${FAKE_BIN}/docker"
+    export PATH="${FAKE_BIN}:${PATH}"
+    export TEST_IMAGE_PREBUILT=1
+}
+
+# Print the gate each recorded docker call dispatched, in order: the
+# in-container flag of a `docker run`, or `system-real-entry.sh` for the
+# DinD runner launch, or `build` for an image build.
+_dispatched() {
+    [[ -f "${FAKE_DOCKER_CALLS}" ]] || return 0
+    sed -nE \
+        -e 's/^docker run .* (--ci-[a-z-]+)$/\1/p' \
+        -e 's/^docker run .*(system-real-entry\.sh)$/\1/p' \
+        -e 's/^docker build .*$/build/p' \
+        "${FAKE_DOCKER_CALLS}"
+}
+
+EVERYTHING_IN_ORDER="$(printf '%s\n' \
+    --ci-lint --ci-unit --ci-integration --ci-system --ci-acceptance \
+    build system-real-entry.sh)"
+
+# --- --help ------------------------------------------------------------------
+
+@test "test.sh --help exits 0, names every host flag, and calls nothing" {
+    run "${TEST_SH}" --help
+    assert_success
+    local _flag
+    for _flag in --build --lint --unit --integration --system --system-real \
+        --acceptance --help; do
+        assert_output --partial "${_flag}"
+    done
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh -h is the same as --help" {
+    run "${TEST_SH}" --help
+    local _long="${output}"
+    run "${TEST_SH}" -h
+    assert_success
+    assert_output "${_long}"
+}
+
+# --- unknown option: refused before anything runs ---------------------------
+
+@test "test.sh --bogus exits 2 with the documented message on stderr, nothing on stdout, no docker call" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    run bash -c '"$1" --bogus >"$2" 2>"$3"' _ "${TEST_SH}" "${_out}" "${_err}"
+    assert_failure 2
+    run cat "${_out}"
+    assert_output ""
+    run cat "${_err}"
+    assert_output "test.sh: unknown option '--bogus' (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh --help --bogus is refused as a whole: exit 2, no usage, no docker call" {
+    run "${TEST_SH}" --help --bogus
+    assert_failure 2
+    assert_output "test.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage:"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh --help --ci-unit --unit is refused as a whole: the flag-combination rule wins over help" {
+    run "${TEST_SH}" --help --ci-unit --unit
+    assert_failure 2
+    assert_output "test.sh: internal flag --ci-unit takes no other option (see --help)"
+    refute_output --partial "Usage:"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh --unit --bogus is refused as a whole: the unit gate never runs" {
+    run "${TEST_SH}" --unit --bogus
+    assert_failure 2
+    assert_output "test.sh: unknown option '--bogus' (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "the old --<tier>-only spellings are gone" {
+    run "${TEST_SH}" --unit-only
+    assert_failure 2
+    assert_output "test.sh: unknown option '--unit-only' (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+# --- no flag: everything, in order, stop at the first failure --------------
+
+@test "test.sh with no flag runs lint, unit, integration, system, acceptance, system-real in that order" {
+    run "${TEST_SH}"
+    assert_success
+    assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
+}
+
+@test "test.sh with no flag stops at the first failing step" {
+    FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
+    assert_failure
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint --ci-unit --ci-integration --ci-system)"
+}
+
+@test "test.sh with no flag stops when lint fails: no tier runs" {
+    FAKE_DOCKER_FAIL_ON=--ci-lint run "${TEST_SH}"
+    assert_failure
+    assert_equal "$(_dispatched)" "--ci-lint"
+}
+
+# --- one flag: exactly that gate ---------------------------------------------
+
+@test "test.sh --<tier> routes exactly that in-container gate and nothing else" {
+    local _tier
+    for _tier in lint unit integration system acceptance; do
+        rm -f "${FAKE_DOCKER_CALLS}"
+        run "${TEST_SH}" "--${_tier}"
+        assert_success
+        assert_equal "$(_dispatched)" "--ci-${_tier}"
+    done
+}
+
+@test "test.sh --system-real builds the runner image, then launches the DinD entry, and nothing else" {
+    run "${TEST_SH}" --system-real
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' build system-real-entry.sh)"
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build .*Dockerfile\.system-real'
+    assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
+}
+
+@test "test.sh --build builds the test image and runs no gate" {
+    unset TEST_IMAGE_PREBUILT
+    run "${TEST_SH}" --build
+    assert_success
+    assert_equal "$(_dispatched)" "build"
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build .*Dockerfile\.test '
+}
+
+# --- the in-container path is wired to the NEW location ---------------------
+
+@test "a host-side gate runs ./script/test/test.sh --ci-<tier> inside the container" {
+    run "${TEST_SH}" --unit
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+}
