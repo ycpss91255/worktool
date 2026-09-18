@@ -110,19 +110,27 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
 
 ## 測試對應
 
-四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 落地:
+四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 四層**全部落地**,每一
+層都是 CI 的必要 gate;下面逐層寫明**驗證什麼**與**延後什麼**,M2 的邊界是誠實
+的:**沒有任何一層宣稱「可用的盒子」已被驗證**(那需要真正的容器管理器,延後到
+M5)。
 
-- 單元(`test/unit/manifest_spec.bats`、`test/unit/assemble_spec.bats`):清單驗證
-  (有效通過;缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 / 引號內純空白 image /
-  image 出現在區段之前 / 多區段皆以正確訊息失敗)與指令組裝(dry-run 印出正確的
-  `distrobox assemble create --file ...`,且不執行;從 repo 以外執行時輸出解析後的
-  絕對路徑;含空白與 shell 特殊字元的路徑經跳脫後可還原成單一參數)。純 bash、
-  完全可 mock。
-- 整合(`test/integration/assemble_spec.bats`):把一支 **mock `distrobox`** 放到
-  PATH(**逐一參數**、每行一個地記錄自己被呼叫的參數),以真實(非 dry-run)模式跑
-  包裝器,斷言它確實以 `assemble create --file <解析後的清單>` 呼叫 distrobox;另外
-  斷言「從 repo 以外執行會傳入解析後的絕對路徑」以及「清單無效時完全不呼叫
-  distrobox 且以非零結束」。證明端到端接線,而不需要真正的 distrobox。
+- 單元(`test/unit/manifest_spec.bats`、`test/unit/assemble_spec.bats`):
+  - **驗證什麼**:清單驗證(有效通過;缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
+    引號內純空白 image / image 出現在區段之前 / 多區段皆以正確訊息失敗)與指令組裝
+    (dry-run 印出正確的 `distrobox assemble create --file ...`,且不執行;從 repo
+    以外執行時輸出解析後的絕對路徑;含空白與 shell 特殊字元的路徑經跳脫後可還原成
+    單一參數)。純 bash、完全可 mock。
+  - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
+    系統層的事。
+- 整合(`test/integration/assemble_spec.bats`):
+  - **驗證什麼**:把一支 **mock `distrobox`** 放到 PATH(**逐一參數**、每行一個地
+    記錄自己被呼叫的參數),以真實(非 dry-run)模式跑包裝器,斷言它確實以
+    `assemble create --file <解析後的清單>` 呼叫 distrobox;另外斷言「從 repo 以外
+    執行會傳入解析後的絕對路徑」以及「清單無效時完全不呼叫 distrobox 且以非零
+    結束」。證明包裝器到 distrobox 的接線。
+  - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
+    能建出來。
 - 系統(`test/system/real_assemble_spec.bats`):在測試映像內執行**真正的、鎖定
   版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,建置時驗證
   tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
@@ -148,9 +156,33 @@ WORKTOOL_DRY_RUN=1 ./script/assemble.sh
   - gate:`just -f justfile.ci test-system`(CI `test-system` job,必要)。
     `script/ci/ci.sh` 對每一層 bats gate 都要求「至少跑了一個案例、無失敗、無
     `skip`」,被 skip 或不存在的必要案例**不會**被當成綠燈。
+- 交付/驗收(`test/acceptance/m2_selfcheck_spec.bats`):
+  - **驗證什麼**:以使用者拿到交付品的方式驗證 —— 直接執行交付的公開入口
+    **`script/selfcheck.sh`**(就是下方 3g 要使用者跑的那支;測試**不**在 bats 裡
+    重寫它的檢查),斷言它 exit 0 且印出 `ALL PASS`(3a/3b 的 dry-run 契約 + 3c-3e
+    五個無效清單的拒絕,共 7 個 `PASS`),從 repo 內或 repo 外執行皆然;並以負向
+    案例證明它的判定不是空的:清單壞掉(缺 image)時、以及包裝器被換成「跳過驗證、
+    永遠印成功指令」的版本時,都必須報 `SOME FAILED` 且 exit 1;`--root` 指到
+    不是 worktool checkout 的目錄時給出清楚錯誤。
+  - **不證明什麼(延後)**:真實硬體上可用的盒子(進盒、工具可執行、效能目標)——
+    留在下方「M2 驗收紀錄」的人類清單,並延後到 **M5**。
+  - gate:`just -f justfile.ci test-acceptance`(CI `test-acceptance` job,必要)。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);執行方式見
 [`structure.md`](structure.md)。
+
+## M2 驗收紀錄(人類清單)
+
+M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的 commit SHA;「結果」
+填 PASS / FAIL / 延後;「證據」填可回溯的連結或指令輸出。**能自動化的已自動化**
+(前兩列由 CI 與 `script/selfcheck.sh` 產生證據);需要真實機器的項目誠實標為延後,
+並寫明延到哪個 milestone。
+
+| 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
+|------|--------------|------|------|------|------|
+| 自動化四層全綠(lint + unit + integration + system + acceptance) | PR #20 head(審核時填 SHA) | GitHub Actions `ubuntu-latest`,Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5) | `ci-passed` 綠:五個 gate 皆 `success`,無 skip、無零案例 | 待審核填寫 | PR #20 的 checks 頁面(`ci-passed` job 記錄) |
+| 一鍵自檢 `./script/selfcheck.sh` 印出 `ALL PASS` | PR #20 head(審核時填 SHA) | 任一有 bash 的機器(clone 後於 repo 根目錄執行;不需 distrobox) | 7 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `./script/selfcheck.sh; echo rc=$?` 的輸出 |
+| 真實可用盒(`bash script/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行) | — | 真實機器:docker + distrobox | 盒子建立、`ripgrep` / `fzf` 可用 | **延後 —— M5**(自動化走 CI 內 docker-in-docker 系統測試;見 [`design.md`](design.md)) | —(不在 M2 範圍;M2 只證明清單被真實 distrobox 解析成正確的 create 請求) |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -175,7 +207,7 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
 
 ### 2. 自動測試(全部在 Docker 內,不需 just / distrobox)
 
-入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑四道 gate:
+入口是 `./script/ci/ci.sh`。第一次可先建測試映像,再依序跑五道 gate:
 
 ```bash
 ./script/ci/ci.sh --build              # (選用) 先建 worktool-test:local 測試映像
@@ -183,6 +215,7 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
 ./script/ci/ci.sh --unit-only          # 單元 bats(test/unit/)
 ./script/ci/ci.sh --integration-only   # 整合 bats(test/integration/)
 ./script/ci/ci.sh --system-only        # 系統 bats(test/system/;真實 distrobox + 假容器管理器)
+./script/ci/ci.sh --acceptance-only    # 驗收 bats(test/acceptance/;跑交付的 script/selfcheck.sh)
 ```
 
 - `--build` 是選用的:後面的 gate 若發現映像不存在會自動建。想先暖快取、或快速驗
@@ -196,6 +229,9 @@ git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 mai
   - `--system-only`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成
     帶 `dev` / `ubuntu:26.04` / `ripgrep fzf` 的 create 請求;管理器失敗會傳回非零),
     結尾 `[ci] system bats OK`。
+  - `--acceptance-only`:所有測項 `ok`(交付的 `script/selfcheck.sh` 對交付的 repo
+    印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
+    `[ci] acceptance bats OK`。
 - 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
   或根本沒跑到任何案例,同樣視為失敗。
 
@@ -271,47 +307,35 @@ bash script/assemble.sh --file /tmp/multi.ini; echo "exit=$?"
 dry-run 輸出採逐一參數的 `%q` 跳脫,所以含空白、`;` 或 `$()` 的路徑會被表示成單一安全
 參數,可直接複製貼上忠實重跑,不會被再次拆分或解讀。
 
-**3g.(選用)一鍵自檢**
+**3g. 一鍵自檢(交付的公開入口)**
 
-想一次跑完上面的 dry-run 斷言,可在 repo 根目錄執行下列腳本(全綠即通過):
+想一次跑完上面 3a-3e 的斷言,執行交付的自檢腳本 [`script/selfcheck.sh`](../script/selfcheck.sh)
+(只需要 bash;不需要 distrobox、不動 host):
 
 ```bash
-bash -c '
-set -uo pipefail
-root="$(pwd -P)"; tmp="$(mktemp -d)"; trap "rm -rf -- \"$tmp\"" EXIT; fail=0
-
-# 3a 正常 dry-run:相對路徑
-out="$(WORKTOOL_DRY_RUN=1 bash script/assemble.sh)"
-[ "$out" = "distrobox assemble create --file box/dev.ini" ] \
-  && echo "PASS 3a" || { echo "FAIL 3a: $out"; fail=1; }
-
-# 3b repo 外呼叫:絕對路徑
-out="$(cd "$tmp" && WORKTOOL_DRY_RUN=1 bash "$root/script/assemble.sh")"
-[ "$out" = "distrobox assemble create --file $root/box/dev.ini" ] \
-  && echo "PASS 3b" || { echo "FAIL 3b: $out"; fail=1; }
-
-# 負向案例:應 exit=1、STDOUT 為空、STDERR 含指定訊息
-check() { # <file> <expected-msg>
-  local o e rc=0
-  o="$(bash script/assemble.sh --file "$1" 2>"$tmp/err")" || rc=$?
-  e="$(cat "$tmp/err")"
-  { [ "$rc" -eq 1 ] && [ -z "$o" ] && case "$e" in *"$2"*) true;; *) false;; esac; } \
-    && echo "PASS $1" || { echo "FAIL $1 (rc=$rc): $e"; fail=1; }
-}
-printf "[dev]\n"                                   > "$tmp/no-image.ini"
-printf "[   ]\nimage=ubuntu:26.04\n"               > "$tmp/blank-name.ini"
-printf "[dev]\nimage=\"   \"\n"                    > "$tmp/blank-image.ini"
-printf "[dev]\nimage= \"   \"\n"                   > "$tmp/spaced-image.ini"
-printf "[dev]\nimage=ubuntu:26.04\n[b]\nimage=x\n" > "$tmp/multi.ini"
-check "$tmp/no-image.ini"    "missing required key '"'"'image'"'"'"
-check "$tmp/blank-name.ini"  "missing box name"
-check "$tmp/blank-image.ini" "missing required key '"'"'image'"'"'"
-check "$tmp/spaced-image.ini" "missing required key '"'"'image'"'"'"
-check "$tmp/multi.ini"       "multiple sections"
-
-[ "$fail" -eq 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }
-'
+./script/selfcheck.sh; echo "rc=$?"
 ```
+
+預期輸出(每項一行 `PASS`,結尾 `ALL PASS`、`rc=0`):
+
+```text
+[INFO] self-checking /path/to/worktool
+PASS 3a
+PASS 3b
+PASS reject no-image.ini
+PASS reject blank-name.ini
+PASS reject blank-image.ini
+PASS reject spaced-image.ini
+PASS reject multi.ini
+ALL PASS
+rc=0
+```
+
+任一項不符會印 `FAIL <項目>: rc=... stdout='...' stderr='...'`,結尾 `SOME FAILED`、
+`rc=1`。腳本預設檢查它自己所在的 checkout,從任何目錄執行都可以;要檢查另一份
+checkout 用 `./script/selfcheck.sh --root <repo>`(指到不是 worktool checkout 的目錄
+會以 `[ERROR]`、`rc=2` 結束)。驗收層測試(`test/acceptance/`)跑的就是這支腳本,
+並且以「清單壞掉」與「包裝器跳過驗證」兩個負向案例證明它會誠實地報 `SOME FAILED`。
 
 ### 4. 真實 assemble(選用,M2 非必須)
 
