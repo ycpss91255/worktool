@@ -14,8 +14,10 @@
 # repo; and its verdict is not vacuous - a broken manifest and a wrapper
 # that skips validation are both reported as SOME FAILED with exit 1.
 #
-# What this does not prove (deferred, see doc/manifest.md 驗收紀錄): a real
-# usable box on real hardware. That item stays on the human checklist.
+# What this does not prove: a usable box. That is the system tier's job -
+# test/system/real_engine_spec.bats (M2, docker-in-docker) proves it in CI;
+# real hardware (performance, non-root user, GPU) stays on the human
+# checklist (doc/manifest.md 驗收紀錄) and M3/M5.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -47,10 +49,13 @@ _make_repo_copy() {
     refute_line --regexp '^FAIL'
     refute_line "SOME FAILED"
     # Every documented check reported PASS: the two dry-run contracts and the
-    # five invalid-manifest rejections (doc/manifest.md 3a-3e).
+    # seven invalid-manifest rejections (doc/manifest.md 3a-3e, including the
+    # single-quoted blank image and the unbalanced-quote image).
     assert_line "PASS 3a"
     assert_line "PASS 3b"
-    assert_equal "$(printf '%s\n' "${lines[@]}" | grep -c '^PASS ')" "7"
+    assert_line "PASS reject single-quoted-image.ini"
+    assert_line "PASS reject unbalanced-quote-image.ini"
+    assert_equal "$(printf '%s\n' "${lines[@]}" | grep -c '^PASS ')" "9"
 }
 
 @test "selfcheck works from outside the repo (defaults to its own checkout)" {

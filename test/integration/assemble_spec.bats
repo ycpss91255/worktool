@@ -6,9 +6,11 @@
 # without needing real distrobox: a MOCK `distrobox` on PATH records the
 # arguments it was called with, and the spec asserts on them.
 #
-# A real `distrobox assemble` (distrobox + docker/podman, docker-in-docker)
-# is the system-level check deferred to M5 (see doc/design.md); this
-# integration test verifies the wiring, not a real container build.
+# A real `distrobox assemble` against a real engine is the system tier's
+# job and lives in M2: test/system/real_engine_spec.bats (docker-in-docker)
+# proves the delivered manifest builds a usable box; M5 keeps only the
+# broader environment matrix (real hardware, non-root user, other images).
+# This integration test verifies the wiring, not a real container build.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -74,5 +76,18 @@ setup() {
     printf '[dev]\n' >"${_bad}"
     run "${ASSEMBLE}" --file "${_bad}"
     assert_failure
+    assert [ ! -f "${RECORD}" ]
+}
+
+@test "an image with an unbalanced quote never invokes distrobox" {
+    # distrobox-assemble sources `image='ubuntu:26.04"` as a shell
+    # assignment, where the unbalanced quote is a syntax error. worktool's
+    # pre-flight must reject it (exit 1, its own clear message) so distrobox
+    # is never called: the mock records zero calls.
+    local _bad="${BATS_TEST_TMPDIR}/unbalanced.ini"
+    printf "[dev]\nimage='ubuntu:26.04\"\n" >"${_bad}"
+    run "${ASSEMBLE}" --file "${_bad}"
+    assert_failure 1
+    assert_output --partial "unbalanced quote"
     assert [ ! -f "${RECORD}" ]
 }
