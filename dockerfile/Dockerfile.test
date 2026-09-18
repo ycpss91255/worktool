@@ -1,9 +1,19 @@
 # Dockerfile.test - lightweight lint/test image for worktool (M1/M2)
 #
-# Bundles bash + bats (+ bats-support / bats-assert) + shellcheck + a pinned
-# real distrobox so the whole test pyramid runs in Docker only (doc/design.md
-# test strategy). Modelled on init_ubuntu's test-tools image, stripped to
-# essentials: no kcov, fish, TUI, gum, or module-lifecycle tooling.
+# Bundles bash + bats (+ bats-support / bats-assert) + shellcheck + just + a
+# pinned real distrobox so the whole test pyramid runs in Docker only
+# (doc/design.md test strategy). Modelled on init_ubuntu's test-tools image,
+# stripped to essentials: no kcov, fish, TUI, gum, or module-lifecycle
+# tooling.
+#
+# just (M2): `just` IS the user interface - the repo-root justfile mod?s the
+# `test` and `box` namespaces (script/test/justfile.test,
+# script/box/justfile.box: `just test unit`, `just box assemble`, ...). The
+# alpine package is enough for the unit spec that exercises them
+# (test/unit/justfile_spec.bats: --list / real dispatch against stubbed
+# scripts); the justfiles must stay within what that packaged version and
+# just >= 1.53 on the host both support (mod?, source_file(),
+# set working-directory, set positional-arguments).
 #
 # distrobox (system tier, M2): the upstream release is a bundle of POSIX
 # shell scripts, so it runs on alpine as-is. It is installed with its own
@@ -13,7 +23,7 @@
 # Usage:
 #   docker build -t worktool-test:local -f dockerfile/Dockerfile.test .
 #   docker run --rm -v "$PWD:/source" -w /source worktool-test:local \
-#     ./script/ci/ci.sh --ci-unit
+#     ./script/test/test.sh --ci-unit
 
 # Single source of truth for the pinned distrobox release (also exported as
 # ENV DISTROBOX_VERSION in the final stage so specs can assert on it).
@@ -70,12 +80,16 @@ ARG DISTROBOX_VERSION
 #           distrobox's host-side scripts also rely on GNU `base64 -w`,
 #           `realpath`, `id -r*`, `mktemp -u`
 # ncurses - `tput`-style terminal queries stay sane under a non-tty harness
+# just    - the user-facing task runner (root justfile + the test / box
+#           namespace modules); exercised by test/unit/justfile_spec.bats,
+#           never used to launch the gates from inside the container
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
         bash \
         git \
         grep coreutils \
-        ncurses
+        ncurses \
+        just
 
 # bats core + extensions (bats-support / bats-assert)
 COPY --from=bats-src /opt/bats /opt/bats
@@ -94,10 +108,12 @@ ENV DISTROBOX_VERSION=${DISTROBOX_VERSION}
 RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
 
 # Smoke check baked into the image so a corrupted build fails fast at CI
-# rather than mid-test-run. distrobox must report exactly the pinned version.
+# rather than mid-test-run. distrobox must report exactly the pinned version;
+# the just version is echoed into the build log (it is whatever alpine ships).
 RUN bash --version >/dev/null && \
     bats --version >/dev/null && \
     shellcheck --version >/dev/null && \
+    just --version && \
     [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
 
 WORKDIR /source
