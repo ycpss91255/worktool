@@ -17,10 +17,12 @@ setup() {
     MOCKBIN="${BATS_TEST_TMPDIR}/bin"
     RECORD="${BATS_TEST_TMPDIR}/distrobox.args"
     mkdir -p "${MOCKBIN}"
-    # Record-only stub: write the args it was invoked with, then succeed.
+    # Record-only stub: write each arg on its OWN line (per-arg, not $*), so a
+    # path containing spaces or shell metachars stays a single recorded token.
+    # Then succeed.
     {
         printf '#!/usr/bin/env bash\n'
-        printf 'printf "%%s\\n" "$*" >"%s"\n' "${RECORD}"
+        printf 'printf "%%s\\n" "$@" >"%s"\n' "${RECORD}"
     } >"${MOCKBIN}/distrobox"
     chmod +x "${MOCKBIN}/distrobox"
     PATH="${MOCKBIN}:${PATH}"
@@ -36,8 +38,12 @@ setup() {
     cd "${REPO_ROOT}"
     run "${ASSEMBLE}"
     assert_success
+    # Args are recorded one-per-line; assert each token independently.
     run cat "${RECORD}"
-    assert_output "assemble create --file box/dev.ini"
+    assert_line --index 0 "assemble"
+    assert_line --index 1 "create"
+    assert_line --index 2 "--file"
+    assert_line --index 3 "box/dev.ini"
 }
 
 @test "assemble validates box/dev.ini before invoking distrobox" {
@@ -47,4 +53,26 @@ setup() {
     assert_success
     # The stub only runs after validation passes; its record must exist.
     assert [ -f "${RECORD}" ]
+}
+
+@test "assemble from outside the repo passes the resolved absolute path" {
+    # From outside the repo, the relative default only resolves against
+    # REPO_ROOT; distrobox must receive that same resolved absolute path, not
+    # a bare `box/dev.ini` that would not exist from here.
+    cd "${BATS_TEST_TMPDIR}"
+    run "${ASSEMBLE}"
+    assert_success
+    run cat "${RECORD}"
+    assert_line --index 2 "--file"
+    assert_line --index 3 "${REPO_ROOT}/box/dev.ini"
+}
+
+@test "an invalid manifest never invokes distrobox" {
+    # Validation must fail-fast BEFORE any real distrobox call: the mock must
+    # never run (no record file) and the wrapper must exit non-zero.
+    local _bad="${BATS_TEST_TMPDIR}/bad.ini"
+    printf '[dev]\n' >"${_bad}"
+    run "${ASSEMBLE}" --file "${_bad}"
+    assert_failure
+    assert [ ! -f "${RECORD}" ]
 }
