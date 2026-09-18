@@ -27,10 +27,15 @@
 #               (script/ci/system-real-entry.sh) starts dockerd and then calls
 #               back into --ci-system-real. --privileged is used ONLY here.
 #
-# A bats tier gate is green ONLY if at least one case ran and none was
-# skipped: bats exits 0 on skips, so the TAP stream is scanned and a skipped
-# or missing required case fails the gate instead of reading as green. This
-# applies to both system groups.
+# A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
+# and defines at least one case (see _required_specs: the M2 specs, listed
+# per tier), the TAP plan covers at least those cases, at least one case ran
+# and none was skipped. bats exits 0 on skips and happily runs a tier whose
+# required spec was deleted or emptied as long as some other spec remains,
+# so the required list is checked per file BEFORE bats runs and the TAP
+# stream is scanned AFTER: a missing, emptied or skipped required case fails
+# the gate instead of reading as green. Additional (non-required) specs in a
+# tier still run on top. This applies to both system groups.
 #
 # Usage:
 #   ./script/ci/ci.sh --lint-only          # host: route lint into container
@@ -68,15 +73,77 @@ SYSTEM_REAL_DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.system-real"
 SYSTEM_REAL_ENTRY="./script/ci/system-real-entry.sh"
 
 # The one system spec that needs a real engine (real-engine group). Every
-# other test/system/*.bats is the shim group.
-SYSTEM_REAL_SPEC="${REPO_ROOT}/test/system/real_engine_spec.bats"
+# other test/system/*.bats is the shim group. The test/-relative form is the
+# single source for both the exclusion below and the required list.
+SYSTEM_REAL_SPEC_REL="system/real_engine_spec.bats"
+SYSTEM_REAL_SPEC="${REPO_ROOT}/test/${SYSTEM_REAL_SPEC_REL}"
 
 # --- Logging -----------------------------------------------------------------
 _info() { printf '[ci] %s\n' "$*" >&2; }
 
+_err() { printf '[ci] ERROR: %s\n' "$*" >&2; }
+
 _die() {
-    printf '[ci] ERROR: %s\n' "$*" >&2
+    _err "$@"
     exit 1
+}
+
+# --- Required specs per tier -------------------------------------------------
+
+# Print the REQUIRED spec files of tier $1, test/-relative, one per line.
+# This is the M2 contract: a tier is red when any of these is missing or
+# defines zero cases, no matter what else runs in the tier. Every other
+# *.bats under the tier is additional and still runs. Returns 1 (prints
+# nothing) for an unknown tier, so a tier without a declared list can never
+# pass by accident.
+_required_specs() {
+    case "$1" in
+        unit)
+            printf '%s\n' \
+                unit/log_spec.bats \
+                unit/manifest_spec.bats \
+                unit/assemble_spec.bats \
+                unit/ci_gate_spec.bats \
+                unit/system_real_entry_spec.bats
+            ;;
+        integration)
+            printf '%s\n' \
+                integration/smoke_spec.bats \
+                integration/assemble_spec.bats
+            ;;
+        system)      printf '%s\n' system/real_assemble_spec.bats ;;
+        system-real) printf '%s\n' "${SYSTEM_REAL_SPEC_REL}" ;;
+        acceptance)  printf '%s\n' acceptance/m2_selfcheck_spec.bats ;;
+        *)           return 1 ;;
+    esac
+}
+
+# Check every required spec of tier $1 BEFORE bats runs: the file must exist
+# and define at least one case (`bats --count` parses the file without
+# running it, so an emptied file reads as 0). Stores the required case total
+# in the variable named by $2, for the TAP plan check after the run.
+_check_required_specs() {
+    local _tier="$1"
+    local -n _total_out="$2"
+    local _rel _abs _n _total=0 _seen=0
+    while IFS= read -r _rel; do
+        [[ -n "${_rel}" ]] || continue
+        _seen=1
+        _abs="${REPO_ROOT}/test/${_rel}"
+        [[ -f "${_abs}" ]] \
+            || _die "${_tier} required spec missing: test/${_rel}"
+        _n="$(bats --count "${_abs}")"
+        if [[ ! "${_n}" =~ ^[0-9]+$ ]]; then
+            _die "${_tier} required spec unreadable by bats: test/${_rel}"
+        fi
+        [[ "${_n}" -gt 0 ]] \
+            || _die "${_tier} required spec defines zero cases: test/${_rel}"
+        _total=$(( _total + _n ))
+    done < <(_required_specs "${_tier}")
+    [[ "${_seen}" -eq 1 ]] \
+        || _die "${_tier}: no required specs declared (add them to _required_specs)"
+    _info "  required specs OK (${_total} case(s) declared by $(_required_specs "${_tier}" | wc -l) file(s))"
+    _total_out="${_total}"
 }
 
 # --- Host side: image + container --------------------------------------------
@@ -166,13 +233,40 @@ _run_shellcheck() {
     _info "ShellCheck OK"
 }
 
+# Check the captured TAP stream of tier $1 in file $2 after the run: a plan
+# was emitted, at least one case ran (no "1..0"), the plan covers at least
+# the $3 cases the required specs define, and no case was skipped (bats
+# itself exits 0 on a skip). Prints the reason and returns 1 on any miss.
+_verify_tap() {
+    local _tier="$1" _tap="$2" _min="$3" _plan
+    _plan="$(sed -nE 's/^1\.\.([0-9]+)$/\1/p' "${_tap}" | head -n 1)"
+    if [[ ! "${_plan}" =~ ^[0-9]+$ ]]; then
+        _err "${_tier} bats emitted no TAP plan"
+        return 1
+    fi
+    if [[ "${_plan}" -eq 0 ]]; then
+        _err "${_tier} bats ran zero cases - a missing required case is not green"
+        return 1
+    fi
+    if [[ "${_plan}" -lt "${_min}" ]]; then
+        _err "${_tier} bats plan (${_plan}) is below the required specs' case total (${_min})"
+        return 1
+    fi
+    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+        _err "${_tier} bats has skipped case(s) - a skipped required case is not green"
+        return 1
+    fi
+    return 0
+}
+
 # Run one bats tier as a gate. $1 = tier label; the remaining arguments are
 # the spec paths (files or directories, handed to `bats -r`) that make up
 # the tier. Omit them to run every test/<tier>/*.bats.
 #
-# Green requires: specs exist, at least one case ran (no "1..0" plan), no
-# case failed, and no case was skipped. The TAP stream is captured (and
-# echoed) so skips can be detected - bats itself exits 0 on a skip.
+# Green requires: the paths exist, every required spec of the tier exists
+# and defines cases (_check_required_specs, before bats runs), no case
+# failed, and the TAP stream passes _verify_tap (plan covers the required
+# cases, nothing skipped). The stream is captured (and echoed) for that.
 _run_bats_tier() {
     local _tier="$1"
     shift
@@ -191,21 +285,19 @@ _run_bats_tier() {
         done
     fi
 
+    local _min
+    _check_required_specs "${_tier}" _min
+
     local _tap
     _tap="$(mktemp)" || _die "mktemp failed"
     if ! bats --formatter tap -r "${_paths[@]}" | tee "${_tap}"; then
         rm -f "${_tap}"
         _die "${_tier} bats failed"
     fi
-    if grep -qE '^1\.\.0$' "${_tap}"; then
-        rm -f "${_tap}"
-        _die "${_tier} bats ran zero cases - a missing required case is not green"
-    fi
-    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
-        rm -f "${_tap}"
-        _die "${_tier} bats has skipped case(s) - a skipped required case is not green"
-    fi
+    local _ok=0
+    _verify_tap "${_tier}" "${_tap}" "${_min}" || _ok=1
     rm -f "${_tap}"
+    [[ "${_ok}" -eq 0 ]] || exit 1
     _info "${_tier} bats OK"
 }
 
