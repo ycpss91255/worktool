@@ -80,8 +80,12 @@ worktool/
     入口 `script/ci/system-real-entry.sh` 起巢狀 dockerd)內,以同一鎖定版 distrobox
     與**真實 docker 引擎**把交付的 `box/dev.ini` 建成真正的 `dev` 盒
     (`ubuntu:26.04`),斷言 `distrobox enter dev -- rg --version` / `fzf --version`
-    成功、第二次 assemble 冪等、`distrobox rm -f dev` 清理乾淨;慢(約 2-3 分鐘),
-    host daemon 零殘留。**這一組證明盒子可用**。
+    成功、第二次 assemble 冪等、`distrobox rm -f dev` 清理乾淨;慢(約 2-3 分鐘)。
+    測試建立的容器/映像/volume 都在巢狀 daemon 內、隨 runner 銷毀,host daemon
+    只留下 runner 映像 `worktool-system-real:local` 與建置快取(見
+    [`manifest.md`](manifest.md)「測試對應」的精確說明)。**這一組證明盒子可用**
+    (驗證邊界:套件在第一次 `distrobox enter` 時才初始化,測試證明的是
+    「assemble 後 enter 可完成初始化並使用工具」)。
 - 交付/驗收(acceptance):`test/acceptance/m2_selfcheck_spec.bats` —— 直接執行
   交付的公開入口 `script/selfcheck.sh`,斷言它對交付的 repo 印 `ALL PASS`、
   exit 0;以「清單壞掉」與「包裝器跳過驗證」負向案例證明判定不是空的。仍需要真實
@@ -128,15 +132,16 @@ just -f justfile.ci test
 `--ci-acceptance`)丟進掛載 `/source` 的一次性容器執行;`--system-real-only`
 則以 `docker run --rm --privileged` 啟動 DinD runner,由 runner 入口
 `script/ci/system-real-entry.sh` 起巢狀 dockerd、等 `docker info` 就緒後再呼叫
-`--ci-system-real`,結束時清理盒子並停掉 dockerd(全部隨 runner 容器銷毀,host
-daemon 零殘留;入口對 `docker info` / `docker ps` / `distrobox rm` / `docker rm`
-的每一次呼叫都各自包在 `timeout` 內,等待迴圈以 `WORKTOOL_DOCKERD_READY_TIMEOUT`
-為權威總期限——就緒探測失敗或成功都一樣:探測成功後的引擎資訊查詢只拿得到**剩餘**
-的就緒預算,預算用完就直接略過並說明,整個等待的最壞情況固定為期限 + 5 秒 kill 寬限
-+ 1 秒,daemon 卡死也不會把本機執行拖過期限;`WORKTOOL_DOCKERD_READY_TIMEOUT` /
-`WORKTOOL_DOCKER_CALL_TIMEOUT` 在起 dockerd 之前就先驗證必須是正整數,`0`(等於
-`timeout` 無上限)、負數、非數字一律直接失敗;清理時若查不到剩餘容器數(`docker ps`
-失敗或逾時)會如實印出 `unknown (query failed)` 而不是假的 `0`)。每一層 bats gate(含兩個
+`--ci-system-real`,結束時清理盒子並停掉 dockerd(巢狀 daemon 內的一切隨 runner
+容器銷毀;host daemon 只留 runner 映像與建置快取;入口對 `docker info` /
+`docker ps` / `distrobox rm` / `docker rm` 的每一次呼叫都各自包在 `timeout` 內,
+等待迴圈以 `WORKTOOL_DOCKERD_READY_TIMEOUT` 為權威總期限——就緒探測失敗或成功都一樣:
+探測成功後的引擎資訊查詢只拿得到**剩餘**的就緒預算,預算用完就直接略過並說明,
+整個等待的最壞情況固定為期限 + 5 秒 kill 寬限 + 1 秒,daemon 卡死也不會把本機
+執行拖過期限;`WORKTOOL_DOCKERD_READY_TIMEOUT` / `WORKTOOL_DOCKER_CALL_TIMEOUT`
+在起 dockerd 之前就先驗證必須是正整數,`0`(等於 `timeout` 無上限)、負數、非數字
+一律直接失敗;清理時若查不到剩餘容器數(`docker ps` 失敗或逾時)會如實印出
+`unknown (query failed)` 而不是假的 `0`)。每一層 bats gate(含兩個
 系統組)都在 `ci.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`;
 integration:`smoke_spec`、`assemble_spec`;system shim:`real_assemble_spec`;

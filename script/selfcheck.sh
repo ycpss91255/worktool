@@ -10,7 +10,8 @@
 #   3b  from outside the repo, dry-run prints the resolved ABSOLUTE manifest
 #       path (validation, dry-run output and the real call share one path)
 #   3c-3e  every documented invalid manifest (missing image, blank name,
-#       blank / space-then-quoted image, multiple sections) is rejected with
+#       blank / space-then-quoted / single-quoted-blank image, an image
+#       with an unbalanced quote, multiple sections) is rejected with
 #       exit 1, an EMPTY stdout, and the documented [ERROR] message
 #
 # Output contract (stdout): one `PASS <check>` / `FAIL <check>: <detail>`
@@ -151,17 +152,25 @@ selfcheck_run() {
         "distrobox assemble create --file ${_abs_quoted}"
 
     # 3c-3e: documented invalid manifests are rejected (exit 1, empty stdout,
-    # documented [ERROR] message), and never reach distrobox.
+    # documented [ERROR] message), and never reach distrobox. The
+    # single-quoted blank matters because distrobox-assemble sources each
+    # value as a shell assignment, where '   ' is as blank as "   "; for the
+    # same reason an unbalanced outer quote ('ubuntu:26.04") is a shell
+    # syntax error upstream and must be caught here, with its own message.
     printf '[dev]\n'                                    >"${SELFCHECK_TMP}/no-image.ini"
     printf '[   ]\nimage=ubuntu:26.04\n'                >"${SELFCHECK_TMP}/blank-name.ini"
     printf '[dev]\nimage="   "\n'                       >"${SELFCHECK_TMP}/blank-image.ini"
     printf '[dev]\nimage= "   "\n'                      >"${SELFCHECK_TMP}/spaced-image.ini"
+    printf "[dev]\nimage='   '\n"                       >"${SELFCHECK_TMP}/single-quoted-image.ini"
+    printf "[dev]\nimage='ubuntu:26.04\"\n"             >"${SELFCHECK_TMP}/unbalanced-quote-image.ini"
     printf '[dev]\nimage=ubuntu:26.04\n[b]\nimage=x\n'  >"${SELFCHECK_TMP}/multi.ini"
-    _check_reject "${SELFCHECK_TMP}/no-image.ini"     "missing required key 'image'"
-    _check_reject "${SELFCHECK_TMP}/blank-name.ini"   "missing box name"
-    _check_reject "${SELFCHECK_TMP}/blank-image.ini"  "missing required key 'image'"
-    _check_reject "${SELFCHECK_TMP}/spaced-image.ini" "missing required key 'image'"
-    _check_reject "${SELFCHECK_TMP}/multi.ini"        "multiple sections"
+    _check_reject "${SELFCHECK_TMP}/no-image.ini"               "missing required key 'image'"
+    _check_reject "${SELFCHECK_TMP}/blank-name.ini"             "missing box name"
+    _check_reject "${SELFCHECK_TMP}/blank-image.ini"            "missing required key 'image'"
+    _check_reject "${SELFCHECK_TMP}/spaced-image.ini"           "missing required key 'image'"
+    _check_reject "${SELFCHECK_TMP}/single-quoted-image.ini"    "missing required key 'image'"
+    _check_reject "${SELFCHECK_TMP}/unbalanced-quote-image.ini" "unbalanced quote"
+    _check_reject "${SELFCHECK_TMP}/multi.ini"                  "multiple sections"
 
     if [[ "${SELFCHECK_FAILED}" -eq 0 ]]; then
         printf 'ALL PASS\n'
