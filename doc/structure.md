@@ -27,12 +27,15 @@ worktool/
 │   │   ├── real_assemble_spec.bats  真實 distrobox 1.8.2.5 + 假容器管理器
 │   │   └── fixture/
 │   │       └── fake_container_manager.sh  假 docker:逐一參數記錄、可注入失敗
+│   ├── acceptance/      交付/驗收測試(bats):跑交付的公開入口
+│   │   └── m2_selfcheck_spec.bats   script/selfcheck.sh 對交付 repo 印 ALL PASS(含負向)
 │   └── helper/          bats 共用 helper
 │       └── common.bash  路徑常數 + bats-support / bats-assert 載入
 ├── script/
 │   ├── assemble.sh      從清單 assemble dev 盒的薄包裝器(dry-run / 真跑)
+│   ├── selfcheck.sh     一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   └── ci/
-│       └── ci.sh        CI 進入點:在容器內跑 lint / unit / integration / system
+│       └── ci.sh        CI 進入點:在容器內跑 lint / unit / integration / system / acceptance
 ├── dockerfile/
 │   └── Dockerfile.test  測試映像(bash + bats + shellcheck + 鎖定版 distrobox)
 ├── doc/
@@ -40,7 +43,7 @@ worktool/
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   └── structure.md     本文件
 ├── justfile             使用者面向的 task runner(委派到 justfile.ci)
-├── justfile.ci          CI gate 定義(lint / test-unit / test-integration / test-system)
+├── justfile.ci          CI gate 定義(lint / test-unit / test-integration / test-system / test-acceptance)
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + ci-passed 彙總
 ```
@@ -64,7 +67,11 @@ worktool/
   (`test/system/fixture/fake_container_manager.sh`),斷言真正抵達管理器的
   create 請求帶有 `dev` / `ubuntu:26.04` / `ripgrep fzf`;不需要 docker-in-docker。
   不證明映像可拉、套件可裝、盒子可用(延後到 M5)。
-- 交付/驗收(acceptance):後續 commit 補齊。
+- 交付/驗收(acceptance):`test/acceptance/m2_selfcheck_spec.bats` —— 直接執行
+  交付的公開入口 `script/selfcheck.sh`,斷言它對交付的 repo 印 `ALL PASS`、
+  exit 0;以「清單壞掉」與「包裝器跳過驗證」負向案例證明判定不是空的。需要真實
+  機器的驗收項目(可用盒)留在 [`manifest.md`](manifest.md)「M2 驗收紀錄」的
+  人類清單,延後到 M5。
 
 ## 執行 gate(全部在 Docker 內)
 
@@ -84,6 +91,9 @@ just -f justfile.ci test-integration
 # 系統測試(test/system/*.bats;真實 distrobox + 假容器管理器)
 just -f justfile.ci test-system
 
+# 交付/驗收測試(test/acceptance/*.bats;跑交付的 script/selfcheck.sh)
+just -f justfile.ci test-acceptance
+
 # 依序跑全部
 just -f justfile.ci test
 ```
@@ -92,14 +102,16 @@ just -f justfile.ci test
 可用 `just -f justfile.ci build` 預先建置或在 Dockerfile 壞掉時快速失敗。
 
 底層由 `script/ci/ci.sh` 驅動:host 端旗標(`--lint-only` /`--unit-only` /
-`--integration-only` /`--system-only`)會把對應的容器內旗標(`--ci-lint` /
-`--ci-unit` /`--ci-integration` /`--ci-system`)丟進掛載 `/source` 的一次性容器
-執行。每一層 bats gate 都要求「至少跑了一個案例、無失敗、無 `skip`」:被
-`skip` 或不存在的必要案例不會被當成綠燈。
+`--integration-only` /`--system-only` /`--acceptance-only`)會把對應的容器內
+旗標(`--ci-lint` /`--ci-unit` /`--ci-integration` /`--ci-system` /
+`--ci-acceptance`)丟進掛載 `/source` 的一次性容器執行。每一層 bats gate 都
+要求「至少跑了一個案例、無失敗、無 `skip`」:被 `skip` 或不存在的必要案例不會
+被當成綠燈。
 
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-跑 lint、test-unit、test-integration、test-system,並以 `ci-passed` 彙總
-job 收斂:只有映像建置成功**且**每個 gate 都 `success` 才綠;被 skip、取消或
-缺席的 gate 一律視為失敗。全綠才視為 milestone gate 通過,交由人類審核合併。
+跑 lint、test-unit、test-integration、test-system、test-acceptance,並以
+`ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 gate 都 `success` 才綠;
+被 skip、取消或缺席的 gate 一律視為失敗。全綠才視為 milestone gate 通過,交由
+人類審核合併。
