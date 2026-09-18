@@ -8,11 +8,21 @@
 # so `distrobox assemble create --file <manifest>` consumes it directly.
 # See doc/manifest.md.
 #
+# worktool ships a single shared "dev" box (doc/design.md), so a manifest is
+# expected to declare exactly ONE section, and its required `image=` must live
+# inside that box's own section. Whitespace-only names/values are not real
+# values and are rejected.
+#
 # Public API (all read-only; none mutate the manifest):
-#   manifest_name     <file>  -> prints the first [section] header's name
-#   manifest_image    <file>  -> prints the first `image=` value (unquoted)
-#   manifest_validate <file>  -> 0 if the manifest has a name AND a non-empty
-#                                image; otherwise logs a clear [ERROR] to
+#   manifest_name     <file>  -> prints the first [section] header's name,
+#                                trimmed; returns 1 if there is no header or
+#                                the name is empty/whitespace-only
+#   manifest_image    <file>  -> prints the `image=` value that belongs to the
+#                                box's (first) section, unquoted and trimmed;
+#                                a whitespace-only value prints empty
+#   manifest_validate <file>  -> 0 if the manifest has a name, exactly one
+#                                section, AND a non-empty image inside that
+#                                section; otherwise logs a clear [ERROR] to
 #                                stderr and returns 1
 #
 # This is a library: it defines functions and must be sourced, not executed.
@@ -38,20 +48,44 @@ _manifest_rtrim() {
     printf '%s' "${_s%"${_s##*[![:space:]]}"}"
 }
 
+# Strip both leading and trailing whitespace.
+_manifest_trim() {
+    local _s
+    _s="$(_manifest_ltrim "$1")"
+    _manifest_rtrim "${_s}"
+}
+
+# Count the number of section headers (`[...]`) in a manifest, skipping
+# comment lines. Used to enforce the single-box rule.
+_manifest_section_count() {
+    local _file="$1" _line _n=0
+    [[ -f "${_file}" ]] || { printf '0\n'; return 1; }
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        _line="$(_manifest_ltrim "${_line}")"
+        case "${_line}" in
+            \#*|\;*) continue ;;
+            \[*\]*) _n=$((_n + 1)) ;;
+        esac
+    done <"${_file}"
+    printf '%s\n' "${_n}"
+}
+
 # --- Public: field extraction ------------------------------------------------
 
-# manifest_name <file>: print the inner name of the first `[name]` section
-# header (distrobox-assemble uses the header as the container name). Returns 1
-# if the file has no section header.
+# manifest_name <file>: print the trimmed inner name of the first `[name]`
+# section header (distrobox-assemble uses the header as the container name).
+# Returns 1 if the file has no section header or the name is whitespace-only.
 manifest_name() {
     local _file="$1" _line _name
     [[ -f "${_file}" ]] || return 1
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         _line="$(_manifest_ltrim "${_line}")"
         case "${_line}" in
+            \#*|\;*) continue ;;
             \[*\]*)
                 _name="${_line#\[}"
                 _name="${_name%%\]*}"
+                _name="$(_manifest_trim "${_name}")"
                 [[ -n "${_name}" ]] || return 1
                 printf '%s\n' "${_name}"
                 return 0
@@ -61,22 +95,40 @@ manifest_name() {
     return 1
 }
 
-# manifest_image <file>: print the first `image=` value, with a single pair of
-# surrounding double quotes and any trailing whitespace stripped. Returns 1 if
-# there is no `image=` line at all (an empty value still prints an empty line
-# and returns 0 - the caller decides whether empty is acceptable).
+# manifest_image <file>: print the `image=` value that belongs to the box's
+# own (first) section - a single pair of surrounding double quotes stripped and
+# surrounding whitespace trimmed, so a quoted whitespace-only value prints
+# empty. An `image=` that appears before the first section header, or inside a
+# later section, does NOT belong to the box and is ignored. Returns 1 if the
+# box section has no `image=` line at all (an empty value still prints an empty
+# line and returns 0 - the caller decides whether empty is acceptable).
 manifest_image() {
-    local _file="$1" _line _val
+    # _state: pre  = before the first section header
+    #         in   = inside the box's (first) section
+    #         post = a later section has started
+    local _file="$1" _line _val _state="pre"
     [[ -f "${_file}" ]] || return 1
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         _line="$(_manifest_ltrim "${_line}")"
         case "${_line}" in
             \#*|\;*) continue ;;
+            \[*\]*)
+                if [[ "${_state}" == "pre" ]]; then
+                    _state="in"
+                else
+                    _state="post"
+                fi
+                ;;
             image=*)
+                [[ "${_state}" == "in" ]] || continue
                 _val="${_line#image=}"
-                _val="$(_manifest_rtrim "${_val}")"
+                # Trim the whole value FIRST so a leading space before an opening
+                # quote (image= "   ") cannot leave a stray quote that reads as a
+                # non-empty image; then strip paired outer quotes and trim again.
+                _val="$(_manifest_trim "${_val}")"
                 _val="${_val#\"}"
                 _val="${_val%\"}"
+                _val="$(_manifest_trim "${_val}")"
                 printf '%s\n' "${_val}"
                 return 0
                 ;;
@@ -88,8 +140,8 @@ manifest_image() {
 # --- Public: validation ------------------------------------------------------
 
 # manifest_validate <file>: fail fast unless the manifest exists and declares
-# both a box name (section header) and a non-empty image. Errors are explicit
-# so a non-zero return is always intentional.
+# exactly one box section with a non-empty `image=` inside that section. Errors
+# are explicit so a non-zero return is always intentional.
 manifest_validate() {
     local _file="${1:-}"
 
@@ -101,14 +153,27 @@ manifest_validate() {
         log_error "manifest not found: ${_file}"
         return 1
     fi
-    if ! manifest_name "${_file}" >/dev/null; then
+
+    local _name
+    if ! _name="$(manifest_name "${_file}")"; then
         log_error "manifest missing box name (expected an [name] section header): ${_file}"
         return 1
     fi
 
+    # Single-box rule: worktool ships one shared "dev" box, so more than one
+    # section is ambiguous (which section's image wins?) and is rejected here.
+    local _sections
+    _sections="$(_manifest_section_count "${_file}")"
+    if [[ "${_sections}" -gt 1 ]]; then
+        log_error "manifest declares multiple sections; worktool supports a single box: ${_file}"
+        return 1
+    fi
+
+    # The image must belong to the box's own section (manifest_image ignores an
+    # image before/outside it), and must not be empty or whitespace-only.
     local _image
     if ! _image="$(manifest_image "${_file}")" || [[ -z "${_image}" ]]; then
-        log_error "manifest missing required key 'image': ${_file}"
+        log_error "manifest missing required key 'image' in section [${_name}]: ${_file}"
         return 1
     fi
 
