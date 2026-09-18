@@ -71,3 +71,33 @@ setup() {
     refute_output --partial "distrobox assemble create"
     assert_output --partial "missing required key 'image'"
 }
+
+# --- consistent resolved path (run from OUTSIDE the repo root) ----------------
+
+@test "dry-run from outside the repo emits the resolved absolute manifest path" {
+    # Run from a directory that is NOT the repo root, so the relative default
+    # `box/dev.ini` only resolves against REPO_ROOT. The emitted command must
+    # carry that same resolved absolute path (not the bare relative string).
+    cd "${TMP}"
+    run "${ASSEMBLE}" --dry-run
+    assert_success
+    assert_output "distrobox assemble create --file ${REPO_ROOT}/box/dev.ini"
+}
+
+# --- faithfully re-runnable dry-run (per-argument shell escaping) -------------
+
+@test "dry-run escapes a path with spaces and metachars into one argument" {
+    local _dir="${TMP}/we ird;dir\$(x)"
+    mkdir -p "${_dir}"
+    local _mani="${_dir}/dev.ini"
+    printf '[dev]\nimage=ubuntu:26.04\n' >"${_mani}"
+
+    run "${ASSEMBLE}" --dry-run --file "${_mani}"
+    assert_success
+
+    # The emitted line must round-trip: re-parsed by the shell it yields the
+    # original manifest path as a SINGLE argument (position 5).
+    eval "set -- ${output}"
+    assert_equal "$#" 5
+    assert_equal "$5" "${_mani}"
+}
