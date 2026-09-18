@@ -77,6 +77,16 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 測試環境維持 Docker-only(unit/integration/system 走 Docker/DinD);只有需要
 真實硬體的驗收項目走人類清單。
 
+決策(2026-09-16,見 issue #129):「真實引擎冒煙」(真 docker 引擎 + 真 distrobox
+把 `box/dev.ini` 建成可用的 dev 盒、`rg` / `fzf` 可執行)**從 M5 提前到 M2**,做法
+採 docker-in-docker(三種做法 —— DinD / DooD / 容器內 rootless podman —— 的研究與
+比較記錄在該 issue;DinD 是唯一同時滿足「distrobox 與 daemon 看到同一套路徑」、
+「host 零殘留」、「GitHub Actions 與本機一致」的做法)。系統層因此分成 shim 組
+(建立請求正確性,快)與 real-engine 組(可用 dev 盒,DinD、`--privileged`、慢),
+兩組皆為 CI 必要 gate;`--privileged` 僅限 real-engine 這一個 job/recipe。M5 保留
+更廣的環境矩陣(真實硬體、非 root 使用者、其他映像、效能量測),不再負責「盒子
+可用」的基本證明。細節見 [`manifest.md`](manifest.md)「測試對應」。
+
 ## Milestone 計畫(細化;每個結束有人類 gate)
 
 > 草案,供討論。定稿後才進 M1。前半(M1-M4)是基礎框架,依相依順序;後半的
@@ -87,7 +97,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 - M1 repo 骨架:目錄結構、justfile/測試框架、CI 骨架、文件基礎。
   Checkpoint:CI 綠、骨架可跑。Exit:人類審核。
 - M2 盒子清單格式 + 最小 assemble:定義盒子套件清單格式,distrobox assemble
-  一個含 1-2 個工具的盒 + 冒煙測試。
+  一個含 1-2 個工具的盒 + 冒煙測試(含 CI 內 docker-in-docker 的真實引擎冒煙,
+  2026-09-16 由 M5 提前;見「測試策略」)。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
 - M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
