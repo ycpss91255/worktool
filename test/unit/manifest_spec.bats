@@ -79,3 +79,56 @@ setup() {
     assert_failure
     assert_output --partial "manifest not found"
 }
+
+# --- whitespace-only values --------------------------------------------------
+
+@test "manifest_name rejects a whitespace-only section header" {
+    printf '[   ]\nimage=ubuntu:26.04\n' >"${TMP}/wsname.ini"
+    run manifest_name "${TMP}/wsname.ini"
+    assert_failure
+}
+
+@test "a whitespace-only section name fails validation with a clear message" {
+    printf '[   ]\nimage=ubuntu:26.04\n' >"${TMP}/wsname.ini"
+    run manifest_validate "${TMP}/wsname.ini"
+    assert_failure
+    assert_output --partial "missing box name"
+}
+
+@test "manifest_image treats a quoted whitespace-only value as empty" {
+    printf '[dev]\nimage="   "\n' >"${TMP}/wsimg.ini"
+    run manifest_image "${TMP}/wsimg.ini"
+    assert_success
+    assert_output ""
+}
+
+@test "a quoted whitespace-only image fails validation as missing image" {
+    printf '[dev]\nimage="   "\n' >"${TMP}/wsimg.ini"
+    run manifest_validate "${TMP}/wsimg.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+# --- section-membership validation -------------------------------------------
+
+@test "an image before any section header is rejected as missing" {
+    printf 'image=ubuntu:26.04\n[dev]\n' >"${TMP}/preimg.ini"
+    run manifest_validate "${TMP}/preimg.ini"
+    assert_failure
+    assert_output --partial "missing required key 'image'"
+}
+
+@test "an image in a different section than the box is rejected (multi-section)" {
+    printf '[dev]\n[other]\nimage=ubuntu:26.04\n' >"${TMP}/otherimg.ini"
+    run manifest_validate "${TMP}/otherimg.ini"
+    assert_failure
+    assert_output --partial "multiple sections"
+}
+
+@test "a multi-section manifest is rejected (single box only)" {
+    printf '[dev]\nimage=ubuntu:26.04\n[other]\nimage=debian:13\n' \
+        >"${TMP}/multi.ini"
+    run manifest_validate "${TMP}/multi.ini"
+    assert_failure
+    assert_output --partial "multiple sections"
+}
