@@ -1,27 +1,34 @@
 # 目錄結構與測試 gate
 
 本文件說明 worktool 的 repo 目錄結構,以及如何在 Docker 內執行各項測試
-gate。狀態:M1(repo 骨架)。本階段只建立骨架、測試框架與 CI,尚未包含任何
-distrobox 邏輯(那從 M2 開始)。
+gate。狀態:M2(盒子清單格式 + 最小 assemble)。M1 建立骨架、測試框架與 CI;
+M2 加入第一個 distrobox 邏輯:盒子清單格式與 assemble 包裝器(見
+[`manifest.md`](manifest.md))。
 
 ## 目錄結構
 
 ```text
 worktool/
-├── lib/                 共用 bash helper(被 tool/box 腳本 source)
-│   └── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
+├── lib/                 共用 bash helper(被 tool/box/script 腳本 source)
+│   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
+│   └── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
 ├── box/                 distrobox 盒子清單
-│   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集,見 doc/manifest.md)
+│   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
 ├── tool/                host 端 GUI/驅動 install script(M11/M12 佔位,.gitkeep)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
-│   │   └── log_spec.bats
+│   │   ├── log_spec.bats
+│   │   ├── manifest_spec.bats    清單驗證與欄位擷取
+│   │   └── assemble_spec.bats    assemble 指令組裝(dry-run)
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
-│   │   └── smoke_spec.bats
-│   ├── system/          系統測試(bats):端到端(佔位,.gitkeep)
+│   │   ├── smoke_spec.bats
+│   │   └── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
+│   ├── system/          系統測試(bats):端到端
+│   │   └── real_assemble_spec.bats  真實 assemble(skip;延後到 M5)
 │   └── helper/          bats 共用 helper
 │       └── common.bash  路徑常數 + bats-support / bats-assert 載入
 ├── script/
+│   ├── assemble.sh      從清單 assemble dev 盒的薄包裝器(dry-run / 真跑)
 │   └── ci/
 │       └── ci.sh        CI 進入點:在容器內跑 lint / unit / integration
 ├── dockerfile/
@@ -40,12 +47,19 @@ worktool/
 
 ## 測試策略對應
 
-四層測試金字塔見 [`design.md`](design.md)「測試策略」。M1 落地前兩層的骨架:
+四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 落地前三層(單元 /
+整合 / 系統佔位),盒子清單細節見 [`manifest.md`](manifest.md):
 
-- 單元(unit):`test/unit/*.bats` —— 目前 `log_spec.bats` 驗證 `lib/log.sh`。
-- 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明
-  Docker 整合 harness 能跑,且 `lib/log.sh` 可 source 並端到端呼叫。
-- 系統(system)、交付/驗收(acceptance):後續 milestone 補齊(目前佔位)。
+- 單元(unit):`test/unit/*.bats` —— `log_spec.bats` 驗證 `lib/log.sh`;
+  `manifest_spec.bats` 驗證清單解析/驗證;`assemble_spec.bats` 驗證 dry-run 的
+  指令組裝。
+- 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明 Docker
+  harness 能跑;`assemble_spec.bats` 以 mock `distrobox` 證明 assemble 端到端接線
+  (`distrobox assemble create --file box/dev.ini`)。
+- 系統(system):`test/system/real_assemble_spec.bats` —— 真實 assemble 需要
+  docker-in-docker,依 [`design.md`](design.md) 延後到 M5;目前以被 `skip` 的佔位
+  測試記錄未來驗證方式,且未接進 CI gate。
+- 交付/驗收(acceptance):後續 milestone 補齊。
 
 ## 執行 gate(全部在 Docker 內)
 
