@@ -10,7 +10,8 @@ distrobox 邏輯(那從 M2 開始)。
 worktool/
 ├── lib/                 共用 bash helper(被 tool/box 腳本 source)
 │   └── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
-├── box/                 distrobox 盒子清單(M2 佔位,目前 .gitkeep)
+├── box/                 distrobox 盒子清單
+│   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集,見 doc/manifest.md)
 ├── tool/                host 端 GUI/驅動 install script(M11/M12 佔位,.gitkeep)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
