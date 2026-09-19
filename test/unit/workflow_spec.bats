@@ -6,8 +6,10 @@
 #   orchestration templates (issue #158): one sub-issue -> one PR driven to
 #   "CI green + codex 可合併", and a fan-out over independent sub-issues.
 #   They are JavaScript run by the Claude Code Workflow tool, so bats cannot
-#   execute them; this spec guards the contract that keeps them loadable and
-#   honest:
+#   execute or parse them (no JS engine in the test image). This spec is a
+#   TEXTUAL guard: it pins the lines that encode the contract so a careless
+#   edit trips a test; it does not prove control flow. Behaviour is proven
+#   by running the templates (dogfooding on real sub-issues). What it pins:
 #   - the file STARTS with the `export const meta = {...}` literal (the
 #     Workflow loader requires it first) and the literal is pure (no calls,
 #     no spread, no interpolation);
@@ -95,8 +97,8 @@ _meta_skeleton() {
     assert_output ""
 }
 
-@test "pr-loop requires repo, issue, branch, name and task; codex only on|off; maxRounds a non-negative integer" {
-    run grep -c "for (const k of \['repo', 'issue', 'branch', 'name', 'task'\])" "${PR_LOOP}"
+@test "pr-loop requires repo, repoDir, issue, branch, name and task; codex only on|off; maxRounds a non-negative integer" {
+    run grep -c "for (const k of \['repo', 'repoDir', 'issue', 'branch', 'name', 'task'\])" "${PR_LOOP}"
     assert_output "1"
     run grep -c "codexArg !== 'on' && codexArg !== 'off'" "${PR_LOOP}"
     assert_output "1"
@@ -152,24 +154,28 @@ _meta_skeleton() {
     assert [ "${output}" -ge 2 ]
 }
 
-@test "no template merges a PR by any means (gh pr merge, gh api merge, git push to main)" {
-    run grep -nE 'gh pr merge|/merge|git push[^\n]* main|--auto' "${PR_LOOP}" "${FANOUT}"
+@test "no template contains a known merge command (gh pr merge, REST/GraphQL merge, push to main, auto-merge)" {
+    run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push[^\n]* main|--auto' "${PR_LOOP}" "${FANOUT}"
     assert_failure
     run grep -c 'Never merge a PR' "${PR_LOOP}"
     assert_output "1"
 }
 
-@test "no template hardcodes a session scratchpad; the work dir derives from repoDir/.worktree (gitignored)" {
-    run grep -n '/tmp/claude-' "${PR_LOOP}" "${FANOUT}"
+@test "no template hardcodes a machine path, a session scratchpad or a session URL; repoDir is required" {
+    run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}"
     assert_failure
     run grep -c 'REPO_DIR}/.worktree/.scratch/' "${PR_LOOP}"
     assert_output "1"
-    run grep -c "REPO_DIR = A.repoDir ||" "${PR_LOOP}" "${FANOUT}"
+    run grep -c "const REPO_DIR = A.repoDir$" "${PR_LOOP}" "${FANOUT}"
     assert_output --partial "pr-loop.js:1"
     assert_output --partial "milestone-fanout.js:1"
+    run grep -c "A.sessionUrl" "${PR_LOOP}"
+    assert [ "${output}" -ge 1 ]
 }
 
-@test "milestone-fanout validates every item, delegates through pipeline to pr-loop, and logs each result as it lands" {
+@test "milestone-fanout requires repoDir, validates every item, delegates through pipeline to pr-loop, and logs in the per-item stage" {
+    run grep -c "!A.repo || !A.repoDir" "${FANOUT}"
+    assert_output "1"
     run grep -c "for (const k of \['issue', 'branch', 'name', 'task'\])" "${FANOUT}"
     assert_output "1"
     run grep -c "workflow({ scriptPath: SCRIPT }" "${FANOUT}"

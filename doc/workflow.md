@@ -16,6 +16,7 @@ CI 綠且 codex「可合併」才由主迴圈合併(一次一個 PR、merge comm
 ```text
 Workflow({ scriptPath: "/home/cyc/Desktop/worktool/.claude/workflows/pr-loop.js", args: {
   repo: "ycpss91255/worktool",
+  repoDir: "/path/to/worktool",
   issue: 150,
   branch: "m3/150-bench",
   name: "bench",
@@ -26,7 +27,7 @@ Workflow({ scriptPath: "/home/cyc/Desktop/worktool/.claude/workflows/pr-loop.js"
 } })
 ```
 
-`milestone-fanout.js` 的 `args` = `{ repo, parent, codex, maxRounds, repoDir?, items: [ { issue, branch, name, task, gates? }, ... ] }`;每個 item 一結束就 `log` 一行結果(誰先好誰先看到)。
+`milestone-fanout.js` 的 `args` = `{ repo, repoDir, parent, codex, maxRounds, sessionUrl?, items: [ { issue, branch, name, task, gates? }, ... ] }`;每個 item 一結束就 `log` 一行結果(誰先好誰先看到)。
 
 ## pr-loop 的 args
 
@@ -41,7 +42,8 @@ Workflow({ scriptPath: "/home/cyc/Desktop/worktool/.claude/workflows/pr-loop.js"
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
-| `repoDir` | 否 | 本機 checkout 路徑(預設 `/home/cyc/Desktop/worktool`);worktree 在 `<repoDir>/.worktree/<name>`、暫存檔在 `<repoDir>/.worktree/.scratch/<name>`(皆 gitignored) |
+| `repoDir` | 是 | 本機 checkout 路徑(不預設,換機器就換值);worktree 在 `<repoDir>/.worktree/<name>`、暫存檔在 `<repoDir>/.worktree/.scratch/<name>`(皆 gitignored) |
+| `sessionUrl` | 否 | 要寫進 commit 的 `Claude-Session:` trailer;不給就不寫 |
 
 ## 迴圈內容
 
@@ -65,6 +67,7 @@ Workflow({ scriptPath: "/home/cyc/Desktop/worktool/.claude/workflows/pr-loop.js"
 - 每個 agent 獨立 commit,合併不 squash(範本只 push,不 merge)。
 - codex 是靜態審查:測試證據一律由本機 gate + CI 提供;codex 暫停時不冒充,留 `[claude]` 註記。
 - 可並行的就並行:獨立的 sub-issue 用 `milestone-fanout`;有相依的用 `pr-loop` 依序。
-- 範本本身有守門測試 `test/unit/workflow_spec.bats`:meta 字面量必須是檔案第一行且純字面量、phase 名稱
-  雙向一致(任何引號寫法)、參數驗證、PR 以分支結構化定位、CI 是 gate、codex 判定結構化且無輸出不算過、
-  codex=off 不冒充、Fix 輪數受限、回傳契約、不含任何 merge 手段、不寫死 session 暫存路徑、fan-out 驗證 item 並委派。
+- 守門測試 `test/unit/workflow_spec.bats` 是**文字層級**的規約檢查(測試映像沒有 JS 引擎,不做 AST 解析):
+  釘住 meta 在第一行且看起來是純字面量、phase 名稱、參數驗證、結構化 PR/CI/codex、CI gate、Fix 輪數、
+  回傳契約、已知的 merge 指令、不寫死機器路徑 / session。它擋的是「不小心改壞」,不是行為證明;
+  行為證明 = 在真實 sub-issue 上跑範本(dogfood),結果留在該 PR。

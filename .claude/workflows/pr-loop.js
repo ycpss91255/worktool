@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pr-loop',
   description: 'One sub-issue -> one PR: implement (TDD, own worktree), wait for CI, codex re-verify, fix and re-verify up to maxRounds; never merges',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, issue, branch, name, task, gates?, codex?, maxRounds?, parent?, repoDir?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, gates?, codex?, maxRounds?, parent?, sessionUrl?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Locate', detail: 'agent: resolve the PR number and head SHA from the branch (structured)' },
@@ -16,6 +16,7 @@ export const meta = {
 // Invoke (from any cwd) with:
 //   Workflow({ scriptPath: "<repoDir>/.claude/workflows/pr-loop.js", args: {
 //     repo: "ycpss91255/worktool",     // required: owner/name for every gh call
+//     repoDir: "/path/to/worktool",     // required: the local checkout the worktrees hang off
 //     issue: 150,                      // required: the ONE sub-issue this PR closes
 //     branch: "m3/150-bench",          // required: branch off origin/main
 //     name: "bench",                   // required: worktree name under <repoDir>/.worktree/
@@ -24,7 +25,7 @@ export const meta = {
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
 //     maxRounds: 3,                    // optional: number of Fix rounds allowed (0 = review once, never fix)
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
-//     repoDir: "/home/cyc/Desktop/worktool" // optional: local checkout; default below
+//     sessionUrl: "<session url>",     // optional: Claude-Session commit trailer
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }.
@@ -32,7 +33,7 @@ export const meta = {
 // main loop (one PR at a time, merge commit, keep agent commits).
 
 const A = args || {}
-for (const k of ['repo', 'issue', 'branch', 'name', 'task']) {
+for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
   if (!A[k]) throw new Error(`pr-loop: args.${k} is required`)
 }
 const codexArg = A.codex === undefined ? 'on' : A.codex
@@ -40,7 +41,7 @@ if (codexArg !== 'on' && codexArg !== 'off') throw new Error(`pr-loop: args.code
 const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
 if (!Number.isInteger(MAX) || MAX < 0) throw new Error(`pr-loop: args.maxRounds must be a non-negative integer, got ${JSON.stringify(A.maxRounds)}`)
 const REPO = A.repo
-const REPO_DIR = A.repoDir || '/home/cyc/Desktop/worktool'
+const REPO_DIR = A.repoDir
 const CODEX = codexArg === 'on'
 const GATES = A.gates || 'just test lint, just test unit, just test integration, just test system, just test acceptance, just test system-real'
 const PARENT = A.parent || ''
@@ -52,7 +53,7 @@ const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum:
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
 const RULES = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>" and "Claude-Session: https://claude.ai/code/session_01NX5H2vuMTv4mBmjpPYoS3s". Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
 
 const IMPLEMENT = `${RULES}
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
