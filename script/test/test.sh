@@ -102,12 +102,15 @@ _required_specs() {
                 unit/justfile_spec.bats \
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
-                unit/bench_spec.bats
+                unit/bench_spec.bats \
+                unit/setup_spec.bats \
+                unit/status_spec.bats
             ;;
         integration)
             printf '%s\n' \
                 integration/smoke_spec.bats \
-                integration/assemble_spec.bats
+                integration/assemble_spec.bats \
+                integration/setup_spec.bats
             ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;
         system-real) printf '%s\n' "${SYSTEM_REAL_SPEC_REL}" ;;
