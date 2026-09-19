@@ -63,6 +63,7 @@ worktool/
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
+│   ├── workflow.md      Workflow 範本說明:pr-loop(一個 sub-issue -> 一個 PR 的實作/CI/codex/修正迴圈)與 milestone-fanout
 │   ├── enter.md         終端自動進盒:just box setup / status 的選項、設定檔、受管區塊、範例 log
 │   ├── structure.md     本文件
 │   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
@@ -71,6 +72,10 @@ worktool/
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
+├── .claude/
+│   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
+│       ├── pr-loop.js
+│       └── milestone-fanout.js
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
@@ -240,7 +245,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+`setup_spec`、`status_spec`、`workflow_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
