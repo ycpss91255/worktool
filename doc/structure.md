@@ -11,7 +11,8 @@
 worktool/
 ├── lib/                 共用 bash helper(被 tool/box/script 腳本 source)
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
-│   └── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
+│   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
+│   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
 ├── tool/                host 端 GUI/驅動 install script(M11/M12 佔位,.gitkeep)
@@ -23,13 +24,17 @@ worktool/
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
 │   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh(M3 加 enter / rm)
-│       └── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
+│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / setup.sh / status.sh(M3 再加 enter / rm)
+│       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
+│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --dry-run / --help;寫單一設定檔 + 受管區塊(見 enter.md)
+│       └── status.sh            印出生效的進盒決策、來源(default / user)與受管區塊是否存在(--help)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
 │   │   ├── manifest_spec.bats    清單驗證與欄位擷取
 │   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)+ CLI(--help / 未知選項 exit 2)
+│   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、tmux host 變體、--auto-enter no 移除並回報、--dry-run 不寫、CLI(暫時 HOME)
+│   │   ├── status_spec.bats      status.sh:設定檔與來源、受管區塊 present / absent、無設定檔時的預設報告、CLI(暫時 HOME)
 │   │   ├── test_sh_spec.bats     test.sh host 端 CLI:--help、未知選項、無旗標的執行順序與遇錯即停(假 docker 記錄呼叫)
 │   │   ├── selfcheck_spec.bats   selfcheck.sh CLI 與新版面下的路徑解析(script/box/assemble.sh)
 │   │   ├── ci_gate_spec.bats     test.sh 每層必要 spec 防漏:在 repo 副本上刪檔/空檔必紅、正常樹必綠
@@ -41,7 +46,8 @@ worktool/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
-│   │   └── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
+│   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
+│   │   └── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致
 │   ├── system/          系統測試(bats):真實 distrobox 端到端,分兩組
 │   │   ├── real_assemble_spec.bats  shim 組:真實 distrobox 1.8.2.5 + 假容器管理器(不需 DinD)
 │   │   ├── real_engine_spec.bats    real-engine 組:真實 docker 引擎(DinD)建出可用 dev 盒
@@ -57,6 +63,7 @@ worktool/
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
+│   ├── enter.md         終端自動進盒:just box setup / status 的選項、設定檔、受管區塊、範例 log
 │   ├── structure.md     本文件
 │   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
@@ -112,19 +119,25 @@ worktool/
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--help`) |
-| `just box help` / `just box h` | `./script/box/assemble.sh --help`(M2 只有 assemble 這一個動詞) |
+| `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
+| `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
+| `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
 是 `assemble.sh` 自己的 `assemble.sh: unknown option '--bogus' (see --help)`
-(exit 2),同樣在任何東西執行之前就拒絕。`test.sh` / `selfcheck.sh` 的未知選項
-也是同一形式(`test.sh: unknown option '<x>' (see --help)`,exit 2)。
+(exit 2),同樣在任何東西執行之前就拒絕。`test.sh` / `selfcheck.sh` /
+`setup.sh` / `status.sh` 的未知選項也是同一形式(`<腳本>: unknown option '<x>'
+(see --help)`,exit 2)。
 
 `just box assemble` 的例子:`just box assemble --dry-run` 印出
 `distrobox assemble create --file box/dev.ini`;
 `just box assemble --dry-run --file /tmp/a.ini` 對 `/tmp/a.ini` 做驗證(壞清單會以
 exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
 `just box assemble` 真的建盒。
+
+`just box setup` / `just box status` 的例子與每個決策的 `[INFO]` log 見
+[`enter.md`](enter.md)「進盒設定」。
 
 ## 測試策略對應
 
@@ -226,9 +239,9 @@ just test selfcheck
 執行,未知選項在任何 docker 呼叫之前就以 exit 2 拒絕。每一層 bats gate(含兩個
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
-`test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`;integration:`smoke_spec`、
-`test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`ci_yml_spec`;integration:`smoke_spec`、
-`assemble_spec`;system shim:`real_assemble_spec`;system-real:`real_engine_spec`;
+`test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
+`setup_spec`、`status_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+`real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
 `skip`:必要 spec 被刪、被清空、被 `skip` 都不會因為同層還有別的 spec 而被當成

@@ -1,15 +1,17 @@
 # justfile.box - the `box` namespace of the worktool just interface.
 #
 # `mod?`d by the root justfile as `box`: `just box` lists the box verbs,
-# `just box assemble [args]` forwards to ./script/box/assemble.sh and
-# `just box bench [args]` to ./script/box/bench.sh. Base model
-# (ycpss91255-docker/base ADR-00000005/10/11): thin forwarders only -
-# `set positional-arguments` + "$@" hands the arguments over VERBATIM (argv
-# boundaries intact), nothing is validated here and no usage text lives
-# here: `just box help` is `assemble.sh --help`, and an unknown option is
-# refused by the script itself (`assemble.sh: unknown option '<x>' (see
-# --help)` / `bench.sh: ...`, exit 2). M2 has assemble; M3 adds bench
-# (issue #150) and later enter / rm.
+# `just box assemble [args]` forwards to ./script/box/assemble.sh,
+# `just box bench [args]` to ./script/box/bench.sh, `just box setup [args]`
+# to ./script/box/setup.sh and `just box status [args]` to
+# ./script/box/status.sh. Base model (ycpss91255-docker/base
+# ADR-00000005/10/11): thin forwarders only - `set positional-arguments` +
+# "$@" hands the arguments over VERBATIM (argv boundaries intact), nothing
+# is validated here and no usage text lives here: `just box help` runs each
+# script's --help in turn, and an unknown option is refused by the script
+# itself (`<script>.sh: unknown option '<x>' (see --help)`, exit 2). M2 had
+# assemble as the only verb; M3 adds bench (#150), setup / status (#21) and
+# later enter / rm.
 #
 # The one-line comment above each recipe is what `just --list` shows.
 
@@ -37,8 +39,19 @@ assemble *args:
 bench *args:
     ./script/box/bench.sh "$@"
 
+# Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --tmux inside|host, --box <name>, --dry-run, --help).
+setup *args:
+    ./script/box/setup.sh "$@"
+
+# Show the auto-enter decisions in force, their sources and the managed blocks (args: --help).
+status *args:
+    ./script/box/status.sh "$@"
+
 alias h := help
 
-# Show the box wrapper help (assemble.sh --help).
+# Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh --help).
 help:
     ./script/box/assemble.sh --help
+    ./script/box/bench.sh --help
+    ./script/box/setup.sh --help
+    ./script/box/status.sh --help
