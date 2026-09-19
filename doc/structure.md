@@ -35,6 +35,7 @@ worktool/
 │   │   ├── ci_gate_spec.bats     test.sh 每層必要 spec 防漏:在 repo 副本上刪檔/空檔必紅、正常樹必綠
 │   │   ├── system_real_entry_spec.bats  DinD runner 入口:docker 卡死時等待/清理仍在期限內結束
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
+│   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -55,7 +56,15 @@ worktool/
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
-│   └── structure.md     本文件
+│   ├── structure.md     本文件
+│   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
+│   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
+│       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
+│       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
+│       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
+│       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
+├── .vscode/
+│   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
@@ -126,7 +135,10 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
   指令組裝與 CLI;`test_sh_spec.bats` 以假 `docker` 驗證 `test.sh` 的 host 端
   CLI(無旗標的順序、遇錯即停、`--help`、未知選項);`selfcheck_spec.bats`
   驗證 `selfcheck.sh` 在新版面下仍找得到 `script/box/assemble.sh`;
-  `justfile_spec.bats` 以 stub 腳本驗證整套 just 文法的轉發。
+  `justfile_spec.bats` 以 stub 腳本驗證整套 just 文法的轉發;`diagram_spec.bats`
+  守住 README 三張 draw.io 圖的單一事實來源(`doc/diagram/*.drawio.svg` 存在、是
+  SVG、不含 `<foreignObject>`、內嵌 `mxfile`、README 以連到 app.diagrams.net 的圖
+  嵌入、`.vscode/extensions.json` 推薦 `hediet.vscode-drawio`)。
 - 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明 Docker
   harness 能跑;`assemble_spec.bats` 以 mock `distrobox` 證明 assemble 端到端接線
   (`distrobox assemble create --file box/dev.ini`)。
@@ -213,7 +225,7 @@ just test selfcheck
 執行,未知選項在任何 docker 呼叫之前就以 exit 2 拒絕。每一層 bats gate(含兩個
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
-`test_sh_spec`、`selfcheck_spec`、`justfile_spec`;integration:`smoke_spec`、
+`test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`;integration:`smoke_spec`、
 `assemble_spec`;system shim:`real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
