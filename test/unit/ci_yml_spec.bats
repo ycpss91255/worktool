@@ -7,8 +7,14 @@
 #
 #   - build-image, gate (lint / test-unit / test-integration / test-system /
 #     test-acceptance) and test-system-real each `runs-on` the matrix runner
-#     and their `runner:` dimension names both ubuntu-latest (amd64) and
-#     ubuntu-24.04-arm (arm64) - no job hardcodes one architecture;
+#     and their `runner:` dimension is EXACTLY the set {ubuntu-latest
+#     (amd64), ubuntu-24.04-arm (arm64)} - no job hardcodes one
+#     architecture, and a third runner (in the flow list or smuggled in
+#     through `include:`) turns this spec red (issue #164);
+#   - the `gate:` dimension is EXACTLY the set {lint, test-unit,
+#     test-integration, test-system, test-acceptance}, and the `include:`
+#     that maps each gate to its `just test` tier names exactly those five
+#     - a sixth gate anywhere turns this spec red (issue #164);
 #   - the prebuilt test-image artifact is per-arch: the upload name in
 #     build-image and the download name in gate are the SAME string and
 #     carry the runner, so the two build legs cannot collide and every gate
@@ -26,8 +32,9 @@
 #   parser): a job block is the lines from `  <id>:` under `jobs:` up to
 #   the next two-space-indented key, with comment lines dropped so a runner
 #   name in a comment never satisfies an assertion. Flow lists
-#   (`key: [a, b]`) are matched item by item. Nothing runs and nothing is
-#   copied.
+#   (`key: [a, b]`) are split into their items and compared as SORTED SETS
+#   against the expected set (order-insensitive, but any extra or missing
+#   item fails). Nothing runs and nothing is copied.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -67,6 +74,39 @@ _needed_ids() {
 # as a whole element. $1 = indent, $2 = key.
 _flow_has() {
     printf '^%s%s: \\[(.*, )?%s(,|\\])' "$1" "$2" "$3"
+}
+
+# Print the items of the flow list line `<indent><key>: [a, b, ...]` of
+# job $1, one per line, sorted. $2 = indent, $3 = key. Every matching line
+# contributes, so a duplicated key shows up as extra items; no matching
+# line prints nothing (which never equals a non-empty expected set).
+_flow_items() {
+    _job_block "$1" \
+        | sed -nE "s/^$2$3: \\[(.*)\\]\$/\\1/p" \
+        | tr ',' '\n' \
+        | sed -E 's/^ +//; s/ +$//' \
+        | sort
+}
+
+# Print every non-comment line INSIDE job $1 (indented deeper than the
+# job id, so the `  gate:` id line itself never counts) that sets key $2,
+# whether as a mapping key (`key:`) or as a sequence item (`- key:`).
+_key_lines() {
+    _job_block "$1" | grep -E "^ {4,}(- )?$2:"
+}
+
+# Print the value of every `- <key>:` sequence item of job $1 (the entries
+# of the matrix `include:`), one per line, sorted. $2 = key.
+_include_values() {
+    _job_block "$1" \
+        | sed -nE "s/^ +- $2: (.*)\$/\\1/p" \
+        | sort
+}
+
+# Print the expected set $@ one per line, sorted (the shape _flow_items and
+# _include_values print, for assert_output).
+_sorted_set() {
+    printf '%s\n' "$@" | sort
 }
 
 # --- required spec -----------------------------------------------------------
@@ -111,6 +151,21 @@ _flow_has() {
     done
 }
 
+@test "the runner dimension of every leg-carrying job is EXACTLY the two runners (a third turns red)" {
+    local _job
+    for _job in "${LEG_JOBS[@]}"; do
+        # The flow list, as a sorted set: nothing extra, nothing missing.
+        run _flow_items "${_job}" '        ' runner
+        assert_output "$(_sorted_set "${RUNNERS[@]}")"
+        # And that flow list is the ONLY place the job sets `runner`: no
+        # second list and no `- runner:` include entry adding a leg.
+        run _key_lines "${_job}" runner
+        assert_success
+        assert_equal "${#lines[@]}" 1
+        assert_line --regexp '^        runner: \['
+    done
+}
+
 @test "gate runs every one of the five gates on the runner dimension" {
     local _gate
     run _job_block gate
@@ -120,6 +175,31 @@ _flow_has() {
         assert_line --regexp "$(_flow_has '        ' gate "${_gate}")"
     done
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
+}
+
+@test "the gate dimension is EXACTLY the five gates (a sixth turns red)" {
+    # The flow list, as a sorted set: nothing extra, nothing missing.
+    run _flow_items gate '        ' gate
+    assert_output "$(_sorted_set "${GATES[@]}")"
+    # `gate` is set by exactly the flow list plus one include entry per
+    # gate: a second list or a stray include entry is one line too many.
+    run _key_lines gate gate
+    assert_success
+    assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
+}
+
+@test "gate's matrix include maps EXACTLY the five gates to a tier and adds no runner" {
+    # One `- gate: <name>` include entry per gate, no more, no less.
+    run _include_values gate gate
+    assert_output "$(_sorted_set "${GATES[@]}")"
+    # Every include entry carries its tier (the `just test <tier>` it runs),
+    # and no include entry names a runner (that would add a third leg).
+    run _job_block gate
+    assert_success
+    refute_line --regexp '^ +- runner:'
+    run _key_lines gate tier
+    assert_success
+    assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
 @test "job names carry the runner so a check reads '<gate> (<runner>)'" {
