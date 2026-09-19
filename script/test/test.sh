@@ -104,7 +104,8 @@ _required_specs() {
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
                 unit/setup_spec.bats \
-                unit/status_spec.bats
+                unit/status_spec.bats \
+                unit/workflow_spec.bats
             ;;
         integration)
             printf '%s\n' \
