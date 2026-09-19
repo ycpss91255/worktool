@@ -192,7 +192,9 @@ issue #129),不再延後到 M5。
   - gate:`just test system`(CI `test-system` job,必要;底層
     `./script/test/test.sh --system`)。
     `script/test/test.sh` 對每一層 bats gate 都要求「至少跑了一個案例、無失敗、無
-    `skip`」,被 skip 或不存在的必要案例**不會**被當成綠燈。
+    `skip`」,並在 `_required_specs` 明列該層的**必要 spec**,bats 跑之前逐檔確認
+    存在且至少一個案例:必要 spec 被刪、被清空、被 skip 都**不會**因同層還有別的
+    spec 而被當成綠燈(`test/unit/ci_gate_spec.bats` 以刪檔/空檔負向案例證明)。
 - 系統,**real-engine 組**(`test/system/real_engine_spec.bats`):以**真正的
   docker 引擎**證明 M2 的「可用 dev 盒」承諾。做法是 **docker-in-docker**
   (2026-09-16 人類決策;三種做法的研究與比較見 issue #129):一個專用的系統測試
@@ -244,7 +246,7 @@ issue #129),不再延後到 M5。
   - gate:`just test system-real`(CI `test-system-real` job,必要,被
     `ci-passed` 彙總要求;慢,約 2-3 分鐘、CI 上限 40 分鐘;底層
     `./script/test/test.sh --system-real`)。同樣適用
-    「至少一個案例、無失敗、無 `skip`、spec 不存在即失敗」的規則。
+    「至少一個案例、無失敗、無 `skip`、必要 spec 不存在或被清空即失敗」的規則。
 - 交付/驗收(`test/acceptance/m2_selfcheck_spec.bats`):
   - **驗證什麼**:以使用者拿到交付品的方式驗證 —— 直接執行交付的公開入口
     **`script/test/selfcheck.sh`**(`just test selfcheck` 呼叫的就是這支,也就是
@@ -274,9 +276,9 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 
 | 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
 |------|--------------|------|------|------|------|
-| 自動化全綠(lint + unit + integration + system + system-real + acceptance) | PR #20 head(審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | PR #20 的 checks 頁面(`ci-passed` job 記錄) |
-| 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | PR #20 head(審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
-| 真實可用盒(`script/box/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理) | PR #20 head(審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 8 案例全 `ok`:盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf` 版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..8` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
+| 自動化全綠(lint + unit + integration + system + system-real + acceptance) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
+| 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | main(#146 合併後;審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
+| 真實可用盒(`script/box/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 8 案例全 `ok`:盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf` 版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..8` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -301,7 +303,6 @@ ADR-00000005/10/11,見 [`design.md`](design.md)「決策」),所有步驟都以 
 ```bash
 git clone https://github.com/ycpss91255/worktool.git
 cd worktool
-git checkout m2-manifest   # 審 M2 PR 用此分支;合併進 main 後改用 main 即可
 ```
 
 ### 2. 自動測試(全部在 Docker 內,不需 distrobox)
@@ -361,7 +362,8 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
     `[ci] system-real bats OK`、`[system-real] cleanup: containers left in the nested
     daemon: 0`。
 - 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
-  或根本沒跑到任何案例,同樣視為失敗。
+  、根本沒跑到任何案例、或該層任一必要 spec 缺檔/零案例(每層先印
+  `[ci]   required specs OK (N case(s) declared by M file(s))` 才開始跑),同樣視為失敗。
 
 ### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 
