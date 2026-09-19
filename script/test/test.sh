@@ -101,7 +101,8 @@ _required_specs() {
                 unit/selfcheck_spec.bats \
                 unit/justfile_spec.bats \
                 unit/diagram_spec.bats \
-                unit/ci_yml_spec.bats
+                unit/ci_yml_spec.bats \
+                unit/bench_spec.bats
             ;;
         integration)
             printf '%s\n' \

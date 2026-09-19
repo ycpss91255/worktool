@@ -1,13 +1,15 @@
 # justfile.box - the `box` namespace of the worktool just interface.
 #
 # `mod?`d by the root justfile as `box`: `just box` lists the box verbs,
-# `just box assemble [args]` forwards to ./script/box/assemble.sh. Base
-# model (ycpss91255-docker/base ADR-00000005/10/11): thin forwarders only -
+# `just box assemble [args]` forwards to ./script/box/assemble.sh and
+# `just box bench [args]` to ./script/box/bench.sh. Base model
+# (ycpss91255-docker/base ADR-00000005/10/11): thin forwarders only -
 # `set positional-arguments` + "$@" hands the arguments over VERBATIM (argv
 # boundaries intact), nothing is validated here and no usage text lives
 # here: `just box help` is `assemble.sh --help`, and an unknown option is
-# refused by assemble.sh itself (`assemble.sh: unknown option '<x>' (see
-# --help)`, exit 2). M2 has assemble as the only verb; M3 adds enter / rm.
+# refused by the script itself (`assemble.sh: unknown option '<x>' (see
+# --help)` / `bench.sh: ...`, exit 2). M2 has assemble; M3 adds bench
+# (issue #150) and later enter / rm.
 #
 # The one-line comment above each recipe is what `just --list` shows.
 
@@ -30,6 +32,10 @@ default:
 # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
 assemble *args:
     ./script/box/assemble.sh "$@"
+
+# Measure the enter latency of the dev box (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help).
+bench *args:
+    ./script/box/bench.sh "$@"
 
 alias h := help
 
