@@ -14,7 +14,7 @@ CI 綠且 codex「可合併」才由主迴圈合併(一次一個 PR、merge comm
 從任何 cwd 以 `scriptPath` 呼叫(不需要把腳本裝進 session 的專案目錄):
 
 ```text
-Workflow({ scriptPath: "/home/cyc/Desktop/worktool/.claude/workflows/pr-loop.js", args: {
+Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
   repo: "ycpss91255/worktool",
   repoDir: "/path/to/worktool",
   issue: 150,
