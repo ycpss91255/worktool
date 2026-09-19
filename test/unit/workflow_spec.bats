@@ -162,7 +162,7 @@ _meta_skeleton() {
 }
 
 @test "no template hardcodes a machine path, a session scratchpad or a session URL; repoDir is required" {
-    run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}"
+    run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
     assert_failure
     run grep -c 'REPO_DIR}/.worktree/.scratch/' "${PR_LOOP}"
     assert_output "1"
