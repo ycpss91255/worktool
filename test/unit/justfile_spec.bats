@@ -25,14 +25,16 @@
 #   Every case runs `just` against an independent COPY of the checkout
 #   (justfile + script/ + lib/ + box/) under BATS_TEST_TMPDIR, never the
 #   real tree, and never Docker. Forwarding is proven by replacing the
-#   copy's four scripts (script/test/test.sh, script/test/selfcheck.sh,
-#   script/box/assemble.sh, script/box/bench.sh) with STUBS that record
-#   their argv - one %q per argument plus the argument COUNT - so a split
-#   or merged argument shows up in the record. A fake `docker` that fails loudly and records every
+#   copy's six scripts (script/test/test.sh, script/test/selfcheck.sh,
+#   script/box/assemble.sh, script/box/bench.sh, script/box/setup.sh,
+#   script/box/status.sh) with STUBS that record their argv - one %q per
+#   argument plus the argument COUNT - so a split or merged argument shows
+#   up in the record. A fake `docker` that fails loudly and records every
 #   call sits first on PATH for the whole spec, so a regression that lets
 #   something reach the REAL test.sh shows up as a recorded docker call
 #   instead of a real build. The dry-run cases run the REAL assemble.sh
-#   (no distrobox needed).
+#   (no distrobox needed); the real setup.sh / status.sh cases run under a
+#   throwaway HOME.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -66,13 +68,13 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's four forwarding targets with recording stubs. Each
+# Replace the copy's six forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
     local _s
     for _s in script/test/test.sh script/test/selfcheck.sh \
-        script/box/assemble.sh script/box/bench.sh; do
+        script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -187,10 +189,10 @@ _listed_names() {
     assert_output "${_expected}"
 }
 
-@test "just box lists assemble, bench, default and help (alias h) only" {
+@test "just box lists assemble, bench, default, help (alias h), setup and status only" {
     _just box
     assert_success
-    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default help "
+    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default help setup status "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     refute_output --partial "test.sh"
     assert_equal "$(_stub_calls)" ""
@@ -297,16 +299,46 @@ _listed_names() {
     assert_equal "$(_last_argc)" "2"
 }
 
-@test "just box help and just box h forward assemble.sh --help" {
+@test "just box help and just box h forward --help to every box script, in order" {
     _stub_scripts
     _just box help
     assert_success
-    assert_equal "$(_stub_calls)" "assemble.sh --help"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
 
     : >"${STUB_CALLS}"
     _just box h
     assert_success
-    assert_equal "$(_stub_calls)" "assemble.sh --help"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
+    assert_equal "$(_last_argc)" "1"
+}
+
+@test "just box setup forwards to setup.sh with no argument" {
+    _stub_scripts
+    _just box setup
+    assert_success
+    assert_equal "$(_stub_calls)" "setup.sh"
+    assert_equal "$(_last_argc)" "0"
+}
+
+@test "just box setup --auto-enter no --tmux host --box <name with spaces> keeps argv boundaries (argc 6)" {
+    _stub_scripts
+    _just box setup --auto-enter no --tmux host --box "my box"
+    assert_success
+    assert_equal "$(_stub_calls)" "setup.sh --auto-enter no --tmux host --box my\\ box"
+    assert_equal "$(_last_argc)" "6"
+}
+
+@test "just box status forwards to status.sh verbatim" {
+    _stub_scripts
+    _just box status
+    assert_success
+    assert_equal "$(_stub_calls)" "status.sh"
+    assert_equal "$(_last_argc)" "0"
+
+    : >"${STUB_CALLS}"
+    _just box status --help
+    assert_success
+    assert_equal "$(_stub_calls)" "status.sh --help"
     assert_equal "$(_last_argc)" "1"
 }
 
@@ -339,6 +371,40 @@ _listed_names() {
     assert_failure 2
     assert_line "bench.sh: unknown option '--bogus' (see --help)"
     refute_output --partial "valid:"
+}
+
+# --- real setup.sh / status.sh under a throwaway HOME: the wiring end to end
+
+@test "just box setup --dry-run logs the decisions via the real script and writes nothing" {
+    local _home="${BATS_TEST_TMPDIR}/home"
+    mkdir -p "${_home}"
+    HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" _just box setup --dry-run
+    assert_success
+    assert_line "[INFO] auto-enter: yes (default)"
+    assert_line "[INFO] dry-run: would write ${_home}/.config/worktool/config"
+    assert [ ! -e "${_home}/.config/worktool/config" ]
+}
+
+@test "just box status via the real script reports the defaults under a throwaway HOME" {
+    local _home="${BATS_TEST_TMPDIR}/home"
+    mkdir -p "${_home}"
+    HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" _just box status
+    assert_success
+    assert_line "auto-enter: yes (default)"
+    assert_line "ghostty: ${_home}/.config/ghostty/config (managed block: absent)"
+}
+
+@test "just box setup --bogus and just box status --bogus are refused by the scripts themselves (exit 2)" {
+    local _home="${BATS_TEST_TMPDIR}/home"
+    mkdir -p "${_home}"
+    HOME="${_home}" _just box setup --bogus
+    assert_failure 2
+    assert_line "setup.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage"
+
+    HOME="${_home}" _just box status --bogus
+    assert_failure 2
+    assert_line "status.sh: unknown option '--bogus' (see --help)"
     refute_output --partial "Usage"
 }
 
