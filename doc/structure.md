@@ -36,6 +36,7 @@ worktool/
 │   │   ├── system_real_entry_spec.bats  DinD runner 入口:docker 卡死時等待/清理仍在期限內結束
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
+│   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -226,6 +227,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`;integration:`smoke_spec`、
+`test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`ci_yml_spec`;integration:`smoke_spec`、
 `assemble_spec`;system shim:`real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
@@ -241,11 +243,16 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 `docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
 分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
 **且** `test-system-real` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
-失敗。全綠才視為 milestone gate 通過,交由人類審核合併。
+失敗。上述每個 job 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
+`ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
+`<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
+的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。全綠才視為
+milestone gate 通過,交由人類審核合併。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
 tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
 `test-integration` -> `just test integration`、`test-system` -> `just test system`、
 `test-acceptance` -> `just test acceptance`;`test-system-real` ->
-`just test system-real`);job 名稱本身不變,branch protection 與 `ci-passed`
-都以它們為準。本機不帶參數的 `just test` = 這六個 gate 依序跑完,與 CI 等價。
+`just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
+branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這六個 gate
+依序跑完,與 CI 在本機架構上的那一組 leg 等價。
