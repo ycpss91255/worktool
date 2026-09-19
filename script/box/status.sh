@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# status.sh - show the auto-enter decisions in force and their sources (M3, #21).
+#
+# The read side of `just box setup`: prints the ONE state file's decisions
+# (auto-enter, terminal, tmux, box), each with its source (default | user),
+# and whether the worktool managed block is present in each managed file
+# (the ghostty config and ~/.tmux.conf). Read-only: it never writes.
+#
+# The backing script of `just box status` (script/box/justfile.box forwards
+# the arguments here verbatim); it also runs on its own:
+#
+#   ./script/box/status.sh          # the report
+#   ./script/box/status.sh --help   # usage
+#
+# The report goes to STDOUT (plain `<key>: <value> (<source>)` lines, no log
+# tags, so it can be grepped); nothing goes to stderr on success. Without a
+# state file the first line says so and the defaults are shown, so the
+# report is never empty. Every path derives from HOME / XDG_CONFIG_HOME
+# (lib/enter.sh).
+#
+# This script owns its option validation: an unknown option is refused with
+# `status.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
+#
+# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`).
+
+# shellcheck source-path=SCRIPTDIR/../../lib
+set -uo pipefail
+
+# --- Paths -------------------------------------------------------------------
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+LIB_DIR="${REPO_ROOT}/lib"
+
+# shellcheck source=enter.sh
+source "${LIB_DIR}/enter.sh"
+
+# --- Usage -------------------------------------------------------------------
+_usage() {
+    cat >&2 <<'EOF'
+Usage: status.sh
+
+Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
+written by `just box setup`), the source of each (default | user), and
+whether the worktool managed block is present in the ghostty config and in
+~/.tmux.conf. Read-only.
+
+  -h, --help   Show this help and exit.
+EOF
+}
+
+_usage_error() {
+    printf 'status.sh: %s (see --help)\n' "$1" >&2
+}
+
+# --- Report ------------------------------------------------------------------
+
+# Print `<key>: <value> (<source>)` for key $1 from state file $2: the stored
+# value with its stored source, or the default when the key is absent.
+_report_key() {
+    local _key="$1" _config="$2" _value _source
+    _value="$(enter_config_get "${_config}" "${_key}")"
+    _source="$(enter_config_get "${_config}" "${_key}.source")"
+    if [[ -z "${_value}" ]]; then
+        _value="$(enter_default "${_key}")"
+        _source="default"
+    fi
+    printf '%s: %s (%s)\n' "${_key}" "${_value}" "${_source:-default}"
+}
+
+# Print `<label>: <file> (managed block: present|absent)`.
+_report_block() {
+    local _label="$1" _file="$2" _state="absent"
+    enter_block_present "${_file}" && _state="present"
+    printf '%s: %s (managed block: %s)\n' "${_label}" "${_file}" "${_state}"
+}
+
+_report() {
+    local _config _key
+    _config="$(enter_config_path)"
+    if [[ -f "${_config}" ]]; then
+        printf 'config: %s\n' "${_config}"
+    else
+        printf 'config: %s (not found - defaults shown; run: just box setup)\n' "${_config}"
+    fi
+    while IFS= read -r _key; do
+        _report_key "${_key}" "${_config}"
+    done < <(enter_keys)
+    _report_block ghostty "$(enter_ghostty_config)"
+    _report_block tmux.conf "$(enter_tmux_conf)"
+}
+
+# --- Main --------------------------------------------------------------------
+status_run() {
+    local _help=0
+    # The whole command line is parsed before anything runs.
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) _help=1 ;;
+            *)
+                _usage_error "unknown option '$1'"
+                return 2
+                ;;
+        esac
+        shift
+    done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    _report
+}
+
+# Guard: only run when executed directly, not when sourced (keeps the file
+# importable by tests).
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
+    status_run "$@"
+fi
