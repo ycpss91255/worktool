@@ -142,6 +142,78 @@ WORKTOOL_DRY_RUN=1 ./script/box/assemble.sh           # 以環境變數試跑,�
 ./script/box/assemble.sh --file box/other.ini         # = just box assemble --file box/other.ini
 ```
 
+## 進盒延遲量測(just box bench)
+
+M3(issue #150)加入量測工具 `script/box/bench.sh`,使用者介面是
+`just box bench [選項]`(recipe 只是把參數**原樣**轉發給腳本;參數驗證與 `--help`
+都在腳本,與 `just box assemble` 同一個模型)。它用 bash 內建的 `EPOCHREALTIME`
+(微秒精度的 wall clock)計時,**不依賴 hyperfine**、不需要在 host 上安裝任何東西。
+
+### 用法
+
+```text
+bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [-h|--help]
+```
+
+| 選項 | 說明 | 預設 |
+|------|------|------|
+| `--box NAME` | 要進的盒子 | `dev` |
+| `--runs N` | 每個指標**計入統計**的次數(N >= 1) | `10` |
+| `--warmup N` | 每個指標量測前**不計入**的暖身次數(N >= 0;第一次 enter 可能要先啟動停著的容器) | `2` |
+| `--max-ms N` | 門檻:**shell 指標的中位數**超過 N ms 即 exit 1(供 gate 使用) | 無門檻 |
+| `--json` | 改印**一個** JSON 物件,不印文字行 | 關 |
+| `--shell CMD` | shell 指標要跑的指令(以空白拆成參數) | `sh -c :` |
+| `-h`, `--help` | 印 usage 後 exit 0 | |
+
+```bash
+just box bench                          # dev 盒,每個指標 2 次暖身 + 10 次量測
+just box bench --runs 3 --warmup 1      # 快一點
+just box bench --max-ms 300             # 當 gate:shell 中位數 > 300 ms 即 exit 1
+just box bench --json                   # 一個 JSON 物件
+just box bench --shell 'fish -c exit'   # 量另一個 shell 的啟動
+just box bench --help                   # 說明(由腳本印出)
+# 底層:./script/box/bench.sh [同樣的選項]
+```
+
+### 指標的意義
+
+兩個指標,**先量 enter、再量 shell**;每個指標先跑 `--warmup` 次(不記錄),再跑
+`--runs` 次(記錄),對記錄到的樣本算 min / median / max(偶數個樣本的中位數取中間
+兩個的平均):
+
+| 指標 | 實際執行的指令 | 量的是什麼 |
+|------|----------------|------------|
+| `enter` | `distrobox enter <box> -- true` | distrobox 包裝層 + 容器引擎的一次來回(進盒的固定成本) |
+| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲 |
+
+輸出(STDOUT,機器可讀;診斷一律走 STDERR):
+
+```text
+enter: min=<ms> median=<ms> max=<ms> ms
+shell: min=<ms> median=<ms> max=<ms> ms
+```
+
+`--json` 時改為恰好一個物件:
+
+```json
+{"box":"dev","runs":10,"warmup":2,"shell_cmd":"sh -c :","unit":"ms","enter":{"min":..,"median":..,"max":..},"shell":{"min":..,"median":..,"max":..}}
+```
+
+結束碼:`0` 完成(且未超過 `--max-ms`);`1` 量測失敗(任一次 enter 非零結束,
+失敗的 enter 沒有值得報告的延遲,立即中止、不印統計)或 shell 中位數超過 `--max-ms`
+(統計仍會印出,原因印在 STDERR);`2` 用法錯誤(未知選項以
+`bench.sh: unknown option '<x>' (see --help)` 拒絕,整條指令列先解析完才動作,
+所以 `--help --bogus` 也是 exit 2、什麼都不跑;`--runs 0`、`--warmup -1`、
+`--max-ms abc` 之類同樣 exit 2);`127` PATH 上沒有 distrobox。
+
+### 達標與 runtime 決策不在這裡
+
+這支工具**只量測、只在 `--max-ms` 明確給定時才判定**。「進盒 < 300 ms」的達標目標,
+以及為了達標要不要換容器 runtime(runc / crun)的決策,都留在 issue #22;本工具是
+#22 從中拆出來的量測部分。系統層 real-engine 組(見下方「測試對應」)會對 DinD 內
+建出的真實 dev 盒實跑一次 `bench.sh --box dev --runs 3 --warmup 1`,只斷言 exit 0 與
+兩行指標存在,並把數字印進 TAP log 當證據,**不設門檻**。
+
 ## 測試對應
 
 四層測試金字塔見 [`design.md`](design.md)「測試策略」。M2 四層**全部落地**,每一
@@ -158,9 +230,14 @@ issue #129),不再延後到 M5。
     區段之前 / 多區段,皆以正確訊息失敗)與指令組裝
     (dry-run 印出正確的 `distrobox assemble create --file ...`,且不執行;從 repo
     以外執行時輸出解析後的絕對路徑;含空白與 shell 特殊字元的路徑經跳脫後可還原成
-    單一參數)。純 bash、完全可 mock。
+    單一參數)。純 bash、完全可 mock。M3 加 `test/unit/bench_spec.bats`:以一支
+    **假 `distrobox`**(記錄每次呼叫的參數、可注入固定或逐次不同的延遲、可注入失敗)
+    驗證 `bench.sh` 的參數形狀(`enter <box> -- true` / `enter <box> -- sh -c :`)、
+    暖身與量測次數、min <= median <= max 且暖身不計入、`--max-ms` 的通過/失敗結束碼、
+    `--json` 形狀、`--help`、未知選項 exit 2 且什麼都沒呼叫;
+    `test/unit/justfile_spec.bats` 另證明 `just box bench --runs 3` 原樣轉發。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
-    系統層的事。
+    系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
 - 整合(`test/integration/assemble_spec.bats`):
   - **驗證什麼**:把一支 **mock `distrobox`** 放到 PATH(**逐一參數**、每行一個地
     記錄自己被呼叫的參數),以真實(非 dry-run)模式跑包裝器,斷言它確實以
@@ -223,9 +300,12 @@ issue #129),不再延後到 M5。
     `manager=distrobox` 標籤;(c) 盒子可用:`distrobox enter dev -- rg --version`
     印出 `ripgrep <版本>`(第一次 enter 會啟動容器並執行 distrobox-init:apt 安裝
     distrobox 依賴與 `ripgrep fzf`,約 2 分鐘)、`distrobox enter dev -- fzf
-    --version` 印出版本,容器狀態為 `running`;(d) 冪等:第二次
+    --version` 印出版本,容器狀態為 `running`;(d) 進盒延遲(M3,issue #150):對
+    這個已初始化的盒子實跑 `script/box/bench.sh --box dev --runs 3 --warmup 1`,
+    斷言 exit 0 與 `enter: ...` / `shell: ...` 兩行指標存在,並把數字印進 TAP log
+    當證據(**不設門檻**,達標留在 #22;見上方「進盒延遲量測」);(e) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
-    恰好一個、仍可 `rg --version`;(e) 清理:`distrobox rm -f dev` exit 0 後
+    恰好一個、仍可 `rg --version`;(f) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
     第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
     `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
@@ -241,8 +321,9 @@ issue #129),不再延後到 M5。
     `distrobox enter`** 啟動容器時執行的。因此這組測試證明的是「**assemble 成功後,
     enter 會完成初始化、工具可用**」,**不是**「assemble 返回時套件已安裝完成」——
     只跑 `script/box/assemble.sh` 而不 enter,盒內還沒有 `rg` / `fzf`。
-  - **不證明什麼(延後)**:效能目標(進盒延遲,M3)、終端自動進盒(M3)、更廣的
-    環境矩陣(真實硬體、非 root 使用者、GPU 等,M5 與人類清單)。
+  - **不證明什麼(延後)**:效能**達標**(bench 案例只記錄數字、不判定;門檻與
+    runtime 決策在 #22)、終端自動進盒(M3)、更廣的環境矩陣(真實硬體、非 root
+    使用者、GPU 等,M5 與人類清單)。
   - gate:`just test system-real`(CI `test-system-real` job,必要,被
     `ci-passed` 彙總要求;慢,約 2-3 分鐘、CI 上限 40 分鐘;底層
     `./script/test/test.sh --system-real`)。同樣適用

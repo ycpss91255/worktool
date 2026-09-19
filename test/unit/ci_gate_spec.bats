@@ -86,6 +86,9 @@ EOF
     assert_line "unit/system_real_entry_spec.bats"
     assert_line "unit/test_sh_spec.bats"
     assert_line "unit/selfcheck_spec.bats"
+    assert_line "unit/justfile_spec.bats"
+    # M3: the enter-latency tool (issue #150).
+    assert_line "unit/bench_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of the integration tier" {

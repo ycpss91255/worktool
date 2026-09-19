@@ -13,6 +13,13 @@
 #   assemble is idempotent (exit 0, still exactly one `dev`), and
 #   `distrobox rm -f dev` removes the box.
 #
+#   M3 (issue #150) adds one evidence case: once the box is initialised,
+#   the delivered `script/box/bench.sh` measures the real enter latency
+#   (`--box dev --runs 3 --warmup 1`), exits 0 and prints its two metric
+#   lines; the numbers are echoed into the TAP stream as evidence. No
+#   threshold is applied here - the < 300 ms target and the runtime
+#   decision live in issue #22.
+#
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
 #   (dockerfile/Dockerfile.system-real, based on the official docker:dind
@@ -31,8 +38,9 @@
 #   is documented in doc/manifest.md.
 #
 # WHAT THIS DOES NOT PROVE
-#   Performance targets (enter latency), the terminal auto-enter flow, and
-#   the broader environment matrix (real hardware, non-root user, other
+#   Performance targets (the bench case only records numbers, it does not
+#   gate on them - issue #22), the terminal auto-enter flow, and the
+#   broader environment matrix (real hardware, non-root user, other
 #   images) - those belong to M3/M5 and the human checklist.
 #
 # TIMEOUTS
@@ -55,6 +63,7 @@ QUERY_TIMEOUT=60          # short engine queries: info / ps / inspect / logs
 
 setup() {
     ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
+    BENCH="${REPO_ROOT}/script/box/bench.sh"
 
     # Hermetic distrobox environment: a fresh HOME (no ~/.distroboxrc, no
     # cache), docker selected explicitly, no desktop entry generation.
@@ -166,7 +175,28 @@ _diag() {
     assert_line --regexp '^[0-9]+\.[0-9]+'
 }
 
-# --- (d) idempotency: assembling again neither errors nor duplicates ---------
+# --- (d) enter latency: bench.sh measures the real box (evidence only) -------
+
+@test "real engine: bench.sh --box dev --runs 3 --warmup 1 exits 0 and prints the enter and shell metric lines (numbers logged, no threshold)" {
+    cd "${REPO_ROOT}"
+    # 2 metrics x (1 warmup + 3 runs) = 8 enters of an initialised box.
+    run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" --box dev --runs 3 --warmup 1 </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    local _num='[0-9]+(\.[0-9]+)?'
+    assert_line --regexp "^enter: min=${_num} median=${_num} max=${_num} ms$"
+    assert_line --regexp "^shell: min=${_num} median=${_num} max=${_num} ms$"
+    # Evidence: the measured numbers go into the TAP stream (fd 3 is bats'
+    # original stdout; `# ` keeps the stream TAP-clean) and into this
+    # case's output.
+    local _l
+    for _l in "${lines[@]}"; do
+        printf '# bench: %s\n' "${_l}" >&3
+        echo "bench: ${_l}"
+    done
+}
+
+# --- (e) idempotency: assembling again neither errors nor duplicates ---------
 
 @test "real engine: a second assemble.sh run exits 0 and does not duplicate the dev box" {
     cd "${REPO_ROOT}"
@@ -186,7 +216,7 @@ _diag() {
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
 }
 
-# --- (e) teardown: distrobox rm removes the box ------------------------------
+# --- (f) teardown: distrobox rm removes the box ------------------------------
 
 @test "real engine: distrobox rm -f dev removes the box from the engine" {
     run timeout "${RM_TIMEOUT}" distrobox rm -f dev </dev/null
