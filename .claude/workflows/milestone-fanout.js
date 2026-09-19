@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-fanout',
   description: 'Fan out independent sub-issues, each through the pr-loop workflow (implement, CI, codex, fix); reports each PR as it finishes; never merges',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, parent, codex?, maxRounds?, repoDir?, items:[{issue,branch,name,task,gates?}]}.',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, codex?, maxRounds?, sessionUrl?, items:[{issue,branch,name,task,gates?}]}.',
   phases: [{ title: 'Fan-out', detail: 'one pr-loop per item, in parallel; each result logged the moment it lands' }],
 }
 
@@ -12,7 +12,7 @@ export const meta = {
 //     parent: "#5",
 //     codex: "on" | "off",
 //     maxRounds: 3,
-//     repoDir: "/home/cyc/Desktop/worktool",   // optional; default below
+//     repoDir: "/path/to/worktool",   // required: local checkout
 //     items: [
 //       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "..." },
 //       { issue: 150, branch: "m3/150-bench",    name: "bench", task: "..." },
@@ -26,13 +26,13 @@ export const meta = {
 // conflicts, merge commit, keep agent commits).
 
 const A = args || {}
-if (!A.repo || !Array.isArray(A.items) || A.items.length === 0) throw new Error('milestone-fanout: args.repo and a non-empty args.items are required')
+if (!A.repo || !A.repoDir || !Array.isArray(A.items) || A.items.length === 0) throw new Error('milestone-fanout: args.repo, args.repoDir and a non-empty args.items are required')
 for (const it of A.items) {
   for (const k of ['issue', 'branch', 'name', 'task']) {
     if (!it[k]) throw new Error(`milestone-fanout: item ${JSON.stringify(it.issue || it)} lacks ${k}`)
   }
 }
-const REPO_DIR = A.repoDir || '/home/cyc/Desktop/worktool'
+const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
 phase('Fan-out')
@@ -41,7 +41,7 @@ const results = await pipeline(A.items,
   async (item) => {
     try {
       return await workflow({ scriptPath: SCRIPT }, {
-        repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
+        repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', sessionUrl: A.sessionUrl, codex: A.codex === undefined ? 'on' : A.codex,
         maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
         issue: item.issue, branch: item.branch, name: item.name, task: item.task, gates: item.gates,
       })
