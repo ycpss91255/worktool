@@ -13,12 +13,18 @@
 #   assemble is idempotent (exit 0, still exactly one `dev`), and
 #   `distrobox rm -f dev` removes the box.
 #
-#   M3 (issue #150) adds one evidence case: once the box is initialised,
-#   the delivered `script/box/bench.sh` measures the real enter latency
-#   (`--box dev --runs 3 --warmup 1`), exits 0 and prints its two metric
-#   lines; the numbers are echoed into the TAP stream as evidence. No
-#   threshold is applied here - the < 300 ms target and the runtime
-#   decision live in issue #22.
+#   M3 (issues #150, #23) adds the enter-latency GATE: once the box is
+#   initialised, the delivered `script/box/bench.sh` measures the real
+#   enter latency (`--box dev --runs 5 --warmup 2`) with `--max-ms
+#   ENTER_MAX_MS` (the < 300 ms target of doc/design.md, one constant
+#   below); the case passes only when bench.sh exits 0, i.e. the SHELL
+#   median (the user-perceived time to a prompt: enter + shell start-up)
+#   is within the threshold. Both metric lines are still echoed into the
+#   TAP stream as evidence. A negative case runs the same bench with
+#   `--max-ms 1` and requires exit 1 plus bench.sh's threshold message, so
+#   the gate is proven to bite on a real box - a green positive case can
+#   never be a no-op threshold. The runtime decision (docker + default
+#   runc stays; CI measured ~88 ms) is recorded in issue #22.
 #
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
@@ -38,10 +44,11 @@
 #   is documented in doc/manifest.md.
 #
 # WHAT THIS DOES NOT PROVE
-#   Performance targets (the bench case only records numbers, it does not
-#   gate on them - issue #22), the terminal auto-enter flow, and the
-#   broader environment matrix (real hardware, non-root user, other
-#   images) - those belong to M3/M5 and the human checklist.
+#   Real-host latency (the gate judges the DinD box on the CI runner; the
+#   numbers of a real machine are collected in the human checklist, issue
+#   #22), the terminal auto-enter flow, and the broader environment matrix
+#   (real hardware, non-root user, other images) - those belong to M3/M5
+#   and the human checklist.
 #
 # TIMEOUTS
 #   Pulling ubuntu:26.04 and apt-installing distrobox's own dependencies plus
@@ -60,6 +67,12 @@ FIRST_ENTER_TIMEOUT=900   # first start: distrobox-init + apt installs
 ENTER_TIMEOUT=300         # subsequent enters (box already initialised)
 RM_TIMEOUT=120
 QUERY_TIMEOUT=60          # short engine queries: info / ps / inspect / logs
+
+# Enter-latency gate (M3, issue #23): the SHELL median bench.sh measures on
+# the real box must not exceed this many milliseconds - the "< ~300 ms
+# time to a prompt" performance target of doc/design.md. The number lives
+# HERE only; doc/design.md and doc/manifest.md refer to this constant.
+ENTER_MAX_MS=300
 
 setup() {
     ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
@@ -175,25 +188,58 @@ _diag() {
     assert_line --regexp '^[0-9]+\.[0-9]+'
 }
 
-# --- (d) enter latency: bench.sh measures the real box (evidence only) -------
+# --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------
 
-@test "real engine: bench.sh --box dev --runs 3 --warmup 1 exits 0 and prints the enter and shell metric lines (numbers logged, no threshold)" {
+# Regex of one bench.sh millisecond value (`88.7`, `120.0`).
+BENCH_NUM='[0-9]+(\.[0-9]+)?'
+
+# Assert that the last `run` printed both bench.sh metric lines (stdout);
+# they must appear whether the threshold passed or not.
+_assert_metric_lines() {
+    assert_line --regexp "^enter: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
+    assert_line --regexp "^shell: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
+}
+
+# Evidence: echo the lines $2.. (a case passes its `${lines[@]}`) into the
+# TAP stream (fd 3 is bats' original stdout; `# ` keeps the stream
+# TAP-clean) and into the case's own output, prefixed with $1.
+_log_lines() {
+    local _tag="$1" _l
+    shift
+    for _l in "$@"; do
+        printf '# %s: %s\n' "${_tag}" "${_l}" >&3
+        echo "${_tag}: ${_l}"
+    done
+}
+
+@test "real engine: bench.sh --box dev --runs 5 --warmup 2 --max-ms ENTER_MAX_MS exits 0 (enter-latency gate) and prints the enter and shell metric lines" {
     cd "${REPO_ROOT}"
-    # 2 metrics x (1 warmup + 3 runs) = 8 enters of an initialised box.
-    run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" --box dev --runs 3 --warmup 1 </dev/null
+    # 2 metrics x (2 warmup + 5 runs) = 14 enters of an initialised box.
+    # Exit 0 IS the gate: bench.sh returns 1 when the shell median exceeds
+    # --max-ms, so a slow box fails this case.
+    run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
+        --box dev --runs 5 --warmup 2 --max-ms "${ENTER_MAX_MS}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    local _num='[0-9]+(\.[0-9]+)?'
-    assert_line --regexp "^enter: min=${_num} median=${_num} max=${_num} ms$"
-    assert_line --regexp "^shell: min=${_num} median=${_num} max=${_num} ms$"
-    # Evidence: the measured numbers go into the TAP stream (fd 3 is bats'
-    # original stdout; `# ` keeps the stream TAP-clean) and into this
-    # case's output.
-    local _l
-    for _l in "${lines[@]}"; do
-        printf '# bench: %s\n' "${_l}" >&3
-        echo "bench: ${_l}"
-    done
+    _assert_metric_lines
+    # The threshold was really evaluated (not merely accepted as an option).
+    assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
+    _log_lines bench "${lines[@]}"
+}
+
+@test "real engine: bench.sh --box dev --runs 1 --warmup 0 --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)" {
+    cd "${REPO_ROOT}"
+    # 2 metrics x (0 warmup + 1 run) = 2 enters. A real engine round trip
+    # is never below 1 ms, so the gate must refuse: exit 1, both metric
+    # lines still printed, the reason on stderr in bench.sh's own words.
+    run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
+        --box dev --runs 1 --warmup 0 --max-ms 1 </dev/null
+    [[ "${status}" -eq 1 ]] || _diag
+    assert_failure 1
+    _assert_metric_lines
+    assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
+    refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
+    _log_lines bench-gate "${lines[@]}"
 }
 
 # --- (e) idempotency: assembling again neither errors nor duplicates ---------

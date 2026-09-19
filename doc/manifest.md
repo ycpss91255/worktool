@@ -206,13 +206,16 @@ shell: min=<ms> median=<ms> max=<ms> ms
 所以 `--help --bogus` 也是 exit 2、什麼都不跑;`--runs 0`、`--warmup -1`、
 `--max-ms abc` 之類同樣 exit 2);`127` PATH 上沒有 distrobox。
 
-### 達標與 runtime 決策不在這裡
+### 達標由 system-real gate 強制,runtime 決策不在這裡
 
-這支工具**只量測、只在 `--max-ms` 明確給定時才判定**。「進盒 < 300 ms」的達標目標,
-以及為了達標要不要換容器 runtime(runc / crun)的決策,都留在 issue #22;本工具是
-#22 從中拆出來的量測部分。系統層 real-engine 組(見下方「測試對應」)會對 DinD 內
-建出的真實 dev 盒實跑一次 `bench.sh --box dev --runs 3 --warmup 1`,只斷言 exit 0 與
-兩行指標存在,並把數字印進 TAP log 當證據,**不設門檻**。
+這支工具**只量測、只在 `--max-ms` 明確給定時才判定**;本工具是 issue #22 從中拆出來
+的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
+維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
+(issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
+的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --max-ms 300`(門檻只寫在該
+spec 的 `ENTER_MAX_MS` 一處),斷言 exit 0、兩行指標存在、且印出 `within --max-ms 300`
+的判定行,並把數字印進 TAP log 當證據;另以 `--max-ms 1` 的負向案例要求 exit 1 與
+`exceeds --max-ms 1` 訊息,證明 gate 會咬。實機數字則進人類清單(#22)。
 
 ## 測試對應
 
@@ -300,10 +303,14 @@ issue #129),不再延後到 M5。
     `manager=distrobox` 標籤;(c) 盒子可用:`distrobox enter dev -- rg --version`
     印出 `ripgrep <版本>`(第一次 enter 會啟動容器並執行 distrobox-init:apt 安裝
     distrobox 依賴與 `ripgrep fzf`,約 2 分鐘)、`distrobox enter dev -- fzf
-    --version` 印出版本,容器狀態為 `running`;(d) 進盒延遲(M3,issue #150):對
-    這個已初始化的盒子實跑 `script/box/bench.sh --box dev --runs 3 --warmup 1`,
-    斷言 exit 0 與 `enter: ...` / `shell: ...` 兩行指標存在,並把數字印進 TAP log
-    當證據(**不設門檻**,達標留在 #22;見上方「進盒延遲量測」);(e) 冪等:第二次
+    --version` 印出版本,容器狀態為 `running`;(d) 進盒延遲 **gate**(M3,issues
+    #150 / #23):對這個已初始化的盒子實跑 `script/box/bench.sh --box dev --runs 5
+    --warmup 2 --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數),斷言
+    exit 0(shell 中位數超過 300 ms 即紅)、`enter: ...` / `shell: ...` 兩行指標存在、
+    `[INFO] shell median ... within --max-ms 300` 判定行存在,並把數字印進 TAP log
+    當證據;再以 `--runs 1 --warmup 0 --max-ms 1` 跑一次負向案例,要求 exit 1、兩行
+    指標仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬(見上方
+    「進盒延遲量測」);(e) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
     恰好一個、仍可 `rg --version`;(f) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
@@ -321,9 +328,9 @@ issue #129),不再延後到 M5。
     `distrobox enter`** 啟動容器時執行的。因此這組測試證明的是「**assemble 成功後,
     enter 會完成初始化、工具可用**」,**不是**「assemble 返回時套件已安裝完成」——
     只跑 `script/box/assemble.sh` 而不 enter,盒內還沒有 `rg` / `fzf`。
-  - **不證明什麼(延後)**:效能**達標**(bench 案例只記錄數字、不判定;門檻與
-    runtime 決策在 #22)、終端自動進盒(M3)、更廣的環境矩陣(真實硬體、非 root
-    使用者、GPU 等,M5 與人類清單)。
+  - **不證明什麼(延後)**:**實機**的進盒延遲(gate 判定的是 CI runner 上 DinD
+    內的盒子;實機數字進人類清單,#22)、終端自動進盒(M3)、更廣的環境矩陣
+    (真實硬體、非 root 使用者、GPU 等,M5 與人類清單)。
   - gate:`just test system-real`(CI `test-system-real` job,必要,被
     `ci-passed` 彙總要求;慢,約 2-3 分鐘、CI 上限 40 分鐘;底層
     `./script/test/test.sh --system-real`)。同樣適用

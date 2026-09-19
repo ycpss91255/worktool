@@ -54,6 +54,15 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
    install script(驅動/GUI)-> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
 4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
+   300 ms 這條線由系統層 real-engine gate **強制**(`just test system-real`,
+   issue #23):`test/system/real_engine_spec.bats` 對 DinD 內建出的真實 dev 盒跑
+   `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
+   --warmup 2 --max-ms 300`),shell 中位數(enter + shell 啟動,即使用者拿到提示
+   字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
+   一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。CI 實測(docker 29.8.0 +
+   預設 runc、warm 容器):amd64 enter 中位數約 88 ms、arm64 約 87 ms,離目標
+   有 3 倍餘裕,故維持 docker + runc、不換 runtime;實機數字由人類清單收集
+   (issue #22)。
 5. 測試層級(已定):完整測試金字塔 —— 單元 -> 整合 -> 系統 -> 交付/驗收,
    全部都要有。詳見下方「測試策略」。
 
