@@ -12,6 +12,34 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 的完整驗證步驟見 [`doc/manifest.md`](doc/manifest.md);目錄結構見
 [`doc/structure.md`](doc/structure.md)。
 
+## 架構與流程
+
+三張圖都是可編輯的 draw.io 檔(`doc/diagram/*.drawio.svg`,圖與原始檔是同一個
+檔案):點圖可在 app.diagrams.net 直接開啟編輯;VS Code 裝
+`hediet.vscode-drawio`(`.vscode/extensions.json` 已推薦)即可就地編輯、存檔即同步。
+
+### 架構
+
+host 只留驅動、docker、snapd、桌面 GUI install script 與 `just`;distrobox 在 host 的
+docker 上跑一個共用的 dev 盒(`ubuntu:26.04`),所有 CLI / TUI 工具(M5-M10)都在盒內;
+設定留在共用 HOME;終端 ghostty(host)-> tmux(盒內)-> fish。
+
+[![架構圖](doc/diagram/architecture.drawio.svg)](https://app.diagrams.net/?url=https://raw.githubusercontent.com/ycpss91255/worktool/main/doc/diagram/architecture.drawio.svg)
+
+### 流程
+
+clone -> `just test`(六道 gate,全部在 Docker)-> `just box assemble` -> 進盒
+(ghostty profile,使用者可選、預設開)-> 日常使用;CI 以 amd64 / arm64 matrix 跑
+同一套 `just test <tier>`,`ci-passed` 彙總。
+
+[![流程圖](doc/diagram/flow.drawio.svg)](https://app.diagrams.net/?url=https://raw.githubusercontent.com/ycpss91255/worktool/main/doc/diagram/flow.drawio.svg)
+
+### Milestone
+
+M1-M17 依序、不可跨越,每個 milestone 之間有人類審核 gate;M1、M2 已完成,目前在 M3。
+
+[![Milestone 圖](doc/diagram/milestone.drawio.svg)](https://app.diagrams.net/?url=https://raw.githubusercontent.com/ycpss91255/worktool/main/doc/diagram/milestone.drawio.svg)
+
 ## 前置需求
 
 - **docker**:目前使用者可直接執行(`docker run --rm hello-world` 能成功),
