@@ -25,10 +25,10 @@
 #   Every case runs `just` against an independent COPY of the checkout
 #   (justfile + script/ + lib/ + box/) under BATS_TEST_TMPDIR, never the
 #   real tree, and never Docker. Forwarding is proven by replacing the
-#   copy's three scripts (script/test/test.sh, script/test/selfcheck.sh,
-#   script/box/assemble.sh) with STUBS that record their argv - one %q per
-#   argument plus the argument COUNT - so a split or merged argument shows
-#   up in the record. A fake `docker` that fails loudly and records every
+#   copy's four scripts (script/test/test.sh, script/test/selfcheck.sh,
+#   script/box/assemble.sh, script/box/bench.sh) with STUBS that record
+#   their argv - one %q per argument plus the argument COUNT - so a split
+#   or merged argument shows up in the record. A fake `docker` that fails loudly and records every
 #   call sits first on PATH for the whole spec, so a regression that lets
 #   something reach the REAL test.sh shows up as a recorded docker call
 #   instead of a real build. The dry-run cases run the REAL assemble.sh
@@ -66,12 +66,13 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's three forwarding targets with recording stubs. Each
+# Replace the copy's four forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
     local _s
-    for _s in script/test/test.sh script/test/selfcheck.sh script/box/assemble.sh; do
+    for _s in script/test/test.sh script/test/selfcheck.sh \
+        script/box/assemble.sh script/box/bench.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -186,10 +187,10 @@ _listed_names() {
     assert_output "${_expected}"
 }
 
-@test "just box lists assemble, default and help (alias h) only" {
+@test "just box lists assemble, bench, default and help (alias h) only" {
     _just box
     assert_success
-    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble default help "
+    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default help "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     refute_output --partial "test.sh"
     assert_equal "$(_stub_calls)" ""
@@ -271,6 +272,31 @@ _listed_names() {
     assert_equal "$(_last_argc)" "3"
 }
 
+@test "just box bench --runs 3 forwards to bench.sh verbatim (argc 2)" {
+    _stub_scripts
+    _just box bench --runs 3
+    assert_success
+    assert_equal "$(_stub_calls)" "bench.sh --runs 3"
+    assert_equal "$(_last_argc)" "2"
+}
+
+@test "just box bench forwards to bench.sh with no argument" {
+    _stub_scripts
+    _just box bench
+    assert_success
+    assert_equal "$(_stub_calls)" "bench.sh"
+    assert_equal "$(_last_argc)" "0"
+}
+
+@test "just box bench --shell 'sh -c :' keeps the shell command one argument (argc 2)" {
+    _stub_scripts
+    _just box bench --shell "sh -c :"
+    assert_success
+    # %q-escaped: one word with escaped spaces, not three words.
+    assert_equal "$(_stub_calls)" "bench.sh --shell sh\\ -c\\ :"
+    assert_equal "$(_last_argc)" "2"
+}
+
 @test "just box help and just box h forward assemble.sh --help" {
     _stub_scripts
     _just box help
@@ -304,6 +330,14 @@ _listed_names() {
     _just box assemble --bogus
     assert_failure 2
     assert_line "assemble.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "valid:"
+    refute_output --partial "Usage"
+}
+
+@test "just box bench --bogus is refused by bench.sh itself (exit 2), not by the justfile" {
+    _just box bench --bogus
+    assert_failure 2
+    assert_line "bench.sh: unknown option '--bogus' (see --help)"
     refute_output --partial "valid:"
     refute_output --partial "Usage"
 }
