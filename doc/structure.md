@@ -24,7 +24,7 @@ worktool/
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
 │   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / setup.sh / status.sh(M3 再加 enter / rm)
+│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh(M3 再加 enter / rm)
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
 │       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --dry-run / --help;寫單一設定檔 + 受管區塊(見 enter.md)
 │       └── status.sh            印出生效的進盒決策、來源(default / user)與受管區塊是否存在(--help)
@@ -126,7 +126,7 @@ worktool/
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--help`) |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
-| `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
+| `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`

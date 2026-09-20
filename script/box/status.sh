@@ -15,8 +15,11 @@
 # The report goes to STDOUT (plain `<key>: <value> (<source>)` lines, no log
 # tags, so it can be grepped); nothing goes to stderr on success. Without a
 # state file the first line says so and the defaults are shown, so the
-# report is never empty. Every path derives from HOME / XDG_CONFIG_HOME
-# (lib/enter.sh).
+# report is never empty. A corrupt state file (a stored value or source that
+# is not an allowed value, whatever the source says) is refused before any
+# report line: `[ERROR] <file>: invalid value ...` on stderr, exit 1 - the
+# same check and message as setup.sh. Every path derives from
+# HOME / XDG_CONFIG_HOME (lib/enter.sh).
 #
 # This script owns its option validation: an unknown option is refused with
 # `status.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
@@ -31,6 +34,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# shellcheck source=log.sh
+source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
 
@@ -42,7 +47,8 @@ Usage: status.sh
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), and
 whether the worktool managed block is present in the ghostty config and in
-~/.tmux.conf. Read-only.
+~/.tmux.conf. Read-only. A corrupt state file is refused: `[ERROR] <file>:
+invalid value ...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
 EOF
@@ -74,9 +80,19 @@ _report_block() {
     printf '%s: %s (managed block: %s)\n' "${_label}" "${_file}" "${_state}"
 }
 
+# Refuse a corrupt state file before any report line (same check and
+# message as setup.sh): exit 1 upstream.
+_config_check() {
+    local _problem
+    _problem="$(enter_config_check "$1")" && return 0
+    log_error "$1: ${_problem}"
+    return 1
+}
+
 _report() {
     local _config _key
     _config="$(enter_config_path)"
+    _config_check "${_config}" || return 1
     if [[ -f "${_config}" ]]; then
         printf 'config: %s\n' "${_config}"
     else

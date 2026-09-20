@@ -83,3 +83,32 @@ setup() {
     _status_lines="$(printf '%s\n' "${lines[@]}" | grep -E '^(auto-enter|terminal|tmux|box): ')"
     assert_equal "${_status_lines}" "${_setup_lines}"
 }
+
+# --- #161 -------------------------------------------------------------------
+
+@test "setup --terminal none --tmux host then status: tmux host (user) stored, both blocks absent" {
+    run "${SETUP}" --terminal none --tmux host
+    assert_success
+    run "${STATUS}"
+    assert_success
+    assert_line "terminal: none (user)"
+    assert_line "tmux: host (user)"
+    assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
+    assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
+    assert [ ! -e "${TMUX_CONF}" ]
+}
+
+@test "a state file setup wrote and a user then corrupted is refused by both scripts, and setup leaves it as is" {
+    run "${SETUP}" --tmux host
+    assert_success
+    sed -i 's/^tmux=host$/tmux=sideways/' "${CONFIG}"
+    local _before
+    _before="$(cat "${CONFIG}")"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_equal "$(cat "${CONFIG}")" "${_before}"
+}
