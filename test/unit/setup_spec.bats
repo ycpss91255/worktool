@@ -392,6 +392,42 @@ _block_count() {
     assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=guess')"
 }
 
+# A key that IS present with an empty value is a stored value like any other:
+# it is refused, never mistaken for an absent key (absent = default applies).
+@test "an empty stored value is refused: a present key is validated even when its value is empty" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=\ntmux.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux (expected inside|host)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=\ntmux.source=user')"
+    printf 'box=\nbox.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*)"
+    printf 'tmux=host\ntmux.source=\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=')"
+}
+
+# Every LINE is validated, not just the first line per key: a corrupt
+# duplicate hiding behind a valid first occurrence is refused too.
+@test "a corrupt duplicate key is refused even when its first occurrence is valid" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux=sideways\ntmux.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux=sideways\ntmux.source=user')"
+    printf 'tmux=host\ntmux.source=user\ntmux.source=guess\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=user\ntmux.source=guess')"
+}
+
 # --- #161 (1): terminal none never writes a terminal profile ------------------
 
 @test "--terminal none --tmux host stores the decision but writes no ~/.tmux.conf" {

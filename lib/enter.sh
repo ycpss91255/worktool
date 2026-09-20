@@ -25,12 +25,16 @@
 #   enter_value_ok <key> <v>  -> 0 when <v> is an allowed value of <key>
 #
 # State file: `<key>=<value>` plus `<key>.source=default|user` per key.
-#   enter_config_get <file> <key>   -> prints the value (nothing when absent)
-#   enter_config_check <file>       -> 0 when every stored key holds a valid
-#                                      value and source (whatever the source
-#                                      says: the file is user-editable);
-#                                      else prints ONE `invalid value ...`
-#                                      line and returns 1
+#   enter_key_known <key>           -> 0 when <key> is a decision key or a
+#                                      `<key>.source`
+#   enter_config_get <file> <key>   -> prints the value (nothing when absent;
+#                                      first occurrence when repeated)
+#   enter_config_check <file>       -> 0 when EVERY LINE holding a known key
+#                                      (repeats and empty values included)
+#                                      has a valid value or source (whatever
+#                                      the source says: the file is
+#                                      user-editable); else prints ONE
+#                                      `invalid value ...` line and returns 1
 #
 # Managed block: exactly one per file, delimited by exact marker lines, so
 # it can be replaced in place and removed without touching user content. A
@@ -125,25 +129,35 @@ enter_config_get() {
     awk -F= -v k="$2" '$1 == k { print substr($0, length(k) + 2); exit }' "$1"
 }
 
-# Validate state file $1: every stored `<key>` and `<key>.source` must hold
-# an allowed value, WHATEVER the source says (the file is user-editable, so
-# a default-sourced line can be corrupt too). An absent file or key is fine
-# (defaults apply). On the first bad line prints
-# `invalid value '<v>' for <key> (expected <...>)` on stdout and returns 1,
-# so the caller can prefix the path and refuse the run before writing.
+# 0 when $1 is a key the state file may hold: a decision key or its
+# `<key>.source` companion.
+enter_key_known() {
+    enter_keys | grep -qxF -- "${1%.source}"
+}
+
+# Validate state file $1 LINE BY LINE: every line whose key is known must
+# hold an allowed value, WHATEVER the source says (the file is user-editable,
+# so a default-sourced line can be corrupt too). An absent file or key is
+# fine (defaults apply) - but a PRESENT key with an empty value is a stored
+# value and is refused like any other. Every line is checked, so a corrupt
+# duplicate behind a valid first occurrence is refused too (reads take the
+# first occurrence; the check must not). On the first bad line, in file
+# order, prints `invalid value '<v>' for <key> (expected <...>)` on stdout
+# and returns 1, so the caller can prefix the path and refuse the run
+# before writing.
 enter_config_check() {
-    local _file="$1" _key _sub _value
+    local _file="$1" _line _key _value
     [[ -f "${_file}" ]] || return 0
-    while IFS= read -r _key; do
-        for _sub in "${_key}" "${_key}.source"; do
-            _value="$(enter_config_get "${_file}" "${_sub}")"
-            [[ -z "${_value}" ]] && continue
-            enter_value_ok "${_sub}" "${_value}" && continue
-            printf "invalid value '%s' for %s (expected %s)\n" \
-                "${_value}" "${_sub}" "$(enter_expected "${_sub}")"
-            return 1
-        done
-    done < <(enter_keys)
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        [[ "${_line}" == *=* ]] || continue
+        _key="${_line%%=*}"
+        enter_key_known "${_key}" || continue
+        _value="${_line#*=}"
+        enter_value_ok "${_key}" "${_value}" && continue
+        printf "invalid value '%s' for %s (expected %s)\n" \
+            "${_value}" "${_key}" "$(enter_expected "${_key}")"
+        return 1
+    done <"${_file}"
 }
 
 # --- Managed block -----------------------------------------------------------
