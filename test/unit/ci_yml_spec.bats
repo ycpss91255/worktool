@@ -15,6 +15,11 @@
 #     test-integration, test-system, test-acceptance}, and the `include:`
 #     that maps each gate to its `just test` tier names exactly those five
 #     - a sixth gate anywhere turns this spec red (issue #164);
+#   - each `include:` entry pairs ONE gate with ONE tier and the pair set
+#     is EXACTLY {lint=lint, test-unit=unit, test-integration=integration,
+#     test-system=system, test-acceptance=acceptance}: a swapped or wrong
+#     tier, an entry without a tier, or an entry with two tiers turns this
+#     spec red (codex round 1 on issue #164);
 #   - the prebuilt test-image artifact is per-arch: the upload name in
 #     build-image and the download name in gate are the SAME string and
 #     carry the runner, so the two build legs cannot collide and every gate
@@ -43,6 +48,9 @@ setup() {
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
     LEG_JOBS=(build-image gate test-system-real)
     GATES=(lint test-unit test-integration test-system test-acceptance)
+    # gate=tier: the `just test <tier>` each gate runs (the include map).
+    TIERS=(lint=lint test-unit=unit test-integration=integration
+        test-system=system test-acceptance=acceptance)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
 }
@@ -103,8 +111,25 @@ _include_values() {
         | sort
 }
 
-# Print the expected set $@ one per line, sorted (the shape _flow_items and
-# _include_values print, for assert_output).
+# Print one `<gate>=<tier>` line per `- gate:` include entry of job $1,
+# sorted. An entry is the `- gate: <name>` line plus the deeper-indented
+# lines up to the next `- ` item; every `tier:` inside it is appended with
+# `+`, so an entry with no tier prints `<gate>=`, one with two prints
+# `<gate>=<a>+<b>`, and a swapped tier prints the wrong pair - none of
+# which equals the expected pair set. An entry that opens with `- tier:`
+# instead of `- gate:` never prints, so its gate goes missing (red).
+_include_pairs() {
+    _job_block "$1" | awk '
+        /^ +- gate: / { if (gate != "") print gate "=" tier
+                        gate = $3; tier = ""; next }
+        gate != "" && /^ +- / { print gate "=" tier; gate = ""; tier = "" }
+        gate != "" && /^ +tier: / { tier = (tier == "" ? $2 : tier "+" $2) }
+        END { if (gate != "") print gate "=" tier }
+    ' | sort
+}
+
+# Print the expected set $@ one per line, sorted (the shape _flow_items,
+# _include_values and _include_pairs print, for assert_output).
 _sorted_set() {
     printf '%s\n' "$@" | sort
 }
@@ -200,6 +225,14 @@ _sorted_set() {
     run _key_lines gate tier
     assert_success
     assert_equal "${#lines[@]}" "${#GATES[@]}"
+}
+
+@test "each include entry pairs its gate with EXACTLY its tier (a swapped, missing or doubled tier turns red)" {
+    # The gate=tier pairs, entry by entry, as a sorted set: the set-of-gates
+    # and count-of-tiers checks above cannot tell `lint: unit` from
+    # `lint: lint`, nor one entry missing its tier while another has two.
+    run _include_pairs gate
+    assert_output "$(_sorted_set "${TIERS[@]}")"
 }
 
 @test "job names carry the runner so a check reads '<gate> (<runner>)'" {
