@@ -36,7 +36,7 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 | 選項 | 值 | 預設 | 意義 |
 |------|----|------|------|
 | `--auto-enter` | `yes` \| `no` | `yes` | 要不要自動進盒。`no` = 還原 host shell:移除兩個受管區塊,並印出移除了什麼 |
-| `--terminal` | `ghostty` \| `none` | `$XDG_CONFIG_HOME/ghostty` 或 `~/.config/ghostty` 存在 -> `ghostty`,否則 `none` | 要管理哪個終端的 profile。`none` = 不寫任何終端 profile(log 會告訴你手動進盒的指令) |
+| `--terminal` | `ghostty` \| `none` | `$XDG_CONFIG_HOME/ghostty` 或 `~/.config/ghostty` 存在 -> `ghostty`,否則 `none` | 要管理哪個終端的 profile。`none` = 不寫任何終端 profile,**連 `~/.tmux.conf` 也不寫**(`--tmux host` 的決策照樣存進設定檔,只是 tmux.conf 區塊只服務 ghostty + host 這組;log 會告訴你手動進盒的指令) |
 | `--tmux` | `inside` \| `host` | `inside` | tmux 跑在盒內(終端直接 `distrobox enter <盒> -- tmux new -A -s main`)或跑在 host(終端跑 `tmux new -A -s main`,tmux 的每個 pane 再進盒:`~/.tmux.conf` 加 `set -g default-command "distrobox enter <盒>"`) |
 | `--box` | 容器名(`[A-Za-z0-9][A-Za-z0-9_.-]*`) | `dev` | 要進哪個盒 |
 | `--dry-run` | — | — | 印出每個決策與每個會寫 / 會移除的檔案,**什麼都不寫**(連設定檔都不寫) |
@@ -55,10 +55,12 @@ exit 2。
 |------|------|
 | `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`) |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = distrobox enter <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
-| `~/.tmux.conf` | 受管區塊(只有 `--tmux host`):`set -g default-command "distrobox enter <盒>"` |
+| `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command "distrobox enter <盒>"` |
 
-受管區塊以兩行標記包住,**一個檔案最多一個**,重跑時**原地取代**(不會重複、
-使用者自己的行原封不動),`--auto-enter no` 時整塊移除:
+受管區塊以兩行標記包住,**一個檔案恰好一個**,重跑時**原地取代**(不會重複、
+使用者自己的行原封不動;檔案若不知怎地已有兩個以上區塊,重寫時會先全部移除、
+再在第一個區塊的位置寫回恰好一個),`--auto-enter no` 時整塊移除。改寫既有檔案
+時保留它原本的權限(mode):
 
 ```text
 # BEGIN worktool managed block (just box setup; do not edit)
@@ -69,9 +71,16 @@ command = distrobox enter dev -- tmux new -A -s main
 設定檔裡標 `user` 的選擇會**跨次保留**(`just box setup --box work` 之後,裸
 `just box setup` 仍是 `box: work (user)`),要改就再給一次選項;標 `default` 的每次
 重算(例如裝了 ghostty 之後,`terminal` 會從 `none (default)` 變成
-`ghostty (default)`)。設定檔可以手改;改壞的值(例如 `tmux=sideways`)會被
+`ghostty (default)`)。設定檔可以手改;改壞的值(例如 `tmux=sideways`)**不論該 key 的 `.source` 是
+`default` 還是 `user`**、也不論命令列有沒有給選項蓋過它,都會在寫任何東西之前被
 `[ERROR] <設定檔>: invalid value 'sideways' for tmux (expected inside|host)` 拒絕、
-exit 1、不改寫任何檔案。
+exit 1、不改寫任何檔案;壞的 `.source`(例如 `tmux.source=guess`)同樣拒絕
+(`expected default|user`)。`just box status` 做同一個檢查、印同一行 `[ERROR]`、
+exit 1。
+
+寫入順序:先寫設定檔、再寫 profile(受管區塊)。設定檔在驗證通過後才寫;若之後
+某個 profile 寫入失敗,設定檔已經更新、指令 exit 1 --- `just box status` 會把該
+區塊報成 `absent`,重跑 `just box setup`(冪等)即可補齊。
 
 ### 範例 log
 

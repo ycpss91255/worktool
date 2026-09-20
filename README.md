@@ -70,11 +70,11 @@ justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完�
 | `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試 |
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
-| `just box` | 列出 box 的動詞(`assemble`、`setup`、`status`) |
+| `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`) |
 | `just box assemble [--dry-run] [--file <manifest>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`) |
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--tmux inside\|host] [--box <名稱>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty / tmux 在盒內 / `dev`),每個決策印 `[INFO] <key>: <value> (default\|user)`,寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊;`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box status` | 印出目前生效的進盒決策、來源(`default` / `user`)與受管區塊是否存在 |
-| `just box help`(或 `h`) | 依序印 `assemble.sh`、`setup.sh`、`status.sh` 的 usage |
+| `just box help`(或 `h`) | 依序印 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh` 的 usage |
 
 打錯 recipe 名(`just test bogus`)得到 `just` 自己的錯誤、exit 1;給了腳本不認得的
 選項(`just box assemble --bogus`)得到腳本自己的 `unknown option ... (see --help)`、
