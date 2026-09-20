@@ -15,11 +15,13 @@
 #     test-integration, test-system, test-acceptance}, and the `include:`
 #     that maps each gate to its `just test` tier names exactly those five
 #     - a sixth gate anywhere turns this spec red (issue #164);
-#   - each `include:` entry pairs ONE gate with ONE tier and the pair set
-#     is EXACTLY {lint=lint, test-unit=unit, test-integration=integration,
-#     test-system=system, test-acceptance=acceptance}: a swapped or wrong
-#     tier, an entry without a tier, or an entry with two tiers turns this
-#     spec red (codex round 1 on issue #164);
+#   - the matrix `include:` is EXACTLY five entries and each entry is
+#     EXACTLY one `gate` plus one `tier`, the entry set being {lint=lint,
+#     test-unit=unit, test-integration=integration, test-system=system,
+#     test-acceptance=acceptance}: a swapped or wrong tier, an entry
+#     without a tier or with two, an extra key inside an entry, or an
+#     extra entry that names no gate at all (`- experimental: true`) turns
+#     this spec red (codex rounds 1 and 2 on issue #164);
 #   - the prebuilt test-image artifact is per-arch: the upload name in
 #     build-image and the download name in gate are the SAME string and
 #     carry the runner, so the two build legs cannot collide and every gate
@@ -111,25 +113,36 @@ _include_values() {
         | sort
 }
 
-# Print one `<gate>=<tier>` line per `- gate:` include entry of job $1,
-# sorted. An entry is the `- gate: <name>` line plus the deeper-indented
-# lines up to the next `- ` item; every `tier:` inside it is appended with
-# `+`, so an entry with no tier prints `<gate>=`, one with two prints
-# `<gate>=<a>+<b>`, and a swapped tier prints the wrong pair - none of
-# which equals the expected pair set. An entry that opens with `- tier:`
-# instead of `- gate:` never prints, so its gate goes missing (red).
-_include_pairs() {
+# Print one line per entry of the matrix `include:` of job $1, sorted: the
+# entry's `key=value` pairs, sorted and joined by `,`. The include block is
+# the lines indented deeper than `        include:` up to the first that
+# is not (a `- key:` anywhere else in the job never counts); an entry is a
+# `- key: value` line plus the deeper-indented `key: value` lines up to
+# the next `- `. So the good entry `- gate: lint` / `tier: lint` prints
+# `gate=lint,tier=lint`; one with no tier prints `gate=lint`, one with two
+# `gate=lint,tier=a,tier=b`, one with a stray key
+# `experimental=true,gate=lint,tier=lint`, and an extra entry naming no
+# gate prints its own line (`experimental=true`) - none of which equals the
+# expected entry set, and the line count IS the entry count.
+_include_entries() {
     _job_block "$1" | awk '
-        /^ +- gate: / { if (gate != "") print gate "=" tier
-                        gate = $3; tier = ""; next }
-        gate != "" && /^ +- / { print gate "=" tier; gate = ""; tier = "" }
-        gate != "" && /^ +tier: / { tier = (tier == "" ? $2 : tier "+" $2) }
-        END { if (gate != "") print gate "=" tier }
-    ' | sort
+        /^        include:$/ { inc = 1; next }
+        inc && /^ *$/ { next }
+        inc && !/^ {9}/ { inc = 0 }
+        inc && /^ +- / { n++ }
+        inc && n { sub(/^ +(- )?/, ""); sub(/: /, "="); print n "\t" $0 }
+    ' \
+        | sort -t "$(printf '\t')" -k1,1n -k2,2 \
+        | awk -F '\t' '
+            $1 != n { if (n) print out; n = $1; out = $2; next }
+            { out = out "," $2 }
+            END { if (n) print out }
+        ' \
+        | sort
 }
 
 # Print the expected set $@ one per line, sorted (the shape _flow_items,
-# _include_values and _include_pairs print, for assert_output).
+# _include_values and _include_entries print, for assert_output).
 _sorted_set() {
     printf '%s\n' "$@" | sort
 }
@@ -227,12 +240,19 @@ _sorted_set() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "each include entry pairs its gate with EXACTLY its tier (a swapped, missing or doubled tier turns red)" {
-    # The gate=tier pairs, entry by entry, as a sorted set: the set-of-gates
+@test "the include is EXACTLY five entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+    local _pair _entries=()
+    for _pair in "${TIERS[@]}"; do
+        _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")
+    done
+    # Every include entry, key by key, as a sorted set: the set-of-gates
     # and count-of-tiers checks above cannot tell `lint: unit` from
-    # `lint: lint`, nor one entry missing its tier while another has two.
-    run _include_pairs gate
-    assert_output "$(_sorted_set "${TIERS[@]}")"
+    # `lint: lint`, nor one entry missing its tier while another has two,
+    # nor see an entry that names no gate at all (`- experimental: true`)
+    # or a stray key riding along inside a gate's entry.
+    run _include_entries gate
+    assert_output "$(_sorted_set "${_entries[@]}")"
+    assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
 @test "job names carry the runner so a check reads '<gate> (<runner>)'" {
