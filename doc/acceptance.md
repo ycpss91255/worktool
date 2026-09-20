@@ -443,10 +443,274 @@ prereq-ok
       distrobox rm -f dev
       ```
 
-## M3 終端自動進盒 + 效能
+## M3 終端自動進盒 + 效能達標(審核中)
 
-- 自動:進盒延遲量測腳本回報 < 300ms;開啟終端後 shell 為盒內 fish 的自動測試。
-- 人類:實機開新終端主觀順暢、無明顯延遲。
+人類 gate 用的驗收清單(= M3 驗收 PR 的描述;逐項勾選,有差異回 PR 留言):
+
+### 通用指令
+
+前提:host 有 docker(可 `--privileged`)與 just;1-4、6 不需 distrobox;5(實機)需要 host 有 distrobox 與 ghostty。
+本 PR 只改 `doc/acceptance.md`;要驗的程式全在 main。想順便看本 PR 的清單差異就 checkout 本 PR 分支。
+
+```bash
+git clone https://github.com/ycpss91255/worktool.git && cd worktool   # main 已含 M3 全部 sub-issue PR(#152-#156、#165-#169)
+just --version && docker info >/dev/null && echo prereq-ok
+```
+
+```text
+just 1.53.0        (版本不限)
+prereq-ok
+```
+
+### 驗收項目
+
+規則:1-4 全部 `just`;5 是實機(distrobox 原生 + 開終端主觀);6 用 gh / grep 查外部證據。每個「驗收方式」區塊都可單獨複製執行(自己建立 / 清理臨時目錄)。
+
+- [ ] 1. 使用者介面:box namespace 多了 bench / setup / status
+  - [ ] 1.1 `just box` 列出六個動作;`just box help` 依序印四支腳本的 usage
+    - 預期看到資訊
+      ```text
+      Available recipes:
+          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+          bench *args    # Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
+          default        # List the box verbs.
+          help           # Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh --help). [alias: h]
+          setup *args    # Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --tmux inside|host, --box <name>, --dry-run, --help).
+          status *args   # Show the auto-enter decisions in force, their sources and the managed blocks (args: --help).
+      Usage: assemble.sh [--file <manifest>] [--dry-run]
+      Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
+      Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
+      Usage: status.sh
+      four-usages
+      ```
+      (usage 第一行可能因終端寬度換行只顯示前半;最後一行 four-usages = 斷言四支不同腳本各有 usage)
+    - 驗收方式
+      ```bash
+      just box
+      just box help 2>&1 | grep '^Usage:'
+      test "$(just box help 2>&1 | grep -o '^Usage: [a-z]*\.sh' | sort -u | wc -l)" -eq 4 && echo four-usages
+      ```
+
+- [ ] 2. 自動測試:六道 gate 全綠(含 300 ms 進盒延遲 gate)
+  - [ ] 2.1 裸 `just test` 跑完六層;system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
+    - 預期看到資訊(約 5-8 分鐘;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
+      ```text
+      ./script/test/test.sh
+      [ci] ShellCheck OK
+      [ci]   required specs OK (N case(s) declared by M file(s))
+      ...(unit / integration / system / acceptance 各層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾)
+      ok N real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
+      ok N real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
+      # bench: enter: min=.. median=.. max=.. ms
+      # bench: shell: min=.. median=.. max=.. ms
+      # bench: inbox: min=.. median=.. max=.. ms
+      # bench: [INFO] shell median .. ms within --max-ms 300
+      ok N real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines
+      # bench-gate: [ERROR] shell median .. ms exceeds --max-ms 1
+      ok N real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)
+      [ci] system-real bats OK
+      [system-real] cleanup: containers left in the nested daemon: 0
+      rc=0
+      ```
+      (數字是你機器的實測;判準 = shell median < 300 且三行指標都在;本機實測 enter 88 / shell(fish) 101 / inbox 4.9 ms。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish < 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 tmux/fish」整條鏈需要終端模擬器,由 5.2 實機驗證)
+    - 驗收方式
+      ```bash
+      just test; echo rc=$?
+      ```
+  - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有 RED 證據段與 GREEN 證據段 —— 一行含 RED(不含 GREEN)或 GREEN(不含 RED)的標記,且該行不在程式碼區塊內(前面的圍欄數為偶數),其後 5 行內有一個**開頭** ``` 圍欄(實際輸出),且 RED 段在 GREEN 段之前(先失敗後通過)
+    - 預期看到資訊(10 行,每行 order=ok)
+      ```text
+      #152 order=ok
+      ...
+      #169 order=ok
+      ```
+    - 驗收方式
+      ```bash
+      ev() { grep -n "$2" <<<"$1" | grep -v "$3" | cut -d: -f1 | while read -r l; do nf=$(sed -n "1,${l}p" <<<"$1" | grep -c '^```'); [ $((nf % 2)) -eq 0 ] && sed -n "$((l+1)),$((l+5))p" <<<"$1" | grep -q '^```' && { echo "$l"; break; }; done | head -1; }
+      for n in 152 153 154 155 156 165 166 167 168 169; do b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body); r=$(ev "$b" RED GREEN); g=$(ev "$b" GREEN RED); printf '#%s order=%s\n' "$n" "$([ -n "$r" ] && [ -n "$g" ] && [ "$r" -lt "$g" ] && echo ok || echo BAD)"; done
+      ```
+
+- [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(每個區塊自建拋棄式 HOME,不動你的家目錄)
+  - [ ] 3.1 dry-run 只印決策、不寫檔
+    - 預期看到資訊
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] tmux: inside (default)
+      [INFO] box: dev (default)
+      [INFO] dry-run: would write <H>/.config/worktool/config
+      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      rc=0
+      absent
+      ```
+    - 驗收方式
+      ```bash
+      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run; echo rc=$?; [ -e "$H/.config/worktool/config" ] && echo written || echo absent; rm -rf "$H"
+      ```
+  - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 顯示來源與區塊
+    - 預期看到資訊
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] tmux: inside (default)
+      [INFO] box: dev (default)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      rc=0
+      ./script/box/status.sh "$@"
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (default)
+      tmux: inside (default)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      tmux.conf: <H>/.tmux.conf (managed block: absent)
+      rc=0
+      # BEGIN worktool managed block (just box setup; do not edit)
+      command = distrobox enter dev -- tmux new -A -s main
+      # END worktool managed block
+      ```
+    - 驗收方式
+      ```bash
+      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup; echo rc=$?; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; cat "$H/.config/ghostty/config"; rm -rf "$H"
+      ```
+  - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);受管區塊只剩零個
+    - 預期看到資訊(第二次 setup 起)
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: no (user)
+      [INFO] terminal: ghostty (default)
+      [INFO] tmux: inside (default)
+      [INFO] box: dev (default)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] removed: <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      [INFO] nothing to remove: <H>/.tmux.conf (no managed block)
+      rc=0
+      blocks=0
+      ```
+    - 驗收方式
+      ```bash
+      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no; echo rc=$?; printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")"; rm -rf "$H"
+      ```
+  - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
+    - 預期看到資訊
+      ```text
+      ./script/box/setup.sh "$@"
+      setup.sh: unknown option '--bogus' (see --help)
+      error: recipe `setup` failed on line 44 with exit code 2
+      rc=2
+      files=0
+      ./script/box/status.sh "$@"
+      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for tmux (expected inside|host)
+      error: recipe `status` failed on line 48 with exit code 1
+      rc=1
+      ./script/box/status.sh "$@"
+      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for tmux (expected inside|host)
+      error: recipe `status` failed on line 48 with exit code 1
+      rc=1
+      ```
+    - 驗收方式
+      ```bash
+      H=$(mktemp -d); HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus; echo rc=$?; printf 'files=%s\n' "$(find "$H" -type f | wc -l)"; mkdir -p "$H/.config/worktool"; for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; done; rm -rf "$H"
+      ```
+
+- [ ] 4. README 圖(draw.io,可編輯)
+  - [ ] 4.1 三張 `.drawio.svg` 無 foreignObject、內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
+    - 預期看到資訊
+      ```text
+      0
+      3
+      4
+      1
+      ```
+    - 驗收方式
+      ```bash
+      grep -l '<foreignObject' doc/diagram/*.drawio.svg | wc -l
+      grep -l 'content="&lt;mxfile' doc/diagram/*.drawio.svg | wc -l
+      grep -c 'doc/diagram/.*\.drawio\.svg' README.md
+      grep -c 'host 只需 docker + just' doc/diagram/flow.drawio.svg
+      ```
+  - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
+
+- [ ] 5. 實機(host 有 distrobox + ghostty;會建 dev 盒並改你的 ghostty 設定,可用 3.3 的方式還原)
+  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準;實機數字貼到 #22)
+    - 預期看到資訊(assemble 的輸出略;最後幾行)
+      ```text
+      enter: min=.. median=.. max=.. ms
+      shell: min=.. median=.. max=.. ms
+      inbox: min=.. median=.. max=.. ms
+      [INFO] shell median .. ms within --max-ms 300
+      rc=0
+      ```
+    - 驗收方式
+      ```bash
+      just box assemble && just box bench --runs 10 --shell 'fish -c exit' --max-ms 300; echo rc=$?
+      ```
+  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令
+    - 預期看到資訊(新視窗內)
+      ```text
+      /run/.containerenv
+      fish
+      main
+      ```
+    - 驗收方式
+      ```bash
+      just box setup && just box status
+      # 開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
+      ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
+      ```
+
+- [ ] 6. CI 與流程(gh / grep 查外部證據)
+  - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check 且數量相等
+    - 預期看到資訊
+      ```text
+      #152 total=8 nonpass=0 amd=0 arm=0 closes=1 issue=#151
+      #153 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#149
+      ...(10 行;#153 起 amd=arm>0;nonpass 全 0;closes 全 1;total>0)
+      #169 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#162
+      distinct=10
+      ```
+    - 驗收方式
+      ```bash
+      set -o pipefail; for n in 152 153 154 155 156 165 166 167 168 169; do c=$(gh pr checks "$n" --repo ycpss91255/worktool --json name,bucket) || { echo "#$n gh-failed"; continue; }; b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; continue; }; printf '#%s total=%s nonpass=%s amd=%s arm=%s closes=%s issue=%s\n' "$n" "$(jq 'length' <<<"$c")" "$(jq '[.[] | select(.bucket != "pass")] | length' <<<"$c")" "$(jq '[.[].name | select(test("ubuntu-latest"))] | length' <<<"$c")" "$(jq '[.[].name | select(test("ubuntu-24.04-arm"))] | length' <<<"$c")" "$(grep -c '^Closes #' <<<"$b")" "$(grep -o '^Closes #[0-9]*' <<<"$b" | cut -d' ' -f2 | tr '\n' ',' | sed 's/,$//')"; done | tee /tmp/m3-61.txt
+      printf 'distinct=%s\n' "$(grep -o 'issue=#[0-9]*' /tmp/m3-61.txt | sort -u | wc -l)"
+      ```
+  - [ ] 6.2 決策與研究都在 issue 上,且是具體結論:#22 的 [claude] 留言有實測 `median=.. ms` 與「維持 docker + 預設 runc」;#148 有「只用 LTS」與「ubuntu-24.04-arm」;#21 有「預設 = 直接進盒」與「印 log」
+    - 預期看到資訊(每行數字 >= 1)
+      ```text
+      #22 median-ms:1 runc:1
+      #148 lts-only:1 arm-runner:1
+      #21 default-enter:1 log:1
+      ```
+    - 驗收方式
+      ```bash
+      c() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -c "$2" | awk '{print ($1>=1)?1:0}'; }
+      echo "#22 median-ms:$(c 22 'median=[0-9][0-9]*\(\.[0-9][0-9]*\)\? ms') runc:$(c 22 '維持 docker + 預設 runc')"
+      echo "#148 lts-only:$(c 148 '只用 LTS') arm-runner:$(c 148 'ubuntu-24.04-arm')"
+      echo "#21 default-enter:$(c 21 '預設 = 直接進盒') log:$(c 21 '印 log')"
+      ```
+  - [ ] 6.3 codex:#156、#165-#169 的最後一則 [codex] 留言判定行是「可合併」;#152-#155 是配額恢復後的補複驗,最後一則 [codex] 判定「不可合併」,各自的阻擋項記錄在 follow-up issue(#163 / #164 / #162 / #161,由原 PR 上的 [claude] 留言指向),而修正該 issue 的 PR(#166 / #165 / #169 / #168)必須 Closes 正是那個 issue,且該 PR 自己的最後 [codex] 判定「可合併」
+    - 預期看到資訊
+      ```text
+      #156 mergeable
+      #165 mergeable
+      #166 mergeable
+      #167 mergeable
+      #168 mergeable
+      #169 mergeable
+      #152 blocked -> follow-up #163 fixed-by PR #166 (closes #163, mergeable) ok
+      #153 blocked -> follow-up #164 fixed-by PR #165 (closes #164, mergeable) ok
+      #154 blocked -> follow-up #162 fixed-by PR #169 (closes #162, mergeable) ok
+      #155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok
+      ```
+    - 驗收方式
+      ```bash
+      v() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
+      for n in 156 165 166 167 168 169; do printf '#%s ' "$n"; v "$n" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT; done
+      for n in 152 153 154 155; do fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u); fu=$(head -1 <<<"$fus"); prs=$(gh pr list --repo ycpss91255/worktool --state merged --search "Closes #$fu in:body" --json number,body --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number"); pr=$(head -1 <<<"$prs"); orig=$(v "$n" | grep -q '^不可合併' && echo blocked || echo UNEXPECTED); fix=$(v "$pr" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT); ok=BAD; [ "$orig" = blocked ] && [ "$fix" = mergeable ] && [ "$(wc -l <<<"$fus")" -eq 1 ] && [ "$(wc -l <<<"$prs")" -eq 1 ] && ok=ok; printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' "$n" "$orig" "$fu" "$pr" "$fu" "$fix" "$ok"; done
+      ```
 
 ## M4 host bootstrap
 
