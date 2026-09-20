@@ -29,21 +29,26 @@
 #   id f_test) must not claim "host 不裝任何套件" - the host DOES need
 #   docker + just (and the architecture diagram / README say so). Its label
 #   reads "測試依賴皆在 Docker 內 / (host 只需 docker + just)" instead, split
-#   over two lines so it fits the 190px node. The check is scoped to the
-#   f_test cell - both its rendered <g data-cell-id="f_test"> group and its
+#   over two lines so it fits the 190px node. The guard is ONE predicate,
+#   _f_test_wording_ok (= _f_test_rendered_ok && _f_test_source_ok), scoped
+#   to the f_test cell - its rendered <g data-cell-id="f_test"> group and its
 #   embedded <mxCell id="f_test"> source - so moving the correct phrase to
 #   another node while f_test regresses is caught.
 #
 #   The "rejects bad input" cases feed hand-written fixtures (a non-root
 #   <svg>, a truncated mxfile payload, the phrase moved to another cell) to
-#   the same predicates the real diagrams go through, so the guards are
-#   proven to reject what they claim to reject rather than merely to pass
-#   on today's exports.
+#   the very same predicates the real diagrams go through - never to a
+#   separate, weaker check - so the guards are proven to reject what they
+#   claim to reject rather than merely to pass on today's exports, and a
+#   guard that later degrades to a global grep fails its rejection case. A
+#   control fixture (correct f_test) proves the guard accepts the fixture
+#   shape at all, so the rejection is not a vacuous format mismatch.
 #
 # Written test-first: RED while doc/diagram/ is missing, GREEN once the
 # exports and the README section land. The #163 tightening was RED on the
 # wording case until flow.drawio.svg was re-exported; the fixture cases were
-# RED against the previous global-grep assertions.
+# RED against the previous global-grep assertions, and the shared-predicate
+# rejection case was RED with the guard temporarily written as a global grep.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -56,6 +61,9 @@ F_TEST_LINE_2="六道 gate,全部在 Docker"
 F_TEST_LINE_3="測試依賴皆在 Docker 內"
 F_TEST_LINE_4="(host 只需 docker + just)"
 OLD_F_TEST_WORDING="host 不裝任何套件"
+# A paraphrase of the old claim used by the regression fixture: wrong in
+# meaning, yet matched by neither the old string nor the new lines.
+REGRESSED_F_TEST_WORDING="host 免安裝"
 
 setup() {
     README="${REPO_ROOT}/README.md"
@@ -136,6 +144,48 @@ _source_cell() {
         | sed -E 's/&lt;\/mxCell&gt;.*$//'
 }
 
+# --- The #163 wording guard (ONE predicate; real diagram and fixtures) -------
+#
+# Both halves are scoped to the f_test cell: what other cells say never
+# counts, so the correct phrase living elsewhere cannot mask a regressed
+# f_test. On failure they print what f_test actually carries, so a failing
+# case shows the mismatch instead of a bare exit status.
+
+# The four expected lines, newline-separated, as _cell_label_lines reports.
+_f_test_expected_lines() {
+    printf '%s\n%s\n%s\n%s\n' \
+        "${F_TEST_LINE_1}" "${F_TEST_LINE_2}" "${F_TEST_LINE_3}" "${F_TEST_LINE_4}"
+}
+
+# True iff the rendered <g data-cell-id="f_test"> group of file $1 carries
+# exactly the four expected <text> lines, in order, and nothing else.
+_f_test_rendered_ok() {
+    local _got
+    _got="$(_cell_label_lines "$1" f_test)"
+    [ "${_got}" = "$(_f_test_expected_lines)" ] && return 0
+    printf 'rendered f_test lines:\n%s\n' "${_got}"
+    return 1
+}
+
+# True iff the embedded &lt;mxCell id=&quot;f_test&quot; source of file $1
+# has value= exactly the same four lines (joined with &amp;#xa;, the escaped
+# newline entity draw.io writes), so an editor re-export keeps the wording.
+_f_test_source_ok() {
+    local _cell _want
+    _cell="$(_source_cell "$1" f_test)"
+    _want="value=&quot;$(_f_test_expected_lines | sed -E '$!s/$/\&amp;#xa;/' | tr -d '\n')&quot;"
+    case "${_cell}" in
+        *"${_want}"*) return 0 ;;
+    esac
+    printf 'source f_test cell:\n%s\n' "${_cell}"
+    return 1
+}
+
+# True iff the flow diagram $1 passes the #163 wording guard on both sides.
+_f_test_wording_ok() {
+    _f_test_rendered_ok "$1" && _f_test_source_ok "$1"
+}
+
 # --- Fixtures (written under BATS_TEST_TMPDIR) ------------------------------
 
 # $1 = path. An <svg> that is NOT the root element (wrapped in <html>).
@@ -158,18 +208,66 @@ _write_fixture_mxfile_truncated() {
 EOF
 }
 
-# $1 = path. A flow-shaped SVG where the f_test cell carries the OLD wording
-# while the correct two lines were moved to another cell (f_other), in both
-# the rendered groups and the embedded source. A global grep for the new
-# phrase passes; only a cell-scoped check catches the regression.
+# Cell label lines are passed to the fixture writers as ONE newline-separated
+# string ($2 below), the way _cell_label_lines reports them.
+
+# One escaped mxCell for the embedded source: id $1, value = the lines $2
+# joined with the draw.io newline entity (&#xa;, itself &amp;-escaped inside
+# the content attribute).
+_fixture_source_cell() {
+    local _value
+    _value="$(printf '%s\n' "$2" | sed -E '$!s/$/\&amp;#xa;/' | tr -d '\n')"
+    printf '&lt;mxCell id=&quot;%s&quot; value=&quot;%s&quot; vertex=&quot;1&quot;&gt;&lt;mxGeometry as=&quot;geometry&quot; /&gt;&lt;/mxCell&gt;' \
+        "$1" "${_value}"
+}
+
+# One rendered cell group: id $1, one <text> per line of $2.
+_fixture_rendered_cell() {
+    local _line _y=0
+    printf '<g data-cell-id="%s"><g>' "$1"
+    while IFS= read -r _line; do
+        _y=$((_y + 1))
+        printf '<text x="1" y="%s">%s</text>' "${_y}" "${_line}"
+    done <<< "$2"
+    printf '</g></g>\n'
+}
+
+# $1 = path, $2 = f_test lines, $3 = f_other lines. A minimal flow-shaped
+# SVG (root <svg>, one embedded mxfile, two cells f_test / f_other) in the
+# same shape as the real export: the rendered <g data-cell-id> groups and the
+# embedded &lt;mxCell&gt; source agree with each other, so what the guard
+# sees is decided by the caller alone.
+_write_fixture_flow() {
+    {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+        printf '<svg xmlns="http://www.w3.org/2000/svg" content="&lt;mxfile host=&quot;x&quot;&gt;&lt;diagram&gt;&lt;mxGraphModel&gt;&lt;root&gt;'
+        _fixture_source_cell f_test "$2"
+        _fixture_source_cell f_other "$3"
+        printf '&lt;/root&gt;&lt;/mxGraphModel&gt;&lt;/diagram&gt;&lt;/mxfile&gt;">\n'
+        _fixture_rendered_cell f_test "$2"
+        _fixture_rendered_cell f_other "$3"
+        printf '</svg>\n'
+    } > "$1"
+}
+
+# $1 = path. Control fixture: f_test carries the correct four lines and
+# f_other something unrelated. Proves the guard accepts a fixture of this
+# shape at all, so the rejection below is not a vacuous format mismatch.
+_write_fixture_wording_ok() {
+    _write_fixture_flow "$1" \
+        "${F_TEST_LINE_1}"$'\n'"${F_TEST_LINE_2}"$'\n'"${F_TEST_LINE_3}"$'\n'"${F_TEST_LINE_4}" \
+        "3. just box"$'\n'"assemble"
+}
+
+# $1 = path. Regression fixture: f_test regressed to a paraphrase of the old
+# claim (neither the old string nor the new lines) while the correct two
+# lines were moved to f_other, in both the rendered groups and the embedded
+# source. Every global grep passes - the new phrase is present, the old
+# string is absent - so only a cell-scoped guard catches it.
 _write_fixture_wording_moved() {
-    cat > "$1" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" content="&lt;mxfile host=&quot;x&quot;&gt;&lt;diagram&gt;&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=&quot;f_test&quot; value=&quot;2. just test&amp;#xa;六道 gate,全部在 Docker&amp;#xa;host 不裝任何套件&quot; vertex=&quot;1&quot;&gt;&lt;mxGeometry as=&quot;geometry&quot; /&gt;&lt;/mxCell&gt;&lt;mxCell id=&quot;f_other&quot; value=&quot;測試依賴皆在 Docker 內&amp;#xa;(host 只需 docker + just)&quot; vertex=&quot;1&quot;&gt;&lt;mxGeometry as=&quot;geometry&quot; /&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;&lt;/diagram&gt;&lt;/mxfile&gt;">
-<g data-cell-id="f_test"><g><text x="1" y="1">2. just test</text><text x="1" y="2">六道 gate,全部在 Docker</text><text x="1" y="3">host 不裝任何套件</text></g></g>
-<g data-cell-id="f_other"><g><text x="1" y="1">測試依賴皆在 Docker 內</text><text x="1" y="2">(host 只需 docker + just)</text></g></g>
-</svg>
-EOF
+    _write_fixture_flow "$1" \
+        "${F_TEST_LINE_1}"$'\n'"${F_TEST_LINE_2}"$'\n'"${REGRESSED_F_TEST_WORDING}" \
+        "${F_TEST_LINE_3}"$'\n'"${F_TEST_LINE_4}"
 }
 
 # --- each diagram: exists, is SVG, no foreignObject, embeds the mxfile ------
@@ -266,39 +364,47 @@ EOF
 }
 
 @test "flow diagram: the rendered f_test node carries exactly the four expected label lines" {
-    run _cell_label_lines "$(_svg flow)" f_test
+    run _f_test_rendered_ok "$(_svg flow)"
     assert_success
-    assert [ "${#lines[@]}" -eq 4 ]
-    assert_line --index 0 "${F_TEST_LINE_1}"
-    assert_line --index 1 "${F_TEST_LINE_2}"
-    assert_line --index 2 "${F_TEST_LINE_3}"
-    assert_line --index 3 "${F_TEST_LINE_4}"
 }
 
 @test "flow diagram: the embedded f_test source value carries the same four lines (editor re-export keeps the wording)" {
-    run _source_cell "$(_svg flow)" f_test
+    run _f_test_source_ok "$(_svg flow)"
     assert_success
-    assert_output --partial "value=&quot;${F_TEST_LINE_1}&amp;#xa;${F_TEST_LINE_2}&amp;#xa;${F_TEST_LINE_3}&amp;#xa;${F_TEST_LINE_4}&quot;"
-    refute_output --partial "${OLD_F_TEST_WORDING}"
 }
 
-@test "the wording check rejects a flow where f_test regressed and the phrase moved to another cell" {
+@test "flow diagram: the real export passes the f_test wording guard as a whole" {
+    run _f_test_wording_ok "$(_svg flow)"
+    assert_success
+}
+
+@test "the wording guard accepts a fixture whose f_test carries the four lines (control)" {
+    local _f="${BATS_TEST_TMPDIR}/ok.svg"
+    _write_fixture_wording_ok "${_f}"
+    run _f_test_wording_ok "${_f}"
+    assert_success
+}
+
+@test "the wording guard rejects a flow where f_test regressed and the phrase moved to another cell" {
     local _f="${BATS_TEST_TMPDIR}/moved.svg"
     _write_fixture_wording_moved "${_f}"
-    # A global grep still finds the new phrase, in rendered text and source ...
+    # Every global grep passes: the new phrase is there (rendered text and
+    # source) and the old string is nowhere ...
     run grep -o "${F_TEST_LINE_3}" "${_f}"
     assert_success
     assert [ "${#lines[@]}" -ge 2 ]
-    # ... but the f_test node itself carries the old wording.
-    run _cell_label_lines "${_f}" f_test
-    assert_success
-    refute_line "${F_TEST_LINE_3}"
-    refute_line "${F_TEST_LINE_4}"
-    assert_line "${OLD_F_TEST_WORDING}"
-    run _source_cell "${_f}" f_test
-    assert_success
-    refute_output --partial "${F_TEST_LINE_3}"
-    assert_output --partial "${OLD_F_TEST_WORDING}"
+    run grep -c "${OLD_F_TEST_WORDING}" "${_f}"
+    assert_failure
+    assert_output "0"
+    # ... but the guard the real diagram goes through must refuse it, on the
+    # rendered side, on the source side, and as a whole. Should the guard
+    # ever fall back to a global grep, these three fail.
+    run _f_test_rendered_ok "${_f}"
+    assert_failure
+    run _f_test_source_ok "${_f}"
+    assert_failure
+    run _f_test_wording_ok "${_f}"
+    assert_failure
 }
 
 # --- README embeds all three -------------------------------------------------
