@@ -256,6 +256,19 @@ _assert_metric_lines() {
 # prompt". This constant is what the gate below hands to bench.sh --shell.
 BENCH_SHELL='fish -c exit'
 
+# Assert that the last `run` timed fish for BOTH shell-shaped metrics, with
+# the given warmup / runs counts: the host-side `shell` metric AND the
+# in-box `inbox` timer (`bash -c <timer> bench-inbox fish -c exit`). Codex
+# round 1 on PR #169: evidence that only names `sh -c :` cannot prove the
+# in-box timer ever started fish, so the spec pins the command in both
+# INFO lines (bench.sh names the timed command per metric).
+_assert_fish_timed() {
+    local _warmup="$1" _runs="$2"
+    assert_line --regexp "^\[INFO\] shell: ${_warmup} warmup \+ ${_runs} run\(s\) of 'distrobox enter dev -- ${BENCH_SHELL}' done$"
+    assert_line --regexp "^\[INFO\] inbox: ${_warmup} warmup \+ ${_runs} run\(s\) of 'distrobox enter dev -- bash -c <timer> bench-inbox ${BENCH_SHELL}' done$"
+    refute_line --regexp "^\[INFO\] (shell|inbox): .* sh -c :' done$"
+}
+
 @test "real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines" {
     cd "${REPO_ROOT}"
     # 3 metrics x (2 warmup + 5 runs) = 21 enters of an initialised box.
@@ -267,8 +280,8 @@ BENCH_SHELL='fish -c exit'
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     _assert_metric_lines
-    # The shell metric really ran fish (bench.sh names the timed command).
-    assert_line --regexp "^\[INFO\] shell: 2 warmup \+ 5 run\(s\) of 'distrobox enter dev -- ${BENCH_SHELL}' done$"
+    # Both the shell metric and the in-box timer really ran fish.
+    _assert_fish_timed 2 5
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
     _log_lines bench "${lines[@]}"
@@ -284,6 +297,7 @@ BENCH_SHELL='fish -c exit'
     [[ "${status}" -eq 1 ]] || _diag
     assert_failure 1
     _assert_metric_lines
+    _assert_fish_timed 0 1
     assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
     refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
     _log_lines bench-gate "${lines[@]}"
