@@ -9,9 +9,11 @@
 #   `distrobox assemble create` -> real `distrobox-create` run, and the
 #   request that actually reaches the container manager carries container
 #   name `dev`, image `ubuntu:26.04`, and the manifest's additional_packages
-#   (`ripgrep fzf`), which distrobox hands to its in-container entrypoint
-#   (distrobox-init) as `--additional-packages`. A manager failure on
-#   `create` propagates back through the wrapper as a non-zero exit.
+#   (`ripgrep fzf tmux fish` - M3, issue #160, adds tmux and fish as the
+#   auto-enter prerequisite), which distrobox hands to its in-container
+#   entrypoint (distrobox-init) as `--additional-packages`. A manager
+#   failure on `create` propagates back through the wrapper as a non-zero
+#   exit.
 #
 # HOW (no docker-in-docker)
 #   The container manager is a FAKE: test/system/fixture/fake_container_manager.sh
@@ -23,8 +25,8 @@
 #
 # WHAT THIS DOES NOT PROVE (see doc/manifest.md)
 #   - that ubuntu:26.04 can actually be pulled,
-#   - that ripgrep/fzf actually install inside the box (distrobox-init never
-#     runs here - no container is ever started),
+#   - that ripgrep/fzf/tmux/fish actually install inside the box
+#     (distrobox-init never runs here - no container is ever started),
 #   - that the resulting box is usable (`distrobox enter dev -- rg --version`).
 #   Those need a real container manager and are proven by the real-engine
 #   group of this tier, test/system/real_engine_spec.bats, which runs in the
@@ -141,7 +143,7 @@ _trim() {
     assert_line --partial "docker create"
     assert_line '--name "dev"'
     assert_line "ubuntu:26.04"
-    assert_line --regexp '^--additional-packages " *ripgrep fzf"$'
+    assert_line --regexp '^--additional-packages " *ripgrep fzf tmux fish"$'
 }
 
 # --- real mode: the create request that reached the manager -----------------
@@ -182,7 +184,7 @@ _trim() {
     local _pkg_i
     _pkg_i="$(_index_of --additional-packages)"
     assert [ "${_pkg_i}" -gt "${_image_i}" ]
-    assert_equal "$(_trim "${ARGV[$((_pkg_i + 1))]}")" "ripgrep fzf"
+    assert_equal "$(_trim "${ARGV[$((_pkg_i + 1))]}")" "ripgrep fzf tmux fish"
 
     # It is a distrobox-managed container.
     local _label_i
