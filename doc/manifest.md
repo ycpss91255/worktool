@@ -151,10 +151,11 @@ WORKTOOL_DRY_RUN=1 ./script/box/assemble.sh           # 以環境變數試跑,�
 
 ## 進盒延遲量測(just box bench)
 
-M3(issue #150)加入量測工具 `script/box/bench.sh`,使用者介面是
-`just box bench [選項]`(recipe 只是把參數**原樣**轉發給腳本;參數驗證與 `--help`
-都在腳本,與 `just box assemble` 同一個模型)。它用 bash 內建的 `EPOCHREALTIME`
-(微秒精度的 wall clock)計時,**不依賴 hyperfine**、不需要在 host 上安裝任何東西。
+M3(issue #150;issue #162 補第三個指標 `inbox` 與輸入驗證)加入量測工具
+`script/box/bench.sh`,使用者介面是 `just box bench [選項]`(recipe 只是把參數**原樣**
+轉發給腳本;參數驗證與 `--help` 都在腳本,與 `just box assemble` 同一個模型)。它用
+bash 內建的 `EPOCHREALTIME`(微秒精度的 wall clock)計時,**不依賴 hyperfine**、不需要
+在 host 上安裝任何東西。
 
 ### 用法
 
@@ -164,12 +165,12 @@ bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD
 
 | 選項 | 說明 | 預設 |
 |------|------|------|
-| `--box NAME` | 要進的盒子 | `dev` |
+| `--box NAME` | 要進的盒子;只允許 `^[A-Za-z0-9._-]+$`(見下方「輸入驗證」) | `dev` |
 | `--runs N` | 每個指標**計入統計**的次數(N >= 1) | `10` |
 | `--warmup N` | 每個指標量測前**不計入**的暖身次數(N >= 0;第一次 enter 可能要先啟動停著的容器) | `2` |
 | `--max-ms N` | 門檻:**shell 指標的中位數**超過 N ms 即 exit 1(供 gate 使用) | 無門檻 |
-| `--json` | 改印**一個** JSON 物件,不印文字行 | 關 |
-| `--shell CMD` | shell 指標要跑的指令(以空白拆成參數) | `sh -c :` |
+| `--json` | 改印**一個** JSON 物件,不印三行文字 | 關 |
+| `--shell CMD` | shell 與 inbox 指標要跑的指令(以空白拆成參數);不得含控制字元(見下方「輸入驗證」) | `sh -c :` |
 | `-h`, `--help` | 印 usage 後 exit 0 | |
 
 ```bash
@@ -184,34 +185,52 @@ just box bench --help                   # 說明(由腳本印出)
 
 ### 指標的意義
 
-兩個指標,**先量 enter、再量 shell**;每個指標先跑 `--warmup` 次(不記錄),再跑
+三個指標,依序 **enter、shell、inbox**;每個指標先跑 `--warmup` 次(不記錄),再跑
 `--runs` 次(記錄),對記錄到的樣本算 min / median / max(偶數個樣本的中位數取中間
 兩個的平均):
 
 | 指標 | 實際執行的指令 | 量的是什麼 |
 |------|----------------|------------|
-| `enter` | `distrobox enter <box> -- true` | distrobox 包裝層 + 容器引擎的一次來回(進盒的固定成本) |
-| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`;system-real gate 用 `fish -c exit`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲 |
+| `enter` | `distrobox enter <box> -- true` | distrobox 包裝層 + 容器引擎的一次來回(進盒的固定成本);host 端計時 |
+| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`;system-real gate 用 `fish -c exit`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲;host 端計時 |
+| `inbox` | `distrobox enter <box> -- bash -c '<timer>' bench-inbox <shell>` | **只有 shell 的啟動**,在**盒內**計時:`<timer>` 是一行 bash,在盒內讀兩次自己的 `EPOCHREALTIME`、中間跑 `<shell>`(以 `"$@"` 收到、參數邊界不變,stdout 丟棄),把差值(微秒、一個整數)印在 stdout 最後一行、以 `<shell>` 的結束碼結束;bench.sh 解析那個數字,所以 enter 的來回**不在**這個數字裡(shell − inbox 約等於 enter)。timer 印出的不是整數(例如盒內 bash 太舊沒有 `EPOCHREALTIME`)視同量測失敗 |
 
 輸出(STDOUT,機器可讀;診斷一律走 STDERR):
 
 ```text
 enter: min=<ms> median=<ms> max=<ms> ms
 shell: min=<ms> median=<ms> max=<ms> ms
+inbox: min=<ms> median=<ms> max=<ms> ms
 ```
 
 `--json` 時改為恰好一個物件:
 
 ```json
-{"box":"dev","runs":10,"warmup":2,"shell_cmd":"sh -c :","unit":"ms","enter":{"min":..,"median":..,"max":..},"shell":{"min":..,"median":..,"max":..}}
+{"box":"dev","runs":10,"warmup":2,"shell_cmd":"sh -c :","unit":"ms","enter":{"min":..,"median":..,"max":..},"shell":{"min":..,"median":..,"max":..},"inbox":{"min":..,"median":..,"max":..}}
 ```
 
-結束碼:`0` 完成(且未超過 `--max-ms`);`1` 量測失敗(任一次 enter 非零結束,
-失敗的 enter 沒有值得報告的延遲,立即中止、不印統計)或 shell 中位數超過 `--max-ms`
-(統計仍會印出,原因印在 STDERR);`2` 用法錯誤(未知選項以
+### 輸入驗證(`--json` 永遠是合法 JSON)
+
+物件裡只有兩個字串(`box`、`shell_cmd`),bench.sh 不寫完整的 JSON 跳脫器,而是在
+**任何東西執行之前**把會讓物件壞掉的值擋掉(整條指令列先解析完才動作,與未知選項
+同一個時機;distrobox 一次都不會被呼叫):
+
+| 選項 | 規則 | 違反時 |
+|------|------|--------|
+| `--box` | 必須符合 `^[A-Za-z0-9._-]+$`(字母、數字、`.`、`_`、`-`;不可為空) | `bench.sh: invalid --box <值>: only letters, digits, '.', '_' and '-' are allowed (see --help)`,exit 2 |
+| `--shell` | 不得含控制字元(換行、tab、ESC 等;不可為空);反斜線與雙引號**合法**,會在 `shell_cmd` 裡跳脫成 `\\` 與 `\"` | `bench.sh: invalid --shell <值>: control characters are not allowed (see --help)`,exit 2 |
+
+訊息裡的 `<值>` 以 `printf %q` 引用,所以就算值裡有換行,錯誤訊息仍是 STDERR 上的
+**一行**。
+
+結束碼:`0` 完成(且未超過 `--max-ms`);`1` 量測失敗(任一指標任一次 enter 非零結束,
+或 inbox 的 timer 印出的不是整數;失敗的 enter 沒有值得報告的延遲,立即中止、不印統計)
+或 shell 中位數超過 `--max-ms`(統計仍會印出,原因印在 STDERR;`--max-ms` **只看
+shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 `bench.sh: unknown option '<x>' (see --help)` 拒絕,整條指令列先解析完才動作,
 所以 `--help --bogus` 也是 exit 2、什麼都不跑;`--runs 0`、`--warmup -1`、
-`--max-ms abc` 之類同樣 exit 2);`127` PATH 上沒有 distrobox。
+`--max-ms abc`、以及上表的 `--box` / `--shell` 違規同樣 exit 2);`127` PATH 上沒有
+distrobox。
 
 ### 達標由 system-real gate 強制,runtime 決策不在這裡
 
@@ -221,10 +240,11 @@ shell: min=<ms> median=<ms> max=<ms> ms
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
 的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
 --max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
-起以盒內 **fish** 為準 —— 使用者實際拿到的 shell,而不是 `sh`),斷言 exit 0、兩行
-指標存在、且印出 `within --max-ms 300` 的判定行,並把數字印進 TAP log 當證據;另以
-`--max-ms 1` 的負向案例要求 exit 1 與 `exceeds --max-ms 1` 訊息,證明 gate 會咬。
-實機數字則進人類清單(#22)。
+起以盒內 **fish** 為準 —— 使用者實際拿到的 shell,而不是 `sh`),斷言 exit 0、三行
+指標存在(`inbox` 那行只有 timer 真的在盒內跑過並印出整數才會出現)、且印出
+`within --max-ms 300` 的判定行,並把數字印進 TAP log 當證據;另以 `--max-ms 1` 的
+負向案例要求 exit 1 與 `exceeds --max-ms 1` 訊息,證明 gate 會咬。實機數字則進人類
+清單(#22)。
 
 ## 測試對應
 
@@ -243,10 +263,17 @@ issue #129),不再延後到 M5。
     (dry-run 印出正確的 `distrobox assemble create --file ...`,且不執行;從 repo
     以外執行時輸出解析後的絕對路徑;含空白與 shell 特殊字元的路徑經跳脫後可還原成
     單一參數)。純 bash、完全可 mock。M3 加 `test/unit/bench_spec.bats`:以一支
-    **假 `distrobox`**(記錄每次呼叫的參數、可注入固定或逐次不同的延遲、可注入失敗)
-    驗證 `bench.sh` 的參數形狀(`enter <box> -- true` / `enter <box> -- sh -c :`)、
-    暖身與量測次數、min <= median <= max 且暖身不計入、`--max-ms` 的通過/失敗結束碼、
-    `--json` 形狀、`--help`、未知選項 exit 2 且什麼都沒呼叫;
+    **假 `distrobox`**(記錄每次呼叫的參數、可注入固定或逐次不同的延遲、可分別對
+    enter / shell / inbox 注入失敗;對 inbox 的 timer 呼叫不真的跑 timer,而是印出
+    被告知要睡的微秒數,或以 `FAKE_DBX_INBOX_OUT` 注入任意輸出)
+    驗證 `bench.sh` 的參數形狀(`enter <box> -- true` / `enter <box> -- sh -c :` /
+    `enter <box> -- bash -c <timer> bench-inbox sh -c :`,timer 是**一個**參數、讀兩次
+    `EPOCHREALTIME`、以 `"$@"` 跑 shell)、暖身與量測次數、min <= median <= max 且暖身
+    不計入、inbox 的數字是盒內印出的值而非 host 來回(偶數樣本中位數可**精確**斷言)、
+    `--max-ms` 的通過/失敗結束碼且不看 inbox、`--json` 形狀(以文法斷言整個物件、
+    反斜線與雙引號的跳脫)、`--box` / `--shell` 的輸入驗證(`a"b`、含換行的 shell 等
+    exit 2 且什麼都沒呼叫)、enter 全過之後 shell 或 inbox 失敗、timer 印非整數、
+    `--help`、未知選項 exit 2 且什麼都沒呼叫;
     `test/unit/justfile_spec.bats` 另證明 `just box bench --runs 3` 原樣轉發。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
