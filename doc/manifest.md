@@ -346,13 +346,19 @@ issue #129),不再延後到 M5。
     fish);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
     盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
     exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
-    fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、`enter: ...` /
-    `shell: ...` 兩行指標存在、bench.sh 的 `[INFO] shell: ... of 'distrobox enter dev
-    -- fish -c exit' done` 行存在(證明量的真的是 fish)、`[INFO] shell median ...
-    within --max-ms 300` 判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1
-    --warmup 0 --shell 'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、兩行
-    指標仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬(見上方
-    「進盒延遲量測」);(e) 冪等:第二次
+    fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
+    `enter: ...` / `shell: ...` / `inbox: ...` 三行指標存在(`inbox` 那行只有 timer
+    真的在盒內跑過並印出整數才會出現)、bench.sh 的兩行 INFO 都釘在 fish:
+    `[INFO] shell: ... of 'distrobox enter dev -- fish -c exit' done`
+    與
+    `[INFO] inbox: ... of 'distrobox enter dev -- bash -c <timer> bench-inbox fish -c exit' done`
+    都存在(前者證明 host 端量的是 fish,後者證明盒內 timer 也真的啟動了 fish),且
+    不得出現任何 `sh -c :` 的 INFO 行(spec 的 `_assert_fish_timed`;只釘 shell 那行
+    證明不了盒內 timer 跑的是什麼)、`[INFO] shell median ... within --max-ms 300`
+    判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell
+    'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、三行指標仍在、同樣兩行
+    fish INFO 仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬
+    (見上方「進盒延遲量測」);(e) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
     恰好一個、仍可 `rg --version`;(f) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、

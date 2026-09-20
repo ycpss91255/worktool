@@ -594,3 +594,32 @@ _json_object_re() {
     assert_output --partial "[ERROR] distrobox not found on PATH"
     assert_equal "$(_calls)" ""
 }
+
+# --- doc/manifest.md states the system-real evidence contract ---------------
+
+# Print the "(d) 進盒延遲 gate" paragraph of doc/manifest.md 測試對應 (from
+# its "(d)" marker up to the "(e)" marker), unwrapped into one line so a
+# phrase the doc wraps across lines can still be matched as one string.
+_manifest_gate_paragraph() {
+    sed -n '/(d) 進盒延遲/,/(e) 冪等/p' "${REPO_ROOT}/doc/manifest.md" \
+        | sed 's/^[[:space:]]*//' | tr '\n' ' '
+}
+
+# The system-real gate (test/system/real_engine_spec.bats) asserts all
+# THREE metric lines and pins `fish -c exit` in BOTH the `[INFO] shell:`
+# and the `[INFO] inbox:` line (_assert_fish_timed), in the positive and
+# the negative case alike. Codex round 2 on PR #169: a reader judges the
+# system-real evidence against this paragraph, so it must state the same
+# contract the spec enforces - a paragraph that still says "two metric
+# lines" and only names the shell INFO line describes the pre-#162 spec.
+@test "doc/manifest.md 測試對應 (d) states the system-real evidence contract: three metric lines, fish pinned in the shell AND inbox INFO lines, in both cases" {
+    run _manifest_gate_paragraph
+    assert_success
+    assert_output --partial "\`enter: ...\` / \`shell: ...\` / \`inbox: ...\` 三行指標存在"
+    assert_output --partial "\`[INFO] shell: ... of 'distrobox enter dev -- fish -c exit' done\`"
+    assert_output --partial "\`[INFO] inbox: ... of 'distrobox enter dev -- bash -c <timer> bench-inbox fish -c exit' done\`"
+    assert_output --partial "三行指標仍在"
+    assert_output --partial "\`sh -c :\`"
+    refute_output --partial "兩行指標"
+    refute_output --partial "兩行 指標"
+}
