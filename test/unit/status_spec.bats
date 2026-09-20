@@ -123,6 +123,30 @@ _write_config() {
     assert_line "auto-enter: yes (default)"
 }
 
+# --- #161 (2): a corrupt state file is refused ------------------------------
+
+@test "a corrupt stored value is refused with [ERROR] on stderr and exit 1, whatever its source" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    _write_config 'tmux=sideways' 'tmux.source=default'
+    run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
+    assert_failure 1
+    run cat "${_err}"
+    assert_output "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    # Nothing on stdout: the check runs before any report line.
+    assert [ ! -s "${_out}" ]
+    _write_config 'tmux=sideways' 'tmux.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+}
+
+@test "a corrupt stored source is refused with exit 1" {
+    _write_config 'box=work' 'box.source=guess'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for box.source (expected default|user)"
+}
+
 # --- the script owns its CLI -------------------------------------------------
 
 @test "--help exits 0 and -h is the same" {

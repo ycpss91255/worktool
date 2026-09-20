@@ -312,6 +312,17 @@ _listed_names() {
     assert_equal "$(_last_argc)" "1"
 }
 
+# #161 (4): the docs describe the same four scripts the recipe runs.
+@test "README.md and doc/structure.md list all four scripts behind just box help, in order" {
+    local _doc
+    for _doc in README.md doc/structure.md; do
+        run grep -E 'just box help.*assemble\.sh.*bench\.sh.*setup\.sh.*status\.sh' "${REPO_ROOT}/${_doc}"
+        assert_success
+    done
+    run grep -E 'just box.*assemble.*bench.*setup.*status' "${REPO_ROOT}/README.md"
+    assert_success
+}
+
 @test "just box setup forwards to setup.sh with no argument" {
     _stub_scripts
     _just box setup
