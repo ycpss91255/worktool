@@ -123,6 +123,62 @@ _write_config() {
     assert_line "auto-enter: yes (default)"
 }
 
+# --- #161 (2): a corrupt state file is refused ------------------------------
+
+@test "a corrupt stored value is refused with [ERROR] on stderr and exit 1, whatever its source" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    _write_config 'tmux=sideways' 'tmux.source=default'
+    run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
+    assert_failure 1
+    run cat "${_err}"
+    assert_output "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    # Nothing on stdout: the check runs before any report line.
+    assert [ ! -s "${_out}" ]
+    _write_config 'tmux=sideways' 'tmux.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+}
+
+@test "a corrupt stored source is refused with exit 1" {
+    _write_config 'box=work' 'box.source=guess'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for box.source (expected default|user)"
+}
+
+# A present key with an empty value is a stored value, not an absent key.
+@test "an empty stored value is refused with exit 1, nothing on stdout" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    _write_config 'tmux=' 'tmux.source=user'
+    run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
+    assert_failure 1
+    run cat "${_err}"
+    assert_output "[ERROR] ${CONFIG}: invalid value '' for tmux (expected inside|host)"
+    assert [ ! -s "${_out}" ]
+    _write_config 'box=' 'box.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*)"
+    _write_config 'box=work' 'box.source='
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for box.source (expected default|user)"
+}
+
+# Every line is validated: a corrupt duplicate behind a valid first line is
+# refused too (the report would otherwise show the first line and hide it).
+@test "a corrupt duplicate key is refused even when its first occurrence is valid" {
+    _write_config 'tmux=host' 'tmux=sideways' 'tmux.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    _write_config 'tmux=host' 'tmux.source=user' 'tmux.source=guess'
+    run "${STATUS}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
+}
+
 # --- the script owns its CLI -------------------------------------------------
 
 @test "--help exits 0 and -h is the same" {

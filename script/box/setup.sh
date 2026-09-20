@@ -28,14 +28,24 @@
 # `<key>=<value>` plus `<key>.source=default|user` per key. A user choice
 # persists across runs until overridden; default keys are recomputed.
 #
-# Managed blocks (begin/end marker lines, at most one per file, replaced in
-# place, user content preserved):
+# Managed blocks (begin/end marker lines, exactly one per file, replaced in
+# place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty, tmux inside:
 #     <config dir>/ghostty/config  command = distrobox enter <box> -- tmux new -A -s main
 #   auto-enter yes, terminal ghostty, tmux host:
 #     <config dir>/ghostty/config  command = tmux new -A -s main
 #     ~/.tmux.conf                 set -g default-command "distrobox enter <box>"
+#   auto-enter yes, terminal none: no terminal profile at all (whatever tmux
+#     says: the tmux.conf block only serves the ghostty+host pair), leftover
+#     blocks removed.
 #   auto-enter no: both blocks removed, each removal reported.
+#
+# Write order: the state file first, then the profiles. The stored values
+# are validated before anything is written (a corrupt state file refuses the
+# whole run, exit 1, no file changed); a profile write that fails afterwards
+# leaves the state file already updated and exits 1 - `just box status` then
+# shows the block as absent, and re-running `just box setup` (idempotent)
+# completes the profiles.
 #
 # This script owns its option validation: an unknown option or an invalid
 # value is refused with `setup.sh: ... (see --help)` on stderr, exit 2,
@@ -86,7 +96,9 @@ back any time with `just box status`.
                             host shell, reporting what was removed.
   --terminal ghostty|none   Terminal profile to manage (default: ghostty when
                             $XDG_CONFIG_HOME/ghostty or ~/.config/ghostty
-                            exists, else none).
+                            exists, else none). `none` writes no profile at
+                            all, not even ~/.tmux.conf; the decisions are
+                            still stored.
   --tmux inside|host        Where tmux runs (default: inside): inside the box
                             (ghostty: distrobox enter <box> -- tmux new -A -s
                             main) or on the host (ghostty: tmux new -A -s
@@ -100,7 +112,12 @@ Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
   $XDG_CONFIG_HOME/worktool/config   the state file (key=value + key.source)
   $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
-  ~/.tmux.conf                       managed block (tmux host only)
+  ~/.tmux.conf                       managed block (terminal ghostty + tmux host only)
+
+The state file is validated before anything is written: a corrupt value in
+it (whatever its `.source`) is refused with `[ERROR] <file>: invalid value
+...`, exit 1, and no file is changed. The state file is written first, then
+the profiles; existing files keep their mode.
 EOF
 }
 
@@ -117,7 +134,7 @@ _usage_error() {
 _set_opt() {
     local _key="${1#--}"
     if ! enter_value_ok "${_key}" "$2"; then
-        _usage_error "invalid value '$2' for $1 (expected $(_expected "${_key}"))"
+        _usage_error "invalid value '$2' for $1 (expected $(enter_expected "${_key}"))"
         return 2
     fi
     case "${_key}" in
@@ -126,15 +143,6 @@ _set_opt() {
         tmux)       OPT_TMUX="$2" ;;
         box)        OPT_BOX="$2" ;;
     esac
-}
-
-# Human form of the allowed values of key $1, for error messages.
-_expected() {
-    if [[ "$1" == "box" ]]; then
-        printf 'a container name: [A-Za-z0-9][A-Za-z0-9_.-]*'
-    else
-        enter_choices "$1"
-    fi
 }
 
 # Parse the WHOLE command line before anything runs, so an unknown option
@@ -167,10 +175,19 @@ _parse_args() {
 
 # --- Decision resolution -----------------------------------------------------
 
+# Refuse a corrupt state file before any decision is taken: every stored
+# value is validated whatever its `.source` says (the file is user-editable,
+# so a default-sourced line can be wrong too), and nothing is written.
+_config_check() {
+    local _problem
+    _problem="$(enter_config_check "${CONFIG}")" && return 0
+    log_error "${CONFIG}: ${_problem}"
+    return 1
+}
+
 # Print `<value> <source>` for key $1 given its option value $2: the option
 # wins (user), then a stored choice whose source is user, then the default.
-# A stored value that is not a valid choice is refused (exit 1 upstream):
-# the state file is user-editable, so it is validated like an option.
+# The stored values were validated as a whole by _config_check.
 _resolve() {
     local _key="$1" _opt="$2" _stored _stored_src
     if [[ -n "${_opt}" ]]; then
@@ -180,10 +197,6 @@ _resolve() {
     _stored="$(enter_config_get "${CONFIG}" "${_key}")"
     _stored_src="$(enter_config_get "${CONFIG}" "${_key}.source")"
     if [[ -n "${_stored}" && "${_stored_src}" == "user" ]]; then
-        if ! enter_value_ok "${_key}" "${_stored}"; then
-            log_error "${CONFIG}: invalid value '${_stored}' for ${_key} (expected $(_expected "${_key}"))"
-            return 1
-        fi
         printf '%s user\n' "${_stored}"
         return 0
     fi
@@ -193,6 +206,7 @@ _resolve() {
 # Resolve every decision into the globals and log each one.
 _resolve_all() {
     local _r
+    _config_check || return 1
     _r="$(_resolve auto-enter "${OPT_AUTO_ENTER}")" || return 1
     AUTO_ENTER="${_r% *}" AUTO_ENTER_SRC="${_r#* }"
     _r="$(_resolve terminal "${OPT_TERMINAL}")" || return 1
@@ -210,22 +224,33 @@ _resolve_all() {
 # --- File actions (every one logged; --dry-run only logs) --------------------
 
 # Replace a file atomically with the content on stdin: written next to the
-# target, then renamed, so a reader never sees a half-written file.
+# target, then renamed, so a reader never sees a half-written file. An
+# existing target keeps its mode (mktemp creates 0600; a user's profile must
+# not end up more private than they made it).
 _write_atomic() {
     local _target="$1" _tmp
     mkdir -p "$(dirname -- "${_target}")" || return 1
     _tmp="$(mktemp "${_target}.XXXXXX")" || return 1
-    if cat >"${_tmp}" && mv -f "${_tmp}" "${_target}"; then
+    if cat >"${_tmp}" && _copy_mode "${_target}" "${_tmp}" \
+        && mv -f "${_tmp}" "${_target}"; then
         return 0
     fi
     rm -f "${_tmp}"
     return 1
 }
 
-# Make file $1 hold exactly one managed block with body $2.
+# Give file $2 the mode of file $1 when $1 exists (nothing to keep otherwise).
+_copy_mode() {
+    [[ -f "$1" ]] || return 0
+    chmod --reference="$1" "$2"
+}
+
+# Make file $1 hold exactly one managed block with body $2. Only ONE block
+# with that body counts as up to date; duplicates are collapsed on rewrite.
 _block_write() {
     local _file="$1" _body="$2"
-    if enter_block_present "${_file}" && [[ "$(enter_block_body "${_file}")" == "${_body}" ]]; then
+    if [[ "$(enter_block_count "${_file}")" -eq 1 \
+        && "$(enter_block_body "${_file}")" == "${_body}" ]]; then
         log_info "unchanged: ${_file} (managed block already up to date)"
         return 0
     fi
@@ -289,24 +314,38 @@ _config_render() {
 # tmux default-command; a block that the current decisions no longer need
 # (terminal none, tmux inside) is removed if an earlier run left it.
 _apply_enable() {
+    if [[ "${TERMINAL}" == "ghostty" ]]; then
+        _apply_ghostty
+    else
+        _apply_no_terminal
+    fi
+}
+
+# terminal ghostty: the ghostty block for the tmux placement, plus the
+# tmux.conf block for tmux host (removed again for tmux inside).
+_apply_ghostty() {
     local _ghostty _tmux_conf _rc=0
     _ghostty="$(enter_ghostty_config)"
     _tmux_conf="$(enter_tmux_conf)"
-    if [[ "${TERMINAL}" == "ghostty" ]]; then
-        if [[ "${TMUX}" == "inside" ]]; then
-            _block_write "${_ghostty}" "command = distrobox enter ${BOX} -- tmux new -A -s main" || _rc=1
-        else
-            _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-        fi
-    else
-        log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
-        _block_remove "${_ghostty}" || _rc=1
-    fi
-    if [[ "${TMUX}" == "host" ]]; then
-        _block_write "${_tmux_conf}" "set -g default-command \"distrobox enter ${BOX}\"" || _rc=1
-    else
+    if [[ "${TMUX}" == "inside" ]]; then
+        _block_write "${_ghostty}" "command = distrobox enter ${BOX} -- tmux new -A -s main" || _rc=1
         _block_remove "${_tmux_conf}" || _rc=1
+    else
+        _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
+        _block_write "${_tmux_conf}" "set -g default-command \"distrobox enter ${BOX}\"" || _rc=1
     fi
+    return "${_rc}"
+}
+
+# terminal none: no terminal profile is written at all (doc/enter.md), so
+# the tmux.conf block - which only serves the ghostty+host pair - is not
+# written either; the tmux decision is still stored for `just box status`.
+# Blocks an earlier ghostty run left are removed.
+_apply_no_terminal() {
+    local _rc=0
+    log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
+    _block_remove "$(enter_ghostty_config)" || _rc=1
+    _block_remove "$(enter_tmux_conf)" || _rc=1
     return "${_rc}"
 }
 

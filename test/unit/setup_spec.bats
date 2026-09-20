@@ -360,3 +360,149 @@ _block_count() {
     assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
     assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=sideways\ntmux.source=user')"
 }
+
+# --- #161 (2): every stored value is validated, whatever its source ----------
+
+@test "a corrupt stored value whose source is default is refused too: exit 1, no file changed" {
+    mkdir -p "$(dirname -- "${CONFIG}")" "${HOME}/.config/ghostty"
+    printf 'tmux=sideways\ntmux.source=default\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    refute_line --partial "wrote:"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=sideways\ntmux.source=default')"
+    assert [ ! -e "${GHOSTTY}" ]
+}
+
+@test "a corrupt stored value is refused even when the option overrides that key" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'box=bad name\nbox.source=default\n' >"${CONFIG}"
+    run "${SETUP}" --box work
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'bad name' for box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'box=bad name\nbox.source=default')"
+}
+
+@test "a corrupt stored source is refused: exit 1, nothing rewritten" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux.source=guess\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=guess')"
+}
+
+# A key that IS present with an empty value is a stored value like any other:
+# it is refused, never mistaken for an absent key (absent = default applies).
+@test "an empty stored value is refused: a present key is validated even when its value is empty" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=\ntmux.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux (expected inside|host)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=\ntmux.source=user')"
+    printf 'box=\nbox.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*)"
+    printf 'tmux=host\ntmux.source=\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=')"
+}
+
+# Every LINE is validated, not just the first line per key: a corrupt
+# duplicate hiding behind a valid first occurrence is refused too.
+@test "a corrupt duplicate key is refused even when its first occurrence is valid" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux=sideways\ntmux.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux=sideways\ntmux.source=user')"
+    printf 'tmux=host\ntmux.source=user\ntmux.source=guess\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=user\ntmux.source=guess')"
+}
+
+# --- #161 (1): terminal none never writes a terminal profile ------------------
+
+@test "--terminal none --tmux host stores the decision but writes no ~/.tmux.conf" {
+    run "${SETUP}" --terminal none --tmux host
+    assert_success
+    assert_line "[INFO] terminal: none (user)"
+    assert_line "[INFO] tmux: host (user)"
+    assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
+    refute_line --partial "wrote: ${TMUX_CONF}"
+    assert [ ! -e "${TMUX_CONF}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+    run cat "${CONFIG}"
+    assert_line "tmux=host"
+    assert_line "tmux.source=user"
+}
+
+@test "switching to --terminal none removes the ~/.tmux.conf block an earlier ghostty+host run left" {
+    run "${SETUP}" --terminal ghostty --tmux host
+    assert_success
+    assert_equal "$(_block_count "${TMUX_CONF}")" "1"
+    run "${SETUP}" --terminal none
+    assert_success
+    assert_line "[INFO] tmux: host (user)"
+    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
+    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_HOST})"
+    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
+    assert_equal "$(_block_count "${GHOSTTY}")" "0"
+}
+
+# --- #161 (3): exactly one managed block per file ----------------------------
+
+@test "a file that already holds two managed blocks is collapsed to exactly one, in place of the first" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n%s\n%s\n%s\nfont-size = 12\n%s\n%s\n%s\ntail = 1\n' \
+        "${BEGIN}" "${CMD_INSIDE}" "${END}" "${BEGIN}" "${CMD_INSIDE}" "${END}" >"${GHOSTTY}"
+    assert_equal "$(_block_count "${GHOSTTY}")" "2"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+    refute_line --partial "unchanged:"
+    assert_equal "$(_block_count "${GHOSTTY}")" "1"
+    run cat "${GHOSTTY}"
+    assert_line --index 0 "theme = dark"
+    assert_line --index 1 "${BEGIN}"
+    assert_line --index 2 "${CMD_INSIDE}"
+    assert_line --index 3 "${END}"
+    assert_line --index 4 "font-size = 12"
+    assert_line --index 5 "tail = 1"
+    assert_equal "${#lines[@]}" 6
+}
+
+@test "--auto-enter no removes every managed block a file holds" {
+    printf '%s\n%s\n%s\nset -g mouse on\n%s\n%s\n%s\n' \
+        "${BEGIN}" "${TMUX_BODY}" "${END}" "${BEGIN}" "${TMUX_BODY}" "${END}" >"${TMUX_CONF}"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
+    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
+    assert_equal "$(cat "${TMUX_CONF}")" "set -g mouse on"
+}
+
+# --- #161 (non-blocking): a rewrite keeps the file mode ----------------------
+
+@test "rewriting an existing profile keeps its file mode" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    chmod 0640 "${GHOSTTY}"
+    printf 'set -g mouse on\n' >"${TMUX_CONF}"
+    chmod 0664 "${TMUX_CONF}"
+    run "${SETUP}" --terminal ghostty --tmux host
+    assert_success
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
+    assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
+    assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
+}
