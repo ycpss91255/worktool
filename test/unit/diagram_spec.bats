@@ -8,20 +8,30 @@
 #   the draw.io editors (app.diagrams.net, VS Code hediet.vscode-drawio) can
 #   open in place. That single file is the single source of truth, so it
 #   must:
-#     - exist and be an SVG document;
+#     - exist and be an SVG document: the first element (skipping the XML
+#       declaration, comments and the DOCTYPE) is <svg, not merely "an
+#       <svg appears somewhere";
 #     - contain NO <foreignObject>: draw.io's default HTML labels export as
 #       foreignObject, which GitHub refuses to render ("Text is not SVG -
 #       cannot display"), so every label must be plain SVG text (mxGraph
 #       style without html=1);
-#     - embed the draw.io source (an <mxfile ...> element, or the
-#       content="&lt;mxfile ..." attribute the desktop exporter writes with
-#       --embed-diagram), otherwise the file is a dead picture nobody can
-#       edit and a separate .drawio would become a second source of truth.
+#     - embed the draw.io source the way the desktop exporter writes it
+#       with --embed-diagram: a content="&lt;mxfile ..." attribute whose
+#       payload round-trips (the closing &lt;/mxfile&gt; is present too),
+#       otherwise the file is a dead picture nobody can edit and a separate
+#       .drawio would become a second source of truth.
 #   README.md must reference all three files, and the recommended VS Code
 #   extension list must name the editor.
 #
+#   Wording guard (issue #163): the flow diagram's `just test` node must not
+#   claim "host 不裝任何套件" - the host DOES need docker + just (and the
+#   architecture diagram / README say so). It reads
+#   "測試依賴皆在 Docker 內 (host 只需 docker + just)" instead, split over two
+#   label lines so it fits the 190px node.
+#
 # Written test-first: RED while doc/diagram/ is missing, GREEN once the
-# exports and the README section land.
+# exports and the README section land. The #163 tightening was RED on the
+# wording case until flow.drawio.svg was re-exported.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -38,6 +48,13 @@ _svg() {
     printf '%s/%s/%s.drawio.svg\n' "${REPO_ROOT}" "${DIAGRAM_DIR}" "$1"
 }
 
+# Name of the first element in file $1 (the first "<" followed by a name
+# character): the XML declaration (<?xml), comments (<!--) and the DOCTYPE
+# (<!DOCTYPE) are skipped because they are not elements.
+_first_element() {
+    grep -oE '<[A-Za-z][A-Za-z0-9:_.-]*' "$1" | head -n 1
+}
+
 # --- each diagram: exists, is SVG, no foreignObject, embeds the mxfile ------
 
 @test "the three draw.io SVG diagrams exist and are non-empty" {
@@ -47,12 +64,12 @@ _svg() {
     done
 }
 
-@test "each diagram is an SVG document (root <svg> element)" {
+@test "each diagram is an SVG document (the first element after the XML declaration is <svg)" {
     local _n
     for _n in "${DIAGRAM_NAMES[@]}"; do
-        run grep -c '<svg' "$(_svg "${_n}")"
+        run _first_element "$(_svg "${_n}")"
         assert_success
-        assert [ "${output}" -ge 1 ]
+        assert_output "<svg"
     done
 }
 
@@ -65,11 +82,18 @@ _svg() {
     done
 }
 
-@test "each diagram embeds its draw.io source (mxfile), so the SVG is the single source" {
+@test "each diagram embeds its draw.io source (content=\"&lt;mxfile ... &lt;/mxfile&gt;), so the SVG is the single source" {
     local _n _f
     for _n in "${DIAGRAM_NAMES[@]}"; do
         _f="$(_svg "${_n}")"
-        run grep -cE 'content="&lt;mxfile|<mxfile' "${_f}"
+        # The opening tag sits in the content attribute the exporter writes
+        # with --embed-diagram ...
+        run grep -c 'content="&lt;mxfile' "${_f}"
+        assert_success
+        assert [ "${output}" -ge 1 ]
+        # ... and the closing tag proves the payload was not truncated, so
+        # draw.io can round-trip it.
+        run grep -c '&lt;/mxfile&gt;' "${_f}"
         assert_success
         assert [ "${output}" -ge 1 ]
     done
@@ -88,6 +112,34 @@ _svg() {
         assert_failure
         assert_output "0"
     done
+}
+
+# --- flow diagram wording (issue #163) ---------------------------------------
+
+@test "flow diagram: the just test node no longer claims the host installs nothing" {
+    run grep -c 'host 不裝任何套件' "$(_svg flow)"
+    assert_failure
+    assert_output "0"
+}
+
+@test "flow diagram: the just test node says test deps live in Docker (host only needs docker + just)" {
+    local _f
+    _f="$(_svg flow)"
+    # Rendered label lines (one <text> per line) ...
+    run grep -c '>測試依賴皆在 Docker 內</text>' "${_f}"
+    assert_success
+    assert [ "${output}" -ge 1 ]
+    run grep -c '>(host 只需 docker + just)</text>' "${_f}"
+    assert_success
+    assert [ "${output}" -ge 1 ]
+    # ... and the embedded source carries the same two fragments, so an
+    # editor re-export keeps the wording.
+    run grep -o '測試依賴皆在 Docker 內' "${_f}"
+    assert_success
+    assert [ "${#lines[@]}" -ge 2 ]
+    run grep -o '(host 只需 docker + just)' "${_f}"
+    assert_success
+    assert [ "${#lines[@]}" -ge 2 ]
 }
 
 # --- README embeds all three -------------------------------------------------
