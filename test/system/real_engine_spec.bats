@@ -31,12 +31,14 @@
 #   is within the threshold. The shell metric is measured on the box's
 #   fish (`--shell 'fish -c exit'`, issue #160): the 300 ms target of
 #   issue #22 is judged on the shell the user actually gets, not on `sh`.
-#   Both metric lines are still echoed into the TAP stream as evidence. A
-#   negative case runs the same bench with `--max-ms 1` and requires exit
-#   1 plus bench.sh's threshold message, so the gate is proven to bite on a
-#   real box - a green positive case can never be a no-op threshold. The
-#   runtime decision (docker + default runc stays; CI measured ~88 ms) is
-#   recorded in issue #22.
+#   All three metric lines (enter, shell, and since issue #162 inbox: the
+#   shell start-up clocked INSIDE the box by a bash timer, which proves the
+#   in-box timer really prints a number on a real box) are still echoed
+#   into the TAP stream as evidence. A negative case runs the same bench
+#   with `--max-ms 1` and requires exit 1 plus bench.sh's threshold
+#   message, so the gate is proven to bite on a real box - a green positive
+#   case can never be a no-op threshold. The runtime decision (docker +
+#   default runc stays; CI measured ~88 ms) is recorded in issue #22.
 #
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
@@ -239,11 +241,14 @@ _log_lines() {
 # Regex of one bench.sh millisecond value (`88.7`, `120.0`).
 BENCH_NUM='[0-9]+(\.[0-9]+)?'
 
-# Assert that the last `run` printed both bench.sh metric lines (stdout);
-# they must appear whether the threshold passed or not.
+# Assert that the last `run` printed all three bench.sh metric lines
+# (stdout); they must appear whether the threshold passed or not. The inbox
+# line is the one that can only be produced by a timer that really ran
+# inside the box and printed an integer (bench.sh aborts otherwise).
 _assert_metric_lines() {
     assert_line --regexp "^enter: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
     assert_line --regexp "^shell: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
+    assert_line --regexp "^inbox: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
 }
 
 # The shell metric is measured on the box's fish (issue #160): `fish -c
@@ -251,9 +256,9 @@ _assert_metric_lines() {
 # prompt". This constant is what the gate below hands to bench.sh --shell.
 BENCH_SHELL='fish -c exit'
 
-@test "real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter and shell metric lines" {
+@test "real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines" {
     cd "${REPO_ROOT}"
-    # 2 metrics x (2 warmup + 5 runs) = 14 enters of an initialised box.
+    # 3 metrics x (2 warmup + 5 runs) = 21 enters of an initialised box.
     # Exit 0 IS the gate: bench.sh returns 1 when the shell median exceeds
     # --max-ms, so a slow box (or a slow fish start-up) fails this case.
     run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
@@ -271,8 +276,8 @@ BENCH_SHELL='fish -c exit'
 
 @test "real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)" {
     cd "${REPO_ROOT}"
-    # 2 metrics x (0 warmup + 1 run) = 2 enters. A real engine round trip
-    # is never below 1 ms, so the gate must refuse: exit 1, both metric
+    # 3 metrics x (0 warmup + 1 run) = 3 enters. A real engine round trip
+    # is never below 1 ms, so the gate must refuse: exit 1, all three metric
     # lines still printed, the reason on stderr in bench.sh's own words.
     run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
         --box dev --runs 1 --warmup 0 --shell "${BENCH_SHELL}" --max-ms 1 </dev/null
