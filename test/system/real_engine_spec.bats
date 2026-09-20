@@ -8,10 +8,19 @@
 #   manifest box/dev.ini, through the REAL pinned distrobox (1.8.2.5), makes
 #   a REAL dockerd create the `dev` box from ubuntu:26.04, distrobox-init
 #   actually runs inside it and installs the manifest's additional_packages
-#   (ripgrep fzf), and the box is usable: `distrobox enter dev -- rg
-#   --version` and `distrobox enter dev -- fzf --version` succeed. A second
-#   assemble is idempotent (exit 0, still exactly one `dev`), and
+#   (ripgrep fzf tmux fish), and the box is usable: `distrobox enter dev --
+#   rg --version` and `distrobox enter dev -- fzf --version` succeed. A
+#   second assemble is idempotent (exit 0, still exactly one `dev`), and
 #   `distrobox rm -f dev` removes the box.
+#
+#   M3 (issue #160) adds tmux and fish to the manifest: `just box setup`
+#   points the terminal at `distrobox enter dev -- tmux new -A -s main` and
+#   #5 requires "open a terminal, get the box's fish", so both must exist
+#   inside the box BEFORE the auto-enter flow can work (their configuration
+#   - dotfiles, theme, plugins - stays M5). Two cases assert `distrobox
+#   enter dev -- tmux -V` and `distrobox enter dev -- fish --version`
+#   succeed and print a version, and echo those versions into the TAP
+#   stream as evidence.
 #
 #   M3 (issues #150, #23) adds the enter-latency GATE: once the box is
 #   initialised, the delivered `script/box/bench.sh` measures the real
@@ -19,12 +28,15 @@
 #   ENTER_MAX_MS` (the < 300 ms target of doc/design.md, one constant
 #   below); the case passes only when bench.sh exits 0, i.e. the SHELL
 #   median (the user-perceived time to a prompt: enter + shell start-up)
-#   is within the threshold. Both metric lines are still echoed into the
-#   TAP stream as evidence. A negative case runs the same bench with
-#   `--max-ms 1` and requires exit 1 plus bench.sh's threshold message, so
-#   the gate is proven to bite on a real box - a green positive case can
-#   never be a no-op threshold. The runtime decision (docker + default
-#   runc stays; CI measured ~88 ms) is recorded in issue #22.
+#   is within the threshold. The shell metric is measured on the box's
+#   fish (`--shell 'fish -c exit'`, issue #160): the 300 ms target of
+#   issue #22 is judged on the shell the user actually gets, not on `sh`.
+#   Both metric lines are still echoed into the TAP stream as evidence. A
+#   negative case runs the same bench with `--max-ms 1` and requires exit
+#   1 plus bench.sh's threshold message, so the gate is proven to bite on a
+#   real box - a green positive case can never be a no-op threshold. The
+#   runtime decision (docker + default runc stays; CI measured ~88 ms) is
+#   recorded in issue #22.
 #
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
@@ -52,7 +64,7 @@
 #
 # TIMEOUTS
 #   Pulling ubuntu:26.04 and apt-installing distrobox's own dependencies plus
-#   ripgrep/fzf inside the box take minutes. Every long step is wrapped in
+#   ripgrep/fzf/tmux/fish inside the box take minutes. Every long step is wrapped in
 #   `timeout` with a generous but bounded budget, and every short engine
 #   query (info / ps / inspect / logs, diagnostics included) goes through
 #   `_docker`, which bounds it too - a wedged daemon cannot hold a case or
@@ -167,6 +179,18 @@ _diag() {
     assert_output "ubuntu:26.04 distrobox"
 }
 
+# Evidence: echo the lines $2.. (a case passes its `${lines[@]}`) into the
+# TAP stream (fd 3 is bats' original stdout; `# ` keeps the stream
+# TAP-clean) and into the case's own output, prefixed with $1.
+_log_lines() {
+    local _tag="$1" _l
+    shift
+    for _l in "$@"; do
+        printf '# %s: %s\n' "${_tag}" "${_l}" >&3
+        echo "${_tag}: ${_l}"
+    done
+}
+
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
 @test "real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)" {
@@ -188,6 +212,28 @@ _diag() {
     assert_line --regexp '^[0-9]+\.[0-9]+'
 }
 
+# M3 (issue #160): tmux and fish are the auto-enter prerequisite - the
+# terminal profile written by `just box setup` runs `distrobox enter dev --
+# tmux new -A -s main`, and #5 wants the box's fish behind it. Their
+# versions go into the TAP stream as evidence.
+@test "real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)" {
+    cd "${REPO_ROOT}"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux -V </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line --regexp '^tmux [0-9]+\.[0-9]+'
+    _log_lines tmux "${lines[@]}"
+}
+
+@test "real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)" {
+    cd "${REPO_ROOT}"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- fish --version </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line --regexp '^fish, version [0-9]+\.[0-9]+'
+    _log_lines fish "${lines[@]}"
+}
+
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------
 
 # Regex of one bench.sh millisecond value (`88.7`, `120.0`).
@@ -200,40 +246,36 @@ _assert_metric_lines() {
     assert_line --regexp "^shell: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
 }
 
-# Evidence: echo the lines $2.. (a case passes its `${lines[@]}`) into the
-# TAP stream (fd 3 is bats' original stdout; `# ` keeps the stream
-# TAP-clean) and into the case's own output, prefixed with $1.
-_log_lines() {
-    local _tag="$1" _l
-    shift
-    for _l in "$@"; do
-        printf '# %s: %s\n' "${_tag}" "${_l}" >&3
-        echo "${_tag}: ${_l}"
-    done
-}
+# The shell metric is measured on the box's fish (issue #160): `fish -c
+# exit` is the cheapest fish start-up, i.e. the floor of "time to a fish
+# prompt". This constant is what the gate below hands to bench.sh --shell.
+BENCH_SHELL='fish -c exit'
 
-@test "real engine: bench.sh --box dev --runs 5 --warmup 2 --max-ms ENTER_MAX_MS exits 0 (enter-latency gate) and prints the enter and shell metric lines" {
+@test "real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter and shell metric lines" {
     cd "${REPO_ROOT}"
     # 2 metrics x (2 warmup + 5 runs) = 14 enters of an initialised box.
     # Exit 0 IS the gate: bench.sh returns 1 when the shell median exceeds
-    # --max-ms, so a slow box fails this case.
+    # --max-ms, so a slow box (or a slow fish start-up) fails this case.
     run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
-        --box dev --runs 5 --warmup 2 --max-ms "${ENTER_MAX_MS}" </dev/null
+        --box dev --runs 5 --warmup 2 --shell "${BENCH_SHELL}" \
+        --max-ms "${ENTER_MAX_MS}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     _assert_metric_lines
+    # The shell metric really ran fish (bench.sh names the timed command).
+    assert_line --regexp "^\[INFO\] shell: 2 warmup \+ 5 run\(s\) of 'distrobox enter dev -- ${BENCH_SHELL}' done$"
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
     _log_lines bench "${lines[@]}"
 }
 
-@test "real engine: bench.sh --box dev --runs 1 --warmup 0 --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)" {
+@test "real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)" {
     cd "${REPO_ROOT}"
     # 2 metrics x (0 warmup + 1 run) = 2 enters. A real engine round trip
     # is never below 1 ms, so the gate must refuse: exit 1, both metric
     # lines still printed, the reason on stderr in bench.sh's own words.
     run timeout "${ENTER_TIMEOUT}" bash "${BENCH}" \
-        --box dev --runs 1 --warmup 0 --max-ms 1 </dev/null
+        --box dev --runs 1 --warmup 0 --shell "${BENCH_SHELL}" --max-ms 1 </dev/null
     [[ "${status}" -eq 1 ]] || _diag
     assert_failure 1
     _assert_metric_lines

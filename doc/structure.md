@@ -165,14 +165,16 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
   - shim 組 `test/system/real_assemble_spec.bats` —— 在測試映像內跑**真正
     的、鎖定版本的 distrobox**(1.8.2.5),容器管理器換成假的 `docker`
     (`test/system/fixture/fake_container_manager.sh`),斷言真正抵達管理器的
-    create 請求帶有 `dev` / `ubuntu:26.04` / `ripgrep fzf`;不需要 docker-in-docker,
+    create 請求帶有 `dev` / `ubuntu:26.04` / `ripgrep fzf tmux fish`;不需要 docker-in-docker,
     快。不證明映像可拉、套件可裝、盒子可用。
   - real-engine 組 `test/system/real_engine_spec.bats` —— 在專用的 docker-in-docker
     runner(`dockerfile/Dockerfile.system-real`,`docker run --rm --privileged`,
     入口 `script/test/system-real-entry.sh` 起巢狀 dockerd)內,以同一鎖定版 distrobox
     與**真實 docker 引擎**把交付的 `box/dev.ini` 建成真正的 `dev` 盒
     (`ubuntu:26.04`),斷言 `distrobox enter dev -- rg --version` / `fzf --version`
-    成功、第二次 assemble 冪等、`distrobox rm -f dev` 清理乾淨;慢(約 2-3 分鐘)。
+    / `tmux -V` / `fish --version` 成功(tmux、fish 是 M3 #160 加的 auto-enter 前提,
+    設定留 M5)、以 `fish -c exit` 量的進盒延遲 gate 達標、第二次 assemble 冪等、
+    `distrobox rm -f dev` 清理乾淨;慢(約 2-3 分鐘)。
     測試建立的容器/映像/volume 都在巢狀 daemon 內、隨 runner 銷毀,host daemon
     只留下 runner 映像 `worktool-system-real:local` 與建置快取(見
     [`manifest.md`](manifest.md)「測試對應」的精確說明)。**這一組證明盒子可用**

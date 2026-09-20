@@ -25,8 +25,14 @@ worktool 的盒子清單**就是一個原生的 distrobox-assemble 檔案**(INI 
 ```ini
 [dev]
 image=ubuntu:26.04
-additional_packages="ripgrep fzf"
+additional_packages="ripgrep fzf tmux fish"
 ```
+
+`additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
+放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 **auto-enter 前提** ——
+`just box setup` 預設把終端指到 `distrobox enter dev -- tmux new -A -s main`,而
+#5 的驗收要求「開終端即盒內 fish」,所以兩者必須先裝進盒,自動進盒才跑得起來。
+M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、plugin)留在 M5。
 
 ### worktool 要求的必要鍵
 
@@ -79,7 +85,8 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
   `root`、`entry` 等。
 
 完整欄位以 distrobox 官方 `distrobox-assemble` 文件為準。M2 的 dev 盒刻意只放
-1-2 個工具(ripgrep、fzf)以驗證 assemble 流程;完整工具集在 M5-M10 逐步移植
+1-2 個工具(ripgrep、fzf)以驗證 assemble 流程;M3 加上 tmux、fish 作為自動進盒的
+前提(只裝、不設定,見上方「格式」);完整工具集在 M5-M10 逐步移植
 (見 [`design.md`](design.md) 的 milestone 計畫)。
 
 ## assemble 流程
@@ -184,7 +191,7 @@ just box bench --help                   # 說明(由腳本印出)
 | 指標 | 實際執行的指令 | 量的是什麼 |
 |------|----------------|------------|
 | `enter` | `distrobox enter <box> -- true` | distrobox 包裝層 + 容器引擎的一次來回(進盒的固定成本) |
-| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲 |
+| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`;system-real gate 用 `fish -c exit`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲 |
 
 輸出(STDOUT,機器可讀;診斷一律走 STDERR):
 
@@ -212,10 +219,12 @@ shell: min=<ms> median=<ms> max=<ms> ms
 的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
 維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
-的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --max-ms 300`(門檻只寫在該
-spec 的 `ENTER_MAX_MS` 一處),斷言 exit 0、兩行指標存在、且印出 `within --max-ms 300`
-的判定行,並把數字印進 TAP log 當證據;另以 `--max-ms 1` 的負向案例要求 exit 1 與
-`exceeds --max-ms 1` 訊息,證明 gate 會咬。實機數字則進人類清單(#22)。
+的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
+--max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
+起以盒內 **fish** 為準 —— 使用者實際拿到的 shell,而不是 `sh`),斷言 exit 0、兩行
+指標存在、且印出 `within --max-ms 300` 的判定行,並把數字印進 TAP log 當證據;另以
+`--max-ms 1` 的負向案例要求 exit 1 與 `exceeds --max-ms 1` 訊息,證明 gate 會咬。
+實機數字則進人類清單(#22)。
 
 ## 測試對應
 
@@ -261,7 +270,7 @@ issue #129),不再延後到 M5。
   - **驗證什麼**:以真實(非 dry-run)模式跑包裝器,斷言**真正抵達容器管理器的
     create 請求**帶有容器名 `dev`、映像 `ubuntu:26.04`(緊接在
     `--entrypoint /usr/bin/entrypoint` 之後),且清單的 `additional_packages`
-    (`ripgrep fzf`)被 distrobox 交給盒內 entrypoint(distrobox-init)的
+    (`ripgrep fzf tmux fish`)被 distrobox 交給盒內 entrypoint(distrobox-init)的
     `--additional-packages`(位於映像之後、恰好一次);`pull` 請求的映像同為
     `ubuntu:26.04` 且發生在 create 之前;上游自己的
     `distrobox assemble create --dry-run --file box/dev.ini` 解析出名稱/映像正確
@@ -302,13 +311,19 @@ issue #129),不再延後到 M5。
     created.`、`docker ps -a` 恰好列出一個 `dev`,且它由 `ubuntu:26.04` 建出、帶
     `manager=distrobox` 標籤;(c) 盒子可用:`distrobox enter dev -- rg --version`
     印出 `ripgrep <版本>`(第一次 enter 會啟動容器並執行 distrobox-init:apt 安裝
-    distrobox 依賴與 `ripgrep fzf`,約 2 分鐘)、`distrobox enter dev -- fzf
-    --version` 印出版本,容器狀態為 `running`;(d) 進盒延遲 **gate**(M3,issues
-    #150 / #23):對這個已初始化的盒子實跑 `script/box/bench.sh --box dev --runs 5
-    --warmup 2 --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數),斷言
-    exit 0(shell 中位數超過 300 ms 即紅)、`enter: ...` / `shell: ...` 兩行指標存在、
-    `[INFO] shell median ... within --max-ms 300` 判定行存在,並把數字印進 TAP log
-    當證據;再以 `--runs 1 --warmup 0 --max-ms 1` 跑一次負向案例,要求 exit 1、兩行
+    distrobox 依賴與 `ripgrep fzf tmux fish`,約 2 分鐘)、`distrobox enter dev --
+    fzf --version` 印出版本,容器狀態為 `running`;M3(issue #160)再加兩個案例:
+    `distrobox enter dev -- tmux -V` 印出 `tmux <版本>`、`distrobox enter dev --
+    fish --version` 印出 `fish, version <版本>`,兩個版本都印進 TAP log 當證據
+    (auto-enter 的前提:終端 profile 跑的是 `tmux new -A -s main`、後面接盒內
+    fish);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
+    盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
+    exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
+    fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、`enter: ...` /
+    `shell: ...` 兩行指標存在、bench.sh 的 `[INFO] shell: ... of 'distrobox enter dev
+    -- fish -c exit' done` 行存在(證明量的真的是 fish)、`[INFO] shell median ...
+    within --max-ms 300` 判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1
+    --warmup 0 --shell 'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、兩行
     指標仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬(見上方
     「進盒延遲量測」);(e) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
@@ -321,13 +336,14 @@ issue #129),不再延後到 M5。
     上游視為「以 root 登入的 rootful」:不會前綴 sudo、盒內使用者即 root、HOME
     為上述全新目錄;這對本證明沒有影響,一般使用者(非 root)的情境留給 M3/M5 與
     人類清單。一句話:**交付的清單經真實 distrobox 1.8.2.5 與真實 docker 引擎,
-    建出可用的 dev 盒(ubuntu:26.04 + ripgrep + fzf)**。
+    建出可用的 dev 盒(ubuntu:26.04 + ripgrep + fzf + tmux + fish)**。
   - **驗證邊界(套件何時裝好)**:distrobox 的 `assemble create` 只負責 `pull` 與
     `create`(建立容器、把 `--additional-packages` 交給盒內 entrypoint);套件
-    初始化(apt 安裝 distrobox 依賴與 `ripgrep fzf`)是由 distrobox-init 在**第一次
-    `distrobox enter`** 啟動容器時執行的。因此這組測試證明的是「**assemble 成功後,
-    enter 會完成初始化、工具可用**」,**不是**「assemble 返回時套件已安裝完成」——
-    只跑 `script/box/assemble.sh` 而不 enter,盒內還沒有 `rg` / `fzf`。
+    初始化(apt 安裝 distrobox 依賴與 `ripgrep fzf tmux fish`)是由 distrobox-init
+    在**第一次 `distrobox enter`** 啟動容器時執行的。因此這組測試證明的是
+    「**assemble 成功後,enter 會完成初始化、工具可用**」,**不是**「assemble 返回時
+    套件已安裝完成」—— 只跑 `script/box/assemble.sh` 而不 enter,盒內還沒有 `rg` /
+    `fzf` / `tmux` / `fish`。
   - **不證明什麼(延後)**:**實機**的進盒延遲(gate 判定的是 CI runner 上 DinD
     內的盒子;實機數字進人類清單,#22)、終端自動進盒(M3)、更廣的環境矩陣
     (真實硬體、非 root 使用者、GPU 等,M5 與人類清單)。
@@ -366,7 +382,7 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 |------|--------------|------|------|------|------|
 | 自動化全綠(lint + unit + integration + system + system-real + acceptance) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
 | 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | main(#146 合併後;審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
-| 真實可用盒(`script/box/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 8 案例全 `ok`:盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf` 版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..8` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
+| 真實可用盒(`script/box/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(M2 時 8 案例;M3 加 bench gate 兩案例與 tmux / fish 兩案例後為 12):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -439,14 +455,16 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
   - `just test integration`:所有測項 `ok`(含「無效 manifest(缺 image、引號不成對)
     絕不呼叫 distrobox」負向測試),結尾 `[ci] integration bats OK`。
   - `just test system`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成
-    帶 `dev` / `ubuntu:26.04` / `ripgrep fzf` 的 create 請求;管理器失敗會傳回非零),
+    帶 `dev` / `ubuntu:26.04` / `ripgrep fzf tmux fish` 的 create 請求;管理器失敗會
+    傳回非零),
     結尾 `[ci] system bats OK`。
   - `just test acceptance`:所有測項 `ok`(交付的 `script/test/selfcheck.sh` 對交付的
     repo 印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
     `[ci] acceptance bats OK`。
   - `just test system-real`:先看到 `[system-real] dockerd ready after Ns` 與
-    `[system-real] engine 29.8.0 ...`,接著 `1..8` 且 8 項全 `ok`(建盒、第一次 enter
-    完成初始化後 `rg --version`、`fzf --version`、冪等、`distrobox rm`),結尾
+    `[system-real] engine 29.8.0 ...`,接著 `1..12` 且 12 項全 `ok`(建盒、第一次 enter
+    完成初始化後 `rg --version`、`fzf --version`、`tmux -V`、`fish --version`、以 fish
+    量的進盒延遲 gate 與其負向案例、冪等、`distrobox rm`),結尾
     `[ci] system-real bats OK`、`[system-real] cleanup: containers left in the nested
     daemon: 0`。
 - 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
@@ -597,5 +615,7 @@ just box assemble         # 需要 PATH 上有 distrobox;否則會以 [ERROR] ..
 # 底層:./script/box/assemble.sh
 distrobox enter dev -- rg --version
 distrobox enter dev -- fzf --version
+distrobox enter dev -- tmux -V
+distrobox enter dev -- fish --version
 distrobox rm -f dev
 ```

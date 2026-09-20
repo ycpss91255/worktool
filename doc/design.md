@@ -252,7 +252,10 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
   一個含 1-2 個工具的盒 + 冒煙測試(含 CI 內 docker-in-docker 的真實引擎冒煙,
   2026-09-16 由 M5 提前;見「測試策略」)。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
-- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。
+- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。盒內先裝 tmux、fish
+  (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 跑的是
+  `distrobox enter dev -- tmux new -A -s main`、後面接盒內 fish,兩者不裝自動進盒
+  跑不起來;只裝套件,設定留 M5。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
 - M4 host bootstrap:install.sh 在 host 裝 docker+distrobox+`just`(冪等、
   可重跑;`just` 在此之前為前置需求,見「決策」)。
@@ -262,7 +265,8 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 
 盒子工具(由最日常關鍵往下):
 
-- M5 shell 核心:fish + tmux(+ 共用 HOME 設定)。最重要,日常骨幹。
+- M5 shell 核心:fish + tmux(+ 共用 HOME 設定)。最重要,日常骨幹。套件本身已在
+  M3 裝進盒(#160);M5 做的是 dotfiles、主題、plugin 與共用 HOME 的設定。
 - M6 導覽/檔案:ripgrep、fd、eza、bat、yazi、zoxide、fzf、tree、ncdu、lnav。
 - M7 編輯器 + git:neovim、lazygit、tig、git、git-lfs。
 - M8 runtime/pkg + AI CLI:python3、pipx、fnm、jq、curl、wget、gum、glow、

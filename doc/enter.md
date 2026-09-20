@@ -22,6 +22,11 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 只動 HOME / `XDG_CONFIG_HOME` 底下的檔案;不裝任何東西、不動 host 的 shell rc、
 不需要 root。
 
+盒內前提:tmux 與 fish。`box/dev.ini` 自 M3(issue #160)起在 `additional_packages`
+裝 `tmux fish`(與 M2 的 `ripgrep fzf` 並列);沒有這兩個套件,終端 profile 的
+`distrobox enter dev -- tmux new -A -s main` 會直接失敗。M3 只裝套件;它們的設定
+(dotfiles、主題、plugin)留 M5。
+
 ## 進盒設定(just box setup / status)
 
 ### 選項
