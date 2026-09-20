@@ -147,14 +147,19 @@ prereq-ok
       ./script/test/test.sh --system-real "$@"
       [system-real] dockerd ready after 1s
       [system-real] engine 29.8.0 driver=overlayfs cgroup=cgroupfs/2
-      [ci]   required specs OK (8 case(s) declared by 1 file(s))
-      1..8
+      [ci]   required specs OK (12 case(s) declared by 1 file(s))
+      1..12
       ok 1 preflight: a real docker engine is live inside the runner
       ...
       ok 5 real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)
       ok 6 real engine: distrobox enter dev -- fzf --version prints a version
-      ok 7 real engine: a second assemble.sh run exits 0 and does not duplicate the dev box
-      ok 8 real engine: distrobox rm -f dev removes the box from the engine
+      # tmux: tmux 3.x
+      ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
+      # fish: fish, version 4.x
+      ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
+      ...
+      ok 11 real engine: a second assemble.sh run exits 0 and does not duplicate the dev box
+      ok 12 real engine: distrobox rm -f dev removes the box from the engine
       [ci] system-real bats OK
       [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
@@ -425,12 +430,15 @@ prereq-ok
       ```text
       ripgrep 15.x.x ...
       0.6x (fzf 版本)
+      tmux 3.x
+      fish, version 4.x
       (第二次 assemble 不重建;rm 後 docker ps -a 無 dev)
       ```
     - 驗收方式
       ```bash
       just box assemble
       distrobox enter dev -- rg --version && distrobox enter dev -- fzf --version
+      distrobox enter dev -- tmux -V && distrobox enter dev -- fish --version
       just box assemble
       distrobox rm -f dev
       ```
