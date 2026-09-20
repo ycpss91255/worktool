@@ -75,8 +75,10 @@ command = distrobox enter dev -- tmux new -A -s main
 `default` 還是 `user`**、也不論命令列有沒有給選項蓋過它,都會在寫任何東西之前被
 `[ERROR] <設定檔>: invalid value 'sideways' for tmux (expected inside|host)` 拒絕、
 exit 1、不改寫任何檔案;壞的 `.source`(例如 `tmux.source=guess`)同樣拒絕
-(`expected default|user`)。`just box status` 做同一個檢查、印同一行 `[ERROR]`、
-exit 1。
+(`expected default|user`)。檢查是**逐行**的:key 存在但值為空(`tmux=`)是壞值、
+不是「沒設定」(`invalid value '' for tmux`);同一 key 重複出現時每一行都檢查,
+`tmux=host` 後面藏一行 `tmux=sideways` 一樣被拒絕(讀取時取第一筆,檢查不會)。
+`just box status` 做同一個檢查、印同一行 `[ERROR]`、exit 1。
 
 寫入順序:先寫設定檔、再寫 profile(受管區塊)。設定檔在驗證通過後才寫;若之後
 某個 profile 寫入失敗,設定檔已經更新、指令 exit 1 --- `just box status` 會把該
