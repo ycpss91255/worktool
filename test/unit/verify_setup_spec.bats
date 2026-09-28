@@ -38,6 +38,13 @@
 #       `present`, and the user's configuration has been deleted
 #     enter_block_strip empties the file instead of removing the block ->
 #       `blocks-before=1`, `blocks=0`, and the same deletion
+#
+#   Those two are asked of EVERY item that writes or removes a managed
+#   block, not only of 3.2 and 3.3 (round 17): 3.5's --distrobox run and
+#   3.6's staging write and removal touch the same files, and the managed
+#   command, the four `distrobox:` texts and `distinct-states=4/4` are all
+#   produced just as happily by a product that deleted the user's config on
+#   the way.
 #     _report_recorded_distrobox collapses to one branch -> all four of
 #       3.6's states answer `runnable`, each with rc=0 and stderr=0
 #     _config_write logs the write without writing -> `status` rebuilds the
@@ -717,6 +724,29 @@ EOF
     assert_output --partial "counting the files under"
 }
 
+@test "3.5: a --distrobox run that overwrites the whole ghostty config instead of replacing its managed block cannot pass (round 17)" {
+    # The same enter_block_compose degradation 3.2 refuses, aimed at the
+    # other write in the file. The #175 assertion this item exists for -
+    # the managed command names the quoted ABSOLUTE distrobox path - is
+    # satisfied word for word by the degraded product, because the command
+    # it wrote is right; what it overwrote to write it is the bug.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_compose() {
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "$2" "${ENTER_BLOCK_END}"
+}
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.5
+    assert_failure
+    # The refusal half is untouched, and the block really was written.
+    assert_line "user-content after-refusal: ghostty=intact tmux.conf=intact"
+    assert_line "command = '<D>' enter dev -- tmux new -A -s main"
+    assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.5 PASS"
+}
+
 # --- 3.6 ----------------------------------------------------------------------
 
 @test "3.6: a just that prints a plausible distrobox line but exits 1 cannot pass" {
@@ -756,6 +786,47 @@ EOF
     assert_failure
     assert_line "distrobox: <H>/bin/distrobox (recorded in a managed block: runnable)"
     assert_output --partial "recorded in a managed block: NOT RUNNABLE"
+    refute_output --partial "3.6 PASS"
+}
+
+@test "3.6: a staging write that overwrites the whole ghostty config instead of replacing its managed block cannot pass (round 17)" {
+    # 3.6 stages its four states with a real `setup --distrobox`. All four
+    # documented `distrobox:` texts, all four `rc=0 stderr=0` lines and
+    # `distinct-states=4/4` come out exactly as a correct run leaves them -
+    # the config the user came with is what is gone.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_compose() {
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "$2" "${ENTER_BLOCK_END}"
+}
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.6
+    assert_failure
+    assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
+    # The states themselves were still told apart, so nothing but the user
+    # content assertion is failing this run.
+    assert_line "distinct-states=4/4"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.6 PASS"
+}
+
+@test "3.6: a removal that empties the ghostty config instead of stripping its managed block cannot pass (round 17)" {
+    # The other half: 3.6 reaches its third state with `setup --auto-enter
+    # no`. `distrobox: <D> (on PATH; no managed block records one)` is the
+    # documented text for "no block recorded" - and an emptied config has
+    # no block recorded either, so it answers with the same line.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_strip() { :; }
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.6
+    assert_failure
+    # The write is cleared first, so the removal is what the failure blames.
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    assert_line "user-content after-removal: ghostty=LOST tmux.conf=intact"
+    assert_line "distinct-states=4/4"
     refute_output --partial "3.6 PASS"
 }
 

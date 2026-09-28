@@ -962,16 +962,22 @@ _item_3_4() {
 _item_3_5() {
     _require_tools env just sed find wc grep ln mktemp || return 1
     _item_begin || return 1
-    local _d _t _p _refuse_rc _files _write_rc _cmd _cmd_norm _grc _bad=0
+    local _d _t _p _refuse_rc _before _files _write_rc _cmd _cmd_norm _grc _bad=0
     _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return 1
     _resolve_exec ghostty 'setup must still resolve the terminal under the restricted PATH' >/dev/null || return 1
     # <G> is deliberately NOT normalised here: the expected lines name
     # <H>/bin/ghostty, the copy reached through the restricted PATH.
     NORM_D="${_d}"
-    mkdir -p -- "${ITEM_H}/.config/ghostty" "${ITEM_H}/bin" || {
-        _fail "3.5: cannot create the throwaway config / bin directories"
+    mkdir -p -- "${ITEM_H}/bin" || {
+        _fail "3.5: cannot create the throwaway bin directory"
         return 1
     }
+    # This item writes a managed block too (the --distrobox run), so it owes
+    # the same debt 3.1-3.3 pay: the file must belong to the user first.
+    # `command = '<D>' ...` is there whether the block was put INTO the
+    # config or put THERE INSTEAD OF it, so the block assertion below cannot
+    # tell the two apart on its own.
+    _seed_user_content 3.5 || return 1
     # ghostty is linked in next to just, so the terminal detection under
     # the restricted PATH no longer depends on where ghostty is installed.
     for _t in just ghostty; do
@@ -983,13 +989,20 @@ _item_3_5() {
     done
     local _path="${ITEM_H}/bin:/usr/bin:/bin"
 
+    # Counted AFTER the seeding, so "the refusal wrote nothing" is a claim
+    # about a HOME that already had the user's two files in it.
+    _before="$(_count_files "${ITEM_H}")" || return 1
+
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     _env+=("PATH=${_path}")
     _run_norm "${_env[@]}" just box setup || return 1
     _refuse_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_refuse_rc}"
     _files="$(_count_files "${ITEM_H}")" || return 1
-    printf 'files=%s\n' "${_files}"
+    printf 'files %s->%s\n' "${_before}" "${_files}"
+    # A refusal that rewrote a file it had no business touching keeps the
+    # file COUNT identical, so the content is what says it kept its hands off.
+    _expect_user_content 3.5 after-refusal || _bad=1
 
     "${_env[@]}" just box setup --distrobox "${_d}" >/dev/null 2>&1
     _write_rc=$?
@@ -1017,13 +1030,16 @@ _item_3_5() {
         _fail "3.5: --distrobox left no readable ${_ghostty}"
         _bad=1
     fi
+    # The --distrobox run rented a block inside the user's config; it did
+    # not replace the config with one.
+    _expect_user_content 3.5 after-write || _bad=1
 
     if [[ "${_refuse_rc}" -ne 1 ]]; then
         _fail "3.5: setup with no distrobox on PATH exited ${_refuse_rc}, expected 1"
         _bad=1
     fi
-    if [[ "${_files}" -ne 0 ]]; then
-        _fail "3.5: the refused run created ${_files} file(s) under the throwaway HOME, expected none"
+    if [[ "${_files}" -ne "${_before}" ]]; then
+        _fail "3.5: the refused run changed the file count under the throwaway HOME (${_before} -> ${_files}); a refusal must write nothing"
         _bad=1
     fi
     if [[ "${_write_rc}" -ne 0 ]]; then
@@ -1053,10 +1069,15 @@ _item_3_6() {
     DISTROBOX_LINES_SEEN=()
     _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return 1
     NORM_D="${_d}"
-    mkdir -p -- "${ITEM_H}/.config/ghostty" "${ITEM_H}/bin" || {
-        _fail "3.6: cannot create the throwaway config / bin directories"
+    mkdir -p -- "${ITEM_H}/bin" || {
+        _fail "3.6: cannot create the throwaway bin directory"
         return 1
     }
+    # The four states are staged by a real write and a real removal, so this
+    # item owes the same debt 3.1-3.3 and 3.5 pay. Every `distrobox:` text
+    # below is produced just as happily by a setup that overwrote the whole
+    # config and a removal that emptied it.
+    _seed_user_content 3.6 || return 1
 
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
 
@@ -1076,6 +1097,7 @@ _item_3_6() {
         _fail "3.6: setup --distrobox failed, so no managed block records anything"
         return 1
     }
+    _expect_user_content 3.6 after-write || _bad=1
 
     # (1) recorded, then moved or removed.
     rm -f -- "${ITEM_H}/bin/distrobox" || {
@@ -1098,6 +1120,9 @@ _item_3_6() {
         _fail "3.6: setup --auto-enter no failed, so a managed block is still recorded"
         return 1
     }
+    # `no managed block records one` is equally true of a config the removal
+    # emptied, so the user's lines are counted on the far side of it too.
+    _expect_user_content 3.6 after-removal || _bad=1
     _status_distrobox_line "${DISTROBOX_STATE_ON_PATH}" || _bad=1
 
     # (4) neither: a PATH holding exactly the six tools this status path
