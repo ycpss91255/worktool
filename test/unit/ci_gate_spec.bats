@@ -56,6 +56,20 @@ _declared() {
     bash -c 'source "$1" && _required_specs "$2"' _ "${TEST_SH}" "$1"
 }
 
+# Number of cases the DEFAULT group of the copy's integration tier runs:
+# every test/integration/*.bats except the ghostty spec, which belongs to
+# the other group and runs in its own image (M3, issue #172).
+_integration_default_count() {
+    local _f _n _total=0
+    for _f in "${COPY}"/test/integration/*.bats; do
+        [[ -f "${_f}" ]] || continue
+        [[ "$(basename -- "${_f}")" == "ghostty_config_spec.bats" ]] && continue
+        _n="$(bats --count "${_f}")"
+        _total=$(( _total + _n ))
+    done
+    printf '%s\n' "${_total}"
+}
+
 # Write a one-case spec at $1 whose case is named $2 (a decoy / extra spec).
 _write_one_case_spec() {
     {
@@ -96,6 +110,14 @@ EOF
     assert_success
     assert_line "integration/smoke_spec.bats"
     assert_line "integration/assemble_spec.bats"
+    # The ghostty spec is the other group's required spec, not this one's.
+    refute_line "integration/ghostty_config_spec.bats"
+}
+
+@test "test.sh declares the required spec of the integration ghostty group" {
+    run _declared integration-ghostty
+    assert_success
+    assert_output "integration/ghostty_config_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of both system groups" {
@@ -123,7 +145,7 @@ EOF
 
 @test "every declared required spec exists in the delivered tree and defines cases" {
     local _tier _rel _n
-    for _tier in unit integration system system-real acceptance; do
+    for _tier in unit integration integration-ghostty system system-real acceptance; do
         while IFS= read -r _rel; do
             assert [ -f "${REPO_ROOT}/test/${_rel}" ]
             _n="$(bats --count "${REPO_ROOT}/test/${_rel}")"
@@ -164,6 +186,36 @@ EOF
     assert_failure
     assert_output --partial "[ci] ERROR: system required spec missing: test/system/real_assemble_spec.bats"
     refute_output --regexp '^1\.\.[0-9]+$'
+}
+
+@test "integration (ghostty group): deleting ghostty_config_spec fails the group before bats runs" {
+    _make_repo_copy
+    rm "${COPY}/test/integration/ghostty_config_spec.bats"
+
+    _run_copy_gate --ci-integration-ghostty
+    assert_failure
+    assert_output --partial "[ci] ERROR:"
+    assert_output --partial "ghostty_config_spec.bats"
+    assert_output --partial "missing"
+    refute_output --regexp '^1\.\.[0-9]+$'
+}
+
+@test "integration (default group): the ghostty spec is NOT run by it (no ghostty needed here)" {
+    _make_repo_copy
+    local _n
+    _n="$(_integration_default_count)"
+    # The default group must not depend on the other group's spec at all:
+    # deleting it leaves the group green, and its cases were never in the
+    # plan (this very gate runs in the alpine test image, which has no
+    # ghostty - if the spec ran here it would fail).
+    rm "${COPY}/test/integration/ghostty_config_spec.bats"
+
+    _run_copy_gate --ci-integration
+    assert_success
+    assert_line "1..${_n}"
+    # Neither the file nor any of its cases were part of the run.
+    refute_output --partial "ghostty_config_spec.bats"
+    refute_output --partial "a real ghostty is on PATH"
 }
 
 @test "system-real: deleting real_engine_spec fails the group" {
@@ -247,7 +299,7 @@ EOF
 @test "integration: a normal tree passes and the plan covers every case" {
     _make_repo_copy
     local _n
-    _n="$(bats --count -r "${COPY}/test/integration")"
+    _n="$(_integration_default_count)"
 
     _run_copy_gate --ci-integration
     assert_success
@@ -282,7 +334,7 @@ EOF
 @test "integration: an additional non-required spec still runs and counts in the plan" {
     _make_repo_copy
     local _n
-    _n="$(bats --count -r "${COPY}/test/integration")"
+    _n="$(_integration_default_count)"
     _write_one_case_spec "${COPY}/test/integration/extra_spec.bats" \
         "extra: additional non-required spec still runs"
 

@@ -547,6 +547,27 @@ verify-tool-ok
       ( fail=0; for n in 152 153 154 155 156 165 166 167 168 169; do b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; fail=1; continue; }; r=$(ev "$b" RED GREEN); g=$(ev "$b" GREEN RED); s=BAD; { [ -n "$r" ] && [ -n "$g" ] && [ "$r" -lt "$g" ]; } && s=ok || fail=1; printf '#%s order=%s\n' "$n" "$s"; done; exit "$fail" ); echo rc=$?
       ```
 
+  - [ ] 2.3 「開窗 -> 進盒 -> tmux/fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
+    - 預期看到資訊(`just test` 的 integration 與 system-real 兩段)
+      ```text
+      # chain: inbox-ok fish=4.2.1 tmux=yes host=036ac17838f8
+      # chain-host: marker host=036ac17838f8 == docker inspect dev hostname
+      ok N ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)
+      # hang: in-box command started, then timed out after 45s (budget 45s, status 124)
+      ok N ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
+      # single-instance: STARTED_AT_RETURN=1
+      # single-instance: FORWARDED_AFTER_RETURN=yes
+      # single-instance: RUNNING_COMMANDS=2
+      # single-instance: COMMAND_FINISHED=no
+      ok N ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet
+      ```
+      (hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`)
+    - 驗收方式
+      ```bash
+      just test integration 2>&1 | grep -E '^ok .*ghostty|^not ok'
+      just test system-real 2>&1 | grep -E '^# (chain|chain-host|hang|single-instance)|^ok .*ghostty chain|^not ok'
+      ```
+
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(每個區塊自建拋棄式 HOME,不動你的家目錄)
   - [ ] 3.1 dry-run 只印決策、不寫檔
     - 預期看到資訊
@@ -688,7 +709,7 @@ verify-tool-ok
       printf 'posted=%s\n' "$(gh api "repos/ycpss91255/worktool/issues/22/comments?per_page=100" --jq '[.[] | select((.body | test("M3 5.1 實機 bench")) and (.body | test("enter: min=.*median=.*max=.* ms")) and (.body | test("shell: min=.*median=.*max=.* ms")) and (.body | test("inbox: min=.*median=.*max=.* ms")))] | length')"
       distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
       ```
-  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完用步驟 3 還原真實設定並移除 dev 盒
+  - [ ] 5.2 開終端即在盒內的 fish(**只剩主觀感受**:整條鏈已由 #172 在 CI 內自動驗證,見下方 2.3;這裡只確認你自己的機器上開窗順不順):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完用步驟 3 還原真實設定並移除 dev 盒
     - 預期看到資訊(步驟 1 的備份摘要;新視窗內三行;步驟 3 的還原結果)
       ```text
       ghostty=backed-up
