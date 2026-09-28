@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/verify_setup_spec.bats - script/verify/setup.sh (M3 acceptance
-# items 3.1-3.6, moved out of doc/acceptance.md)
+# items 3.1-3.7, moved out of doc/acceptance.md)
 #
 # WHAT THIS PROVES
 #   The one property the move exists to buy: A FAILURE CANNOT READ AS A
@@ -49,6 +49,11 @@
 #       3.6's states answer `runnable`, each with rc=0 and stderr=0
 #     _config_write logs the write without writing -> `status` rebuilds the
 #       same four decisions from its defaults
+#     ONLY the tmux-host path overwrites its file -> every tmux-INSIDE item
+#       (3.1, 3.2, 3.3, 3.5, 3.6) still passes word for word, and 3.7 is the
+#       one that fails. That pair is the measure of the gap 3.7 closes:
+#       before it, section 3 printed `tmux.conf=intact` on six items while
+#       no item ever asked the product to WRITE ~/.tmux.conf.
 #
 #   Those are caught by seeding the managed files with the user's own
 #   content before setup runs, by reading the state file back, by pinning
@@ -352,9 +357,36 @@ _insert_before() {
     rm -f "${_file}.new"
 }
 
+# Degrade the copy at $1 so that ONLY the tmux-host path overwrites its
+# managed file. The ghostty block is still replaced in place, correctly, on
+# both tmux placements; ~/.tmux.conf is written over wholesale, and the
+# report is exactly the one a correct write prints. This is the regression
+# section 3 could not see: 3.1-3.6 never take this branch.
+_degrade_tmux_path_overwrites() {
+    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'EOF'
+_apply_ghostty() {
+    local _ghostty _tmux_conf _body _rc=0
+    _ghostty="$(enter_ghostty_config)"
+    _tmux_conf="$(enter_tmux_conf)"
+    if [[ "${TMUX}" == "inside" ]]; then
+        _block_write "${_ghostty}" \
+            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
+        _block_remove "${_tmux_conf}" || _rc=1
+        return "${_rc}"
+    fi
+    _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
+    _body="set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'"
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "${_body}" "${ENTER_BLOCK_END}" \
+        >"${_tmux_conf}" || _rc=1
+    log_info "wrote: ${_tmux_conf} (managed block: ${_body})"
+    return "${_rc}"
+}
+EOF
+}
+
 # --- Control ------------------------------------------------------------------
 
-@test "control: with every tool behaving, all six items pass (so the failure cases below are not vacuous)" {
+@test "control: with every tool behaving, all seven items pass (so the failure cases below are not vacuous)" {
     run "${VERIFY}"
     assert_success
     assert_output --partial "3.1 PASS"
@@ -363,6 +395,7 @@ _insert_before() {
     assert_output --partial "3.4 PASS"
     assert_output --partial "3.5 PASS"
     assert_output --partial "3.6 PASS"
+    assert_output --partial "3.7 PASS"
 }
 
 # --- CLI ----------------------------------------------------------------------
@@ -386,12 +419,13 @@ _insert_before() {
     assert_output --partial "verify/setup.sh: unknown item '9.9' (see --help)"
 }
 
-@test "cli: --list prints the six items with their group" {
+@test "cli: --list prints the seven items with their group" {
     run "${VERIFY}" --list
     assert_success
     assert_line --index 0 --partial "3.1  temphome"
     assert_line --index 5 --partial "3.6  temphome"
-    [ "${#lines[@]}" -eq 6 ]
+    assert_line --index 6 --partial "3.7  temphome"
+    [ "${#lines[@]}" -eq 7 ]
 }
 
 # --- 3.1 ----------------------------------------------------------------------
@@ -835,6 +869,83 @@ EOF
     run "${VERIFY}" 3.6
     assert_failure
     refute_output --partial "3.6 PASS"
+}
+
+# --- 3.7 ----------------------------------------------------------------------
+# The item that closes the gap: section 3 printed `tmux.conf=intact` on every
+# item while no item ever asked the product to WRITE ~/.tmux.conf.
+
+@test "3.7: a just that prints a plausible tmux-host setup but exits 1 cannot pass" {
+    _stub_just_plausible 1
+    run "${VERIFY}" 3.7
+    assert_failure
+    assert_output --partial "[FAIL]"
+}
+
+@test "3.7: a setup that logs the tmux.conf write without writing it cannot pass" {
+    # Every decision line is there and the run exits 0; the file the write
+    # line names was never created, so there is no block to show.
+    _stub_just_plausible 0
+    run "${VERIFY}" 3.7
+    assert_failure
+    refute_output --partial "3.7 PASS"
+}
+
+@test "3.7: a --tmux host write that overwrites the whole ~/.tmux.conf instead of replacing its managed block cannot pass (GAP B)" {
+    # The degraded product really runs, really writes the documented body
+    # into ~/.tmux.conf and really reports it. `status` says the block is
+    # present, the counts are 1 then 0 - and the user's tmux configuration
+    # is gone. Only the user content seeded before setup can see it.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_tmux_path_overwrites "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.7
+    assert_failure
+    assert_line "[INFO] wrote: <H>/.tmux.conf (managed block: set -g default-command '\"<D>\" enter dev')"
+    assert_line "set -g default-command '\"<D>\" enter dev'"
+    assert_line "tmux.conf: <H>/.tmux.conf (managed block: present)"
+    assert_line "user-content after-write: ghostty=intact tmux.conf=LOST"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.7 PASS"
+}
+
+@test "3.7 is what catches it: the same degradation leaves every tmux-inside item green" {
+    # The honest measure of the gap. 3.1, 3.2, 3.3, 3.5 and 3.6 all run the
+    # tmux-INSIDE path, which this degradation does not touch, so they pass
+    # word for word - which is exactly how a regression confined to the tmux
+    # path used to reach the maintainer's machine.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_tmux_path_overwrites "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.5 3.6
+    assert_success
+    assert_output --partial "3.2 PASS"
+    assert_output --partial "3.6 PASS"
+}
+
+@test "3.7: a removal that empties ~/.tmux.conf instead of stripping its managed block cannot pass" {
+    # The other side of the round trip: `tmux-blocks-before=1`,
+    # `tmux-blocks=0` and every removal line are what a correct removal
+    # prints, and an emptied file satisfies all three.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_strip() { :; }
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.7
+    assert_failure
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    assert_line "user-content after-removal: ghostty=LOST tmux.conf=LOST"
+    assert_line "tmux-blocks-before=1"
+    assert_line "tmux-blocks=0"
+    refute_output --partial "3.7 PASS"
+}
+
+@test "3.7: a grep -c that answers 0 but exits 2 cannot pass (tmux-blocks=0 must mean the file was read)" {
+    _stub_grep_count_unreadable '-c'
+    run "${VERIFY}" 3.7
+    assert_failure
+    refute_output --partial "3.7 PASS"
 }
 
 # --- Group realbox ------------------------------------------------------------

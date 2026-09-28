@@ -22,7 +22,10 @@
 #              FAKE_DBX_CREATE_RC / FAKE_DBX_CREATE_OUT / FAKE_DBX_CREATE_REGISTERS
 #              FAKE_DBX_RM_RC / FAKE_DBX_RM_REMOVES
 #   just       FAKE_JUST_<VERB>_RC / FAKE_JUST_<VERB>_OUT for assemble, bench,
-#              setup, status; FAKE_JUST_ASSEMBLE_REGISTERS
+#              setup, status; FAKE_JUST_ASSEMBLE_REGISTERS;
+#              FAKE_JUST_BOX_SCRIPT_DIR runs the REAL script/box/<verb>.sh of
+#              that directory for `box setup` / `box status` (the degraded-copy
+#              family: a copy of the checkout is degraded and driven for real)
 #   gh         FAKE_GH_COMMENT_RC / FAKE_GH_COMMENT_OUT / FAKE_GH_COMMENT_ID
 #              FAKE_GH_API_RC / FAKE_GH_API_OUT
 #   jq         FAKE_JQ_RC / FAKE_JQ_OUT
@@ -147,12 +150,21 @@ _fake_just() {
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
             return "${FAKE_JUST_BENCH_RC:-0}"
             ;;
-        setup)
-            _out="${FAKE_JUST_SETUP_OUT-[INFO] auto-enter: yes (default)}"
-            [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
-            return "${FAKE_JUST_SETUP_RC:-0}"
-            ;;
-        status)
+        setup | status)
+            # FAKE_JUST_BOX_SCRIPT_DIR runs the REAL product instead of
+            # answering canned text, so a DEGRADED COPY of the checkout can
+            # be driven through `just box <verb>`: that is the only way to
+            # ask whether 5.2 catches a product that writes the files it
+            # says it writes and destroys the user's content doing it.
+            if [[ -n "${FAKE_JUST_BOX_SCRIPT_DIR-}" ]]; then
+                "${FAKE_JUST_BOX_SCRIPT_DIR}/${_verb}.sh" "${@:3}"
+                return $?
+            fi
+            if [[ "${_verb}" == setup ]]; then
+                _out="${FAKE_JUST_SETUP_OUT-[INFO] auto-enter: yes (default)}"
+                [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
+                return "${FAKE_JUST_SETUP_RC:-0}"
+            fi
             _out="${FAKE_JUST_STATUS_OUT-auto-enter: yes (default)}"
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
             return "${FAKE_JUST_STATUS_RC:-0}"
