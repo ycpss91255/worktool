@@ -16,6 +16,11 @@
 #   - A key missing from the state file falls back to its default.
 #   - Every path comes from HOME / XDG_CONFIG_HOME (throwaway HOME per case;
 #     the real home is never read).
+#   - Since issue #175 the report ends with a `distrobox: ...` line: the
+#     managed command now names an ABSOLUTE distrobox path, so the report
+#     has to say whether that path is still runnable. That line is the
+#     readable error when distrobox is moved or removed after setup - the
+#     alternative is a terminal window that flashes `not found` and closes.
 #   - The script owns its CLI: --help / -h exit 0; an unknown option is
 #     refused with `status.sh: unknown option '<x>' (see --help)`, exit 2.
 #   - status never writes anything.
@@ -33,6 +38,17 @@ setup() {
     TMUX_CONF="${HOME}/.tmux.conf"
     BEGIN="# BEGIN worktool managed block (just box setup; do not edit)"
     END="# END worktool managed block"
+
+    # Issue #175: a distrobox of the case's own, in a directory no test
+    # image has on PATH, so the `distrobox: ...` report line is the same
+    # whatever the image ships.
+    DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
+    DISTROBOX="${DBX_DIR}/distrobox"
+    mkdir -p "${DBX_DIR}"
+    printf '#!/bin/sh\nexit 0\n' >"${DISTROBOX}"
+    chmod +x "${DISTROBOX}"
+    PATH="${DBX_DIR}:${PATH}"
+    export PATH
 }
 
 # Write a state file at $CONFIG with the given key=value lines.
@@ -59,6 +75,7 @@ _write_config() {
     assert_line "box: dev (default)"
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
+    assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
     assert [ ! -e "${CONFIG}" ]
 }
 
@@ -89,7 +106,86 @@ _write_config() {
     assert_line --index 4 "box: work (default)"
     assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
-    assert_equal "${#lines[@]}" 7
+    assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+    assert_equal "${#lines[@]}" 8
+}
+
+# --- #175: the report says whether the recorded distrobox still runs --------
+
+# Write a managed block holding exactly the body $1 into file $2.
+_write_block() {
+    mkdir -p "$(dirname -- "$2")"
+    printf '%s\n%s\n%s\n' "${BEGIN}" "$1" "${END}" >"$2"
+}
+
+@test "#175: a managed block that records a runnable distrobox is reported as runnable" {
+    _write_block "command = '${DISTROBOX}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: runnable)"
+}
+
+@test "#175: a managed block whose distrobox path is gone is reported as NOT RUNNABLE with what to do" {
+    _write_block "command = '/nowhere/bin/distrobox' enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+@test "#175: the distrobox recorded in the ~/.tmux.conf default-command is reported too" {
+    _write_block "set -g default-command '\"/nowhere/bin/distrobox\" enter dev'" "${TMUX_CONF}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+# --- #175 round 1: the recorded path is a QUOTED shell word ------------------
+#
+# The literal dollar below is built from a variable so the metacharacter is
+# unmistakably data, in the test as well as in the block under test.
+
+@test "#175r1: a recorded path holding spaces and metacharacters is decoded whole, not split at the first space" {
+    local _d='$' _path
+    _path="/nowhere/my ${_d}dir/distrobox"
+    _write_block "command = '${_path}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${_path} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+@test "#175r1: a recorded tmux default-command path is decoded through BOTH quoting layers" {
+    local _d='$' _path
+    _path="/nowhere/my ${_d}dir/distrobox"
+    # tmux owns the outer single quotes; the shell word inside is
+    # double-quoted, so the dollar arrives backslash-escaped.
+    _write_block "set -g default-command '\"/nowhere/my \\${_d}dir/distrobox\" enter dev'" "${TMUX_CONF}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${_path} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+# An UNQUOTED absolute path is what the first attempt at issue #175 wrote;
+# a block a user still has must keep being readable.
+@test "#175r1: an unquoted absolute path left by an earlier setup is still decoded" {
+    _write_block "command = /nowhere/bin/distrobox enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+@test "#175: a managed block that still records the BARE name is called out as the shape the desktop cannot run" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf '%s\ncommand = distrobox enter dev -- tmux new -A -s main\n%s\n' \
+        "${BEGIN}" "${END}" >"${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: distrobox (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)"
+}
+
+@test "#175: with no distrobox on PATH and no managed block the report says so instead of staying silent" {
+    PATH="/usr/bin:/bin" run "${STATUS}"
+    assert_success
+    assert_line "distrobox: not found on PATH (install distrobox, then re-run: just box setup)"
 }
 
 @test "a key missing from the state file falls back to its default" {

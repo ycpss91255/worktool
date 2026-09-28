@@ -3,8 +3,9 @@
 #
 # The read side of `just box setup`: prints the ONE state file's decisions
 # (auto-enter, terminal, tmux, box), each with its source (default | user),
-# and whether the worktool managed block is present in each managed file
-# (the ghostty config and ~/.tmux.conf). Read-only: it never writes.
+# whether the worktool managed block is present in each managed file (the
+# ghostty config and ~/.tmux.conf), and - since issue #175 - whether the
+# distrobox those blocks name can still be run. Read-only: it never writes.
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -45,10 +46,11 @@ _usage() {
 Usage: status.sh
 
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
-written by `just box setup`), the source of each (default | user), and
-whether the worktool managed block is present in the ghostty config and in
-~/.tmux.conf. Read-only. A corrupt state file is refused: `[ERROR] <file>:
-invalid value ...` on stderr, exit 1.
+written by `just box setup`), the source of each (default | user), whether
+the worktool managed block is present in the ghostty config and in
+~/.tmux.conf, and whether the distrobox those blocks name can still be run.
+Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
+...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
 EOF
@@ -103,6 +105,45 @@ _report() {
     done < <(enter_keys)
     _report_block ghostty "$(enter_ghostty_config)"
     _report_block tmux.conf "$(enter_tmux_conf)"
+    _report_distrobox
+}
+
+# `distrobox: <path> (<state>)` - the readable answer to "will the managed
+# command actually run?" (issue #175).
+#
+# The managed command names an ABSOLUTE distrobox path, so a distrobox
+# that is later moved, upgraded away or removed turns a desktop-launched
+# terminal into a window that flashes `not found` and closes. This line
+# says it where the user can read it. When no managed block records one,
+# it reports what the next `just box setup` would resolve instead, so the
+# line is never absent.
+_report_distrobox() {
+    local _recorded
+    _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_config)")")"
+    [[ -n "${_recorded}" ]] \
+        || _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_tmux_conf)")")"
+    if [[ -n "${_recorded}" ]]; then
+        _report_recorded_distrobox "${_recorded}"
+        return 0
+    fi
+    if _recorded="$(enter_distrobox_program)"; then
+        printf 'distrobox: %s (on PATH; no managed block records one)\n' "${_recorded}"
+    else
+        printf 'distrobox: not found on PATH (install distrobox, then re-run: just box setup)\n'
+    fi
+}
+
+# The three states a recorded distrobox $1 can be in. A bare name is the
+# fallback an older setup (or a setup run with no distrobox on PATH) left
+# behind: it is not an error yet, but it is the shape issue #175 was about.
+_report_recorded_distrobox() {
+    if [[ "$1" != /* ]]; then
+        printf 'distrobox: %s (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)\n' "$1"
+    elif [[ -x "$1" ]]; then
+        printf 'distrobox: %s (recorded in a managed block: runnable)\n' "$1"
+    else
+        printf 'distrobox: %s (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)\n' "$1"
+    fi
 }
 
 # --- Main --------------------------------------------------------------------

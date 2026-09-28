@@ -12,8 +12,17 @@
 #       the delivered managed block (marker lines included - they are `#`
 #       comments to ghostty) parses.
 #     - `ghostty +show-config` under XDG_CONFIG_HOME reports
-#       `command = distrobox enter dev -- tmux new -A -s main` - the
+#       `command = <distrobox> enter dev -- tmux new -A -s main` - the
 #       EFFECTIVE value ghostty would run, not merely the text on disk.
+#       Since issue #175 `<distrobox>` is the ABSOLUTE path setup.sh
+#       resolved, not the bare name: a terminal the desktop starts
+#       inherits the systemd user manager's PATH, which does not hold
+#       ~/.local/bin. The case asserts the absolute form AND refutes the
+#       bare one. Since round 1 that path is also a SINGLE-QUOTED shell
+#       word (ghostty hands a `command` without a `direct:` prefix to
+#       `/bin/sh -c`), and one case runs the value a real ghostty reports
+#       through that same shell; with nothing to resolve the run is
+#       refused rather than written.
 #     - the other setup decisions travel the same way: `--tmux host` resolves
 #       to `command = tmux new -A -s main`, `--box work` names that box.
 #     - the assertion is not vacuous: after `--auto-enter no` removes the
@@ -40,9 +49,6 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 # Hard bound (seconds) on every ghostty CLI action; SIGKILL 5s later.
 GHOSTTY_TIMEOUT=60
 
-# What #5 / doc/enter.md promise the terminal runs, with the default box.
-EXPECTED_COMMAND='distrobox enter dev -- tmux new -A -s main'
-
 setup() {
     SETUP="${REPO_ROOT}/script/box/setup.sh"
 
@@ -55,6 +61,23 @@ setup() {
     export XDG_CONFIG_HOME
     mkdir -p "${XDG_CONFIG_HOME}/ghostty"
     GHOSTTY_CONFIG="${XDG_CONFIG_HOME}/ghostty/config"
+
+    # Issue #175: this image has no distrobox of its own, so each case
+    # installs one where a user's would be - outside the system PATH - and
+    # that absolute path is what setup.sh must hand to ghostty.
+    DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
+    DISTROBOX="${DBX_DIR}/distrobox"
+    mkdir -p "${DBX_DIR}"
+    printf '#!/bin/sh\nexit 0\n' >"${DISTROBOX}"
+    chmod +x "${DISTROBOX}"
+    PATH="${DBX_DIR}:${PATH}"
+    export PATH
+
+    # What #5 / doc/enter.md promise the terminal runs, with the default
+    # box. The path is a single-quoted shell word (issue #175 round 1):
+    # ghostty runs a `command` without a `direct:` prefix through
+    # `/bin/sh -c`, so the value is shell source.
+    EXPECTED_COMMAND="'${DISTROBOX}' enter dev -- tmux new -A -s main"
 }
 
 # Every ghostty call goes through here: a hard bound so a wedged ghostty
@@ -119,7 +142,96 @@ _log_lines() {
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line 'command = distrobox enter work -- tmux new -A -s main'
+    assert_line "command = '${DISTROBOX}' enter work -- tmux new -A -s main"
+}
+
+# --- #175: the command ghostty resolves names an ABSOLUTE distrobox ---------
+
+@test "#175: the effective command ghostty resolves is an ABSOLUTE distrobox path, not the bare name" {
+    run "${SETUP}"
+    assert_success
+    run _ghostty +show-config
+    assert_success
+    assert_line "command = ${EXPECTED_COMMAND}"
+    # The shape the real machine failed on: a desktop-launched terminal
+    # inherits a PATH without ~/.local/bin and dies with `not found`.
+    refute_line 'command = distrobox enter dev -- tmux new -A -s main'
+    _log_lines effective "${EXPECTED_COMMAND}"
+}
+
+@test "#175: the absolute-path command is still a config +validate-config accepts" {
+    run "${SETUP}"
+    assert_success
+    run grep -qxF "command = ${EXPECTED_COMMAND}" "${GHOSTTY_CONFIG}"
+    assert_success
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_success
+}
+
+@test "#175r1: with no distrobox on PATH setup refuses the run instead of writing a command it knows cannot work" {
+    PATH="/usr/bin:/bin" run "${SETUP}"
+    assert_failure 1
+    assert_line --partial "[ERROR] distrobox: not found on PATH"
+    assert [ ! -e "${GHOSTTY_CONFIG}" ]
+}
+
+# --- #175 round 1: a REAL ghostty resolves the quoted path back ---------------
+#
+# The value ghostty reports is what it hands to `/bin/sh -c`, so the case
+# below runs that exact string: an install path holding a space, a `$` or a
+# quote must still reach the one binary, and must not run anything else.
+
+@test "#175r2: a distrobox path holding a newline is refused, because ghostty could not parse what it would write" {
+    local _dir="${BATS_TEST_TMPDIR}/nl/d"$'\n'"e" _dbx
+    mkdir -p "${_dir}"
+    _dbx="${_dir}/distrobox"
+    printf '#!/bin/sh\nexit 0\n' >"${_dbx}"
+    chmod +x "${_dbx}"
+
+    run "${SETUP}" --distrobox "${_dbx}"
+    assert_failure 1
+    assert_line --partial "holds a newline or carriage return"
+    assert [ ! -e "${GHOSTTY_CONFIG}" ]
+
+    # The check bites: this is the file setup would have written, and a
+    # real ghostty refuses it - the managed body is split across two
+    # lines, so the second one is not a key it knows.
+    printf "command = '%s' enter dev -- tmux new -A -s main\n" "${_dbx}" >"${GHOSTTY_CONFIG}"
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_failure
+    assert_output --partial 'unknown field'
+    _log_lines would-have-been-refused "${lines[@]}"
+}
+
+@test "#175r1: a distrobox path with spaces and metacharacters survives ghostty and the shell it hands the command to" {
+    local _sentinel="${BATS_TEST_TMPDIR}/pwned"
+    local _dir="${BATS_TEST_TMPDIR}/q/d \$(touch ${_sentinel}) \"q\"" _dbx _cmd
+    mkdir -p "${_dir}"
+    _dbx="${_dir}/distrobox"
+    cat >"${_dbx}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$0.log"
+EOF
+    chmod +x "${_dbx}"
+
+    run "${SETUP}" --distrobox "${_dbx}"
+    assert_success
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_success
+
+    # The EFFECTIVE value, read back from a real ghostty ...
+    run _ghostty +show-config
+    assert_success
+    assert_line "command = '${_dbx}' enter dev -- tmux new -A -s main"
+    _cmd="$(printf '%s\n' "${lines[@]}" | sed -n 's/^command = //p')"
+    _log_lines effective "${_cmd}"
+
+    # ... run exactly the way ghostty runs it.
+    run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
+    assert_success
+    run cat "${_dbx}.log"
+    assert_line "enter dev -- tmux new -A -s main"
+    assert [ ! -e "${_sentinel}" ]
 }
 
 # --- control cases: the two assertions above can fail ------------------------
