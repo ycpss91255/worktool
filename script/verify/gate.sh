@@ -105,6 +105,11 @@ EXIT_UNAVAILABLE=3
 # were each judged once", so the set is pinned here and compared exactly: a
 # run that prints one verdict and exits 0 has not made that claim, and a
 # verdict for a PR this item does not cover has not made it either.
+#
+# The ORDER is pinned too, because the document publishes an ordered block and
+# a reader compares it line by line. Ten correct verdicts with two of them
+# swapped is a checker iterating over a different list from the one this item
+# names, which is the same defect as a missing verdict wearing better clothes.
 TDD_PRS=(152 153 154 155 156 165 166 167 168 169)
 
 # Item 2.3: the lines of each tier the document publishes, and the tier the
@@ -146,6 +151,14 @@ SYSTEM_REAL_CASES=(
 # the values the document explicitly calls per-run measurements (`host=`,
 # `fish=`, `SECOND_ELAPSED=`, `FORWARDED_DELAY_MS=`, the budget in seconds)
 # are matched by shape, so a slower or faster runner cannot go red for it.
+#
+# Where the document publishes a BOUND on a measurement, the bound is part of
+# the shape. `SECOND_ELAPSED` is the one such value here: the document says
+# the case accepts 0-15 seconds, so `[0-9]+` is the wrong pattern - a
+# forwarded launch that took 999 seconds to return is not the fast return the
+# case exists to observe, and it would have matched. The other measurements
+# (`host=`, `fish=`, `FORWARDED_DELAY_MS=`, the budget in seconds) are
+# published without a bound and stay shape-only.
 INTEGRATION_CRITERIA=()
 SYSTEM_REAL_CRITERIA=(
     '^# chain: inbox-ok fish=[0-9]+(\.[0-9]+)+ tmux=yes host=[^[:space:]]+$'
@@ -154,7 +167,7 @@ SYSTEM_REAL_CRITERIA=(
     '^# hang: in-box command started, then timed out after [0-9]+s \(budget [0-9]+s, status 124\)$'
     '^# single-instance: PRIMARY=up$'
     '^# single-instance: SECOND_RC=0$'
-    '^# single-instance: SECOND_ELAPSED=[0-9]+$'
+    '^# single-instance: SECOND_ELAPSED=([0-9]|1[0-5])$'
     '^# single-instance: STARTED_AT_RETURN=1$'
     '^# single-instance: FORWARDED_STARTED=yes$'
     '^# single-instance: FORWARDED_AFTER_RETURN=yes$'
@@ -589,6 +602,7 @@ _item_2_2() {
 
     local _verdict='^#([0-9]+)[[:space:]]order=ok[[:space:]]red=([0-9]+)[[:space:]]green=([0-9]+)$'
     local -A _count=()
+    local -a _order=()
     local _line _pr _red _green _bad=0 _n=0
     while IFS= read -r _line; do
         [[ -n "${_line}" ]] || continue
@@ -607,6 +621,7 @@ _item_2_2() {
             continue
         fi
         _count["${_pr}"]=$(( ${_count["${_pr}"]:-0} + 1 ))
+        _order+=("${_pr}")
     done <<<"${_out}"
 
     if [[ "${_n}" -eq 0 ]]; then
@@ -639,6 +654,15 @@ _item_2_2() {
     fi
     if [[ "${#_extra[@]}" -gt 0 ]]; then
         _err "doc/evidence/tdd.sh printed a verdict for PR(s) this item does not cover: ${_extra[*]} (expected exactly ${TDD_PRS[*]/#/#})"
+        _bad=1
+    fi
+
+    # The ORDER, once the set is known to be right. Comparing it earlier would
+    # only restate a missing or repeated verdict in a second, less useful way;
+    # comparing it at all is what catches ten correct verdicts in the wrong
+    # sequence, which the set comparison alone accepts.
+    if [[ "${_bad}" -eq 0 && "${_order[*]}" != "${TDD_PRS[*]}" ]]; then
+        _err "doc/evidence/tdd.sh printed the ten verdicts in the order ${_order[*]/#/#}, but doc/acceptance.md publishes ${TDD_PRS[*]/#/#}"
         _bad=1
     fi
 

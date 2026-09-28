@@ -254,6 +254,30 @@ shell: min=3.0 median=3.0 max=3.0 ms' \
     assert_output --partial "got n=3 distinct=1"
 }
 
+@test "5.1: three shaped numbers that are not ordered min <= median <= max are refused" {
+    # One line per metric, every number well formed, exactly the shape the old
+    # check accepted - and min > max, so it is not a measurement of anything.
+    FAKE_JUST_BENCH_OUT='enter: min=500 median=400 max=1 ms
+shell: min=143.8 median=176.9 max=215.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "enter: min=500 median=400 max=1 is not min <= median <= max"
+    refute_output --partial "posted="
+}
+
+@test "5.1: a shell median above the --max-ms the run passed to bench is refused" {
+    # Inside its own line (min <= median <= max) and still over the 300 ms
+    # budget this very run handed to `just box bench`.
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=400.5 max=515.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "shell median 400.5 ms is not below the --max-ms 300"
+    refute_output --partial "posted="
+}
+
 @test "5.1: wc prints a plausible 3 but exits 1 (plausible output, non-zero exit)" {
     SHIM_WC_RC=1 SHIM_WC_OUT='3' run "${REALBOX}" --allow-real-box 5.1
     assert_failure

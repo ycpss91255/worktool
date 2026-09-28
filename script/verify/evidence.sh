@@ -230,6 +230,14 @@ _grep_capture() {
 # outside the pass bucket, exactly one `Closes #` line, and - from #153 on -
 # an equal, non-zero number of amd64 and arm64 checks. The ten issue
 # references must be ten distinct ones.
+#
+# "Two architectures" is a claim about two DISJOINT SETS of checks, so that is
+# what is counted. Two independent substring tests over the same array do not
+# make it: one check named `lint (ubuntu-latest, ubuntu-24.04-arm)` satisfies
+# both of them, and a PR with that single check would report `amd=1 arm=1` and
+# pass while only one job ever ran. The names are therefore collected per
+# architecture, de-duplicated, and required to be equal in number AND to share
+# no name at all (`both=0`).
 
 _ITEM_6_1_PRS=(152 153 154 155 156 165 166 167 168 169)
 # The one PR that predates the arm64 runner; from #153 on both architectures
@@ -242,10 +250,10 @@ item_6_1() {
         printf 'rc=1\n'
         return 1
     fi
-    local _fail=0 _pr _checks _body _type _total _nonpass _amd _arm
-    local _matches _rc _closes _issue _match _number
-    local -a _match_lines=()
-    declare -A _distinct=()
+    local _fail=0 _pr _checks _body _type _total _nonpass _amd _arm _both
+    local _matches _rc _closes _issue _match _number _amd_names _arm_names _name
+    local -a _match_lines=() _amd_lines=() _arm_lines=()
+    declare -A _distinct=() _amd_set=() _arm_set=()
 
     for _pr in "${_ITEM_6_1_PRS[@]}"; do
         if ! _gh_capture _checks pr checks "${_pr}" --repo "${EVIDENCE_REPO}" \
@@ -287,17 +295,39 @@ item_6_1() {
 
         if ! _jq_capture _total "${_checks}" 'length' \
             || ! _jq_capture _nonpass "${_checks}" '[.[] | select(.bucket != "pass")] | length' \
-            || ! _jq_capture _amd "${_checks}" '[.[].name | select(test("ubuntu-latest"))] | length' \
-            || ! _jq_capture _arm "${_checks}" '[.[].name | select(test("ubuntu-24.04-arm"))] | length'; then
+            || ! _jq_capture _amd_names "${_checks}" -r '.[].name | select(test("ubuntu-latest"))' \
+            || ! _jq_capture _arm_names "${_checks}" -r '.[].name | select(test("ubuntu-24.04-arm"))'; then
             printf '#%s jq-failed\n' "${_pr}"
             _fail=1
             continue
         fi
-        if ! _is_count "${_total}" || ! _is_count "${_nonpass}" \
-            || ! _is_count "${_amd}" || ! _is_count "${_arm}"; then
+        if ! _is_count "${_total}" || ! _is_count "${_nonpass}"; then
             printf '#%s bad-counts\n' "${_pr}"
             _fail=1
             continue
+        fi
+
+        # Distinct NAMES per architecture, and the overlap between the two
+        # sets. `amd` and `arm` are the sizes of two sets; `both` is how many
+        # names are in each of them, which a genuine two-architecture matrix
+        # answers with 0.
+        _lines_into _amd_lines "${_amd_names}"
+        _lines_into _arm_lines "${_arm_names}"
+        _amd_set=()
+        _arm_set=()
+        if [[ "${#_amd_lines[@]}" -gt 0 ]]; then
+            for _name in "${_amd_lines[@]}"; do _amd_set["${_name}"]=1; done
+        fi
+        if [[ "${#_arm_lines[@]}" -gt 0 ]]; then
+            for _name in "${_arm_lines[@]}"; do _arm_set["${_name}"]=1; done
+        fi
+        _amd="${#_amd_set[@]}"
+        _arm="${#_arm_set[@]}"
+        _both=0
+        if [[ "${_amd}" -gt 0 ]]; then
+            for _name in "${!_amd_set[@]}"; do
+                [[ -n "${_arm_set["${_name}"]:-}" ]] && _both=$((_both + 1))
+            done
         fi
 
         _grep_capture _matches "${_body}" -o '^Closes #[0-9][0-9]*'
@@ -319,15 +349,15 @@ item_6_1() {
             _issue="${_issue:+${_issue},}#${_number}"
         done
 
-        printf '#%s total=%s nonpass=%s amd=%s arm=%s closes=%s issue=%s\n' \
-            "${_pr}" "${_total}" "${_nonpass}" "${_amd}" "${_arm}" \
+        printf '#%s total=%s nonpass=%s amd=%s arm=%s both=%s closes=%s issue=%s\n' \
+            "${_pr}" "${_total}" "${_nonpass}" "${_amd}" "${_arm}" "${_both}" \
             "${_closes}" "${_issue}"
 
         [[ -z "${_issue}" ]] || _distinct["${_issue}"]=1
         [[ "${_total}" -gt 0 && "${_nonpass}" -eq 0 \
             && "${_closes}" -eq 1 && -n "${_issue}" ]] || _fail=1
         if [[ "${_pr}" != "${_ITEM_6_1_NO_ARM_PR}" ]]; then
-            [[ "${_amd}" -gt 0 && "${_amd}" -eq "${_arm}" ]] || _fail=1
+            [[ "${_amd}" -gt 0 && "${_amd}" -eq "${_arm}" && "${_both}" -eq 0 ]] || _fail=1
         fi
     done
 
@@ -441,6 +471,13 @@ item_6_2() {
 # four that were re-reviewed after the quota came back must end on "blocked",
 # each pointing at exactly one follow-up issue, which exactly one merged PR
 # closes, and that PR must itself end on "mergeable".
+#
+# "Each" is a claim about FOUR follow-ups and FOUR fix PRs, so the tracking is
+# kept across the whole item, not reset per blocked PR. Reset per PR, one
+# issue and one PR could answer for all four: four identical rows, each
+# internally consistent, would print `ok` four times while three of the four
+# blockers were never recorded anywhere. The two sets are therefore collected
+# over the whole item and their sizes printed and compared.
 
 _ITEM_6_3_MERGEABLE_PRS=(156 165 166 167 168 169)
 _ITEM_6_3_BLOCKED_PRS=(152 153 154 155)
@@ -497,7 +534,7 @@ item_6_3() {
     local _fail=0 _pr _verdict _rc _word _claude _follow _matches _match
     local _number _issue _prs _fix_pr _orig _fixed _ok
     local -a _match_lines=() _pr_lines=()
-    declare -A _follow_seen=()
+    declare -A _follow_seen=() _follow_all=() _fix_all=()
 
     for _pr in "${_ITEM_6_3_MERGEABLE_PRS[@]}"; do
         _item_6_3_verdict "${_pr}" _verdict
@@ -571,6 +608,8 @@ item_6_3() {
         _fixed="$(_item_6_3_word "${_verdict}" "${_rc}")"
 
         _issue="${_follow}"
+        _follow_all["${_follow}"]=1
+        _fix_all["${_fix_pr}"]=1
         _ok=BAD
         if [[ "${_orig}" == blocked && "${_fixed}" == mergeable \
             && "${#_follow_seen[@]}" -eq 1 && "${#_pr_lines[@]}" -eq 1 ]]; then
@@ -582,6 +621,15 @@ item_6_3() {
             "${_pr}" "${_orig}" "${_issue}" "${_fix_pr}" "${_issue}" \
             "${_fixed}" "${_ok}"
     done
+
+    # One follow-up issue and one fix PR cannot answer for four blocked PRs.
+    printf 'distinct-follow-ups=%s distinct-fix-prs=%s\n' \
+        "${#_follow_all[@]}" "${#_fix_all[@]}"
+    if [[ "${#_follow_all[@]}" -ne "${#_ITEM_6_3_BLOCKED_PRS[@]}" \
+        || "${#_fix_all[@]}" -ne "${#_ITEM_6_3_BLOCKED_PRS[@]}" ]]; then
+        log_error "evidence.sh: the ${#_ITEM_6_3_BLOCKED_PRS[@]} blocked PR(s) name ${#_follow_all[@]} distinct follow-up issue(s) and ${#_fix_all[@]} distinct fix PR(s); each blocked PR must have its own"
+        _fail=1
+    fi
 
     printf 'rc=%s\n' "${_fail}"
     return "${_fail}"

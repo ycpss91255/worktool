@@ -15,6 +15,19 @@
 #     grep -c PAT F   -> exit 2 ("cannot read F") prints 0, same as "no match"
 #     $(cmd)          -> a plausible string with a non-zero status behind it
 #
+#   The second family is the one an exit code and a file count cannot see at
+#   all: a `just box setup` that RUNS, exits 0 and writes the files it says
+#   it writes, while being wrong about WHAT it wrote -
+#
+#     the managed command names the bare `distrobox` (the #175 regression)
+#     a documented decision has stopped being logged
+#     the default run writes a ghostty config with no managed block, and the
+#       removal run still reports removing one (`blocks=0` either way)
+#     the removal resolves a distrobox the document says it does not need
+#
+#   Every one of those leaves the counts and the statuses exactly as a green
+#   run leaves them, so the content assertions are what fail them.
+#
 #   It also proves the environment gate: when ghostty, distrobox or just is
 #   not here, the affected item SAYS SO and exits non-zero. Nothing is
 #   skipped silently.
@@ -169,6 +182,107 @@ _stub_mktemp_dir_then_fail() {
         'exit 1'
 }
 
+# --- The content stubs -------------------------------------------------------
+# These two are the shape no exit code and no count can see: a `just box
+# setup` that runs, exits 0, writes the files it says it writes, and is
+# WRONG ABOUT WHAT IT WROTE. $1 chooses the defect:
+#   bare-name  the managed command names `distrobox` instead of the quoted
+#              absolute path (the #175 regression)
+#   no-block   the default run writes a ghostty config with NO managed block,
+#              while the removal run still reports removing one
+_stub_just_setup_writing() {
+    cat >"${STUB}/just" <<EOF
+#!/usr/bin/env bash
+# A box setup that behaves correctly everywhere a status code or a file count
+# can look, and lies in its text. MODE=$1
+set -u
+MODE=$1
+EOF
+    cat >>"${STUB}/just" <<'EOF'
+_cfg="${XDG_CONFIG_HOME:-${HOME}/.config}"
+_log() { printf '[INFO] %s\n' "$1" >&2; }
+
+case "${1:-}:${2:-}" in
+    box:status)
+        printf 'config: %s/worktool/config\n' "${_cfg}"
+        printf 'auto-enter: yes (default)\n'
+        printf 'terminal: ghostty (default)\n'
+        printf 'tmux: inside (default)\n'
+        printf 'box: dev (default)\n'
+        printf 'ghostty: %s/ghostty/config (managed block: present)\n' "${_cfg}"
+        printf 'tmux.conf: %s/.tmux.conf (managed block: absent)\n' "${HOME}"
+        printf 'distrobox: %s (recorded in a managed block: runnable)\n' \
+            "$(command -v distrobox)"
+        exit 0
+        ;;
+    box:setup) ;;
+    *) exit 0 ;;
+esac
+
+_dbx="$(command -v distrobox)"
+case "${MODE}" in
+    bare-name) _cmd="command = distrobox enter dev -- tmux new -A -s main" ;;
+    *) _cmd="command = '${_dbx}' enter dev -- tmux new -A -s main" ;;
+esac
+
+_dry=0
+_auto=yes
+_src=default
+shift 2
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dry-run) _dry=1 ;;
+        --auto-enter)
+            shift
+            _auto="${1:-yes}"
+            _src=user
+            ;;
+    esac
+    shift
+done
+
+printf './script/box/setup.sh "$@"\n' >&2
+_log "auto-enter: ${_auto} (${_src})"
+_log "terminal: ghostty (default)"
+_log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
+_log "tmux: inside (default)"
+_log "box: dev (default)"
+[ "${_auto}" = yes ] \
+    && _log "distrobox: ${_dbx} (absolute path written into the managed command)"
+
+if [ "${_dry}" = 1 ]; then
+    _log "dry-run: would write ${_cfg}/worktool/config"
+    _log "dry-run: would write ${_cfg}/ghostty/config (managed block: ${_cmd})"
+    exit 0
+fi
+
+mkdir -p "${_cfg}/worktool" "${_cfg}/ghostty"
+printf 'auto-enter=%s\nauto-enter.source=%s\n' "${_auto}" "${_src}" \
+    >"${_cfg}/worktool/config"
+_log "wrote: ${_cfg}/worktool/config"
+
+if [ "${_auto}" = yes ]; then
+    if [ "${MODE}" = no-block ]; then
+        # The config is written, and it holds no managed block at all.
+        printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
+    else
+        {
+            printf '# BEGIN worktool managed block (just box setup; do not edit)\n'
+            printf '%s\n' "${_cmd}"
+            printf '# END worktool managed block\n'
+        } >"${_cfg}/ghostty/config"
+    fi
+    _log "wrote: ${_cfg}/ghostty/config (managed block: ${_cmd})"
+else
+    printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
+    _log "removed: ${_cfg}/ghostty/config (managed block: ${_cmd})"
+    _log "nothing to remove: ${HOME}/.tmux.conf (no managed block)"
+fi
+exit 0
+EOF
+    chmod +x "${STUB}/just"
+}
+
 # --- Control ------------------------------------------------------------------
 
 @test "control: with every tool behaving, all six items pass (so the failure cases below are not vacuous)" {
@@ -241,6 +355,24 @@ _stub_mktemp_dir_then_fail() {
     assert_output --partial "counting the files under"
 }
 
+@test "3.1: a dry-run whose managed command names the bare distrobox cannot pass (#175)" {
+    # Exit 0, no file written, every decision logged - and the command it says
+    # it would write is the bare name the real machine failed on. Only the
+    # TEXT of that line tells this run from a correct one.
+    _stub_just_setup_writing bare-name
+    run "${VERIFY}" 3.1
+    assert_failure
+    assert_output --partial "-- tmux new -A -s main)', found 0"
+    refute_output --partial "3.1 PASS"
+}
+
+@test "3.1: a dry-run that stops logging one of the documented decisions cannot pass" {
+    _stub_just_plausible 0
+    run "${VERIFY}" 3.1
+    assert_failure
+    assert_output --partial "expected exactly one line containing '[INFO] terminal detected: ghostty (ghostty executable <G>)', found 0"
+}
+
 @test "3.1: a mktemp that prints a real directory but exits 1 cannot pass" {
     _stub_mktemp_dir_then_fail
     run "${VERIFY}" 3.1
@@ -292,6 +424,18 @@ _stub_mktemp_dir_then_fail() {
     assert_output --partial "left no readable"
 }
 
+@test "3.2: a setup that writes a managed block naming the bare distrobox cannot pass (#175)" {
+    # The file is there, the block is there, `status` says `present`, and
+    # every count and exit code is right. The block holds the bare name, and
+    # that is the whole of #175 - so the block's CONTENT is what is asserted.
+    _stub_just_setup_writing bare-name
+    run "${VERIFY}" 3.2
+    assert_failure
+    assert_output --partial "command = distrobox enter dev -- tmux new -A -s main"
+    assert_output --partial "-- tmux new -A -s main', found 0"
+    refute_output --partial "3.2 PASS"
+}
+
 @test "3.2: a sed that normalises the output correctly but exits 1 cannot pass" {
     _stub_sed_output_then_fail
     run "${VERIFY}" 3.2
@@ -313,6 +457,61 @@ _stub_mktemp_dir_then_fail() {
     run "${VERIFY}" 3.3
     assert_failure
     assert_output --partial "[FAIL]"
+}
+
+@test "3.3: a config that never held a managed block cannot pass, however convincing the removal report is" {
+    # The removal run exits 0, reports the block it removed and the tmux.conf
+    # it had nothing to remove from, and leaves blocks=0 - because the first
+    # setup never wrote a block. "It is gone" is vacuously true of something
+    # that was never there, so the precondition is measured first.
+    _stub_just_setup_writing no-block
+    run "${VERIFY}" 3.3
+    assert_failure
+    assert_line "blocks-before=0"
+    assert_output --partial "held 0 managed block(s) before the removal"
+    refute_output --partial "3.3 PASS"
+}
+
+@test "3.3: a removal that resolves a distrobox it does not need cannot pass" {
+    # `--auto-enter no` only removes, so the document shows no `distrobox:`
+    # decision line for it. This stub logs one anyway.
+    cat >"${STUB}/just" <<'EOF'
+#!/usr/bin/env bash
+set -u
+_cfg="${XDG_CONFIG_HOME:-${HOME}/.config}"
+_dbx="$(command -v distrobox)"
+_cmd="command = '${_dbx}' enter dev -- tmux new -A -s main"
+_log() { printf '[INFO] %s\n' "$1" >&2; }
+mkdir -p "${_cfg}/worktool" "${_cfg}/ghostty"
+case "$*" in
+    *"--auto-enter no"*)
+        _log "auto-enter: no (user)"
+        _log "terminal: ghostty (default)"
+        _log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
+        _log "tmux: inside (default)"
+        _log "box: dev (default)"
+        _log "distrobox: ${_dbx} (absolute path written into the managed command)"
+        printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
+        _log "wrote: ${_cfg}/worktool/config"
+        _log "removed: ${_cfg}/ghostty/config (managed block: ${_cmd})"
+        _log "nothing to remove: ${HOME}/.tmux.conf (no managed block)"
+        ;;
+    *)
+        {
+            printf '# BEGIN worktool managed block (just box setup; do not edit)\n'
+            printf '%s\n' "${_cmd}"
+            printf '# END worktool managed block\n'
+        } >"${_cfg}/ghostty/config"
+        printf 'auto-enter=yes\n' >"${_cfg}/worktool/config"
+        ;;
+esac
+exit 0
+EOF
+    chmod +x "${STUB}/just"
+    run "${VERIFY}" 3.3
+    assert_failure
+    assert_line "blocks-before=1"
+    assert_output --partial "expected no line containing '[INFO] distrobox:'"
 }
 
 @test "3.3: a grep -c that answers 0 but exits 2 cannot pass (blocks=0 must mean the file was read)" {
