@@ -14,6 +14,10 @@
 #                    integration, system, acceptance, system-real; the
 #                    run stops at the first failing step
 #     --<tier>       exactly that one gate, nothing else
+#     --integration  BOTH groups of the tier (M3, issue #172): the default
+#                    one in the test image, then the ghostty one in the
+#                    ubuntu ghostty image it builds first - and nothing at
+#                    all after the default group failed
 #     --build        the test image build only
 #
 # HOW
@@ -60,8 +64,13 @@ _dispatched() {
         "${FAKE_DOCKER_CALLS}"
 }
 
+# The integration step is TWO containers (M3, issue #172): the default
+# group in the test image, then - after a `docker build` of the ubuntu
+# ghostty image - the ghostty group.
 EVERYTHING_IN_ORDER="$(printf '%s\n' \
-    --ci-lint --ci-unit --ci-integration --ci-system --ci-acceptance \
+    --ci-lint --ci-unit \
+    --ci-integration build --ci-integration-ghostty \
+    --ci-system --ci-acceptance \
     build system-real-entry.sh)"
 
 # --- --help ------------------------------------------------------------------
@@ -140,7 +149,9 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
     assert_failure
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit --ci-integration --ci-system)"
+        --ci-lint --ci-unit \
+        --ci-integration build --ci-integration-ghostty \
+        --ci-system)"
 }
 
 @test "test.sh with no flag stops when lint fails: no tier runs" {
@@ -153,12 +164,32 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 @test "test.sh --<tier> routes exactly that in-container gate and nothing else" {
     local _tier
-    for _tier in lint unit integration system acceptance; do
+    for _tier in lint unit system acceptance; do
         rm -f "${FAKE_DOCKER_CALLS}"
         run "${TEST_SH}" "--${_tier}"
         assert_success
         assert_equal "$(_dispatched)" "--ci-${_tier}"
     done
+}
+
+# --- the integration tier's two groups (M3, issue #172) ---------------------
+
+@test "test.sh --integration runs the default group, then builds the ghostty image and runs the ghostty group" {
+    run "${TEST_SH}" --integration
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-integration build --ci-integration-ghostty)"
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build .*Dockerfile\.ghostty'
+    # The ghostty group is a plain container: no daemon, no extra privilege.
+    assert_line --regexp '^docker run --rm -v .*:/source -w /source worktool-ghostty:local \./script/test/test\.sh --ci-integration-ghostty$'
+    refute_line --partial '--privileged'
+}
+
+@test "test.sh --integration stops when the default group fails: the ghostty image is never built" {
+    FAKE_DOCKER_FAIL_ON=--ci-integration run "${TEST_SH}" --integration
+    assert_failure
+    assert_equal "$(_dispatched)" "--ci-integration"
 }
 
 @test "test.sh --system-real builds the runner image, then launches the DinD entry, and nothing else" {

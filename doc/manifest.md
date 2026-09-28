@@ -285,6 +285,21 @@ issue #129),不再延後到 M5。
     完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
+- 整合,**ghostty 組**(`test/integration/ghostty_config_spec.bats`,M3 issue
+  #172):ghostty 只在 Ubuntu 26.04(resolute)的官方庫裡,所以這一組跑在自己的
+  映像 `dockerfile/Dockerfile.ghostty`(ubuntu:26.04 + ghostty + 同一份 bats);
+  `just test integration` 會**兩組都跑**(先預設組、再 ghostty 組),每組各自適用
+  同一套 tier 規則(必備 spec 存在且非空、至少跑一個 case、不得 skip)。
+  - **驗證什麼**:`just box setup` 寫出的受管區塊交給**真的 ghostty** ——
+    `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
+    是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
+    `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
+    `distrobox enter dev -- tmux new -A -s main`;`--tmux host` 解析成
+    `tmux new -A -s main`、`--box work` 換成該盒名。另有兩個對照案例證明斷言不是
+    恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
+    `+validate-config` 以 `unknown field` 拒絕。
+  - **不證明什麼**:視窗真的開得起來、真的進得了盒 —— 那是 real-engine 組的
+    ghostty 鏈案例(需要顯示器與真引擎)。
 - 系統,**shim 組**(`test/system/real_assemble_spec.bats`):在測試映像內執行
   **真正的、鎖定版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,
   建置時驗證 tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
@@ -314,10 +329,15 @@ issue #129),不再延後到 M5。
 - 系統,**real-engine 組**(`test/system/real_engine_spec.bats`):以**真正的
   docker 引擎**證明 M2 的「可用 dev 盒」承諾。做法是 **docker-in-docker**
   (2026-09-16 人類決策;三種做法的研究與比較見 issue #129):一個專用的系統測試
-  runner 映像 `dockerfile/Dockerfile.system-real`,以官方 `docker:29.8.0-dind`
-  為基底(內含 dockerd、containerd、runc、docker CLI),加上 bash、bats 1.14.0
-  (+ bats-support v0.3.0 / bats-assert v2.1.0)與**同一份**鎖定的 distrobox
-  1.8.2.5(同一個 tarball、同一個 sha256、同一個上游安裝器);所有版本皆鎖定。
+  runner 映像 `dockerfile/Dockerfile.system-real`,基底自 M3 issue #172 起改為
+  `ubuntu:26.04`(ghostty 鏈案例需要真的 ghostty 與無頭 X,而 ghostty 只有 26.04
+  有),引擎則**原封不動**從同一個鎖定的官方 `docker:29.8.0-dind` 映像 COPY 進來
+  (dockerd、containerd、runc、docker CLI 都是靜態 Go binary,`dockerd-entrypoint.sh`
+  / `dind` 是 POSIX shell,`/usr/local/sbin/.iptables-legacy` 是指向 `/usr/sbin`
+  的符號連結,由 ubuntu 的 iptables 套件補齊),再加上 bash、bats 1.14.0
+  (+ bats-support v0.3.0 / bats-assert v2.1.0)、ghostty + Xvfb + dbus-x11,與
+  **同一份**鎖定的 distrobox 1.8.2.5(同一個 tarball、同一個 sha256、同一個上游
+  安裝器);所有版本皆鎖定。
   runner 以 `docker run --rm --privileged` 啟動(巢狀 dockerd 需要;**這是唯一
   使用 `--privileged` 的地方**),入口 `script/test/system-real-entry.sh` 在容器內
   背景啟動一個獨立的 dockerd(沿用 dind 映像自己的 `dockerd-entrypoint.sh`:
@@ -358,9 +378,25 @@ issue #129),不再延後到 M5。
     判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell
     'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、三行指標仍在、同樣兩行
     fish INFO 仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬
-    (見上方「進盒延遲量測」);(e) 冪等:第二次
+    (見上方「進盒延遲量測」);(e) **ghostty 鏈**(M3,issue #172):在 runner 內
+    用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
+    ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
+    釘住 `gtk-single-instance = false`,command 為
+    `distrobox enter dev -- tmux new -A -s chain fish <盒內腳本>`;判準是**盒內**
+    留下的標記檔(內容含 `fish=<版本>`、`tmux=yes`),而不是 ghostty 的結束碼 ——
+    runner 本身沒有裝 fish(spec 明確斷言 `command -v fish` 失敗),所以會回答的
+    只可能是盒內那一個。另兩個負向案例:command 永不結束(`distrobox enter dev --
+    sleep infinity`)時,`timeout -k` 在預算內以 124 失敗、標記檔沒有被寫出,證明
+    不會掛住;以及 `test/system/fixture/ghostty_single_instance.sh` 在一個
+    `xvfb-run` + `dbus-run-session` 裡實地示範:`gtk-single-instance = true` 時第二
+    次啟動 ghostty 會經 D-Bus 轉交給既有主進程、**立刻 exit 0**,而它要求的指令
+    (`sleep infinity`)根本沒跑完 —— 這就是「拿結束碼當成功判準」的假陽性,也是
+    每個案例都釘 `gtk-single-instance = false`、都以標記檔為證的原因。三層防卡:
+    設定不覆寫 `wait-after-command` / `quit-after-last-window-closed`(讓 ghostty
+    自己在指令結束後退出)、每個 ghostty 呼叫外層 `timeout -k`、CI job 的
+    `timeout-minutes`;(f) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
-    恰好一個、仍可 `rg --version`;(f) 清理:`distrobox rm -f dev` exit 0 後
+    恰好一個、仍可 `rg --version`;(g) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
     第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
     `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
@@ -456,7 +492,7 @@ just test lint          # ShellCheck(*.sh + *.bats)
 # 底層:./script/test/test.sh --lint
 just test unit          # 單元 bats(test/unit/)
 # 底層:./script/test/test.sh --unit
-just test integration   # 整合 bats(test/integration/)
+just test integration   # 整合 bats(test/integration/;兩組:預設組 + ghostty 組,後者在 ubuntu:26.04 的 ghostty 映像內,不需顯示器)
 # 底層:./script/test/test.sh --integration
 just test system        # 系統 bats,shim 組(test/system/;真實 distrobox + 假容器管理器)
 # 底層:./script/test/test.sh --system
