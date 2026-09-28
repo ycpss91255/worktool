@@ -4,11 +4,12 @@
 # WHAT THIS PROVES
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
-#   - zero special cases: the root justfile is exactly two `mod?` lines
-#     (test, box) plus a `default` that lists them - no other recipe;
-#   - action-named namespaces: script/test/justfile.test and
-#     script/box/justfile.box, each with its own `default`, `help` (alias
-#     `h`) and `set working-directory := '../..'`, so every recipe runs at
+#   - zero special cases: the root justfile is exactly three `mod?` lines
+#     (test, box, verify) plus a `default` that lists them - no other recipe;
+#   - action-named namespaces: script/test/justfile.test,
+#     script/box/justfile.box and script/verify/justfile.verify, each with
+#     its own `default`, `help` (alias `h`) and
+#     `set working-directory := '../..'`, so every recipe runs at
 #     the repo root wherever `just` is typed;
 #   - min -> max: bare `just test` forwards to test.sh with NO argument
 #     (= everything CI runs); each verb narrows to one `--<verb>` flag;
@@ -51,9 +52,12 @@ setup() {
 # Independent checkout copy at $COPY with the REAL scripts and justfiles
 # (cp -R keeps the executable bits).
 _make_repo_copy() {
-    mkdir -p "${COPY}"
+    mkdir -p "${COPY}/doc"
     cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
     cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${COPY}/"
+    # doc/evidence carries the assets script/verify/gate.sh runs, so the
+    # `verify` namespace can be exercised end to end against the copy.
+    cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
 }
 
 # A `docker` that must never be reached: records the call and fails loudly.
@@ -68,13 +72,15 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's six forwarding targets with recording stubs. Each
+# Replace the copy's twelve forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
     local _s
     for _s in script/test/test.sh script/test/selfcheck.sh \
-        script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh; do
+        script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh \
+        script/verify/ui.sh script/verify/gate.sh script/verify/setup.sh \
+        script/verify/diagram.sh script/verify/realbox.sh script/verify/evidence.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -139,22 +145,23 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is exactly two mod? lines (test, box) and one default recipe" {
+@test "root justfile is exactly three mod? lines (test, box, verify) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
     run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
     assert_success
-    assert_equal "${#lines[@]}" 4
+    assert_equal "${#lines[@]}" 5
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 "default:"
-    assert_line --index 3 --regexp '^[[:space:]]+@just --list$'
+    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
+    assert_line --index 3 "default:"
+    assert_line --index 4 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
     local _m
-    for _m in script/test/justfile.test script/box/justfile.box; do
+    for _m in script/test/justfile.test script/box/justfile.box script/verify/justfile.verify; do
         assert [ -f "${REPO_ROOT}/${_m}" ]
         run grep -xE "set working-directory := '\.\./\.\.'" "${REPO_ROOT}/${_m}"
         assert_success
@@ -166,19 +173,21 @@ _listed_names() {
     # settings must not carry usage text or option lists (case-insensitive).
     run bash -c "grep -vhE '^[[:space:]]*#' \"\$@\" | grep -niE 'valid:|usage'" _ \
         "${REPO_ROOT}/justfile" \
-        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box"
+        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box" \
+        "${REPO_ROOT}/script/verify/justfile.verify"
     assert_failure
     assert_output ""
 }
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the two namespaces and default, nothing else" {
+@test "just --list shows the three namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "box default test "
+    assert_equal "$(_listed_names)" "box default test verify "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
+    assert_line --regexp '^ +verify \.\.\. +# '
 }
 
 @test "bare just is just --list" {
@@ -351,6 +360,106 @@ _listed_names() {
     assert_success
     assert_equal "$(_stub_calls)" "status.sh --help"
     assert_equal "$(_last_argc)" "1"
+}
+
+# --- verify namespace: the acceptance checks of doc/acceptance.md -----------
+
+@test "just verify lists the six verify verbs, default and help (alias h) only" {
+    _just verify
+    assert_success
+    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" \
+        "default diagram evidence gate help realbox setup ui "
+    assert_output --regexp '\[alias: h\]|^ +h( |$)'
+    assert_equal "$(_stub_calls)" ""
+}
+
+@test "just verify <verb> forwards to its script with no argument" {
+    _stub_scripts
+    local _pair _verb _script
+    for _pair in 'ui=ui.sh' 'gate=gate.sh' 'diagram=diagram.sh' \
+        'realbox=realbox.sh' 'evidence=evidence.sh'; do
+        _verb="${_pair%%=*}"
+        _script="${_pair#*=}"
+        : >"${STUB_CALLS}"
+        _just verify "${_verb}"
+        assert_success
+        assert_equal "$(_stub_calls)" "${_script}"
+        assert_equal "$(_last_argc)" "0"
+    done
+}
+
+@test "just verify gate 2.4 forwards the item id as one argument (argc 1)" {
+    _stub_scripts
+    _just verify gate 2.4
+    assert_success
+    assert_equal "$(_stub_calls)" "gate.sh 2.4"
+    assert_equal "$(_last_argc)" "1"
+}
+
+@test "just verify realbox --allow-real-box 5.2.3 keeps argv boundaries (argc 2)" {
+    _stub_scripts
+    _just verify realbox --allow-real-box 5.2.3
+    assert_success
+    assert_equal "$(_stub_calls)" "realbox.sh --allow-real-box 5.2.3"
+    assert_equal "$(_last_argc)" "2"
+}
+
+@test "just verify diagram --root <path with spaces> stays one argument (argc 2)" {
+    _stub_scripts
+    _just verify diagram --root "/tmp/my repo/wt"
+    assert_success
+    assert_equal "$(_stub_calls)" "diagram.sh --root /tmp/my\\ repo/wt"
+    assert_equal "$(_last_argc)" "2"
+}
+
+@test "just verify help and just verify h forward --help to every verify script, in order" {
+    _stub_scripts
+    local _expected
+    _expected="$(printf '%s\n' 'ui.sh --help' 'gate.sh --help' 'setup.sh --help' \
+        'diagram.sh --help' 'realbox.sh --help' 'evidence.sh --help')"
+    _just verify help
+    assert_success
+    assert_equal "$(_stub_calls)" "${_expected}"
+
+    : >"${STUB_CALLS}"
+    _just verify h
+    assert_success
+    assert_equal "$(_stub_calls)" "${_expected}"
+    assert_equal "$(_last_argc)" "1"
+}
+
+@test "just verify bogus fails with just's own recipe error, nothing runs" {
+    _stub_scripts
+    _just verify bogus
+    assert_failure 1
+    assert_output --regexp 'does not contain recipe.*bogus'
+    assert_equal "$(_stub_calls)" ""
+}
+
+@test "just verify gate --bogus is refused by gate.sh itself (exit 2), not by the justfile" {
+    _just verify gate --bogus
+    assert_failure 2
+    assert_line "gate.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "valid:"
+}
+
+# --- real gate.sh through the namespace: the wiring end to end --------------
+
+@test "just verify gate 2.4 runs the real script and prints the documented six lines" {
+    _just verify gate 2.4
+    assert_success
+    assert_line 'order=BAD red=6 green=0'
+    assert_line 'wrong-order rc=1'
+    assert_line 'order=BAD red=0 green=0'
+    assert_line 'empty-red-block rc=1'
+    assert_line 'guarded-rc=7'
+    assert_line 'unguarded-rc=0'
+}
+
+@test "cd doc && just verify gate --list resolves the script at the repo root" {
+    _just_from_subdir verify gate --list
+    assert_success
+    assert_line --partial '2.4  doc '
 }
 
 # --- real assemble.sh, dry-run: the wiring end to end (no distrobox) ---------

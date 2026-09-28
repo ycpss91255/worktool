@@ -133,7 +133,13 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
-                unit/workflow_spec.bats
+                unit/workflow_spec.bats \
+                unit/verify_ui_spec.bats \
+                unit/verify_gate_spec.bats \
+                unit/verify_setup_spec.bats \
+                unit/verify_diagram_spec.bats \
+                unit/verify_realbox_spec.bats \
+                unit/verify_evidence_spec.bats
             ;;
         integration)
             printf '%s\n' \

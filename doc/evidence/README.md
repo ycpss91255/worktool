@@ -2,10 +2,14 @@
 
 `doc/acceptance.md` 的驗收方式只寫「呼叫哪一支」,判定邏輯放在這裡,受版本控制。
 
+M3 2.2 與 2.4 的入口現在是 `just verify gate 2.2` / `just verify gate 2.4`
+(`script/verify/gate.sh`);這裡的檔案仍然是判定本體,`gate.sh` 只是呼叫它們並
+守住結束碼(`tdd.sh` 印得出十行卻 exit 1、負向 fixture 被接受成通過,兩種都讀成紅)。
+
 | 檔案 | 用途 |
 | --- | --- |
 | `tdd.sh` | 2.2:對每個 sub-issue PR 的描述判定「非空 RED 區塊在前、非空 GREEN 區塊在後」 |
-| `tdd.awk` | `tdd.sh` 的判定核心,單獨吃一份 PR 描述 |
+| `tdd.awk` | `tdd.sh` 的判定核心,單獨吃一份 PR 描述;2.4 也直接拿它跑負向 fixture |
 | `negative/wrong-order.md` | 2.4 的負向 fixture:RED / GREEN 顛倒 |
 | `negative/empty-red-block.md` | 2.4 的負向 fixture:RED 區塊是空的 |
 
