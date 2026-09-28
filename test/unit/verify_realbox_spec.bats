@@ -99,6 +99,87 @@ _reset_log() {
     : >"${STATE}/list-calls"
 }
 
+_tmux_conf() { printf '%s\n' "${HOME}/.tmux.conf"; }
+
+# The user lines ~/.tmux.conf is seeded with: what a maintainer's own tmux
+# configuration stands for, and what every check below asks to survive.
+TMUX_USER_LINES=(
+    '# worktool acceptance: user content that must survive every write'
+    'set -g history-limit 12345'
+    'set -g mouse on'
+)
+
+_seed_tmux_conf() {
+    printf '%s\n' "${TMUX_USER_LINES[@]}" >"$(_tmux_conf)"
+}
+
+# The state file a maintainer who chose `--tmux host` once already has. The
+# decision is STORED, so the next bare `just box setup` writes ~/.tmux.conf
+# whether or not this run asked for it - the case GAP A is about.
+_seed_tmux_host_state() {
+    mkdir -p "${HOME}/.config/worktool"
+    printf 'tmux=host\ntmux.source=user\n' >"${HOME}/.config/worktool/config"
+}
+
+# --- the degraded-copy family ------------------------------------------------
+# The fakes above break the TOOLS realbox.sh drives. These break the PRODUCT:
+# a copy of the checkout is degraded and `just box setup` / `just box status`
+# are pointed at THAT copy (FAKE_JUST_BOX_SCRIPT_DIR), so the output is what
+# the degraded product really prints and 5.2 has to catch it on content alone.
+
+_repo_copy() {
+    local _dst="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_dst}"
+    cp -a "${REPO_ROOT}/justfile" "${REPO_ROOT}/lib" "${REPO_ROOT}/script" \
+        "${REPO_ROOT}/box" "${_dst}/"
+    printf '%s\n' "${_dst}"
+}
+
+# Insert the lines on stdin into file $2 immediately before its first line
+# equal to $1, so a later definition of a shell function shadows the shipped
+# one. Pure bash; the result is copied back INTO the file so it keeps its
+# executable bit.
+_insert_before() {
+    local _anchor="$1" _file="$2" _frag _line _done=0
+    _frag="$(cat)"
+    : >"${_file}.new"
+    while IFS= read -r _line || [ -n "${_line}" ]; do
+        if [ "${_done}" -eq 0 ] && [ "${_line}" = "${_anchor}" ]; then
+            printf '%s\n' "${_frag}" >>"${_file}.new"
+            _done=1
+        fi
+        printf '%s\n' "${_line}" >>"${_file}.new"
+    done <"${_file}"
+    [ "${_done}" -eq 1 ] || return 1
+    cat "${_file}.new" >"${_file}"
+    rm -f "${_file}.new"
+}
+
+# Degrade the copy at $1 so ONLY the tmux-host path overwrites its file: the
+# ghostty block is still replaced in place and the report is word for word
+# the one a correct write prints.
+_degrade_tmux_path_overwrites() {
+    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'EOF'
+_apply_ghostty() {
+    local _ghostty _tmux_conf _body _rc=0
+    _ghostty="$(enter_ghostty_config)"
+    _tmux_conf="$(enter_tmux_conf)"
+    if [[ "${TMUX}" == "inside" ]]; then
+        _block_write "${_ghostty}" \
+            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
+        _block_remove "${_tmux_conf}" || _rc=1
+        return "${_rc}"
+    fi
+    _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
+    _body="set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'"
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "${_body}" "${ENTER_BLOCK_END}" \
+        >"${_tmux_conf}" || _rc=1
+    log_info "wrote: ${_tmux_conf} (managed block: ${_body})"
+    return "${_rc}"
+}
+EOF
+}
+
 # --- self-registration -------------------------------------------------------
 
 @test "this spec is a required unit spec of test.sh" {
@@ -345,14 +426,56 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 
 # --- 5.2 step 1: back up -----------------------------------------------------
 
-@test "5.2.1 happy path records regular + absent-dir and publishes the manifest" {
+@test "5.2.1 happy path records every file setup can write and publishes the manifest" {
+    _seed_tmux_conf
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
+    assert_line "backup-covers=3/3"
     assert_line "ghostty=regular"
     assert_line --partial "ghostty.sha="
     assert_line "worktool=absent-dir"
+    # ~/.tmux.conf is in the set: `just box setup` writes it whenever the
+    # stored tmux decision is `host`, and without this line step 3 would
+    # have nothing to restore it from.
+    assert_line "tmux-conf=regular"
+    assert_line --partial "tmux-conf.sha="
     assert_line "backup=$(_backup_dir) ok=1"
     [ -f "$(_backup_dir)/manifest" ]
+    [ -f "$(_backup_dir)/tmux-conf.config" ]
+}
+
+@test "5.2.1: an absent ~/.tmux.conf is absent-file, never absent-dir (\$HOME is not ours to remove)" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "backup-covers=3/3"
+    assert_line "tmux-conf=absent-file"
+    refute_line "tmux-conf=absent-dir"
+}
+
+@test "5.2.1 refuses the whole item when a file setup can write cannot be backed up" {
+    # A directory where ~/.tmux.conf should be: `just box setup --tmux host`
+    # would still try to write there, and nothing could put it back. The
+    # refusal lands BEFORE a backup directory exists.
+    mkdir -p "$(_tmux_conf)"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=2/3"
+    assert_output --partial "neither a regular file nor a symlink"
+    assert_output --partial "refusing to apply anything"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1 refuses when the link behind a config leads somewhere it cannot copy" {
+    # A symlinked ~/.tmux.conf whose target is a directory: `cp -a` would
+    # copy the link, and the file behind it - the one that actually holds
+    # the user's configuration - could not be preserved at all.
+    mkdir -p "${BATS_TEST_TMPDIR}/not-a-file"
+    ln -s "${BATS_TEST_TMPDIR}/not-a-file" "$(_tmux_conf)"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=2/3"
+    assert_output --partial "is not a regular file -- handle it by hand"
+    [ ! -e "$(_backup_dir)" ]
 }
 
 @test "5.2.1: an existing backup dir is refused with ok=0 and nothing is copied" {
@@ -394,9 +517,23 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     rm -f "$(_ghostty_config)"
     printf 'font-size = 9\n' >"${HOME}/.config/ghostty/real-config"
     ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
-    SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' run "${REALBOX}" --allow-real-box 5.2.1
+    # Scoped to the BACKUP copy's link, so the preflight (which resolves the
+    # live link) still runs and this case reaches the guard it is about.
+    SHIM_READLINK_ON='worktool-m3-52-backup' SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' \
+        run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
     assert_output --partial "cannot read the backup link"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: a link this run cannot resolve refuses before a backup directory exists" {
+    rm -f "$(_ghostty_config)"
+    printf 'font-size = 9\n' >"${HOME}/.config/ghostty/real-config"
+    ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
+    SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=2/3"
+    assert_output --partial "cannot resolve the link"
     [ ! -e "$(_backup_dir)" ]
 }
 
@@ -551,6 +688,70 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line "dev-gone=1"
     assert_line "backup-removed=1"
     [ ! -e "$(_backup_dir)" ]
+}
+
+# --- 5.2 and the user's own content (GAP A) ----------------------------------
+# These run the REAL product out of a copy of the checkout, so the output is
+# what it really prints. The scenario is the maintainer's: the state file
+# already says `tmux=host`, so a bare `just box setup` writes ~/.tmux.conf
+# whether or not this run asked it to.
+
+@test "5.2: the apply keeps the user's own content in every managed file (the degraded case below is not vacuous)" {
+    local _repo
+    _repo="$(_repo_copy)"
+    _seed_tmux_conf
+    _seed_tmux_host_state
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2
+    # The item still ends at the subjective check, which needs a tty.
+    assert_failure
+    assert_line "backup-covers=3/3"
+    assert_line "user-content after-apply: ghostty=intact tmux.conf=intact"
+    assert_output --partial "stdin is not a tty"
+    assert_line "restore-ok=1"
+    assert_line "blocks=0"
+}
+
+@test "5.2: a product whose --tmux host path overwrites the whole ~/.tmux.conf is caught after the apply, and the backup puts it back (GAP A)" {
+    # Every signal 5.2 used to have stays green: setup exits 0, status is
+    # fine, the managed block is in the file, and step 3 reports a clean
+    # restore. What says the apply destroyed the maintainer's tmux
+    # configuration is the user-content line - checked BEFORE step 3, or
+    # the restore would hide the damage it was meant to undo.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_tmux_path_overwrites "${_repo}"
+    _seed_tmux_conf
+    _seed_tmux_host_state
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure
+    assert_line "setup-rc=0"
+    assert_line "user-content after-apply: ghostty=intact tmux.conf=LOST"
+    assert_output --partial "lost content the user had before this run"
+    assert_output --partial "run 5.2.3 to restore it from the backup"
+    # The subjective check is never reached; the restore still runs.
+    refute_output --partial "stdin is not a tty"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    # And the file is back, byte for byte - only possible because the backup
+    # set covers ~/.tmux.conf.
+    run cat "$(_tmux_conf)"
+    assert_output "$(printf '%s\n' "${TMUX_USER_LINES[@]}")"
+}
+
+@test "5.2: a managed block left in ~/.tmux.conf fails the restore, exactly as one left in the ghostty config does" {
+    # blocks= counts every user-owned managed file: a restore that put the
+    # ghostty config back and forgot ~/.tmux.conf used to print blocks=0.
+    _seed_tmux_conf
+    printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
+        >>"$(_tmux_conf)"
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure
+    assert_line "blocks=1"
+    assert_output --partial "managed block still present in $(_tmux_conf)"
 }
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
