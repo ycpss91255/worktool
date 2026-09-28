@@ -484,7 +484,7 @@ prereq-ok
 - repo 使用依賴:`docker`(可 `--privileged`)、`just`;clone 需要 `git`。
 - 驗收工具:`gh`(已登入,2.2 / 5.1 / 6.1-6.3 用)、`jq`(5.1 / 6.1 用)、`awk` / `grep` / `sed` / `cut` / `find` / `mktemp` / `sha256sum`(coreutils + awk);3 需要 host 的 PATH 上有 `distrobox` 與 `ghostty`(setup 解析這兩個絕對路徑寫進決策 log 與受管 command,少一個就沒得驗);5(實機)另需真的建得起盒、開得起 ghostty 視窗。1-2、4、6 不需 distrobox / ghostty。
 
-每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk` / `tdd.sh`,文件那一行只剩一次呼叫;當初為什麼搬(十份 PR 描述都滿足 2.2 的主張、而且找不到任何單一環境差異能重現維護者那一輪的 9/10 `order=BAD`)照實記在 `doc/evidence/README.md`,#176 item 8。
+每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk` / `tdd.sh`,文件那一行只剩 `bash doc/evidence/tdd.sh` 一次呼叫、不帶任何可被改寫的 shell 語法。維護者那一輪的 9/10 `order=BAD`:十份 PR 描述都滿足 2.2 的主張(以 `bash doc/evidence/tdd.sh` 實測 10/10),awk 實作、locale、CRLF、貼上時的 shell 與縮排都已逐項排除,但**根因未解**,因為那一輪跑在維護者的指令執行器裡、那個環境在這裡沒有,重現不了;處置因此是結構性的(把邏輯搬出文件),不是找出成因。逐項排除的指令與輸出見 `doc/evidence/README.md`,#176 item 8。
 本 PR(#157)只改 `doc/acceptance.md` 與它的檢查程式 `doc/evidence/`(不動產品程式);**要驗的產品程式全在 main,但 2.2 與 2.4 呼叫的 `doc/evidence/` 只在本 PR 分支上**,所以下面直接 clone 本 PR 分支 `m3/5-acceptance`(= main 加這兩份文件變更)。clone 成 main 的話,2.2 會是 `No such file or directory`(rc=127)、2.4 會是 `awk: fatal: cannot open source file`。
 
 ```bash
@@ -782,26 +782,33 @@ verify-tool-ok
         grep '^command' "$H/.config/ghostty/config" | norm )
       ```
   - [ ] 3.6 `status` 的 `distrobox:` 那行:除了 3.2 的 runnable,其餘四種狀態(#177)各印一次,證明「受管 command 還跑不跑得起來」在壞掉的情況下也講得出來
-    - 預期看到資訊(四行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有)
+    - 預期看到資訊(四案各兩行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有;每案的第二行是那次 `status` 自己的結束碼與它寫到 stderr 的行數)
       ```text
       distrobox: <H>/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)
+      rc=0 stderr=0
       distrobox: distrobox (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)
+      rc=0 stderr=0
       distrobox: <D> (on PATH; no managed block records one)
+      rc=0 stderr=0
       distrobox: not found on PATH (install distrobox, then re-run: just box setup)
+      rc=0 stderr=0
       ```
-      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一行的受限 PATH 只放 `just` / `sh` / `bash` / `dirname` 四個連結,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到)
+      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一案的受限 PATH 放的是 `status` 這條路徑**真正會用到的**六個工具(`just` / `sh` / `bash` / `dirname` / `awk` / `grep`)、獨缺 distrobox,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到 —— 而且找不到的是 distrobox,不是 `status` 自己要用的工具。`rc=` / `stderr=` 是這件事的守門:`stderr=0` 表示那次 `status` 除了 just 的回聲之外一個字都沒往 stderr 寫,少放工具的話那些 `command not found` 會被算進去(實測把 `awk` / `grep` 拿掉是 `stderr=18`),案子直接紅,不會被後面的 `grep` 濾掉當成過關;區塊開頭的 `set -o pipefail` 讓這裡每條管線的上游失敗也一樣反映在 `rc=` 上(round 11)。stderr 收在 `$H/err`,跟著 HOME 一起被清掉)
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
+      ( set -o pipefail
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
         D=$(command -v distrobox) || exit 1
         norm() { sed -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
-        st() { HOME=$H XDG_CONFIG_HOME=$H/.config "$@" just box status 2>&1 | grep '^distrobox:' | norm; }
+        st() { HOME=$H XDG_CONFIG_HOME=$H/.config "$@" just box status 2>"$H/err" | grep '^distrobox:' | norm
+               local rc=${PIPESTATUS[0]}
+               printf 'rc=%s stderr=%s\n' "$rc" "$(grep -cv '^\./script/box/status\.sh' "$H/err")"; }
         printf '#!/bin/sh\nexit 0\n' >"$H/bin/distrobox"; chmod +x "$H/bin/distrobox"
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --distrobox "$H/bin/distrobox" >/dev/null 2>&1
         rm -f "$H/bin/distrobox"; st                      # 記錄當時跑得動,之後被移走
         sed -i "s|^command = .*|command = 'distrobox' enter dev -- tmux new -A -s main|" "$H/.config/ghostty/config"; st
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no >/dev/null 2>&1; st
-        for t in just sh bash dirname; do ln -s "$(command -v "$t")" "$H/bin/$t"; done
+        for t in just sh bash dirname awk grep; do ln -s "$(command -v "$t")" "$H/bin/$t"; done
         st env PATH="$H/bin" )
       ```
 
