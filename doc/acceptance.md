@@ -482,9 +482,9 @@ prereq-ok
 依賴分兩組(repo 本身不需要驗收工具):
 
 - repo 使用依賴:`docker`(可 `--privileged`)、`just`;clone 需要 `git`。
-- 驗收工具:`gh`(已登入,2.2 / 5.1 / 6.1-6.3 用)、`jq`(5.1 / 6.1 用)、`awk` / `grep` / `sed` / `cut` / `find` / `mktemp` / `sha256sum`(coreutils + awk);5(實機)另需 host 有 `distrobox` 與 `ghostty`。1-4、6 不需 distrobox。
+- 驗收工具:`gh`(已登入,2.2 / 5.1 / 6.1-6.3 用)、`jq`(5.1 / 6.1 用)、`awk` / `grep` / `sed` / `cut` / `find` / `mktemp` / `sha256sum`(coreutils + awk);3 需要 host 的 PATH 上有 `distrobox` 與 `ghostty`(setup 解析這兩個絕對路徑寫進決策 log 與受管 command,少一個就沒得驗);5(實機)另需真的建得起盒、開得起 ghostty 視窗。1-2、4、6 不需 distrobox / ghostty。
 
-每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數(#176 item 8:上一輪 2.2 的 9 行 here-string 函式在維護者的執行器裡被改寫過才失敗,同一份文字在本 repo 內重跑是 10/10 綠)。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk`,文件這一行只剩一次呼叫。
+每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk` / `tdd.sh`,文件那一行只剩一次呼叫;當初為什麼搬(十份 PR 描述都滿足 2.2 的主張、而且找不到任何單一環境差異能重現維護者那一輪的 9/10 `order=BAD`)照實記在 `doc/evidence/README.md`,#176 item 8。
 本 PR(#157)只改 `doc/acceptance.md` 與它的檢查程式 `doc/evidence/`(不動產品程式);**要驗的產品程式全在 main,但 2.2 與 2.4 呼叫的 `doc/evidence/` 只在本 PR 分支上**,所以下面直接 clone 本 PR 分支 `m3/5-acceptance`(= main 加這兩份文件變更)。clone 成 main 的話,2.2 會是 `No such file or directory`(rc=127)、2.4 會是 `awk: fatal: cannot open source file`。
 
 ```bash
@@ -501,7 +501,7 @@ verify-tool-ok
 
 (`git clone` 自己會往 stderr 印 `Cloning into 'worktool'...` 之類的進度,不列在上面;判準是後面三行。`gh` 沒登入時只會少掉 `verify-tool-ok` 且整段 rc=1)
 
-3 與 5 的輸出含機器相關路徑,下面以 `<H>`(臨時 HOME)、`<D>`(host 上 distrobox 執行檔的絕對路徑,例如 `/usr/local/bin/distrobox`)代表。
+3 與 5 的輸出含機器相關路徑,下面以 `<H>`(臨時 HOME)、`<D>`(host 上 distrobox 執行檔的絕對路徑,例如 `/usr/local/bin/distrobox`)、`<G>`(host 上 ghostty 執行檔的絕對路徑,`command -v ghostty` 的結果)代表。3 的每個區塊自己算出這幾個路徑,再用 `sed` 把輸出裡的它們換成佔位符,所以 3 的預期輸出在任何安裝位置都逐字相符(round 10:上一版把 ghostty 路徑寫死成 `/usr/bin/ghostty`,裝在別處的機器會無故變紅);5 的輸出沒有這層轉換,請自己對照。
 
 ### 驗收項目
 
@@ -647,7 +647,7 @@ verify-tool-ok
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [INFO] distrobox: <D> (absolute path written into the managed command)
@@ -656,12 +656,14 @@ verify-tool-ok
       rc=0
       files 0->0
       ```
-      (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;沒有 ghostty 執行檔也沒有 ghostty 設定目錄的機器上這行會說 `none`)
+      (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是區塊自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就 `exit 1`)
     - 驗收方式
       ```bash
       ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
+        G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1   # 預期輸出比對的是這兩個路徑,不是寫死的
+        norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
         before=$(find "$H" -type f | wc -l)
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run; echo rc=$?
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run 2>&1 | norm; echo rc=${PIPESTATUS[0]}
         printf 'files %s->%s\n' "$before" "$(find "$H" -type f | wc -l)" )
       ```
   - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
@@ -670,7 +672,7 @@ verify-tool-ok
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [INFO] distrobox: <D> (absolute path written into the managed command)
@@ -694,9 +696,11 @@ verify-tool-ok
     - 驗收方式
       ```bash
       ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup; echo rc=$?
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?
-        cat "$H/.config/ghostty/config" )
+        G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1
+        norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup 2>&1 | norm; echo rc=${PIPESTATUS[0]}
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box status 2>&1 | norm; echo rc=${PIPESTATUS[0]}
+        norm <"$H/.config/ghostty/config" )
       ```
   - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);受管區塊只剩零個
     - 預期看到資訊(第二次 setup 起)
@@ -704,7 +708,7 @@ verify-tool-ok
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: no (user)
       [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [INFO] wrote: <H>/.config/worktool/config
@@ -717,8 +721,10 @@ verify-tool-ok
     - 驗收方式
       ```bash
       ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
+        G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1
+        norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no; echo rc=$?
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no 2>&1 | norm; echo rc=${PIPESTATUS[0]}
         printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")" )
       ```
   - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
@@ -741,10 +747,11 @@ verify-tool-ok
     - 驗收方式
       ```bash
       ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus; echo rc=$?
+        norm() { sed -e "s|$H|<H>|g"; }
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus 2>&1 | norm; echo rc=${PIPESTATUS[0]}
         printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
         mkdir -p "$H/.config/worktool"
-        for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; done )
+        for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status 2>&1 | norm; echo rc=${PIPESTATUS[0]}; done )
       ```
   - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
     - 預期看到資訊
@@ -752,7 +759,7 @@ verify-tool-ok
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
+      [INFO] terminal detected: ghostty (ghostty executable <H>/bin/ghostty)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
@@ -765,11 +772,37 @@ verify-tool-ok
     - 驗收方式
       ```bash
       ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
-        D=$(command -v distrobox) || exit 1; ln -s "$(command -v just)" "$H/bin/just"; P=$H/bin:/usr/bin:/bin
-        HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup; echo rc=$?
+        D=$(command -v distrobox) && command -v ghostty >/dev/null || exit 1
+        norm() { sed -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
+        # ghostty 一起連進 $H/bin:受限 PATH 下的偵測結果就不再取決於它裝在哪
+        for t in just ghostty; do ln -s "$(command -v "$t")" "$H/bin/$t"; done; P=$H/bin:/usr/bin:/bin
+        HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup 2>&1 | norm; echo rc=${PIPESTATUS[0]}
         printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
         HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup --distrobox "$D" >/dev/null 2>&1; echo rc=$?
-        grep '^command' "$H/.config/ghostty/config" )
+        grep '^command' "$H/.config/ghostty/config" | norm )
+      ```
+  - [ ] 3.6 `status` 的 `distrobox:` 那行:除了 3.2 的 runnable,其餘四種狀態(#177)各印一次,證明「受管 command 還跑不跑得起來」在壞掉的情況下也講得出來
+    - 預期看到資訊(四行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有)
+      ```text
+      distrobox: <H>/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)
+      distrobox: distrobox (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)
+      distrobox: <D> (on PATH; no managed block records one)
+      distrobox: not found on PATH (install distrobox, then re-run: just box setup)
+      ```
+      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一行的受限 PATH 只放 `just` / `sh` / `bash` / `dirname` 四個連結,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到)
+    - 驗收方式
+      ```bash
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
+        D=$(command -v distrobox) || exit 1
+        norm() { sed -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
+        st() { HOME=$H XDG_CONFIG_HOME=$H/.config "$@" just box status 2>&1 | grep '^distrobox:' | norm; }
+        printf '#!/bin/sh\nexit 0\n' >"$H/bin/distrobox"; chmod +x "$H/bin/distrobox"
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --distrobox "$H/bin/distrobox" >/dev/null 2>&1
+        rm -f "$H/bin/distrobox"; st                      # 記錄當時跑得動,之後被移走
+        sed -i "s|^command = .*|command = 'distrobox' enter dev -- tmux new -A -s main|" "$H/.config/ghostty/config"; st
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no >/dev/null 2>&1; st
+        for t in just sh bash dirname; do ln -s "$(command -v "$t")" "$H/bin/$t"; done
+        st env PATH="$H/bin" )
       ```
 
 - [ ] 4. README 圖(draw.io,可編輯)
@@ -792,7 +825,7 @@ verify-tool-ok
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定。**安全約定**:5.1 與 5.2 都先斷言同名 `dev` 盒不存在,存在就拒絕而不刪(#176 item 1),並且只刪除自己建立的盒子;5.2 備份用 `cp -a`,symlink 連同它指到的檔案一起備份、一起還原(#176 item 2);清理失敗一律讓整段回非 0(#176 item 4)。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
+- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定。**安全約定**:5.1 與 5.2 都先斷言同名 `dev` 盒不存在,存在就拒絕而不刪(#176 item 1),並且只刪除自己建立的盒子 —— 所有權標記在 `just box assemble` **之前**就寫下,標記的意思是「這一輪動過 assemble」,所以建盒與記錄之間被中斷不會留下無主的盒子(round 10);5.2 備份用 `cp -a`,symlink 連同它指到的檔案一起備份、一起還原(#176 item 2);清理失敗一律讓整段回非 0(#176 item 4)。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
   - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由本區塊自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
@@ -805,7 +838,7 @@ verify-tool-ok
       posted=1 comment=<id> run=m3-51-20260928T112604Z-<pid>
       cleanup-rc=0
       ````
-      (`posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓整段 exit 非 0 並要你手動移除盒子)
+      (`posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓整段 exit 非 0 並要你手動移除盒子。所有權標記在 `just box assemble` **之前**就寫下,意思是「這一輪動過 assemble」而不是「assemble 成功了」,所以 assemble 跑到一半被 Ctrl-C 一樣會清;反過來「標記在、盒子不在」是被接受的,清理只看最後盒子還在不在,`distrobox rm` 沒東西可刪不算失敗(round 10))
     - 驗收方式
       ````bash
       (
@@ -838,14 +871,20 @@ verify-tool-ok
         W=$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-51.XXXXXXXX") || fail "mktemp failed"
         [ -d "$W" ] || fail "mktemp returned '$W', which is not a directory"
 
+        # CREATED means "assemble was ATTEMPTED", not "assemble returned 0":
+        # it is set before the call, so an interrupt anywhere inside assemble
+        # still hands cleanup the box. The price is a marker with no box,
+        # which is the safe direction and which cleanup tolerates below.
         CREATED=0; CLEAN_RC=0
         cleanup() {
           st=$?
           trap - EXIT INT TERM HUP
           if [ "$CREATED" -eq 1 ]; then
-            distrobox rm -f "$BOX" >/dev/null 2>&1; rmrc=$?
+            # rm legitimately fails when there is nothing to remove (interrupted
+            # before the box existed), so only the final state decides
+            distrobox rm -f "$BOX" >/dev/null 2>&1
             box_exists "$BOX"; ge=$?
-            { [ "$rmrc" -eq 0 ] && [ "$ge" -eq 1 ]; } || CLEAN_RC=1
+            [ "$ge" -eq 1 ] || CLEAN_RC=1
           fi
           printf 'cleanup-rc=%s\n' "$CLEAN_RC"
           [ "$CLEAN_RC" -eq 0 ] || printf "[FAIL] box '%s' survived cleanup -- remove it by hand\n" "$BOX" >&2
@@ -856,8 +895,8 @@ verify-tool-ok
         }
         trap cleanup EXIT INT TERM HUP   # Ctrl-C also cleans up
 
+        CREATED=1                       # claim ownership BEFORE the box can exist
         just box assemble >/dev/null || fail "just box assemble failed"
-        CREATED=1
         box_exists "$BOX" || fail "assemble returned 0 but box '$BOX' is not listed"
 
         just box bench --runs 10 --shell 'fish -c exit' --max-ms 300 | tee "$W/bench.txt"
@@ -908,7 +947,7 @@ verify-tool-ok
       dev-gone=1
       backup-removed=1
       ```
-      (每個名字一行:`regular` = 原本就有那個普通檔、`symlink` = 原本是連結(連同它指到的檔案一起備份)、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有。步驟 2 只信任**已發布到磁碟的 manifest**,不信任步驟 1 留下的 shell 變數(#176 item 6),而且會重新比對 sha256:步驟 1 之後檔案被動過就拒絕套用。備份路徑帶 uid,多人共用主機不會互撞;`mkdir -m 700` 遇到既有目錄或預埋的 symlink 直接拒絕。`restore-ok=1` 才刪備份;失敗會保留備份讓你修好再貼一次步驟 3;還原成功後再貼一次只會印 `no-backup=1`。`dev-gone` 只在**這一輪建過盒**時才出現,沒建過是 `dev-untouched=1`;`dev-gone=0` 讓整段回非 0)
+      (每個名字一行:`regular` = 原本就有那個普通檔、`symlink` = 原本是連結(連同它指到的檔案一起備份)、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有。步驟 2 只信任**已發布到磁碟的 manifest**,不信任步驟 1 留下的 shell 變數(#176 item 6),而且會重新比對 sha256:步驟 1 之後檔案被動過就拒絕套用。備份路徑帶 uid,多人共用主機不會互撞;`mkdir -m 700` 遇到既有目錄或預埋的 symlink 直接拒絕。`restore-ok=1` 才刪備份;失敗會保留備份讓你修好再貼一次步驟 3;還原成功後再貼一次只會印 `no-backup=1`。`dev-gone` 只在**這一輪動過 assemble** 時才出現,沒動過是 `dev-untouched=1`;`dev-gone=0` 讓整段回非 0。所有權標記 `created-box` 寫在 `just box assemble` **之前**,所以 assemble 跑到一半被中斷、盒子沒建起來,步驟 3 一樣認得這一輪、一樣印 `dev-gone=1`(`distrobox rm` 沒東西可刪不算失敗,只看盒子最後在不在);步驟 2 從宣告所有權那一刻起也有 trap,中斷時會多印一行 `incomplete=1 (run step 3 now: ...)` 到 stderr,提醒你立刻貼步驟 3 —— 真正還原的一律是步驟 3,因為那時設定可能已經套用,只拆盒子只還原了一半(round 10))
     - 驗收方式
       ```bash
       # 步驟 1) 備份真實設定。備份目錄已存在、或備份中途失敗,都完全不動任何檔案
@@ -1066,8 +1105,25 @@ verify-tool-ok
         [ "$e" -eq 0 ] && wt_bad "a distrobox named '$BOX' already exists -- refusing. Step 3 deletes the box this run creates, so rename or remove yours by hand first."
         printf 'preexisting-dev=0\n'
 
+        # From here on this run owns a box, so an interrupt has to be
+        # survivable. Two halves: the marker on disk (step 3 reads it in a
+        # fresh shell) and this trap (it tells a human at the terminal).
+        # Step 3 remains the only thing that undoes anything -- the config
+        # may already be applied by then, and it restores both.
+        CREATED=0
+        interrupted() {
+          st=$?
+          trap - EXIT INT TERM HUP
+          { [ "$CREATED" -eq 1 ] && [ "$st" -ne 0 ]; } &&
+            printf 'incomplete=1 (run step 3 now: it restores the config and removes the box this run created)\n' >&2
+          exit "$st"
+        }
+        trap interrupted EXIT INT TERM HUP
+
+        # marker BEFORE assemble: it means "assemble was attempted", so an
+        # interrupt inside assemble still leaves step 3 able to clean up
+        CREATED=1; : >"$B/created-box"            # persisted so step 3 works in a fresh shell
         just box assemble >/dev/null || wt_bad "just box assemble failed"
-        : >"$B/created-box"                       # persisted so step 3 works in a fresh shell
         box_exists "$BOX" || wt_bad "assemble returned 0 but box '$BOX' is not listed"
         just box setup || wt_bad "just box setup failed -- run step 3 to restore"
         just box status || wt_bad "just box status failed -- run step 3 to restore"
@@ -1168,7 +1224,10 @@ verify-tool-ok
         note "leftover-dirs=$lo"
         [ "$lo" -eq 0 ] || bad "directories that did not exist before are still there"
 
-        # only remove a box this run created, and a failed removal fails the block
+        # Only remove a box this run created, and a failed removal fails the
+        # block. The marker says step 2 STARTED assemble, so it can outlive an
+        # interrupt that left no box: `distrobox rm` failing is expected then,
+        # and only the existence check below decides (round 10).
         box_exists() {
           local out
           out=$(distrobox list 2>/dev/null) || return 2
