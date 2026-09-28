@@ -130,6 +130,7 @@ _required_specs() {
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
+                unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
                 unit/workflow_spec.bats
