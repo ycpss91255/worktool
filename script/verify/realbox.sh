@@ -85,6 +85,13 @@ OPT_IN=0
 TIMEOUT_SHORT=180
 TIMEOUT_LONG=1800
 
+# The enter-latency budget of M3 5.1, in milliseconds. It is BOTH what `just
+# box bench` is handed as --max-ms and what this script compares the measured
+# shell median against, so the threshold the document publishes and the
+# threshold the run enforces cannot drift apart.
+BENCH_MAX_MS=300
+BENCH_RUNS=10
+
 # The items `no argument` runs, in order.
 ITEMS_ALL=(5.1 5.2 5.3)
 
@@ -230,10 +237,72 @@ _51_cleanup() {
     return "${_crc}"
 }
 
+# True when decimal $1 <= decimal $2.
+#
+# The measurements are milliseconds with a fraction, and the shell has no
+# float arithmetic; `awk` would do it, but this spec's own point is that a
+# broken external tool must not decide a verdict, and awk is already the tool
+# whose failure 5.1 treats as "cannot tell". So the comparison is done here:
+# the integer parts as integers, then the fractions padded to a common width
+# and compared as integers. `10#` keeps a leading zero from being read as
+# octal. Both arguments have already been matched against the strict
+# `[0-9]+(\.[0-9]+)?` shape below, so there is nothing else to parse.
+_num_le() {
+    local _ai="${1%%.*}" _bi="${2%%.*}" _af="" _bf=""
+    [[ "$1" == *.* ]] && _af="${1#*.}"
+    [[ "$2" == *.* ]] && _bf="${2#*.}"
+    ((10#${_ai:-0} < 10#${_bi:-0})) && return 0
+    ((10#${_ai:-0} > 10#${_bi:-0})) && return 1
+    while [[ "${#_af}" -lt "${#_bf}" ]]; do _af="${_af}0"; done
+    while [[ "${#_bf}" -lt "${#_af}" ]]; do _bf="${_bf}0"; done
+    ((10#0${_af} <= 10#0${_bf}))
+}
+
+# True when decimal $1 < decimal $2.
+_num_lt() {
+    _num_le "$2" "$1" && return 1
+    return 0
+}
+
+# The numbers of the three metric lines are internally consistent, and the
+# shell median is inside the budget the run actually handed to `bench`.
+#
+# Shape alone is not an answer: `min=500 median=400 max=1` is three
+# well-formed numbers, is not a measurement of anything, and would have
+# passed. So min <= median <= max is asserted per metric, and the one
+# threshold the document publishes - the enter-latency budget, measured on
+# the shell median - is compared against ${BENCH_MAX_MS}, the same value
+# `--max-ms` was given.
+_51_check_metric_values() {
+    local _line _metric _min _med _max _bad=0
+    local _re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
+    while IFS= read -r _line; do
+        [[ -n "${_line}" ]] || continue
+        if [[ ! "${_line}" =~ ${_re} ]]; then
+            guard_fail "bench line '${_line}' is not a metric line"
+            _bad=1
+            continue
+        fi
+        _metric="${BASH_REMATCH[1]}"
+        _min="${BASH_REMATCH[2]}"
+        _med="${BASH_REMATCH[4]}"
+        _max="${BASH_REMATCH[6]}"
+        if ! _num_le "${_min}" "${_med}" || ! _num_le "${_med}" "${_max}"; then
+            guard_fail "${_metric}: min=${_min} median=${_med} max=${_max} is not min <= median <= max, so it is not a measurement of ten runs"
+            _bad=1
+        fi
+        if [[ "${_metric}" == shell ]] && ! _num_lt "${_med}" "${BENCH_MAX_MS}"; then
+            guard_fail "shell median ${_med} ms is not below the --max-ms ${BENCH_MAX_MS} this run passed to bench"
+            _bad=1
+        fi
+    done <"${_51_W}/three.txt"
+    return "${_bad}"
+}
+
 # Extract the three metric lines and prove there is exactly one of each.
 _51_collect_metrics() {
     local _grc _n _k
-    grep -E '^(enter|shell|inbox): min=[0-9.]+ median=[0-9.]+ max=[0-9.]+ ms$' \
+    grep -E '^(enter|shell|inbox): min=[0-9]+(\.[0-9]+)? median=[0-9]+(\.[0-9]+)? max=[0-9]+(\.[0-9]+)? ms$' \
         -- "${_51_W}/bench.txt" >"${_51_W}/three.txt"
     _grc=$?
     # 1 = matched nothing (a real answer, caught by the counts below);
@@ -256,6 +325,7 @@ _51_collect_metrics() {
         || { guard_fail "wc printed '${_k}', which is not a count"; return 1; }
     { [[ "${_n}" -eq 3 ]] && [[ "${_k}" -eq 3 ]]; } \
         || { guard_fail "expected one enter/shell/inbox line each, got n=${_n} distinct=${_k}"; return 1; }
+    _51_check_metric_values || return 1
     return 0
 }
 
@@ -325,7 +395,8 @@ _51_body() {
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
-    _just box bench --runs 10 --shell 'fish -c exit' --max-ms 300 | tee "${_51_W}/bench.txt"
+    _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
+        --max-ms "${BENCH_MAX_MS}" | tee "${_51_W}/bench.txt"
     _st=("${PIPESTATUS[@]}")
     _brc="${_st[0]}"
     _trc="${_st[1]}"

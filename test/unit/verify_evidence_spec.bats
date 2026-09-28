@@ -85,12 +85,18 @@ _issue_of() {
 
 # #152 predates the arm64 runner: 8 checks, none per-architecture. From #153
 # on: 7 amd64 + 7 arm64 + the aggregator = 15, all in the pass bucket.
+# FAKE_GH_DUAL_ARCH=1 replaces those with ONE check whose name carries both
+# architecture labels - the shape two independent substring tests cannot tell
+# from a real two-architecture matrix.
 _checks_json() {
     local pr="$1" i out=""
     if [ "$pr" = 152 ]; then
         for i in 1 2 3 4 5 6 7 8; do
             out="${out}{\"name\":\"gate-${i}\",\"bucket\":\"${FAKE_GH_BUCKET:-pass}\"},"
         done
+    elif [ "${FAKE_GH_DUAL_ARCH:-0}" = 1 ]; then
+        out='{"name":"lint (ubuntu-latest, ubuntu-24.04-arm)","bucket":"pass"},'
+        out="${out}{\"name\":\"ci-passed\",\"bucket\":\"${FAKE_GH_BUCKET:-pass}\"},"
     else
         for i in 1 2 3 4 5 6 7; do
             out="${out}{\"name\":\"gate-${i} (ubuntu-latest)\",\"bucket\":\"pass\"},"
@@ -107,7 +113,17 @@ _body_of() {
     printf 'What this PR does.\n\nCloses #%s\n' "${issue}"
 }
 
+# FAKE_GH_ONE_FOLLOWUP=1 points all four blocked PRs at the SAME follow-up
+# issue, so one issue and one fix PR answer for every one of them.
 _claude_of() {
+    if [ "${FAKE_GH_ONE_FOLLOWUP:-0}" = 1 ]; then
+        case "$1" in
+            152 | 153 | 154 | 155)
+                printf '[claude] blockers recorded in follow-up issue #163\n'
+                return 0
+                ;;
+        esac
+    fi
     case "$1" in
         22)  printf '[claude] bench on this host\nshell: median=176.9 ms\n維持 docker + 預設 runc\n' ;;
         148) printf '[claude] runner survey\n只用 LTS\nubuntu-24.04-arm\n' ;;
@@ -206,6 +222,20 @@ input="$(cat)"
 
 _count() { printf '%s' "${input}" | "${FAKE_REAL_GREP}" -o "$1" | wc -l | tr -d ' '; }
 
+# Every check name holding the literal $1, one per line - what
+# `.[].name | select(test("<arch>"))` answers now that evidence.sh counts
+# distinct NAMES per architecture instead of substring hits.
+_names() {
+    local _line _n
+    while IFS= read -r _line; do
+        _n="${_line#\"name\":\"}"
+        _n="${_n%\"}"
+        case "${_n}" in
+            *"$1"*) printf '%s\n' "${_n}" ;;
+        esac
+    done < <(printf '%s' "${input}" | "${FAKE_REAL_GREP}" -o '"name":"[^"]*"')
+}
+
 case "${filter}" in
     type) out="array" ;;
     length) out="${FAKE_JQ_LENGTH:-$(_count '{"name"')}" ;;
@@ -214,8 +244,8 @@ case "${filter}" in
         passed="$(_count '"bucket":"pass"')"
         out="$((total - passed))"
         ;;
-    *'ubuntu-24.04-arm'*) out="$(_count 'ubuntu-24\.04-arm')" ;;
-    *'ubuntu-latest'*) out="$(_count 'ubuntu-latest')" ;;
+    *'ubuntu-24.04-arm'*) out="$(_names 'ubuntu-24.04-arm')" ;;
+    *'ubuntu-latest'*) out="$(_names 'ubuntu-latest')" ;;
     *)
         printf 'fake jq: unsupported filter: %s\n' "${filter}" >&2
         exit 3
@@ -350,7 +380,7 @@ _run_evidence_item() {
     _stub_all_ok
     run "${EVIDENCE}"
     assert_success
-    assert_line "#152 total=8 nonpass=0 amd=0 arm=0 closes=1 issue=#151"
+    assert_line "#152 total=8 nonpass=0 amd=0 arm=0 both=0 closes=1 issue=#151"
     assert_line "distinct=10"
     assert_line "#22 median-ms:1 runc:1"
     assert_line "#156 mergeable"
@@ -378,16 +408,16 @@ _run_evidence_item() {
     _stub_all_ok
     _run_evidence_item item_6_1
     assert_success
-    assert_line --index 0 "#152 total=8 nonpass=0 amd=0 arm=0 closes=1 issue=#151"
-    assert_line --index 1 "#153 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#149"
-    assert_line --index 2 "#154 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#150"
-    assert_line --index 3 "#155 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#21"
-    assert_line --index 4 "#156 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#23"
-    assert_line --index 5 "#165 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#164"
-    assert_line --index 6 "#166 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#163"
-    assert_line --index 7 "#167 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#160"
-    assert_line --index 8 "#168 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#161"
-    assert_line --index 9 "#169 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#162"
+    assert_line --index 0 "#152 total=8 nonpass=0 amd=0 arm=0 both=0 closes=1 issue=#151"
+    assert_line --index 1 "#153 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#149"
+    assert_line --index 2 "#154 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#150"
+    assert_line --index 3 "#155 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#21"
+    assert_line --index 4 "#156 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#23"
+    assert_line --index 5 "#165 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#164"
+    assert_line --index 6 "#166 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#163"
+    assert_line --index 7 "#167 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#160"
+    assert_line --index 8 "#168 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#161"
+    assert_line --index 9 "#169 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#162"
     assert_line --index 10 "distinct=10"
     assert_line --index 11 "rc=0"
 }
@@ -492,7 +522,19 @@ STUB
     _stub_all_ok
     FAKE_GH_BUCKET=fail _run_evidence_item item_6_1
     assert_failure
-    assert_line "#152 total=8 nonpass=8 amd=0 arm=0 closes=1 issue=#151"
+    assert_line "#152 total=8 nonpass=8 amd=0 arm=0 both=0 closes=1 issue=#151"
+    assert_line "rc=1"
+}
+
+@test "6.1: one check named for BOTH architectures does not prove two architectures ran" {
+    _stub_all_ok
+    # `lint (ubuntu-latest, ubuntu-24.04-arm)` satisfies a substring test for
+    # amd64 and a substring test for arm64 at the same time. Counting distinct
+    # names per architecture and requiring the two sets to be disjoint is what
+    # tells that one job apart from a real matrix.
+    FAKE_GH_DUAL_ARCH=1 _run_evidence_item item_6_1
+    assert_failure
+    assert_line "#153 total=2 nonpass=0 amd=1 arm=1 both=1 closes=1 issue=#149"
     assert_line "rc=1"
 }
 
@@ -593,7 +635,22 @@ STUB
     assert_line --index 7 "#153 blocked -> follow-up #164 fixed-by PR #165 (closes #164, mergeable) ok"
     assert_line --index 8 "#154 blocked -> follow-up #162 fixed-by PR #169 (closes #162, mergeable) ok"
     assert_line --index 9 "#155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok"
-    assert_line --index 10 "rc=0"
+    assert_line --index 10 "distinct-follow-ups=4 distinct-fix-prs=4"
+    assert_line --index 11 "rc=0"
+}
+
+@test "6.3: one follow-up issue and one fix PR cannot answer for all four blocked PRs" {
+    _stub_all_ok
+    # Every row is internally consistent - blocked, a follow-up, a merged PR
+    # that closes it, a mergeable verdict on that PR - and prints `ok`. It is
+    # still the same issue and the same PR four times over, so three of the
+    # four sets of blockers were never recorded anywhere.
+    FAKE_GH_ONE_FOLLOWUP=1 _run_evidence_item item_6_3
+    assert_failure
+    assert_line "#152 blocked -> follow-up #163 fixed-by PR #166 (closes #163, mergeable) ok"
+    assert_line "#155 blocked -> follow-up #163 fixed-by PR #166 (closes #163, mergeable) ok"
+    assert_line "distinct-follow-ups=1 distinct-fix-prs=1"
+    assert_line "rc=1"
 }
 
 @test "6.3: gh missing from PATH fails and says the check cannot run here" {

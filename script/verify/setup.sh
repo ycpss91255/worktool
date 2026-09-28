@@ -36,6 +36,14 @@
 #     and holds no block".
 #   - A check that CANNOT run here (no ghostty, no distrobox, no just) says
 #     so on stderr and exits non-zero. Nothing is ever skipped silently.
+#   - The CONTENT is judged, not only the status and the counts. An exit
+#     code says a command ran and a file count says it wrote; neither can
+#     see a setup that regressed to the bare `distrobox` name (#175), a
+#     decision that stopped being logged, or a removal that reported a
+#     block it never touched. _expect_lines pins each documented line to
+#     exactly one occurrence, and 3.3 measures that a block EXISTED before
+#     it asserts the block is gone - "removed" is vacuously true of a
+#     config that never had one.
 #
 # Usage: ./script/verify/setup.sh [--allow-real-box] [ITEM...]
 #   ./script/verify/setup.sh            # every item, in order, stop at the first failure
@@ -111,6 +119,13 @@ OPT_ALLOW_REAL_BOX=0
 ITEM_T=""  # the item's own mktemp directory (scratch; never counted)
 ITEM_H=""  # the throwaway HOME inside it
 LAST_RC=0  # the exit status of the last command _run_norm ran
+LAST_OUT="" # the normalised text _run_norm last printed, so it can be JUDGED
+
+# The managed command doc/acceptance.md publishes, in its normalised form.
+# Items 3.1, 3.2 and 3.3 all name it: a quoted ABSOLUTE distrobox path is the
+# whole of issue #175, and it lives in the TEXT - no exit code and no file
+# count can see a regression back to the bare name.
+MANAGED_CMD="command = '<D>' enter dev -- tmux new -A -s main"
 
 # Normalisation replacements (empty = not applied), so the printed lines
 # are the same on every machine whatever the install locations are.
@@ -283,7 +298,8 @@ _norm() {
 }
 
 # Run "$@" with stdout and stderr merged into a scratch file, print the
-# normalised output, and leave the command's OWN exit status in LAST_RC.
+# normalised output, leave the command's OWN exit status in LAST_RC and the
+# normalised text in LAST_OUT so the caller can judge WHAT was printed.
 #
 # Deliberately not a pipeline: `cmd | norm` reports the status of `norm`,
 # and reaching for ${PIPESTATUS[0]} afterwards only moves the problem (a
@@ -291,19 +307,79 @@ _norm() {
 # status is read directly and a failing normaliser fails the check.
 _run_norm() {
     local _out="${ITEM_T}/run.out" _nrc
+    LAST_OUT=""
     : >"${_out}" || {
         _fail "cannot write the scratch file ${_out}"
         return 1
     }
     "$@" >"${_out}" 2>&1
     LAST_RC=$?
-    _norm <"${_out}"
+    LAST_OUT="$(_norm <"${_out}")"
     _nrc=$?
     if [[ "${_nrc}" -ne 0 ]]; then
         _fail "normalising the output of '$*' failed (exit ${_nrc}); the reported rc cannot be trusted"
         return 1
     fi
+    [[ -z "${LAST_OUT}" ]] || printf '%s\n' "${LAST_OUT}"
     return 0
+}
+
+# Normalise file $1 into LAST_OUT and print it, the way _run_norm does for a
+# command. A file that cannot be read is a failure, never an empty block.
+_show_norm_file() {
+    local _file="$1" _nrc
+    LAST_OUT=""
+    [[ -f "${_file}" && -r "${_file}" ]] || {
+        _fail "cannot show ${_file}: it is not a readable file"
+        return 1
+    }
+    LAST_OUT="$(_norm <"${_file}")"
+    _nrc=$?
+    if [[ "${_nrc}" -ne 0 ]]; then
+        _fail "normalising ${_file} failed (exit ${_nrc}); its content cannot be judged"
+        return 1
+    fi
+    [[ -z "${LAST_OUT}" ]] || printf '%s\n' "${LAST_OUT}"
+    return 0
+}
+
+# Every documented line of the block just printed is there, EXACTLY ONCE.
+#
+# This is the assertion an exit code and a file count cannot make. `just box
+# setup` exiting 0 having written two files says a command ran; only the text
+# says it logged each decision and wrote the managed command #175 requires.
+# "Exactly once" rather than "at least once" for the same reason the tier
+# checks of gate.sh compare sets: a run that printed a decision twice, or
+# logged one file twice under two names, has not made the documented claim.
+# $1 is the item id used in messages; the rest are literal substrings.
+_expect_lines() {
+    local _item="$1"
+    shift
+    local _pat _line _n _bad=0
+    for _pat in "$@"; do
+        _n=0
+        while IFS= read -r _line; do
+            [[ "${_line}" == *"${_pat}"* ]] && _n=$((_n + 1))
+        done <<<"${LAST_OUT}"
+        if [[ "${_n}" -ne 1 ]]; then
+            _fail "${_item}: expected exactly one line containing '${_pat}', found ${_n}"
+            _bad=1
+        fi
+    done
+    return "${_bad}"
+}
+
+# No line of the block just printed contains $2. Used where the document
+# states an absence as part of the claim (3.3: `--auto-enter no` only
+# removes, so it never resolves a distrobox and never logs one).
+_refute_line() {
+    local _item="$1" _pat="$2" _line _n=0
+    while IFS= read -r _line; do
+        [[ "${_line}" == *"${_pat}"* ]] && _n=$((_n + 1))
+    done <<<"${LAST_OUT}"
+    [[ "${_n}" -eq 0 ]] && return 0
+    _fail "${_item}: expected no line containing '${_pat}', found ${_n}"
+    return 1
 }
 
 # Print the number of REGULAR files under directory $1.
@@ -455,6 +531,19 @@ _item_3_1() {
     _before="$(_count_files "${ITEM_H}")" || return 1
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     _run_norm "${_env[@]}" just box setup --dry-run || return 1
+    # Judged BEFORE `rc=` is printed, while LAST_OUT still holds this run's
+    # text: every decision the document publishes, and the managed command
+    # the dry run says it would write (#175).
+    _expect_lines 3.1 \
+        '[INFO] auto-enter: yes (default)' \
+        '[INFO] terminal: ghostty (default)' \
+        '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
+        '[INFO] tmux: inside (default)' \
+        '[INFO] box: dev (default)' \
+        '[INFO] distrobox: <D> (absolute path written into the managed command)' \
+        '[INFO] dry-run: would write <H>/.config/worktool/config' \
+        "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
+        || _bad=1
     printf 'rc=%s\n' "${LAST_RC}"
     _after="$(_count_files "${ITEM_H}")" || return 1
     printf 'files %s->%s\n' "${_before}" "${_after}"
@@ -488,18 +577,43 @@ _item_3_2() {
 
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     _run_norm "${_env[@]}" just box setup || return 1
+    _expect_lines 3.2 \
+        '[INFO] auto-enter: yes (default)' \
+        '[INFO] terminal: ghostty (default)' \
+        '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
+        '[INFO] tmux: inside (default)' \
+        '[INFO] box: dev (default)' \
+        '[INFO] distrobox: <D> (absolute path written into the managed command)' \
+        '[INFO] wrote: <H>/.config/worktool/config' \
+        "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
+        || _bad=1
     _setup_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_setup_rc}"
     _run_norm "${_env[@]}" just box status || return 1
+    # The document publishes the whole eight-line report, including the last
+    # line's verdict on whether the recorded distrobox still runs.
+    _expect_lines 3.2 \
+        'config: <H>/.config/worktool/config' \
+        'auto-enter: yes (default)' \
+        'terminal: ghostty (default)' \
+        'tmux: inside (default)' \
+        'box: dev (default)' \
+        'ghostty: <H>/.config/ghostty/config (managed block: present)' \
+        'tmux.conf: <H>/.tmux.conf (managed block: absent)' \
+        'distrobox: <D> (recorded in a managed block: runnable)' \
+        || _bad=1
     _status_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_status_rc}"
 
     _ghostty="${ITEM_H}/.config/ghostty/config"
-    if [[ -f "${_ghostty}" && -r "${_ghostty}" ]]; then
-        _norm <"${_ghostty}" || {
-            _fail "3.2: normalising ${_ghostty} failed; its content cannot be judged"
-            return 1
-        }
+    if _show_norm_file "${_ghostty}"; then
+        # The block itself, not merely its presence: the markers that delimit
+        # it and the ONE managed command it must hold.
+        _expect_lines 3.2 \
+            '# BEGIN worktool managed block (just box setup; do not edit)' \
+            "${MANAGED_CMD}" \
+            '# END worktool managed block' \
+            || _bad=1
     else
         _fail "3.2: setup left no readable ${_ghostty}; there is no managed block to show"
         _bad=1
@@ -523,7 +637,7 @@ _item_3_2() {
 _item_3_3() {
     _require_tools env just sed grep mktemp || return 1
     _item_begin || return 1
-    local _g _d _blocks _bad=0
+    local _g _d _blocks _before _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
     _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
     NORM_G="${_g}"
@@ -540,7 +654,35 @@ _item_3_3() {
         _fail "3.3: the first (default) just box setup failed, so there is no managed block to remove"
         return 1
     }
+    # "The block was removed" is vacuously true of a config that never had
+    # one, so the precondition is MEASURED and printed before the removal
+    # runs: without this line, a setup that silently stopped writing the
+    # block would satisfy `blocks=0` exactly as a working removal does.
+    _before="$(_count_matching 'BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
+    printf 'blocks-before=%s\n' "${_before}"
+    if [[ "${_before}" -ne 1 ]]; then
+        _fail "3.3: the ghostty config held ${_before} managed block(s) before the removal, expected 1; 'the block is gone' proves nothing about a block that was never there"
+        _bad=1
+    fi
+
     _run_norm "${_env[@]}" just box setup --auto-enter no || return 1
+    # Every removal is reported by name, and the removed block is named with
+    # the command it held; the tmux.conf line is the "there was nothing to
+    # undo" half of the same report.
+    _expect_lines 3.3 \
+        '[INFO] auto-enter: no (user)' \
+        '[INFO] terminal: ghostty (default)' \
+        '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
+        '[INFO] tmux: inside (default)' \
+        '[INFO] box: dev (default)' \
+        '[INFO] wrote: <H>/.config/worktool/config' \
+        "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
+        '[INFO] nothing to remove: <H>/.tmux.conf (no managed block)' \
+        || _bad=1
+    # Removing needs no distrobox, so the document shows no `distrobox:`
+    # decision line here. An implementation that resolved one anyway would
+    # be doing work it must not need.
+    _refute_line 3.3 '[INFO] distrobox:' || _bad=1
     printf 'rc=%s\n' "${LAST_RC}"
 
     _blocks="$(_count_matching 'BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1

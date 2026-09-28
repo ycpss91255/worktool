@@ -29,6 +29,9 @@
 #     doc/evidence/tdd.sh    - exits 0 judging one PR twice and one never
 #     doc/evidence/tdd.sh    - exits 0 judging a PR the item does not cover
 #     doc/evidence/tdd.sh    - exits 0 with GREEN opening before RED
+#     doc/evidence/tdd.sh    - exits 0 with ten correct verdicts, two swapped
+#     just test system-real  - exits 0 with SECOND_ELAPSED outside the 0-15
+#                              the document publishes
 #     just test <tier>       - exits 0 with one placeholder `ok` per tier
 #     just test system-real  - exits 0 with only a subset of the criteria
 #     just test system-real  - exits 0 with plausible-but-wrong values
@@ -473,6 +476,31 @@ EOF
     assert_output --partial 'GREEN must open after RED): #152 order=ok red=51 green=31'
 }
 
+@test "degenerate: ten correct verdicts with two of them swapped fail 2.2 on the documented order" {
+    _stub_gh
+    # Every line is well formed, every documented PR is judged exactly once,
+    # and the set comparison is satisfied - only #154 and #155 have traded
+    # places, which is a checker walking a list that is not the one this item
+    # names.
+    _stub_tdd_sh <<'EOF'
+printf '#152 order=ok red=31 green=51\n'
+printf '#153 order=ok red=21 green=40\n'
+printf '#155 order=ok red=31 green=49\n'
+printf '#154 order=ok red=27 green=41\n'
+printf '#156 order=ok red=29 green=49\n'
+printf '#165 order=ok red=25 green=72\n'
+printf '#166 order=ok red=21 green=58\n'
+printf '#167 order=ok red=20 green=56\n'
+printf '#168 order=ok red=25 green=44\n'
+printf '#169 order=ok red=22 green=47\n'
+exit 0
+EOF
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.2
+    assert_failure 1
+    assert_output --partial 'printed the ten verdicts in the order #152 #153 #155 #154'
+    assert_output --partial 'but doc/acceptance.md publishes #152 #153 #154 #155'
+}
+
 @test "false-pass guard: a tdd.sh that never returns is killed and fails" {
     _stub_gh
     {
@@ -703,6 +731,31 @@ EOF
     PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
     assert_success
     assert_line '# single-instance: SECOND_ELAPSED=0'
+}
+
+@test "degenerate: a SECOND_ELAPSED outside the 0-15 the document publishes fails 2.3" {
+    _stub_ci_tools
+    _write_tier_blocks
+    # The forwarded launch took sixteen minutes to return, which is the exact
+    # opposite of the fast return this case exists to observe - and `[0-9]+`
+    # matched it happily.
+    sed -i -e 's/^# single-instance: SECOND_ELAPSED=1$/# single-instance: SECOND_ELAPSED=999/' \
+        "${SYS_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'printed no line meeting the documented criterion ^# single-instance: SECOND_ELAPSED='
+}
+
+@test "control: the documented upper bound 15 for SECOND_ELAPSED still passes 2.3" {
+    _stub_ci_tools
+    _write_tier_blocks
+    sed -i -e 's/^# single-instance: SECOND_ELAPSED=1$/# single-instance: SECOND_ELAPSED=15/' \
+        "${SYS_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_success
+    assert_line '# single-instance: SECOND_ELAPSED=15'
 }
 
 @test "degenerate: a documented case reported twice fails 2.3 and names it" {

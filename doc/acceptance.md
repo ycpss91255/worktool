@@ -505,6 +505,16 @@ verify-tool-ok
 
 3 與 5 的輸出含機器相關路徑,下面以 `<H>`(臨時 HOME)、`<D>`(host 上 distrobox 執行檔的絕對路徑,例如 `/usr/local/bin/distrobox`)、`<G>`(host 上 ghostty 執行檔的絕對路徑,`command -v ghostty` 的結果)代表。3 的每一項由 `script/verify/setup.sh` 自己算出這幾個路徑、再把輸出裡的它們換成佔位符,所以 3 的預期輸出在任何安裝位置都逐字相符(round 10:更早的版本把 ghostty 路徑寫死成 `/usr/bin/ghostty`,裝在別處的機器會無故變紅);5 的輸出沒有這層轉換,請自己對照。
 
+### 威脅模型:這些檢查程式擋得住什麼、擋不住什麼
+
+`script/verify/` 擋的是**誠實的回歸**與**環境真的壞掉**:產品改壞了、某個決策不再印 log、
+受管 command 退回裸名字、CI 少跑一個架構、`gh` 印得出像樣的輸出卻 exit 1、量測數字自相
+矛盾 —— 這些都會被指名並回非 0。它擋不住的是**操作者偽造它正在檢查的那份證據**:把 `just`
+換成一個什麼都不印就 exit 0 的殼、把十份 PR 描述的程式碼區塊填成一個字元、手寫一份看起來
+對的 bench 輸出,這類做法本檢查程式不處理。這不是漏洞而是邊界:在那個情境下整套測試同樣
+全部失效(誰都可以把 `bats` 換成 `exit 0`),所以防線只能是「誰能改這個 repo 與這台機器」,
+不是驗收腳本裡再多一層斷言。
+
 ### 驗收項目
 
 規則:入口一律 `just` —— 產品功能是 `just box` / `just test`,驗收本身是 `just verify`;5 是實機(distrobox 原生 + 開終端主觀);文件與外部證據由 `just verify evidence` 用上面列出的驗收工具(gh / jq / awk / grep / sed / find)查。
@@ -540,8 +550,8 @@ verify-tool-ok
       ./script/verify/gate.sh "$@"
       ./script/test/test.sh
       [ci] ShellCheck OK
-      [ci]   required specs OK (573 case(s) declared by 21 file(s))
-      ...(unit 573 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
+      [ci]   required specs OK (585 case(s) declared by 21 file(s))
+      ...(unit 585 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
       ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
       # bench: enter: min=91.1 median=93.8 max=102.0 ms
@@ -577,7 +587,9 @@ verify-tool-ok
       ```
       (失敗時的樣子:缺段、區塊是空的或順序錯是 `#N order=BAD ...`,查詢失敗是 `#N evidence=gh-failed`,兩者最後都 `rc=1`。
       判準是「上面這十個 PR 各有一行、各只有一行 `order=ok`,且 `green` 大於 `red`」,不是「有看到某一行 order=ok」——
-      `script/verify/gate.sh` 就是照這個集合判的:少一個、多一個、重複一個都會被指名並回 `rc=1`)
+      `script/verify/gate.sh` 就是照這個集合判的:少一個、多一個、重複一個都會被指名並回 `rc=1`。
+      **行的順序也在判準內**:十行全對但其中兩行對調,代表檢查程式跑的是另一份清單,
+      `gate.sh` 會印出實測順序與本文件公佈的順序並回 `rc=1`)
     - 驗收方式
       ```bash
       just verify gate 2.2; echo rc=$?
@@ -618,7 +630,7 @@ verify-tool-ok
       rc=0
       ```
       (`host=` 是那一輪盒子的容器 id、`fish=`、`FORWARDED_DELAY_MS=` 與 `SECOND_ELAPSED=` 是實測值,每次都不一樣,不要照字面比 —— 尤其 `SECOND_ELAPSED` 是「第二次啟動花了幾秒」,測試接受的是 0-15,上面印 `1` 只是某一輪的實測(round 11:一輪量到 `0`,照字面比會無故變紅);判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、整段 `rc=0`。任何一層出現 `not ok`,即使該層 `just test` 回 0 也算失敗;integration 紅掉時不會再跑 system-real。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`。
-      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 九個、system-real 五個 `ok` 案例(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)各出現一次、不能多也不能少;`tmux=yes`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`host=` / `fish=` / `SECOND_ELAPSED=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
+      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 九個、system-real 五個 `ok` 案例(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)各出現一次、不能多也不能少;`tmux=yes`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`host=` / `fish=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`SECOND_ELAPSED=` 也是實測值,但本文件公佈了它的範圍(0-15),所以 `gate.sh` 就照 `0-15` 比 —— 只比 `[0-9]+` 的話,`SECOND_ELAPSED=999`(第二次啟動花了十六分鐘才返回,正好是本案例要否證的那件事)也會過;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
     - 驗收方式
       ```bash
       just verify gate 2.3; echo rc=$?
@@ -661,7 +673,7 @@ verify-tool-ok
       files 0->0
       rc=0
       ```
-      (第一個 `rc=` 是 `just box setup` 自己的結束碼,最後一行是本項 `echo rc=$?`。files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是 `script/verify/setup.sh` 自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就報 `[UNAVAILABLE]` 並回非 0)
+      (第一個 `rc=` 是 `just box setup` 自己的結束碼,最後一行是本項 `echo rc=$?`。files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是 `script/verify/setup.sh` 自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就報 `[UNAVAILABLE]` 並回非 0。上面每一行**內容**都在判準內、且各只能出現一次 —— 結束碼與檔案數看不出「受管 command 退回裸名字」(#175 的回歸)或「某個決策不再印 log」,只有文字看得出來)
     - 驗收方式
       ```bash
       just verify setup 3.1; echo rc=$?
@@ -694,13 +706,15 @@ verify-tool-ok
       # END worktool managed block
       rc=0
       ```
+      (上面三段的每一行內容都在判準內、且各只能出現一次:setup 的八行決策 log、status 的八行報告、以及檔案裡那個受管區塊的三行 —— 最後這三行是 #175 的本體,只有比對文字才看得出受管 command 是不是**已 quote 的絕對路徑**。「檔案在、區塊在」不等於「區塊寫對了」)
     - 驗收方式
       ```bash
       just verify setup 3.2; echo rc=$?
       ```
-  - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);受管區塊只剩零個
-    - 預期看到資訊(第二次 setup 起)
+  - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);移除前確實有一個受管區塊,移除後只剩零個
+    - 預期看到資訊(第一次 setup 的輸出略,從它留下的受管區塊數起)
       ```text
+      blocks-before=1
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: no (user)
       [INFO] terminal: ghostty (default)
@@ -714,7 +728,8 @@ verify-tool-ok
       blocks=0
       rc=0
       ```
-      (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行。`blocks=0` 只在檔案讀得到時才印得出來:`grep -c` 的 1 是「零個相符」、2 才是「檔案讀不到」,腳本把兩者分開)
+      (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行 —— 這個「沒有」也在判準內。`blocks=0` 只在檔案讀得到時才印得出來:`grep -c` 的 1 是「零個相符」、2 才是「檔案讀不到」,腳本把兩者分開。
+      `blocks-before=1` 是判準的另一半:對一個**從來就沒有受管區塊**的設定檔來說,「區塊被移除了」是恆真的,所以先量第一次 setup 到底有沒有寫出區塊,再去判它有沒有被移掉;`blocks-before=0` 直接紅。中間八行的內容同樣逐行比對、各只能出現一次)
     - 驗收方式
       ```bash
       just verify setup 3.3; echo rc=$?
@@ -820,7 +835,8 @@ verify-tool-ok
       cleanup-rc=0
       rc=0
       ````
-      (`posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓本項 exit 非 0 並要你手動移除盒子。所有權標記在 `just box assemble` **之前**就寫下,意思是「這一輪動過 assemble」而不是「assemble 成功了」,所以 assemble 跑到一半被 Ctrl-C 一樣會清;反過來「標記在、盒子不在」是被接受的,清理只看最後盒子還在不在,`distrobox rm` 沒東西可刪不算失敗(round 10))
+      (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於這一輪真的傳給 `bench` 的 `--max-ms`(300)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
+      `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓本項 exit 非 0 並要你手動移除盒子。所有權標記在 `just box assemble` **之前**就寫下,意思是「這一輪動過 assemble」而不是「assemble 成功了」,所以 assemble 跑到一半被 Ctrl-C 一樣會清;反過來「標記在、盒子不在」是被接受的,清理只看最後盒子還在不在,`distrobox rm` 沒東西可刪不算失敗(round 10))
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.1; echo rc=$?
@@ -881,24 +897,25 @@ verify-tool-ok
       ```
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
-  - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check 且數量相等
+  - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check,兩邊的 check 名稱數量相等且完全不重疊
     - 預期看到資訊
       ```text
-      #152 total=8 nonpass=0 amd=0 arm=0 closes=1 issue=#151
-      #153 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#149
-      #154 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#150
-      #155 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#21
-      #156 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#23
-      #165 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#164
-      #166 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#163
-      #167 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#160
-      #168 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#161
-      #169 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#162
+      #152 total=8 nonpass=0 amd=0 arm=0 both=0 closes=1 issue=#151
+      #153 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#149
+      #154 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#150
+      #155 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#21
+      #156 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#23
+      #165 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#164
+      #166 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#163
+      #167 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#160
+      #168 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#161
+      #169 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#162
       distinct=10
       rc=0
       rc=0
       ```
-      (6 的三項各有兩行 `rc=`:第一行是 `script/verify/evidence.sh` 自己印的彙總判定,第二行是本項 `echo rc=$?`,兩者必須相同。任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等 —— 兩行就都是 1)
+      (6 的三項各有兩行 `rc=`:第一行是 `script/verify/evidence.sh` 自己印的彙總判定,第二行是本項 `echo rc=$?`,兩者必須相同。任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等或 both>0 —— 兩行就都是 1。
+      `amd` / `arm` 數的是**相異的 check 名稱**,`both` 是同時算進兩邊的名稱數:「兩個架構」講的是兩組互斥的 check,不是「有字串對到 ubuntu-latest」加上「有字串對到 ubuntu-24.04-arm」—— 只用兩個各自獨立的子字串判斷的話,一個叫 `lint (ubuntu-latest, ubuntu-24.04-arm)` 的 check 會同時滿足兩邊,只跑了一個 job 的 PR 照樣印出 `amd=1 arm=1` 過關)
     - 驗收方式
       ```bash
       just verify evidence 6.1; echo rc=$?
@@ -930,10 +947,12 @@ verify-tool-ok
       #153 blocked -> follow-up #164 fixed-by PR #165 (closes #164, mergeable) ok
       #154 blocked -> follow-up #162 fixed-by PR #169 (closes #162, mergeable) ok
       #155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok
+      distinct-follow-ups=4 distinct-fix-prs=4
       rc=0
       rc=0
       ```
-      (失敗時的樣子:判定是「不可合併」印 `blocked`、沒有判定行印 `NOT`、`gh` 查詢本身失敗印 `gh-failed`,配對不成立是行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`。round 12:舊版的 `v()` 是 `gh ... | grep ... | tail -1`,結束碼來自 `tail`,所以「印得出判定行卻 exit 1 的 gh」會讓六個 PR 全部讀成 mergeable —— 現在 gh 的輸出先收進變數、先判它自己的結束碼,`gh-failed` 因此和「判定不是可合併」分得開)
+      (失敗時的樣子:判定是「不可合併」印 `blocked`、沒有判定行印 `NOT`、`gh` 查詢本身失敗印 `gh-failed`,配對不成立是行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`。
+      `distinct-follow-ups` / `distinct-fix-prs` 必須都是 4:四個被擋的 PR 各要有**自己的** follow-up issue 與修正 PR。這兩個計數跨整個項目累計,不是每個 PR 重新算一次 —— 每個 PR 重算的話,同一個 issue 加同一個 PR 可以把四行都餵飽,四行各自看起來都自洽、也都印 `ok`,但其中三個阻擋項其實哪裡都沒記錄。round 12:舊版的 `v()` 是 `gh ... | grep ... | tail -1`,結束碼來自 `tail`,所以「印得出判定行卻 exit 1 的 gh」會讓六個 PR 全部讀成 mergeable —— 現在 gh 的輸出先收進變數、先判它自己的結束碼,`gh-failed` 因此和「判定不是可合併」分得開)
     - 驗收方式
       ```bash
       just verify evidence 6.3; echo rc=$?
