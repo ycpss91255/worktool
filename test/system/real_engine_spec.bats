@@ -103,6 +103,22 @@ setup() {
     mkdir -p "${HOME}"
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
+
+    # The ghostty cases (section (e), issue #172) write their config under
+    # this HOME and read it back through a real ghostty, so the managed
+    # block travels the same XDG path a user's would. The delivered
+    # lib/enter.sh supplies the block markers and the composer, so the
+    # test writes the SAME shape `just box setup` writes.
+    export XDG_CONFIG_HOME="${HOME}/.config"
+    # shellcheck source-path=SCRIPTDIR/../../lib
+    # shellcheck source=enter.sh
+    source "${REPO_ROOT}/lib/enter.sh"
+    # GTK in a container with no GPU and no session bus: software X11 only.
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export GDK_BACKEND=x11
+    export XDG_RUNTIME_DIR="${BATS_FILE_TMPDIR}/run"
+    mkdir -p "${XDG_RUNTIME_DIR}"
+    chmod 700 "${XDG_RUNTIME_DIR}"
 }
 
 # --- bounded engine queries + diagnostics ------------------------------------
@@ -303,7 +319,156 @@ _assert_fish_timed() {
     _log_lines bench-gate "${lines[@]}"
 }
 
-# --- (e) idempotency: assembling again neither errors nor duplicates ---------
+# --- (e) the ghostty chain: a real window enters the real box ----------------
+#
+# Layer 2 of issue #172: a REAL ghostty, on a REAL (headless) X server,
+# reading a REAL managed block, opens a window whose command enters the
+# REAL box of the cases above and leaves a marker INSIDE it. Layer 1 (the
+# display-free half: the block a real ghostty parses and resolves) is
+# test/integration/ghostty_config_spec.bats.
+#
+# WHY THE WITNESS IS THE MARKER FILE, NOT GHOSTTY'S EXIT CODE
+#   With `gtk-single-instance` on, a second `ghostty` only asks an existing
+#   primary instance over D-Bus to open the window and exits 0 immediately -
+#   so exit 0 proves nothing about the command. The test config therefore
+#   pins `gtk-single-instance = false` (asserted below), and what a case
+#   accepts as success is the marker the command wrote inside the box. The
+#   last case in this section demonstrates the false positive on purpose.
+#
+# WHY IT CANNOT HANG
+#   The config does NOT override `wait-after-command` (default false) or
+#   `quit-after-last-window-closed` (default true on Linux), so ghostty
+#   closes the window and exits by itself once the command returns; every
+#   launch is additionally wrapped in `timeout -k` (_ghostty_run), and the
+#   CI job has its own `timeout-minutes`. The deliberate-hang case proves
+#   the second of the three bites.
+
+# Budgets (seconds) for the ghostty cases.
+GHOSTTY_CLI_TIMEOUT=60      # +version / +show-config: no window at all
+GHOSTTY_CHAIN_TIMEOUT=180   # one windowed run of the whole chain
+GHOSTTY_HANG_TIMEOUT=45     # the deliberate-hang case: must be REACHED
+
+# Where the chain writes its evidence. HOME is the box's bind-mounted home
+# (see setup), so a file the command writes inside the box shows up here.
+_chain_marker() { printf '%s/ghostty-chain.txt\n' "${HOME}"; }
+_chain_script() { printf '%s/ghostty-chain.fish\n' "${HOME}"; }
+
+# Write the fish payload the chain runs INSIDE the box: it records the fish
+# version (only fish sets FISH_VERSION, and this runner has no fish at
+# all), whether it is running under tmux, and the box's own node name.
+_write_chain_script() {
+    cat >"$(_chain_script)" <<EOF
+set -l under_tmux no
+if set -q TMUX
+    set under_tmux yes
+end
+printf 'inbox-ok fish=%s tmux=%s host=%s\n' "\$FISH_VERSION" "\$under_tmux" (uname -n) \
+    >$(_chain_marker)
+EOF
+}
+
+# Write the ghostty config the case under test uses, into the throwaway
+# XDG_CONFIG_HOME: the false-positive guard first, then EXACTLY ONE real
+# worktool managed block (composed by the delivered lib/enter.sh, markers
+# and all) holding `command = $1`. Nothing else is set - in particular
+# `wait-after-command` and `quit-after-last-window-closed` keep their
+# defaults, which is what makes ghostty exit on its own.
+_write_ghostty_config() {
+    local _file
+    _file="$(enter_ghostty_config)"
+    mkdir -p "$(dirname -- "${_file}")"
+    printf 'gtk-single-instance = false\n' >"${_file}"
+    enter_block_compose "${_file}" "command = $1" >"${_file}.new"
+    mv -f "${_file}.new" "${_file}"
+}
+
+# Launch ghostty on a throwaway X server under a hard bound of $1 seconds.
+# LIBGL_ALWAYS_SOFTWARE / GDK_BACKEND keep GTK on the software X11 path in
+# a container with no GPU; `xvfb-run -a` picks a free display number.
+# Exit status is ghostty's (124 when the bound was reached).
+_ghostty_run() {
+    timeout -k 5 "$1" xvfb-run -a ghostty </dev/null
+}
+
+@test "preflight: the runner has a real ghostty and Xvfb, and no fish of its own" {
+    run timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +version
+    assert_success
+    assert_line --regexp '^Ghostty [0-9]+\.[0-9]+'
+    _log_lines ghostty "${lines[0]}"
+    run command -v xvfb-run
+    assert_success
+    # The chain's evidence is "fish answered". The runner must not be able
+    # to produce that itself: the only fish in this container tree is the
+    # box's.
+    run command -v fish
+    assert_failure
+}
+
+@test "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)" {
+    _write_ghostty_config "distrobox enter dev -- true"
+    run env XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+        timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +show-config
+    assert_success
+    # The EFFECTIVE value, not the text on disk: `detect` must not be what
+    # decides whether this window is real or forwarded to a background
+    # process nobody reaps.
+    assert_line 'gtk-single-instance = false'
+    assert_line 'command = distrobox enter dev -- true'
+}
+
+@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)" {
+    rm -f "$(_chain_marker)"
+    _write_chain_script
+    # The full chain #5 promises, in one command, but ending: ghostty ->
+    # distrobox enter dev -> tmux -> fish -> the marker. `tmux new -A -s`
+    # is the delivered shape; the session ends when the script does, so
+    # tmux exits, `distrobox enter` returns and ghostty closes the window.
+    _write_ghostty_config \
+        "distrobox enter dev -- tmux new -A -s chain fish $(_chain_script)"
+    run _ghostty_run "${GHOSTTY_CHAIN_TIMEOUT}"
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    # The witness: the file the command wrote inside the box.
+    assert [ -f "$(_chain_marker)" ]
+    run cat "$(_chain_marker)"
+    assert_success
+    assert_line --regexp '^inbox-ok fish=[0-9]+\.[0-9]+.* tmux=yes host=.+$'
+    _log_lines chain "${lines[@]}"
+}
+
+@test "ghostty chain: a command that never ends FAILS within its budget instead of hanging" {
+    rm -f "$(_chain_marker)"
+    _write_ghostty_config "distrobox enter dev -- sleep infinity"
+    local _start="${SECONDS}" _elapsed
+    run _ghostty_run "${GHOSTTY_HANG_TIMEOUT}"
+    _elapsed=$(( SECONDS - _start ))
+    # 124 is `timeout`'s own "the bound was reached" status: the run was
+    # cut, not left to the CI job timeout.
+    assert_failure 124
+    # And it really was cut at the budget, not merely late.
+    assert [ "${_elapsed}" -lt $(( GHOSTTY_HANG_TIMEOUT + 30 )) ]
+    # Nothing reached the box: the marker of the previous case is gone and
+    # was not recreated.
+    assert [ ! -f "$(_chain_marker)" ]
+    _log_lines hang "timed out after ${_elapsed}s (budget ${GHOSTTY_HANG_TIMEOUT}s, status ${status})"
+}
+
+@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while its command never runs to completion (the false positive the guard prevents)" {
+    local _probe="${REPO_ROOT}/test/system/fixture/ghostty_single_instance.sh"
+    run timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" bash "${_probe}" \
+        "${BATS_TEST_TMPDIR}/si" </dev/null
+    assert_success
+    # The second launch returned success although the command it asked for
+    # (`sleep infinity`) can never finish: exit status alone is not a
+    # witness once ghostty forwards over D-Bus. This is why every case
+    # above pins `gtk-single-instance = false` and asserts a marker file.
+    assert_line --regexp '^SECOND_RC=0$'
+    assert_line --regexp '^SECOND_ELAPSED=[0-9]+$'
+    assert_line 'COMMAND_FINISHED=no'
+    _log_lines single-instance "${lines[@]}"
+}
+
+# --- (f) idempotency: assembling again neither errors nor duplicates ---------
 
 @test "real engine: a second assemble.sh run exits 0 and does not duplicate the dev box" {
     cd "${REPO_ROOT}"
@@ -323,7 +488,7 @@ _assert_fish_timed() {
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
 }
 
-# --- (f) teardown: distrobox rm removes the box ------------------------------
+# --- (g) teardown: distrobox rm removes the box ------------------------------
 
 @test "real engine: distrobox rm -f dev removes the box from the engine" {
     run timeout "${RM_TIMEOUT}" distrobox rm -f dev </dev/null
