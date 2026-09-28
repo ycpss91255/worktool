@@ -432,8 +432,11 @@ issue #129),不再延後到 M5。
       不是一啟動就死。
     - **假陽性示範**:`test/system/fixture/ghostty_single_instance.sh` 在一個
       `xvfb-run` + `dbus-run-session` 裡,讓每個 ghostty 視窗跑同一份 payload
-      (寫在檔案裡,所以設定的 `command` 全是單字、不必跟 ghostty 的 argv 切分
-      搏鬥):一開始就把**自己的 pid 與 starttime** 寫成一個獨一無二的檔(每一步
+      (寫在檔案裡,所以 payload 裡的 `$` / `(` / `)` 不必跟 ghostty 的 argv 切分
+      搏鬥;設定只需要帶路徑,而那個路徑是**加雙引號**的 —— ghostty 的 `command`
+      確實支援雙引號,實測含空白的路徑不加引號會被拆成三個 argv 而失敗,加了就
+      正常,fixture 另外拒絕雙引號 / 反斜線 / 換行這些光靠引號帶不動的字元):
+      一開始就把**自己的 pid 與 starttime** 寫成一個獨一無二的檔(每一步
       都檢查,寫不出來就不往下走)、`sleep infinity`、跑完才會再寫一個 done 檔。
       於是實地**觀測**:`gtk-single-instance = true` 時第二次啟動 ghostty
       **遠比它要求的指令可能耗費的時間更快就返回 0**(`SECOND_ELAPSED` 斷言
