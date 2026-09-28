@@ -17,22 +17,34 @@
 #   `gtk-single-instance = false` and asserts an in-box marker file exactly
 #   because of this.
 #
-# HOW
+# HOW (every claim below is OBSERVED, nothing is asserted by fiat)
 #   One Xvfb display and one private session bus (dbus-run-session), one
-#   config with `gtk-single-instance = true` and a command that can never
-#   finish (`sleep infinity`) but touches a readiness file first:
-#     1. start the primary in the background and wait (bounded) until its
-#        command has actually started, so the second launch is guaranteed
-#        to be a forwarded one and not a new primary;
-#     2. remove the readiness file, run ghostty again under its own
-#        `timeout`, and record its status and how long it took;
-#     3. report whether the command it asked for had finished by then (it
-#        cannot have: it is `sleep infinity`).
+#   config with `gtk-single-instance = true`, and a command that leaves a
+#   UNIQUE start file per window and can only ever finish after a
+#   `sleep infinity`:
+#
+#     /bin/sh -c "mktemp <STARTED>/w.XXXXXX; sleep infinity; mktemp <DONE>/d.XXXXXX"
+#
+#   so the number of files under STARTED is the number of window commands
+#   that really began, and any file under DONE would mean one of them
+#   returned (it cannot).
+#
+#     1. start the primary in the background and wait (bounded) until
+#        STARTED holds exactly one file, i.e. its command really began;
+#     2. run ghostty a second time under its own `timeout`, recording its
+#        status and how long it took;
+#     3. wait (bounded) for STARTED to reach two files - that second file
+#        is the forwarded window's command starting, which is what makes
+#        this a forwarding and not just "a second process exited fast";
+#     4. check the primary is still alive (`kill -0`) and count DONE.
 #
 #   Output on stdout, one `KEY=VALUE` per line, for the spec to assert on:
+#     PRIMARY=up|died-before-ready|not-ready-in-<n>s
 #     SECOND_RC=<status of the second launch>
 #     SECOND_ELAPSED=<seconds it took>
-#     COMMAND_FINISHED=no|yes
+#     FORWARDED_STARTED=yes|no   (a SECOND window command began)
+#     PRIMARY_ALIVE=yes|no       (the primary outlived the second launch)
+#     COMMAND_FINISHED=no|yes    (observed: DONE is empty / is not)
 #
 # Usage: ghostty_single_instance.sh <workdir>
 #
@@ -46,8 +58,9 @@
 set -uo pipefail
 
 # Bounds (seconds).
-PRIMARY_READY_TIMEOUT=60   # until the primary's command has started
-SECOND_TIMEOUT=25          # the forwarded launch's own bound
+PRIMARY_READY_TIMEOUT=60    # until the primary's command has started
+FORWARD_START_TIMEOUT=30    # until the forwarded window's command starts
+SECOND_TIMEOUT=25           # the forwarded launch's own bound
 KILL_GRACE=5
 
 _die() {
@@ -72,56 +85,89 @@ WORKDIR="${1:-}"
 [[ -n "${WORKDIR}" ]] || _die "usage: ghostty_single_instance.sh <workdir>"
 
 mkdir -p "${WORKDIR}" || _die "cannot create ${WORKDIR}"
-READY="${WORKDIR}/primary-up"
+STARTED="${WORKDIR}/started"
+DONE="${WORKDIR}/done"
 CONFIG_HOME="${WORKDIR}/config"
-mkdir -p "${CONFIG_HOME}/ghostty" || _die "cannot create ${CONFIG_HOME}/ghostty"
+mkdir -p "${STARTED}" "${DONE}" "${CONFIG_HOME}/ghostty" \
+    || _die "cannot create the scenario directories under ${WORKDIR}"
 
 export XDG_CONFIG_HOME="${CONFIG_HOME}"
 export LIBGL_ALWAYS_SOFTWARE=1
 export GDK_BACKEND=x11
 
+# How many window commands have begun / returned so far.
+_started_count() { find "${STARTED}" -maxdepth 1 -type f | wc -l; }
+_done_count() { find "${DONE}" -maxdepth 1 -type f | wc -l; }
+
+# Wait (bounded by $2 seconds) until at least $1 window commands have
+# begun. Returns 1 when the deadline passes first.
+_wait_started() {
+    local _want="$1" _budget="$2"
+    local _deadline=$(( SECONDS + _budget ))
+    while (( "$(_started_count)" < _want )); do
+        (( SECONDS < _deadline )) || return 1
+        sleep 1
+    done
+    return 0
+}
+
 # `gtk-single-instance = true` is the whole point: this is the setting the
-# real test config pins to false. The command announces itself and then
-# never returns.
+# real test config pins to false. Each window's command leaves a unique
+# file the moment it begins, then blocks forever; only a command that
+# RETURNED could leave a file under DONE.
 _write_config() {
-    rm -f "${READY}"
     cat >"${CONFIG_HOME}/ghostty/config" <<EOF
 gtk-single-instance = true
-command = /bin/sh -c "touch ${READY}; exec sleep infinity"
+command = /bin/sh -c "mktemp ${STARTED}/w.XXXXXX >/dev/null; sleep infinity; mktemp ${DONE}/d.XXXXXX >/dev/null"
 EOF
 }
 
 _scenario() {
     ghostty >/dev/null 2>&1 &
     local _primary=$!
-    local _deadline=$(( SECONDS + PRIMARY_READY_TIMEOUT ))
-    while [[ ! -f "${READY}" ]]; do
-        if ! kill -0 "${_primary}" 2>/dev/null; then
-            echo "PRIMARY=died-before-ready"
-            return 1
-        fi
-        if (( SECONDS >= _deadline )); then
+    if ! _wait_started 1 "${PRIMARY_READY_TIMEOUT}"; then
+        if kill -0 "${_primary}" 2>/dev/null; then
             echo "PRIMARY=not-ready-in-${PRIMARY_READY_TIMEOUT}s"
             kill -KILL "${_primary}" 2>/dev/null
-            return 1
+        else
+            echo "PRIMARY=died-before-ready"
         fi
-        sleep 1
-    done
+        return 1
+    fi
     echo "PRIMARY=up"
 
-    # From here on, a `ghostty` call can only be a forwarded one.
-    rm -f "${READY}"
+    # From here on, a `ghostty` call can only be a forwarded one: the
+    # primary owns the bus name.
     local _start="${SECONDS}" _rc
     timeout -k "${KILL_GRACE}" "${SECOND_TIMEOUT}" ghostty >/dev/null 2>&1
     _rc=$?
     echo "SECOND_RC=${_rc}"
     echo "SECOND_ELAPSED=$(( SECONDS - _start ))"
 
-    # `sleep infinity` cannot have finished; the readiness file only tells
-    # us the forwarded window's command STARTED. Either way the answer is
-    # the same: the second launch's status was decided without waiting for
-    # the command.
-    echo "COMMAND_FINISHED=no"
+    # The second launch has already returned. Did a SECOND window command
+    # begin? That is the forwarding: the work it reported success for is
+    # being done by someone else, after it exited.
+    if _wait_started 2 "${FORWARD_START_TIMEOUT}"; then
+        echo "FORWARDED_STARTED=yes"
+    else
+        echo "FORWARDED_STARTED=no"
+    fi
+
+    # ... and it is the primary that is doing it.
+    if kill -0 "${_primary}" 2>/dev/null; then
+        echo "PRIMARY_ALIVE=yes"
+    else
+        echo "PRIMARY_ALIVE=no"
+    fi
+
+    # OBSERVED, not assumed: no window command has returned. The second
+    # launch's exit status was therefore decided without waiting for the
+    # command it asked for.
+    if [[ "$(_done_count)" -eq 0 ]]; then
+        echo "COMMAND_FINISHED=no"
+    else
+        echo "COMMAND_FINISHED=yes"
+    fi
 
     kill -KILL "${_primary}" 2>/dev/null
     wait "${_primary}" 2>/dev/null
