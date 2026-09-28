@@ -67,6 +67,11 @@ worktool/
 │   ├── enter.md         終端自動進盒:just box setup / status 的選項、設定檔、受管區塊、範例 log
 │   ├── structure.md     本文件
 │   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
+│   ├── evidence/        acceptance.md 的檢查程式(不是產品介面,所以不在 `just` 底下;把判定邏輯放進版控檔案,
+│   │   │                文件那一行就只剩一次呼叫,複製貼上或執行器改寫文件文字都改不動判準,見 #176 item 8)
+│   │   ├── tdd.awk      判定一份 PR body 是否「先有非空的 RED 程式碼區塊,之後才有非空的 GREEN 區塊」
+│   │   ├── tdd.sh       對 M3 各 sub-issue PR 逐一跑 tdd.awk(`bash doc/evidence/tdd.sh`;acceptance.md 2.2)
+│   │   └── negative/    tdd.awk 的負向 fixture:順序顛倒、RED 區塊是空的(acceptance.md 2.4 證明檢查不是恆真)
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
 │       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
