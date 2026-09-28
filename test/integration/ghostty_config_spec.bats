@@ -181,6 +181,28 @@ _log_lines() {
 # below runs that exact string: an install path holding a space, a `$` or a
 # quote must still reach the one binary, and must not run anything else.
 
+@test "#175r2: a distrobox path holding a newline is refused, because ghostty could not parse what it would write" {
+    local _dir="${BATS_TEST_TMPDIR}/nl/d"$'\n'"e" _dbx
+    mkdir -p "${_dir}"
+    _dbx="${_dir}/distrobox"
+    printf '#!/bin/sh\nexit 0\n' >"${_dbx}"
+    chmod +x "${_dbx}"
+
+    run "${SETUP}" --distrobox "${_dbx}"
+    assert_failure 1
+    assert_line --partial "holds a newline or carriage return"
+    assert [ ! -e "${GHOSTTY_CONFIG}" ]
+
+    # The check bites: this is the file setup would have written, and a
+    # real ghostty refuses it - the managed body is split across two
+    # lines, so the second one is not a key it knows.
+    printf "command = '%s' enter dev -- tmux new -A -s main\n" "${_dbx}" >"${GHOSTTY_CONFIG}"
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_failure
+    assert_output --partial 'unknown field'
+    _log_lines would-have-been-refused "${lines[@]}"
+}
+
 @test "#175r1: a distrobox path with spaces and metacharacters survives ghostty and the shell it hands the command to" {
     local _sentinel="${BATS_TEST_TMPDIR}/pwned"
     local _dir="${BATS_TEST_TMPDIR}/q/d \$(touch ${_sentinel}) \"q\"" _dbx _cmd

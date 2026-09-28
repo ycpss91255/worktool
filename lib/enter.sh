@@ -43,6 +43,8 @@
 #   enter_sh_dquote <s>       -> $s as a double-quoted POSIX shell word
 #   enter_first_word <s>      -> the first shell word of $s, decoded
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
+#   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
+#   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
 # State file: `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
@@ -175,6 +177,28 @@ enter_sh_dquote() {
     _s="${_s//\$/\\\$}"
     _s="${_s//\"/\\\"}"
     printf '"%s"\n' "${_s}"
+}
+
+# 0 when $1 can be written into a managed block at all (issue #175 round
+# 2): no newline and no carriage return.
+#
+# Shell quoting makes a valid WORD out of any text, but both managed files
+# are LINE-BASED - ghostty reads its config line by line, and so does tmux.
+# A path holding a newline therefore splits the managed body across two
+# lines, and ghostty rejects the whole file with `unknown field` - after
+# setup had already written it and exited 0. There is no encoding that
+# fixes this on both sides, so such a path is refused instead.
+enter_path_single_line() {
+    [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]]
+}
+
+# $1 with every newline / carriage return shown as `\n` / `\r`, so a path
+# holding one can still be named in a ONE-LINE diagnostic.
+enter_show_control() {
+    local _s="$1"
+    _s="${_s//$'\r'/\\r}"
+    _s="${_s//$'\n'/\\n}"
+    printf '%s\n' "${_s}"
 }
 
 # The FIRST shell word of $1, decoded: a single-quoted word ('...', with

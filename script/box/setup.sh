@@ -48,6 +48,12 @@
 # quotes in the ghostty body, and double quotes inside tmux's own
 # single-quoted value (issue #175 round 1).
 #
+# Quoting alone is not enough, though: both files are LINE-BASED, so a path
+# holding a newline or a carriage return would split the managed body over
+# two lines and make the whole file unparseable (ghostty answers
+# `unknown field`). Such a path is REFUSED - whichever source it came from,
+# and before anything at all is written (issue #175 round 2).
+#
 # Managed blocks (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty, tmux inside:
@@ -284,7 +290,10 @@ _resolve_all() {
 # Resolve the distrobox the managed command will name into DISTROBOX and
 # log the basis. Returns 1 - and the caller refuses the whole run before
 # writing anything - when there is none, or when the resolved path cannot
-# be encoded into the blocks this run would write.
+# be encoded into the blocks this run would write (a newline or carriage
+# return anywhere; a single quote when ~/.tmux.conf is also written). The
+# two encoding rules apply to BOTH sources of the path, the option and
+# PATH, because they are about what the managed FILES can hold.
 #
 # Issue #175 round 1: the first attempt wrote the bare name with a WARN
 # when nothing resolved. That handed the user exactly the configuration
@@ -300,6 +309,15 @@ _resolve_distrobox() {
         log_info "distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     else
         log_error "distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written"
+        return 1
+    fi
+    # Both managed files are line-based, so a path holding a newline or a
+    # carriage return cannot be written into either of them whatever the
+    # shell quoting says (issue #175 round 2). The diagnostic shows the
+    # control character rather than printing it, so the error stays one
+    # line.
+    if ! enter_path_single_line "${DISTROBOX}"; then
+        log_error "distrobox: $(enter_show_control "${DISTROBOX}") holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
         return 1
     fi
     # The ~/.tmux.conf body nests a shell command inside a tmux

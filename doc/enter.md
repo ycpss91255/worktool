@@ -155,6 +155,25 @@ flatpak)。原因是乾淨機器:剛用 PPA 裝好 `/usr/bin/ghostty`、還沒�
 
 `--tmux inside` 只寫 ghostty 那一塊,單引號可以正常編碼,不受此限。
 
+### 路徑含換行一律拒絕(issue #175 round 2)
+
+shell quoting 能把**任何**文字變成一個合法的 word,但兩個受管檔案都是**逐行**
+格式:ghostty 一行一個 key,tmux.conf 也一樣。所以路徑裡只要有換行(LF)或
+歸位字元(CR),受管 body 就會被**切成兩行**——ghostty 讀到第二行不認得的 key,
+整份 config 以 `unknown field` 被拒,而 setup 早就寫完並 exit 0 了。這正是
+round 1 拿掉的「裸名字 fallback」同一類問題:**已知壞掉的半套寫入**。
+
+沒有任何編碼能同時滿足兩邊,所以這種路徑直接拒絕:
+
+- 規則同時適用於 `--distrobox` 給的路徑與 PATH 上自動解析到的路徑——這條限制
+  講的是**受管檔案裝得下什麼**,不是使用者從哪裡給的。
+- 拒絕發生在**任何檔案被寫之前**(連狀態檔都不寫),exit 1。
+- 診斷訊息把控制字元顯示成 `\n` / `\r`,錯誤本身才不會也被切成兩行。
+
+```text
+[ERROR] distrobox: /home/me/weird\ndir/distrobox holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written
+```
+
 ### 範例 log
 
 預設(PATH 上有 `/usr/bin/ghostty`,distrobox 在 `~/.local/bin`):

@@ -806,6 +806,53 @@ _dquote() {
     _assert_ghostty_quoting "it's here"
 }
 
+# --- #175 round 2: a path holding a NEWLINE cannot go into either file ------
+#
+# `enter_sh_squote` makes a valid shell word out of anything, but BOTH
+# managed files are LINE-BASED: a newline in the path splits the managed
+# body across two lines, and ghostty then rejects the whole config
+# (`unknown field`) - while setup had already written it and exited 0.
+# That is the same "known-broken partial write" the bare-name fallback was.
+
+# Install a fake distrobox under a directory whose name holds the control
+# character $1, run setup against it, and assert the run is refused with
+# the reason named and NOTHING written. $2 is how that character must be
+# shown in the one-line diagnostic.
+_assert_control_char_refused() {
+    local _dir="${BATS_TEST_TMPDIR}/ctl/d$1e" _dbx
+    mkdir -p "${_dir}" "${HOME}/.config/ghostty"
+    _dbx="${_dir}/distrobox"
+    _fake_distrobox "${_dbx}"
+    assert [ -x "${_dbx}" ]
+    run "${SETUP}" --distrobox "${_dbx}"
+    assert_failure 1
+    assert_line "[ERROR] distrobox: ${BATS_TEST_TMPDIR}/ctl/d$2e/distrobox holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
+    assert [ ! -e "${CONFIG}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+    assert [ ! -e "${TMUX_CONF}" ]
+}
+
+@test "#175r2: a distrobox path holding a newline is refused before anything is written" {
+    _assert_control_char_refused $'\n' '\n'
+}
+
+@test "#175r2: a carriage return is refused the same way (it truncates the line just as badly)" {
+    _assert_control_char_refused $'\r' '\r'
+}
+
+# The rule is about what can be WRITTEN, so it has to bite on the path
+# setup resolves for itself, not only on the one the user names.
+@test "#175r2: a distrobox found on PATH is held to the same rule as --distrobox" {
+    local _dir="${BATS_TEST_TMPDIR}/nlpath/d"$'\n'"e"
+    mkdir -p "${_dir}" "${HOME}/.config/ghostty"
+    _fake_distrobox "${_dir}/distrobox"
+    PATH="${_dir}:/usr/bin:/bin" run "${SETUP}"
+    assert_failure 1
+    assert_line --partial "holds a newline or carriage return"
+    assert [ ! -e "${CONFIG}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+}
+
 # The whole point of the absolute path: the command survives the reduced
 # PATH a desktop session hands its terminal. The control case first proves
 # that PATH really cannot reach this distrobox by name, so the positive
