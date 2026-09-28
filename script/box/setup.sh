@@ -38,16 +38,23 @@
 # resolved (`[INFO] distrobox: ...`), never the bare name: a terminal the
 # desktop starts inherits the systemd user manager's PATH, which does not
 # hold ~/.local/bin, and the bare name died there with `/bin/sh: 1:
-# distrobox: not found` (issue #175). With no distrobox on PATH at all the
-# bare name is written as a last resort and the run WARNs.
+# distrobox: not found` (issue #175). With nothing on PATH the run is
+# REFUSED (exit 1, nothing written) instead of writing a command already
+# known to fail; `--distrobox <path>` names one explicitly.
+#
+# Both bodies are shell SOURCE (ghostty runs a `command` without a
+# `direct:` prefix through `/bin/sh -c`; tmux runs `default-command` the
+# same way), so `<distrobox>` is written as a QUOTED shell word: single
+# quotes in the ghostty body, and double quotes inside tmux's own
+# single-quoted value (issue #175 round 1).
 #
 # Managed blocks (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty, tmux inside:
-#     <config dir>/ghostty/config  command = <distrobox> enter <box> -- tmux new -A -s main
+#     <config dir>/ghostty/config  command = '<distrobox>' enter <box> -- tmux new -A -s main
 #   auto-enter yes, terminal ghostty, tmux host:
 #     <config dir>/ghostty/config  command = tmux new -A -s main
-#     ~/.tmux.conf                 set -g default-command "<distrobox> enter <box>"
+#     ~/.tmux.conf                 set -g default-command '"<distrobox>" enter <box>'
 #   auto-enter yes, terminal none: no terminal profile at all (whatever tmux
 #     says: the tmux.conf block only serves the ghostty+host pair), leftover
 #     blocks removed.
@@ -85,6 +92,7 @@ OPT_AUTO_ENTER=""
 OPT_TERMINAL=""
 OPT_TMUX=""
 OPT_BOX=""
+OPT_DISTROBOX=""
 OPT_DRY_RUN=0
 OPT_HELP=0
 
@@ -101,7 +109,8 @@ DISTROBOX=""
 _usage() {
     cat >&2 <<'EOF'
 Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
-                [--tmux inside|host] [--box <name>] [--dry-run]
+                [--tmux inside|host] [--box <name>] [--distrobox <path>]
+                [--dry-run]
 
 Choose how a new terminal enters the worktool dev box, store the choice in
 $XDG_CONFIG_HOME/worktool/config and write the terminal profile for it.
@@ -125,6 +134,11 @@ back any time with `just box status`.
                             absolute path this run resolves, so a terminal
                             started from the desktop can run it.
   --box <name>              Box to enter (default: dev).
+  --distrobox <path>        Absolute path of the distrobox executable to write
+                            into the managed command (default: the one on
+                            PATH). With none on PATH and no --distrobox the
+                            run is refused: a bare `distrobox` is exactly the
+                            command a desktop-launched terminal cannot find.
   --dry-run                 Log every decision and file action; write nothing.
   -h, --help                Show this help and exit.
 
@@ -136,8 +150,9 @@ Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 
 The state file is validated before anything is written: a corrupt value in
 it (whatever its `.source`) is refused with `[ERROR] <file>: invalid value
-...`, exit 1, and no file is changed. The state file is written first, then
-the profiles; existing files keep their mode.
+...`, exit 1, and no file is changed. A distrobox that cannot be resolved
+is refused the same way, before anything is written. The state file is
+written first, then the profiles; existing files keep their mode.
 EOF
 }
 
@@ -149,10 +164,23 @@ _usage_error() {
 
 # --- Argument parsing --------------------------------------------------------
 
-# Store option $1 (--auto-enter / --terminal / --tmux / --box) = value $2
-# after validating the value. Returns 2 on an invalid value.
+# Store option $1 (--auto-enter / --terminal / --tmux / --box /
+# --distrobox) = value $2 after validating the value. Returns 2 on an
+# invalid value.
+#
+# --distrobox is not a stored decision, so it has its own rule rather than
+# a state-file one: only an absolute path to an executable FILE can go into
+# a managed command (the same contract enter_which enforces for PATH).
 _set_opt() {
     local _key="${1#--}"
+    if [[ "${_key}" == "distrobox" ]]; then
+        if [[ "$2" != /* || ! -f "$2" || ! -x "$2" ]]; then
+            _usage_error "invalid value '$2' for $1 (expected an absolute path to an executable file)"
+            return 2
+        fi
+        OPT_DISTROBOX="$2"
+        return 0
+    fi
     if ! enter_value_ok "${_key}" "$2"; then
         _usage_error "invalid value '$2' for $1 (expected $(enter_expected "${_key}"))"
         return 2
@@ -170,7 +198,7 @@ _set_opt() {
 _parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --auto-enter|--terminal|--tmux|--box)
+            --auto-enter|--terminal|--tmux|--box|--distrobox)
                 if [[ $# -lt 2 ]]; then
                     _usage_error "$1 requires a value"
                     return 2
@@ -178,7 +206,7 @@ _parse_args() {
                 _set_opt "$1" "$2" || return 2
                 shift
                 ;;
-            --auto-enter=*|--terminal=*|--tmux=*|--box=*)
+            --auto-enter=*|--terminal=*|--tmux=*|--box=*|--distrobox=*)
                 _set_opt "${1%%=*}" "${1#*=}" || return 2
                 ;;
             --dry-run) OPT_DRY_RUN=1 ;;
@@ -245,18 +273,42 @@ _resolve_all() {
     fi
     log_info "tmux: ${TMUX} (${TMUX_SRC})"
     log_info "box: ${BOX} (${BOX_SRC})"
+    # Only the paths that WRITE a managed command need a distrobox, and
+    # they need it before anything is written, so a refusal leaves the
+    # whole run untouched.
+    if [[ "${AUTO_ENTER}" == "yes" && "${TERMINAL}" == "ghostty" ]]; then
+        _resolve_distrobox || return 1
+    fi
 }
 
 # Resolve the distrobox the managed command will name into DISTROBOX and
-# log the basis: the absolute path (issue #175), or the bare name plus a
-# WARN when nothing is on PATH - setup must still work on a machine where
-# distrobox is not installed yet, but the user has to be told that the
-# profile it just wrote depends on PATH at launch time.
+# log the basis. Returns 1 - and the caller refuses the whole run before
+# writing anything - when there is none, or when the resolved path cannot
+# be encoded into the blocks this run would write.
+#
+# Issue #175 round 1: the first attempt wrote the bare name with a WARN
+# when nothing resolved. That handed the user exactly the configuration
+# the real machine failed on - a terminal window that opens and closes -
+# and `just box status` cannot rescue it, because nothing about that
+# failure sends anyone to run status. setup knows here that the command
+# cannot work, so it refuses and says what to do instead.
 _resolve_distrobox() {
-    if DISTROBOX="$(enter_distrobox_program)"; then
+    if [[ -n "${OPT_DISTROBOX}" ]]; then
+        DISTROBOX="${OPT_DISTROBOX}"
+        log_info "distrobox: ${DISTROBOX} (--distrobox; absolute path written into the managed command)"
+    elif DISTROBOX="$(enter_distrobox_program)"; then
         log_info "distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     else
-        log_warn "distrobox: not found on PATH; the managed command falls back to the bare name (a terminal launched from the desktop may not find it - install distrobox, then re-run: just box setup)"
+        log_error "distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written"
+        return 1
+    fi
+    # The ~/.tmux.conf body nests a shell command inside a tmux
+    # single-quoted value, and tmux has NO escape inside single quotes, so
+    # a path holding one cannot be delivered through it. Refuse rather
+    # than write a file that would not parse the way it reads.
+    if [[ "${TMUX}" == "host" && "${DISTROBOX}" == *"'"* ]]; then
+        log_error "distrobox: ${DISTROBOX} holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
+        return 1
     fi
 }
 
@@ -366,14 +418,17 @@ _apply_ghostty() {
     local _ghostty _tmux_conf _rc=0
     _ghostty="$(enter_ghostty_config)"
     _tmux_conf="$(enter_tmux_conf)"
-    # Both bodies below name a distrobox, so resolve it before either.
-    _resolve_distrobox
+    # DISTROBOX was resolved (and the run refused if it could not be) in
+    # _resolve_all, before any file was touched. Both bodies are shell
+    # source, so the path goes in as a quoted shell word.
     if [[ "${TMUX}" == "inside" ]]; then
-        _block_write "${_ghostty}" "command = ${DISTROBOX} enter ${BOX} -- tmux new -A -s main" || _rc=1
+        _block_write "${_ghostty}" \
+            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
         _block_remove "${_tmux_conf}" || _rc=1
     else
         _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-        _block_write "${_tmux_conf}" "set -g default-command \"${DISTROBOX} enter ${BOX}\"" || _rc=1
+        _block_write "${_tmux_conf}" \
+            "set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'" || _rc=1
     fi
     return "${_rc}"
 }

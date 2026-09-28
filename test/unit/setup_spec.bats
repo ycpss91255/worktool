@@ -17,9 +17,9 @@
 #     default keys are recomputed on every run.
 #   - auto-enter yes + terminal ghostty writes ONE managed block (begin/end
 #     marker lines) into $XDG_CONFIG_HOME/ghostty/config: tmux inside ->
-#     `command = <distrobox> enter <box> -- tmux new -A -s main`; tmux host ->
-#     `command = tmux new -A -s main` plus a managed block in ~/.tmux.conf
-#     (`set -g default-command "<distrobox> enter <box>"`). Re-runs are
+#     `command = '<distrobox>' enter <box> -- tmux new -A -s main`; tmux host
+#     -> `command = tmux new -A -s main` plus a managed block in ~/.tmux.conf
+#     (`set -g default-command '"<distrobox>" enter <box>'`). Re-runs are
 #     idempotent (the block is replaced in place, never duplicated); user
 #     content around the block is preserved.
 #   - auto-enter no removes both managed blocks and reports each removal.
@@ -42,6 +42,16 @@
 #   Every case here therefore installs a distrobox of its own, in a
 #   directory no test image has on PATH, so the expectations do not depend
 #   on what the image happens to ship.
+#
+# ISSUE #175 ROUND 1 (what codex blocked on)
+#   (a) With nothing to resolve, the run is REFUSED (exit 1, nothing
+#       written) instead of writing the bare name behind a warning - that
+#       bare name IS the broken configuration the real machine hit.
+#       `--distrobox <path>` serves the "configure now, install later" flow.
+#   (b) Both managed bodies are shell SOURCE, so the path is written as a
+#       QUOTED shell word: an install path holding a space, a `$`, a
+#       backtick or a quote must reach the one binary and must not run
+#       anything else.
 #
 # Every path comes from HOME / XDG_CONFIG_HOME, so each case runs against a
 # throwaway HOME under BATS_TEST_TMPDIR: the real home is never read or
@@ -74,9 +84,13 @@ setup() {
     PATH="${DBX_DIR}:${PATH}"
     export PATH
 
-    CMD_INSIDE="command = ${DISTROBOX} enter dev -- tmux new -A -s main"
+    # Issue #175 round 1: both bodies are shell source, so the path is
+    # QUOTED. ghostty runs its `command` through /bin/sh -c, hence a
+    # single-quoted word; the tmux body nests that shell command inside a
+    # tmux single-quoted value, so the inner word is double-quoted instead.
+    CMD_INSIDE="command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
     CMD_HOST="command = tmux new -A -s main"
-    TMUX_BODY="set -g default-command \"${DISTROBOX} enter dev\""
+    TMUX_BODY="set -g default-command '\"${DISTROBOX}\" enter dev'"
 }
 
 # Install an executable stand-in for distrobox at $1. setup.sh only
@@ -85,9 +99,13 @@ setup() {
 # prove which binary answered.
 _fake_distrobox() {
     mkdir -p "$(dirname -- "$1")"
-    cat >"$1" <<EOF
+    # The log path comes from $0 at RUN time, never interpolated into the
+    # script: a case installs this under a directory whose name holds `$`,
+    # a backtick or a quote, and a path baked into the body would be
+    # re-evaluated by the shell that runs it (issue #175 round 1).
+    cat >"$1" <<'EOF'
 #!/bin/sh
-printf '%s\n' "\$*" >>"$1.log"
+printf '%s\n' "$*" >>"$0.log"
 EOF
     chmod +x "$1"
 }
@@ -197,7 +215,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = ${DISTROBOX} enter work -- tmux new -A -s main)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work -- tmux new -A -s main)"
 }
 
 # --- ghostty block: exactly once, idempotent, user content preserved ---------
@@ -586,7 +604,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = ${DISTROBOX} enter dev -- tmux new -A -s main"
+    assert_line "command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
     refute_line "command = distrobox enter dev -- tmux new -A -s main"
 }
 
@@ -595,7 +613,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${TMUX_CONF}"
-    assert_line "set -g default-command \"${DISTROBOX} enter dev\""
+    assert_line "set -g default-command '\"${DISTROBOX}\" enter dev'"
     refute_line 'set -g default-command "distrobox enter dev"'
 }
 
@@ -614,17 +632,178 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${_link_dir}/distrobox (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = ${_link_dir}/distrobox enter dev -- tmux new -A -s main"
+    assert_line "command = '${_link_dir}/distrobox' enter dev -- tmux new -A -s main"
     refute_line --partial "${_real}"
 }
 
-@test "#175: with no distrobox on PATH the command falls back to the bare name and setup warns about a desktop launch" {
+# --- #175 round 1 (a): an unresolvable distrobox REFUSES the run -------------
+#
+# Writing the bare name and warning was the first attempt, and it handed the
+# user exactly the configuration the real machine failed on: a window that
+# opens and closes. setup knows at that moment that the command cannot work,
+# so it refuses instead of writing one - and names the way out.
+
+@test "#175r1: with no distrobox on PATH the run is refused, nothing is written, and the error names the way out" {
     mkdir -p "${HOME}/.config/ghostty"
     PATH="/usr/bin:/bin" run "${SETUP}"
+    assert_failure 1
+    assert_line "[ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written"
+    refute_line --partial "wrote:"
+    assert [ ! -e "${CONFIG}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+    assert [ ! -e "${TMUX_CONF}" ]
+}
+
+@test "#175r1: --dry-run is refused the same way (it reports what would happen, and this would fail)" {
+    mkdir -p "${HOME}/.config/ghostty"
+    PATH="/usr/bin:/bin" run "${SETUP}" --dry-run
+    assert_failure 1
+    assert_line --partial "[ERROR] distrobox: not found on PATH"
+    assert [ ! -e "${CONFIG}" ]
+}
+
+# The "configure now, install later" flow issue #175 worried about: it is
+# served by naming the path, not by writing a command known to be broken.
+@test "#175r1: --distrobox <path> supplies the program when PATH cannot" {
+    mkdir -p "${HOME}/.config/ghostty"
+    PATH="/usr/bin:/bin" run "${SETUP}" --distrobox "${DISTROBOX}"
     assert_success
-    assert_line "[WARN] distrobox: not found on PATH; the managed command falls back to the bare name (a terminal launched from the desktop may not find it - install distrobox, then re-run: just box setup)"
+    assert_line "[INFO] distrobox: ${DISTROBOX} (--distrobox; absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = distrobox enter dev -- tmux new -A -s main"
+    assert_line "${CMD_INSIDE}"
+}
+
+@test "#175r1: --distrobox refuses a relative path, a missing file and a non-executable file, exit 2, nothing written" {
+    local _rel="local/bin/distrobox" _missing="${BATS_TEST_TMPDIR}/gone/distrobox"
+    local _plain="${BATS_TEST_TMPDIR}/plain/distrobox"
+    mkdir -p "$(dirname -- "${_plain}")"
+    printf '#!/bin/sh\n' >"${_plain}"
+    chmod 0644 "${_plain}"
+    run "${SETUP}" --distrobox "${_rel}"
+    assert_failure 2
+    assert_output "setup.sh: invalid value '${_rel}' for --distrobox (expected an absolute path to an executable file) (see --help)"
+    run "${SETUP}" --distrobox "${_missing}"
+    assert_failure 2
+    assert_output "setup.sh: invalid value '${_missing}' for --distrobox (expected an absolute path to an executable file) (see --help)"
+    run "${SETUP}" --distrobox "${_plain}"
+    assert_failure 2
+    assert_output "setup.sh: invalid value '${_plain}' for --distrobox (expected an absolute path to an executable file) (see --help)"
+    run "${SETUP}" --distrobox
+    assert_failure 2
+    assert_output "setup.sh: --distrobox requires a value (see --help)"
+    assert [ ! -e "${CONFIG}" ]
+}
+
+# The paths that never name a distrobox must stay usable on a machine that
+# has none: the refusal is about the managed command, not about setup.
+@test "#175r1: --terminal none and --auto-enter no still work with no distrobox anywhere" {
+    PATH="/usr/bin:/bin" run "${SETUP}" --terminal none
+    assert_success
+    assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
+    refute_line --partial "[ERROR]"
+    PATH="/usr/bin:/bin" run "${SETUP}" --auto-enter no
+    assert_success
+    refute_line --partial "[ERROR]"
+}
+
+# --- #175 round 1 (b): the path is SHELL-QUOTED in both bodies ---------------
+#
+# Both managed bodies are shell source, not argv: ghostty runs a `command`
+# without a `direct:` prefix through `/bin/sh -c`, and tmux runs
+# `default-command` the same way. An install path holding a space, a `$`, a
+# backtick or a quote would otherwise be split into words or change the
+# meaning of the command outright.
+
+# Install a fake distrobox under a directory NAMED $1 and run setup against
+# it. Asserts the ghostty body quotes the path as one POSIX shell word,
+# that `/bin/sh -c` on that body really runs THAT binary with the expected
+# arguments, and that nothing else ran.
+_assert_ghostty_quoting() {
+    local _dir="${BATS_TEST_TMPDIR}/q/$1" _dbx _cmd
+    mkdir -p "${_dir}" "${HOME}/.config/ghostty"
+    _dbx="${_dir}/distrobox"
+    _fake_distrobox "${_dbx}"
+    run "${SETUP}" --distrobox "${_dbx}"
+    assert_success
+    _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
+    assert_equal "${_cmd}" "$(_squote "${_dbx}") enter dev -- tmux new -A -s main"
+    run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
+    assert_success
+    run cat "${_dbx}.log"
+    assert_line "enter dev -- tmux new -A -s main"
+}
+
+# The expected POSIX single-quoted form of $1 (the test's own encoder, so a
+# bug in the delivered one cannot define its own expectation).
+_squote() {
+    local _s="$1"
+    _s="${_s//\'/\'\\\'\'}"
+    printf "'%s'\n" "${_s}"
+}
+
+@test "#175r1: a distrobox path containing SPACES is quoted and still runs as one word" {
+    _assert_ghostty_quoting 'dir with spaces'
+}
+
+@test "#175r1: a distrobox path containing \$ and backticks is quoted, and the substitutions never run" {
+    local _sentinel_a="${BATS_TEST_TMPDIR}/pwned-dollar" _sentinel_b="${BATS_TEST_TMPDIR}/pwned-backtick"
+    _assert_ghostty_quoting "d \$(touch ${_sentinel_a}) \`touch ${_sentinel_b}\` \${HOME}"
+    assert [ ! -e "${_sentinel_a}" ]
+    assert [ ! -e "${_sentinel_b}" ]
+}
+
+@test "#175r1: a distrobox path containing DOUBLE QUOTES is quoted and still runs" {
+    _assert_ghostty_quoting 'dir "quoted" name'
+}
+
+@test "#175r1: the ~/.tmux.conf default-command quotes the path for the shell inside tmux's own quoting" {
+    local _sentinel="${BATS_TEST_TMPDIR}/pwned-tmux"
+    local _dir="${BATS_TEST_TMPDIR}/qt/d \$(touch ${_sentinel}) \"q\"" _dbx _inner
+    mkdir -p "${_dir}"
+    _dbx="${_dir}/distrobox"
+    _fake_distrobox "${_dbx}"
+    run "${SETUP}" --terminal ghostty --distrobox "${_dbx}" --tmux host
+    assert_success
+    # tmux owns the outer single quotes (a tmux single-quoted value is fully
+    # literal: no escape, no expansion), the shell owns the inner word.
+    run cat "${TMUX_CONF}"
+    assert_line "set -g default-command '$(_dquote "${_dbx}") enter dev'"
+    # The shell half really runs that binary, and runs nothing else.
+    _inner="$(sed -n "s/^set -g default-command '\(.*\)'\$/\1/p" "${TMUX_CONF}")"
+    run env -i PATH=/usr/bin:/bin /bin/sh -c "${_inner}"
+    assert_success
+    run cat "${_dbx}.log"
+    assert_line "enter dev"
+    assert [ ! -e "${_sentinel}" ]
+}
+
+# The expected POSIX double-quoted form of $1 (the test's own encoder).
+_dquote() {
+    local _s="$1"
+    _s="${_s//\\/\\\\}"
+    _s="${_s//\`/\\\`}"
+    _s="${_s//\$/\\\$}"
+    _s="${_s//\"/\\\"}"
+    printf '"%s"\n' "${_s}"
+}
+
+# A tmux single-quoted value has no escape at all, so a path holding a
+# single quote cannot be encoded in the ~/.tmux.conf block. That is refused
+# rather than written half-broken; the ghostty-only shape still accepts it.
+@test "#175r1: --tmux host refuses a distrobox path holding a single quote instead of writing a broken tmux.conf" {
+    local _dir="${BATS_TEST_TMPDIR}/qq/it's here" _dbx
+    mkdir -p "${_dir}"
+    _dbx="${_dir}/distrobox"
+    _fake_distrobox "${_dbx}"
+    run "${SETUP}" --terminal ghostty --distrobox "${_dbx}" --tmux host
+    assert_failure 1
+    assert_line "[ERROR] distrobox: ${_dbx} holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
+    assert [ ! -e "${TMUX_CONF}" ]
+    assert [ ! -e "${CONFIG}" ]
+}
+
+@test "#175r1: --tmux inside accepts a single quote in the path (the ghostty body can encode it)" {
+    _assert_ghostty_quoting "it's here"
 }
 
 # The whole point of the absolute path: the command survives the reduced
@@ -637,7 +816,7 @@ _block_count() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "${DISTROBOX} enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev -- tmux new -A -s main"
 
     # Control: this PATH has no distrobox by name.
     run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev -- tmux new -A -s main'

@@ -32,9 +32,9 @@ setup() {
     DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
     DISTROBOX="${DBX_DIR}/distrobox"
     mkdir -p "${DBX_DIR}"
-    cat >"${DISTROBOX}" <<EOF
+    cat >"${DISTROBOX}" <<'EOF'
 #!/bin/sh
-printf '%s\n' "\$*" >>"${DISTROBOX}.log"
+printf '%s\n' "$*" >>"$0.log"
 EOF
     chmod +x "${DISTROBOX}"
     PATH="${DBX_DIR}:${PATH}"
@@ -65,7 +65,7 @@ EOF
     assert_line "tmux: inside (user)"
     assert_line "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
-    run grep -F "command = ${DISTROBOX} enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run grep -F "command = '${DISTROBOX}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
     assert_success
 }
 
@@ -145,7 +145,7 @@ EOF
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "${DISTROBOX} enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev -- tmux new -A -s main"
 
     # Control: that environment really cannot reach this distrobox by name,
     # so the case below cannot pass by accident.
@@ -165,8 +165,8 @@ EOF
     run "${SETUP}" --terminal ghostty --tmux host
     assert_success
     local _cmd
-    _cmd="$(sed -n 's/^set -g default-command "\(.*\)"$/\1/p' "${TMUX_CONF}")"
-    assert_equal "${_cmd}" "${DISTROBOX} enter dev"
+    _cmd="$(sed -n "s/^set -g default-command '\\(.*\\)'\$/\\1/p" "${TMUX_CONF}")"
+    assert_equal "${_cmd}" "\"${DISTROBOX}\" enter dev"
     run env -i PATH=/usr/bin:/bin HOME="${HOME}" /bin/sh -c "${_cmd}"
     assert_success
     run cat "${DISTROBOX}.log"

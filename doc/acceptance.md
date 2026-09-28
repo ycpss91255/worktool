@@ -450,8 +450,9 @@ prereq-ok
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
     `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
     `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
-    `command` 恰為 `<distrobox 絕對路徑> enter dev -- tmux new -A -s main`
-    (issue #175:受管 command 寫絕對路徑,斷言同時 refute 裸名字那一行);
+    `command` 恰為 `'<distrobox 絕對路徑>' enter dev -- tmux new -A -s main`
+    (issue #175:受管 command 寫**已 quote 的**絕對路徑,斷言同時 refute 裸名字
+    那一行;另有一案以含空白與 `$(...)` 的安裝路徑證明 quoting 真的擋得住);
     `--tmux host` / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
     之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
     斷言不是恆真。
