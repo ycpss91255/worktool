@@ -19,30 +19,27 @@
 #
 # HOW (every claim below is OBSERVED; nothing is asserted by fiat)
 #   One Xvfb display and one private session bus (dbus-run-session), one
-#   config with `gtk-single-instance = true`, and a command that names
-#   itself the moment it begins and could only write to DONE if it ever
-#   RETURNED:
-#
-#     /bin/sh -c "echo $$ ><STARTED>/w.$$ && sleep infinity && echo done ><DONE>/d.$$"
-#
-#   The start file is named after - and holds - the pid of the shell
-#   running that window's command, so the fixture can later ask those
-#   exact processes whether they are still alive. `&&`, not `;`: a start
-#   file that could not be written must stop the chain rather than leave
-#   a blocked command with no evidence that it began. So the file count
-#   under STARTED is the number of window commands that really started,
-#   and any file under DONE would mean one of them returned (none can:
-#   `sleep infinity` is in the way).
+#   config with `gtk-single-instance = true`, and a window payload
+#   (<WORKDIR>/window-command.sh) that names itself the moment it begins
+#   and could only write to DONE if it ever RETURNED: it records its pid
+#   and its starttime, then blocks in `sleep infinity`. Every step of it
+#   is failure-checked, so a payload that could not leave its evidence
+#   never goes on to block. The file count under STARTED is therefore the
+#   number of window commands that really started, and any file under
+#   DONE would mean one of them returned (none can).
 #
 #     1. start the primary in the background and wait (bounded) until
 #        STARTED holds exactly one file, i.e. its command really began;
-#     2. run ghostty a second time under its own `timeout`; the instant it
-#        returns, take a timestamp and read the STARTED count AGAIN -
-#        still 1 means the work it just reported success for had not even
-#        begun;
+#     2. run ghostty a second time under its own `timeout`; IMMEDIATELY
+#        AFTER it returns, take a timestamp and then read the STARTED
+#        count. Neither reading is an atomic snapshot of the return
+#        instant - the timestamp is taken first and a couple of
+#        subshells run in between - so a forwarded command that started
+#        very fast would be counted here and turn the case RED. The
+#        sampling delay can only cost a pass, never buy one;
 #     3. wait (bounded) for STARTED to reach two, and compare that second
 #        file's mtime with the timestamp from step 2, so the ORDER
-#        (returned first, command started after) is measured and not
+#        (timestamp first, command's own mtime after) is measured and not
 #        merely assumed from the order the script happens to look in;
 #     4. count this run's window commands that are still running, check
 #        the primary ghostty process is still there, and count DONE.
@@ -51,11 +48,12 @@
 #     PRIMARY=up|died-before-ready|not-ready-in-<n>s
 #     SECOND_RC=<status of the second launch>
 #     SECOND_ELAPSED=<seconds it took>
-#     STARTED_AT_RETURN=<window commands begun when it returned>
+#     STARTED_AT_RETURN=<window commands begun, read just after it returned>
 #     FORWARDED_STARTED=yes|no        (a SECOND window command began)
 #     FORWARDED_AFTER_RETURN=yes|no   (measured: its mtime > return time)
 #     FORWARDED_DELAY_MS=<ms between the return and that command starting>
-#     RUNNING_COMMANDS=<this run's window commands still alive, by pid>
+#     RUNNING_COMMANDS=<this run's window commands still running: pid
+#                       present, same starttime, not a zombie>
 #     PRIMARY_WRAPPER_ALIVE=yes|no    (the ghostty process that owns the
 #                                      bus name, NOT the command's shell -
 #                                      the STARTED count is what proves a
@@ -104,6 +102,7 @@ mkdir -p "${WORKDIR}" || _die "cannot create ${WORKDIR}"
 STARTED="${WORKDIR}/started"
 DONE="${WORKDIR}/done"
 CONFIG_HOME="${WORKDIR}/config"
+WINDOW_CMD="${WORKDIR}/window-command.sh"
 mkdir -p "${STARTED}" "${DONE}" "${CONFIG_HOME}/ghostty" \
     || _die "cannot create the scenario directories under ${WORKDIR}"
 
@@ -125,7 +124,16 @@ _done_count() { find "${DONE}" -maxdepth 1 -type f | wc -l; }
 # width and prints all nine digits - a silent 10^6 error if the format
 # string is trusted to truncate. Dividing in the shell is correct on both
 # implementations.
-_epoch_ms() { printf '%s\n' "$(( ${1} / 1000000 ))"; }
+#
+# The `date` output is validated before it is used: a `date` without `%N`
+# echoes the letter back and the arithmetic would fail in a confusing
+# place, so this fails loudly with its own message instead. `10#` keeps a
+# leading zero from being read as octal.
+_epoch_ms() {
+    [[ "$1" =~ ^[0-9]{18,20}$ ]] \
+        || _die "date did not return epoch nanoseconds (got '$1'); does this date support %N?"
+    printf '%s\n' "$(( 10#$1 / 1000000 ))"
+}
 _now_ms() { _epoch_ms "$(date +%s%N)"; }
 _mtime_ms() { _epoch_ms "$(date -r "$1" +%s%N)"; }
 
@@ -136,23 +144,45 @@ _newest_started() {
         | sort -n | tail -n 1 | cut -d' ' -f2-
 }
 
+# Print `<state> <starttime>` for pid $1 out of /proc/<pid>/stat: the
+# field after the `) ` is the state (field 3) and the 20th after it is
+# starttime (field 22). Splitting after the last `) ` is what keeps a
+# comm containing spaces or parentheses from shifting every field.
+_proc_state_start() {
+    local _line _rest
+    _line="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+    _rest="${_line##*") "}"
+    [[ "${_rest}" != "${_line}" ]] || return 1
+    printf '%s %s\n' \
+        "$(printf '%s\n' "${_rest}" | cut -d' ' -f1)" \
+        "$(printf '%s\n' "${_rest}" | cut -d' ' -f20)"
+}
+
 # How many of THIS run's window commands are still running, asked of the
-# command processes themselves: every start file is named after - and
-# holds - the pid of the shell running that window's command, so this
-# probes those exact pids rather than scanning for a pattern.
+# command processes themselves. Every start file holds the pid of the
+# shell running that window's command AND that process's starttime, so a
+# command counts here only when the pid still exists, its starttime is
+# the SAME one it recorded (a recycled pid has a later one) and it is not
+# a zombie. `kill -0` alone would accept both of those.
 #
 # Process-name or command-line scanning would be wrong here twice over:
 # inside the system-real runner the nested engine's containers share the
 # runner's PID namespace (the deliberate-hang case leaves a `sleep` in the
 # dev box), and `pgrep -f` matches any command line quoting the pattern,
-# including the harness that launched this script.
+# including the harness that launched this script. Both were measured
+# returning 4 and 5 where the answer is 2.
 _running_commands() {
-    local _f _pid _n=0
+    local _f _pid _start _now _state _now_start _n=0
     for _f in "${STARTED}"/w.*; do
         [[ -f "${_f}" ]] || continue
-        _pid="$(cat "${_f}")"
-        [[ "${_pid}" =~ ^[0-9]+$ ]] || continue
-        kill -0 "${_pid}" 2>/dev/null && _n=$(( _n + 1 ))
+        read -r _pid _start <"${_f}" || continue
+        [[ "${_pid}" =~ ^[0-9]+$ && "${_start}" =~ ^[0-9]+$ ]] || continue
+        _now="$(_proc_state_start "${_pid}")" || continue
+        _state="${_now%% *}"
+        _now_start="${_now##* }"
+        [[ "${_state}" != "Z" ]] || continue
+        [[ "${_now_start}" == "${_start}" ]] || continue
+        _n=$(( _n + 1 ))
     done
     printf '%s\n' "${_n}"
 }
@@ -169,12 +199,38 @@ _wait_started() {
     return 0
 }
 
+# The payload every ghostty window runs. It lives in a file rather than
+# inline in the config so the config `command` is all single words: no
+# quoting of `$`, `(` or `)` has to survive ghostty's own argv splitting.
+#
+# It records its pid AND its starttime (field 22 of /proc/<pid>/stat), so
+# the checker can tell this process from a later one that reused the pid.
+# Every step is failure-checked: a payload that could not leave its
+# evidence must not go on to block, or the scenario would have a running
+# command with nothing to show for it.
+_write_window_command() {
+    cat >"${WINDOW_CMD}" <<EOF
+#!/bin/sh
+# Written by ghostty_single_instance.sh; one instance per ghostty window.
+set -u
+_line="\$(cat /proc/\$\$/stat)" || exit 1
+_rest="\${_line##*") "}"
+[ "\${_rest}" != "\${_line}" ] || exit 1
+_start="\$(printf '%s\n' "\${_rest}" | cut -d' ' -f20)"
+[ -n "\${_start}" ] || exit 1
+printf '%s %s\n' "\$\$" "\${_start}" >"${STARTED}/w.\$\$" || exit 1
+sleep infinity || exit 1
+printf 'done\n' >"${DONE}/d.\$\$"
+EOF
+    chmod +x "${WINDOW_CMD}"
+}
+
 # `gtk-single-instance = true` is the whole point: this is the setting the
 # real test config pins to false.
 _write_config() {
     cat >"${CONFIG_HOME}/ghostty/config" <<EOF
 gtk-single-instance = true
-command = /bin/sh -c "echo \$\$ >${STARTED}/w.\$\$ && sleep infinity && echo done >${DONE}/d.\$\$"
+command = /bin/sh ${WINDOW_CMD}
 EOF
 }
 
@@ -207,13 +263,17 @@ _scenario() {
     local _start="${SECONDS}" _rc _return_ms _at_return
     timeout -k "${KILL_GRACE}" "${SECOND_TIMEOUT}" ghostty >/dev/null 2>&1
     _rc=$?
-    # Taken BEFORE anything else, so they describe the moment of return.
+    # Taken as soon as possible after the return, timestamp first. These
+    # are not an atomic snapshot of the return instant (see the header):
+    # a forwarded command quick enough to slip into this gap would push
+    # the count to 2 and fail the case, so the delay can only cost a
+    # pass.
     _return_ms="$(_now_ms)"
     _at_return="$(_started_count)"
     echo "SECOND_RC=${_rc}"
     echo "SECOND_ELAPSED=$(( SECONDS - _start ))"
-    # 1 means: at the instant this launch reported success, the command it
-    # asked for had not begun at all.
+    # 1 means: just after this launch reported success, the command it
+    # asked for had still not begun.
     echo "STARTED_AT_RETURN=${_at_return}"
 
     # Now let the forwarded window's command appear, and MEASURE when it
@@ -235,7 +295,8 @@ _scenario() {
         echo "FORWARDED_DELAY_MS=0"
     fi
 
-    # Both window commands are still there, asked of their own pids ...
+    # Both window commands are still running - pid present, starttime
+    # unchanged, not a zombie ...
     echo "RUNNING_COMMANDS=$(_running_commands)"
 
     # ... and the ghostty process that owns the bus name outlived the
@@ -267,6 +328,7 @@ if [[ "${MODE}" == "scenario" ]]; then
 fi
 
 _reset_dirs || _die "cannot reset ${STARTED} / ${DONE}"
+_write_window_command
 _write_config
 xvfb-run -a dbus-run-session -- bash "${SELF}" "${SCENARIO_FLAG}" "${WORKDIR}" \
     || _die "the single-instance scenario did not complete"
