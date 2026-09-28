@@ -41,9 +41,29 @@
 #     see a setup that regressed to the bare `distrobox` name (#175), a
 #     decision that stopped being logged, or a removal that reported a
 #     block it never touched. _expect_lines pins each documented line to
-#     exactly one occurrence, and 3.3 measures that a block EXISTED before
-#     it asserts the block is gone - "removed" is vacuously true of a
-#     config that never had one.
+#     exactly one WHOLE line - never a substring, so a line that merely
+#     CONTAINS the documented text (`config: <H>/... (not found - defaults
+#     shown...)`) is a failure, not a match - and 3.3 measures that a block
+#     EXISTED before it asserts the block is gone; "removed" is vacuously
+#     true of a config that never had one.
+#   - The USER's content is judged too. Every managed file a check writes is
+#     seeded with recognisable user lines BEFORE setup runs, and after every
+#     write, rewrite and removal the file's non-block lines must still be
+#     exactly those lines, in that order. Without this, a setup that
+#     OVERWROTE the whole ghostty config instead of replacing its managed
+#     block in place would leave every count, every status and every
+#     assertion about the block itself green - while destroying the
+#     configuration the user came with.
+#   - Every documented STATE is pinned to the case it belongs to. 3.6 does
+#     not ask "is there a `distrobox:` line"; it asks for the one of the
+#     four published texts that state must produce, and then that the four
+#     cases produced four DIFFERENT texts - a status.sh degraded to a single
+#     branch answers all four cases identically and is caught.
+#   - A state file the report claims to have written is READ BACK. 3.2
+#     compares $XDG_CONFIG_HOME/worktool/config against its documented
+#     content, line for line and nothing else: `[INFO] wrote: ...` is the
+#     product's own claim, and a `status` run on defaults reproduces the
+#     rest of the report whether or not the file is there.
 #
 # Usage: ./script/verify/setup.sh [--allow-real-box] [ITEM...]
 #   ./script/verify/setup.sh            # every item, in order, stop at the first failure
@@ -120,12 +140,58 @@ ITEM_T=""  # the item's own mktemp directory (scratch; never counted)
 ITEM_H=""  # the throwaway HOME inside it
 LAST_RC=0  # the exit status of the last command _run_norm ran
 LAST_OUT="" # the normalised text _run_norm last printed, so it can be JUDGED
+DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 
 # The managed command doc/acceptance.md publishes, in its normalised form.
 # Items 3.1, 3.2 and 3.3 all name it: a quoted ABSOLUTE distrobox path is the
 # whole of issue #175, and it lives in the TEXT - no exit code and no file
 # count can see a regression back to the bare name.
 MANAGED_CMD="command = '<D>' enter dev -- tmux new -A -s main"
+
+# The markers that delimit the managed block, spelled out here rather than
+# sourced from lib/enter.sh: enter.sh is the code under test, so a degraded
+# stripper must not get to answer the question "what did the user have?".
+VERIFY_BLOCK_BEGIN='# BEGIN worktool managed block (just box setup; do not edit)'
+VERIFY_BLOCK_END='# END worktool managed block'
+
+# The user content every managed file is seeded with before setup runs.
+# Real ghostty configs and ~/.tmux.conf files are not empty; these stand in
+# for whatever the user already had, and they must come out the far side of
+# every write, rewrite and removal unchanged and in this order.
+GHOSTTY_USER_LINES=(
+    '# worktool acceptance: user content that must survive every write'
+    'font-size = 13'
+    'window-padding-x = 7'
+)
+TMUX_USER_LINES=(
+    '# worktool acceptance: user content that must survive every write'
+    'set -g history-limit 12345'
+    'set -g mouse on'
+)
+
+# The whole documented content of the ONE state file `just box setup` writes
+# for the default run, in file order. 3.2 reads the file back and compares
+# it against exactly this: the `[INFO] wrote:` line is the product talking
+# about itself, and `status` prints the same four decisions from its own
+# defaults when the file is missing entirely.
+STATE_FILE_LINES=(
+    '# worktool auto-enter state: written by "just box setup", read by "just box status".'
+    'auto-enter=yes'
+    'auto-enter.source=default'
+    'terminal=ghostty'
+    'terminal.source=default'
+    'tmux=inside'
+    'tmux.source=default'
+    'box=dev'
+    'box.source=default'
+)
+
+# The four `distrobox:` texts doc/acceptance.md publishes for item 3.6, in
+# the order the item stages them. `runnable` (the fifth) belongs to 3.2.
+DISTROBOX_STATE_MOVED="distrobox: <H>/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+DISTROBOX_STATE_BARE="distrobox: distrobox (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)"
+DISTROBOX_STATE_ON_PATH="distrobox: <D> (on PATH; no managed block records one)"
+DISTROBOX_STATE_NONE="distrobox: not found on PATH (install distrobox, then re-run: just box setup)"
 
 # Normalisation replacements (empty = not applied), so the printed lines
 # are the same on every machine whatever the install locations are.
@@ -343,7 +409,8 @@ _show_norm_file() {
     return 0
 }
 
-# Every documented line of the block just printed is there, EXACTLY ONCE.
+# Every documented line of the block just printed is there, EXACTLY ONCE,
+# AS A WHOLE LINE.
 #
 # This is the assertion an exit code and a file count cannot make. `just box
 # setup` exiting 0 having written two files says a command ran; only the text
@@ -351,7 +418,14 @@ _show_norm_file() {
 # "Exactly once" rather than "at least once" for the same reason the tier
 # checks of gate.sh compare sets: a run that printed a decision twice, or
 # logged one file twice under two names, has not made the documented claim.
-# $1 is the item id used in messages; the rest are literal substrings.
+#
+# Whole line rather than substring, because the degraded forms of these
+# lines are the documented text PLUS something: `config: <H>/.config/
+# worktool/config (not found - defaults shown; run: just box setup)` is the
+# report for a state file that was never written, and it contains the line
+# that means the opposite. Every expectation below is a complete line of
+# doc/acceptance.md, so anchoring costs nothing and closes that hole.
+# $1 is the item id used in messages; the rest are literal whole lines.
 _expect_lines() {
     local _item="$1"
     shift
@@ -359,14 +433,34 @@ _expect_lines() {
     for _pat in "$@"; do
         _n=0
         while IFS= read -r _line; do
-            [[ "${_line}" == *"${_pat}"* ]] && _n=$((_n + 1))
+            [[ "${_line}" == "${_pat}" ]] && _n=$((_n + 1))
         done <<<"${LAST_OUT}"
         if [[ "${_n}" -ne 1 ]]; then
-            _fail "${_item}: expected exactly one line containing '${_pat}', found ${_n}"
+            _fail "${_item}: expected exactly one line equal to '${_pat}', found ${_n}"
             _bad=1
         fi
     done
     return "${_bad}"
+}
+
+# The block just printed is EXACTLY these lines, in this order, and holds
+# nothing else. Used where the document publishes a whole file rather than a
+# set of lines within a larger report (3.2's state file): "every documented
+# line is present" cannot see a tenth line the document never mentioned.
+# $1 is the item id, $2 names what is being compared, the rest are the lines.
+_expect_only_lines() {
+    local _item="$1" _what="$2"
+    shift 2
+    local _want
+    _want="$(printf '%s\n' "$@")"
+    [[ "${LAST_OUT}" == "${_want}" ]] && return 0
+    _fail "${_item}: ${_what} is not the documented content.
+--- expected ($# line(s)) ---
+${_want}
+--- got ---
+${LAST_OUT}
+---"
+    return 1
 }
 
 # No line of the block just printed contains $2. Used where the document
@@ -380,6 +474,103 @@ _refute_line() {
     [[ "${_n}" -eq 0 ]] && return 0
     _fail "${_item}: expected no line containing '${_pat}', found ${_n}"
     return 1
+}
+
+# --- The user's own content --------------------------------------------------
+#
+# A managed file belongs to the USER; `just box setup` only rents a block
+# inside it. Nothing else in this script can see the difference between
+# "replaced the managed block in place" and "overwrote the whole file with
+# the managed block": the block is there either way, the counts are the same
+# either way, `status` says `present` either way - and the second one has
+# just deleted the user's ghostty configuration. So each item that writes
+# seeds the file first and asserts afterwards, at every point where the
+# product touched it.
+
+# Seed the managed files of the current item with the user content above.
+# Called instead of a bare mkdir, BEFORE the first setup run, so the check
+# below is about content the product found and had to keep.
+_seed_user_content() {
+    local _item="$1"
+    mkdir -p -- "${ITEM_H}/.config/ghostty" || {
+        _fail "${_item}: cannot create ${ITEM_H}/.config/ghostty"
+        return 1
+    }
+    printf '%s\n' "${GHOSTTY_USER_LINES[@]}" >"${ITEM_H}/.config/ghostty/config" || {
+        _fail "${_item}: cannot seed the throwaway ghostty config with user content"
+        return 1
+    }
+    printf '%s\n' "${TMUX_USER_LINES[@]}" >"${ITEM_H}/.tmux.conf" || {
+        _fail "${_item}: cannot seed the throwaway ~/.tmux.conf with user content"
+        return 1
+    }
+    return 0
+}
+
+# Print the lines of file $1 that lie OUTSIDE every managed block.
+#
+# Deliberately not enter_block_strip: lib/enter.sh is the thing being
+# accepted here, and a stripper that empties the file would otherwise get to
+# report that the file was empty all along.
+_user_lines_of() {
+    local _file="$1" _line _skip=0
+    [[ -f "${_file}" && -r "${_file}" ]] || {
+        _fail "cannot read ${_file} to check the user content survived"
+        return 1
+    }
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        if [[ "${_line}" == "${VERIFY_BLOCK_BEGIN}" ]]; then
+            _skip=1
+            continue
+        fi
+        if [[ "${_line}" == "${VERIFY_BLOCK_END}" ]]; then
+            _skip=0
+            continue
+        fi
+        [[ "${_skip}" -eq 1 ]] && continue
+        printf '%s\n' "${_line}"
+    done <"${_file}"
+    return 0
+}
+
+# Set USER_CONTENT_STATE to `intact` / `LOST` / `UNREADABLE` for file $4.
+# $1 item, $2 when (the point in the sequence), $3 label, $4 file, rest the
+# lines the file was seeded with.
+USER_CONTENT_STATE=""
+_check_user_content() {
+    local _item="$1" _when="$2" _label="$3" _file="$4"
+    shift 4
+    local _want _got
+    _want="$(printf '%s\n' "$@")"
+    USER_CONTENT_STATE="UNREADABLE"
+    _got="$(_user_lines_of "${_file}")" || return 1
+    if [[ "${_got}" == "${_want}" ]]; then
+        USER_CONTENT_STATE="intact"
+        return 0
+    fi
+    USER_CONTENT_STATE="LOST"
+    _fail "${_item}: ${_when}: ${_label} lost the user's own content.
+Outside the managed block, ${_file} must still hold exactly the $# seeded
+line(s), in this order:
+${_want}
+--- it holds ---
+${_got}
+---"
+    return 1
+}
+
+# Both managed files at one point in the sequence, reported on ONE stdout
+# line so the item's printed block shows WHERE the check ran.
+_expect_user_content() {
+    local _item="$1" _when="$2" _bad=0 _g _t
+    _check_user_content "${_item}" "${_when}" ghostty \
+        "${ITEM_H}/.config/ghostty/config" "${GHOSTTY_USER_LINES[@]}" || _bad=1
+    _g="${USER_CONTENT_STATE}"
+    _check_user_content "${_item}" "${_when}" tmux.conf \
+        "${ITEM_H}/.tmux.conf" "${TMUX_USER_LINES[@]}" || _bad=1
+    _t="${USER_CONTENT_STATE}"
+    printf 'user-content %s: ghostty=%s tmux.conf=%s\n' "${_when}" "${_g}" "${_t}"
+    return "${_bad}"
 }
 
 # Print the number of REGULAR files under directory $1.
@@ -523,10 +714,10 @@ _item_3_1() {
     _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
     NORM_G="${_g}"
     NORM_D="${_d}"
-    mkdir -p -- "${ITEM_H}/.config/ghostty" || {
-        _fail "3.1: cannot create ${ITEM_H}/.config/ghostty"
-        return 1
-    }
+    # The managed files exist and hold the user's own content before the dry
+    # run: "nothing was written" is a claim about a file that was already
+    # there, and the file count alone cannot see a dry run that rewrote one.
+    _seed_user_content 3.1 || return 1
 
     _before="$(_count_files "${ITEM_H}")" || return 1
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
@@ -547,6 +738,7 @@ _item_3_1() {
     printf 'rc=%s\n' "${LAST_RC}"
     _after="$(_count_files "${ITEM_H}")" || return 1
     printf 'files %s->%s\n' "${_before}" "${_after}"
+    _expect_user_content 3.1 after-dry-run || _bad=1
 
     if [[ "${LAST_RC}" -ne 0 ]]; then
         _fail "3.1: just box setup --dry-run exited ${LAST_RC}, expected 0"
@@ -565,15 +757,14 @@ _item_3_1() {
 _item_3_2() {
     _require_tools env just sed mktemp || return 1
     _item_begin || return 1
-    local _g _d _setup_rc _status_rc _ghostty _bad=0
+    local _g _d _setup_rc _status_rc _ghostty _state _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
     _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
     NORM_G="${_g}"
     NORM_D="${_d}"
-    mkdir -p -- "${ITEM_H}/.config/ghostty" || {
-        _fail "3.2: cannot create ${ITEM_H}/.config/ghostty"
-        return 1
-    }
+    # The write lands in files the user already owns, so the check can tell
+    # "put a block in it" apart from "replaced it with a block".
+    _seed_user_content 3.2 || return 1
 
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     _run_norm "${_env[@]}" just box setup || return 1
@@ -589,6 +780,20 @@ _item_3_2() {
         || _bad=1
     _setup_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_setup_rc}"
+
+    # The state file is READ BACK before `status` is asked about it. Without
+    # this the item trusts `[INFO] wrote: ...`, which is the product's own
+    # word for what it did; and a `status` run with no state file at all
+    # prints the same four decisions from its defaults, so the rest of the
+    # report cannot tell the difference either.
+    _state="${ITEM_H}/.config/worktool/config"
+    if _show_norm_file "${_state}"; then
+        _expect_only_lines 3.2 "${_state}" "${STATE_FILE_LINES[@]}" || _bad=1
+    else
+        _fail "3.2: setup reported writing ${_state}, but left no readable file there"
+        _bad=1
+    fi
+
     _run_norm "${_env[@]}" just box status || return 1
     # The document publishes the whole eight-line report, including the last
     # line's verdict on whether the recorded distrobox still runs.
@@ -618,6 +823,8 @@ _item_3_2() {
         _fail "3.2: setup left no readable ${_ghostty}; there is no managed block to show"
         _bad=1
     fi
+    # The block went INTO the user's files; it did not replace them.
+    _expect_user_content 3.2 after-write || _bad=1
 
     if [[ "${_setup_rc}" -ne 0 ]]; then
         _fail "3.2: just box setup exited ${_setup_rc}, expected 0"
@@ -642,10 +849,9 @@ _item_3_3() {
     _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
     NORM_G="${_g}"
     NORM_D="${_d}"
-    mkdir -p -- "${ITEM_H}/.config/ghostty" || {
-        _fail "3.3: cannot create ${ITEM_H}/.config/ghostty"
-        return 1
-    }
+    # Removal is where overwriting is most tempting and most destructive:
+    # "the block is gone" is also true of a config that was truncated.
+    _seed_user_content 3.3 || return 1
 
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     # The removal case has nothing to remove unless the first run wrote a
@@ -654,6 +860,7 @@ _item_3_3() {
         _fail "3.3: the first (default) just box setup failed, so there is no managed block to remove"
         return 1
     }
+    _expect_user_content 3.3 after-write || _bad=1
     # "The block was removed" is vacuously true of a config that never had
     # one, so the precondition is MEASURED and printed before the removal
     # runs: without this line, a setup that silently stopped writing the
@@ -687,6 +894,9 @@ _item_3_3() {
 
     _blocks="$(_count_matching 'BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
     printf 'blocks=%s\n' "${_blocks}"
+    # `blocks=0` is equally true of a config the removal emptied, so the
+    # user's own lines are counted again on the far side of the removal.
+    _expect_user_content 3.3 after-removal || _bad=1
 
     if [[ "${LAST_RC}" -ne 0 ]]; then
         _fail "3.3: just box setup --auto-enter no exited ${LAST_RC}, expected 0"
@@ -829,10 +1039,18 @@ _item_3_5() {
 # own exit status and the number of lines it wrote to stderr - `stderr=0`
 # is what proves the restricted-PATH case lost DISTROBOX and not one of
 # status's own tools.
+#
+# Each case names the ONE published text its state must produce. "There is a
+# `distrobox:` line, status exited 0 and wrote nothing to stderr" is true of
+# a status.sh degraded to a single branch that always answers `runnable` -
+# the exact shape #177 exists to prevent - so the four documented texts are
+# pinned to the four states, and the item then checks they really were four
+# different answers.
 _item_3_6() {
     _require_tools env just sed grep ln chmod mktemp || return 1
     _item_begin || return 1
     local _d _t _p _bad=0
+    DISTROBOX_LINES_SEEN=()
     _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return 1
     NORM_D="${_d}"
     mkdir -p -- "${ITEM_H}/.config/ghostty" "${ITEM_H}/bin" || {
@@ -864,7 +1082,7 @@ _item_3_6() {
         _fail "3.6: cannot remove the throwaway distrobox"
         return 1
     }
-    _status_distrobox_line || _bad=1
+    _status_distrobox_line "${DISTROBOX_STATE_MOVED}" || _bad=1
 
     # (2) an older setup's bare name (this version refuses to write one,
     # so the only way to reach the state is to stage it by hand).
@@ -873,14 +1091,14 @@ _item_3_6() {
         _fail "3.6: cannot stage the bare-name managed block"
         return 1
     }
-    _status_distrobox_line || _bad=1
+    _status_distrobox_line "${DISTROBOX_STATE_BARE}" || _bad=1
 
     # (3) no managed block, but a distrobox on PATH.
     "${_env[@]}" just box setup --auto-enter no >/dev/null 2>&1 || {
         _fail "3.6: setup --auto-enter no failed, so a managed block is still recorded"
         return 1
     }
-    _status_distrobox_line || _bad=1
+    _status_distrobox_line "${DISTROBOX_STATE_ON_PATH}" || _bad=1
 
     # (4) neither: a PATH holding exactly the six tools this status path
     # uses and no distrobox, so the one thing missing is the one under
@@ -892,19 +1110,53 @@ _item_3_6() {
             return 1
         }
     done
-    _status_distrobox_line "PATH=${ITEM_H}/bin" || _bad=1
+    _status_distrobox_line "${DISTROBOX_STATE_NONE}" "PATH=${ITEM_H}/bin" || _bad=1
 
+    _expect_distinct_distrobox_lines || _bad=1
     return "${_bad}"
 }
 
-# One 3.6 case: run `status` (with the extra env assignments "$@"), print
-# its `distrobox:` line, its own exit status and how many lines it wrote to
-# stderr beyond just's recipe echo.
+# The four cases answered with four DIFFERENT texts.
+#
+# Per-case equality already refuses a status.sh with one branch; this is the
+# claim the document actually makes - "其餘四種狀態各印一次" - stated where
+# it can be read, so a future case added with a copy-pasted expectation is
+# caught as well.
+_expect_distinct_distrobox_lines() {
+    local _n="${#DISTROBOX_LINES_SEEN[@]}" _i _j _distinct=0
+    if [[ "${_n}" -ne 4 ]]; then
+        _fail "3.6: ${_n} of the four documented distrobox states produced a line, expected 4"
+        printf 'distinct-states=%s/4\n' "${_n}"
+        return 1
+    fi
+    for ((_i = 0; _i < _n; _i++)); do
+        for ((_j = 0; _j < _i; _j++)); do
+            if [[ "${DISTROBOX_LINES_SEEN[_i]}" == "${DISTROBOX_LINES_SEEN[_j]}" ]]; then
+                _fail "3.6: case $((_i + 1)) and case $((_j + 1)) printed the SAME line, so the two states are not being told apart: ${DISTROBOX_LINES_SEEN[_i]}"
+                _distinct=1
+            fi
+        done
+    done
+    if [[ "${_distinct}" -ne 0 ]]; then
+        printf 'distinct-states=REPEATED/4\n'
+        return 1
+    fi
+    printf 'distinct-states=4/4\n'
+    return 0
+}
+
+# One 3.6 case: run `status` (with the extra env assignments "$@" after the
+# expected line "$1"), print its `distrobox:` line, its own exit status and
+# how many lines it wrote to stderr beyond just's recipe echo.
 #
 # status runs into files rather than into a pipe, so the status reported is
 # status's own; the `distrobox:` line must actually be there (a run that
-# printed none has nothing to judge, and must not read as a pass).
+# printed none has nothing to judge, and must not read as a pass) AND it
+# must be the text doc/acceptance.md publishes for THIS state - the whole
+# line, not a line that happens to start `distrobox:`.
 _status_distrobox_line() {
+    local _want="$1"
+    shift
     local _out="${ITEM_T}/status.out" _err="${ITEM_T}/status.err"
     local _rc _grc _line _shown _stderr
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
@@ -923,11 +1175,19 @@ _status_distrobox_line() {
     fi
     _shown="$(_norm_line "${_line}")" || return 1
     printf '%s\n' "${_shown}"
+    DISTROBOX_LINES_SEEN+=("${_shown}")
 
     _stderr="$(_count_not_matching '^\./script/box/status\.sh' "${_err}")" || return 1
     printf 'rc=%s stderr=%s\n' "${_rc}" "${_stderr}"
 
     local _bad=0
+    if [[ "${_shown}" != "${_want}" ]]; then
+        _fail "3.6: this state must report
+  ${_want}
+but status reported
+  ${_shown}"
+        _bad=1
+    fi
     if [[ "${_rc}" -ne 0 ]]; then
         _fail "3.6: status exited ${_rc}, expected 0"
         _bad=1
