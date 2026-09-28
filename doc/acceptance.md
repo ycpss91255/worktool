@@ -485,10 +485,10 @@ prereq-ok
 - 驗收工具:`gh`(已登入,2.2 / 5.1 / 6.1-6.3 用)、`jq`(5.1 / 6.1 用)、`awk` / `grep` / `sed` / `cut` / `find` / `mktemp` / `sha256sum`(coreutils + awk);5(實機)另需 host 有 `distrobox` 與 `ghostty`。1-4、6 不需 distrobox。
 
 每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數(#176 item 8:上一輪 2.2 的 9 行 here-string 函式在維護者的執行器裡被改寫過才失敗,同一份文字在本 repo 內重跑是 10/10 綠)。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk`,文件這一行只剩一次呼叫。
-本 PR 只改 `doc/acceptance.md` 與它的檢查程式 `doc/evidence/`(不動產品程式);要驗的程式全在 main。想順便看本 PR 的清單差異就 checkout 本 PR 分支。
+本 PR(#157)只改 `doc/acceptance.md` 與它的檢查程式 `doc/evidence/`(不動產品程式);**要驗的產品程式全在 main,但 2.2 與 2.4 呼叫的 `doc/evidence/` 只在本 PR 分支上**,所以下面直接 clone 本 PR 分支 `m3/5-acceptance`(= main 加這兩份文件變更)。clone 成 main 的話,2.2 會是 `No such file or directory`(rc=127)、2.4 會是 `awk: fatal: cannot open source file`。
 
 ```bash
-git clone https://github.com/ycpss91255/worktool.git && cd worktool   # main 已含 M3 全部 sub-issue PR(#152-#156、#165-#169)與 #177
+git clone --branch m3/5-acceptance https://github.com/ycpss91255/worktool.git && cd worktool   # 該分支已 merge main,含 M3 全部 sub-issue PR(#152-#156、#165-#169)與 #177
 just --version && docker info >/dev/null && echo repo-dep-ok
 gh auth status >/dev/null 2>&1 && jq --version >/dev/null && echo verify-tool-ok
 ```
@@ -498,6 +498,8 @@ just 1.53.0        (版本不限)
 repo-dep-ok
 verify-tool-ok
 ```
+
+(`git clone` 自己會往 stderr 印 `Cloning into 'worktool'...` 之類的進度,不列在上面;判準是後面三行。`gh` 沒登入時只會少掉 `verify-tool-ok` 且整段 rc=1)
 
 3 與 5 的輸出含機器相關路徑,下面以 `<H>`(臨時 HOME)、`<D>`(host 上 distrobox 執行檔的絕對路徑,例如 `/usr/local/bin/distrobox`)代表。
 
@@ -614,7 +616,7 @@ verify-tool-ok
       ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
       rc=0
       ```
-      (hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`)
+      (`host=` 是那一輪盒子的容器 id、`FORWARDED_DELAY_MS=` 與 `fish=` 是實測值,每次都不一樣,不要照字面比;判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、兩段都 `rc=0`。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`)
     - 驗收方式
       ```bash
       ( set -o pipefail; just test integration 2>&1 | grep -E '^ok .*ghostty|^not ok' ); echo rc=$?
@@ -953,7 +955,8 @@ verify-tool-ok
             [ "$(readlink "$B/$n.config")" = "$(readlink "$p")" ] ||
               { printf '[FAIL] %s: backup link target differs from the original\n' "$n" >&2; exit 1; }
             printf '%s=symlink\n%s.link=%s\n' "$n" "$n" "$(readlink "$p")" >>"$B/manifest.partial"
-            # setup writes THROUGH the link, so the pointed-to file must be backed up too
+            # today setup REPLACES the link with a regular file, but a future one
+            # could write through it, so back the pointed-to file up either way
             if [ -e "$p" ]; then
               tp=$(readlink -f "$p") || { printf '[FAIL] %s: cannot resolve the link target\n' "$n" >&2; exit 1; }
               [ -f "$tp" ] || { printf '[FAIL] %s: link target %s is not a regular file -- handle it by hand\n' "$n" "$tp" >&2; exit 1; }
@@ -1131,7 +1134,8 @@ verify-tool-ok
               [ "$(readlink "$p")" = "$(wt_field "$B" "$n.link")" ] || bad "$n: restored link points at $(readlink "$p")"
               tp=$(wt_field "$B" "$n.tpath")
               if [ -n "$tp" ]; then
-                # setup wrote through the link, so put the pointed-to file back byte for byte
+                # put the pointed-to file back byte for byte, whether setup wrote
+                # through the link or replaced it (cp -a on an untouched file is a no-op)
                 cp -a "$B/$n.target" "$tp" || { bad "$n: restoring link target $tp failed"; continue; }
                 [ "$(wt_sha "$tp")" = "$(wt_field "$B" "$n.tsha")" ] || bad "$n: link target $tp not restored byte for byte"
               fi
@@ -1195,10 +1199,15 @@ verify-tool-ok
       revalidate=1
       [FAIL] a distrobox named 'dev' already exists -- refusing. Step 3 deletes the box this run creates, so rename or remove yours by hand first.
       52-rc=1
+      restore-rc=0
+      restore-ok=1
+      blocks=0
+      leftover-dirs=0
       dev-untouched=1 (this run never created a box; leaving every box alone)
+      backup-removed=1
       still-there=dev
       ```
-      (5.1 在 `just box assemble` 之前就拒絕,所以沒有 `preexisting-dev=0`、也沒有 `cleanup-rc`;5.2 步驟 2 在 `revalidate=1` 之後、`just box assemble` 之前拒絕,你的設定沒被動過,步驟 3 只是把備份收掉並印 `dev-untouched=1`)
+      (5.1 在 `just box assemble` 之前就拒絕,所以沒有 `preexisting-dev=0`、也沒有 `cleanup-rc`;5.2 步驟 2 在 `revalidate=1` 之後、`just box assemble` 之前拒絕,你的設定沒被動過。步驟 3 仍然跑完整條還原流程 —— 六行和 5.2 正常路徑一樣,只是 `dev-gone=1` 換成 `dev-untouched=1`,因為這一輪沒有建過盒。全程沒有任何 `distrobox rm`)
     - 驗收方式
       ```bash
       distrobox create --name dev --image ubuntu:24.04 --yes >/dev/null
@@ -1262,14 +1271,28 @@ verify-tool-ok
       #22 median-ms:1 runc:1
       #148 lts-only:1 arm-runner:1
       #21 default-enter:1 log:1
+      rc=0
       ```
-      (查詢用 `--paginate`:留言超過 100 則之後才不會因為只看第一頁而漏掉)
+      (查詢用 `--paginate`:留言超過 100 則之後才不會因為只看第一頁而漏掉。任何一格不是 `1`、或任何一次 `gh` 查詢失敗(該格印 `gh-failed`)都讓整段 `rc=1` —— 舊版把 `gh` 的失敗當成「找不到」而印 `0` 卻仍 rc=0,和 2.2 / 6.1 / 6.3 的 fail-closed 不一致)
     - 驗收方式
       ```bash
-      c() { gh api "repos/ycpss91255/worktool/issues/$1/comments" --paginate --jq '.[].body | select(startswith("[claude]"))' | grep -c "$2" | awk '{print ($1>=1)?1:0}'; }
-      echo "#22 median-ms:$(c 22 'median=[0-9][0-9]*\(\.[0-9][0-9]*\)\? ms') runc:$(c 22 '維持 docker + 預設 runc')"
-      echo "#148 lts-only:$(c 148 '只用 LTS') arm-runner:$(c 148 'ubuntu-24.04-arm')"
-      echo "#21 default-enter:$(c 21 '預設 = 直接進盒') log:$(c 21 '印 log')"
+      (
+        # 1 = 找到、0 = 沒找到、gh-failed = 查詢本身失敗;三者只有 1 算過
+        c() {
+          local body n
+          body=$(gh api "repos/ycpss91255/worktool/issues/$1/comments" --paginate \
+                   --jq '.[].body | select(startswith("[claude]"))') || { echo gh-failed; return; }
+          n=$(printf '%s\n' "$body" | grep -c "$2")
+          [ "$n" -ge 1 ] && echo 1 || echo 0
+        }
+        a=$(c 22 'median=[0-9][0-9]*\(\.[0-9][0-9]*\)\? ms'); b=$(c 22 '維持 docker + 預設 runc')
+        d=$(c 148 '只用 LTS'); e=$(c 148 'ubuntu-24.04-arm')
+        f=$(c 21 '預設 = 直接進盒'); g=$(c 21 '印 log')
+        echo "#22 median-ms:$a runc:$b"
+        echo "#148 lts-only:$d arm-runner:$e"
+        echo "#21 default-enter:$f log:$g"
+        for v in "$a" "$b" "$d" "$e" "$f" "$g"; do [ "$v" = 1 ] || exit 1; done
+      ); echo rc=$?
       ```
   - [ ] 6.3 codex:#156、#165-#169 的最後一則 [codex] 留言判定行是「可合併」;#152-#155 是配額恢復後的補複驗,最後一則 [codex] 判定「不可合併」,各自的阻擋項記錄在 follow-up issue(#163 / #164 / #162 / #161,由原 PR 上的 [claude] 留言指向),而修正該 issue 的 PR(#166 / #165 / #169 / #168)必須 Closes 正是那個 issue,且該 PR 自己的最後 [codex] 判定「可合併」
     - 預期看到資訊
