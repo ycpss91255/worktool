@@ -449,22 +449,29 @@ prereq-ok
 
 ### 通用指令
 
-前提:host 有 docker(可 `--privileged`)與 just;1-4、6 不需 distrobox;5(實機)需要 host 有 distrobox 與 ghostty。
+依賴分兩組(repo 本身不需要驗收工具):
+
+- repo 使用依賴:`docker`(可 `--privileged`)、`just`;clone 需要 `git`。
+- 驗收工具:`gh`(已登入,2.2 / 6.1-6.3 用)、`jq`(6.1 用)、`grep` / `sed` / `awk` / `find` / `mktemp`(coreutils);5(實機)另需 host 有 `distrobox` 與 `ghostty`。1-4、6 不需 distrobox。
+
+每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔。
 本 PR 只改 `doc/acceptance.md`;要驗的程式全在 main。想順便看本 PR 的清單差異就 checkout 本 PR 分支。
 
 ```bash
 git clone https://github.com/ycpss91255/worktool.git && cd worktool   # main 已含 M3 全部 sub-issue PR(#152-#156、#165-#169)
-just --version && docker info >/dev/null && echo prereq-ok
+just --version && docker info >/dev/null && echo repo-dep-ok
+gh auth status >/dev/null 2>&1 && jq --version >/dev/null && echo verify-tool-ok
 ```
 
 ```text
 just 1.53.0        (版本不限)
-prereq-ok
+repo-dep-ok
+verify-tool-ok
 ```
 
 ### 驗收項目
 
-規則:1-4 全部 `just`;5 是實機(distrobox 原生 + 開終端主觀);6 用 gh / grep 查外部證據。每個「驗收方式」區塊都可單獨複製執行(自己建立 / 清理臨時目錄)。
+規則:功能入口一律 `just`(1-4 操作 repo 的部分);5 是實機(distrobox 原生 + 開終端主觀);文件與外部證據用上面列出的驗收工具(gh / jq / grep / sed / awk / find)查。
 
 - [ ] 1. 使用者介面:box namespace 多了 bench / setup / status
   - [ ] 1.1 `just box` 列出六個動作;`just box help` 依序印四支腳本的 usage
@@ -517,17 +524,26 @@ prereq-ok
       ```bash
       just test; echo rc=$?
       ```
-  - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有 RED 證據段與 GREEN 證據段 —— 一行含 RED(不含 GREEN)或 GREEN(不含 RED)的標記,且該行不在程式碼區塊內(前面的圍欄數為偶數),其後 5 行內有一個**開頭** ``` 圍欄(實際輸出),且 RED 段在 GREEN 段之前(先失敗後通過)
+  - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有 RED 段在 GREEN 段之前,且兩段各自後面 5 行內有一個非空的程式碼區塊(只證明「有貼輸出且順序正確」,不自動判讀內容語意;內容由人看)
     - 預期看到資訊(10 行,每行 order=ok)
       ```text
       #152 order=ok
       ...
       #169 order=ok
+      rc=0
       ```
     - 驗收方式
       ```bash
-      ev() { grep -n "$2" <<<"$1" | grep -v "$3" | cut -d: -f1 | while read -r l; do nf=$(sed -n "1,${l}p" <<<"$1" | grep -c '^```'); [ $((nf % 2)) -eq 0 ] && sed -n "$((l+1)),$((l+5))p" <<<"$1" | grep -q '^```' && { echo "$l"; break; }; done | head -1; }
-      for n in 152 153 154 155 156 165 166 167 168 169; do b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body); r=$(ev "$b" RED GREEN); g=$(ev "$b" GREEN RED); printf '#%s order=%s\n' "$n" "$([ -n "$r" ] && [ -n "$g" ] && [ "$r" -lt "$g" ] && echo ok || echo BAD)"; done
+      ev() {
+        grep -n "$2" <<<"$1" | grep -v "$3" | cut -d: -f1 | while read -r l; do
+          nf=$(sed -n "1,${l}p" <<<"$1" | grep -c '^```'); [ $((nf % 2)) -eq 0 ] || continue
+          f=$(sed -n "$((l+1)),$((l+5))p" <<<"$1" | grep -n '^```' | head -1 | cut -d: -f1); [ -n "$f" ] || continue
+          body=$(sed -n "$((l+f+1)),\$p" <<<"$1" | sed -n '1,/^```/p' | sed '$d')
+          [ "$(grep -c '[^[:space:]]' <<<"$body")" -gt 0 ] || continue
+          echo "$l"; break
+        done | head -1
+      }
+      ( fail=0; for n in 152 153 154 155 156 165 166 167 168 169; do b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; fail=1; continue; }; r=$(ev "$b" RED GREEN); g=$(ev "$b" GREEN RED); s=BAD; { [ -n "$r" ] && [ -n "$g" ] && [ "$r" -lt "$g" ]; } && s=ok || fail=1; printf '#%s order=%s\n' "$n" "$s"; done; exit "$fail" ); echo rc=$?
       ```
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(每個區塊自建拋棄式 HOME,不動你的家目錄)
@@ -542,11 +558,15 @@ prereq-ok
       [INFO] dry-run: would write <H>/.config/worktool/config
       [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
       rc=0
-      absent
+      files 0->0
       ```
+      (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案)
     - 驗收方式
       ```bash
-      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run; echo rc=$?; [ -e "$H/.config/worktool/config" ] && echo written || echo absent; rm -rf "$H"
+      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+        before=$(find "$H" -type f | wc -l)
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run; echo rc=$?
+        printf 'files %s->%s\n' "$before" "$(find "$H" -type f | wc -l)" )
       ```
   - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 顯示來源與區塊
     - 預期看到資訊
@@ -574,7 +594,10 @@ prereq-ok
       ```
     - 驗收方式
       ```bash
-      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup; echo rc=$?; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; cat "$H/.config/ghostty/config"; rm -rf "$H"
+      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup; echo rc=$?
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?
+        cat "$H/.config/ghostty/config" )
       ```
   - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);受管區塊只剩零個
     - 預期看到資訊(第二次 setup 起)
@@ -592,7 +615,10 @@ prereq-ok
       ```
     - 驗收方式
       ```bash
-      H=$(mktemp -d); mkdir -p "$H/.config/ghostty"; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1; HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no; echo rc=$?; printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")"; rm -rf "$H"
+      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no; echo rc=$?
+        printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")" )
       ```
   - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
     - 預期看到資訊
@@ -613,29 +639,35 @@ prereq-ok
       ```
     - 驗收方式
       ```bash
-      H=$(mktemp -d); HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus; echo rc=$?; printf 'files=%s\n' "$(find "$H" -type f | wc -l)"; mkdir -p "$H/.config/worktool"; for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; done; rm -rf "$H"
+      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus; echo rc=$?
+        printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
+        mkdir -p "$H/.config/worktool"
+        for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; done )
       ```
 
 - [ ] 4. README 圖(draw.io,可編輯)
-  - [ ] 4.1 三張 `.drawio.svg` 無 foreignObject、內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
-    - 預期看到資訊
+  - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
+    - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)
       ```text
-      0
-      3
-      4
-      1
+      svg=3
+      foreignobject=0
+      mxfile=3
+      readme=4
+      flow-wording=1
       ```
     - 驗收方式
       ```bash
-      grep -l '<foreignObject' doc/diagram/*.drawio.svg | wc -l
-      grep -l 'content="&lt;mxfile' doc/diagram/*.drawio.svg | wc -l
-      grep -c 'doc/diagram/.*\.drawio\.svg' README.md
-      grep -c 'host 只需 docker + just' doc/diagram/flow.drawio.svg
+      printf 'svg=%s\n' "$(find doc/diagram -maxdepth 1 -name '*.drawio.svg' | wc -l)"
+      printf 'foreignobject=%s\n' "$(grep -l '<foreignObject' doc/diagram/*.drawio.svg | wc -l)"
+      printf 'mxfile=%s\n' "$(grep -l 'content="&lt;mxfile' doc/diagram/*.drawio.svg | wc -l)"
+      printf 'readme=%s\n' "$(grep -c 'doc/diagram/.*\.drawio\.svg' README.md)"
+      printf 'flow-wording=%s\n' "$(grep -c 'host 只需 docker + just' doc/diagram/flow.drawio.svg)"
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機(host 有 distrobox + ghostty;會建 dev 盒並改你的 ghostty 設定,可用 3.3 的方式還原)
-  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準;實機數字貼到 #22)
+- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定 —— 5.1 與 5.2 各自負責自己的還原:備份真實設定、驗完還原、最後 `distrobox rm -f dev`。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
+  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);數字貼到 #22;驗完移除 dev 盒
     - 預期看到資訊(assemble 的輸出略;最後幾行)
       ```text
       enter: min=.. median=.. max=.. ms
@@ -643,23 +675,41 @@ prereq-ok
       inbox: min=.. median=.. max=.. ms
       [INFO] shell median .. ms within --max-ms 300
       rc=0
+      posted=1
+      cleanup-rc=0
       ```
+      (posted >= 1 = #22 上有 host 實測的 `shell: min=.. median=.. max=.. ms` 三行數字)
     - 驗收方式
       ```bash
-      just box assemble && just box bench --runs 10 --shell 'fish -c exit' --max-ms 300; echo rc=$?
+      just box assemble >/dev/null && just box bench --runs 10 --shell 'fish -c exit' --max-ms 300; echo rc=$?
+      # 把上面三行數字貼到 #22:
+      #   gh issue comment 22 --repo ycpss91255/worktool --body '實機 bench(<你的機器>):enter/shell/inbox ... '
+      printf 'posted=%s\n' "$(gh api "repos/ycpss91255/worktool/issues/22/comments?per_page=100" --jq '.[].body' | grep -c 'shell: min=.*median=.*max=.* ms')"
+      distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
       ```
-  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令
-    - 預期看到資訊(新視窗內)
+  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完還原真實設定並移除 dev 盒
+    - 預期看到資訊(新視窗內;之後還原區塊的輸出)
       ```text
       /run/.containerenv
       fish
       main
+      restore-rc=0
+      restored=ghostty worktool
+      cleanup-rc=0
       ```
     - 驗收方式
       ```bash
-      just box setup && just box status
-      # 開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
+      # 1) 備份真實設定 + 套用
+      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=$(mktemp -d) || exit 1; echo "backup: $B"
+      for n in ghostty worktool; do [ -e "$C/$n/config" ] && cp -p "$C/$n/config" "$B/$n.config"; done
+      just box assemble >/dev/null && just box setup && just box status
+      # 2) 開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
       ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
+      # 3) 回到原本的視窗還原(受管區塊 -> 檔案 -> 盒子)
+      just box setup --auto-enter no >/dev/null; echo restore-rc=$?
+      for n in ghostty worktool; do if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config"; else rm -f "$C/$n/config"; fi; done
+      printf 'restored=%s\n' "ghostty worktool"; rm -rf "$B"
+      distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
       ```
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
@@ -671,11 +721,28 @@ prereq-ok
       ...(10 行;#153 起 amd=arm>0;nonpass 全 0;closes 全 1;total>0)
       #169 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#162
       distinct=10
+      rc=0
       ```
+      (任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等 —— rc 都是 1)
     - 驗收方式
       ```bash
-      set -o pipefail; for n in 152 153 154 155 156 165 166 167 168 169; do c=$(gh pr checks "$n" --repo ycpss91255/worktool --json name,bucket) || { echo "#$n gh-failed"; continue; }; b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; continue; }; printf '#%s total=%s nonpass=%s amd=%s arm=%s closes=%s issue=%s\n' "$n" "$(jq 'length' <<<"$c")" "$(jq '[.[] | select(.bucket != "pass")] | length' <<<"$c")" "$(jq '[.[].name | select(test("ubuntu-latest"))] | length' <<<"$c")" "$(jq '[.[].name | select(test("ubuntu-24.04-arm"))] | length' <<<"$c")" "$(grep -c '^Closes #' <<<"$b")" "$(grep -o '^Closes #[0-9]*' <<<"$b" | cut -d' ' -f2 | tr '\n' ',' | sed 's/,$//')"; done | tee /tmp/m3-61.txt
-      printf 'distinct=%s\n' "$(grep -o 'issue=#[0-9]*' /tmp/m3-61.txt | sort -u | wc -l)"
+      (
+        fail=0; seen=""
+        for n in 152 153 154 155 156 165 166 167 168 169; do
+          c=$(gh pr checks "$n" --repo ycpss91255/worktool --json name,bucket) &&
+          b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; fail=1; continue; }
+          t=$(jq 'length' <<<"$c"); np=$(jq '[.[] | select(.bucket != "pass")] | length' <<<"$c")
+          amd=$(jq '[.[].name | select(test("ubuntu-latest"))] | length' <<<"$c")
+          arm=$(jq '[.[].name | select(test("ubuntu-24.04-arm"))] | length' <<<"$c")
+          cl=$(grep -c '^Closes #' <<<"$b"); is=$(grep -o '^Closes #[0-9]*' <<<"$b" | cut -d' ' -f2 | tr '\n' ',' | sed 's/,$//')
+          printf '#%s total=%s nonpass=%s amd=%s arm=%s closes=%s issue=%s\n' "$n" "$t" "$np" "$amd" "$arm" "$cl" "$is"
+          seen="$seen $is"
+          { [ "$t" -gt 0 ] && [ "$np" -eq 0 ] && [ "$cl" -eq 1 ] && [ -n "$is" ]; } || fail=1
+          [ "$n" = 152 ] || { [ "$amd" -gt 0 ] && [ "$amd" -eq "$arm" ]; } || fail=1
+        done
+        d=$(tr ' ' '\n' <<<"$seen" | grep '^#[0-9]' | sort -u | grep -c .); printf 'distinct=%s\n' "$d"
+        [ "$fail" -eq 0 ] && [ "$d" -eq 10 ] || exit 1
+      ); echo rc=$?
       ```
   - [ ] 6.2 決策與研究都在 issue 上,且是具體結論:#22 的 [claude] 留言有實測 `median=.. ms` 與「維持 docker + 預設 runc」;#148 有「只用 LTS」與「ubuntu-24.04-arm」;#21 有「預設 = 直接進盒」與「印 log」
     - 預期看到資訊(每行數字 >= 1)
@@ -704,12 +771,27 @@ prereq-ok
       #153 blocked -> follow-up #164 fixed-by PR #165 (closes #164, mergeable) ok
       #154 blocked -> follow-up #162 fixed-by PR #169 (closes #162, mergeable) ok
       #155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok
+      rc=0
       ```
     - 驗收方式
       ```bash
       v() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
-      for n in 156 165 166 167 168 169; do printf '#%s ' "$n"; v "$n" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT; done
-      for n in 152 153 154 155; do fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u); fu=$(head -1 <<<"$fus"); prs=$(gh pr list --repo ycpss91255/worktool --state merged --search "Closes #$fu in:body" --json number,body --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number"); pr=$(head -1 <<<"$prs"); orig=$(v "$n" | grep -q '^不可合併' && echo blocked || echo UNEXPECTED); fix=$(v "$pr" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT); ok=BAD; [ "$orig" = blocked ] && [ "$fix" = mergeable ] && [ "$(wc -l <<<"$fus")" -eq 1 ] && [ "$(wc -l <<<"$prs")" -eq 1 ] && ok=ok; printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' "$n" "$orig" "$fu" "$pr" "$fu" "$fix" "$ok"; done
+      (
+        fail=0
+        for n in 156 165 166 167 168 169; do printf '#%s ' "$n"; v "$n" | grep -q '^可合併\|^mergeable' && echo mergeable || { echo NOT; fail=1; }; done
+        for n in 152 153 154 155; do
+          fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u)
+          fu=$(head -1 <<<"$fus"); [ -n "$fu" ] || { printf '#%s no-follow-up\n' "$n"; fail=1; continue; }
+          prs=$(gh pr list --repo ycpss91255/worktool --state merged --search "Closes #$fu in:body" --json number,body --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number")
+          pr=$(head -1 <<<"$prs"); [ -n "$pr" ] || { printf '#%s no-fix-pr\n' "$n"; fail=1; continue; }
+          orig=$(v "$n" | grep -q '^不可合併' && echo blocked || echo UNEXPECTED)
+          fix=$(v "$pr" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT)
+          ok=BAD
+          { [ "$orig" = blocked ] && [ "$fix" = mergeable ] && [ "$(grep -c '[0-9]' <<<"$fus")" -eq 1 ] && [ "$(grep -c '[0-9]' <<<"$prs")" -eq 1 ]; } && ok=ok || fail=1
+          printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' "$n" "$orig" "$fu" "$pr" "$fu" "$fix" "$ok"
+        done
+        exit "$fail"
+      ); echo rc=$?
       ```
 
 ## M4 host bootstrap
