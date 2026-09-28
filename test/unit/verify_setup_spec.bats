@@ -28,6 +28,26 @@
 #   Every one of those leaves the counts and the statuses exactly as a green
 #   run leaves them, so the content assertions are what fail them.
 #
+#   The third family (round 16) degrades the PRODUCT itself, on a copy of
+#   the checkout, and runs that copy's own script/verify/setup.sh. Nothing
+#   is stubbed: the output is what the degraded product really prints, and
+#   it is self-consistent -
+#
+#     enter_block_compose writes the whole ghostty config instead of
+#       replacing its managed block -> the block is there, `status` says
+#       `present`, and the user's configuration has been deleted
+#     enter_block_strip empties the file instead of removing the block ->
+#       `blocks-before=1`, `blocks=0`, and the same deletion
+#     _report_recorded_distrobox collapses to one branch -> all four of
+#       3.6's states answer `runnable`, each with rc=0 and stderr=0
+#     _config_write logs the write without writing -> `status` rebuilds the
+#       same four decisions from its defaults
+#
+#   Those are caught by seeding the managed files with the user's own
+#   content before setup runs, by reading the state file back, by pinning
+#   each of 3.6's four documented texts to the state it belongs to, and by
+#   comparing documented lines as WHOLE lines rather than substrings.
+#
 #   It also proves the environment gate: when ghostty, distrobox or just is
 #   not here, the affected item SAYS SO and exits non-zero. Nothing is
 #   skipped silently.
@@ -283,6 +303,48 @@ EOF
     chmod +x "${STUB}/just"
 }
 
+# --- The degraded-product copies ---------------------------------------------
+# The stubs above break the TOOLS a check leans on. These break the PRODUCT,
+# which is the only way to ask the question round 16 asked: does the check
+# still pass when `just box setup` / `just box status` are HONESTLY wrong -
+# changed only in the repo's own code, producing output they generate
+# themselves and that is self-consistent? Nothing is faked here: a copy of
+# the checkout is degraded and ITS script/verify/setup.sh is run, so the
+# real tree is never touched and the check has to catch the product on the
+# content alone.
+
+# A copy of everything `just box` and `just verify setup` need, under the
+# case's own tmpdir.
+_repo_copy() {
+    local _dst="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_dst}"
+    cp -a "${REPO_ROOT}/justfile" "${REPO_ROOT}/lib" "${REPO_ROOT}/script" \
+        "${REPO_ROOT}/box" "${_dst}/"
+    printf '%s\n' "${_dst}"
+}
+
+# Insert the lines on stdin into file $2 immediately before its first line
+# equal to $1, so a later definition of a shell function shadows the one the
+# file ships. Pure bash: the image's sed is busybox, and a multi-line `s`
+# replacement is not something to depend on here. The result is copied back
+# INTO the original file rather than renamed over it, so the script keeps
+# its executable bit.
+_insert_before() {
+    local _anchor="$1" _file="$2" _frag _line _done=0
+    _frag="$(cat)"
+    : >"${_file}.new"
+    while IFS= read -r _line || [ -n "${_line}" ]; do
+        if [ "${_done}" -eq 0 ] && [ "${_line}" = "${_anchor}" ]; then
+            printf '%s\n' "${_frag}" >>"${_file}.new"
+            _done=1
+        fi
+        printf '%s\n' "${_line}" >>"${_file}.new"
+    done <"${_file}"
+    [ "${_done}" -eq 1 ] || return 1
+    cat "${_file}.new" >"${_file}"
+    rm -f "${_file}.new"
+}
+
 # --- Control ------------------------------------------------------------------
 
 @test "control: with every tool behaving, all six items pass (so the failure cases below are not vacuous)" {
@@ -370,7 +432,7 @@ EOF
     _stub_just_plausible 0
     run "${VERIFY}" 3.1
     assert_failure
-    assert_output --partial "expected exactly one line containing '[INFO] terminal detected: ghostty (ghostty executable <G>)', found 0"
+    assert_output --partial "expected exactly one line equal to '[INFO] terminal detected: ghostty (ghostty executable <G>)', found 0"
 }
 
 @test "3.1: a mktemp that prints a real directory but exits 1 cannot pass" {
@@ -443,6 +505,60 @@ EOF
     assert_output --partial "normalising"
 }
 
+@test "3.2: a setup that overwrites the whole ghostty config instead of replacing its managed block cannot pass (round 16 gap 1)" {
+    # enter_block_compose degraded to "print the block, forget the file".
+    # Every count, every exit code, the whole `status` report and the block
+    # itself stay exactly as a correct run leaves them - and the ghostty
+    # configuration the user came with has been deleted. Only the user
+    # content the item seeds BEFORE setup can see it.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_compose() {
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "$2" "${ENTER_BLOCK_END}"
+}
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.2
+    assert_failure
+    # The degraded product really did run and really did write the right
+    # block; only the user's lines are missing.
+    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)"
+    assert_line "command = '<D>' enter dev -- tmux new -A -s main"
+    assert_line "ghostty: <H>/.config/ghostty/config (managed block: present)"
+    assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.2 PASS"
+}
+
+@test "3.2: a setup that logs writing the state file without writing it cannot pass (round 16 gap 3)" {
+    # `[INFO] wrote: <H>/.config/worktool/config` is the product's own word
+    # for what it did, and `status` prints the same four decisions from its
+    # defaults when the file is missing - so the file is read back, and the
+    # `config:` line is compared as a WHOLE line (the degraded report's
+    # `... (not found - defaults shown ...)` CONTAINS the documented text).
+    local _repo
+    _repo="$(_repo_copy)"
+    _insert_before 'setup_run() {' "${_repo}/script/box/setup.sh" <<'EOF'
+_config_write() {
+    if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
+        log_info "dry-run: would write ${CONFIG}"
+        return 0
+    fi
+    log_info "wrote: ${CONFIG}"
+}
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.2
+    assert_failure
+    # setup ran, exited 0 and said it wrote the file; nothing but reading it
+    # back can tell that it did not.
+    assert_line "[INFO] wrote: <H>/.config/worktool/config"
+    assert_line "rc=0"
+    assert_output --partial "but left no readable file there"
+    assert_output --partial \
+        "expected exactly one line equal to 'config: <H>/.config/worktool/config', found 0"
+    refute_output --partial "3.2 PASS"
+}
+
 # --- 3.3 ----------------------------------------------------------------------
 
 @test "3.3: a just that prints the documented removal lines but exits 1 cannot pass" {
@@ -512,6 +628,26 @@ EOF
     assert_failure
     assert_line "blocks-before=1"
     assert_output --partial "expected no line containing '[INFO] distrobox:'"
+}
+
+@test "3.3: a removal that empties the ghostty config instead of stripping its managed block cannot pass (round 16 gap 1)" {
+    # enter_block_strip degraded to "print nothing", so the removal writes an
+    # empty file. `blocks-before=1`, `blocks=0`, rc=0 and every removal line
+    # are all exactly what a correct removal produces; the user's own lines
+    # are what is gone, and they are checked on both sides of the removal so
+    # the write is cleared before the removal is blamed.
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_block_strip() { :; }
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.3
+    assert_failure
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    assert_line "user-content after-removal: ghostty=LOST tmux.conf=intact"
+    assert_line "blocks-before=1"
+    assert_line "blocks=0"
+    refute_output --partial "3.3 PASS"
 }
 
 @test "3.3: a grep -c that answers 0 but exits 2 cannot pass (blocks=0 must mean the file was read)" {
@@ -602,6 +738,25 @@ EOF
     run "${VERIFY}" 3.6
     assert_failure
     assert_output --partial "[FAIL]"
+}
+
+@test "3.6: a status.sh whose recorded-distrobox branch always answers runnable cannot pass (round 16 gap 2)" {
+    # The four states collapsed into one. Every case still prints a line
+    # starting `distrobox:`, still exits 0 and still writes nothing to
+    # stderr - which is all the item used to ask for. What it asks for now
+    # is the ONE published text each state must produce.
+    local _repo
+    _repo="$(_repo_copy)"
+    _insert_before 'status_run() {' "${_repo}/script/box/status.sh" <<'EOF'
+_report_recorded_distrobox() {
+    printf 'distrobox: %s (recorded in a managed block: runnable)\n' "$1"
+}
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.6
+    assert_failure
+    assert_line "distrobox: <H>/bin/distrobox (recorded in a managed block: runnable)"
+    assert_output --partial "recorded in a managed block: NOT RUNNABLE"
+    refute_output --partial "3.6 PASS"
 }
 
 @test "3.6: a grep -cv that answers 0 but exits 2 cannot pass (stderr=0 must mean stderr was read)" {
