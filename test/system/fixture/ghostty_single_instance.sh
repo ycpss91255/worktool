@@ -63,6 +63,12 @@
 #
 # Usage: ghostty_single_instance.sh <workdir>
 #
+# Two self-check modes exist for the fast test tier (no display, no bus,
+# no ghostty needed), driven by test/unit/ghostty_fixture_spec.bats:
+#   ghostty_single_instance.sh --check-workdir <workdir>
+#   ghostty_single_instance.sh --check-epoch-ms <nanoseconds>
+# Each runs one guard and exits with its verdict, creating nothing.
+#
 # Every wait in here is bounded, and the whole script is additionally
 # wrapped in `timeout` by its caller: it can fail, it cannot hang.
 #
@@ -90,26 +96,46 @@ _die() {
 SCENARIO_FLAG="--scenario"
 SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 
+# Two more modes exist ONLY so the guards below can be tested without a
+# display, a session bus or a real ghostty: they run one check and exit
+# with its verdict. test/unit/ghostty_fixture_spec.bats drives them.
+CHECK_WORKDIR_FLAG="--check-workdir"
+CHECK_EPOCH_FLAG="--check-epoch-ms"
+
 MODE="outer"
-if [[ "${1:-}" == "${SCENARIO_FLAG}" ]]; then
-    MODE="scenario"
-    shift
+case "${1:-}" in
+    "${SCENARIO_FLAG}")      MODE="scenario"; shift ;;
+    "${CHECK_WORKDIR_FLAG}") MODE="check-workdir"; shift ;;
+    "${CHECK_EPOCH_FLAG}")   MODE="check-epoch"; shift ;;
+esac
+
+# --check-epoch-ms takes a value, not a workdir: serve it before the
+# workdir plumbing below runs.
+if [[ "${MODE}" == "check-epoch" ]]; then
+    _EPOCH_ARG="${1:-}"
+    [[ -n "${_EPOCH_ARG}" ]] \
+        || _die "usage: ghostty_single_instance.sh ${CHECK_EPOCH_FLAG} <nanoseconds>"
 fi
 
 WORKDIR="${1:-}"
-[[ -n "${WORKDIR}" ]] || _die "usage: ghostty_single_instance.sh <workdir>"
+if [[ "${MODE}" != "check-epoch" ]]; then
+    [[ -n "${WORKDIR}" ]] || _die "usage: ghostty_single_instance.sh <workdir>"
+fi
 
-mkdir -p "${WORKDIR}" || _die "cannot create ${WORKDIR}"
 STARTED="${WORKDIR}/started"
 DONE="${WORKDIR}/done"
 CONFIG_HOME="${WORKDIR}/config"
 WINDOW_CMD="${WORKDIR}/window-command.sh"
-mkdir -p "${STARTED}" "${DONE}" "${CONFIG_HOME}/ghostty" \
-    || _die "cannot create the scenario directories under ${WORKDIR}"
 
-export XDG_CONFIG_HOME="${CONFIG_HOME}"
-export LIBGL_ALWAYS_SOFTWARE=1
-export GDK_BACKEND=x11
+# The two check modes only inspect values; they create nothing and export
+# nothing (a refused path must not leave a directory behind).
+if [[ "${MODE}" == "outer" || "${MODE}" == "scenario" ]]; then
+    mkdir -p "${STARTED}" "${DONE}" "${CONFIG_HOME}/ghostty" \
+        || _die "cannot create the scenario directories under ${WORKDIR}"
+    export XDG_CONFIG_HOME="${CONFIG_HOME}"
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export GDK_BACKEND=x11
+fi
 
 # --- observation helpers -----------------------------------------------------
 
@@ -131,14 +157,31 @@ _done_count() { find "${DONE}" -maxdepth 1 -type f | wc -l; }
 # place, so this fails loudly with its own message instead. `10#` keeps a
 # leading zero from being read as octal.
 #
-# EXACTLY 19 digits. Epoch nanoseconds have been 19 digits since 2001 and
-# stay so until 2286; every 20-digit value is above 2^63-1, where bash
-# arithmetic WRAPS instead of refusing - accepting those would trade a
-# loud failure for a silently wrong millisecond.
+# EXACTLY 19 digits, and no larger than 2^63-1. Epoch nanoseconds have
+# been 19 digits since 2001 and cross 2^63-1 in 2262 - so the digit count
+# alone is NOT a range check: 9223372036854775808 .. 9999999999999999999
+# are 19 digits and would WRAP in bash arithmetic (measured:
+# 9223372036854775808 came out as -9223372036854 ms).
+#
+# The bound is checked on the two halves of the string, each of which
+# fits comfortably in 64 bits, so the check itself can never wrap - and
+# the millisecond value is taken by dropping the last SIX digits (ns ->
+# ms) rather than dividing the full value, so no arithmetic ever touches
+# a 19-digit number.
+_EPOCH_NS_MAX_HI='9223372036'   # first 10 digits of 2^63-1
+_EPOCH_NS_MAX_LO='854775807'    # last 9
 _epoch_ms() {
+    local _hi _lo
     [[ "$1" =~ ^[0-9]{19}$ ]] \
-        || _die "date did not return 19-digit epoch nanoseconds (got '$1'): either this date does not support %N, or the value is outside what 64-bit shell arithmetic can hold"
-    printf '%s\n' "$(( 10#$1 / 1000000 ))"
+        || _die "date did not return 19-digit epoch nanoseconds (got '$1'): does this date support %N?"
+    _hi="${1:0:10}"
+    _lo="${1:10}"
+    if (( 10#${_hi} > 10#${_EPOCH_NS_MAX_HI} )) \
+        || { (( 10#${_hi} == 10#${_EPOCH_NS_MAX_HI} )) \
+            && (( 10#${_lo} > 10#${_EPOCH_NS_MAX_LO} )); }; then
+        _die "epoch nanoseconds '$1' exceed 2^63-1, which 64-bit shell arithmetic cannot hold"
+    fi
+    printf '%s\n' "$(( 10#${1:0:13} ))"
 }
 _now_ms() { _epoch_ms "$(date +%s%N)"; }
 _mtime_ms() { _epoch_ms "$(date -r "$1" +%s%N)"; }
@@ -235,33 +278,57 @@ EOF
 # `gtk-single-instance = true` is the whole point: this is the setting the
 # real test config pins to false.
 #
-# The payload path is DOUBLE QUOTED. ghostty splits `command` into argv
-# itself and honours double quotes (verified against ghostty 1.3.0: with
-# a workdir containing a space, the unquoted form is torn into three
-# arguments and the launch dies on its timeout, the quoted form runs);
-# an unquoted path would silently work only for whitespace-free
-# workdirs, and this fixture takes any <workdir>. _check_workdir refuses
-# the characters quoting alone cannot carry.
+# The payload path is SINGLE QUOTED.
+#
+# A `command` without the `direct:` prefix is a SHELL command line in
+# ghostty 1.3.0: the string is handed to `/bin/sh -c`, so it goes through
+# a second round of parsing that config-level quoting has to survive.
+# Measured against the ghostty in the runner image, with the payload
+# writing to a fixed path so only the path handoff was under test:
+#
+#   form                        space    $ in path   backtick in path
+#   direct:, unquoted           BROKEN   -           -
+#   shell, double quoted        ok       BROKEN      BROKEN (executed)
+#   shell, single quoted        ok       ok          ok
+#
+# `direct:` skips the shell but does no quoting at all, so it cannot
+# carry a workdir with a space (the launch dies on its timeout); double
+# quotes let `$` expand and a backtick RUN - a path-shaped injection.
+# Single quotes carry all three, which is what this uses. The one
+# character single quoting cannot carry is the single quote itself;
+# _check_workdir refuses it, along with the others that would break out
+# of, or terminate, the quoted run.
 _write_config() {
     cat >"${CONFIG_HOME}/ghostty/config" <<EOF
 gtk-single-instance = true
-command = /bin/sh "${WINDOW_CMD}"
+command = /bin/sh '${WINDOW_CMD}'
 EOF
 }
 
-# Refuse a workdir whose path cannot survive ghostty's argv splitting
-# even when quoted: a double quote would end the quoted run, a backslash
-# is an escape, and a newline would end the config line. Whitespace IS
-# supported (the quoting above handles it) - this is about the cases
-# that would otherwise produce a config that parses into the wrong argv
-# and fail somewhere far away.
+# Refuse a workdir whose path cannot be handed to ghostty safely.
+#
+# A single quote ends the quoted run and a newline ends the config line:
+# either would produce a config that parses into some other command.
+# `$`, a backtick, a double quote and a backslash are all carried
+# literally INSIDE single quotes - they are refused anyway, as defence in
+# depth: they are exactly what turns dangerous the moment the quoting
+# form changes, and nothing this fixture is pointed at needs them.
+# Whitespace IS supported (that is what the quoting is for).
+#
+# Each character gets its own message, so a refusal says which one.
 _check_workdir() {
+    [[ "${WINDOW_CMD}" != *"'"* ]] \
+        || _die "workdir path must not contain a single quote: ${WORKDIR}"
+    [[ "${WINDOW_CMD}" != *$'\n'* ]] \
+        || _die "workdir path must not contain a newline: ${WORKDIR}"
+    [[ "${WINDOW_CMD}" != *'$'* ]] \
+        || _die "workdir path must not contain a dollar sign: ${WORKDIR}"
+    [[ "${WINDOW_CMD}" != *'`'* ]] \
+        || _die "workdir path must not contain a backtick: ${WORKDIR}"
     [[ "${WINDOW_CMD}" != *'"'* ]] \
         || _die "workdir path must not contain a double quote: ${WORKDIR}"
     [[ "${WINDOW_CMD}" != *\\* ]] \
         || _die "workdir path must not contain a backslash: ${WORKDIR}"
-    [[ "${WINDOW_CMD}" != *$'\n'* ]] \
-        || _die "workdir path must not contain a newline: ${WORKDIR}"
 }
 
 # Start from nothing, so a re-run against the same workdir cannot inherit
@@ -351,6 +418,17 @@ _scenario() {
     wait "${_primary}" 2>/dev/null
     return 0
 }
+
+if [[ "${MODE}" == "check-workdir" ]]; then
+    _check_workdir
+    printf 'workdir accepted: %s\n' "${WORKDIR}"
+    exit 0
+fi
+
+if [[ "${MODE}" == "check-epoch" ]]; then
+    _epoch_ms "${_EPOCH_ARG}"
+    exit 0
+fi
 
 if [[ "${MODE}" == "scenario" ]]; then
     _scenario
