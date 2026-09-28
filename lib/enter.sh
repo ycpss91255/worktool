@@ -14,8 +14,9 @@
 #
 # Decisions (the keys of the state file) and their defaults:
 #   auto-enter  yes|no        default yes
-#   terminal    ghostty|none  default ghostty when <config dir>/ghostty or
-#                             ~/.config/ghostty exists, else none
+#   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is
+#                             on PATH, or (secondary) a ghostty config dir
+#                             exists; else none
 #   tmux        inside|host   default inside
 #   box         <name>        default dev
 #   enter_keys                -> prints the four keys, one per line
@@ -23,6 +24,27 @@
 #   enter_choices <key>       -> prints the allowed values (`a|b`), empty for box
 #   enter_expected <key>      -> the allowed values in human form (messages)
 #   enter_value_ok <key> <v>  -> 0 when <v> is an allowed value of <key>
+#
+# Executables the decisions depend on (issue #175):
+#   enter_which <name>        -> the ABSOLUTE path PATH resolves, else 1
+#   enter_terminal_detect     -> `<value> <reason>`: the terminal default and
+#                                the basis of it, for the decision log
+#   enter_distrobox_program   -> the distrobox a managed command must name:
+#                                the absolute path, else 1 (the caller
+#                                refuses the run; there is no bare-name
+#                                fallback - see the function comment)
+#
+# Shell quoting (issue #175 round 1). BOTH managed bodies are shell SOURCE,
+# not argv: ghostty runs a `command` without a `direct:` prefix through
+# `/bin/sh -c`, and tmux runs `default-command` the same way. An install
+# path holding a space or a shell metacharacter would otherwise be split
+# into words or change what the command means.
+#   enter_sh_squote <s>       -> $s as a single-quoted POSIX shell word
+#   enter_sh_dquote <s>       -> $s as a double-quoted POSIX shell word
+#   enter_first_word <s>      -> the first shell word of $s, decoded
+#   enter_body_distrobox <b>  -> the distrobox a managed block body names
+#   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
+#   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
 # State file: `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
@@ -60,16 +82,193 @@ enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
 enter_tmux_conf() { printf '%s/.tmux.conf\n' "${HOME}"; }
 
+# --- Executables the decisions depend on (issue #175) ------------------------
+
+# Print the ABSOLUTE path of executable $1 as the CURRENT PATH resolves it;
+# return 1 when there is none. `command -v` also answers for shell
+# functions, aliases and builtins, and returns a RELATIVE path when the
+# PATH entry that matched was relative - none of those can be written into
+# a terminal profile, so only a real, absolute, executable file is taken.
+enter_which() {
+    local _path
+    _path="$(command -v -- "$1" 2>/dev/null)" || return 1
+    [[ -n "${_path}" && "${_path}" == /* && -f "${_path}" && -x "${_path}" ]] \
+        || return 1
+    printf '%s\n' "${_path}"
+}
+
+# The terminal default AND the basis of it, as `<value> <reason>` (the
+# value up to the first space, the reason after it), so the decision log
+# can say why.
+#
+# The PRIMARY signal is the ghostty EXECUTABLE (issue #175): a clean
+# machine has /usr/bin/ghostty and no ~/.config/ghostty yet, and judging on
+# the config dir alone resolved such a machine to `none` and wrote no
+# terminal profile at all - the M3 real-machine acceptance failed exactly
+# there. A config dir under XDG_CONFIG_HOME or ~/.config (the two places
+# ghostty itself reads) stays a SECONDARY signal, for a ghostty that is
+# installed but not on this PATH.
+enter_terminal_detect() {
+    local _exe _dir
+    if _exe="$(enter_which ghostty)"; then
+        printf 'ghostty ghostty executable %s\n' "${_exe}"
+        return 0
+    fi
+    for _dir in "$(enter_config_dir)/ghostty" "${HOME}/.config/ghostty"; do
+        if [[ -d "${_dir}" ]]; then
+            printf 'ghostty no ghostty executable on PATH; config dir %s\n' "${_dir}"
+            return 0
+        fi
+    done
+    printf 'none no ghostty executable on PATH and no ghostty config dir\n'
+}
+
+# The distrobox program a managed command must name: the ABSOLUTE path the
+# current PATH resolves. Returns 1, printing nothing, when there is none.
+#
+# WHY ABSOLUTE (issue #175): a terminal started from the desktop inherits
+# the systemd user manager's environment, not the user's interactive
+# shell's, and that PATH routinely lacks ~/.local/bin - where distrobox's
+# own installer puts it. A bare `distrobox` in the managed command died
+# there with `/bin/sh: 1: distrobox: not found`.
+#
+# WHY THERE IS NO BARE-NAME FALLBACK (issue #175 round 1): writing the bare
+# name when nothing resolves hands the user exactly the configuration the
+# real machine failed on - a window that opens and closes. setup.sh knows
+# at that moment that the command cannot work, so it refuses the run and
+# says what to do (install distrobox, or name one with --distrobox).
+#
+# WHY THE SYMLINK IS KEPT: a distrobox reached through a symlink keeps the
+# symlink path. That is the name the user (or their package manager)
+# installed, and an upgrade replaces the target behind it, so dereferencing
+# would pin a path that can disappear. Upstream's dispatcher realpath()s
+# $0 before locating its distrobox-* siblings, so being invoked through the
+# link is safe.
+enter_distrobox_program() {
+    enter_which distrobox
+}
+
+# --- Shell quoting (issue #175 round 1) --------------------------------------
+
+# $1 as a POSIX shell word in SINGLE quotes: every character is literal, and
+# an embedded single quote is closed, escaped and reopened ('\''). This is
+# the only form that is safe for arbitrary text, so it is what the ghostty
+# managed command uses.
+enter_sh_squote() {
+    local _s="$1"
+    _s="${_s//\'/\'\\\'\'}"
+    printf "'%s'\n" "${_s}"
+}
+
+# $1 as a POSIX shell word in DOUBLE quotes: inside "..." only \ ` $ " are
+# special, so exactly those four are backslash-escaped (the backslash
+# first, or the escapes would be escaped again).
+#
+# Used where an OUTER layer already owns the single quote: the ~/.tmux.conf
+# managed block is `set -g default-command '<shell command>'`, and a tmux
+# single-quoted value is fully literal - no escape, no expansion - which
+# makes it the one tmux form whose content needs no second encoding. The
+# price is that a path holding a single quote cannot be delivered through
+# it at all; setup.sh refuses that case rather than writing a broken file.
+enter_sh_dquote() {
+    local _s="$1"
+    _s="${_s//\\/\\\\}"
+    _s="${_s//\`/\\\`}"
+    _s="${_s//\$/\\\$}"
+    _s="${_s//\"/\\\"}"
+    printf '"%s"\n' "${_s}"
+}
+
+# 0 when $1 can be written into a managed block at all (issue #175 round
+# 2): no newline and no carriage return.
+#
+# Shell quoting makes a valid WORD out of any text, but both managed files
+# are LINE-BASED - ghostty reads its config line by line, and so does tmux.
+# A path holding a newline therefore splits the managed body across two
+# lines, and ghostty rejects the whole file with `unknown field` - after
+# setup had already written it and exited 0. There is no encoding that
+# fixes this on both sides, so such a path is refused instead.
+enter_path_single_line() {
+    [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]]
+}
+
+# $1 with every newline / carriage return shown as `\n` / `\r`, so a path
+# holding one can still be named in a ONE-LINE diagnostic.
+enter_show_control() {
+    local _s="$1"
+    _s="${_s//$'\r'/\\r}"
+    _s="${_s//$'\n'/\\n}"
+    printf '%s\n' "${_s}"
+}
+
+# The FIRST shell word of $1, decoded: a single-quoted word ('...', with
+# '\'' for an embedded quote), a double-quoted word ("...", with backslash
+# escapes), or - for a block an earlier worktool wrote - a bare word up to
+# the first space.
+enter_first_word() {
+    local _s="$1" _out="" _c _esc="'\\''"
+    case "${_s}" in
+        "'"*)
+            _s="${_s#\'}"
+            while [[ -n "${_s}" ]]; do
+                _c="${_s:0:1}"
+                if [[ "${_c}" == "'" ]]; then
+                    [[ "${_s:0:4}" == "${_esc}" ]] || break
+                    _out+="'"
+                    _s="${_s:4}"
+                    continue
+                fi
+                _out+="${_c}"
+                _s="${_s:1}"
+            done
+            ;;
+        '"'*)
+            _s="${_s#\"}"
+            while [[ -n "${_s}" ]]; do
+                _c="${_s:0:1}"
+                [[ "${_c}" == '"' ]] && break
+                if [[ "${_c}" == "\\" ]]; then
+                    _out+="${_s:1:1}"
+                    _s="${_s:2}"
+                    continue
+                fi
+                _out+="${_c}"
+                _s="${_s:1}"
+            done
+            ;;
+        *) _out="${_s%% *}" ;;
+    esac
+    printf '%s\n' "${_out}"
+}
+
+# The distrobox program recorded in managed-block body $1, or nothing when
+# the body names none. setup.sh writes exactly two bodies that name one:
+#   command = '<distrobox>' enter <box> -- tmux new -A -s main
+#   set -g default-command '"<distrobox>" enter <box>'
+# (the tmux-on-host ghostty body, `command = tmux new -A -s main`, names
+# none). The unquoted / double-quoted-outer shapes an earlier worktool
+# wrote are still decoded, so a block a user already has keeps reporting.
+# status.sh reads this back to say whether that path still runs.
+enter_body_distrobox() {
+    local _body="$1" _rest _prog
+    case "${_body}" in
+        'command = '*)               _rest="${_body#command = }" ;;
+        "set -g default-command '"*) _rest="${_body#set -g default-command \'}" ;;
+        'set -g default-command "'*) _rest="${_body#set -g default-command \"}" ;;
+        *) return 0 ;;
+    esac
+    _prog="$(enter_first_word "${_rest}")"
+    [[ "${_prog##*/}" == "distrobox" ]] || return 0
+    printf '%s\n' "${_prog}"
+}
+
 # --- Defaults and choices ----------------------------------------------------
 
-# ghostty is the detected default when it has a config dir under either
-# XDG_CONFIG_HOME or ~/.config (the two places ghostty itself reads).
+# The value half of enter_terminal_detect (the reason half is for the log).
 _enter_default_terminal() {
-    if [[ -d "$(enter_config_dir)/ghostty" || -d "${HOME}/.config/ghostty" ]]; then
-        printf 'ghostty\n'
-    else
-        printf 'none\n'
-    fi
+    local _detected
+    _detected="$(enter_terminal_detect)"
+    printf '%s\n' "${_detected%% *}"
 }
 
 enter_default() {
