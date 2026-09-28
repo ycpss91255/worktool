@@ -657,6 +657,9 @@ verify-tool-ok
       ```
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(`script/verify/setup.sh` 每項自建拋棄式 HOME 並在 EXIT / INT / TERM / HUP 清掉,不動你的家目錄)
+
+  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以 3.1 / 3.2 / 3.3 在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。
+
   - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
       ```text
@@ -670,15 +673,16 @@ verify-tool-ok
       [INFO] dry-run: would write <H>/.config/worktool/config
       [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
       rc=0
-      files 0->0
+      files 2->2
+      user-content after-dry-run: ghostty=intact tmux.conf=intact
       rc=0
       ```
-      (第一個 `rc=` 是 `just box setup` 自己的結束碼,最後一行是本項 `echo rc=$?`。files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是 `script/verify/setup.sh` 自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就報 `[UNAVAILABLE]` 並回非 0。上面每一行**內容**都在判準內、且各只能出現一次 —— 結束碼與檔案數看不出「受管 command 退回裸名字」(#175 的回歸)或「某個決策不再印 log」,只有文字看得出來)
+      (第一個 `rc=` 是 `just box setup` 自己的結束碼,最後一行是本項 `echo rc=$?`。files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:那兩個是本項在跑 setup 前種下的 ghostty 設定與 `~/.tmux.conf`,dry-run 不得新增任何檔案,也不得改動它們 —— 檔案數看不出「dry-run 把既有檔案重寫了一遍」,`user-content` 那行看得出來。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是 `script/verify/setup.sh` 自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就報 `[UNAVAILABLE]` 並回非 0。上面每一行**內容**都在判準內、且各只能出現一次 —— 結束碼與檔案數看不出「受管 command 退回裸名字」(#175 的回歸)或「某個決策不再印 log」,只有文字看得出來)
     - 驗收方式
       ```bash
       just verify setup 3.1; echo rc=$?
       ```
-  - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
+  - [ ] 3.2 真的寫入:設定檔(讀回來逐行比對)+ ghostty 受管區塊(進到使用者既有內容裡,不是取而代之);status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
     - 預期看到資訊
       ```text
       ./script/box/setup.sh "$@"
@@ -691,6 +695,15 @@ verify-tool-ok
       [INFO] wrote: <H>/.config/worktool/config
       [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
       rc=0
+      # worktool auto-enter state: written by "just box setup", read by "just box status".
+      auto-enter=yes
+      auto-enter.source=default
+      terminal=ghostty
+      terminal.source=default
+      tmux=inside
+      tmux.source=default
+      box=dev
+      box.source=default
       ./script/box/status.sh "$@"
       config: <H>/.config/worktool/config
       auto-enter: yes (default)
@@ -701,12 +714,17 @@ verify-tool-ok
       tmux.conf: <H>/.tmux.conf (managed block: absent)
       distrobox: <D> (recorded in a managed block: runnable)
       rc=0
+      # worktool acceptance: user content that must survive every write
+      font-size = 13
+      window-padding-x = 7
       # BEGIN worktool managed block (just box setup; do not edit)
       command = '<D>' enter dev -- tmux new -A -s main
       # END worktool managed block
+      user-content after-write: ghostty=intact tmux.conf=intact
       rc=0
       ```
-      (上面三段的每一行內容都在判準內、且各只能出現一次:setup 的八行決策 log、status 的八行報告、以及檔案裡那個受管區塊的三行 —— 最後這三行是 #175 的本體,只有比對文字才看得出受管 command 是不是**已 quote 的絕對路徑**。「檔案在、區塊在」不等於「區塊寫對了」)
+      (上面四段的每一行內容都在判準內:setup 的八行決策 log 與 status 的八行報告各只能出現一次;`<H>/.config/worktool/config` 那九行是**把狀態檔讀回來**跟本文件公佈的內容整份比對 —— 多一行少一行都紅。為什麼要讀回來:`[INFO] wrote: ...` 是產品自己講自己,而狀態檔根本沒寫出來時,`status` 會用預設值印出**一模一樣**的四個決策,只差第一行變成 `config: <H>/.config/worktool/config (not found - defaults shown; run: just box setup)` —— 所以這些行是以**整行**比對,不是「有包含」,不然那條降級訊息正好包含了它要否證的那一行(round 16)。
+      最後一段是 ghostty 設定檔的全文:前三行是本項在 setup 之前種下的使用者內容,後三行才是受管區塊 —— 受管區塊是**加進去**的,不是把整份設定換掉,這就是 `user-content after-write:` 那行在講的事。區塊的三行是 #175 的本體,只有比對文字才看得出受管 command 是不是**已 quote 的絕對路徑**。「檔案在、區塊在」不等於「區塊寫對了」,更不等於「使用者原本的東西還在」)
     - 驗收方式
       ```bash
       just verify setup 3.2; echo rc=$?
@@ -714,6 +732,7 @@ verify-tool-ok
   - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);移除前確實有一個受管區塊,移除後只剩零個
     - 預期看到資訊(第一次 setup 的輸出略,從它留下的受管區塊數起)
       ```text
+      user-content after-write: ghostty=intact tmux.conf=intact
       blocks-before=1
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: no (user)
@@ -726,10 +745,12 @@ verify-tool-ok
       [INFO] nothing to remove: <H>/.tmux.conf (no managed block)
       rc=0
       blocks=0
+      user-content after-removal: ghostty=intact tmux.conf=intact
       rc=0
       ```
       (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行 —— 這個「沒有」也在判準內。`blocks=0` 只在檔案讀得到時才印得出來:`grep -c` 的 1 是「零個相符」、2 才是「檔案讀不到」,腳本把兩者分開。
-      `blocks-before=1` 是判準的另一半:對一個**從來就沒有受管區塊**的設定檔來說,「區塊被移除了」是恆真的,所以先量第一次 setup 到底有沒有寫出區塊,再去判它有沒有被移掉;`blocks-before=0` 直接紅。中間八行的內容同樣逐行比對、各只能出現一次)
+      `blocks-before=1` 是判準的另一半:對一個**從來就沒有受管區塊**的設定檔來說,「區塊被移除了」是恆真的,所以先量第一次 setup 到底有沒有寫出區塊,再去判它有沒有被移掉;`blocks-before=0` 直接紅。中間八行的內容同樣逐行比對、各只能出現一次。
+      `blocks=0` 同樣是「把整份設定清空」也會成立的話 —— 移除是最容易寫成覆寫、也最傷的一步 —— 所以使用者內容在移除的**兩側**各查一次:`after-write` 先把寫入那一步洗清,`after-removal` 才能把帳算到移除頭上)
     - 驗收方式
       ```bash
       just verify setup 3.3; echo rc=$?
@@ -790,9 +811,10 @@ verify-tool-ok
       rc=0 stderr=0
       distrobox: not found on PATH (install distrobox, then re-run: just box setup)
       rc=0 stderr=0
+      distinct-states=4/4
       rc=0
       ```
-      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一案的受限 PATH 放的是 `status` 這條路徑**真正會用到的**六個工具(`just` / `sh` / `bash` / `dirname` / `awk` / `grep`)、獨缺 distrobox,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到 —— 而且找不到的是 distrobox,不是 `status` 自己要用的工具。`rc=` / `stderr=` 是這件事的守門:`stderr=0` 表示那次 `status` 除了 just 的回聲之外一個字都沒往 stderr 寫,少放工具的話那些 `command not found` 會被算進去(實測把 `awk` / `grep` 拿掉是 `stderr=18`),案子直接紅,不會被後面的 `grep` 濾掉當成過關;`script/verify/setup.sh` 在這裡不架任何管線,輸出先落到檔案再讀,所以 `rc=` 一定是那次 `status` 自己的結束碼(round 11)。stderr 收在臨時 HOME 底下,跟著 HOME 一起被清掉。最後一行是本項 `echo rc=$?`)
+      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**上面那四行 `distrobox:` 是逐字判準,而且各綁定它所屬的那一個狀態**:本項問的不是「有沒有一行以 `distrobox:` 開頭」,而是「這個狀態有沒有印出本文件為它公佈的那一行」。這是必要的 —— 把 `status.sh` 的三分支改成單分支、一律回 `runnable`,四案仍然各有一行 `distrobox:`、各自 `rc=0 stderr=0`,舊版判準全綠(round 16)。`distinct-states=4/4` 是同一件事的另一半:四案確實給了四個**不同**的答案。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一案的受限 PATH 放的是 `status` 這條路徑**真正會用到的**六個工具(`just` / `sh` / `bash` / `dirname` / `awk` / `grep`)、獨缺 distrobox,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到 —— 而且找不到的是 distrobox,不是 `status` 自己要用的工具。`rc=` / `stderr=` 是這件事的守門:`stderr=0` 表示那次 `status` 除了 just 的回聲之外一個字都沒往 stderr 寫,少放工具的話那些 `command not found` 會被算進去(實測把 `awk` / `grep` 拿掉是 `stderr=18`),案子直接紅,不會被後面的 `grep` 濾掉當成過關;`script/verify/setup.sh` 在這裡不架任何管線,輸出先落到檔案再讀,所以 `rc=` 一定是那次 `status` 自己的結束碼(round 11)。stderr 收在臨時 HOME 底下,跟著 HOME 一起被清掉。最後一行是本項 `echo rc=$?`)
     - 驗收方式
       ```bash
       just verify setup 3.6; echo rc=$?
