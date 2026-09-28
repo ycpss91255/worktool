@@ -15,9 +15,14 @@
 # Since M3 issue #172 the image is Ubuntu 26.04 based rather than the
 # docker:dind image itself: the ghostty chain cases need a REAL ghostty
 # (packaged by 26.04 only) and a headless X server next to the real
-# engine. The engine binaries and the dind helper scripts are copied in
-# from the same pinned docker:dind image, so nothing about how the nested
-# daemon starts changed.
+# engine. The engine binaries, its CLI plugins and the dind helper scripts
+# are copied in from the same pinned docker:dind image, so how the nested
+# daemon starts is unchanged - but this is a REBASE, not a transplant of
+# the whole image: the host side of the real-engine gate now runs on
+# Ubuntu / GNU userland instead of Alpine / busybox, which means the gate
+# no longer covers Alpine host compatibility and a tool that busybox used
+# to provide has to be installed by name (see `bsdextrautils` below).
+# doc/manifest.md records that change of gate meaning.
 #
 # It MUST be started with `docker run --rm --privileged` (a nested dockerd
 # needs it; see issue #129 for the DinD-vs-DooD-vs-podman decision). Every
@@ -134,11 +139,20 @@ RUN apt-get update && \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# The engine and the dind helpers, exactly as the official image builds
-# them (static binaries + POSIX shell wrappers + the legacy-iptables
-# symlink directory).
+# The engine and the dind helpers as the official image builds them
+# (static binaries + POSIX shell wrappers + the legacy-iptables symlink
+# directory), plus its CLI plugins (buildx / compose), so `docker buildx`
+# and `docker compose` exist here exactly as they do in docker:dind.
+#
+# NOT carried over, and deliberately outside this runner's contract: the
+# dind image's `dockremap` user/group and its /etc/subuid + /etc/subgid
+# entries. They only matter for rootless dockerd and userns-remap;
+# script/test/system-real-entry.sh refuses to run as anything but root
+# (its preflight), so the nested daemon here is always rootful. See
+# doc/manifest.md.
 COPY --from=docker-engine /usr/local/bin/ /usr/local/bin/
 COPY --from=docker-engine /usr/local/sbin/ /usr/local/sbin/
+COPY --from=docker-engine /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 
 # The dind image declares this as a volume so the nested daemon's state
 # never lands in the image layer; `docker run --rm` drops it with the
@@ -175,6 +189,8 @@ RUN bash --version >/dev/null && \
     command -v rev >/dev/null && \
     command -v xvfb-run >/dev/null && \
     command -v dbus-run-session >/dev/null && \
+    docker buildx version >/dev/null && \
+    docker compose version >/dev/null && \
     [ -x /usr/local/bin/dockerd-entrypoint.sh ] && \
     [ -x /usr/local/bin/dind ] && \
     [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]

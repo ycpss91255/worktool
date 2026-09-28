@@ -458,10 +458,12 @@ prereq-ok
     `distrobox enter dev -- tmux new -A -s chain fish <script>`,斷言**盒內**留下
     的標記檔顯示 fish 版本與 `tmux=yes`(runner 自己沒有 fish,所以回答的只可能
     是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。
-  - 防卡與假陽性防護各有負向測試:command 永不結束(`sleep infinity`)時測試在
-    預算內以 `timeout` 的 124 失敗而非掛住;另有案例實地示範
-    `gtk-single-instance` 開啟時「第二次啟動立刻 exit 0、指令根本沒跑完」的假
-    陽性,因此測試設定一律明寫 `gtk-single-instance = false` 並以標記檔為證。
+  - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
+    `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
+    (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;
+    另有案例實地**觀測** `gtk-single-instance` 開啟時「第二次啟動立刻 exit 0、
+    轉交的視窗指令在它返回之後才開始、沒有任何指令跑完」的假陽性,因此測試設定
+    一律明寫 `gtk-single-instance = false` 並以盒內標記檔為證。
 - 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲。
 
 ## M4 host bootstrap
