@@ -339,7 +339,16 @@ issue #129),不再延後到 M5。
   全部 COPY 進來,所以巢狀 daemon 的**啟動方式沒有改變**;再加上 bash、bats 1.14.0
   (+ bats-support v0.3.0 / bats-assert v2.1.0)、ghostty + Xvfb + xauth + dbus-x11,
   與**同一份**鎖定的 distrobox 1.8.2.5(同一個 tarball、同一個 sha256、同一個上游
-  安裝器);除了 ghostty 之外,所有版本皆鎖定。
+  安裝器)。
+
+  **真正鎖定的是哪些**:`docker:29.8.0-dind`(tag)、distrobox 1.8.2.5
+  (tarball + sha256 + 上游安裝器)、bats 1.14.0 與 bats-support v0.3.0 /
+  bats-assert v2.1.0(git tag)、以及 `alpine:3.24` / `ubuntu:26.04` 這兩個基底的
+  **tag**(tag 不是 digest,同一個 tag 的內容會隨上游 rebuild 變動)。
+  **沒有鎖定的**:apt 裝進來的一切 —— ghostty、bash、iptables、Xvfb、
+  `bsdextrautils` 等,全部拿 archive 當下的版本,沒有寫 `=<version>`。斷言只釘
+  形狀(例如 ghostty 的 `major.minor`),所以 archive 更新不會立刻紅,但**這個
+  映像不是逐位元可重現的**。
 
   這是**改基底,不是把整個 dind 映像搬過來**,而且它讓這個 gate 的語意變了,必須
   說清楚:
@@ -356,10 +365,10 @@ issue #129),不再延後到 M5。
     `script/test/system-real-entry.sh` 的 preflight 本來就要求 root,這裡的巢狀
     daemon 一律 rootful,所以**不在本 runner 的契約內**。真要驗 rootless 是另一
     個 issue 的事。
-  - **ghostty 沒有釘版本**:兩個映像都是 `apt-get install ghostty`,拿的是
-    26.04 archive 當下的版本(撰寫時 `1.3.0~us1-0ubuntu1.1`)。斷言只釘
-    `major.minor` 形狀,不釘 build,所以 archive 更新不會立刻紅,但**版本會漂移**;
-    要完全可重現得改成釘 `=<version>` 並自行承擔套件被移出 archive 的風險。
+  - **ghostty(以及其他 apt 套件)沒有釘版本**:見上面「真正鎖定的是哪些」。
+    ghostty 拿的是 26.04 archive 當下的版本(撰寫時 `1.3.0~us1-0ubuntu1.1`),
+    斷言只釘 `major.minor` 形狀,所以**版本會漂移**;要完全可重現得改成釘
+    `=<version>` 並自行承擔套件被移出 archive 的風險。
   - **iptables 的 legacy fallback 沒有獨立測試**:entrypoint 會先試現行
     `iptables`、失敗才退回 legacy。兩架構 CI 的真 dockerd 都成功啟動,證明目前的
     選擇可用,但沒有案例強制走 legacy 那條路。
@@ -422,13 +431,25 @@ issue #129),不再延後到 M5。
       另外斷言耗時**同時有上下界**(下界 = 預算 - 2s),證明它是跑滿預算才被砍,
       不是一啟動就死。
     - **假陽性示範**:`test/system/fixture/ghostty_single_instance.sh` 在一個
-      `xvfb-run` + `dbus-run-session` 裡,用「每個視窗指令一開始就 `mktemp` 出一個
-      獨一無二的檔、跑完才會再 `mktemp` 一個 done 檔」的 command 實地**觀測**:
-      `gtk-single-instance = true` 時第二次啟動 ghostty 立刻 exit 0
-      (`SECOND_ELAPSED` 斷言 0-5 秒),而**第二個視窗指令是在它返回之後才開始的**
-      (`FORWARDED_STARTED=yes`)、主進程仍活著(`PRIMARY_ALIVE=yes`)、且**沒有任何
-      視窗指令跑完**(`COMMAND_FINISHED=no`,由 done 檔數量觀測而來,不是固定
-      輸出)。這就是「拿結束碼當成功判準」的假陽性,也是每個案例都釘
+      `xvfb-run` + `dbus-run-session` 裡,用「每個視窗指令一開始就把**自己的 pid**
+      寫成一個獨一無二的檔(`&&`,寫不出來就不往下走)、跑完才會再寫一個 done 檔」
+      的 command 實地**觀測**:`gtk-single-instance = true` 時第二次啟動 ghostty 立刻
+      exit 0(`SECOND_ELAPSED` 斷言 0-15 秒 —— 門檻放寬是為了不讓慢 runner 假紅,
+      重點是「遠短於它要求的指令的壽命」,那個指令永不結束),而**在它返回的那一
+      瞬間,它要求的工作根本還沒開始**(`STARTED_AT_RETURN=1`,在返回當下取樣)。
+      之後第二個視窗指令才出現(`FORWARDED_STARTED=yes`),而且順序是**量出來
+      的**:該檔 mtime 與返回時間戳相比在其後(`FORWARDED_AFTER_RETURN=yes`,
+      實測延遲約 300-400 ms),不是靠「腳本後看才寫後發生」推論。此時這一輪的兩個
+      視窗指令都還活著(`RUNNING_COMMANDS=2`;**直接對它們各自記下的 pid** 問,
+      不是掃描行程名或命令列 —— DinD 下巢狀容器與 runner 同一個 PID namespace,
+      數 `sleep` 會把 dev 盒裡的殘留算進去,`pgrep -f` 則會連引用到該字串的 harness
+      一起算)、持有 bus name 的 ghostty
+      行程仍在(`PRIMARY_WRAPPER_ALIVE=yes` —— 這驗的是**包裝行程**,不是指令自己
+      的 shell;指令有沒有開始由 `STARTED_AT_RETURN` 說了算)、且**沒有任何視窗
+      指令跑完**(`COMMAND_FINISHED=no`,由 done 檔數量觀測而來,不是固定輸出)。
+      時間戳一律走 `date +%s%N` 再自行除以 10^6:26.04 的 uutils `date` 接受
+      `%3N` 但**忽略寬度**、照印九位,信任格式字串會少算 10^6 倍。
+      這就是「拿結束碼當成功判準」的假陽性,也是每個案例都釘
       `gtk-single-instance = false`、都以標記檔為證的原因。
     三層防卡:
     設定不覆寫 `wait-after-command` / `quit-after-last-window-closed`(讓 ghostty

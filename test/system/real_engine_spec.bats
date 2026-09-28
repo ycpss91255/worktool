@@ -513,24 +513,44 @@ _ghostty_run() {
     _log_lines hang "in-box command started, then timed out after ${_elapsed}s (budget ${GHOSTTY_HANG_TIMEOUT}s, status ${_hang_status})"
 }
 
-@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for is still only starting elsewhere (the false positive the guard prevents)" {
+@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 BEFORE the command it asked for has even started (the false positive the guard prevents)" {
     local _probe="${REPO_ROOT}/test/system/fixture/ghostty_single_instance.sh"
     run timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" bash "${_probe}" \
         "${BATS_TEST_TMPDIR}/si" </dev/null
     assert_success
     _log_lines single-instance "${lines[@]}"
-    # The fixture OBSERVES each of these; none of them is a fixed echo.
-    #   the primary was really running before the second launch ...
+    # The fixture OBSERVES every line below; none of them is a fixed echo.
+    #   The primary was really running before the second launch ...
     assert_line 'PRIMARY=up'
     #   ... the second launch reported success ...
     assert_line 'SECOND_RC=0'
-    #   ... it returned at once (a real launch blocks until its window
-    #   closes; 0-5s is "did not wait for anything") ...
-    assert_line --regexp '^SECOND_ELAPSED=[0-5]$'
-    #   ... yet a SECOND window command only began afterwards ...
+    #   ... and returned without waiting for anything. The threshold is
+    #   generous on purpose: what matters is "nothing like the lifetime of
+    #   the command it asked for" (that command blocks forever), not a
+    #   tight number a slow runner could trip over. Measured at 0s.
+    assert_line --regexp '^SECOND_ELAPSED=([0-9]|1[0-5])$'
+    #   At the INSTANT it returned, the work it reported success for had
+    #   not begun: still just the primary's own window command. This is
+    #   the ordering claim, sampled at the moment of return rather than
+    #   inferred from the order the fixture happens to look in.
+    assert_line 'STARTED_AT_RETURN=1'
+    #   A second window command did begin ...
     assert_line 'FORWARDED_STARTED=yes'
-    #   ... in the primary, which outlived the launch that "succeeded" ...
-    assert_line 'PRIMARY_ALIVE=yes'
+    #   ... and its start time is MEASURED to be later than that return
+    #   (mtime of its own start file vs the timestamp taken at return).
+    assert_line 'FORWARDED_AFTER_RETURN=yes'
+    assert_line --regexp '^FORWARDED_DELAY_MS=[1-9][0-9]*$'
+    #   Both of this run's window commands are still alive - asked of the
+    #   command processes themselves, by the pid each one recorded when it
+    #   began, so neither the dev box's leftover sleeps (same PID
+    #   namespace as the runner, under DinD) nor a harness command line
+    #   quoting the pattern can inflate the number ...
+    assert_line 'RUNNING_COMMANDS=2'
+    #   ... under the ghostty process that owns the bus name, which
+    #   outlived the launch that "succeeded" (the wrapper, not the
+    #   command's own shell - STARTED_AT_RETURN is what speaks for the
+    #   command) ...
+    assert_line 'PRIMARY_WRAPPER_ALIVE=yes'
     #   ... and no window command has returned at all.
     assert_line 'COMMAND_FINISHED=no'
     # That is the false positive: exit status alone is not a witness once
