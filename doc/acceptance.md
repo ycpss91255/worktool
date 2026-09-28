@@ -678,38 +678,53 @@ verify-tool-ok
       posted=1
       cleanup-rc=0
       ```
-      (posted >= 1 = #22 上有 host 實測的 `shell: min=.. median=.. max=.. ms` 三行數字)
+      (posted >= 1 = #22 上有**同一則**留言,同時含 `M3 5.1 實機 bench` 標記與 enter / shell / inbox 三行數字;分散在不同留言或缺一行都不算)
     - 驗收方式
       ```bash
       just box assemble >/dev/null && just box bench --runs 10 --shell 'fish -c exit' --max-ms 300; echo rc=$?
-      # 把上面三行數字貼到 #22:
-      #   gh issue comment 22 --repo ycpss91255/worktool --body '實機 bench(<你的機器>):enter/shell/inbox ... '
-      printf 'posted=%s\n' "$(gh api "repos/ycpss91255/worktool/issues/22/comments?per_page=100" --jq '.[].body' | grep -c 'shell: min=.*median=.*max=.* ms')"
+      # 把上面三行數字貼到 #22,留言必須含標記 "M3 5.1 實機 bench" 與完整三行,例如:
+      #   gh issue comment 22 --repo ycpss91255/worktool --body-file <(printf 'M3 5.1 實機 bench(<你的機器>)\n\n```text\n%s\n```\n' "$(cat <貼上三行>)")
+      printf 'posted=%s\n' "$(gh api "repos/ycpss91255/worktool/issues/22/comments?per_page=100" --jq '[.[] | select((.body | test("M3 5.1 實機 bench")) and (.body | test("enter: min=.*median=.*max=.* ms")) and (.body | test("shell: min=.*median=.*max=.* ms")) and (.body | test("inbox: min=.*median=.*max=.* ms")))] | length')"
       distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
       ```
-  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完還原真實設定並移除 dev 盒
-    - 預期看到資訊(新視窗內;之後還原區塊的輸出)
+  - [ ] 5.2 開終端即在盒內的 fish(人類主觀):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完用步驟 3 還原真實設定並移除 dev 盒
+    - 預期看到資訊(步驟 1 的備份摘要;新視窗內三行;步驟 3 的還原結果)
       ```text
+      ghostty=backed-up
+      worktool=absent
+      backup=/tmp/worktool-m3-52-backup ok=1
       /run/.containerenv
       fish
       main
       restore-rc=0
-      restored=ghostty worktool
-      cleanup-rc=0
+      blocks=0
+      dev-gone=1
       ```
+      (`ghostty` / `worktool` 兩行視你原本有沒有那個檔而定;`ok=1` 才會往下套用。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**)
     - 驗收方式
       ```bash
-      # 1) 備份真實設定 + 套用
-      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=$(mktemp -d) || exit 1; echo "backup: $B"
-      for n in ghostty worktool; do [ -e "$C/$n/config" ] && cp -p "$C/$n/config" "$B/$n.config"; done
-      just box assemble >/dev/null && just box setup && just box status
-      # 2) 開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
+      # 1) 備份真實設定;備份失敗就不動任何東西
+      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
+      mkdir "$B" || echo "backup 目錄已存在:$B -- 先執行步驟 3 還原,確認後再自行移除"
+      ok=1; : > "$B/manifest"
+      for n in ghostty worktool; do
+        if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest" || ok=0
+        else echo "$n=absent" >> "$B/manifest"; fi
+      done
+      cat "$B/manifest"; printf 'backup=%s ok=%s\n' "$B" "$ok"
+      # 2) 只有備份成功才套用,然後開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
+      [ "$ok" = 1 ] && just box assemble >/dev/null && just box setup && just box status
       ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
-      # 3) 回到原本的視窗還原(受管區塊 -> 檔案 -> 盒子)
-      just box setup --auto-enter no >/dev/null; echo restore-rc=$?
-      for n in ghostty worktool; do if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config"; else rm -f "$C/$n/config"; fi; done
-      printf 'restored=%s\n' "ghostty worktool"; rm -rf "$B"
-      distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
+      # 3) 還原 -- 可單獨執行、可重複執行,中斷後也用這段
+      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
+      just box setup --auto-enter no >/dev/null 2>&1; echo restore-rc=$?
+      for n in ghostty worktool; do
+        if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config"
+        elif grep -qx "$n=absent" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"; fi
+      done
+      b=0; [ -e "$C/ghostty/config" ] && b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config"); printf 'blocks=%s\n' "$b"
+      rm -rf "$B"; distrobox rm -f dev >/dev/null 2>&1
+      d=$(distrobox list 2>/dev/null | grep -c '[[:space:]]dev[[:space:]]'); printf 'dev-gone=%s\n' "$([ "$d" -eq 0 ] && echo 1 || echo 0)"
       ```
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
