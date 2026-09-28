@@ -1,0 +1,74 @@
+# Dockerfile.ghostty - image for the GHOSTTY group of the integration tier
+# (M3, issue #172).
+#
+# The plain test image (Dockerfile.test) is alpine based and has no
+# ghostty: ghostty is packaged by Ubuntu 26.04 (resolute) and nothing
+# older, so the one gate that needs a REAL ghostty gets its own ubuntu
+# image. It holds ghostty and bats and nothing else it does not need -
+# no display server (the cases here run `ghostty +validate-config` and
+# `ghostty +show-config`, both pure CLI actions), no docker, no distrobox.
+# Opening an actual window against a real box is layer 2 and lives in the
+# system-real runner (dockerfile/Dockerfile.system-real).
+#
+# Usage:
+#   docker build -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .
+#   docker run --rm -v "$PWD:/source" -w /source worktool-ghostty:local \
+#     ./script/test/test.sh --ci-integration-ghostty
+
+# Every version is pinned. UBUNTU_TAG is the ONLY release that ships
+# ghostty in its archive (universe); BATS_* / ALPINE_TAG match
+# Dockerfile.system-real so all three images carry the same bats.
+ARG UBUNTU_TAG=26.04
+ARG BATS_TAG=1.14.0
+ARG ALPINE_TAG=3.24
+
+FROM bats/bats:${BATS_TAG} AS bats-src
+
+FROM alpine:${ALPINE_TAG} AS bats-extensions
+# hadolint ignore=DL3018
+RUN apk add --no-cache git && \
+    git clone --depth 1 -b v0.3.0 \
+        https://github.com/bats-core/bats-support /bats/bats-support && \
+    git clone --depth 1 -b v2.1.0 \
+        https://github.com/bats-core/bats-assert /bats/bats-assert
+
+# Final stage: Ubuntu 26.04 (resolute), the release whose universe
+# component carries ghostty 1.3.0 for both amd64 and arm64.
+FROM ubuntu:${UBUNTU_TAG}
+ENV DEBIAN_FRONTEND=noninteractive
+# bash            - bats and the worktool shell scripts need it
+# ghostty         - the whole point: the real terminal that reads the
+#                   managed block `just box setup` writes
+# ca-certificates - kept for parity with the other images
+# git             - test fixtures / future harness
+# The archive version is deliberately NOT pinned here: 26.04 is a
+# supported release and its ghostty gets security updates within the
+# 1.3.0 series (the spec asserts the major.minor it sees, not a build).
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        ghostty \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# bats core + extensions (bats-support / bats-assert). Both are plain
+# bash, so the alpine-built copies run unchanged on ubuntu.
+COPY --from=bats-src /opt/bats /opt/bats
+COPY --from=bats-src /usr/lib/bats /usr/lib/bats
+COPY --from=bats-extensions /bats /usr/lib/bats
+
+# Expose bats on PATH (the bats image keeps it under /opt/bats/bin only).
+RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
+
+# Smoke check baked into the image so a corrupted build fails fast at
+# build time rather than mid-run. `ghostty +version` needs no display,
+# which is exactly the property this group relies on.
+RUN bash --version >/dev/null && \
+    bats --version >/dev/null && \
+    timeout --version >/dev/null && \
+    ghostty +version
+
+WORKDIR /source
+ENTRYPOINT ["/bin/bash"]

@@ -445,8 +445,29 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能
 
-- 自動:進盒延遲量測腳本回報 < 300ms;開啟終端後 shell 為盒內 fish 的自動測試。
-- 人類:實機開新終端主觀順暢、無明顯延遲。
+- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> 進盒 -> tmux/fish」鏈在 CI
+  內無頭驗證**(issue #172),分兩層:
+  - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
+    `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
+    `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
+    `command` 恰為 `distrobox enter dev -- tmux new -A -s main`;`--tmux host`
+    / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no` 之後不再有該
+    指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明斷言不是恆真。
+  - 第二層(system-real 組,`just test system-real`):在 DinD 內用
+    `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
+    `distrobox enter dev -- tmux new -A -s chain fish <script>`,斷言**盒內**留下
+    的標記檔顯示 fish 版本與 `tmux=yes`(runner 自己沒有 fish,所以回答的只可能
+    是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。
+  - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
+    `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
+    (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;
+    另有案例實地**觀測並量測** `gtk-single-instance` 開啟時的假陽性:第二次啟動
+    **遠比它要求的指令可能耗費的時間更快就返回 0**(該指令永不結束),而在它
+    **返回後隨即取樣**時,那個指令還沒開始;之後才開始 —— 順序以「start 檔 mtime
+    嚴格晚於該時間戳」量出來。取樣不是返回瞬間的原子快照,但方向上只會讓案例假紅、
+    不會假綠。期間沒有任何指令跑完。因此測試設定一律明寫
+    `gtk-single-instance = false` 並以盒內標記檔為證。
+- 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲。
 
 ## M4 host bootstrap
 

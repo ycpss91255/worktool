@@ -285,6 +285,21 @@ issue #129),不再延後到 M5。
     完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
+- 整合,**ghostty 組**(`test/integration/ghostty_config_spec.bats`,M3 issue
+  #172):ghostty 只在 Ubuntu 26.04(resolute)的官方庫裡,所以這一組跑在自己的
+  映像 `dockerfile/Dockerfile.ghostty`(ubuntu:26.04 + ghostty + 同一份 bats);
+  `just test integration` 會**兩組都跑**(先預設組、再 ghostty 組),每組各自適用
+  同一套 tier 規則(必備 spec 存在且非空、至少跑一個 case、不得 skip)。
+  - **驗證什麼**:`just box setup` 寫出的受管區塊交給**真的 ghostty** ——
+    `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
+    是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
+    `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
+    `distrobox enter dev -- tmux new -A -s main`;`--tmux host` 解析成
+    `tmux new -A -s main`、`--box work` 換成該盒名。另有兩個對照案例證明斷言不是
+    恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
+    `+validate-config` 以 `unknown field` 拒絕。
+  - **不證明什麼**:視窗真的開得起來、真的進得了盒 —— 那是 real-engine 組的
+    ghostty 鏈案例(需要顯示器與真引擎)。
 - 系統,**shim 組**(`test/system/real_assemble_spec.bats`):在測試映像內執行
   **真正的、鎖定版本的 distrobox**(`dockerfile/Dockerfile.test` 固定 `1.8.2.5`,
   建置時驗證 tarball 的 sha256),容器管理器則換成一支**假的 `docker`**
@@ -314,10 +329,49 @@ issue #129),不再延後到 M5。
 - 系統,**real-engine 組**(`test/system/real_engine_spec.bats`):以**真正的
   docker 引擎**證明 M2 的「可用 dev 盒」承諾。做法是 **docker-in-docker**
   (2026-09-16 人類決策;三種做法的研究與比較見 issue #129):一個專用的系統測試
-  runner 映像 `dockerfile/Dockerfile.system-real`,以官方 `docker:29.8.0-dind`
-  為基底(內含 dockerd、containerd、runc、docker CLI),加上 bash、bats 1.14.0
-  (+ bats-support v0.3.0 / bats-assert v2.1.0)與**同一份**鎖定的 distrobox
-  1.8.2.5(同一個 tarball、同一個 sha256、同一個上游安裝器);所有版本皆鎖定。
+  runner 映像 `dockerfile/Dockerfile.system-real`,基底自 M3 issue #172 起從官方
+  `docker:29.8.0-dind`(alpine)**改為 `ubuntu:26.04`**(ghostty 鏈案例需要真的
+  ghostty 與無頭 X,而 ghostty 只有 26.04 有)。引擎與 dind 啟動機制**仍來自同一個
+  鎖定的 `docker:29.8.0-dind`**:`/usr/local/bin`(dockerd、containerd、runc、
+  docker CLI、`dockerd-entrypoint.sh`、`dind`,都是靜態 Go binary 或 POSIX shell)、
+  `/usr/local/sbin/.iptables-legacy`(指向 `/usr/sbin` 的符號連結,由 ubuntu 的
+  iptables 套件補齊)與 `/usr/local/libexec/docker/cli-plugins`(buildx / compose)
+  全部 COPY 進來,所以巢狀 daemon 的**啟動方式沒有改變**;再加上 bash、bats 1.14.0
+  (+ bats-support v0.3.0 / bats-assert v2.1.0)、ghostty + Xvfb + xauth + dbus-x11,
+  與**同一份**鎖定的 distrobox 1.8.2.5(同一個 tarball、同一個 sha256、同一個上游
+  安裝器)。
+
+  **真正鎖定的是哪些**:`docker:29.8.0-dind`(tag)、distrobox 1.8.2.5
+  (tarball + sha256 + 上游安裝器)、bats 1.14.0 與 bats-support v0.3.0 /
+  bats-assert v2.1.0(git tag)、以及 `alpine:3.24` / `ubuntu:26.04` 這兩個基底的
+  **tag**(tag 不是 digest,同一個 tag 的內容會隨上游 rebuild 變動)。
+  **沒有鎖定的**:apt 裝進來的一切 —— ghostty、bash、iptables、Xvfb、
+  `bsdextrautils` 等,全部拿 archive 當下的版本,沒有寫 `=<version>`。斷言只釘
+  形狀(例如 ghostty 的 `major.minor`),所以 archive 更新不會立刻紅,但**這個
+  映像不是逐位元可重現的**。
+
+  這是**改基底,不是把整個 dind 映像搬過來**,而且它讓這個 gate 的語意變了,必須
+  說清楚:
+
+  - **host 側不再是 Alpine**。real-engine 組跑 worktool / distrobox host 端腳本的
+    那一層,從 Alpine + busybox 換成 Ubuntu + GNU userland。**這個 gate 因此不再
+    涵蓋 Alpine host 相容性**,而且較完整的 GNU userland可能**掩蓋**「少了某個
+    工具」的問題 —— 這次就踩到一個實例:`distrobox-enter` 要用 `rev`,busybox
+    內建、Debian/Ubuntu 拆進 `bsdextrautils`,必須點名安裝。換句話說:gate 變**寬**
+    了,不是等價替換。worktool 交付的目標平台本來就是 Ubuntu(見 `design.md`),
+    所以這個取捨是刻意的,但它不應該被說成「一樣」。
+  - **沒有搬過來的東西**:dind 映像的 `dockremap` 使用者/群組與
+    `/etc/subuid` / `/etc/subgid`。它們只服務 rootless dockerd 與 userns-remap;
+    `script/test/system-real-entry.sh` 的 preflight 本來就要求 root,這裡的巢狀
+    daemon 一律 rootful,所以**不在本 runner 的契約內**。真要驗 rootless 是另一
+    個 issue 的事。
+  - **ghostty(以及其他 apt 套件)沒有釘版本**:見上面「真正鎖定的是哪些」。
+    ghostty 拿的是 26.04 archive 當下的版本(撰寫時 `1.3.0~us1-0ubuntu1.1`),
+    斷言只釘 `major.minor` 形狀,所以**版本會漂移**;要完全可重現得改成釘
+    `=<version>` 並自行承擔套件被移出 archive 的風險。
+  - **iptables 的 legacy fallback 沒有獨立測試**:entrypoint 會先試現行
+    `iptables`、失敗才退回 legacy。兩架構 CI 的真 dockerd 都成功啟動,證明目前的
+    選擇可用,但沒有案例強制走 legacy 那條路。
   runner 以 `docker run --rm --privileged` 啟動(巢狀 dockerd 需要;**這是唯一
   使用 `--privileged` 的地方**),入口 `script/test/system-real-entry.sh` 在容器內
   背景啟動一個獨立的 dockerd(沿用 dind 映像自己的 `dockerd-entrypoint.sh`:
@@ -358,9 +412,91 @@ issue #129),不再延後到 M5。
     判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell
     'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、三行指標仍在、同樣兩行
     fish INFO 仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬
-    (見上方「進盒延遲量測」);(e) 冪等:第二次
+    (見上方「進盒延遲量測」);(e) **ghostty 鏈**(M3,issue #172):在 runner 內
+    用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
+    ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
+    釘住 `gtk-single-instance = false`,command 為
+    `distrobox enter dev -- tmux new -A -s chain fish <盒內腳本>`;判準是**盒內**
+    留下的標記檔(內容含 `fish=<版本>`、`tmux=yes`、`host=<節點名>`),而不是
+    ghostty 的結束碼 —— runner 本身沒有裝 fish(spec 明確斷言 `command -v fish`
+    失敗),所以會回答的只可能是盒內那一個;標記裡的 `host=` 還要等於
+    `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
+    HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
+    +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
+    件事,不是路徑本身。另兩個負向案例:
+    - **永不結束的指令**:盒內 payload **先寫一個獨立的 ready 標記**(內含
+      `fish=<版本>`),**再** `exec sleep infinity`。案例只有在 ready 標記出現的
+      前提下才接受 `timeout` 的 124 —— 否則就是「視窗/`distrobox enter` 在到達
+      盒子前就卡住」這個**不同的**失敗,會以可辨識訊息紅掉,而不是被當成通過。
+      另外斷言耗時**同時有上下界**(下界 = 預算 - 2s),證明它是跑滿預算才被砍,
+      不是一啟動就死。
+    - **假陽性示範**:`test/system/fixture/ghostty_single_instance.sh` 在一個
+      `xvfb-run` + `dbus-run-session` 裡,讓每個 ghostty 視窗跑同一份 payload
+      (寫在檔案裡,所以 payload 裡的 `$` / `(` / `)` 不必跟 ghostty 的設定解析
+      搏鬥;設定只需要帶路徑,而那個路徑是**加單引號**的):一開始就把**自己的
+      pid 與 starttime** 寫成一個獨一無二的檔(每一步都檢查,寫不出來就不往下
+      走)、`sleep infinity`、跑完才會再寫一個 done 檔。
+
+      為什麼是**單**引號:ghostty 1.3.0 的 `command` 若**沒有** `direct:` 前綴,
+      存的是一條 **shell 命令列**、交給 `/bin/sh -c`,所以設定層的引用還要撐過
+      第二層 shell 解析。拿 runner 映像裡的 ghostty 實測(payload 寫到固定路徑,
+      只驗路徑的傳遞):
+
+      | 形式 | 路徑含空白 | 路徑含 `$` | 路徑含反引號 |
+      |------|-----------|-----------|-------------|
+      | `direct:`(不引用) | 壞 | — | — |
+      | shell + 雙引號 | 可 | **壞**(展開) | **壞**(命令替換被執行) |
+      | shell + 單引號 | 可 | 可 | 可 |
+
+      `direct:` 會跳過 shell,但它**完全不做引用處理**,所以帶不動含空白的路徑;
+      雙引號則讓 `$` 展開、讓反引號**執行** —— 那是路徑形狀的注入。單引號三種
+      都帶得動,因此採用它。單引號唯一帶不動的是單引號本身,`_check_workdir`
+      拒絕它與換行(會終止設定行),並額外拒絕 `$` / 反引號 / 雙引號 / 反斜線
+      作為縱深防禦(單引號內它們本來就是字面字元,但一旦引用形式改變就會變危險),
+      每個字元各自給訊息。這個字元矩陣由 `test/unit/ghostty_fixture_spec.bats`
+      在**單元層**驗證(fixture 的 `--check-workdir` 模式不需要顯示器或 ghostty),
+      不必等慢的 system-real。
+      於是實地**觀測**:`gtk-single-instance = true` 時第二次啟動 ghostty
+      **遠比它要求的指令可能耗費的時間更快就返回 0**(`SECOND_ELAPSED` 斷言
+      0-15 秒;門檻放寬是為了不讓慢 runner 假紅,要證明的是「沒有等那個指令」,
+      而那個指令永不結束,不是「一定幾秒內」),而**在它返回後隨即取樣時,它要求
+      的工作還沒開始**(`STARTED_AT_RETURN=1`)。
+
+      這個取樣**不是返回瞬間的原子快照**:先取時間戳、再讀計數,中間隔著兩個
+      subshell。方向上只會害自己 —— 轉交的指令若快到擠進這個空檔,計數會讀到 2
+      而讓案例**紅**,不可能因此變綠。順序則是**量出來的**:第二個 start 檔的
+      mtime 嚴格晚於上面那個時間戳(`FORWARDED_AFTER_RETURN=yes`,實測延遲約
+      300-400 ms),不是靠「腳本後看才寫後發生」推論;同毫秒不算晚(嚴格 `>`),
+      所以精度不足只會假紅。**未檢查**的是 workdir 所在檔案系統的 mtime 粒度:
+      若某天落在只有秒級粒度的掛載上,這個比較會大量假紅(仍不會假綠)。
+
+      此時這一輪的兩個視窗指令都還在跑(`RUNNING_COMMANDS=2`):對每個指令**自己
+      記下的 pid** 檢查「行程還在 + starttime 與當初相同(排除 pid 被重用)+
+      狀態不是 `Z`(排除 zombie)」;只用 `kill -0` 這兩種情況都會誤判成活著,
+      而掃行程名或命令列更不行 —— DinD 下巢狀容器與 runner 同一個 PID namespace,
+      數 `sleep` 會把 dev 盒裡的殘留算進去(實測 4),`pgrep -f` 則會連引用到該
+      字串的 harness 一起算(實測 5)。持有 bus name 的 ghostty 行程也仍在
+      (`PRIMARY_WRAPPER_ALIVE=yes` —— 這驗的是**包裝行程**,不是指令自己的
+      shell;指令有沒有開始由 `STARTED_AT_RETURN` 說了算)、且**沒有任何視窗指令
+      跑完**(`COMMAND_FINISHED=no`,由 done 檔數量觀測而來,不是固定輸出)。
+      時間戳一律走 `date +%s%N`(26.04 的 uutils `date` 接受 `%3N` 但**忽略
+      寬度**、照印九位,信任格式字串會少算 10^6 倍),並在用之前驗證:必須**恰好
+      19 位**數字(不支援 `%N` 的 `date` 會把字母原樣印出來),而且**不得大於
+      2^63-1** —— 位數不等於範圍檢查,`9223372036854775808` 到
+      `9999999999999999999` 都是 19 位但會讓 bash 算術 **wrap**(實測
+      `9223372036854775808` 會變成 `-9223372036854`);epoch 奈秒是 **2262 年**
+      越過 2^63-1,不是等變成 20 位。上界比較拆成兩半各自比,所以檢查本身不會
+      wrap;毫秒值則直接砍掉末六位取得,不對 19 位數做除法。這兩件事同樣由
+      `test/unit/ghostty_fixture_spec.bats`(fixture 的 `--check-epoch-ms` 模式)
+      在單元層驗證。
+      這就是「拿結束碼當成功判準」的假陽性,也是每個案例都釘
+      `gtk-single-instance = false`、都以標記檔為證的原因。
+    三層防卡:
+    設定不覆寫 `wait-after-command` / `quit-after-last-window-closed`(讓 ghostty
+    自己在指令結束後退出)、每個 ghostty 呼叫外層 `timeout -k`、CI job 的
+    `timeout-minutes`;(f) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
-    恰好一個、仍可 `rg --version`;(f) 清理:`distrobox rm -f dev` exit 0 後
+    恰好一個、仍可 `rg --version`;(g) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
     第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
     `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
@@ -456,7 +592,7 @@ just test lint          # ShellCheck(*.sh + *.bats)
 # 底層:./script/test/test.sh --lint
 just test unit          # 單元 bats(test/unit/)
 # 底層:./script/test/test.sh --unit
-just test integration   # 整合 bats(test/integration/)
+just test integration   # 整合 bats(test/integration/;兩組:預設組 + ghostty 組,後者在 ubuntu:26.04 的 ghostty 映像內,不需顯示器)
 # 底層:./script/test/test.sh --integration
 just test system        # 系統 bats,shim 組(test/system/;真實 distrobox + 假容器管理器)
 # 底層:./script/test/test.sh --system
