@@ -445,6 +445,37 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能達標(審核中)
 
+- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> 進盒 -> tmux/fish」鏈在 CI
+  內無頭驗證**(issue #172),分兩層:
+  - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
+    `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
+    `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
+    `command` 恰為 `'<distrobox 絕對路徑>' enter dev -- tmux new -A -s main`
+    (issue #175:受管 command 寫**已 quote 的**絕對路徑,斷言同時 refute 裸名字
+    那一行;另有一案以含空白與 `$(...)` 的安裝路徑證明 quoting 真的擋得住);
+    `--tmux host` / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
+    之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
+    斷言不是恆真。
+  - 第二層(system-real 組,`just test system-real`):在 DinD 內用
+    `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
+    `distrobox enter dev -- tmux new -A -s chain fish <script>`,斷言**盒內**留下
+    的標記檔顯示 fish 版本與 `tmux=yes`(runner 自己沒有 fish,所以回答的只可能
+    是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
+    一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
+    distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
+    `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
+  - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
+    `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
+    (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;
+    另有案例實地**觀測並量測** `gtk-single-instance` 開啟時的假陽性:第二次啟動
+    **遠比它要求的指令可能耗費的時間更快就返回 0**(該指令永不結束),而在它
+    **返回後隨即取樣**時,那個指令還沒開始;之後才開始 —— 順序以「start 檔 mtime
+    嚴格晚於該時間戳」量出來。取樣不是返回瞬間的原子快照,但方向上只會讓案例假紅、
+    不會假綠。期間沒有任何指令跑完。因此測試設定一律明寫
+    `gtk-single-instance = false` 並以盒內標記檔為證。
+- 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲。
+
+
 人類 gate 用的驗收清單(= M3 驗收 PR 的描述;逐項勾選,有差異回 PR 留言):
 
 ### 通用指令
