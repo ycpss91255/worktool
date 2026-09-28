@@ -20,21 +20,34 @@
 # Decisions (option (user) > stored user choice > default; each logged as
 # `[INFO] <key>: <value> (<source>)`):
 #   auto-enter  yes|no        default yes
-#   terminal    ghostty|none  default ghostty when a ghostty config dir exists
+#   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is on
+#                             PATH (or, secondary, a ghostty config dir exists)
 #   tmux        inside|host   default inside
 #   box         <name>        default dev
+#
+# When `terminal` comes from the default, the BASIS of that default is
+# logged too (`[INFO] terminal detected: <value> (<reason>)`): issue #175
+# was a clean machine with /usr/bin/ghostty and no ~/.config/ghostty yet,
+# resolved to `none` with nothing in the log to say why.
 #
 # State file: $XDG_CONFIG_HOME/worktool/config (~/.config/worktool/config),
 # `<key>=<value>` plus `<key>.source=default|user` per key. A user choice
 # persists across runs until overridden; default keys are recomputed.
 #
+# `<distrobox>` below is the ABSOLUTE path of the distrobox this run
+# resolved (`[INFO] distrobox: ...`), never the bare name: a terminal the
+# desktop starts inherits the systemd user manager's PATH, which does not
+# hold ~/.local/bin, and the bare name died there with `/bin/sh: 1:
+# distrobox: not found` (issue #175). With no distrobox on PATH at all the
+# bare name is written as a last resort and the run WARNs.
+#
 # Managed blocks (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty, tmux inside:
-#     <config dir>/ghostty/config  command = distrobox enter <box> -- tmux new -A -s main
+#     <config dir>/ghostty/config  command = <distrobox> enter <box> -- tmux new -A -s main
 #   auto-enter yes, terminal ghostty, tmux host:
 #     <config dir>/ghostty/config  command = tmux new -A -s main
-#     ~/.tmux.conf                 set -g default-command "distrobox enter <box>"
+#     ~/.tmux.conf                 set -g default-command "<distrobox> enter <box>"
 #   auto-enter yes, terminal none: no terminal profile at all (whatever tmux
 #     says: the tmux.conf block only serves the ghostty+host pair), leftover
 #     blocks removed.
@@ -80,6 +93,10 @@ CONFIG=""
 AUTO_ENTER="" TERMINAL="" TMUX="" BOX=""
 AUTO_ENTER_SRC="" TERMINAL_SRC="" TMUX_SRC="" BOX_SRC=""
 
+# The distrobox program the managed command names (set by _resolve_distrobox,
+# only on the paths that write one).
+DISTROBOX=""
+
 # --- Usage -------------------------------------------------------------------
 _usage() {
     cat >&2 <<'EOF'
@@ -95,15 +112,18 @@ back any time with `just box status`.
                             `no` removes the managed blocks and restores the
                             host shell, reporting what was removed.
   --terminal ghostty|none   Terminal profile to manage (default: ghostty when
+                            the ghostty executable is on PATH, or when
                             $XDG_CONFIG_HOME/ghostty or ~/.config/ghostty
-                            exists, else none). `none` writes no profile at
+                            exists; else none). `none` writes no profile at
                             all, not even ~/.tmux.conf; the decisions are
                             still stored.
   --tmux inside|host        Where tmux runs (default: inside): inside the box
-                            (ghostty: distrobox enter <box> -- tmux new -A -s
-                            main) or on the host (ghostty: tmux new -A -s
+                            (ghostty: <distrobox> enter <box> -- tmux new -A
+                            -s main) or on the host (ghostty: tmux new -A -s
                             main; ~/.tmux.conf: set -g default-command
-                            "distrobox enter <box>").
+                            "<distrobox> enter <box>"). <distrobox> is the
+                            absolute path this run resolves, so a terminal
+                            started from the desktop can run it.
   --box <name>              Box to enter (default: dev).
   --dry-run                 Log every decision and file action; write nothing.
   -h, --help                Show this help and exit.
@@ -205,7 +225,7 @@ _resolve() {
 
 # Resolve every decision into the globals and log each one.
 _resolve_all() {
-    local _r
+    local _r _detected
     _config_check || return 1
     _r="$(_resolve auto-enter "${OPT_AUTO_ENTER}")" || return 1
     AUTO_ENTER="${_r% *}" AUTO_ENTER_SRC="${_r#* }"
@@ -217,8 +237,27 @@ _resolve_all() {
     BOX="${_r% *}" BOX_SRC="${_r#* }"
     log_info "auto-enter: ${AUTO_ENTER} (${AUTO_ENTER_SRC})"
     log_info "terminal: ${TERMINAL} (${TERMINAL_SRC})"
+    # Only a DEFAULT has a detection basis to report; a user-forced value
+    # was not detected at all, and saying otherwise would mislead.
+    if [[ "${TERMINAL_SRC}" == "default" ]]; then
+        _detected="$(enter_terminal_detect)"
+        log_info "terminal detected: ${_detected%% *} (${_detected#* })"
+    fi
     log_info "tmux: ${TMUX} (${TMUX_SRC})"
     log_info "box: ${BOX} (${BOX_SRC})"
+}
+
+# Resolve the distrobox the managed command will name into DISTROBOX and
+# log the basis: the absolute path (issue #175), or the bare name plus a
+# WARN when nothing is on PATH - setup must still work on a machine where
+# distrobox is not installed yet, but the user has to be told that the
+# profile it just wrote depends on PATH at launch time.
+_resolve_distrobox() {
+    if DISTROBOX="$(enter_distrobox_program)"; then
+        log_info "distrobox: ${DISTROBOX} (absolute path written into the managed command)"
+    else
+        log_warn "distrobox: not found on PATH; the managed command falls back to the bare name (a terminal launched from the desktop may not find it - install distrobox, then re-run: just box setup)"
+    fi
 }
 
 # --- File actions (every one logged; --dry-run only logs) --------------------
@@ -327,12 +366,14 @@ _apply_ghostty() {
     local _ghostty _tmux_conf _rc=0
     _ghostty="$(enter_ghostty_config)"
     _tmux_conf="$(enter_tmux_conf)"
+    # Both bodies below name a distrobox, so resolve it before either.
+    _resolve_distrobox
     if [[ "${TMUX}" == "inside" ]]; then
-        _block_write "${_ghostty}" "command = distrobox enter ${BOX} -- tmux new -A -s main" || _rc=1
+        _block_write "${_ghostty}" "command = ${DISTROBOX} enter ${BOX} -- tmux new -A -s main" || _rc=1
         _block_remove "${_tmux_conf}" || _rc=1
     else
         _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-        _block_write "${_tmux_conf}" "set -g default-command \"distrobox enter ${BOX}\"" || _rc=1
+        _block_write "${_tmux_conf}" "set -g default-command \"${DISTROBOX} enter ${BOX}\"" || _rc=1
     fi
     return "${_rc}"
 }
@@ -341,6 +382,11 @@ _apply_ghostty() {
 # the tmux.conf block - which only serves the ghostty+host pair - is not
 # written either; the tmux decision is still stored for `just box status`.
 # Blocks an earlier ghostty run left are removed.
+#
+# The hint below keeps the BARE name on purpose: nothing is being written
+# to a file here, it is a line for the user to type in their own
+# interactive shell, whose PATH does hold ~/.local/bin. The absolute path
+# of issue #175 is for the managed command, which a desktop session runs.
 _apply_no_terminal() {
     local _rc=0
     log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"

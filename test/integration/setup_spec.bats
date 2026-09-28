@@ -10,6 +10,10 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+# `run -127` (a control case asserting `command not found`) is a flagged
+# run, which bats only accepts once the minimum version is declared.
+bats_require_minimum_version 1.5.0
+
 setup() {
     SETUP="${REPO_ROOT}/script/box/setup.sh"
     STATUS="${REPO_ROOT}/script/box/status.sh"
@@ -20,6 +24,21 @@ setup() {
     CONFIG="${HOME}/.config/worktool/config"
     GHOSTTY="${HOME}/.config/ghostty/config"
     TMUX_CONF="${HOME}/.tmux.conf"
+
+    # Issue #175: the managed command names the ABSOLUTE path of the
+    # distrobox setup.sh resolved. Each case installs its own, under a
+    # directory no test image has on PATH, so the expectation does not
+    # depend on where the image happens to put distrobox.
+    DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
+    DISTROBOX="${DBX_DIR}/distrobox"
+    mkdir -p "${DBX_DIR}"
+    cat >"${DISTROBOX}" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"${DISTROBOX}.log"
+EOF
+    chmod +x "${DISTROBOX}"
+    PATH="${DBX_DIR}:${PATH}"
+    export PATH
 }
 
 @test "setup (tmux host) then status: status reports the stored decisions, sources and both blocks present" {
@@ -46,7 +65,7 @@ setup() {
     assert_line "tmux: inside (user)"
     assert_line "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
-    run grep -F 'command = distrobox enter dev -- tmux new -A -s main' "${GHOSTTY}"
+    run grep -F "command = ${DISTROBOX} enter dev -- tmux new -A -s main" "${GHOSTTY}"
     assert_success
 }
 
@@ -111,4 +130,60 @@ setup() {
     assert_failure 1
     assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
     assert_equal "$(cat "${CONFIG}")" "${_before}"
+}
+
+# --- #175 ---------------------------------------------------------------
+#
+# The M3 real-machine acceptance failed with `/bin/sh: 1: distrobox: not
+# found`: a terminal started from the GNOME desktop inherits the systemd
+# user manager's PATH, which does not hold ~/.local/bin, and the managed
+# command was the bare name. These cases run the command setup.sh really
+# wrote, in that reduced environment.
+
+@test "#175: the command setup wrote runs under the reduced PATH of a desktop session (the bare name does not)" {
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    local _cmd
+    _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
+    assert_equal "${_cmd}" "${DISTROBOX} enter dev -- tmux new -A -s main"
+
+    # Control: that environment really cannot reach this distrobox by name,
+    # so the case below cannot pass by accident.
+    run -127 env -i PATH=/usr/bin:/bin HOME="${HOME}" /bin/sh -c \
+        'distrobox enter dev -- tmux new -A -s main'
+    assert_failure 127
+    assert_output --partial 'not found'
+
+    # What ghostty runs: `/bin/sh -c "<the managed command>"`.
+    run env -i PATH=/usr/bin:/bin HOME="${HOME}" /bin/sh -c "${_cmd}"
+    assert_success
+    run cat "${DISTROBOX}.log"
+    assert_line "enter dev -- tmux new -A -s main"
+}
+
+@test "#175: the tmux host default-command also runs under the reduced PATH of a desktop session" {
+    run "${SETUP}" --terminal ghostty --tmux host
+    assert_success
+    local _cmd
+    _cmd="$(sed -n 's/^set -g default-command "\(.*\)"$/\1/p' "${TMUX_CONF}")"
+    assert_equal "${_cmd}" "${DISTROBOX} enter dev"
+    run env -i PATH=/usr/bin:/bin HOME="${HOME}" /bin/sh -c "${_cmd}"
+    assert_success
+    run cat "${DISTROBOX}.log"
+    assert_line "enter dev"
+}
+
+@test "#175: status reports the distrobox the managed block records, and flags it once it is gone" {
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: runnable)"
+
+    # The path setup resolved stops working (distrobox moved or removed):
+    # the report is the readable error, not a window that flashes and dies.
+    rm -f "${DISTROBOX}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
 }

@@ -9,17 +9,17 @@
 #   - Every decision is resolved as option (user) > stored user choice >
 #     default, and logged on stderr as `[INFO] <key>: <value> (<source>)`:
 #     auto-enter yes|no (default yes), terminal ghostty|none (default ghostty
-#     when a ghostty config dir exists, else none), tmux inside|host (default
-#     inside), box <name> (default dev).
+#     when the ghostty executable is on PATH, or a ghostty config dir exists;
+#     else none), tmux inside|host (default inside), box <name> (default dev).
 #   - The decisions land in ONE state file, $XDG_CONFIG_HOME/worktool/config
 #     (default ~/.config/worktool/config): `<key>=<value>` plus
 #     `<key>.source=default|user` per key. User choices persist across runs;
 #     default keys are recomputed on every run.
 #   - auto-enter yes + terminal ghostty writes ONE managed block (begin/end
 #     marker lines) into $XDG_CONFIG_HOME/ghostty/config: tmux inside ->
-#     `command = distrobox enter <box> -- tmux new -A -s main`; tmux host ->
+#     `command = <distrobox> enter <box> -- tmux new -A -s main`; tmux host ->
 #     `command = tmux new -A -s main` plus a managed block in ~/.tmux.conf
-#     (`set -g default-command "distrobox enter <box>"`). Re-runs are
+#     (`set -g default-command "<distrobox> enter <box>"`). Re-runs are
 #     idempotent (the block is replaced in place, never duplicated); user
 #     content around the block is preserved.
 #   - auto-enter no removes both managed blocks and reports each removal.
@@ -29,11 +29,29 @@
 #     invalid value is refused with `setup.sh: ... (see --help)` on stderr,
 #     exit 2, before anything is touched.
 #
+# ISSUE #175 (the two bugs the M3 real-machine acceptance hit)
+#   (1) The terminal default follows the ghostty EXECUTABLE (`command -v
+#       ghostty`), not the config directory: a clean machine has
+#       /usr/bin/ghostty and no ~/.config/ghostty yet, and used to be
+#       resolved to `none`. The config dir stays a secondary signal, and
+#       the basis of the decision is logged.
+#   (2) `<distrobox>` above is the ABSOLUTE path setup.sh resolved, never
+#       the bare name: a terminal started from the desktop inherits the
+#       systemd user manager's PATH, which does not hold ~/.local/bin, so
+#       a bare `distrobox` dies with `/bin/sh: 1: distrobox: not found`.
+#   Every case here therefore installs a distrobox of its own, in a
+#   directory no test image has on PATH, so the expectations do not depend
+#   on what the image happens to ship.
+#
 # Every path comes from HOME / XDG_CONFIG_HOME, so each case runs against a
 # throwaway HOME under BATS_TEST_TMPDIR: the real home is never read or
 # written.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+
+# `run -127` (a control case asserting `command not found`) is a flagged
+# run, which bats only accepts once the minimum version is declared.
+bats_require_minimum_version 1.5.0
 
 setup() {
     SETUP="${REPO_ROOT}/script/box/setup.sh"
@@ -46,9 +64,32 @@ setup() {
     TMUX_CONF="${HOME}/.tmux.conf"
     BEGIN="# BEGIN worktool managed block (just box setup; do not edit)"
     END="# END worktool managed block"
-    CMD_INSIDE="command = distrobox enter dev -- tmux new -A -s main"
+
+    # Issue #175 (2): the distrobox every case resolves. It lives under the
+    # case's own tmpdir - a directory no test image has on PATH - so the
+    # expected managed command is the same in every image.
+    DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
+    DISTROBOX="${DBX_DIR}/distrobox"
+    _fake_distrobox "${DISTROBOX}"
+    PATH="${DBX_DIR}:${PATH}"
+    export PATH
+
+    CMD_INSIDE="command = ${DISTROBOX} enter dev -- tmux new -A -s main"
     CMD_HOST="command = tmux new -A -s main"
-    TMUX_BODY='set -g default-command "distrobox enter dev"'
+    TMUX_BODY="set -g default-command \"${DISTROBOX} enter dev\""
+}
+
+# Install an executable stand-in for distrobox at $1. setup.sh only
+# RESOLVES and writes its path, so the stand-in never has to do anything;
+# it records its arguments so a case that runs the managed command can
+# prove which binary answered.
+_fake_distrobox() {
+    mkdir -p "$(dirname -- "$1")"
+    cat >"$1" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$1.log"
+EOF
+    chmod +x "$1"
 }
 
 # Number of managed-block begin markers in file $1 (0 when absent).
@@ -156,7 +197,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = distrobox enter work -- tmux new -A -s main)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = ${DISTROBOX} enter work -- tmux new -A -s main)"
 }
 
 # --- ghostty block: exactly once, idempotent, user content preserved ---------
@@ -490,6 +531,124 @@ _block_count() {
 }
 
 # --- #161 (non-blocking): a rewrite keeps the file mode ----------------------
+
+# --- #175 (1): the terminal default follows the ghostty EXECUTABLE -----------
+#
+# The M3 real-machine acceptance failed here: /usr/bin/ghostty was installed
+# and ~/.config/ghostty did not exist yet, so `just box setup` chose `none`
+# and wrote nothing at all. The executable is the primary signal now, and
+# every case below also asserts the line that says WHY.
+
+@test "#175: terminal defaults to ghostty when the executable is on PATH even though no config dir exists" {
+    local _bin="${BATS_TEST_TMPDIR}/ghostty-bin"
+    mkdir -p "${_bin}"
+    printf '#!/bin/sh\nexit 0\n' >"${_bin}/ghostty"
+    chmod +x "${_bin}/ghostty"
+    assert [ ! -d "${HOME}/.config/ghostty" ]
+    PATH="${_bin}:${PATH}" run "${SETUP}"
+    assert_success
+    assert_line "[INFO] terminal: ghostty (default)"
+    assert_line "[INFO] terminal detected: ghostty (ghostty executable ${_bin}/ghostty)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+}
+
+@test "#175: the config dir alone still selects ghostty when no executable is on PATH, and the log says so" {
+    mkdir -p "${HOME}/.config/ghostty"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] terminal: ghostty (default)"
+    assert_line "[INFO] terminal detected: ghostty (no ghostty executable on PATH; config dir ${HOME}/.config/ghostty)"
+}
+
+@test "#175: terminal is none only when there is neither an executable nor a config dir, and the log names both" {
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] terminal: none (default)"
+    assert_line "[INFO] terminal detected: none (no ghostty executable on PATH and no ghostty config dir)"
+}
+
+@test "#175: a user-forced --terminal prints no detection line (detection is the default's basis only)" {
+    run "${SETUP}" --terminal none
+    assert_success
+    assert_line "[INFO] terminal: none (user)"
+    refute_line --partial "terminal detected:"
+}
+
+# --- #175 (2): the managed command names an ABSOLUTE distrobox ---------------
+#
+# A terminal started from the desktop inherits the systemd user manager's
+# PATH, which does not hold ~/.local/bin; the bare name died there with
+# `/bin/sh: 1: distrobox: not found`.
+
+@test "#175: the ghostty managed command names the absolute path of the resolved distrobox, never the bare name" {
+    mkdir -p "${HOME}/.config/ghostty"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
+    run cat "${GHOSTTY}"
+    assert_line "command = ${DISTROBOX} enter dev -- tmux new -A -s main"
+    refute_line "command = distrobox enter dev -- tmux new -A -s main"
+}
+
+@test "#175: --tmux host names the absolute distrobox path in the ~/.tmux.conf default-command too" {
+    run "${SETUP}" --terminal ghostty --tmux host
+    assert_success
+    assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
+    run cat "${TMUX_CONF}"
+    assert_line "set -g default-command \"${DISTROBOX} enter dev\""
+    refute_line 'set -g default-command "distrobox enter dev"'
+}
+
+# A distrobox reached through a symlink keeps the SYMLINK path: that is the
+# name the user (or their package manager) installed, and an upgrade
+# replaces the target behind it. Upstream's own dispatcher realpath()s $0
+# before locating its siblings, so being invoked through the link is safe.
+@test "#175: a distrobox reached through a symlink keeps the symlink path, not the target" {
+    local _real="${BATS_TEST_TMPDIR}/opt/distrobox-1.8.2.5/distrobox"
+    local _link_dir="${BATS_TEST_TMPDIR}/link/bin"
+    mkdir -p "$(dirname -- "${_real}")" "${_link_dir}"
+    printf '#!/bin/sh\nexit 0\n' >"${_real}"
+    chmod +x "${_real}"
+    ln -s "${_real}" "${_link_dir}/distrobox"
+    PATH="${_link_dir}:${PATH}" run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] distrobox: ${_link_dir}/distrobox (absolute path written into the managed command)"
+    run cat "${GHOSTTY}"
+    assert_line "command = ${_link_dir}/distrobox enter dev -- tmux new -A -s main"
+    refute_line --partial "${_real}"
+}
+
+@test "#175: with no distrobox on PATH the command falls back to the bare name and setup warns about a desktop launch" {
+    mkdir -p "${HOME}/.config/ghostty"
+    PATH="/usr/bin:/bin" run "${SETUP}"
+    assert_success
+    assert_line "[WARN] distrobox: not found on PATH; the managed command falls back to the bare name (a terminal launched from the desktop may not find it - install distrobox, then re-run: just box setup)"
+    run cat "${GHOSTTY}"
+    assert_line "command = distrobox enter dev -- tmux new -A -s main"
+}
+
+# The whole point of the absolute path: the command survives the reduced
+# PATH a desktop session hands its terminal. The control case first proves
+# that PATH really cannot reach this distrobox by name, so the positive
+# case cannot be vacuous.
+@test "#175: the written command runs under the reduced PATH of a desktop session, where the bare name does not" {
+    mkdir -p "${HOME}/.config/ghostty"
+    run "${SETUP}"
+    assert_success
+    local _cmd
+    _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
+    assert_equal "${_cmd}" "${DISTROBOX} enter dev -- tmux new -A -s main"
+
+    # Control: this PATH has no distrobox by name.
+    run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev -- tmux new -A -s main'
+    assert_failure 127
+
+    # The delivered command, run exactly as ghostty would run it.
+    run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
+    assert_success
+    run cat "${DISTROBOX}.log"
+    assert_line "enter dev -- tmux new -A -s main"
+}
 
 @test "rewriting an existing profile keeps its file mode" {
     mkdir -p "${HOME}/.config/ghostty"

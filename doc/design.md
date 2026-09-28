@@ -254,8 +254,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
 - M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。盒內先裝 tmux、fish
   (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 跑的是
-  `distrobox enter dev -- tmux new -A -s main`、後面接盒內 fish,兩者不裝自動進盒
-  跑不起來;只裝套件,設定留 M5。
+  `<distrobox 絕對路徑> enter dev -- tmux new -A -s main`(issue #175:桌面啟動
+  的終端繼承 systemd user manager 的 PATH,裸名字找不到)、後面接盒內 fish,
+  兩者不裝自動進盒跑不起來;只裝套件,設定留 M5。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
 - M4 host bootstrap:install.sh 在 host 裝 docker+distrobox+`just`(冪等、
   可重跑;`just` 在此之前為前置需求,見「決策」)。

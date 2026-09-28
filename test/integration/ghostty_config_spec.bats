@@ -12,8 +12,14 @@
 #       the delivered managed block (marker lines included - they are `#`
 #       comments to ghostty) parses.
 #     - `ghostty +show-config` under XDG_CONFIG_HOME reports
-#       `command = distrobox enter dev -- tmux new -A -s main` - the
+#       `command = <distrobox> enter dev -- tmux new -A -s main` - the
 #       EFFECTIVE value ghostty would run, not merely the text on disk.
+#       Since issue #175 `<distrobox>` is the ABSOLUTE path setup.sh
+#       resolved, not the bare name: a terminal the desktop starts
+#       inherits the systemd user manager's PATH, which does not hold
+#       ~/.local/bin. The case asserts the absolute form AND refutes the
+#       bare one, and a control case covers the fallback (no distrobox on
+#       PATH at all): what setup writes then must still parse.
 #     - the other setup decisions travel the same way: `--tmux host` resolves
 #       to `command = tmux new -A -s main`, `--box work` names that box.
 #     - the assertion is not vacuous: after `--auto-enter no` removes the
@@ -40,9 +46,6 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 # Hard bound (seconds) on every ghostty CLI action; SIGKILL 5s later.
 GHOSTTY_TIMEOUT=60
 
-# What #5 / doc/enter.md promise the terminal runs, with the default box.
-EXPECTED_COMMAND='distrobox enter dev -- tmux new -A -s main'
-
 setup() {
     SETUP="${REPO_ROOT}/script/box/setup.sh"
 
@@ -55,6 +58,20 @@ setup() {
     export XDG_CONFIG_HOME
     mkdir -p "${XDG_CONFIG_HOME}/ghostty"
     GHOSTTY_CONFIG="${XDG_CONFIG_HOME}/ghostty/config"
+
+    # Issue #175: this image has no distrobox of its own, so each case
+    # installs one where a user's would be - outside the system PATH - and
+    # that absolute path is what setup.sh must hand to ghostty.
+    DBX_DIR="${BATS_TEST_TMPDIR}/local/bin"
+    DISTROBOX="${DBX_DIR}/distrobox"
+    mkdir -p "${DBX_DIR}"
+    printf '#!/bin/sh\nexit 0\n' >"${DISTROBOX}"
+    chmod +x "${DISTROBOX}"
+    PATH="${DBX_DIR}:${PATH}"
+    export PATH
+
+    # What #5 / doc/enter.md promise the terminal runs, with the default box.
+    EXPECTED_COMMAND="${DISTROBOX} enter dev -- tmux new -A -s main"
 }
 
 # Every ghostty call goes through here: a hard bound so a wedged ghostty
@@ -119,7 +136,41 @@ _log_lines() {
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line 'command = distrobox enter work -- tmux new -A -s main'
+    assert_line "command = ${DISTROBOX} enter work -- tmux new -A -s main"
+}
+
+# --- #175: the command ghostty resolves names an ABSOLUTE distrobox ---------
+
+@test "#175: the effective command ghostty resolves is an ABSOLUTE distrobox path, not the bare name" {
+    run "${SETUP}"
+    assert_success
+    run _ghostty +show-config
+    assert_success
+    assert_line --regexp '^command = /.*/distrobox enter dev -- tmux new -A -s main$'
+    # The shape the real machine failed on: a desktop-launched terminal
+    # inherits a PATH without ~/.local/bin and dies with `not found`.
+    refute_line 'command = distrobox enter dev -- tmux new -A -s main'
+    _log_lines effective "${DISTROBOX} enter dev -- tmux new -A -s main"
+}
+
+@test "#175: the absolute-path command is still a config +validate-config accepts" {
+    run "${SETUP}"
+    assert_success
+    run grep -qxF "command = ${EXPECTED_COMMAND}" "${GHOSTTY_CONFIG}"
+    assert_success
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_success
+}
+
+@test "#175: with no distrobox on PATH setup falls back to the bare name and ghostty still parses it" {
+    PATH="/usr/bin:/bin" run "${SETUP}"
+    assert_success
+    assert_line --partial "[WARN] distrobox: not found on PATH"
+    run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
+    assert_success
+    run _ghostty +show-config
+    assert_success
+    assert_line 'command = distrobox enter dev -- tmux new -A -s main'
 }
 
 # --- control cases: the two assertions above can fail ------------------------

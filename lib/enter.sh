@@ -14,8 +14,9 @@
 #
 # Decisions (the keys of the state file) and their defaults:
 #   auto-enter  yes|no        default yes
-#   terminal    ghostty|none  default ghostty when <config dir>/ghostty or
-#                             ~/.config/ghostty exists, else none
+#   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is
+#                             on PATH, or (secondary) a ghostty config dir
+#                             exists; else none
 #   tmux        inside|host   default inside
 #   box         <name>        default dev
 #   enter_keys                -> prints the four keys, one per line
@@ -23,6 +24,14 @@
 #   enter_choices <key>       -> prints the allowed values (`a|b`), empty for box
 #   enter_expected <key>      -> the allowed values in human form (messages)
 #   enter_value_ok <key> <v>  -> 0 when <v> is an allowed value of <key>
+#
+# Executables the decisions depend on (issue #175):
+#   enter_which <name>        -> the ABSOLUTE path PATH resolves, else 1
+#   enter_terminal_detect     -> `<value> <reason>`: the terminal default and
+#                                the basis of it, for the decision log
+#   enter_distrobox_program   -> the distrobox a managed command must name:
+#                                the absolute path (0) or the bare name (1)
+#   enter_body_distrobox <b>  -> the distrobox a managed block body names
 #
 # State file: `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
@@ -60,16 +69,94 @@ enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
 enter_tmux_conf() { printf '%s/.tmux.conf\n' "${HOME}"; }
 
+# --- Executables the decisions depend on (issue #175) ------------------------
+
+# Print the ABSOLUTE path of executable $1 as the CURRENT PATH resolves it;
+# return 1 when there is none. `command -v` also answers for shell
+# functions, aliases and builtins, and returns a RELATIVE path when the
+# PATH entry that matched was relative - none of those can be written into
+# a terminal profile, so only a real, absolute, executable file is taken.
+enter_which() {
+    local _path
+    _path="$(command -v -- "$1" 2>/dev/null)" || return 1
+    [[ -n "${_path}" && "${_path}" == /* && -f "${_path}" && -x "${_path}" ]] \
+        || return 1
+    printf '%s\n' "${_path}"
+}
+
+# The terminal default AND the basis of it, as `<value> <reason>` (the
+# value up to the first space, the reason after it), so the decision log
+# can say why.
+#
+# The PRIMARY signal is the ghostty EXECUTABLE (issue #175): a clean
+# machine has /usr/bin/ghostty and no ~/.config/ghostty yet, and judging on
+# the config dir alone resolved such a machine to `none` and wrote no
+# terminal profile at all - the M3 real-machine acceptance failed exactly
+# there. A config dir under XDG_CONFIG_HOME or ~/.config (the two places
+# ghostty itself reads) stays a SECONDARY signal, for a ghostty that is
+# installed but not on this PATH.
+enter_terminal_detect() {
+    local _exe _dir
+    if _exe="$(enter_which ghostty)"; then
+        printf 'ghostty ghostty executable %s\n' "${_exe}"
+        return 0
+    fi
+    for _dir in "$(enter_config_dir)/ghostty" "${HOME}/.config/ghostty"; do
+        if [[ -d "${_dir}" ]]; then
+            printf 'ghostty no ghostty executable on PATH; config dir %s\n' "${_dir}"
+            return 0
+        fi
+    done
+    printf 'none no ghostty executable on PATH and no ghostty config dir\n'
+}
+
+# The distrobox program a managed command must name: the ABSOLUTE path the
+# current PATH resolves (return 0), or the bare name as a last resort
+# (return 1, so the caller can warn).
+#
+# WHY ABSOLUTE (issue #175): a terminal started from the desktop inherits
+# the systemd user manager's environment, not the user's interactive
+# shell's, and that PATH routinely lacks ~/.local/bin - where distrobox's
+# own installer puts it. A bare `distrobox` in the managed command died
+# there with `/bin/sh: 1: distrobox: not found`.
+#
+# WHY THE SYMLINK IS KEPT: a distrobox reached through a symlink keeps the
+# symlink path. That is the name the user (or their package manager)
+# installed, and an upgrade replaces the target behind it, so dereferencing
+# would pin a path that can disappear. Upstream's dispatcher realpath()s
+# $0 before locating its distrobox-* siblings, so being invoked through the
+# link is safe.
+enter_distrobox_program() {
+    enter_which distrobox && return 0
+    printf 'distrobox\n'
+    return 1
+}
+
+# The distrobox program recorded in managed-block body $1, or nothing when
+# the body names none. setup.sh writes exactly two bodies that name one:
+#   command = <distrobox> enter <box> -- tmux new -A -s main
+#   set -g default-command "<distrobox> enter <box>"
+# (the tmux-on-host ghostty body, `command = tmux new -A -s main`, names
+# none). status.sh reads it back to report whether that path still runs.
+enter_body_distrobox() {
+    local _body="$1" _prog
+    case "${_body}" in
+        'command = '*)               _prog="${_body#command = }" ;;
+        'set -g default-command "'*) _prog="${_body#set -g default-command \"}" ;;
+        *) return 0 ;;
+    esac
+    _prog="${_prog%% *}"
+    [[ "${_prog##*/}" == "distrobox" ]] || return 0
+    printf '%s\n' "${_prog}"
+}
+
 # --- Defaults and choices ----------------------------------------------------
 
-# ghostty is the detected default when it has a config dir under either
-# XDG_CONFIG_HOME or ~/.config (the two places ghostty itself reads).
+# The value half of enter_terminal_detect (the reason half is for the log).
 _enter_default_terminal() {
-    if [[ -d "$(enter_config_dir)/ghostty" || -d "${HOME}/.config/ghostty" ]]; then
-        printf 'ghostty\n'
-    else
-        printf 'none\n'
-    fi
+    local _detected
+    _detected="$(enter_terminal_detect)"
+    printf '%s\n' "${_detected%% *}"
 }
 
 enter_default() {
