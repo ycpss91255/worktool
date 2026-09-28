@@ -698,37 +698,49 @@ verify-tool-ok
       fish
       main
       restore-rc=0
+      restore-ok=1
       blocks=0
       leftover-dirs=0
       dev-gone=1
       ```
-      (每個名字一行:`backed-up` = 原本就有那個檔、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有;`ok=1` 才會往下套用。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**;`leftover-dirs=0` = 原本不存在的目錄也被移除,不留空目錄)
+      (每個名字一行:`backed-up` = 原本就有那個檔、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有;`ok=1` 才會往下套用,`ok=0` 或備份目錄已存在時步驟 1 完全不動任何檔案。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**;`restore-ok=1` 才會刪掉備份,`restore-ok=0` 會保留備份讓你重跑;還原成功後備份就沒了,再貼一次步驟 3 只會印 `no-backup=1` 而不動任何檔案;`leftover-dirs=0` = 原本不存在的目錄也被移除,不留空目錄)
     - 驗收方式
       ```bash
-      # 1) 備份真實設定;備份失敗就不動任何東西
-      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
-      mkdir "$B" || echo "backup 目錄已存在:$B -- 先執行步驟 3 還原,確認後再自行移除"
-      ok=1; : > "$B/manifest"
-      for n in ghostty worktool; do
-        if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest" || ok=0
-        elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest"
-        else echo "$n=absent-dir" >> "$B/manifest"; fi
-      done
-      cat "$B/manifest"; printf 'backup=%s ok=%s\n' "$B" "$ok"
+      # 1) 備份真實設定;備份目錄已存在或備份失敗,就完全不動任何檔案
+      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup; ok=0
+      if ! mkdir "$B" 2>/dev/null; then
+        echo "backup 目錄已存在:$B -- 裡面可能是上一次沒跑完的備份。先貼步驟 3 用那份備份還原,確認乾淨後再重跑步驟 1。"
+      else
+        ok=1; : > "$B/manifest"
+        for n in ghostty worktool; do
+          if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest" || ok=0
+          elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest"
+          else echo "$n=absent-dir" >> "$B/manifest"; fi
+        done
+        cat "$B/manifest"
+      fi
+      printf 'backup=%s ok=%s\n' "$B" "$ok"
       # 2) 只有備份成功才套用,然後開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
       [ "$ok" = 1 ] && just box assemble >/dev/null && just box setup && just box status
       ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
-      # 3) 還原 -- 可單獨執行、可重複執行,中斷後也用這段
+      # 3) 還原 -- 可在任何 shell 單獨執行,中斷後也用這段;沒有備份時什麼都不動
       C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
-      just box setup --auto-enter no >/dev/null 2>&1; echo restore-rc=$?
-      for n in ghostty worktool; do
-        if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config"
-        elif grep -qx "$n=absent-file" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"
-        elif grep -qx "$n=absent-dir" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"; rmdir "$C/$n" 2>/dev/null; fi
-      done
-      b=0; [ -e "$C/ghostty/config" ] && b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config"); printf 'blocks=%s\n' "$b"
-      lo=0; for n in ghostty worktool; do grep -qx "$n=absent-dir" "$B/manifest" 2>/dev/null && [ -d "$C/$n" ] && lo=$((lo+1)); done; printf 'leftover-dirs=%s\n' "$lo"
-      rm -rf "$B"; distrobox rm -f dev >/dev/null 2>&1
+      if [ ! -f "$B/manifest" ]; then
+        echo "no-backup=1($B 沒有備份;已經還原過就不需要再跑)"
+      else
+        just box setup --auto-enter no >/dev/null 2>&1; rrc=$?; echo "restore-rc=$rrc"
+        rok=1; [ "$rrc" -eq 0 ] || rok=0
+        for n in ghostty worktool; do
+          if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config" || rok=0
+          elif grep -qx "$n=absent-file" "$B/manifest"; then rm -f "$C/$n/config" || rok=0
+          elif grep -qx "$n=absent-dir" "$B/manifest"; then { rm -f "$C/$n/config" || rok=0; }; rmdir "$C/$n" 2>/dev/null; fi
+        done
+        echo "restore-ok=$rok"
+        b=0; [ -e "$C/ghostty/config" ] && b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config"); printf 'blocks=%s\n' "$b"
+        lo=0; for n in ghostty worktool; do grep -qx "$n=absent-dir" "$B/manifest" && [ -d "$C/$n" ] && lo=$((lo+1)); done; printf 'leftover-dirs=%s\n' "$lo"
+        if [ "$rok" = 1 ] && [ "$lo" = 0 ]; then rm -rf "$B"; else echo "還原未完成,備份保留在 $B,修正後重跑這段"; fi
+      fi
+      distrobox rm -f dev >/dev/null 2>&1
       d=$(distrobox list 2>/dev/null | grep -c '[[:space:]]dev[[:space:]]'); printf 'dev-gone=%s\n' "$([ "$d" -eq 0 ] && echo 1 || echo 0)"
       ```
 
