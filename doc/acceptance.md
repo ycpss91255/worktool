@@ -527,9 +527,13 @@ verify-tool-ok
       (usage 第一行可能因終端寬度換行只顯示前半;最後一行 four-usages = 斷言四支不同腳本各有 usage)
     - 驗收方式
       ```bash
-      just box
-      just box help 2>&1 | grep '^Usage:'
-      test "$(just box help 2>&1 | grep -o '^Usage: [a-z]*\.sh' | sort -u | wc -l)" -eq 4 && echo four-usages
+      ( set -o pipefail
+        just box || exit 1
+        # 先看 just 自己的結束碼,再數它印了什麼:印得出四行 Usage 卻 exit 1 的 just 不算過
+        help=$(just box help 2>&1) || exit 1
+        printf '%s\n' "$help" | grep '^Usage:' || exit 1
+        n=$(printf '%s\n' "$help" | grep -o '^Usage: [a-z]*\.sh' | sort -u | wc -l) || exit 1
+        [ "$n" -eq 4 ] && echo four-usages )
       ```
 
 - [ ] 2. 自動測試:六道 gate 全綠(含 300 ms 進盒延遲 gate)
@@ -622,22 +626,26 @@ verify-tool-ok
       ( set -o pipefail; just test integration 2>&1 | grep -E '^ok .*ghostty|^not ok' ); echo rc=$?
       ( set -o pipefail; just test system-real 2>&1 | grep -E '^# (chain|chain-host|hang|single-instance)|^ok .*ghostty chain|^not ok' ); echo rc=$?
       ```
-  - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;2.3 的 pipeline 沒有 `pipefail` 時會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
+  - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;沒有 `pipefail` 的 pipeline 會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
     - 預期看到資訊(前四行 = 檢查程式咬住順序顛倒與空的 RED 區塊;後兩行 = 同一條 pipeline 有無 `pipefail` 的差別)
       ```text
       order=BAD red=6 green=0
       wrong-order rc=1
       order=BAD red=0 green=0
       empty-red-block rc=1
-      pipefail-rc=7
-      documented-style-rc=0
+      guarded-rc=7
+      unguarded-rc=0
       ```
+      (round 12:M3 的每個區塊都已經掃過一遍,凡是「第一段可能失敗」的 pipeline 一律用
+      `set -o pipefail` / `${PIPESTATUS[0]}` / 先收進變數再判結束碼三者之一守住,所以
+      `unguarded-rc=0` 是**刻意留下的反例**,不是本清單還在用的寫法 —— 它就是這一項要
+      示範的那個缺陷:上游 exit 7,整條 pipeline 仍然回 0)
     - 驗收方式
       ```bash
       awk -f doc/evidence/tdd.awk doc/evidence/negative/wrong-order.md; echo "wrong-order rc=$?"
       awk -f doc/evidence/tdd.awk doc/evidence/negative/empty-red-block.md; echo "empty-red-block rc=$?"
-      ( set -o pipefail; { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo pipefail-rc=$?
-      ( { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo documented-style-rc=$?
+      ( set -o pipefail; { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo guarded-rc=$?
+      ( { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo unguarded-rc=$?
       ```
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(每個區塊自建拋棄式 HOME,不動你的家目錄)
@@ -659,12 +667,17 @@ verify-tool-ok
       (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是區塊自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就 `exit 1`)
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
+      ( set -o pipefail   # find 壞掉時 wc 仍會印 0,pipefail 讓那種 0 變成非 0 結束碼而不是「通過」
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1   # 預期輸出比對的是這兩個路徑,不是寫死的
         norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
-        before=$(find "$H" -type f | wc -l)
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        printf 'files %s->%s\n' "$before" "$(find "$H" -type f | wc -l)" )
+        count() { find "$1" -type f | wc -l; }
+        before=$(count "$H") || exit 1
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run 2>&1 | norm; src=${PIPESTATUS[0]}; echo rc=$src
+        after=$(count "$H") || exit 1
+        printf 'files %s->%s\n' "$before" "$after"
+        # 印出來的 rc 也要是區塊自己的結束碼,否則「印 rc=1 卻整段 exit 0」還是一種通過
+        [ "$src" -eq 0 ] )
       ```
   - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
     - 預期看到資訊
@@ -695,12 +708,14 @@ verify-tool-ok
       ```
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
+      ( set -o pipefail
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1
         norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box status 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        norm <"$H/.config/ghostty/config" )
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup 2>&1 | norm; src=${PIPESTATUS[0]}; echo rc=$src
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box status 2>&1 | norm; trc=${PIPESTATUS[0]}; echo rc=$trc
+        norm <"$H/.config/ghostty/config" || exit 1
+        [ "$src" -eq 0 ] && [ "$trc" -eq 0 ] )
       ```
   - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);受管區塊只剩零個
     - 預期看到資訊(第二次 setup 起)
@@ -720,12 +735,17 @@ verify-tool-ok
       (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行)
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
+      ( set -o pipefail
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         G=$(command -v ghostty) && D=$(command -v distrobox) || exit 1
         norm() { sed -e "s|$G|<G>|g" -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")" )
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1 || exit 1
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no 2>&1 | norm; src=${PIPESTATUS[0]}; echo rc=$src
+        # grep -c 的 1 是「零個相符」、2 才是「檔案讀不到」:少了這一關,檔案不見也會印 blocks=0
+        blocks=$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config"); brc=$?
+        [ "$brc" -le 1 ] || exit 1
+        printf 'blocks=%s\n' "$blocks"
+        [ "$src" -eq 0 ] )
       ```
   - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
     - 預期看到資訊
@@ -746,10 +766,12 @@ verify-tool-ok
       ```
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT
+      ( set -o pipefail
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT
         norm() { sed -e "s|$H|<H>|g"; }
+        count() { find "$1" -type f | wc -l; }
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
+        files=$(count "$H") || exit 1; printf 'files=%s\n' "$files"
         mkdir -p "$H/.config/worktool"
         for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status 2>&1 | norm; echo rc=${PIPESTATUS[0]}; done )
       ```
@@ -771,15 +793,19 @@ verify-tool-ok
       ```
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
+      ( set -o pipefail
+        H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
         D=$(command -v distrobox) && command -v ghostty >/dev/null || exit 1
         norm() { sed -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
+        count() { find "$1" -type f | wc -l; }
         # ghostty 一起連進 $H/bin:受限 PATH 下的偵測結果就不再取決於它裝在哪
         for t in just ghostty; do ln -s "$(command -v "$t")" "$H/bin/$t"; done; P=$H/bin:/usr/bin:/bin
         HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup 2>&1 | norm; echo rc=${PIPESTATUS[0]}
-        printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
+        files=$(count "$H") || exit 1; printf 'files=%s\n' "$files"
         HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup --distrobox "$D" >/dev/null 2>&1; echo rc=$?
-        grep '^command' "$H/.config/ghostty/config" | norm )
+        # 先收進變數再判 grep 的結束碼:直接 `grep ... | norm` 的話,grep 失敗會被 sed 的 0 蓋掉
+        cmd=$(grep '^command' "$H/.config/ghostty/config") || exit 1
+        printf '%s\n' "$cmd" | norm )
       ```
   - [ ] 3.6 `status` 的 `distrobox:` 那行:除了 3.2 的 runnable,其餘四種狀態(#177)各印一次,證明「受管 command 還跑不跑得起來」在壞掉的情況下也講得出來
     - 預期看到資訊(四案各兩行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有;每案的第二行是那次 `status` 自己的結束碼與它寫到 stderr 的行數)
@@ -801,13 +827,17 @@ verify-tool-ok
         D=$(command -v distrobox) || exit 1
         norm() { sed -e "s|$D|<D>|g" -e "s|$H|<H>|g"; }
         st() { HOME=$H XDG_CONFIG_HOME=$H/.config "$@" just box status 2>"$H/err" | grep '^distrobox:' | norm
-               local rc=${PIPESTATUS[0]}
-               printf 'rc=%s stderr=%s\n' "$rc" "$(grep -cv '^\./script/box/status\.sh' "$H/err")"; }
+               local rc=${PIPESTATUS[0]} n
+               # grep -cv 的 1 是「零行」、2 是「檔案讀不到」:後者不能混進 stderr=0
+               n=$(grep -cv '^\./script/box/status\.sh' "$H/err"); [ $? -le 1 ] || return 1
+               printf 'rc=%s stderr=%s\n' "$rc" "$n"; }
         printf '#!/bin/sh\nexit 0\n' >"$H/bin/distrobox"; chmod +x "$H/bin/distrobox"
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --distrobox "$H/bin/distrobox" >/dev/null 2>&1
-        rm -f "$H/bin/distrobox"; st                      # 記錄當時跑得動,之後被移走
-        sed -i "s|^command = .*|command = 'distrobox' enter dev -- tmux new -A -s main|" "$H/.config/ghostty/config"; st
-        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no >/dev/null 2>&1; st
+        # 每個前置步驟都要判結束碼:setup 沒寫成功的話,後面的 st 讀到的就不是這一案要驗的狀態
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --distrobox "$H/bin/distrobox" >/dev/null 2>&1 || exit 1
+        rm -f "$H/bin/distrobox"; st || exit 1            # 記錄當時跑得動,之後被移走
+        sed -i "s|^command = .*|command = 'distrobox' enter dev -- tmux new -A -s main|" "$H/.config/ghostty/config" || exit 1
+        st || exit 1
+        HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no >/dev/null 2>&1 || exit 1; st || exit 1
         for t in just sh bash dirname awk grep; do ln -s "$(command -v "$t")" "$H/bin/$t"; done
         st env PATH="$H/bin" )
       ```
@@ -817,18 +847,38 @@ verify-tool-ok
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)
       ```text
       svg=3
-      foreignobject=0
-      mxfile=3
+      foreignobject=0/3
+      mxfile=3/3
       readme=4
       flow-wording=1
       ```
+      (round 12:`foreignobject` 與 `mxfile` 改印 `相符/掃過` 兩個數字。舊版全部是
+      `$(cmd | wc -l)`,`foreignobject=0` 因此有兩種意思 —— 三張圖都乾淨,或是**一張圖
+      都沒讀到**(目錄不在、glob 沒展開、grep 讀不到檔),而後者才是真的壞掉。現在分母
+      就是那一輪實際掃過的檔數,`0/3` 和 `0/0` 一眼分得出來;而且區塊先斷言 glob 展得
+      開、每個檔讀得到,讀不到就直接非 0 結束,根本印不出那五行)
     - 驗收方式
       ```bash
-      printf 'svg=%s\n' "$(find doc/diagram -maxdepth 1 -name '*.drawio.svg' | wc -l)"
-      printf 'foreignobject=%s\n' "$(grep -l '<foreignObject' doc/diagram/*.drawio.svg | wc -l)"
-      printf 'mxfile=%s\n' "$(grep -l 'content="&lt;mxfile' doc/diagram/*.drawio.svg | wc -l)"
-      printf 'readme=%s\n' "$(grep -c 'doc/diagram/.*\.drawio\.svg' README.md)"
-      printf 'flow-wording=%s\n' "$(grep -c 'host 只需 docker + just' doc/diagram/flow.drawio.svg)"
+      ( set -o pipefail; shopt -s nullglob
+        svgs=(doc/diagram/*.drawio.svg)
+        # 沒有輸入就沒有「通過」可言:先證明要數的東西真的在,再開始數
+        [ "${#svgs[@]}" -gt 0 ] || { printf '[FAIL] no .drawio.svg under doc/diagram\n' >&2; exit 1; }
+        for f in "${svgs[@]}" README.md doc/diagram/flow.drawio.svg; do
+          [ -r "$f" ] || { printf '[FAIL] %s is not readable\n' "$f" >&2; exit 1; }
+        done
+        # grep 的 1 是「零個相符」、>=2 才是真的出錯,只有後者該讓區塊紅掉
+        hits() { local pat=$1 out; shift; out=$(grep -l -e "$pat" -- "$@"); [ $? -le 1 ] || return 1
+                 if [ -z "$out" ]; then echo 0; else printf '%s\n' "$out" | wc -l; fi; }
+        cnt()  { local out; out=$(grep -c -e "$1" -- "$2"); [ $? -le 1 ] || return 1; printf '%s\n' "$out"; }
+        printf 'svg=%s\n' "${#svgs[@]}"
+        fo=$(hits '<foreignObject' "${svgs[@]}") || exit 1
+        printf 'foreignobject=%s/%s\n' "$fo" "${#svgs[@]}"
+        mx=$(hits 'content="&lt;mxfile' "${svgs[@]}") || exit 1
+        printf 'mxfile=%s/%s\n' "$mx" "${#svgs[@]}"
+        rdm=$(cnt 'doc/diagram/.*\.drawio\.svg' README.md) || exit 1
+        printf 'readme=%s\n' "$rdm"
+        fw=$(cnt 'host 只需 docker + just' doc/diagram/flow.drawio.svg) || exit 1
+        printf 'flow-wording=%s\n' "$fw" )
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
@@ -849,7 +899,7 @@ verify-tool-ok
     - 驗收方式
       ````bash
       (
-        set -u
+        set -u -o pipefail   # 管線的第一段失敗就讓整條管線失敗
         REPO=ycpss91255/worktool; ISSUE=22; BOX=dev
         TAG='M3 5.1 實機 bench'
         RUN_ID="m3-51-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -913,7 +963,8 @@ verify-tool-ok
 
         grep -E '^(enter|shell|inbox): min=[0-9.]+ median=[0-9.]+ max=[0-9.]+ ms$' \
           "$W/bench.txt" >"$W/three.txt" || true
-        n=$(wc -l <"$W/three.txt"); k=$(cut -d: -f1 "$W/three.txt" | sort -u | wc -l)
+        n=$(wc -l <"$W/three.txt") || fail "counting the bench lines failed"
+        k=$(cut -d: -f1 "$W/three.txt" | sort -u | wc -l) || fail "counting the distinct bench metrics failed"
         { [ "$n" -eq 3 ] && [ "$k" -eq 3 ]; } || fail "expected one enter/shell/inbox line each, got n=$n distinct=$k"
 
         # publish from this run, then verify that exact comment by id
@@ -959,7 +1010,7 @@ verify-tool-ok
       ```bash
       # 步驟 1) 備份真實設定。備份目錄已存在、或備份中途失敗,都完全不動任何檔案
       (
-        set -u
+        set -u -o pipefail   # 管線的第一段失敗就讓整條管線失敗
         C=${XDG_CONFIG_HOME:-$HOME/.config}
         B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
         NAMES='ghostty worktool'
@@ -992,7 +1043,10 @@ verify-tool-ok
           regular)
             # cp -a = -dR --preserve=all, so mode/mtime survive and links are NOT dereferenced
             cp -a "$p" "$B/$n.config" || { printf '[FAIL] %s: backup copy failed\n' "$n" >&2; exit 1; }
-            printf '%s=regular\n%s.sha=%s\n' "$n" "$n" "$(wt_sha "$B/$n.config")" >>"$B/manifest.partial"
+            # wt_sha 是 `sha256sum | cut`:先收進變數才判得到 sha256sum 自己的結束碼,
+            # 直接塞進 printf 的話,壞掉的 sha256sum 會變成 manifest 裡一個空的 .sha
+            sha=$(wt_sha "$B/$n.config") || { printf '[FAIL] %s: hashing the backup failed\n' "$n" >&2; exit 1; }
+            printf '%s=regular\n%s.sha=%s\n' "$n" "$n" "$sha" >>"$B/manifest.partial"
             ;;
           symlink)
             cp -a "$p" "$B/$n.config" || { printf '[FAIL] %s: backup copy failed\n' "$n" >&2; exit 1; }
@@ -1007,7 +1061,8 @@ verify-tool-ok
               tp=$(readlink -f "$p") || { printf '[FAIL] %s: cannot resolve the link target\n' "$n" >&2; exit 1; }
               [ -f "$tp" ] || { printf '[FAIL] %s: link target %s is not a regular file -- handle it by hand\n' "$n" "$tp" >&2; exit 1; }
               cp -a "$tp" "$B/$n.target" || { printf '[FAIL] %s: backing up the link target failed\n' "$n" >&2; exit 1; }
-              printf '%s.tpath=%s\n%s.tsha=%s\n' "$n" "$tp" "$n" "$(wt_sha "$B/$n.target")" >>"$B/manifest.partial"
+              tsha=$(wt_sha "$B/$n.target") || { printf '[FAIL] %s: hashing the link target backup failed\n' "$n" >&2; exit 1; }
+              printf '%s.tpath=%s\n%s.tsha=%s\n' "$n" "$tp" "$n" "$tsha" >>"$B/manifest.partial"
             else
               printf '%s.tpath=\n' "$n" >>"$B/manifest.partial"   # dangling link: nothing behind it
             fi
@@ -1038,7 +1093,7 @@ verify-tool-ok
       ```bash
       # 步驟 2) 重新驗證磁碟上的 manifest,再套用;之後開一個新的 ghostty 視窗
       (
-        set -u
+        set -u -o pipefail   # 管線的第一段失敗就讓整條管線失敗
         C=${XDG_CONFIG_HOME:-$HOME/.config}
         B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
         NAMES='ghostty worktool'
@@ -1051,7 +1106,8 @@ verify-tool-ok
           else echo other; fi
         }
         wt_sha() { sha256sum "$1" | cut -d' ' -f1; }
-        wt_field() { grep -E "^$2=" "$1/manifest" | head -1 | cut -d= -f2-; }
+        # -m1 取代 `| head -1`:grep 自己停,pipefail 下不會踩到 head 提前關管線的 SIGPIPE
+        wt_field() { grep -m1 -E "^$2=" "$1/manifest" | cut -d= -f2-; }
         wt_bad() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
         # trust the published manifest on disk, never the $ok variable from step 1
@@ -1146,7 +1202,7 @@ verify-tool-ok
       ```bash
       # 步驟 3) 還原 -- 可在任何 shell 單獨執行,中斷後也用這段;沒有備份時什麼都不動
       (
-        set -u
+        set -u -o pipefail   # 管線的第一段失敗就讓整條管線失敗
         C=${XDG_CONFIG_HOME:-$HOME/.config}
         B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
         NAMES='ghostty worktool'
@@ -1162,7 +1218,8 @@ verify-tool-ok
           else echo other; fi
         }
         wt_sha() { sha256sum "$1" | cut -d' ' -f1; }
-        wt_field() { grep -E "^$2=" "$1/manifest" | head -1 | cut -d= -f2-; }
+        # -m1 取代 `| head -1`:grep 自己停,pipefail 下不會踩到 head 提前關管線的 SIGPIPE
+        wt_field() { grep -m1 -E "^$2=" "$1/manifest" | cut -d= -f2-; }
 
         if [ ! -d "$B" ]; then
           note "no-backup=1 ($B absent; already restored, or step 1 never ran)"
@@ -1221,7 +1278,9 @@ verify-tool-ok
 
         b=0
         if [ "$(wt_type "$C/ghostty/config")" != absent ]; then
-          b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config" 2>/dev/null) || b=0
+          # grep -c 的 1 是「零個相符」,>=2 是讀不到檔:後者不該偽裝成 blocks=0
+          b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config" 2>/dev/null); grc=$?
+          [ "$grc" -le 1 ] || { b=-1; bad "cannot read $C/ghostty/config -- blocks= is not trustworthy"; }
         fi
         note "blocks=$b"
         [ "$b" -eq 0 ] || bad "worktool managed block still present in $C/ghostty/config"
@@ -1281,7 +1340,13 @@ verify-tool-ok
     - 驗收方式
       ```bash
       distrobox create --name dev --image ubuntu:24.04 --yes >/dev/null
-      distrobox list | awk -F'|' 'NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n=="dev") print "preexisting=" n }'
+      # 先收 distrobox list 的結束碼:壞掉的 list 交給 awk 會變成「一筆都沒有」的空成功,
+      # 也就是「盒子不在」—— 正好是這一項要證明存在的那個前提,不能讓它靜靜滑過去
+      ( set -o pipefail
+        out=$(distrobox list) || { printf '[FAIL] distrobox list failed\n' >&2; exit 1; }
+        printf '%s\n' "$out" | awk -F'|' -v want=dev '
+          NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n==want) { print "preexisting=" n; f=1 } }
+          END { exit(f ? 0 : 1) }' || { printf '[FAIL] no box named dev after create\n' >&2; exit 1; } )
       ```
       ```bash
       # 原樣貼上 5.1 的整段,緊接著貼這一行
@@ -1293,8 +1358,13 @@ verify-tool-ok
       ```
       ```bash
       # 再貼一次 5.2 的步驟 3 把備份收掉(它印 dev-untouched=1,不動任何盒子),然後確認盒子還在並手動移除
-      distrobox list | awk -F'|' 'NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n=="dev") print "still-there=" n }'
-      distrobox rm -f dev
+      # 同上:list 失敗不得偽裝成「盒子已經不在」—— 那會讓「沒被刪掉」這個結論憑空成立
+      ( set -o pipefail
+        out=$(distrobox list) || { printf '[FAIL] distrobox list failed\n' >&2; exit 1; }
+        printf '%s\n' "$out" | awk -F'|' -v want=dev '
+          NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n==want) { print "still-there=" n; f=1 } }
+          END { exit(f ? 0 : 1) }' || { printf '[FAIL] box dev is gone -- it should NOT have been removed\n' >&2; exit 1; } ) &&
+      distrobox rm -f dev   # 只有「確認它還在」才動手刪,狀態不明時不亂刪
       ```
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
@@ -1318,13 +1388,16 @@ verify-tool-ok
     - 驗收方式
       ```bash
       (
+        set -o pipefail
         fail=0; seen=""
         for n in 152 153 154 155 156 165 166 167 168 169; do
           c=$(gh pr checks "$n" --repo ycpss91255/worktool --json name,bucket) &&
           b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; fail=1; continue; }
-          t=$(jq 'length' <<<"$c"); np=$(jq '[.[] | select(.bucket != "pass")] | length' <<<"$c")
-          amd=$(jq '[.[].name | select(test("ubuntu-latest"))] | length' <<<"$c")
-          arm=$(jq '[.[].name | select(test("ubuntu-24.04-arm"))] | length' <<<"$c")
+          t=$(jq 'length' <<<"$c") &&
+          np=$(jq '[.[] | select(.bucket != "pass")] | length' <<<"$c") &&
+          amd=$(jq '[.[].name | select(test("ubuntu-latest"))] | length' <<<"$c") &&
+          arm=$(jq '[.[].name | select(test("ubuntu-24.04-arm"))] | length' <<<"$c") ||
+            { echo "#$n jq-failed"; fail=1; continue; }
           cl=$(grep -c '^Closes #' <<<"$b"); is=$(grep -o '^Closes #[0-9]*' <<<"$b" | cut -d' ' -f2 | tr '\n' ',' | sed 's/,$//')
           printf '#%s total=%s nonpass=%s amd=%s arm=%s closes=%s issue=%s\n' "$n" "$t" "$np" "$amd" "$arm" "$cl" "$is"
           seen="$seen $is"
@@ -1347,6 +1420,7 @@ verify-tool-ok
     - 驗收方式
       ```bash
       (
+        set -o pipefail
         # 1 = 找到、0 = 沒找到、gh-failed = 查詢本身失敗;三者只有 1 算過
         c() {
           local body n
@@ -1379,22 +1453,50 @@ verify-tool-ok
       #155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok
       rc=0
       ```
-      (失敗時的樣子:判定不符是 `NOT` 或行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`)
+      (失敗時的樣子:判定是「不可合併」印 `blocked`、沒有判定行印 `NOT`、`gh` 查詢本身失敗印 `gh-failed`,配對不成立是行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`。round 12:舊版的 `v()` 是 `gh ... | grep ... | tail -1`,結束碼來自 `tail`,所以「印得出判定行卻 exit 1 的 gh」會讓六個 PR 全部讀成 mergeable —— 現在 gh 的輸出先收進變數、先判它自己的結束碼,`gh-failed` 因此和「判定不是可合併」分得開)
     - 驗收方式
       ```bash
-      v() { gh api "repos/ycpss91255/worktool/issues/$1/comments" --paginate --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
       (
+        set -o pipefail
+        R=ycpss91255/worktool
+        # 最後一則 [codex] 判定行;rc 0 = 取到、1 = 沒有判定行、2 = 查詢本身失敗
+        verdict() {
+          local body line
+          body=$(gh api "repos/$R/issues/$1/comments" --paginate \
+                   --jq '[.[].body | select(startswith("[codex]"))] | last') || return 2
+          line=$(printf '%s\n' "$body" | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1) || return 1
+          [ -n "$line" ] || return 1
+          printf '%s\n' "$line"
+        }
+        word() {   # $1 = 判定行, $2 = verdict 的 rc;把三種結果翻成一個詞
+          case "$2:$1" in
+          0:可合併* | 0:mergeable*) echo mergeable ;;
+          0:不可合併* | 0:blocked*) echo blocked ;;
+          2:*) echo gh-failed ;;
+          *) echo NOT ;;
+          esac
+        }
         fail=0
-        for n in 156 165 166 167 168 169; do printf '#%s ' "$n"; v "$n" | grep -q '^可合併\|^mergeable' && echo mergeable || { echo NOT; fail=1; }; done
+        for n in 156 165 166 167 168 169; do
+          d=$(verdict "$n"); r=$?; w=$(word "$d" "$r")
+          printf '#%s %s\n' "$n" "$w"
+          [ "$w" = mergeable ] || fail=1
+        done
         for n in 152 153 154 155; do
-          fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments" --paginate --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u)
+          cb=$(gh api "repos/$R/issues/$n/comments" --paginate \
+                 --jq '.[].body | select(startswith("[claude]"))') ||
+            { printf '#%s gh-failed\n' "$n"; fail=1; continue; }
+          fus=$(printf '%s\n' "$cb" | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u)
           fu=$(head -1 <<<"$fus"); [ -n "$fu" ] || { printf '#%s no-follow-up\n' "$n"; fail=1; continue; }
-          prs=$(gh pr list --repo ycpss91255/worktool --state merged --search "Closes #$fu in:body" --json number,body --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number")
+          prs=$(gh pr list --repo "$R" --state merged --search "Closes #$fu in:body" --json number,body \
+                  --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number") ||
+            { printf '#%s gh-failed\n' "$n"; fail=1; continue; }
           pr=$(head -1 <<<"$prs"); [ -n "$pr" ] || { printf '#%s no-fix-pr\n' "$n"; fail=1; continue; }
-          orig=$(v "$n" | grep -q '^不可合併' && echo blocked || echo UNEXPECTED)
-          fix=$(v "$pr" | grep -q '^可合併\|^mergeable' && echo mergeable || echo NOT)
+          od=$(verdict "$n"); orc=$?; orig=$(word "$od" "$orc")
+          fd=$(verdict "$pr"); frc=$?; fix=$(word "$fd" "$frc")
           ok=BAD
-          { [ "$orig" = blocked ] && [ "$fix" = mergeable ] && [ "$(grep -c '[0-9]' <<<"$fus")" -eq 1 ] && [ "$(grep -c '[0-9]' <<<"$prs")" -eq 1 ]; } && ok=ok || fail=1
+          { [ "$orig" = blocked ] && [ "$fix" = mergeable ] &&
+            [ "$(grep -c '[0-9]' <<<"$fus")" -eq 1 ] && [ "$(grep -c '[0-9]' <<<"$prs")" -eq 1 ]; } && ok=ok || fail=1
           printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' "$n" "$orig" "$fu" "$pr" "$fu" "$fix" "$ok"
         done
         exit "$fail"
