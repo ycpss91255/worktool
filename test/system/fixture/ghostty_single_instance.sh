@@ -10,12 +10,13 @@
 #   `gtk-single-instance` defaults to `detect`. Where it resolves to ON,
 #   the SECOND `ghostty` invocation does not open anything itself: it asks
 #   the already-running primary instance over the session bus to open the
-#   window and exits 0 straight away. Its exit status therefore says
-#   nothing about the command it asked for - a test that treats "ghostty
-#   exited 0" as "the command ran" is green while the window lives on in a
-#   background process nobody reaps. The worktool test config pins
-#   `gtk-single-instance = false` and asserts an in-box marker file exactly
-#   because of this.
+#   window and returns 0 far sooner than the command it was asked to run
+#   could take - here, before that command has begun at all. Its exit
+#   status therefore says nothing about the command - a test that treats
+#   "ghostty exited 0" as "the command ran" is green while the window
+#   lives on in a background process nobody reaps. The worktool test
+#   config pins `gtk-single-instance = false` and asserts an in-box
+#   marker file exactly because of this.
 #
 # HOW (every claim below is OBSERVED; nothing is asserted by fiat)
 #   One Xvfb display and one private session bus (dbus-run-session), one
@@ -129,9 +130,14 @@ _done_count() { find "${DONE}" -maxdepth 1 -type f | wc -l; }
 # echoes the letter back and the arithmetic would fail in a confusing
 # place, so this fails loudly with its own message instead. `10#` keeps a
 # leading zero from being read as octal.
+#
+# EXACTLY 19 digits. Epoch nanoseconds have been 19 digits since 2001 and
+# stay so until 2286; every 20-digit value is above 2^63-1, where bash
+# arithmetic WRAPS instead of refusing - accepting those would trade a
+# loud failure for a silently wrong millisecond.
 _epoch_ms() {
-    [[ "$1" =~ ^[0-9]{18,20}$ ]] \
-        || _die "date did not return epoch nanoseconds (got '$1'); does this date support %N?"
+    [[ "$1" =~ ^[0-9]{19}$ ]] \
+        || _die "date did not return 19-digit epoch nanoseconds (got '$1'): either this date does not support %N, or the value is outside what 64-bit shell arithmetic can hold"
     printf '%s\n' "$(( 10#$1 / 1000000 ))"
 }
 _now_ms() { _epoch_ms "$(date +%s%N)"; }
@@ -200,8 +206,9 @@ _wait_started() {
 }
 
 # The payload every ghostty window runs. It lives in a file rather than
-# inline in the config so the config `command` is all single words: no
-# quoting of `$`, `(` or `)` has to survive ghostty's own argv splitting.
+# inline in the config so that none of its `$`, `(` or `)` has to survive
+# ghostty's own argv splitting; the config then only has to carry the
+# path, which _write_config double quotes.
 #
 # It records its pid AND its starttime (field 22 of /proc/<pid>/stat), so
 # the checker can tell this process from a later one that reused the pid.
@@ -227,11 +234,34 @@ EOF
 
 # `gtk-single-instance = true` is the whole point: this is the setting the
 # real test config pins to false.
+#
+# The payload path is DOUBLE QUOTED. ghostty splits `command` into argv
+# itself and honours double quotes (verified against ghostty 1.3.0: with
+# a workdir containing a space, the unquoted form is torn into three
+# arguments and the launch dies on its timeout, the quoted form runs);
+# an unquoted path would silently work only for whitespace-free
+# workdirs, and this fixture takes any <workdir>. _check_workdir refuses
+# the characters quoting alone cannot carry.
 _write_config() {
     cat >"${CONFIG_HOME}/ghostty/config" <<EOF
 gtk-single-instance = true
-command = /bin/sh ${WINDOW_CMD}
+command = /bin/sh "${WINDOW_CMD}"
 EOF
+}
+
+# Refuse a workdir whose path cannot survive ghostty's argv splitting
+# even when quoted: a double quote would end the quoted run, a backslash
+# is an escape, and a newline would end the config line. Whitespace IS
+# supported (the quoting above handles it) - this is about the cases
+# that would otherwise produce a config that parses into the wrong argv
+# and fail somewhere far away.
+_check_workdir() {
+    [[ "${WINDOW_CMD}" != *'"'* ]] \
+        || _die "workdir path must not contain a double quote: ${WORKDIR}"
+    [[ "${WINDOW_CMD}" != *\\* ]] \
+        || _die "workdir path must not contain a backslash: ${WORKDIR}"
+    [[ "${WINDOW_CMD}" != *$'\n'* ]] \
+        || _die "workdir path must not contain a newline: ${WORKDIR}"
 }
 
 # Start from nothing, so a re-run against the same workdir cannot inherit
@@ -327,6 +357,7 @@ if [[ "${MODE}" == "scenario" ]]; then
     exit $?
 fi
 
+_check_workdir
 _reset_dirs || _die "cannot reset ${STARTED} / ${DONE}"
 _write_window_command
 _write_config

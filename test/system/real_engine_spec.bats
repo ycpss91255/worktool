@@ -329,8 +329,9 @@ _assert_fish_timed() {
 #
 # WHY THE WITNESS IS THE MARKER FILE, NOT GHOSTTY'S EXIT CODE
 #   With `gtk-single-instance` on, a second `ghostty` only asks an existing
-#   primary instance over D-Bus to open the window and exits 0 immediately -
-#   so exit 0 proves nothing about the command. The test config therefore
+#   primary instance over D-Bus to open the window, and returns 0 without
+#   waiting for the command it asked for - so exit 0 proves nothing about
+#   that command. The test config therefore
 #   pins `gtk-single-instance = false` (asserted below), and what a case
 #   accepts as success is the marker the command wrote inside the box. The
 #   last case in this section demonstrates the false positive on purpose.
