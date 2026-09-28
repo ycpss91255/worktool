@@ -450,14 +450,19 @@ prereq-ok
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
     `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
     `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
-    `command` 恰為 `distrobox enter dev -- tmux new -A -s main`;`--tmux host`
-    / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no` 之後不再有該
-    指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明斷言不是恆真。
+    `command` 恰為 `<distrobox 絕對路徑> enter dev -- tmux new -A -s main`
+    (issue #175:受管 command 寫絕對路徑,斷言同時 refute 裸名字那一行);
+    `--tmux host` / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
+    之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
+    斷言不是恆真。
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
     `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
     `distrobox enter dev -- tmux new -A -s chain fish <script>`,斷言**盒內**留下
     的標記檔顯示 fish 版本與 `tmux=yes`(runner 自己沒有 fish,所以回答的只可能
-    是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。
+    是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
+    一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
+    distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
+    `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;

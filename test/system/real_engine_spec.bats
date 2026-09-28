@@ -75,6 +75,10 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+# `run -127` (a control case asserting `command not found`) is a flagged
+# run, which bats only accepts once the minimum version is declared.
+bats_require_minimum_version 1.5.0
+
 # Bounded budgets (seconds) for the long steps.
 ASSEMBLE_TIMEOUT=600      # image pull + docker create (no start yet)
 FIRST_ENTER_TIMEOUT=900   # first start: distrobox-init + apt installs
@@ -562,6 +566,71 @@ _ghostty_run() {
     # That is the false positive: exit status alone is not a witness once
     # ghostty forwards over D-Bus. Which is why every case above pins
     # `gtk-single-instance = false` and judges on an in-box marker file.
+}
+
+# --- (e2) issue #175: the chain survives a desktop session's PATH ------------
+#
+# WHAT THIS ADDS TO THE CASES ABOVE
+#   They all launch ghostty with the runner's full PATH, which holds
+#   /usr/local/bin/distrobox - so a bare `distrobox` in the managed command
+#   works and the real-machine bug of issue #175 is invisible. On a real
+#   desktop the terminal is started by the session, inherits the systemd
+#   user manager's PATH (no ~/.local/bin), and the bare name died with
+#   `/bin/sh: 1: distrobox: not found`.
+#
+#   This case reproduces that PATH deliberately: a directory holding only
+#   the container engine, plus /usr/bin:/bin - distrobox is NOT reachable
+#   by name from it (the control assertion proves that first). What makes
+#   the chain work anyway is the ABSOLUTE path the DELIVERED
+#   script/box/setup.sh resolved into the managed block, which this case
+#   reads back out of the file setup wrote.
+
+# A PATH shaped like a desktop session's: the engine is reachable (a real
+# GNOME session finds /usr/bin/docker), distrobox is not (it lives in
+# /usr/local/bin here, as a user's lives in ~/.local/bin). Printed on
+# stdout; the engine symlink is created under $1.
+_desktop_path() {
+    local _dir="$1"
+    mkdir -p "${_dir}"
+    ln -sf "$(command -v docker)" "${_dir}/docker"
+    printf '%s:/usr/bin:/bin\n' "${_dir}"
+}
+
+@test "ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH" {
+    local _setup="${REPO_ROOT}/script/box/setup.sh"
+    local _gui_path _prog _ghostty_config
+    _gui_path="$(_desktop_path "${BATS_FILE_TMPDIR}/desktop-bin")"
+
+    # (1) The control: from that PATH, `distrobox` by name does not exist.
+    # Without this the case could pass with the old bare-name command.
+    run -127 env -i PATH="${_gui_path}" /bin/sh -c 'distrobox --version'
+    assert_failure 127
+    _log_lines desktop-path "PATH=${_gui_path} has no distrobox by name"
+
+    # (2) The DELIVERED setup.sh resolves it and writes the managed block.
+    run "${_setup}" --terminal ghostty --box dev
+    assert_success
+    _ghostty_config="$(enter_ghostty_config)"
+    _prog="$(sed -nE 's/^command = (.*) enter dev -- tmux new -A -s main$/\1/p' "${_ghostty_config}")"
+    [[ "${_prog}" == /* && -x "${_prog}" ]] \
+        || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
+    _log_lines setup-command "command = ${_prog} enter dev -- tmux new -A -s main"
+
+    # (3) The same program, in the chain shape that ends by itself, run by
+    # a real ghostty window under the desktop PATH.
+    rm -f "$(_chain_marker)"
+    _write_chain_script
+    _write_ghostty_config \
+        "${_prog} enter dev -- tmux new -A -s chain175 fish $(_chain_script)"
+    run env PATH="${_gui_path}" \
+        timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert [ -f "$(_chain_marker)" ]
+    run cat "$(_chain_marker)"
+    assert_success
+    assert_line --regexp '^inbox-ok fish=[0-9]+\.[0-9]+.* tmux=yes host=.+$'
+    _log_lines chain-desktop-path "${lines[@]}"
 }
 
 # --- (f) idempotency: assembling again neither errors nor duplicates ---------

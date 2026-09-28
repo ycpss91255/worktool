@@ -12,7 +12,7 @@ worktool/
 ├── lib/                 共用 bash helper(被 tool/box/script 腳本 source)
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
 │   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
-│   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
+│   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
 ├── tool/                host 端 GUI/驅動 install script(M11/M12 佔位,.gitkeep)
@@ -27,14 +27,14 @@ worktool/
 │       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh(M3 再加 enter / rm)
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
 │       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --dry-run / --help;寫單一設定檔 + 受管區塊(見 enter.md)
-│       └── status.sh            印出生效的進盒決策、來源(default / user)與受管區塊是否存在(--help)
+│       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
 │   │   ├── manifest_spec.bats    清單驗證與欄位擷取
 │   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)+ CLI(--help / 未知選項 exit 2)
-│   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、tmux host 變體、--auto-enter no 移除並回報、--dry-run 不寫、CLI(暫時 HOME)
-│   │   ├── status_spec.bats      status.sh:設定檔與來源、受管區塊 present / absent、無設定檔時的預設報告、CLI(暫時 HOME)
+│   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、tmux host 變體、--auto-enter no 移除並回報、--dry-run 不寫、CLI、ghostty 執行檔偵測與 distrobox 絕對路徑(#175)(暫時 HOME)
+│   │   ├── status_spec.bats      status.sh:設定檔與來源、受管區塊 present / absent、distrobox 是否還跑得起來(#175)、無設定檔時的預設報告、CLI(暫時 HOME)
 │   │   ├── test_sh_spec.bats     test.sh host 端 CLI:--help、未知選項、無旗標的執行順序與遇錯即停(假 docker 記錄呼叫)
 │   │   ├── selfcheck_spec.bats   selfcheck.sh CLI 與新版面下的路徑解析(script/box/assemble.sh)
 │   │   ├── ci_gate_spec.bats     test.sh 每層必要 spec 防漏:在 repo 副本上刪檔/空檔必紅、正常樹必綠
@@ -47,7 +47,7 @@ worktool/
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
-│   │   └── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致
+│   │   └── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致、受管 command 在桌面式縮減 PATH 下可執行(#175)
 │   ├── system/          系統測試(bats):真實 distrobox 端到端,分兩組
 │   │   ├── real_assemble_spec.bats  shim 組:真實 distrobox 1.8.2.5 + 假容器管理器(不需 DinD)
 │   │   ├── real_engine_spec.bats    real-engine 組:真實 docker 引擎(DinD)建出可用 dev 盒
