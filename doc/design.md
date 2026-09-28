@@ -128,7 +128,8 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    難擴充的原因;重複 recipe 名在 `just` 是硬錯誤,`mod?` 是唯一免衝突的機制,
    ADR-00000010)。
 2. **namespace 以動作命名**:`test`(所有 CI 檢查,**含 lint**)、`box`(盒子
-   生命週期)。**不用** `ci` / `cd` 這類描述機制、不描述動作的名字(base
+   生命週期)、`verify`(`doc/acceptance.md` 的驗收項目)。**不用** `ci` / `cd`
+   這類描述機制、不描述動作的名字(base
    ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
    同儕,而是 `just test lint`。
 3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
@@ -153,13 +154,19 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 **root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
 
 ```just
-mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
-mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+# Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+mod? test 'script/test/justfile.test'
+# Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench ... | setup ... | status  (M3 adds enter / rm)
+mod? box 'script/box/justfile.box'
+# Acceptance checks of doc/acceptance.md: just verify ui | gate | setup | diagram | realbox | evidence  [ITEM]
+mod? verify 'script/verify/justfile.verify'
 
 # Default: list the namespaces.
 default:
     @just --list
 ```
+
+(每個 `mod?` 上方那一行註解就是 `just --list` 對該 namespace 顯示的說明。)
 
 **namespace `test`**(`script/test/justfile.test`,`set working-directory := '../..'`,
 `set positional-arguments`:recipe 以 `"$@"` 原樣轉發額外參數 —— 不用 `{{args}}`,因為它會先

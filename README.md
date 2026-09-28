@@ -60,7 +60,7 @@ M1-M17 依序、不可跨越,每個 milestone 之間有人類審核 gate;M1、M2
 justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完整對照表見
 [`doc/design.md`](doc/design.md)「決策」)。
 
-裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明。
+裸 `just` 列出 namespaces(`test`、`box`、`verify`)與各自的一行說明。
 
 | 指令 | 說明 |
 |------|------|
@@ -75,6 +75,10 @@ justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完�
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--tmux inside\|host] [--box <名稱>] [--distrobox <路徑>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty **執行檔** / tmux 在盒內 / `dev`),每個決策印 `[INFO] <key>: <value> (default\|user)`(`terminal` 用預設時還會印偵測依據),寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊(裡面的 distrobox 是**已 quote 的絕對路徑**,桌面啟動的終端才找得到;解析不到就拒絕整次執行,或用 `--distrobox` 指定);`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box status` | 印出目前生效的進盒決策、來源(`default` / `user`)、受管區塊是否存在,以及受管 command 裡的 distrobox 現在還跑不跑得起來 |
 | `just box help`(或 `h`) | 依序印 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh` 的 usage |
+| `just verify` | 列出 verify 的動詞(`ui`、`gate`、`setup`、`diagram`、`realbox`、`evidence`) |
+| `just verify <動詞> [ITEM]` | 跑 [`doc/acceptance.md`](doc/acceptance.md) 的驗收項目:不給 ITEM 就依序跑該腳本的全部項目、遇到第一個失敗即停(例:`just verify setup 3.2`)。跑不動的環境印 `[UNAVAILABLE] ...` 並回非 0,從不靜默跳過 |
+| `just verify realbox --allow-real-box [ITEM]` | 實機項目:會建 `dev` 盒、改你真實 HOME 的設定,所以需要這個明確的 opt-in;同名盒已存在就拒絕而不刪 |
+| `just verify help`(或 `h`) | 依序印六支 verify 腳本的 usage |
 
 打錯 recipe 名(`just test bogus`)得到 `just` 自己的錯誤、exit 1;給了腳本不認得的
 選項(`just box assemble --bogus`)得到腳本自己的 `unknown option ... (see --help)`、

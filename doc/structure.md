@@ -23,11 +23,19 @@ worktool/
 │   │   │                        (無旗標 = 全部依序跑);容器內以 --ci-* 跑真正的 gate
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
-│   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh(M3 再加 enter / rm)
-│       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
-│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊(distrobox 寫已 quote 的絕對路徑;見 enter.md)
-│       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
+│   ├── box/             dev 盒生命週期(just box ...)
+│   │   ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh(M3 再加 enter / rm)
+│   │   ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
+│   │   ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊(distrobox 寫已 quote 的絕對路徑;見 enter.md)
+│   │   └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
+│   └── verify/          驗收清單的可執行形式(just verify ...);doc/acceptance.md 只留判準與預期輸出,不留 shell 邏輯
+│       ├── justfile.verify      `verify` 命名空間:薄轉發到 ui.sh / gate.sh / setup.sh / diagram.sh / realbox.sh / evidence.sh
+│       ├── ui.sh                M3 1.1:box 命名空間的使用者介面(六個動詞、四支腳本的 usage)
+│       ├── gate.sh              M3 2.1-2.4:六層 gate、TDD 證據、開窗->進盒鏈的 CI 證據,以及驗收程式自己的負向
+│       ├── setup.sh             M3 3.1-3.6:進盒設定與 status,每項自建並清掉拋棄式 HOME
+│       ├── diagram.sh           M3 4.1:doc/diagram/ 三張 drawio.svg 與 README 引用
+│       ├── realbox.sh           M3 5.1-5.3:實機項目,需 --allow-real-box;同名盒存在就拒絕、只刪自己建的
+│       └── evidence.sh          M3 6.1-6.3:以 gh 查外部 CI 與流程證據
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
@@ -42,6 +50,12 @@ worktool/
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
+│   │   ├── verify_ui_spec.bats       script/verify/ui.sh:每個「印得出像樣輸出、結束碼卻非 0」的 stub 都必須讀成紅
+│   │   ├── verify_gate_spec.bats     script/verify/gate.sh:同上,外加「負向 fixture 變成通過」這種資料面回歸
+│   │   ├── verify_setup_spec.bats    script/verify/setup.sh:同上,涵蓋 3.1-3.6 的每個判準
+│   │   ├── verify_diagram_spec.bats  script/verify/diagram.sh:同上,涵蓋 grep 探針與 `0/3` vs `0/0`
+│   │   ├── verify_realbox_spec.bats  script/verify/realbox.sh:同上,外加同名盒防護、所有權標記與還原
+│   │   ├── verify_evidence_spec.bats script/verify/evidence.sh:同上,gh / jq 印得出結果卻非 0 一律讀成紅
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -83,7 +97,7 @@ worktool/
 │       └── milestone-fanout.js
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
-├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
+├── justfile             使用者介面入口:只有三行 `mod?`(test / box / verify)+ `default`(= just --list)
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
 ```
@@ -132,6 +146,14 @@ worktool/
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
+| `just verify` | 列出 verify 的動詞(`just --justfile script/verify/justfile.verify --list`) |
+| `just verify ui [args]` | `./script/verify/ui.sh [args]`(`ITEM`、`--list`、`--help`) |
+| `just verify gate [args]` | `./script/verify/gate.sh [args]`(`ITEM`、`--list`、`--help`) |
+| `just verify setup [args]` | `./script/verify/setup.sh [args]`(`ITEM`、`--list`、`--help`) |
+| `just verify diagram [args]` | `./script/verify/diagram.sh [args]`(`ITEM`、`--root <repo>`、`--help`) |
+| `just verify realbox [args]` | `./script/verify/realbox.sh [args]`(需 `--allow-real-box`;`ITEM`、`--repo`、`--issue`、`--box`、`--image`、`--help`) |
+| `just verify evidence [args]` | `./script/verify/evidence.sh [args]`(`ITEM`、`--list`、`--help`) |
+| `just verify help` / `just verify h` | 依序 `./script/verify/ui.sh --help`、`gate.sh --help`、`setup.sh --help`、`diagram.sh --help`、`realbox.sh --help`、`evidence.sh --help` |
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
@@ -252,7 +274,9 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+`ghostty_fixture_spec`、`setup_spec`、`status_spec`、`workflow_spec`、`verify_ui_spec`、
+`verify_gate_spec`、`verify_setup_spec`、`verify_diagram_spec`、`verify_realbox_spec`、
+`verify_evidence_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
