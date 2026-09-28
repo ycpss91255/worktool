@@ -540,8 +540,8 @@ verify-tool-ok
       ./script/verify/gate.sh "$@"
       ./script/test/test.sh
       [ci] ShellCheck OK
-      [ci]   required specs OK (560 case(s) declared by 21 file(s))
-      ...(unit 560 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
+      [ci]   required specs OK (573 case(s) declared by 21 file(s))
+      ...(unit 573 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
       ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
       # bench: enter: min=91.1 median=93.8 max=102.0 ms
@@ -575,7 +575,9 @@ verify-tool-ok
       #169 order=ok red=22 green=47
       rc=0
       ```
-      (失敗時的樣子:缺段、區塊是空的或順序錯是 `#N order=BAD ...`,查詢失敗是 `#N evidence=gh-failed`,兩者最後都 `rc=1`)
+      (失敗時的樣子:缺段、區塊是空的或順序錯是 `#N order=BAD ...`,查詢失敗是 `#N evidence=gh-failed`,兩者最後都 `rc=1`。
+      判準是「上面這十個 PR 各有一行、各只有一行 `order=ok`,且 `green` 大於 `red`」,不是「有看到某一行 order=ok」——
+      `script/verify/gate.sh` 就是照這個集合判的:少一個、多一個、重複一個都會被指名並回 `rc=1`)
     - 驗收方式
       ```bash
       just verify gate 2.2; echo rc=$?
@@ -615,7 +617,8 @@ verify-tool-ok
       ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
       rc=0
       ```
-      (`host=` 是那一輪盒子的容器 id、`fish=`、`FORWARDED_DELAY_MS=` 與 `SECOND_ELAPSED=` 是實測值,每次都不一樣,不要照字面比 —— 尤其 `SECOND_ELAPSED` 是「第二次啟動花了幾秒」,測試接受的是 0-15,上面印 `1` 只是某一輪的實測(round 11:一輪量到 `0`,照字面比會無故變紅);判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、整段 `rc=0`。任何一層出現 `not ok`,即使該層 `just test` 回 0 也算失敗;integration 紅掉時不會再跑 system-real。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`)
+      (`host=` 是那一輪盒子的容器 id、`fish=`、`FORWARDED_DELAY_MS=` 與 `SECOND_ELAPSED=` 是實測值,每次都不一樣,不要照字面比 —— 尤其 `SECOND_ELAPSED` 是「第二次啟動花了幾秒」,測試接受的是 0-15,上面印 `1` 只是某一輪的實測(round 11:一輪量到 `0`,照字面比會無故變紅);判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、整段 `rc=0`。任何一層出現 `not ok`,即使該層 `just test` 回 0 也算失敗;integration 紅掉時不會再跑 system-real。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`。
+      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 九個、system-real 五個 `ok` 案例(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)各出現一次、不能多也不能少;`tmux=yes`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`host=` / `fish=` / `SECOND_ELAPSED=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
     - 驗收方式
       ```bash
       just verify gate 2.3; echo rc=$?
