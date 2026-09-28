@@ -425,7 +425,7 @@ prereq-ok
       ```
 
 - [ ] 7. 選做:真實主機(需 host 有 distrobox;host 沒裝可略過 —— 1.5 已在 Docker 內做等價的真實盒驗證)
-  - [ ] 7.1 一鍵建盒、進盒可用、冪等、可清理
+  - [ ] 7.1 一鍵建盒、進盒可用、冪等、可清理(**跑之前先確認你沒有同名 `dev` 盒**:這段結尾會無條件 `distrobox rm -f dev`;先斷言不存在、只刪自己建的那種寫法見 M3 的 5.1 與 5.3)
     - 預期看到資訊
       ```text
       ripgrep 15.x.x ...
@@ -475,7 +475,6 @@ prereq-ok
     `gtk-single-instance = false` 並以盒內標記檔為證。
 - 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲。
 
-
 人類 gate 用的驗收清單(= M3 驗收 PR 的描述;逐項勾選,有差異回 PR 留言):
 
 ### 通用指令
@@ -483,13 +482,13 @@ prereq-ok
 依賴分兩組(repo 本身不需要驗收工具):
 
 - repo 使用依賴:`docker`(可 `--privileged`)、`just`;clone 需要 `git`。
-- 驗收工具:`gh`(已登入,2.2 / 6.1-6.3 用)、`jq`(6.1 用)、`grep` / `sed` / `awk` / `find` / `mktemp`(coreutils);5(實機)另需 host 有 `distrobox` 與 `ghostty`。1-4、6 不需 distrobox。
+- 驗收工具:`gh`(已登入,2.2 / 5.1 / 6.1-6.3 用)、`jq`(5.1 / 6.1 用)、`awk` / `grep` / `sed` / `cut` / `find` / `mktemp` / `sha256sum`(coreutils + awk);5(實機)另需 host 有 `distrobox` 與 `ghostty`。1-4、6 不需 distrobox。
 
-每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔。
-本 PR 只改 `doc/acceptance.md`;要驗的程式全在 main。想順便看本 PR 的清單差異就 checkout 本 PR 分支。
+每個「驗收方式」區塊以 **bash** 執行(fish 使用者先打 `bash`),可單獨複製執行,自己建立並清理臨時目錄 / 暫存檔;**請原樣貼上,不要改寫**,改寫過的區塊不算數(#176 item 8:上一輪 2.2 的 9 行 here-string 函式在維護者的執行器裡被改寫過才失敗,同一份文字在本 repo 內重跑是 10/10 綠)。為了不再依賴文件文字的完整性,2.2 的判定邏輯已經移進 repo 檔案 `doc/evidence/tdd.awk`,文件這一行只剩一次呼叫。
+本 PR 只改 `doc/acceptance.md` 與它的檢查程式 `doc/evidence/`(不動產品程式);要驗的程式全在 main。想順便看本 PR 的清單差異就 checkout 本 PR 分支。
 
 ```bash
-git clone https://github.com/ycpss91255/worktool.git && cd worktool   # main 已含 M3 全部 sub-issue PR(#152-#156、#165-#169)
+git clone https://github.com/ycpss91255/worktool.git && cd worktool   # main 已含 M3 全部 sub-issue PR(#152-#156、#165-#169)與 #177
 just --version && docker info >/dev/null && echo repo-dep-ok
 gh auth status >/dev/null 2>&1 && jq --version >/dev/null && echo verify-tool-ok
 ```
@@ -500,9 +499,11 @@ repo-dep-ok
 verify-tool-ok
 ```
 
+3 與 5 的輸出含機器相關路徑,下面以 `<H>`(臨時 HOME)、`<D>`(host 上 distrobox 執行檔的絕對路徑,例如 `/usr/local/bin/distrobox`)代表。
+
 ### 驗收項目
 
-規則:功能入口一律 `just`(1-4 操作 repo 的部分);5 是實機(distrobox 原生 + 開終端主觀);文件與外部證據用上面列出的驗收工具(gh / jq / grep / sed / awk / find)查。
+規則:功能入口一律 `just`(1-4 操作 repo 的部分);5 是實機(distrobox 原生 + 開終端主觀);文件與外部證據用上面列出的驗收工具(gh / jq / awk / grep / sed / find)查。
 
 - [ ] 1. 使用者介面:box namespace 多了 bench / setup / status
   - [ ] 1.1 `just box` 列出六個動作;`just box help` 依序印四支腳本的 usage
@@ -535,102 +536,144 @@ verify-tool-ok
       ```text
       ./script/test/test.sh
       [ci] ShellCheck OK
-      [ci]   required specs OK (N case(s) declared by M file(s))
-      ...(unit / integration / system / acceptance 各層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾)
-      ok N real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
-      ok N real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
-      # bench: enter: min=.. median=.. max=.. ms
-      # bench: shell: min=.. median=.. max=.. ms
-      # bench: inbox: min=.. median=.. max=.. ms
-      # bench: [INFO] shell median .. ms within --max-ms 300
-      ok N real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines
-      # bench-gate: [ERROR] shell median .. ms exceeds --max-ms 1
-      ok N real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)
+      [ci]   required specs OK (331 case(s) declared by 15 file(s))
+      ...(unit 331 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
+      ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
+      ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
+      # bench: enter: min=91.1 median=93.8 max=102.0 ms
+      # bench: shell: min=95.2 median=99.7 max=100.3 ms
+      # bench: inbox: min=4.7 median=5.1 max=5.9 ms
+      # bench: [INFO] shell median 99.7 ms within --max-ms 300
+      ok 9 real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines
+      # bench-gate: [ERROR] shell median 98.4 ms exceeds --max-ms 1
+      ok 10 real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)
       [ci] system-real bats OK
       [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
       ```
-      (數字是你機器的實測;判準 = shell median < 300 且三行指標都在;本機實測 enter 88 / shell(fish) 101 / inbox 4.9 ms。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish < 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 tmux/fish」整條鏈需要終端模擬器,由 5.2 實機驗證)
+      (數字是你機器的實測;判準 = shell median < 300 且三行指標都在。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish < 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 tmux/fish」整條鏈由 2.3 在 CI 內驗證,實機主觀感受由 5.2 驗)
     - 驗收方式
       ```bash
       just test; echo rc=$?
       ```
-  - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有 RED 段在 GREEN 段之前,且兩段各自後面 5 行內有一個非空的程式碼區塊(只證明「有貼輸出且順序正確」,不自動判讀內容語意;內容由人看)
-    - 預期看到資訊(10 行,每行 order=ok)
+  - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有一個非空的 RED 程式碼區塊,且其後另有一個非空的 GREEN 程式碼區塊(只證明「有貼輸出且順序正確」,不判讀內容語意;`red=` / `green=` 是該區塊開頭的行號)
+    - 預期看到資訊(10 行,每行 order=ok;行號依 PR 內容而異)
       ```text
-      #152 order=ok
-      ...
-      #169 order=ok
+      #152 order=ok red=31 green=51
+      #153 order=ok red=21 green=40
+      #154 order=ok red=27 green=41
+      #155 order=ok red=31 green=49
+      #156 order=ok red=29 green=49
+      #165 order=ok red=25 green=72
+      #166 order=ok red=21 green=58
+      #167 order=ok red=20 green=56
+      #168 order=ok red=25 green=44
+      #169 order=ok red=22 green=47
       rc=0
       ```
-      (失敗時的樣子:缺段或順序錯是 `#N order=BAD`,查詢失敗是 `#N gh-failed`,兩者最後都 `rc=1`)
+      (失敗時的樣子:缺段、區塊是空的或順序錯是 `#N order=BAD ...`,查詢失敗是 `#N evidence=gh-failed`,兩者最後都 `rc=1`)
     - 驗收方式
       ```bash
-      ev() {
-        grep -n "$2" <<<"$1" | grep -v "$3" | cut -d: -f1 | while read -r l; do
-          nf=$(sed -n "1,${l}p" <<<"$1" | grep -c '^```'); [ $((nf % 2)) -eq 0 ] || continue
-          f=$(sed -n "$((l+1)),$((l+5))p" <<<"$1" | grep -n '^```' | head -1 | cut -d: -f1); [ -n "$f" ] || continue
-          body=$(sed -n "$((l+f+1)),\$p" <<<"$1" | sed -n '1,/^```/p' | sed '$d')
-          [ "$(grep -c '[^[:space:]]' <<<"$body")" -gt 0 ] || continue
-          echo "$l"; break
-        done | head -1
-      }
-      ( fail=0; for n in 152 153 154 155 156 165 166 167 168 169; do b=$(gh pr view "$n" --repo ycpss91255/worktool --json body --jq .body) || { echo "#$n gh-failed"; fail=1; continue; }; r=$(ev "$b" RED GREEN); g=$(ev "$b" GREEN RED); s=BAD; { [ -n "$r" ] && [ -n "$g" ] && [ "$r" -lt "$g" ]; } && s=ok || fail=1; printf '#%s order=%s\n' "$n" "$s"; done; exit "$fail" ); echo rc=$?
+      bash doc/evidence/tdd.sh; echo rc=$?
+      ```
+  - [ ] 2.3 「開窗 -> 進盒 -> tmux/fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
+    - 預期看到資訊(`just test` 的 integration 與 system-real 兩段;兩條 pipeline 都以 `set -o pipefail` 保護,所以 rc 反映上游 `just test` 的結果)
+      ```text
+      ok 8 setup --tmux inside after host: status shows the tmux.conf block gone, ghostty still present
+      ok 1 preflight: a real ghostty is on PATH and reports its version
+      ok 2 setup.sh writes a ghostty config that +validate-config accepts
+      ok 5 +show-config follows setup.sh --box work (the box name reaches ghostty)
+      ok 6 #175: the effective command ghostty resolves is an ABSOLUTE distrobox path, not the bare name
+      ok 9 #175r2: a distrobox path holding a newline is refused, because ghostty could not parse what it would write
+      ok 10 #175r1: a distrobox path with spaces and metacharacters survives ghostty and the shell it hands the command to
+      ok 11 after setup.sh --auto-enter no there is no enter command left for ghostty to run
+      ok 12 +validate-config refuses a config ghostty cannot parse (the check bites)
+      rc=0
       ```
 
-  - [ ] 2.3 「開窗 -> 進盒 -> tmux/fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
-    - 預期看到資訊(`just test` 的 integration 與 system-real 兩段)
       ```text
-      # chain: inbox-ok fish=4.2.1 tmux=yes host=036ac17838f8
-      # chain-host: marker host=036ac17838f8 == docker inspect dev hostname
-      ok N ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)
+      ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)
+      # chain: inbox-ok fish=4.2.1 tmux=yes host=ca83e9d035cd
+      # chain-host: marker host=ca83e9d035cd == docker inspect dev hostname
+      ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)
+      # hang-ready: hang-ready fish=4.2.1 host=ca83e9d035cd
       # hang: in-box command started, then timed out after 45s (budget 45s, status 124)
-      ok N ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
+      ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
+      # single-instance: PRIMARY=up
+      # single-instance: SECOND_RC=0
+      # single-instance: SECOND_ELAPSED=1
       # single-instance: STARTED_AT_RETURN=1
+      # single-instance: FORWARDED_STARTED=yes
       # single-instance: FORWARDED_AFTER_RETURN=yes
+      # single-instance: FORWARDED_DELAY_MS=319
       # single-instance: RUNNING_COMMANDS=2
+      # single-instance: PRIMARY_WRAPPER_ALIVE=yes
       # single-instance: COMMAND_FINISHED=no
-      ok N ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet
+      ok 15 ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)
+      # chain-desktop-path: inbox-ok fish=4.2.1 tmux=yes host=ca83e9d035cd
+      ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
+      rc=0
       ```
       (hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`)
     - 驗收方式
       ```bash
-      just test integration 2>&1 | grep -E '^ok .*ghostty|^not ok'
-      just test system-real 2>&1 | grep -E '^# (chain|chain-host|hang|single-instance)|^ok .*ghostty chain|^not ok'
+      ( set -o pipefail; just test integration 2>&1 | grep -E '^ok .*ghostty|^not ok' ); echo rc=$?
+      ( set -o pipefail; just test system-real 2>&1 | grep -E '^# (chain|chain-host|hang|single-instance)|^ok .*ghostty chain|^not ok' ); echo rc=$?
+      ```
+  - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;2.3 的 pipeline 沒有 `pipefail` 時會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
+    - 預期看到資訊(前四行 = 檢查程式咬住順序顛倒與空的 RED 區塊;後兩行 = 同一條 pipeline 有無 `pipefail` 的差別)
+      ```text
+      order=BAD red=6 green=0
+      wrong-order rc=1
+      order=BAD red=0 green=0
+      empty-red-block rc=1
+      pipefail-rc=7
+      documented-style-rc=0
+      ```
+    - 驗收方式
+      ```bash
+      awk -f doc/evidence/tdd.awk doc/evidence/negative/wrong-order.md; echo "wrong-order rc=$?"
+      awk -f doc/evidence/tdd.awk doc/evidence/negative/empty-red-block.md; echo "empty-red-block rc=$?"
+      ( set -o pipefail; { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo pipefail-rc=$?
+      ( { echo 'ok 1 ghostty chain: x'; exit 7; } | grep -E '^ok .*ghostty' >/dev/null ); echo documented-style-rc=$?
       ```
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(每個區塊自建拋棄式 HOME,不動你的家目錄)
-  - [ ] 3.1 dry-run 只印決策、不寫檔
+  - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
       ```text
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] dry-run: would write <H>/.config/worktool/config
-      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
       rc=0
       files 0->0
       ```
-      (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案)
+      (files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:dry-run 不得新增任何檔案。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;沒有 ghostty 執行檔也沒有 ghostty 設定目錄的機器上這行會說 `none`)
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         before=$(find "$H" -type f | wc -l)
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --dry-run; echo rc=$?
         printf 'files %s->%s\n' "$before" "$(find "$H" -type f | wc -l)" )
       ```
-  - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 顯示來源與區塊
+  - [ ] 3.2 真的寫入:設定檔 + ghostty 受管區塊;status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
     - 預期看到資訊
       ```text
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] wrote: <H>/.config/worktool/config
-      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
       rc=0
       ./script/box/status.sh "$@"
       config: <H>/.config/worktool/config
@@ -640,14 +683,15 @@ verify-tool-ok
       box: dev (default)
       ghostty: <H>/.config/ghostty/config (managed block: present)
       tmux.conf: <H>/.tmux.conf (managed block: absent)
+      distrobox: <D> (recorded in a managed block: runnable)
       rc=0
       # BEGIN worktool managed block (just box setup; do not edit)
-      command = distrobox enter dev -- tmux new -A -s main
+      command = '<D>' enter dev -- tmux new -A -s main
       # END worktool managed block
       ```
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup; echo rc=$?
         HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?
         cat "$H/.config/ghostty/config" )
@@ -658,17 +702,19 @@ verify-tool-ok
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: no (user)
       [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
       [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [INFO] wrote: <H>/.config/worktool/config
-      [INFO] removed: <H>/.config/ghostty/config (managed block: command = distrobox enter dev -- tmux new -A -s main)
+      [INFO] removed: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
       [INFO] nothing to remove: <H>/.tmux.conf (no managed block)
       rc=0
       blocks=0
       ```
+      (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行)
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT; mkdir -p "$H/.config/ghostty"
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty"
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup >/dev/null 2>&1
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --auto-enter no; echo rc=$?
         printf 'blocks=%s\n' "$(grep -c 'BEGIN worktool managed block' "$H/.config/ghostty/config")" )
@@ -692,11 +738,36 @@ verify-tool-ok
       ```
     - 驗收方式
       ```bash
-      ( H=$(mktemp -d) || exit 1; trap 'rm -rf "$H"' EXIT
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT
         HOME=$H XDG_CONFIG_HOME=$H/.config just box setup --bogus; echo rc=$?
         printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
         mkdir -p "$H/.config/worktool"
         for src in default user; do printf 'tmux=sideways\ntmux.source=%s\n' "$src" > "$H/.config/worktool/config"; HOME=$H XDG_CONFIG_HOME=$H/.config just box status; echo rc=$?; done )
+      ```
+  - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
+    - 預期看到資訊
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
+      [INFO] tmux: inside (default)
+      [INFO] box: dev (default)
+      [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
+      error: recipe `setup` failed on line 44 with exit code 1
+      rc=1
+      files=0
+      rc=0
+      command = '<D>' enter dev -- tmux new -A -s main
+      ```
+    - 驗收方式
+      ```bash
+      ( H=$(mktemp -d) || exit 1; trap 'find "$H" -depth -delete' EXIT; mkdir -p "$H/.config/ghostty" "$H/bin"
+        D=$(command -v distrobox) || exit 1; ln -s "$(command -v just)" "$H/bin/just"; P=$H/bin:/usr/bin:/bin
+        HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup; echo rc=$?
+        printf 'files=%s\n' "$(find "$H" -type f | wc -l)"
+        HOME=$H XDG_CONFIG_HOME=$H/.config PATH=$P just box setup --distrobox "$D" >/dev/null 2>&1; echo rc=$?
+        grep '^command' "$H/.config/ghostty/config" )
       ```
 
 - [ ] 4. README 圖(draw.io,可編輯)
@@ -719,33 +790,112 @@ verify-tool-ok
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定 —— 5.1 與 5.2 各自負責自己的還原:備份真實設定、驗完還原、最後 `distrobox rm -f dev`。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
-  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);數字貼到 #22;驗完移除 dev 盒
-    - 預期看到資訊(assemble 的輸出略;最後幾行)
-      ```text
-      enter: min=.. median=.. max=.. ms
-      shell: min=.. median=.. max=.. ms
-      inbox: min=.. median=.. max=.. ms
-      [INFO] shell median .. ms within --max-ms 300
+- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定。**安全約定**:5.1 與 5.2 都先斷言同名 `dev` 盒不存在,存在就拒絕而不刪(#176 item 1),並且只刪除自己建立的盒子;5.2 備份用 `cp -a`,symlink 連同它指到的檔案一起備份、一起還原(#176 item 2);清理失敗一律讓整段回非 0(#176 item 4)。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
+  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由本區塊自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗
+    - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
+      ````text
+      preexisting-dev=0
+      enter: min=136.1 median=171.1 max=197.0 ms
+      shell: min=143.8 median=176.9 max=215.5 ms
+      inbox: min=14.9 median=17.5 max=25.4 ms
+      [INFO] shell median 176.9 ms within --max-ms 300
       rc=0
-      posted=1
+      posted=1 comment=<id> run=m3-51-20260928T112604Z-<pid>
       cleanup-rc=0
-      ```
-      (posted >= 1 = #22 上有**同一則**留言,同時含 `M3 5.1 實機 bench` 標記與 enter / shell / inbox 三行數字;分散在不同留言或缺一行都不算)
+      ````
+      (`posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓整段 exit 非 0 並要你手動移除盒子)
     - 驗收方式
-      ```bash
-      just box assemble >/dev/null && just box bench --runs 10 --shell 'fish -c exit' --max-ms 300; echo rc=$?
-      # 把上面三行數字貼到 #22,留言必須含標記 "M3 5.1 實機 bench" 與完整三行,例如:
-      #   gh issue comment 22 --repo ycpss91255/worktool --body-file <(printf 'M3 5.1 實機 bench(<你的機器>)\n\n```text\n%s\n```\n' "$(cat <貼上三行>)")
-      printf 'posted=%s\n' "$(gh api "repos/ycpss91255/worktool/issues/22/comments?per_page=100" --jq '[.[] | select((.body | test("M3 5.1 實機 bench")) and (.body | test("enter: min=.*median=.*max=.* ms")) and (.body | test("shell: min=.*median=.*max=.* ms")) and (.body | test("inbox: min=.*median=.*max=.* ms")))] | length')"
-      distrobox rm -f dev >/dev/null 2>&1; echo cleanup-rc=$?
-      ```
-  - [ ] 5.2 開終端即在盒內的 fish(**只剩主觀感受**:整條鏈已由 #172 在 CI 內自動驗證,見下方 2.3;這裡只確認你自己的機器上開窗順不順):`just box setup` 後開新 ghostty 視窗,在新視窗裡執行下列指令;驗完用步驟 3 還原真實設定並移除 dev 盒
-    - 預期看到資訊(步驟 1 的備份摘要;新視窗內三行;步驟 3 的還原結果)
+      ````bash
+      (
+        set -u
+        REPO=ycpss91255/worktool; ISSUE=22; BOX=dev
+        TAG='M3 5.1 實機 bench'
+        RUN_ID="m3-51-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        fence='```'
+
+        fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
+        for c in distrobox just gh jq mktemp; do
+          command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
+        done
+
+        # 0 = box exists, 1 = box does not exist, 2 = cannot tell (never guess)
+        box_exists() {
+          local out
+          out=$(distrobox list 2>/dev/null) || return 2
+          printf '%s\n' "$out" | awk -F'|' -v want="$1" '
+            NR > 1 { n = $2; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n == want) f = 1 }
+            END { exit(f ? 0 : 1) }'
+        }
+
+        # refuse before creating; never delete a box this run did not create
+        box_exists "$BOX"; e=$?
+        [ "$e" -eq 2 ] && fail "distrobox list failed -- cannot tell whether '$BOX' exists; refusing to create or delete anything"
+        [ "$e" -eq 0 ] && fail "a distrobox named '$BOX' already exists -- refusing. This block deletes the box it creates, so rename or remove yours by hand first."
+        printf 'preexisting-dev=0\n'
+
+        W=$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-51.XXXXXXXX") || fail "mktemp failed"
+        [ -d "$W" ] || fail "mktemp returned '$W', which is not a directory"
+
+        CREATED=0; CLEAN_RC=0
+        cleanup() {
+          st=$?
+          trap - EXIT INT TERM HUP
+          if [ "$CREATED" -eq 1 ]; then
+            distrobox rm -f "$BOX" >/dev/null 2>&1; rmrc=$?
+            box_exists "$BOX"; ge=$?
+            { [ "$rmrc" -eq 0 ] && [ "$ge" -eq 1 ]; } || CLEAN_RC=1
+          fi
+          printf 'cleanup-rc=%s\n' "$CLEAN_RC"
+          [ "$CLEAN_RC" -eq 0 ] || printf "[FAIL] box '%s' survived cleanup -- remove it by hand\n" "$BOX" >&2
+          rm -rf "$W"
+          # a failed cleanup fails the whole block
+          [ "$st" -eq 0 ] || exit "$st"
+          exit "$CLEAN_RC"
+        }
+        trap cleanup EXIT INT TERM HUP   # Ctrl-C also cleans up
+
+        just box assemble >/dev/null || fail "just box assemble failed"
+        CREATED=1
+        box_exists "$BOX" || fail "assemble returned 0 but box '$BOX' is not listed"
+
+        just box bench --runs 10 --shell 'fish -c exit' --max-ms 300 | tee "$W/bench.txt"
+        brc=${PIPESTATUS[0]}
+        printf 'rc=%s\n' "$brc"
+        [ "$brc" -eq 0 ] || fail "just box bench exited $brc"
+
+        grep -E '^(enter|shell|inbox): min=[0-9.]+ median=[0-9.]+ max=[0-9.]+ ms$' \
+          "$W/bench.txt" >"$W/three.txt" || true
+        n=$(wc -l <"$W/three.txt"); k=$(cut -d: -f1 "$W/three.txt" | sort -u | wc -l)
+        { [ "$n" -eq 3 ] && [ "$k" -eq 3 ]; } || fail "expected one enter/shell/inbox line each, got n=$n distinct=$k"
+
+        # publish from this run, then verify that exact comment by id
+        { printf '%s (%s, run %s)\n\n' "$TAG" "$(uname -sm)" "$RUN_ID"
+          printf '%stext\n' "$fence"; cat "$W/three.txt"; printf '%s\n' "$fence"; } >"$W/body.md"
+        url=$(gh issue comment "$ISSUE" --repo "$REPO" --body-file "$W/body.md") || fail "gh issue comment failed"
+        cid=${url##*-}
+        case "$cid" in '' | *[!0-9]*) fail "cannot parse a comment id out of '$url'" ;; esac
+        gh api "repos/$REPO/issues/comments/$cid" >"$W/posted.json" || fail "re-reading comment $cid failed"
+        posted=$(jq -r --arg rid "$RUN_ID" --arg tag "$TAG" --arg iss "$ISSUE" --rawfile three "$W/three.txt" '
+            ($three | rtrimstr("\n") | split("\n")) as $lines
+            | if (.issue_url | endswith("/issues/" + $iss))
+                 and (.body | contains($tag)) and (.body | contains($rid))
+                 and ([$lines[] as $l | (.body | contains($l))] | all)
+              then 1 else 0 end' "$W/posted.json")
+        printf 'posted=%s comment=%s run=%s\n' "$posted" "$cid" "$RUN_ID"
+        [ "$posted" = 1 ] || fail "comment $cid on #$ISSUE does not carry run id $RUN_ID plus the three lines measured above"
+      )
+      ````
+  - [ ] 5.2 開終端即在盒內的 fish(**只剩主觀感受**:整條鏈已由 2.3 在 CI 內自動驗證;這裡只確認你自己的機器上開窗順不順):三步驟依序貼上,步驟 3 可在任何 shell 單獨貼、也是中斷後的還原手段
+    - 預期看到資訊(步驟 1 備份摘要;步驟 2 套用;新視窗內三行;步驟 3 還原)
       ```text
-      ghostty=backed-up
+      ghostty=regular
+      ghostty.sha=<sha256>
       worktool=absent-dir
-      backup=/tmp/worktool-m3-52-backup ok=1
+      backup=/tmp/worktool-m3-52-backup.1000 ok=1
+      revalidate=1
+      preexisting-dev=0
+      (just box setup / just box status 的輸出,格式同 3.2,只是對象是你真實的 HOME)
+      setup-rc=0
       /run/.containerenv
       fish
       main
@@ -754,53 +904,318 @@ verify-tool-ok
       blocks=0
       leftover-dirs=0
       dev-gone=1
+      backup-removed=1
       ```
-      (每個名字一行:`backed-up` = 原本就有那個檔、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有;`ok=1` 才會往下套用,`ok=0` 或備份目錄已存在時步驟 1 完全不動任何檔案。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**;`restore-ok=1` 才會刪掉備份,`restore-ok=0` 會保留備份讓你重跑;還原成功後備份就沒了,再貼一次步驟 3 只會印 `no-backup=1` 而不動任何檔案;`leftover-dirs=0` = 原本不存在的目錄也被移除,不留空目錄)
+      (每個名字一行:`regular` = 原本就有那個普通檔、`symlink` = 原本是連結(連同它指到的檔案一起備份)、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有。步驟 2 只信任**已發布到磁碟的 manifest**,不信任步驟 1 留下的 shell 變數(#176 item 6),而且會重新比對 sha256:步驟 1 之後檔案被動過就拒絕套用。備份路徑帶 uid,多人共用主機不會互撞;`mkdir -m 700` 遇到既有目錄或預埋的 symlink 直接拒絕。`restore-ok=1` 才刪備份;失敗會保留備份讓你修好再貼一次步驟 3;還原成功後再貼一次只會印 `no-backup=1`。`dev-gone` 只在**這一輪建過盒**時才出現,沒建過是 `dev-untouched=1`;`dev-gone=0` 讓整段回非 0)
     - 驗收方式
       ```bash
-      # 1) 備份真實設定;備份目錄已存在或備份失敗,就完全不動任何檔案
-      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup; ok=0
-      if ! mkdir "$B" 2>/dev/null; then
-        echo "backup 目錄已存在:$B -- 裡面可能是上一次沒跑完的備份。先貼步驟 3 用那份備份還原,確認乾淨後再重跑步驟 1。"
-      else
-        ok=1; : > "$B/manifest.partial"
-        for n in ghostty worktool; do
-          if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest.partial" || ok=0
-          elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest.partial"
-          else echo "$n=absent-dir" >> "$B/manifest.partial"; fi
+      # 步驟 1) 備份真實設定。備份目錄已存在、或備份中途失敗,都完全不動任何檔案
+      (
+        set -u
+        C=${XDG_CONFIG_HOME:-$HOME/.config}
+        B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
+        NAMES='ghostty worktool'
+
+        wt_type() { # regular | symlink | absent | other   (-L first: a dangling link is still a link)
+          if [ -L "$1" ]; then echo symlink
+          elif [ ! -e "$1" ]; then echo absent
+          elif [ -f "$1" ]; then echo regular
+          else echo other; fi
+        }
+        wt_sha() { sha256sum "$1" | cut -d' ' -f1; }
+
+        # refuse if a previous run left a backup; never write into a dir we did not create
+        if ! mkdir -m 700 "$B" 2>/dev/null; then
+          printf 'backup=%s ok=0\n' "$B"
+          printf '[FAIL] backup dir already exists: %s -- run step 3 to restore from it, confirm clean, then re-run step 1\n' "$B" >&2
+          exit 1
+        fi
+        if ! { [ -d "$B" ] && [ ! -L "$B" ] && [ -O "$B" ]; }; then
+          printf '[FAIL] %s is not a directory we own\n' "$B" >&2
+          exit 1
+        fi
+        # until the manifest is published nothing has been applied, so a failed step 1 self-cleans
+        trap 'rm -rf "$B"; printf "backup=%s ok=0\n" "$B"' EXIT INT TERM HUP
+
+        : >"$B/manifest.partial"
+        for n in $NAMES; do
+          p="$C/$n/config"
+          case "$(wt_type "$p")" in
+          regular)
+            # cp -a = -dR --preserve=all, so mode/mtime survive and links are NOT dereferenced
+            cp -a "$p" "$B/$n.config" || { printf '[FAIL] %s: backup copy failed\n' "$n" >&2; exit 1; }
+            printf '%s=regular\n%s.sha=%s\n' "$n" "$n" "$(wt_sha "$B/$n.config")" >>"$B/manifest.partial"
+            ;;
+          symlink)
+            cp -a "$p" "$B/$n.config" || { printf '[FAIL] %s: backup copy failed\n' "$n" >&2; exit 1; }
+            [ "$(wt_type "$B/$n.config")" = symlink ] ||
+              { printf '[FAIL] %s: the backup is not a symlink -- refusing to continue\n' "$n" >&2; exit 1; }
+            [ "$(readlink "$B/$n.config")" = "$(readlink "$p")" ] ||
+              { printf '[FAIL] %s: backup link target differs from the original\n' "$n" >&2; exit 1; }
+            printf '%s=symlink\n%s.link=%s\n' "$n" "$n" "$(readlink "$p")" >>"$B/manifest.partial"
+            # setup writes THROUGH the link, so the pointed-to file must be backed up too
+            if [ -e "$p" ]; then
+              tp=$(readlink -f "$p") || { printf '[FAIL] %s: cannot resolve the link target\n' "$n" >&2; exit 1; }
+              [ -f "$tp" ] || { printf '[FAIL] %s: link target %s is not a regular file -- handle it by hand\n' "$n" "$tp" >&2; exit 1; }
+              cp -a "$tp" "$B/$n.target" || { printf '[FAIL] %s: backing up the link target failed\n' "$n" >&2; exit 1; }
+              printf '%s.tpath=%s\n%s.tsha=%s\n' "$n" "$tp" "$n" "$(wt_sha "$B/$n.target")" >>"$B/manifest.partial"
+            else
+              printf '%s.tpath=\n' "$n" >>"$B/manifest.partial"   # dangling link: nothing behind it
+            fi
+            ;;
+          absent)
+            if [ -d "$C/$n" ]; then printf '%s=absent-file\n' "$n" >>"$B/manifest.partial"
+            else printf '%s=absent-dir\n' "$n" >>"$B/manifest.partial"; fi
+            ;;
+          other)
+            printf '[FAIL] %s: %s is neither a regular file nor a symlink -- handle it by hand\n' "$n" "$p" >&2
+            exit 1
+            ;;
+          esac
         done
-        # 每個名字都要恰好一筆合法狀態,全部齊全才把 manifest 原子發布出去
-        for n in ghostty worktool; do [ "$(grep -cE "^$n=(backed-up|absent-file|absent-dir)$" "$B/manifest.partial")" -eq 1 ] || ok=0; done
-        [ "$ok" = 1 ] && mv "$B/manifest.partial" "$B/manifest"
-        cat "$B"/manifest* 2>/dev/null
-      fi
-      printf 'backup=%s ok=%s\n' "$B" "$ok"
-      # 2) 只有備份成功才套用,然後開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
-      [ "$ok" = 1 ] && just box assemble >/dev/null && just box setup && just box status
+
+        for n in $NAMES; do
+          [ "$(grep -cE "^$n=(regular|symlink|absent-file|absent-dir)\$" "$B/manifest.partial")" -eq 1 ] ||
+            { printf '[FAIL] %s: manifest does not have exactly one state line\n' "$n" >&2; exit 1; }
+        done
+        mv "$B/manifest.partial" "$B/manifest" || { printf '[FAIL] publishing the manifest failed\n' >&2; exit 1; }
+        trap - EXIT INT TERM HUP
+
+        cat "$B/manifest"
+        printf 'backup=%s ok=1\n' "$B"
+      )
+      ```
+
+      ```bash
+      # 步驟 2) 重新驗證磁碟上的 manifest,再套用;之後開一個新的 ghostty 視窗
+      (
+        set -u
+        C=${XDG_CONFIG_HOME:-$HOME/.config}
+        B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
+        NAMES='ghostty worktool'
+        BOX=dev
+
+        wt_type() {
+          if [ -L "$1" ]; then echo symlink
+          elif [ ! -e "$1" ]; then echo absent
+          elif [ -f "$1" ]; then echo regular
+          else echo other; fi
+        }
+        wt_sha() { sha256sum "$1" | cut -d' ' -f1; }
+        wt_field() { grep -E "^$2=" "$1/manifest" | head -1 | cut -d= -f2-; }
+        wt_bad() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
+
+        # trust the published manifest on disk, never the $ok variable from step 1
+        [ -f "$B/manifest" ] || wt_bad "no published manifest at $B/manifest -- step 1 did not finish; nothing applied"
+        [ -e "$B/manifest.partial" ] && wt_bad "$B/manifest.partial still present -- step 1 is half-done"
+        for n in $NAMES; do
+          [ "$(grep -cE "^$n=(regular|symlink|absent-file|absent-dir)\$" "$B/manifest")" -eq 1 ] ||
+            wt_bad "$n: manifest does not have exactly one state line"
+        done
+        for n in $NAMES; do
+          p="$C/$n/config"; bp="$B/$n.config"; s=$(wt_field "$B" "$n")
+          case "$s" in
+          regular)
+            [ "$(wt_type "$bp")" = regular ] || wt_bad "$n: the backup is not a regular file"
+            [ "$(wt_type "$p")" = regular ] || wt_bad "$n: live config is no longer a regular file"
+            [ "$(wt_sha "$bp")" = "$(wt_field "$B" "$n.sha")" ] || wt_bad "$n: backup does not match its manifest checksum"
+            [ "$(wt_sha "$bp")" = "$(wt_sha "$p")" ] || wt_bad "$n: live config changed since step 1 -- re-run step 3 then step 1"
+            ;;
+          symlink)
+            [ "$(wt_type "$bp")" = symlink ] || wt_bad "$n: the backup did not preserve the symlink"
+            [ "$(wt_type "$p")" = symlink ] || wt_bad "$n: live config is no longer a symlink"
+            [ "$(readlink "$bp")" = "$(wt_field "$B" "$n.link")" ] || wt_bad "$n: backup link target differs from the manifest"
+            [ "$(readlink "$p")" = "$(wt_field "$B" "$n.link")" ] || wt_bad "$n: live link target changed since step 1"
+            tp=$(wt_field "$B" "$n.tpath")
+            if [ -n "$tp" ]; then
+              [ "$(wt_type "$B/$n.target")" = regular ] || wt_bad "$n: the link target was not backed up"
+              [ "$(wt_sha "$B/$n.target")" = "$(wt_field "$B" "$n.tsha")" ] || wt_bad "$n: target backup does not match its manifest checksum"
+              [ -f "$tp" ] || wt_bad "$n: link target $tp disappeared since step 1"
+              [ "$(wt_sha "$tp")" = "$(wt_field "$B" "$n.tsha")" ] || wt_bad "$n: link target $tp changed since step 1"
+            else
+              [ ! -e "$p" ] || wt_bad "$n: manifest recorded a dangling link but it resolves now"
+            fi
+            ;;
+          absent-file)
+            { [ ! -e "$bp" ] && [ ! -L "$bp" ]; } || wt_bad "$n: manifest says absent-file but a backup file exists"
+            [ -d "$C/$n" ] || wt_bad "$n: config dir vanished since step 1"
+            [ "$(wt_type "$p")" = absent ] || wt_bad "$n: a config appeared since step 1"
+            ;;
+          absent-dir)
+            { [ ! -e "$bp" ] && [ ! -L "$bp" ]; } || wt_bad "$n: manifest says absent-dir but a backup file exists"
+            [ ! -e "$C/$n" ] || wt_bad "$n: config dir appeared since step 1"
+            ;;
+          *) wt_bad "$n: unknown manifest state '$s'" ;;
+          esac
+        done
+        printf 'revalidate=1\n'
+
+        # refuse a box this run did not create; record what we do create so step 3 can undo exactly that
+        box_exists() {
+          local out
+          out=$(distrobox list 2>/dev/null) || return 2
+          printf '%s\n' "$out" | awk -F'|' -v want="$1" '
+            NR > 1 { n = $2; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n == want) f = 1 }
+            END { exit(f ? 0 : 1) }'
+        }
+        box_exists "$BOX"; e=$?
+        [ "$e" -eq 2 ] && wt_bad "distrobox list failed -- cannot tell whether '$BOX' exists"
+        [ "$e" -eq 0 ] && wt_bad "a distrobox named '$BOX' already exists -- refusing. Step 3 deletes the box this run creates, so rename or remove yours by hand first."
+        printf 'preexisting-dev=0\n'
+
+        just box assemble >/dev/null || wt_bad "just box assemble failed"
+        : >"$B/created-box"                       # persisted so step 3 works in a fresh shell
+        box_exists "$BOX" || wt_bad "assemble returned 0 but box '$BOX' is not listed"
+        just box setup || wt_bad "just box setup failed -- run step 3 to restore"
+        just box status || wt_bad "just box status failed -- run step 3 to restore"
+        printf 'setup-rc=0\n'
+      )
+      ```
+
+      ```bash
+      # 新的 ghostty 視窗裡跑這三行(主觀:開窗到提示字元無明顯延遲)
       ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
-      # 3) 還原 -- 可在任何 shell 單獨執行,中斷後也用這段;沒有備份時什麼都不動
-      C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
-      mv=1; for n in ghostty worktool; do c=$(grep -cE "^$n=(backed-up|absent-file|absent-dir)$" "$B/manifest" 2>/dev/null); [ "${c:-0}" -eq 1 ] || mv=0; done
-      if [ ! -f "$B/manifest" ]; then
-        if [ -d "$B" ]; then echo "incomplete-backup=1($B 只有殘骸、沒有完成的 manifest。備份沒完成代表步驟 2 從沒套用過,你的設定沒被動過,直接 rm -rf '$B' 再重跑步驟 1)"
-        else echo "no-backup=1($B 沒有備份;已經還原過就不需要再跑)"; fi
-      elif [ "$mv" != 1 ]; then
-        echo "manifest-invalid=1($B/manifest 不是每個名字恰好一筆合法狀態,不自動還原;請人工比對 $B 內容)"
-      else
-        just box setup --auto-enter no >/dev/null 2>&1; rrc=$?; echo "restore-rc=$rrc"
-        rok=1; [ "$rrc" -eq 0 ] || rok=0
-        for n in ghostty worktool; do
-          if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config" || rok=0
-          elif grep -qx "$n=absent-file" "$B/manifest"; then rm -f "$C/$n/config" || rok=0
-          elif grep -qx "$n=absent-dir" "$B/manifest"; then { rm -f "$C/$n/config" || rok=0; }; rmdir "$C/$n" 2>/dev/null; fi
+      ```
+
+      ```bash
+      # 步驟 3) 還原 -- 可在任何 shell 單獨執行,中斷後也用這段;沒有備份時什麼都不動
+      (
+        set -u
+        C=${XDG_CONFIG_HOME:-$HOME/.config}
+        B=${TMPDIR:-/tmp}/worktool-m3-52-backup.$(id -u)
+        NAMES='ghostty worktool'
+        BOX=dev
+        rc=0
+        note() { printf '%s\n' "$*"; }
+        bad() { printf '[FAIL] %s\n' "$*" >&2; rc=1; }
+
+        wt_type() {
+          if [ -L "$1" ]; then echo symlink
+          elif [ ! -e "$1" ]; then echo absent
+          elif [ -f "$1" ]; then echo regular
+          else echo other; fi
+        }
+        wt_sha() { sha256sum "$1" | cut -d' ' -f1; }
+        wt_field() { grep -E "^$2=" "$1/manifest" | head -1 | cut -d= -f2-; }
+
+        if [ ! -d "$B" ]; then
+          note "no-backup=1 ($B absent; already restored, or step 1 never ran)"
+          exit 0
+        fi
+        if [ ! -f "$B/manifest" ]; then
+          note "incomplete-backup=1 ($B has no published manifest, so step 2 never applied anything; inspect it, then: rm -rf '$B')"
+          exit 1
+        fi
+        mv_ok=1
+        for n in $NAMES; do
+          [ "$(grep -cE "^$n=(regular|symlink|absent-file|absent-dir)\$" "$B/manifest")" -eq 1 ] || mv_ok=0
         done
-        echo "restore-ok=$rok"
-        b=0; [ -e "$C/ghostty/config" ] && b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config"); printf 'blocks=%s\n' "$b"
-        lo=0; for n in ghostty worktool; do grep -qx "$n=absent-dir" "$B/manifest" && [ -d "$C/$n" ] && lo=$((lo+1)); done; printf 'leftover-dirs=%s\n' "$lo"
-        if [ "$rok" = 1 ] && [ "$lo" = 0 ]; then rm -rf "$B"; else echo "還原未完成,備份保留在 $B,修正後重跑這段"; fi
-      fi
-      distrobox rm -f dev >/dev/null 2>&1
-      d=$(distrobox list 2>/dev/null | grep -c '[[:space:]]dev[[:space:]]'); printf 'dev-gone=%s\n' "$([ "$d" -eq 0 ] && echo 1 || echo 0)"
+        if [ "$mv_ok" != 1 ]; then
+          note "manifest-invalid=1 ($B/manifest is not exactly one valid state line per name; restore by hand)"
+          exit 1
+        fi
+
+        just box setup --auto-enter no >/dev/null 2>&1; rrc=$?
+        note "restore-rc=$rrc"
+        [ "$rrc" -eq 0 ] || bad "just box setup --auto-enter no exited $rrc"
+
+        for n in $NAMES; do
+          p="$C/$n/config"; bp="$B/$n.config"; s=$(wt_field "$B" "$n")
+          case "$s" in
+          regular | symlink)
+            mkdir -p "$C/$n" || { bad "$n: cannot recreate $C/$n"; continue; }
+            rm -f "$p" || { bad "$n: cannot clear $p"; continue; }   # never write through a symlink
+            cp -a "$bp" "$p" || { bad "$n: restore copy failed"; continue; }
+            [ "$(wt_type "$p")" = "$s" ] || bad "$n: restored as $(wt_type "$p"), expected $s"
+            if [ "$s" = symlink ]; then
+              [ "$(readlink "$p")" = "$(wt_field "$B" "$n.link")" ] || bad "$n: restored link points at $(readlink "$p")"
+              tp=$(wt_field "$B" "$n.tpath")
+              if [ -n "$tp" ]; then
+                # setup wrote through the link, so put the pointed-to file back byte for byte
+                cp -a "$B/$n.target" "$tp" || { bad "$n: restoring link target $tp failed"; continue; }
+                [ "$(wt_sha "$tp")" = "$(wt_field "$B" "$n.tsha")" ] || bad "$n: link target $tp not restored byte for byte"
+              fi
+            else
+              [ "$(wt_sha "$p")" = "$(wt_field "$B" "$n.sha")" ] || bad "$n: restored content checksum mismatch"
+            fi
+            ;;
+          absent-file)
+            rm -f "$p" || bad "$n: cannot remove $p"
+            [ "$(wt_type "$p")" = absent ] || bad "$n: $p still present"
+            ;;
+          absent-dir)
+            rm -f "$p" || bad "$n: cannot remove $p"
+            rmdir "$C/$n" 2>/dev/null
+            [ ! -e "$C/$n" ] || bad "$n: $C/$n still present (not empty?)"
+            ;;
+          esac
+        done
+        if [ "$rc" -eq 0 ]; then note "restore-ok=1"; else note "restore-ok=0"; fi
+
+        b=0
+        if [ "$(wt_type "$C/ghostty/config")" != absent ]; then
+          b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config" 2>/dev/null) || b=0
+        fi
+        note "blocks=$b"
+        [ "$b" -eq 0 ] || bad "worktool managed block still present in $C/ghostty/config"
+
+        lo=0
+        for n in $NAMES; do grep -qx "$n=absent-dir" "$B/manifest" && [ -e "$C/$n" ] && lo=$((lo + 1)); done
+        note "leftover-dirs=$lo"
+        [ "$lo" -eq 0 ] || bad "directories that did not exist before are still there"
+
+        # only remove a box this run created, and a failed removal fails the block
+        box_exists() {
+          local out
+          out=$(distrobox list 2>/dev/null) || return 2
+          printf '%s\n' "$out" | awk -F'|' -v want="$1" '
+            NR > 1 { n = $2; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n == want) f = 1 }
+            END { exit(f ? 0 : 1) }'
+        }
+        if [ -e "$B/created-box" ]; then
+          distrobox rm -f "$BOX" >/dev/null 2>&1
+          box_exists "$BOX"; e=$?
+          if [ "$e" -eq 1 ]; then note "dev-gone=1"; rm -f "$B/created-box"
+          else note "dev-gone=0"; bad "box '$BOX' created by this run is still there (or distrobox list failed) -- remove it by hand"; fi
+        else
+          note "dev-untouched=1 (this run never created a box; leaving every box alone)"
+        fi
+
+        if [ "$rc" -eq 0 ]; then rm -rf "$B"; note "backup-removed=1"
+        else note "backup kept at $B -- fix the errors above and re-run step 3"; fi
+        exit "$rc"
+      )
+      ```
+  - [ ] 5.3 負向:**先建一個同名 `dev` 盒**,證明 5.1 與 5.2 步驟 2 拒絕而不是刪掉它(#176 item 1 的負向測試;最後自己手動移除那個盒)
+    - 預期看到資訊(兩段各自拒絕,盒子從頭到尾都在)
+      ```text
+      preexisting=dev
+      [FAIL] a distrobox named 'dev' already exists -- refusing. This block deletes the box it creates, so rename or remove yours by hand first.
+      51-rc=1
+      revalidate=1
+      [FAIL] a distrobox named 'dev' already exists -- refusing. Step 3 deletes the box this run creates, so rename or remove yours by hand first.
+      52-rc=1
+      dev-untouched=1 (this run never created a box; leaving every box alone)
+      still-there=dev
+      ```
+      (5.1 在 `just box assemble` 之前就拒絕,所以沒有 `preexisting-dev=0`、也沒有 `cleanup-rc`;5.2 步驟 2 在 `revalidate=1` 之後、`just box assemble` 之前拒絕,你的設定沒被動過,步驟 3 只是把備份收掉並印 `dev-untouched=1`)
+    - 驗收方式
+      ```bash
+      distrobox create --name dev --image ubuntu:24.04 --yes >/dev/null
+      distrobox list | awk -F'|' 'NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n=="dev") print "preexisting=" n }'
+      ```
+      ```bash
+      # 原樣貼上 5.1 的整段,緊接著貼這一行
+      echo 51-rc=$?
+      ```
+      ```bash
+      # 原樣貼上 5.2 的步驟 1、再貼步驟 2,緊接著貼這一行
+      echo 52-rc=$?
+      ```
+      ```bash
+      # 再貼一次 5.2 的步驟 3 把備份收掉(它印 dev-untouched=1,不動任何盒子),然後確認盒子還在並手動移除
+      distrobox list | awk -F'|' 'NR>1 { n=$2; gsub(/^[ \t]+|[ \t]+$/,"",n); if (n=="dev") print "still-there=" n }'
+      distrobox rm -f dev
       ```
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
@@ -809,7 +1224,13 @@ verify-tool-ok
       ```text
       #152 total=8 nonpass=0 amd=0 arm=0 closes=1 issue=#151
       #153 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#149
-      ...(10 行;#153 起 amd=arm>0;nonpass 全 0;closes 全 1;total>0)
+      #154 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#150
+      #155 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#21
+      #156 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#23
+      #165 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#164
+      #166 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#163
+      #167 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#160
+      #168 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#161
       #169 total=15 nonpass=0 amd=7 arm=7 closes=1 issue=#162
       distinct=10
       rc=0
@@ -842,9 +1263,10 @@ verify-tool-ok
       #148 lts-only:1 arm-runner:1
       #21 default-enter:1 log:1
       ```
+      (查詢用 `--paginate`:留言超過 100 則之後才不會因為只看第一頁而漏掉)
     - 驗收方式
       ```bash
-      c() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -c "$2" | awk '{print ($1>=1)?1:0}'; }
+      c() { gh api "repos/ycpss91255/worktool/issues/$1/comments" --paginate --jq '.[].body | select(startswith("[claude]"))' | grep -c "$2" | awk '{print ($1>=1)?1:0}'; }
       echo "#22 median-ms:$(c 22 'median=[0-9][0-9]*\(\.[0-9][0-9]*\)\? ms') runc:$(c 22 '維持 docker + 預設 runc')"
       echo "#148 lts-only:$(c 148 '只用 LTS') arm-runner:$(c 148 'ubuntu-24.04-arm')"
       echo "#21 default-enter:$(c 21 '預設 = 直接進盒') log:$(c 21 '印 log')"
@@ -867,12 +1289,12 @@ verify-tool-ok
       (失敗時的樣子:判定不符是 `NOT` 或行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`)
     - 驗收方式
       ```bash
-      v() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
+      v() { gh api "repos/ycpss91255/worktool/issues/$1/comments" --paginate --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
       (
         fail=0
         for n in 156 165 166 167 168 169; do printf '#%s ' "$n"; v "$n" | grep -q '^可合併\|^mergeable' && echo mergeable || { echo NOT; fail=1; }; done
         for n in 152 153 154 155; do
-          fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments?per_page=100" --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u)
+          fus=$(gh api "repos/ycpss91255/worktool/issues/$n/comments" --paginate --jq '.[].body | select(startswith("[claude]"))' | grep -o 'follow-up issue #[0-9]*' | grep -o '[0-9]*' | sort -u)
           fu=$(head -1 <<<"$fus"); [ -n "$fu" ] || { printf '#%s no-follow-up\n' "$n"; fail=1; continue; }
           prs=$(gh pr list --repo ycpss91255/worktool --state merged --search "Closes #$fu in:body" --json number,body --jq ".[] | select(.body | test(\"^Closes #$fu\\\\b\"; \"m\")) | .number")
           pr=$(head -1 <<<"$prs"); [ -n "$pr" ] || { printf '#%s no-fix-pr\n' "$n"; fail=1; continue; }
