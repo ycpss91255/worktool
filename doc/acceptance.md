@@ -658,11 +658,15 @@ verify-tool-ok
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(`script/verify/setup.sh` 每項自建拋棄式 HOME 並在 EXIT / INT / TERM / HUP 清掉,不動你的家目錄)
 
-  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 3.8 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
+  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 3.8 / 3.9 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
 
-  **`tmux.conf=` 那半邊,只有 3.7 與 3.8 是實證**:`~/.tmux.conf` 只有在 tmux 決策是 `host` 時才被寫入(`script/box/setup.sh` 的 `_apply_ghostty`),而 3.1-3.6 全跑 `--tmux inside`,產品在那條路徑上只會「打開來找有沒有區塊要移除」。所以 3.1-3.6 的 `tmux.conf=intact` 講的是**這條路徑不該碰的檔案沒被碰**,不是「寫入不會毀掉它」—— 一個只在 tmux 路徑上把整份 `~/.tmux.conf` 覆寫掉的回歸,3.1-3.6 六項會全綠(這正是 `test/unit/verify_setup_spec.bats` 那個降級副本案例實測到的)。真正跑那條路徑、真正斷言區塊是**加進** `~/.tmux.conf` 而不是取代它的,是 3.7;3.8 再拿同一對區塊去跑第二條移除路徑。
+  **`tmux.conf=` 那半邊,只有 3.7、3.8 與 3.9 是實證**:`~/.tmux.conf` 只有在 tmux 決策是 `host` 時才被寫入(`script/box/setup.sh` 的 `_apply_ghostty`),而 3.1-3.6 全跑 `--tmux inside`,產品在那條路徑上只會「打開來找有沒有區塊要移除」。所以 3.1-3.6 的 `tmux.conf=intact` 講的是**這條路徑不該碰的檔案沒被碰**,不是「寫入不會毀掉它」—— 一個只在 tmux 路徑上把整份 `~/.tmux.conf` 覆寫掉的回歸,3.1-3.6 六項會全綠(這正是 `test/unit/verify_setup_spec.bats` 那個降級副本案例實測到的)。真正跑那條路徑、真正斷言區塊是**加進** `~/.tmux.conf` 而不是取代它的,是 3.7;3.8 再拿同一對區塊去跑第二條移除路徑,3.9 再拿同一對區塊去跑第三個移除呼叫點。
 
-  **移除有兩條路徑,不是一條**:`--auto-enter no` 走 `_apply_disable`(3.3 與 3.7 驗的那條),`--terminal none` 走 `_apply_no_terminal` —— 兩段各自獨立的程式碼,而後者同樣會把兩個受管檔的區塊都拿掉。在 3.8 之前,整個 `script/verify/` 沒有任何一處傳過 `--terminal none`(`grep -rn -- "--terminal" script/verify/` 一個都沒有),所以把 `_apply_no_terminal` 退化成「清空整份檔案」而不是「抽掉區塊」,lint、全部單元案例、整合層與 3.1-3.7 每一項都是綠的,實測只有兩個檔案被清成零行。這條路徑也不是偏門:`lib/enter.sh` 的 `enter_terminal_detect` 在「PATH 上沒有 ghostty 執行檔、也沒有 ghostty 設定目錄」時回 `none`,所以**一台沒裝 ghostty 的機器預設就走這條**。3.8 就是跑它的那一項。
+  **移除有三個呼叫點,不是一個**:`--auto-enter no` 走 `_apply_disable`(3.3 與 3.7 驗的那條),`--terminal none` 走 `_apply_no_terminal` —— 兩段各自獨立的程式碼,而後者同樣會把兩個受管檔的區塊都拿掉。在 3.8 之前,整個 `script/verify/` 沒有任何一處傳過 `--terminal none`(`grep -rn -- "--terminal" script/verify/` 一個都沒有),所以把 `_apply_no_terminal` 退化成「清空整份檔案」而不是「抽掉區塊」,lint、全部單元案例、整合層與 3.1-3.7 每一項都是綠的,實測只有兩個檔案被清成零行。這條路徑也不是偏門:`lib/enter.sh` 的 `enter_terminal_detect` 在「PATH 上沒有 ghostty 執行檔、也沒有 ghostty 設定目錄」時回 `none`,所以**一台沒裝 ghostty 的機器預設就走這條**。3.8 就是跑它的那一項。
+
+  第三個呼叫點不是一整段函式,而是 `_apply_ghostty` 在 tmux-inside 分支上自己打的一行 `_block_remove "${_tmux_conf}"`:把上一次 `--tmux host` 寫進 `~/.tmux.conf` 的區塊拿掉。3.2 / 3.5 / 3.6 都跑那條分支,卻沒有一項真的執行到它 —— 那時候 `~/.tmux.conf` 裡沒有區塊,函式第一行就 return;3.3 與 3.7 走的是 `_apply_disable`,3.8 走的是 `_apply_no_terminal`。只把**這一個呼叫點**退化成清空整份檔案,3.1 到 3.8 八項全綠、其餘各層也全綠,而使用者「試了 host、換回 inside」就會丟掉整份 `~/.tmux.conf`。3.9 就是跑它的那一項。
+
+  `script/box/setup.sh` 還有五條路徑沒有驗收項目(`_block_write` 的 unchanged 分支、`_block_remove` 的 dry-run 分支、`enter_block_compose` 的多區塊收斂、`_write_atomic` 的失敗分支、`_copy_mode` 的權限保留),沒有一條會讓使用者丟掉檔案內容,追蹤在 #178。
 
   - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
@@ -922,6 +926,51 @@ verify-tool-ok
     - 驗收方式
       ```bash
       just verify setup 3.8; echo rc=$?
+      ```
+  - [ ] 3.9 `--tmux host` 之後再 `--tmux inside`:換回來的那一步,也是**第三個**會移除受管區塊的呼叫點(`_apply_ghostty` 自己裡面那一行 `_block_remove "${_tmux_conf}"`)—— ghostty 區塊改寫成 inside 版本、`~/.tmux.conf` 的區塊被移除並回報,而 `~/.tmux.conf` 剩下的必須剛好就是使用者那三行
+    - 預期看到資訊(第一次佈置用的 `--terminal ghostty --tmux host` 輸出略,同 3.7;本項從它留下的兩個受管區塊數起)
+      ```text
+      user-content after-write: ghostty=intact tmux.conf=intact
+      ghostty-blocks-before=1
+      tmux-blocks-before=1
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (user)
+      [INFO] tmux: inside (user)
+      [INFO] box: dev (default)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
+      [INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '"<D>" enter dev')
+      rc=0
+      # worktool acceptance: user content that must survive every write
+      set -g history-limit 12345
+      set -g mouse on
+      ghostty-blocks=1
+      tmux-blocks=0
+      user-content after-switch: ghostty=intact tmux.conf=intact
+      ./script/box/status.sh "$@"
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      tmux: inside (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      tmux.conf: <H>/.tmux.conf (managed block: absent)
+      distrobox: <D> (recorded in a managed block: runnable)
+      rc=0
+      rc=0
+      ```
+      (最後兩個 `rc=0`:前一個是那次 `just box status` 自己的結束碼,最後一行才是本項的 `echo rc=$?`。
+      為什麼要有這一項:移除受管區塊的地方有**三個**,不是兩個。`_apply_disable`(`--auto-enter no`,3.3 與 3.7)與 `_apply_no_terminal`(`--terminal none`,3.8)是兩整段依決策分派過去的函式;第三個不是函式,是 `_apply_ghostty` 在 tmux-inside 分支上自己打的一通 `_block_remove "${_tmux_conf}"` —— 把上一次 `--tmux host` 寫進 `~/.tmux.conf` 的區塊拿掉,因為 tmux 改在盒內跑之後,host 端的 `default-command` 已經沒有用處了。這正是使用者「試了 host、不喜歡、換回 inside」會走的那一步。
+      3.9 之前沒有任何一項真的執行到它:3.2 / 3.5 / 3.6 確實跑 tmux-inside 分支,但它們的 `~/.tmux.conf` 裡根本沒有區塊,`_block_remove` 在第一行就 return 了 —— 它們的 `tmux.conf=intact` 又一次只是「產品打開來看了一眼」。把**這一個呼叫點**退化成「清空整份檔案」而不是「抽掉區塊」,上面那行 `removed:` 連 body 都一樣、`tmux-blocks` 照樣 1 變 0、`ghostty-blocks` 照樣是 1、`status` 照樣說 `absent`、lint 綠、其餘單元案例全綠、整合層綠、3.1 到 3.8 八項全綠 —— 而使用者的 `~/.tmux.conf` 變成零行。實測見 `test/unit/verify_setup_spec.bats` 的降級副本案例(GAP D),同一份降級讓 3.1-3.8 全綠。
+      分得出來的有兩處,而且是同一件事的兩半:`user-content after-switch:` 那行,以及緊接在 `rc=0` 之後印出來的**整份 `~/.tmux.conf`**(那三行)。後者是逐行全等比對 —— 不是「這幾行有出現」,而是「這個檔案就只有這三行、順序不變」,所以被清空(零行)或留下殘餘 marker 都是紅的。`ghostty-blocks-before` / `tmux-blocks-before` 是移除的前提:對一個從來沒有區塊的檔案來說「區塊被移除了」是恆真的;`after-write` 那行把佈置那一步洗清,`after-switch` 才能把帳算到這次切換頭上。
+      這一次 setup **同時做了兩件不同的事**:ghostty 的受管區塊被**改寫**成 inside 版本(絕對路徑回到 ghostty 那個 body 裡,因為 tmux 現在在盒內起),`~/.tmux.conf` 的受管區塊被**移除**。所以 `ghostty-blocks=1` 與 `tmux-blocks=0` 要一起看:只有前者才證明 ghostty 那半邊沒被順手一起清掉。
+      沒有 `[INFO] terminal detected:` —— 這個「沒有」也在判準內:兩次 setup 都自己指定 `--terminal ghostty`,不是偵測出來的,所以沒有偵測結果可報。本項因此不需要 host 上有 ghostty 執行檔(同 3.8),但仍然需要 distrobox:這條路徑會寫受管 command。
+      整合層那一案(`test/integration/setup_spec.bats` 的 `setup --tmux inside after host`)跑的是同一個轉換,但它原本只問 `managed block: absent` —— 對一份被清空的檔案同樣成立。它現在也先種使用者內容、先量區塊數、再逐行比對移除之後的全文)
+    - 驗收方式
+      ```bash
+      just verify setup 3.9; echo rc=$?
       ```
 
 - [ ] 4. README 圖(draw.io,可編輯)
