@@ -15,14 +15,21 @@
 # Since M3 issue #172 the image is Ubuntu 26.04 based rather than the
 # docker:dind image itself: the ghostty chain cases need a REAL ghostty
 # (packaged by 26.04 only) and a headless X server next to the real
-# engine. The engine binaries, its CLI plugins and the dind helper scripts
-# are copied in from the same pinned docker:dind image, so how the nested
-# daemon starts is unchanged - but this is a REBASE, not a transplant of
-# the whole image: the host side of the real-engine gate now runs on
-# Ubuntu / GNU userland instead of Alpine / busybox, which means the gate
-# no longer covers Alpine host compatibility and a tool that busybox used
-# to provide has to be installed by name (see `bsdextrautils` below).
-# doc/manifest.md records that change of gate meaning.
+# engine.
+#
+# What is taken from the pinned docker:dind image is exactly three
+# directories - /usr/local/bin (engine binaries + the dind helper
+# scripts), /usr/local/sbin (the legacy-iptables symlinks) and
+# /usr/local/libexec/docker/cli-plugins (buildx / compose) - so how the
+# nested daemon starts is unchanged. Nothing else of that image comes
+# across: this is a REBASE, not a transplant. In particular its
+# `dockremap` user and /etc/subuid + /etc/subgid are deliberately left
+# behind (see the COPY block below), the host side of the real-engine
+# gate now runs on Ubuntu / GNU userland instead of Alpine / busybox - so
+# the gate no longer covers Alpine host compatibility - and a tool that
+# busybox used to provide has to be installed by name (see
+# `bsdextrautils` below). doc/manifest.md records that change of gate
+# meaning.
 #
 # It MUST be started with `docker run --rm --privileged` (a nested dockerd
 # needs it; see issue #129 for the DinD-vs-DooD-vs-podman decision). Every
@@ -91,8 +98,11 @@ FROM docker:${DOCKER_DIND_TAG} AS docker-engine
 # itself (M3, issue #172). The ghostty chain cases of
 # test/system/real_engine_spec.bats need a REAL ghostty next to the real
 # engine, and ghostty is packaged by 26.04 and nothing older - alpine has
-# none at all. Everything the dind image contributed is copied in below,
-# so the runner entry (script/test/system-real-entry.sh) is unchanged.
+# none at all. The three directories the runner entry
+# (script/test/system-real-entry.sh) depends on are copied in below -
+# /usr/local/bin, /usr/local/sbin and
+# /usr/local/libexec/docker/cli-plugins - which is why that entry is
+# unchanged. What is NOT carried over is listed at that COPY block.
 FROM ubuntu:${UBUNTU_TAG}
 ARG DISTROBOX_VERSION
 ENV DEBIAN_FRONTEND=noninteractive

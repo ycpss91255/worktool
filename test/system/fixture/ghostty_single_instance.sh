@@ -17,34 +17,50 @@
 #   `gtk-single-instance = false` and asserts an in-box marker file exactly
 #   because of this.
 #
-# HOW (every claim below is OBSERVED, nothing is asserted by fiat)
+# HOW (every claim below is OBSERVED; nothing is asserted by fiat)
 #   One Xvfb display and one private session bus (dbus-run-session), one
-#   config with `gtk-single-instance = true`, and a command that leaves a
-#   UNIQUE start file per window and can only ever finish after a
-#   `sleep infinity`:
+#   config with `gtk-single-instance = true`, and a command that names
+#   itself the moment it begins and could only write to DONE if it ever
+#   RETURNED:
 #
-#     /bin/sh -c "mktemp <STARTED>/w.XXXXXX; sleep infinity; mktemp <DONE>/d.XXXXXX"
+#     /bin/sh -c "echo $$ ><STARTED>/w.$$ && sleep infinity && echo done ><DONE>/d.$$"
 #
-#   so the number of files under STARTED is the number of window commands
-#   that really began, and any file under DONE would mean one of them
-#   returned (it cannot).
+#   The start file is named after - and holds - the pid of the shell
+#   running that window's command, so the fixture can later ask those
+#   exact processes whether they are still alive. `&&`, not `;`: a start
+#   file that could not be written must stop the chain rather than leave
+#   a blocked command with no evidence that it began. So the file count
+#   under STARTED is the number of window commands that really started,
+#   and any file under DONE would mean one of them returned (none can:
+#   `sleep infinity` is in the way).
 #
 #     1. start the primary in the background and wait (bounded) until
 #        STARTED holds exactly one file, i.e. its command really began;
-#     2. run ghostty a second time under its own `timeout`, recording its
-#        status and how long it took;
-#     3. wait (bounded) for STARTED to reach two files - that second file
-#        is the forwarded window's command starting, which is what makes
-#        this a forwarding and not just "a second process exited fast";
-#     4. check the primary is still alive (`kill -0`) and count DONE.
+#     2. run ghostty a second time under its own `timeout`; the instant it
+#        returns, take a timestamp and read the STARTED count AGAIN -
+#        still 1 means the work it just reported success for had not even
+#        begun;
+#     3. wait (bounded) for STARTED to reach two, and compare that second
+#        file's mtime with the timestamp from step 2, so the ORDER
+#        (returned first, command started after) is measured and not
+#        merely assumed from the order the script happens to look in;
+#     4. count this run's window commands that are still running, check
+#        the primary ghostty process is still there, and count DONE.
 #
 #   Output on stdout, one `KEY=VALUE` per line, for the spec to assert on:
 #     PRIMARY=up|died-before-ready|not-ready-in-<n>s
 #     SECOND_RC=<status of the second launch>
 #     SECOND_ELAPSED=<seconds it took>
-#     FORWARDED_STARTED=yes|no   (a SECOND window command began)
-#     PRIMARY_ALIVE=yes|no       (the primary outlived the second launch)
-#     COMMAND_FINISHED=no|yes    (observed: DONE is empty / is not)
+#     STARTED_AT_RETURN=<window commands begun when it returned>
+#     FORWARDED_STARTED=yes|no        (a SECOND window command began)
+#     FORWARDED_AFTER_RETURN=yes|no   (measured: its mtime > return time)
+#     FORWARDED_DELAY_MS=<ms between the return and that command starting>
+#     RUNNING_COMMANDS=<this run's window commands still alive, by pid>
+#     PRIMARY_WRAPPER_ALIVE=yes|no    (the ghostty process that owns the
+#                                      bus name, NOT the command's shell -
+#                                      the STARTED count is what proves a
+#                                      command began)
+#     COMMAND_FINISHED=no|yes         (observed: DONE is empty / is not)
 #
 # Usage: ghostty_single_instance.sh <workdir>
 #
@@ -95,9 +111,51 @@ export XDG_CONFIG_HOME="${CONFIG_HOME}"
 export LIBGL_ALWAYS_SOFTWARE=1
 export GDK_BACKEND=x11
 
+# --- observation helpers -----------------------------------------------------
+
 # How many window commands have begun / returned so far.
 _started_count() { find "${STARTED}" -maxdepth 1 -type f | wc -l; }
 _done_count() { find "${DONE}" -maxdepth 1 -type f | wc -l; }
+
+# Wall clock in milliseconds, and the mtime of file $1 in the same unit,
+# so the two can be compared directly.
+#
+# Both go through `date +%s%N` (nanoseconds) and are divided here. Ubuntu
+# 26.04 ships uutils coreutils, whose `date` accepts `%3N` but IGNORES the
+# width and prints all nine digits - a silent 10^6 error if the format
+# string is trusted to truncate. Dividing in the shell is correct on both
+# implementations.
+_epoch_ms() { printf '%s\n' "$(( ${1} / 1000000 ))"; }
+_now_ms() { _epoch_ms "$(date +%s%N)"; }
+_mtime_ms() { _epoch_ms "$(date -r "$1" +%s%N)"; }
+
+# The most recently created start file, i.e. the window command that began
+# last (the forwarded one, once there are two).
+_newest_started() {
+    find "${STARTED}" -maxdepth 1 -type f -printf '%T@ %p\n' \
+        | sort -n | tail -n 1 | cut -d' ' -f2-
+}
+
+# How many of THIS run's window commands are still running, asked of the
+# command processes themselves: every start file is named after - and
+# holds - the pid of the shell running that window's command, so this
+# probes those exact pids rather than scanning for a pattern.
+#
+# Process-name or command-line scanning would be wrong here twice over:
+# inside the system-real runner the nested engine's containers share the
+# runner's PID namespace (the deliberate-hang case leaves a `sleep` in the
+# dev box), and `pgrep -f` matches any command line quoting the pattern,
+# including the harness that launched this script.
+_running_commands() {
+    local _f _pid _n=0
+    for _f in "${STARTED}"/w.*; do
+        [[ -f "${_f}" ]] || continue
+        _pid="$(cat "${_f}")"
+        [[ "${_pid}" =~ ^[0-9]+$ ]] || continue
+        kill -0 "${_pid}" 2>/dev/null && _n=$(( _n + 1 ))
+    done
+    printf '%s\n' "${_n}"
+}
 
 # Wait (bounded by $2 seconds) until at least $1 window commands have
 # begun. Returns 1 when the deadline passes first.
@@ -112,15 +170,23 @@ _wait_started() {
 }
 
 # `gtk-single-instance = true` is the whole point: this is the setting the
-# real test config pins to false. Each window's command leaves a unique
-# file the moment it begins, then blocks forever; only a command that
-# RETURNED could leave a file under DONE.
+# real test config pins to false.
 _write_config() {
     cat >"${CONFIG_HOME}/ghostty/config" <<EOF
 gtk-single-instance = true
-command = /bin/sh -c "mktemp ${STARTED}/w.XXXXXX >/dev/null; sleep infinity; mktemp ${DONE}/d.XXXXXX >/dev/null"
+command = /bin/sh -c "echo \$\$ >${STARTED}/w.\$\$ && sleep infinity && echo done >${DONE}/d.\$\$"
 EOF
 }
+
+# Start from nothing, so a re-run against the same workdir cannot inherit
+# another run's counts (bats hands over a fresh directory, but the
+# evidence must not depend on that).
+_reset_dirs() {
+    rm -rf "${STARTED}" "${DONE}" || return 1
+    mkdir -p "${STARTED}" "${DONE}" || return 1
+}
+
+# --- the scenario ------------------------------------------------------------
 
 _scenario() {
     ghostty >/dev/null 2>&1 &
@@ -138,26 +204,47 @@ _scenario() {
 
     # From here on, a `ghostty` call can only be a forwarded one: the
     # primary owns the bus name.
-    local _start="${SECONDS}" _rc
+    local _start="${SECONDS}" _rc _return_ms _at_return
     timeout -k "${KILL_GRACE}" "${SECOND_TIMEOUT}" ghostty >/dev/null 2>&1
     _rc=$?
+    # Taken BEFORE anything else, so they describe the moment of return.
+    _return_ms="$(_now_ms)"
+    _at_return="$(_started_count)"
     echo "SECOND_RC=${_rc}"
     echo "SECOND_ELAPSED=$(( SECONDS - _start ))"
+    # 1 means: at the instant this launch reported success, the command it
+    # asked for had not begun at all.
+    echo "STARTED_AT_RETURN=${_at_return}"
 
-    # The second launch has already returned. Did a SECOND window command
-    # begin? That is the forwarding: the work it reported success for is
-    # being done by someone else, after it exited.
+    # Now let the forwarded window's command appear, and MEASURE when it
+    # did relative to the return above.
     if _wait_started 2 "${FORWARD_START_TIMEOUT}"; then
         echo "FORWARDED_STARTED=yes"
+        local _newest _started_ms
+        _newest="$(_newest_started)"
+        _started_ms="$(_mtime_ms "${_newest}")"
+        if [[ "${_started_ms}" -gt "${_return_ms}" ]]; then
+            echo "FORWARDED_AFTER_RETURN=yes"
+        else
+            echo "FORWARDED_AFTER_RETURN=no"
+        fi
+        echo "FORWARDED_DELAY_MS=$(( _started_ms - _return_ms ))"
     else
         echo "FORWARDED_STARTED=no"
+        echo "FORWARDED_AFTER_RETURN=no"
+        echo "FORWARDED_DELAY_MS=0"
     fi
 
-    # ... and it is the primary that is doing it.
+    # Both window commands are still there, asked of their own pids ...
+    echo "RUNNING_COMMANDS=$(_running_commands)"
+
+    # ... and the ghostty process that owns the bus name outlived the
+    # launch that claimed success. (This is the WRAPPER, not the command's
+    # own shell; the STARTED count above is what proves a command began.)
     if kill -0 "${_primary}" 2>/dev/null; then
-        echo "PRIMARY_ALIVE=yes"
+        echo "PRIMARY_WRAPPER_ALIVE=yes"
     else
-        echo "PRIMARY_ALIVE=no"
+        echo "PRIMARY_WRAPPER_ALIVE=no"
     fi
 
     # OBSERVED, not assumed: no window command has returned. The second
@@ -179,6 +266,7 @@ if [[ "${MODE}" == "scenario" ]]; then
     exit $?
 fi
 
+_reset_dirs || _die "cannot reset ${STARTED} / ${DONE}"
 _write_config
 xvfb-run -a dbus-run-session -- bash "${SELF}" "${SCENARIO_FLAG}" "${WORKDIR}" \
     || _die "the single-instance scenario did not complete"
