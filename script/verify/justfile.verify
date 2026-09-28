@@ -45,7 +45,7 @@ ui *args:
 gate *args:
     ./script/verify/gate.sh "$@"
 
-# Acceptance items 3.1-3.6: auto-enter setup and status, each under a throwaway HOME (args: ITEM, --list, --help).
+# Acceptance items 3.1-3.7: auto-enter setup and status, each under a throwaway HOME (args: ITEM, --list, --help).
 setup *args:
     ./script/verify/setup.sh "$@"
 

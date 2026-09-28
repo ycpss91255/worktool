@@ -32,7 +32,7 @@ worktool/
 │       ├── justfile.verify      `verify` 命名空間:薄轉發到 ui.sh / gate.sh / setup.sh / diagram.sh / realbox.sh / evidence.sh
 │       ├── ui.sh                M3 1.1:box 命名空間的使用者介面(六個動詞、四支腳本的 usage)
 │       ├── gate.sh              M3 2.1-2.4:六層 gate、TDD 證據、開窗->進盒鏈的 CI 證據,以及驗收程式自己的負向
-│       ├── setup.sh             M3 3.1-3.6:進盒設定與 status,每項自建並清掉拋棄式 HOME
+│       ├── setup.sh             M3 3.1-3.7:進盒設定與 status,每項自建並清掉拋棄式 HOME
 │       ├── diagram.sh           M3 4.1:doc/diagram/ 三張 drawio.svg 與 README 引用
 │       ├── realbox.sh           M3 5.1-5.3:實機項目,需 --allow-real-box;同名盒存在就拒絕、只刪自己建的
 │       └── evidence.sh          M3 6.1-6.3:以 gh 查外部 CI 與流程證據
@@ -52,7 +52,7 @@ worktool/
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── verify_ui_spec.bats       script/verify/ui.sh:每個「印得出像樣輸出、結束碼卻非 0」的 stub 都必須讀成紅
 │   │   ├── verify_gate_spec.bats     script/verify/gate.sh:同上,外加「負向 fixture 變成通過」這種資料面回歸
-│   │   ├── verify_setup_spec.bats    script/verify/setup.sh:同上,涵蓋 3.1-3.6 的每個判準
+│   │   ├── verify_setup_spec.bats    script/verify/setup.sh:同上,涵蓋 3.1-3.7 的每個判準
 │   │   ├── verify_diagram_spec.bats  script/verify/diagram.sh:同上,涵蓋 grep 探針與 `0/3` vs `0/0`
 │   │   ├── verify_realbox_spec.bats  script/verify/realbox.sh:同上,外加同名盒防護、所有權標記與還原
 │   │   ├── verify_evidence_spec.bats script/verify/evidence.sh:同上,gh / jq 印得出結果卻非 0 一律讀成紅

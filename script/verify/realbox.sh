@@ -31,7 +31,12 @@
 #
 # GROUP realbox
 #   These items build a real distrobox, rewrite the real ghostty / worktool
-#   configs under $XDG_CONFIG_HOME and comment on a GitHub issue, so:
+#   configs under $XDG_CONFIG_HOME and the real ~/.tmux.conf, and comment on
+#   a GitHub issue, so:
+#     - the backup set is the WHOLE set of files `just box setup` can write,
+#       and 5.2 refuses to start when any of them cannot be backed up: the
+#       tmux decision is stored, so a state file carrying `tmux=host` makes
+#       the apply write ~/.tmux.conf whether this run asked for it or not;
 #     - they refuse to run without the explicit --allow-real-box opt-in;
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
@@ -112,11 +117,14 @@ Items:
   5.1     Real-machine bench: build the box, measure the enter latency,
           publish the three numbers to the issue and read that exact comment
           back. Removes the box it created, on success and on interrupt.
-  5.2     Ghostty window chain: back up the real ghostty / worktool configs,
-          apply the managed blocks, confirm a new window at the terminal,
+  5.2     Ghostty window chain: back up every config `just box setup` can
+          write (the ghostty config, the worktool state file and
+          ~/.tmux.conf), apply the managed blocks, prove the user's own
+          content survived the apply, confirm a new window at the terminal,
           then restore everything and remove the box.
-  5.2.1   5.2 step 1 only (back up).
-  5.2.2   5.2 step 2 only (re-validate the published backup, then apply).
+  5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
+  5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
+          check the user's own content survived).
   5.2.3   5.2 step 3 only (restore). The recovery entry: safe to run alone
           after an interrupt, and a no-op when there is no backup.
   5.3     Negative: with a `dev` box present, prove 5.1 and 5.2 step 2 refuse
@@ -440,6 +448,10 @@ item_51() {
 _52_step1_backup() {
     guard_require sha256sum cp mv mkdir rm readlink grep cut id || return 1
     cfgbk_paths || return 1
+    # Nothing is applied unless EVERY file `just box setup` can write can be
+    # backed up: this item rewrites the maintainer's real configuration, and
+    # a file with no backup has no way back (see lib/config_backup.sh).
+    cfgbk_preflight || return 1
     cfgbk_dir_create || return 1
     # Until the manifest is published nothing has been applied, so a step 1
     # that fails or is interrupted removes its own half-written backup.
@@ -477,6 +489,12 @@ _52_step2_apply() {
     _just box setup || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
     _just box status || { guard_fail "just box status failed -- run 5.2.3 to restore"; return 1; }
     printf 'setup-rc=0\n'
+    # The claim no exit code and no `status` line can make: the maintainer's
+    # own lines are still in every file this apply just wrote. Checked HERE,
+    # before step 3 restores anything, or the restore would hide the damage
+    # it was only supposed to undo.
+    cfgbk_report_user_content after-apply \
+        || { guard_fail "the apply destroyed user content -- run 5.2.3 to restore it from the backup"; return 1; }
 }
 
 # --- the one subjective check ------------------------------------------------

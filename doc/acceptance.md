@@ -658,7 +658,9 @@ verify-tool-ok
 
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(`script/verify/setup.sh` 每項自建拋棄式 HOME 並在 EXIT / INT / TERM / HUP 清掉,不動你的家目錄)
 
-  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
+  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
+
+  **`tmux.conf=` 那半邊,只有 3.7 是實證**:`~/.tmux.conf` 只有在 tmux 決策是 `host` 時才被寫入(`script/box/setup.sh` 的 `_apply_ghostty`),而 3.1-3.6 全跑 `--tmux inside`,產品在那條路徑上只會「打開來找有沒有區塊要移除」。所以 3.1-3.6 的 `tmux.conf=intact` 講的是**這條路徑不該碰的檔案沒被碰**,不是「寫入不會毀掉它」—— 一個只在 tmux 路徑上把整份 `~/.tmux.conf` 覆寫掉的回歸,3.1-3.6 六項會全綠(這正是 `test/unit/verify_setup_spec.bats` 那個降級副本案例實測到的)。真正跑那條路徑、真正斷言區塊是**加進** `~/.tmux.conf` 而不是取代它的,是 3.7。
 
   - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
@@ -826,6 +828,59 @@ verify-tool-ok
       ```bash
       just verify setup 3.6; echo rc=$?
       ```
+  - [ ] 3.7 `--tmux host`:唯一會寫 `~/.tmux.conf` 的路徑 —— 區塊寫進使用者既有的 `~/.tmux.conf`(不是取而代之)、`status` 兩個受管檔都報 `present`、`--auto-enter no` 把兩個區塊都移掉,而使用者那三行在寫入與移除的兩側都還在
+    - 預期看到資訊
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
+      [INFO] tmux: host (user)
+      [INFO] box: dev (default)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = tmux new -A -s main)
+      [INFO] wrote: <H>/.tmux.conf (managed block: set -g default-command '"<D>" enter dev')
+      rc=0
+      # worktool acceptance: user content that must survive every write
+      set -g history-limit 12345
+      set -g mouse on
+      # BEGIN worktool managed block (just box setup; do not edit)
+      set -g default-command '"<D>" enter dev'
+      # END worktool managed block
+      user-content after-write: ghostty=intact tmux.conf=intact
+      ./script/box/status.sh "$@"
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (default)
+      tmux: host (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      tmux.conf: <H>/.tmux.conf (managed block: present)
+      distrobox: <D> (recorded in a managed block: runnable)
+      rc=0
+      tmux-blocks-before=1
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: no (user)
+      [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
+      [INFO] tmux: host (user)
+      [INFO] box: dev (default)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] removed: <H>/.config/ghostty/config (managed block: command = tmux new -A -s main)
+      [INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '"<D>" enter dev')
+      rc=0
+      tmux-blocks=0
+      user-content after-removal: ghostty=intact tmux.conf=intact
+      rc=0
+      ```
+      (`--tmux host` 是**唯一**會寫 `~/.tmux.conf` 的決策,所以本項是整個 3 裡唯一讓產品真的寫那個檔的地方;3.1-3.6 全跑 `--tmux inside`,它們的 `tmux.conf=intact` 只證明「不該碰的沒被碰」。這裡兩個受管檔各有一個區塊,而且兩個 body 不一樣:tmux 跑在 host 上,所以 ghostty 那個不再帶 distrobox(`command = tmux new -A -s main`),絕對路徑改由 `~/.tmux.conf` 那個帶 —— tmux 的單引號值是全字面、沒有任何跳脫,所以裡面那層用雙引號(#175 round 1)。
+      中間那六行是 `~/.tmux.conf` 的全文:前三行是本項在 setup 之前種下的使用者內容,後三行才是受管區塊。`[INFO] wrote: ...` 那行與區塊那三行,對「把整份 `~/.tmux.conf` 覆寫成受管區塊」的產品**一字不差**地成立 —— 分得出來的只有 `user-content after-write:`。`tmux-blocks-before=1` 是移除那一半的前提(對一個從來沒有區塊的檔案來說「區塊被移除了」是恆真的),`tmux-blocks=0` 則同樣對「被清空的檔案」成立,所以使用者內容在移除的兩側各查一次。
+      判準是上面每一行的**內容**,各只能出現一次;`status` 的 `tmux.conf: ... (managed block: present)` 與 `distrobox: <D> (recorded in a managed block: runnable)` 一起證明受管紀錄是從 `~/.tmux.conf` 那個區塊讀回來的 —— ghostty 那個 body 根本沒有 distrobox 可讀)
+    - 驗收方式
+      ```bash
+      just verify setup 3.7; echo rc=$?
+      ```
 
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
@@ -850,7 +905,7 @@ verify-tool-ok
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定。**安全約定**:5.1 與 5.2 都先斷言同名 `dev` 盒不存在,存在就拒絕而不刪(#176 item 1),並且只刪除自己建立的盒子 —— 所有權標記在 `just box assemble` **之前**就寫下,標記的意思是「這一輪動過 assemble」,所以建盒與記錄之間被中斷不會留下無主的盒子(round 10);5.2 備份用 `cp -a`,symlink 連同它指到的檔案一起備份、一起還原(#176 item 2);清理失敗一律讓整段回非 0(#176 item 4)。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
+- [ ] 5. 實機(需要 host 有 distrobox + ghostty;會建 `dev` 盒、並動到你真實 HOME 的 ghostty / worktool 設定與 `~/.tmux.conf`。**安全約定**:5.1 與 5.2 都先斷言同名 `dev` 盒不存在,存在就拒絕而不刪(#176 item 1),並且只刪除自己建立的盒子 —— 所有權標記在 `just box assemble` **之前**就寫下,標記的意思是「這一輪動過 assemble」,所以建盒與記錄之間被中斷不會留下無主的盒子(round 10);5.2 的備份集合就是 `just box setup` **會寫的全部三個檔**(ghostty 設定、worktool 狀態檔、`~/.tmux.conf`),有任何一個備份不了就在建備份目錄之前拒絕跑,備份用 `cp -a`,symlink 連同它指到的檔案一起備份、一起還原(#176 item 2);套用之後、還原之前再斷言使用者自己的內容還在;清理失敗一律讓整段回非 0(#176 item 4)。host 沒有 ghostty 就無法完成 5.2,該項保持未勾)
   - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
@@ -873,14 +928,18 @@ verify-tool-ok
   - [ ] 5.2 開終端即在盒內的 fish(**只剩主觀感受**:整條鏈已由 2.3 在 CI 內自動驗證;這裡只確認你自己的機器上開窗順不順):一次呼叫跑完備份、套用、開窗確認、還原三個步驟;被中斷時單獨跑 `just verify realbox --allow-real-box 5.2.3` 就是還原手段(沒有備份時它只印 `no-backup=1`)
     - 預期看到資訊(步驟 1 備份摘要;步驟 2 套用;新視窗內三行;步驟 3 還原)
       ```text
+      backup-covers=3/3
       ghostty=regular
       ghostty.sha=<sha256>
       worktool=absent-dir
+      tmux-conf=regular
+      tmux-conf.sha=<sha256>
       backup=/tmp/worktool-m3-52-backup.1000 ok=1
       revalidate=1
       preexisting-dev=0
       (just box setup / just box status 的輸出,格式同 3.2,只是對象是你真實的 HOME)
       setup-rc=0
+      user-content after-apply: ghostty=intact tmux.conf=intact
       /run/.containerenv
       fish
       main
@@ -892,7 +951,10 @@ verify-tool-ok
       backup-removed=1
       rc=0
       ```
-      (每個名字先印一行狀態:`regular` = 原本就有那個普通檔、`symlink` = 原本是連結(連同它指到的檔案一起備份)、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有;狀態行後面還有幾行明細,行數隨狀態而異 —— `regular` 多一行 `<名字>.sha=`(上面就是這種),`symlink` 多三行 `<名字>.link=` / `<名字>.tpath=` / `<名字>.tsha=`(連結指到的檔也備份了),兩種 `absent` 則沒有明細行。所以你的 HOME 是連結時,步驟 1 會比上面多印兩行,那是對的(round 11)。步驟 2 只信任**已發布到磁碟的 manifest**,不信任步驟 1 留下的 shell 變數(#176 item 6),而且會重新比對 sha256:步驟 1 之後檔案被動過就拒絕套用。備份路徑帶 uid,多人共用主機不會互撞;`mkdir -m 700` 遇到既有目錄或預埋的 symlink 直接拒絕。`restore-ok=1` 才刪備份;失敗會保留備份讓你修好之後單獨跑一次 `just verify realbox --allow-real-box 5.2.3`;還原成功後再跑一次只會印 `no-backup=1`。`dev-gone` 只在**這一輪動過 assemble** 時才出現,沒動過是 `dev-untouched=1`;`dev-gone=0` 讓整段回非 0。所有權標記 `created-box` 寫在 `just box assemble` **之前**,所以 assemble 跑到一半被中斷、盒子沒建起來,步驟 3 一樣認得這一輪、一樣印 `dev-gone=1`(`distrobox rm` 沒東西可刪不算失敗,只看盒子最後在不在);步驟 2 從宣告所有權那一刻起也有 trap,中斷時會多印一行 `incomplete=1 (run step 3 now: ...)` 到 stderr,提醒你立刻跑 5.2.3 —— 真正還原的一律是步驟 3,因為那時設定可能已經套用,只拆盒子只還原了一半(round 10))
+      (第一行 `backup-covers=3/3` 是本項的**開跑條件**:備份集合必須涵蓋 `just box setup` 會寫的**每一個**檔 —— ghostty 設定、worktool 狀態檔、以及 `~/.tmux.conf`。tmux 決策是**存下來的**,所以你的狀態檔只要寫著 `tmux=host`,步驟 2 那次 `just box setup` 就會去寫 `~/.tmux.conf`,不管這一輪有沒有下那個選項;沒備份到它,步驟 3 就沒有東西可還原,而唯一的指望是產品自己的移除邏輯沒有 bug。任何一個檔備份不了(該在的地方放的是目錄、連結指到的不是普通檔、讀不到),分子就會少、整項在**備份目錄還沒建立之前**就拒絕跑,什麼都不會被套用。
+      接著每個名字先印一行狀態:`regular` = 原本就有那個普通檔、`symlink` = 原本是連結(連同它指到的檔案一起備份)、`absent-file` = 目錄在但沒有檔(`tmux-conf` 不存在時一定是這種:它住在 `$HOME`,那個目錄不是 worktool 建的、也不該由它刪)、`absent-dir` = 連目錄都沒有;狀態行後面還有幾行明細,行數隨狀態而異 —— `regular` 多一行 `<名字>.sha=`(上面就是這種),`symlink` 多三行 `<名字>.link=` / `<名字>.tpath=` / `<名字>.tsha=`(連結指到的檔也備份了),兩種 `absent` 則沒有明細行。所以你的 HOME 是連結時,步驟 1 會比上面多印兩行,那是對的(round 11)。步驟 2 只信任**已發布到磁碟的 manifest**,不信任步驟 1 留下的 shell 變數(#176 item 6),而且會重新比對 sha256:步驟 1 之後檔案被動過就拒絕套用。
+      `user-content after-apply:` 是步驟 2 的最後一道:每個**使用者自己的**受管檔(ghostty 設定與 `~/.tmux.conf`;worktool 狀態檔不算,那整份都是產品寫的)在受管區塊以外的內容,必須跟步驟 1 備份下來的一字不差。這一行**排在步驟 3 之前**是關鍵 —— 還原會把檔案復原,所以還原之後再查就什麼都看不出來了。少了它,一個把整份 `~/.tmux.conf` 覆寫成受管區塊的 setup 會讓 `setup-rc=0`、`status` 說 `present`、`blocks=0`、`restore-ok=1` 全數照舊,而你原本的 tmux 設定在那一刻已經沒了(只是這一輪剛好還原得回來)。
+      備份路徑帶 uid,多人共用主機不會互撞;`mkdir -m 700` 遇到既有目錄或預埋的 symlink 直接拒絕。`restore-ok=1` 才刪備份;失敗會保留備份讓你修好之後單獨跑一次 `just verify realbox --allow-real-box 5.2.3`;還原成功後再跑一次只會印 `no-backup=1`。`dev-gone` 只在**這一輪動過 assemble** 時才出現,沒動過是 `dev-untouched=1`;`dev-gone=0` 讓整段回非 0。所有權標記 `created-box` 寫在 `just box assemble` **之前**,所以 assemble 跑到一半被中斷、盒子沒建起來,步驟 3 一樣認得這一輪、一樣印 `dev-gone=1`(`distrobox rm` 沒東西可刪不算失敗,只看盒子最後在不在);步驟 2 從宣告所有權那一刻起也有 trap,中斷時會多印一行 `incomplete=1 (run step 3 now: ...)` 到 stderr,提醒你立刻跑 5.2.3 —— 真正還原的一律是步驟 3,因為那時設定可能已經套用,只拆盒子只還原了一半(round 10))
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.2; echo rc=$?
@@ -903,9 +965,12 @@ verify-tool-ok
       preexisting=dev
       [FAIL] a distrobox named 'dev' already exists -- refusing. This block deletes the box it creates, so rename or remove yours by hand first.
       51-rc=1
+      backup-covers=3/3
       ghostty=regular
       ghostty.sha=<sha256>
       worktool=absent-dir
+      tmux-conf=regular
+      tmux-conf.sha=<sha256>
       backup=/tmp/worktool-m3-52-backup.1000 ok=1
       revalidate=1
       [FAIL] a distrobox named 'dev' already exists -- refusing. Step 3 deletes the box this run creates, so rename or remove yours by hand first.
@@ -919,7 +984,7 @@ verify-tool-ok
       still-there=dev
       rc=0
       ```
-      (5.1 在 `just box assemble` 之前就拒絕,所以沒有 `preexisting-dev=0`、也沒有 `cleanup-rc`;`51-rc=1` 與 `revalidate=1` 中間那四行是 5.2 步驟 1 自己的備份摘要(它照樣跑完、照樣印),形狀跟 5.2 一樣隨你的 HOME 而異 —— 上面示範的是 `regular` + `absent-dir`,round 11 之前漏列了這四行;5.2 步驟 2 在 `revalidate=1` 之後、`just box assemble` 之前拒絕,你的設定沒被動過。步驟 3 仍然跑完整條還原流程 —— 六行和 5.2 正常路徑一樣,只是 `dev-gone=1` 換成 `dev-untouched=1`,因為這一輪沒有建過盒。全程沒有任何 `distrobox rm`)
+      (5.1 在 `just box assemble` 之前就拒絕,所以沒有 `preexisting-dev=0`、也沒有 `cleanup-rc`;`51-rc=1` 與 `revalidate=1` 中間那幾行是 5.2 步驟 1 自己的涵蓋判定與備份摘要(它照樣跑完、照樣印),形狀跟 5.2 一樣隨你的 HOME 而異 —— 上面示範的是 `regular` + `absent-dir` + `regular`,round 11 之前漏列了這幾行;5.2 步驟 2 在 `revalidate=1` 之後、`just box assemble` 之前拒絕,所以沒有 `user-content after-apply:` 那行 —— 這一輪根本沒有套用任何東西,你的設定沒被動過。步驟 3 仍然跑完整條還原流程 —— 六行和 5.2 正常路徑一樣,只是 `dev-gone=1` 換成 `dev-untouched=1`,因為這一輪沒有建過盒。全程沒有任何 `distrobox rm`)
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.3; echo rc=$?
