@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/verify_setup_spec.bats - script/verify/setup.sh (M3 acceptance
-# items 3.1-3.8, moved out of doc/acceptance.md)
+# items 3.1-3.9, moved out of doc/acceptance.md)
 #
 # WHAT THIS PROVES
 #   The one property the move exists to buy: A FAILURE CANNOT READ AS A
@@ -61,6 +61,14 @@
 #       3.8 closes; the degraded product's own removal lines, both block
 #       counts (1 then 0) and both `status` `absent` verdicts are word for
 #       word the ones a correct run prints.
+#     ONLY the `_block_remove` call INSIDE `_apply_ghostty` - the one the
+#       tmux-INSIDE branch makes to take out the block an earlier
+#       `--tmux host` run left - empties its file instead of stripping the
+#       block -> 3.1 to 3.8 ALL still pass. 3.2, 3.5 and 3.6 run that very
+#       branch but never reach the call, because their ~/.tmux.conf holds
+#       no block for it to remove; 3.3 and 3.7 reach `_apply_disable` and
+#       3.8 reaches `_apply_no_terminal` instead. That pair is the measure
+#       of the gap 3.9 closes.
 #
 #   Those are caught by seeding the managed files with the user's own
 #   content before setup runs, by reading the state file back, by pinning
@@ -414,9 +422,42 @@ _apply_no_terminal() {
 EOF
 }
 
+# Degrade the copy at $1 so that ONLY the `_block_remove` call INSIDE
+# `_apply_ghostty` - the one the tmux-INSIDE branch makes, to take out the
+# block an earlier `--tmux host` run wrote - empties ~/.tmux.conf instead
+# of stripping its block. Every other call site is untouched: the ghostty
+# write on both branches, the tmux.conf write on the host branch,
+# `_apply_disable` and `_apply_no_terminal` are all exactly as they ship,
+# so the degradation is invisible to every item that does not first write
+# a ~/.tmux.conf block and then switch back to `--tmux inside`. The log
+# line is the one the correct product prints, naming the same body.
+_degrade_inside_removal_empties() {
+    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'FRAG'
+_apply_ghostty() {
+    local _ghostty _tmux_conf _body _rc=0
+    _ghostty="$(enter_ghostty_config)"
+    _tmux_conf="$(enter_tmux_conf)"
+    if [[ "${TMUX}" == "inside" ]]; then
+        _block_write "${_ghostty}" \
+            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
+        if enter_block_present "${_tmux_conf}"; then
+            _body="$(enter_block_body "${_tmux_conf}")"
+            : >"${_tmux_conf}" || _rc=1
+            log_info "removed: ${_tmux_conf} (managed block: ${_body})"
+        fi
+        return "${_rc}"
+    fi
+    _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
+    _block_write "${_tmux_conf}" \
+        "set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'" || _rc=1
+    return "${_rc}"
+}
+FRAG
+}
+
 # --- Control ------------------------------------------------------------------
 
-@test "control: with every tool behaving, all eight items pass (so the failure cases below are not vacuous)" {
+@test "control: with every tool behaving, all nine items pass (so the failure cases below are not vacuous)" {
     run "${VERIFY}"
     assert_success
     assert_output --partial "3.1 PASS"
@@ -427,6 +468,7 @@ EOF
     assert_output --partial "3.6 PASS"
     assert_output --partial "3.7 PASS"
     assert_output --partial "3.8 PASS"
+    assert_output --partial "3.9 PASS"
 }
 
 # --- CLI ----------------------------------------------------------------------
@@ -450,14 +492,15 @@ EOF
     assert_output --partial "verify/setup.sh: unknown item '9.9' (see --help)"
 }
 
-@test "cli: --list prints the eight items with their group" {
+@test "cli: --list prints the nine items with their group" {
     run "${VERIFY}" --list
     assert_success
     assert_line --index 0 --partial "3.1  temphome"
     assert_line --index 5 --partial "3.6  temphome"
     assert_line --index 6 --partial "3.7  temphome"
     assert_line --index 7 --partial "3.8  temphome"
-    [ "${#lines[@]}" -eq 8 ]
+    assert_line --index 8 --partial "3.9  temphome"
+    [ "${#lines[@]}" -eq 9 ]
 }
 
 # --- 3.1 ----------------------------------------------------------------------
@@ -1034,19 +1077,20 @@ EOF
 }
 
 @test "3.8 is what catches it: the same degradation leaves every other item of section 3 green" {
-    # The honest measure of the gap 3.8 closes. 3.1 to 3.7 never pass
-    # `--terminal none` to the product, so they reach `_apply_disable`
-    # instead and this degradation is invisible to all seven of them - which
-    # is exactly how a data-losing `_apply_no_terminal` would have reached
-    # the maintainer's machine, on the default path of any host without
-    # ghostty.
+    # The honest measure of the gap 3.8 closes. No other item passes
+    # `--terminal none` to the product, so they reach `_apply_disable` or
+    # the removal inside `_apply_ghostty` instead and this degradation is
+    # invisible to all eight of them - which is exactly how a data-losing
+    # `_apply_no_terminal` would have reached the maintainer's machine, on
+    # the default path of any host without ghostty.
     local _repo
     _repo="$(_repo_copy)"
     _degrade_no_terminal_empties "${_repo}"
-    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.4 3.5 3.6 3.7
+    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.9
     assert_success
     assert_output --partial "3.3 PASS"
     assert_output --partial "3.7 PASS"
+    assert_output --partial "3.9 PASS"
 }
 
 @test "3.8: a grep -c that answers 0 but exits 2 cannot pass (the block counts must mean the files were read)" {
@@ -1054,6 +1098,78 @@ EOF
     run "${VERIFY}" 3.8
     assert_failure
     refute_output --partial "3.8 PASS"
+}
+
+# --- 3.9 ----------------------------------------------------------------------
+# The item that closes the last removal call site that can lose a user file:
+# the `_block_remove "${_tmux_conf}"` INSIDE `_apply_ghostty`, taken when the
+# user switches from `--tmux host` back to `--tmux inside`.
+
+@test "3.9: a just that prints a plausible setup but exits 1 cannot pass" {
+    _stub_just_plausible 1
+    run "${VERIFY}" 3.9
+    assert_failure
+    assert_output --partial "[FAIL]"
+    refute_output --partial "3.9 PASS"
+}
+
+@test "3.9: a staging setup that exits 0 without writing the tmux.conf block cannot pass (the removal would be vacuous)" {
+    # "The tmux.conf block is gone after the switch" is true of a file that
+    # never had one, so the precondition is measured and printed.
+    _stub_just_plausible 0
+    run "${VERIFY}" 3.9
+    assert_failure
+    assert_line "tmux-blocks-before=0"
+    refute_output --partial "3.9 PASS"
+}
+
+@test "3.9: a switch back to --tmux inside that empties ~/.tmux.conf instead of stripping its block cannot pass (GAP D)" {
+    # The degraded product really runs, really reports removing the block by
+    # name and really leaves zero blocks behind: `tmux-blocks-before=1`,
+    # `tmux-blocks=0`, `status` calls the file `absent` - and the user's tmux
+    # configuration is zero lines long. Only the seeded content, and the
+    # whole-file comparison next to it, can see the difference.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_inside_removal_empties "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.9
+    assert_failure
+    assert_line "[INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '\"<D>\" enter dev')"
+    assert_line "tmux-blocks-before=1"
+    assert_line "tmux-blocks=0"
+    assert_line "ghostty-blocks=1"
+    assert_line "tmux.conf: <H>/.tmux.conf (managed block: absent)"
+    # The staging write is cleared first, so the failure is charged to the
+    # switch and to nothing else.
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    assert_line "user-content after-switch: ghostty=intact tmux.conf=LOST"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.9 PASS"
+}
+
+@test "3.9 is what catches it: the same degradation leaves every other item of section 3 green" {
+    # The honest measure of the gap 3.9 closes. 3.2, 3.5 and 3.6 run the
+    # tmux-INSIDE branch this degradation lives on, and still pass: their
+    # ~/.tmux.conf holds no managed block, so the degraded call never fires.
+    # 3.3 and 3.7 reach `_apply_disable`, 3.8 reaches `_apply_no_terminal`.
+    # That is how a data-losing switch-back would have reached the
+    # maintainer's machine with all eight items, lint and every other tier
+    # green.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_inside_removal_empties "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8
+    assert_success
+    assert_output --partial "3.2 PASS"
+    assert_output --partial "3.7 PASS"
+    assert_output --partial "3.8 PASS"
+}
+
+@test "3.9: a grep -c that answers 0 but exits 2 cannot pass (the block counts must mean the files were read)" {
+    _stub_grep_count_unreadable '-c'
+    run "${VERIFY}" 3.9
+    assert_failure
+    refute_output --partial "3.9 PASS"
 }
 
 # --- Group realbox ------------------------------------------------------------

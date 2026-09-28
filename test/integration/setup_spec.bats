@@ -56,10 +56,27 @@ EOF
 }
 
 @test "setup --tmux inside after host: status shows the tmux.conf block gone, ghostty still present" {
+    # `~/.tmux.conf` is the user's file, and this transition is the one
+    # place the tmux-inside branch of _apply_ghostty removes a block from
+    # it. `managed block: absent` is equally true of a file the removal
+    # EMPTIED, so the user's own lines are seeded first and compared
+    # afterwards: that comparison is the only thing here that tells
+    # "stripped the block" apart from "truncated the file".
+    local _user_lines='# user tmux config
+set -g history-limit 12345
+set -g mouse on'
+    printf '%s\n' "${_user_lines}" >"${TMUX_CONF}"
+
     run "${SETUP}" --tmux host
     assert_success
+    # The removal is vacuous unless a block was really written first.
+    run grep -cxF '# BEGIN worktool managed block (just box setup; do not edit)' "${TMUX_CONF}"
+    assert_success
+    assert_output "1"
+
     run "${SETUP}" --tmux inside
     assert_success
+    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: set -g default-command '\"${DISTROBOX}\" enter dev')"
     run "${STATUS}"
     assert_success
     assert_line "tmux: inside (user)"
@@ -67,6 +84,11 @@ EOF
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     run grep -F "command = '${DISTROBOX}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
     assert_success
+
+    # What is left of ~/.tmux.conf is exactly what the user brought to it.
+    run cat "${TMUX_CONF}"
+    assert_success
+    assert_output "${_user_lines}"
 }
 
 @test "setup --auto-enter no then status: no (user) and both blocks absent" {
