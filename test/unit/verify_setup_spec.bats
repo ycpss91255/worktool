@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/verify_setup_spec.bats - script/verify/setup.sh (M3 acceptance
-# items 3.1-3.7, moved out of doc/acceptance.md)
+# items 3.1-3.8, moved out of doc/acceptance.md)
 #
 # WHAT THIS PROVES
 #   The one property the move exists to buy: A FAILURE CANNOT READ AS A
@@ -54,6 +54,13 @@
 #       one that fails. That pair is the measure of the gap 3.7 closes:
 #       before it, section 3 printed `tmux.conf=intact` on six items while
 #       no item ever asked the product to WRITE ~/.tmux.conf.
+#     ONLY `_apply_no_terminal` empties its files instead of stripping the
+#       block -> 3.1 to 3.7 ALL still pass, because no item of theirs ever
+#       passes `--terminal none` to the product. They reach the other
+#       removal path, `_apply_disable`. That pair is the measure of the gap
+#       3.8 closes; the degraded product's own removal lines, both block
+#       counts (1 then 0) and both `status` `absent` verdicts are word for
+#       word the ones a correct run prints.
 #
 #   Those are caught by seeding the managed files with the user's own
 #   content before setup runs, by reading the state file back, by pinning
@@ -384,9 +391,32 @@ _apply_ghostty() {
 EOF
 }
 
+# Degrade the copy at $1 so that ONLY `_apply_no_terminal` - the
+# `--terminal none` removal path - empties each managed file instead of
+# stripping its block. `_apply_disable` (`--auto-enter no`, the removal
+# path 3.3 and 3.7 run) and both write paths are left exactly as they are,
+# so the degradation is invisible to every item that does not pass
+# `--terminal none`. The log lines are the ones the correct product prints,
+# in the same order, naming the same bodies.
+_degrade_no_terminal_empties() {
+    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'EOF'
+_apply_no_terminal() {
+    local _rc=0 _f _body
+    log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
+    for _f in "$(enter_ghostty_config)" "$(enter_tmux_conf)"; do
+        enter_block_present "${_f}" || continue
+        _body="$(enter_block_body "${_f}")"
+        : >"${_f}" || _rc=1
+        log_info "removed: ${_f} (managed block: ${_body})"
+    done
+    return "${_rc}"
+}
+EOF
+}
+
 # --- Control ------------------------------------------------------------------
 
-@test "control: with every tool behaving, all seven items pass (so the failure cases below are not vacuous)" {
+@test "control: with every tool behaving, all eight items pass (so the failure cases below are not vacuous)" {
     run "${VERIFY}"
     assert_success
     assert_output --partial "3.1 PASS"
@@ -396,6 +426,7 @@ EOF
     assert_output --partial "3.5 PASS"
     assert_output --partial "3.6 PASS"
     assert_output --partial "3.7 PASS"
+    assert_output --partial "3.8 PASS"
 }
 
 # --- CLI ----------------------------------------------------------------------
@@ -419,13 +450,14 @@ EOF
     assert_output --partial "verify/setup.sh: unknown item '9.9' (see --help)"
 }
 
-@test "cli: --list prints the seven items with their group" {
+@test "cli: --list prints the eight items with their group" {
     run "${VERIFY}" --list
     assert_success
     assert_line --index 0 --partial "3.1  temphome"
     assert_line --index 5 --partial "3.6  temphome"
     assert_line --index 6 --partial "3.7  temphome"
-    [ "${#lines[@]}" -eq 7 ]
+    assert_line --index 7 --partial "3.8  temphome"
+    [ "${#lines[@]}" -eq 8 ]
 }
 
 # --- 3.1 ----------------------------------------------------------------------
@@ -946,6 +978,82 @@ EOF
     run "${VERIFY}" 3.7
     assert_failure
     refute_output --partial "3.7 PASS"
+}
+
+# --- 3.8 ----------------------------------------------------------------------
+# The item that closes the last gap of the same class: `--terminal none`
+# never appeared anywhere in script/verify/, while `_apply_no_terminal`
+# REMOVES the managed block from both managed files - and a machine with no
+# ghostty takes that path by default.
+
+@test "3.8: a just that prints a plausible setup but exits 1 cannot pass" {
+    _stub_just_plausible 1
+    run "${VERIFY}" 3.8
+    assert_failure
+    assert_output --partial "[FAIL]"
+    refute_output --partial "3.8 PASS"
+}
+
+@test "3.8: a staging setup that exits 0 without writing the two blocks cannot pass (the removal would be vacuous)" {
+    # `--terminal none` removing nothing is indistinguishable from
+    # `--terminal none` removing correctly unless the blocks were really
+    # there first, so the preconditions are measured and printed.
+    _stub_just_plausible 0
+    run "${VERIFY}" 3.8
+    assert_failure
+    assert_line "ghostty-blocks-before=0"
+    refute_output --partial "3.8 PASS"
+}
+
+@test "3.8: a --terminal none removal that empties both managed files instead of stripping their blocks cannot pass (GAP C)" {
+    # The degraded product really runs, really reports removing each block
+    # by name, and really leaves zero blocks behind: both counts go 1 to 0
+    # and `status` calls both files `absent`. It has also just deleted the
+    # user's ghostty config AND their ~/.tmux.conf. Only the content seeded
+    # before the staging run can see it.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_no_terminal_empties "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.8
+    assert_failure
+    assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
+    assert_line "[INFO] removed: <H>/.config/ghostty/config (managed block: command = tmux new -A -s main)"
+    assert_line "[INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '\"<D>\" enter dev')"
+    assert_line "ghostty-blocks-before=1"
+    assert_line "tmux-blocks-before=1"
+    assert_line "ghostty-blocks=0"
+    assert_line "tmux-blocks=0"
+    assert_line "ghostty: <H>/.config/ghostty/config (managed block: absent)"
+    assert_line "tmux.conf: <H>/.tmux.conf (managed block: absent)"
+    # The staging write is cleared first, so the failure is charged to the
+    # removal and to nothing else.
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    assert_line "user-content after-removal: ghostty=LOST tmux.conf=LOST"
+    assert_output --partial "lost the user's own content"
+    refute_output --partial "3.8 PASS"
+}
+
+@test "3.8 is what catches it: the same degradation leaves every other item of section 3 green" {
+    # The honest measure of the gap 3.8 closes. 3.1 to 3.7 never pass
+    # `--terminal none` to the product, so they reach `_apply_disable`
+    # instead and this degradation is invisible to all seven of them - which
+    # is exactly how a data-losing `_apply_no_terminal` would have reached
+    # the maintainer's machine, on the default path of any host without
+    # ghostty.
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_no_terminal_empties "${_repo}"
+    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.4 3.5 3.6 3.7
+    assert_success
+    assert_output --partial "3.3 PASS"
+    assert_output --partial "3.7 PASS"
+}
+
+@test "3.8: a grep -c that answers 0 but exits 2 cannot pass (the block counts must mean the files were read)" {
+    _stub_grep_count_unreadable '-c'
+    run "${VERIFY}" 3.8
+    assert_failure
+    refute_output --partial "3.8 PASS"
 }
 
 # --- Group realbox ------------------------------------------------------------
