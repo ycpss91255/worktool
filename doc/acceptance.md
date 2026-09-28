@@ -711,13 +711,16 @@ verify-tool-ok
       if ! mkdir "$B" 2>/dev/null; then
         echo "backup 目錄已存在:$B -- 裡面可能是上一次沒跑完的備份。先貼步驟 3 用那份備份還原,確認乾淨後再重跑步驟 1。"
       else
-        ok=1; : > "$B/manifest"
+        ok=1; : > "$B/manifest.partial"
         for n in ghostty worktool; do
-          if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest" || ok=0
-          elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest"
-          else echo "$n=absent-dir" >> "$B/manifest"; fi
+          if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest.partial" || ok=0
+          elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest.partial"
+          else echo "$n=absent-dir" >> "$B/manifest.partial"; fi
         done
-        cat "$B/manifest"
+        # 每個名字都要恰好一筆合法狀態,全部齊全才把 manifest 原子發布出去
+        for n in ghostty worktool; do [ "$(grep -cE "^$n=(backed-up|absent-file|absent-dir)$" "$B/manifest.partial")" -eq 1 ] || ok=0; done
+        [ "$ok" = 1 ] && mv "$B/manifest.partial" "$B/manifest"
+        cat "$B"/manifest* 2>/dev/null
       fi
       printf 'backup=%s ok=%s\n' "$B" "$ok"
       # 2) 只有備份成功才套用,然後開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
@@ -725,8 +728,12 @@ verify-tool-ok
       ls /run/.containerenv; ps -p $fish_pid -o comm=; tmux display -p '#S'
       # 3) 還原 -- 可在任何 shell 單獨執行,中斷後也用這段;沒有備份時什麼都不動
       C=${XDG_CONFIG_HOME:-$HOME/.config}; B=${TMPDIR:-/tmp}/worktool-m3-52-backup
+      mv=1; for n in ghostty worktool; do c=$(grep -cE "^$n=(backed-up|absent-file|absent-dir)$" "$B/manifest" 2>/dev/null); [ "${c:-0}" -eq 1 ] || mv=0; done
       if [ ! -f "$B/manifest" ]; then
-        echo "no-backup=1($B 沒有備份;已經還原過就不需要再跑)"
+        if [ -d "$B" ]; then echo "incomplete-backup=1($B 只有殘骸、沒有完成的 manifest。備份沒完成代表步驟 2 從沒套用過,你的設定沒被動過,直接 rm -rf '$B' 再重跑步驟 1)"
+        else echo "no-backup=1($B 沒有備份;已經還原過就不需要再跑)"; fi
+      elif [ "$mv" != 1 ]; then
+        echo "manifest-invalid=1($B/manifest 不是每個名字恰好一筆合法狀態,不自動還原;請人工比對 $B 內容)"
       else
         just box setup --auto-enter no >/dev/null 2>&1; rrc=$?; echo "restore-rc=$rrc"
         rok=1; [ "$rrc" -eq 0 ] || rok=0
