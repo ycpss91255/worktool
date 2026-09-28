@@ -70,6 +70,12 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+# `run -127` below (bats-core >= 1.5.0) needs this guard or bats-core warns
+# BW02 instead. Both bats sources this repo uses are already well above
+# 1.5.0 (dockerfile/Dockerfile.test: bats/bats:latest; Dockerfile.system-real:
+# BATS_TAG=1.14.0), so this only documents the requirement.
+bats_require_minimum_version 1.5.0
+
 setup() {
     BENCH="${REPO_ROOT}/script/box/bench.sh"
     TMP="${BATS_TEST_TMPDIR}"
@@ -589,8 +595,7 @@ _json_object_re() {
     for _tool in dirname sort; do
         ln -s "$(command -v "${_tool}")" "${_only}/${_tool}"
     done
-    run env PATH="${_only}" "${_bash}" "${BENCH}" --runs 1 --warmup 0
-    assert_failure 127
+    run -127 env PATH="${_only}" "${_bash}" "${BENCH}" --runs 1 --warmup 0
     assert_output --partial "[ERROR] distrobox not found on PATH"
     assert_equal "$(_calls)" ""
 }
