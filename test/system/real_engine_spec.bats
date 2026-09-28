@@ -513,7 +513,7 @@ _ghostty_run() {
     _log_lines hang "in-box command started, then timed out after ${_elapsed}s (budget ${GHOSTTY_HANG_TIMEOUT}s, status ${_hang_status})"
 }
 
-@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 BEFORE the command it asked for has even started (the false positive the guard prevents)" {
+@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)" {
     local _probe="${REPO_ROOT}/test/system/fixture/ghostty_single_instance.sh"
     run timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" bash "${_probe}" \
         "${BATS_TEST_TMPDIR}/si" </dev/null
@@ -524,15 +524,18 @@ _ghostty_run() {
     assert_line 'PRIMARY=up'
     #   ... the second launch reported success ...
     assert_line 'SECOND_RC=0'
-    #   ... and returned without waiting for anything. The threshold is
-    #   generous on purpose: what matters is "nothing like the lifetime of
-    #   the command it asked for" (that command blocks forever), not a
-    #   tight number a slow runner could trip over. Measured at 0s.
+    #   ... and returned far sooner than the command it asked for could
+    #   ever take, since that command never ends. The threshold is
+    #   generous on purpose: the claim is "did not wait for the command",
+    #   not "within N seconds", and a tight number is only a way for a
+    #   slow runner to go red. Measured at 0-1s.
     assert_line --regexp '^SECOND_ELAPSED=([0-9]|1[0-5])$'
-    #   At the INSTANT it returned, the work it reported success for had
-    #   not begun: still just the primary's own window command. This is
-    #   the ordering claim, sampled at the moment of return rather than
-    #   inferred from the order the fixture happens to look in.
+    #   Read IMMEDIATELY AFTER the return (timestamp first, then the
+    #   count - see the fixture header: neither is an atomic snapshot of
+    #   the return instant). Still 1: the work this launch reported
+    #   success for had not begun. A forwarded command fast enough to
+    #   slip into that sampling gap would read 2 and fail the case, so
+    #   the delay can only cost a pass, never buy one.
     assert_line 'STARTED_AT_RETURN=1'
     #   A second window command did begin ...
     assert_line 'FORWARDED_STARTED=yes'
@@ -540,11 +543,13 @@ _ghostty_run() {
     #   (mtime of its own start file vs the timestamp taken at return).
     assert_line 'FORWARDED_AFTER_RETURN=yes'
     assert_line --regexp '^FORWARDED_DELAY_MS=[1-9][0-9]*$'
-    #   Both of this run's window commands are still alive - asked of the
-    #   command processes themselves, by the pid each one recorded when it
-    #   began, so neither the dev box's leftover sleeps (same PID
-    #   namespace as the runner, under DinD) nor a harness command line
-    #   quoting the pattern can inflate the number ...
+    #   Both of this run's window commands are still running - asked of
+    #   the command processes themselves: the pid each one recorded is
+    #   present, its starttime is unchanged (so it is not a recycled pid)
+    #   and it is not a zombie. `kill -0` alone would accept both of
+    #   those; process-name or command-line scanning would be wrong too
+    #   (the dev box's leftover sleeps share the runner's PID namespace
+    #   under DinD, and `pgrep -f` matches the harness) ...
     assert_line 'RUNNING_COMMANDS=2'
     #   ... under the ghostty process that owns the bus name, which
     #   outlived the launch that "succeeded" (the wrapper, not the

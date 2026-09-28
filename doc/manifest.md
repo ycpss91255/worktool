@@ -431,24 +431,37 @@ issue #129),不再延後到 M5。
       另外斷言耗時**同時有上下界**(下界 = 預算 - 2s),證明它是跑滿預算才被砍,
       不是一啟動就死。
     - **假陽性示範**:`test/system/fixture/ghostty_single_instance.sh` 在一個
-      `xvfb-run` + `dbus-run-session` 裡,用「每個視窗指令一開始就把**自己的 pid**
-      寫成一個獨一無二的檔(`&&`,寫不出來就不往下走)、跑完才會再寫一個 done 檔」
-      的 command 實地**觀測**:`gtk-single-instance = true` 時第二次啟動 ghostty 立刻
-      exit 0(`SECOND_ELAPSED` 斷言 0-15 秒 —— 門檻放寬是為了不讓慢 runner 假紅,
-      重點是「遠短於它要求的指令的壽命」,那個指令永不結束),而**在它返回的那一
-      瞬間,它要求的工作根本還沒開始**(`STARTED_AT_RETURN=1`,在返回當下取樣)。
-      之後第二個視窗指令才出現(`FORWARDED_STARTED=yes`),而且順序是**量出來
-      的**:該檔 mtime 與返回時間戳相比在其後(`FORWARDED_AFTER_RETURN=yes`,
-      實測延遲約 300-400 ms),不是靠「腳本後看才寫後發生」推論。此時這一輪的兩個
-      視窗指令都還活著(`RUNNING_COMMANDS=2`;**直接對它們各自記下的 pid** 問,
-      不是掃描行程名或命令列 —— DinD 下巢狀容器與 runner 同一個 PID namespace,
-      數 `sleep` 會把 dev 盒裡的殘留算進去,`pgrep -f` 則會連引用到該字串的 harness
-      一起算)、持有 bus name 的 ghostty
-      行程仍在(`PRIMARY_WRAPPER_ALIVE=yes` —— 這驗的是**包裝行程**,不是指令自己
-      的 shell;指令有沒有開始由 `STARTED_AT_RETURN` 說了算)、且**沒有任何視窗
-      指令跑完**(`COMMAND_FINISHED=no`,由 done 檔數量觀測而來,不是固定輸出)。
-      時間戳一律走 `date +%s%N` 再自行除以 10^6:26.04 的 uutils `date` 接受
-      `%3N` 但**忽略寬度**、照印九位,信任格式字串會少算 10^6 倍。
+      `xvfb-run` + `dbus-run-session` 裡,讓每個 ghostty 視窗跑同一份 payload
+      (寫在檔案裡,所以設定的 `command` 全是單字、不必跟 ghostty 的 argv 切分
+      搏鬥):一開始就把**自己的 pid 與 starttime** 寫成一個獨一無二的檔(每一步
+      都檢查,寫不出來就不往下走)、`sleep infinity`、跑完才會再寫一個 done 檔。
+      於是實地**觀測**:`gtk-single-instance = true` 時第二次啟動 ghostty
+      **遠比它要求的指令可能耗費的時間更快就返回 0**(`SECOND_ELAPSED` 斷言
+      0-15 秒;門檻放寬是為了不讓慢 runner 假紅,要證明的是「沒有等那個指令」,
+      而那個指令永不結束,不是「一定幾秒內」),而**在它返回後隨即取樣時,它要求
+      的工作還沒開始**(`STARTED_AT_RETURN=1`)。
+
+      這個取樣**不是返回瞬間的原子快照**:先取時間戳、再讀計數,中間隔著兩個
+      subshell。方向上只會害自己 —— 轉交的指令若快到擠進這個空檔,計數會讀到 2
+      而讓案例**紅**,不可能因此變綠。順序則是**量出來的**:第二個 start 檔的
+      mtime 嚴格晚於上面那個時間戳(`FORWARDED_AFTER_RETURN=yes`,實測延遲約
+      300-400 ms),不是靠「腳本後看才寫後發生」推論;同毫秒不算晚(嚴格 `>`),
+      所以精度不足只會假紅。**未檢查**的是 workdir 所在檔案系統的 mtime 粒度:
+      若某天落在只有秒級粒度的掛載上,這個比較會大量假紅(仍不會假綠)。
+
+      此時這一輪的兩個視窗指令都還在跑(`RUNNING_COMMANDS=2`):對每個指令**自己
+      記下的 pid** 檢查「行程還在 + starttime 與當初相同(排除 pid 被重用)+
+      狀態不是 `Z`(排除 zombie)」;只用 `kill -0` 這兩種情況都會誤判成活著,
+      而掃行程名或命令列更不行 —— DinD 下巢狀容器與 runner 同一個 PID namespace,
+      數 `sleep` 會把 dev 盒裡的殘留算進去(實測 4),`pgrep -f` 則會連引用到該
+      字串的 harness 一起算(實測 5)。持有 bus name 的 ghostty 行程也仍在
+      (`PRIMARY_WRAPPER_ALIVE=yes` —— 這驗的是**包裝行程**,不是指令自己的
+      shell;指令有沒有開始由 `STARTED_AT_RETURN` 說了算)、且**沒有任何視窗指令
+      跑完**(`COMMAND_FINISHED=no`,由 done 檔數量觀測而來,不是固定輸出)。
+      時間戳一律走 `date +%s%N` 再自行除以 10^6,並先驗證輸出真的是 18-20 位
+      數字(不是就以可辨識訊息紅掉):26.04 的 uutils `date` 接受 `%3N` 但**忽略
+      寬度**、照印九位,信任格式字串會少算 10^6 倍;而不支援 `%N` 的 `date` 會把
+      字母原樣印出來、讓算術在別的地方爆掉。
       這就是「拿結束碼當成功判準」的假陽性,也是每個案例都釘
       `gtk-single-instance = false`、都以標記檔為證的原因。
     三層防卡:
