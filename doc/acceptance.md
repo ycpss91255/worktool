@@ -532,6 +532,7 @@ verify-tool-ok
       #169 order=ok
       rc=0
       ```
+      (失敗時的樣子:缺段或順序錯是 `#N order=BAD`,查詢失敗是 `#N gh-failed`,兩者最後都 `rc=1`)
     - 驗收方式
       ```bash
       ev() {
@@ -691,16 +692,17 @@ verify-tool-ok
     - 預期看到資訊(步驟 1 的備份摘要;新視窗內三行;步驟 3 的還原結果)
       ```text
       ghostty=backed-up
-      worktool=absent
+      worktool=absent-dir
       backup=/tmp/worktool-m3-52-backup ok=1
       /run/.containerenv
       fish
       main
       restore-rc=0
       blocks=0
+      leftover-dirs=0
       dev-gone=1
       ```
-      (`ghostty` / `worktool` 兩行視你原本有沒有那個檔而定;`ok=1` 才會往下套用。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**)
+      (每個名字一行:`backed-up` = 原本就有那個檔、`absent-file` = 目錄在但沒有檔、`absent-dir` = 連目錄都沒有;`ok=1` 才會往下套用。備份路徑固定,**中途失敗、關掉視窗或 Ctrl-C 之後,在任何 shell 單獨貼步驟 3 都能還原**;`leftover-dirs=0` = 原本不存在的目錄也被移除,不留空目錄)
     - 驗收方式
       ```bash
       # 1) 備份真實設定;備份失敗就不動任何東西
@@ -709,7 +711,8 @@ verify-tool-ok
       ok=1; : > "$B/manifest"
       for n in ghostty worktool; do
         if [ -e "$C/$n/config" ]; then cp -p "$C/$n/config" "$B/$n.config" && echo "$n=backed-up" >> "$B/manifest" || ok=0
-        else echo "$n=absent" >> "$B/manifest"; fi
+        elif [ -d "$C/$n" ]; then echo "$n=absent-file" >> "$B/manifest"
+        else echo "$n=absent-dir" >> "$B/manifest"; fi
       done
       cat "$B/manifest"; printf 'backup=%s ok=%s\n' "$B" "$ok"
       # 2) 只有備份成功才套用,然後開一個新的 ghostty 視窗,在裡面執行(三行輸出如上;主觀:開窗到提示字元無明顯延遲):
@@ -720,9 +723,11 @@ verify-tool-ok
       just box setup --auto-enter no >/dev/null 2>&1; echo restore-rc=$?
       for n in ghostty worktool; do
         if [ -e "$B/$n.config" ]; then cp -p "$B/$n.config" "$C/$n/config"
-        elif grep -qx "$n=absent" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"; fi
+        elif grep -qx "$n=absent-file" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"
+        elif grep -qx "$n=absent-dir" "$B/manifest" 2>/dev/null; then rm -f "$C/$n/config"; rmdir "$C/$n" 2>/dev/null; fi
       done
       b=0; [ -e "$C/ghostty/config" ] && b=$(grep -c 'BEGIN worktool managed block' "$C/ghostty/config"); printf 'blocks=%s\n' "$b"
+      lo=0; for n in ghostty worktool; do grep -qx "$n=absent-dir" "$B/manifest" 2>/dev/null && [ -d "$C/$n" ] && lo=$((lo+1)); done; printf 'leftover-dirs=%s\n' "$lo"
       rm -rf "$B"; distrobox rm -f dev >/dev/null 2>&1
       d=$(distrobox list 2>/dev/null | grep -c '[[:space:]]dev[[:space:]]'); printf 'dev-gone=%s\n' "$([ "$d" -eq 0 ] && echo 1 || echo 0)"
       ```
@@ -788,6 +793,7 @@ verify-tool-ok
       #155 blocked -> follow-up #161 fixed-by PR #168 (closes #161, mergeable) ok
       rc=0
       ```
+      (失敗時的樣子:判定不符是 `NOT` 或行尾 `BAD`,查不到對應關係是 `#N no-follow-up` / `#N no-fix-pr`,最後都 `rc=1`)
     - 驗收方式
       ```bash
       v() { gh api "repos/ycpss91255/worktool/issues/$1/comments?per_page=100" --jq '[.[].body | select(startswith("[codex]"))] | last' | grep -E '^(可合併|不可合併|mergeable|blocked)' | tail -1; }
