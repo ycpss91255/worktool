@@ -34,6 +34,18 @@
 #     nothing, >= 2 grep itself failed. Only the first two are answers.
 #   - Every count and every rc is compared with what the document promises,
 #     so a plausible-looking but different number fails and is named.
+#   - Where the document publishes a SET, this script compares the set, not
+#     its non-emptiness: item 2.2 wants the ten named PRs, each judged once,
+#     and item 2.3 wants the cases and the named criteria each tier's block
+#     lists. "At least one line looked right" is not an answer to either
+#     question - one verdict line, or two placeholder `ok` lines, would
+#     otherwise certify evidence that is almost entirely absent. What is
+#     missing, extra or repeated is named on stderr.
+#   - A criterion the document states as a VALUE (`tmux=yes`,
+#     `FORWARDED_STARTED=yes`, `COMMAND_FINISHED=no`) is pinned literally; a
+#     MEASUREMENT (a container id, a fish version, an elapsed time, a delay
+#     in ms) is matched by shape only, because the document says in so many
+#     words not to compare those literally.
 #   - A check that cannot run here (no docker, no gh, no awk) is reported
 #     as UNAVAILABLE and exits non-zero. Nothing is ever skipped silently.
 #
@@ -88,10 +100,82 @@ EXIT_FAIL=1
 EXIT_USAGE=2
 EXIT_UNAVAILABLE=3
 
+# Item 2.2: the PRs doc/acceptance.md publishes a verdict line for, in the
+# order the document prints them. The item's claim is "these ten PR bodies
+# were each judged once", so the set is pinned here and compared exactly: a
+# run that prints one verdict and exits 0 has not made that claim, and a
+# verdict for a PR this item does not cover has not made it either.
+TDD_PRS=(152 153 154 155 156 165 166 167 168 169)
+
 # Item 2.3: the lines of each tier the document publishes, and the tier the
-# run has to exercise to produce them.
+# run has to exercise to produce them. The pattern SELECTS the block the
+# document prints; the arrays below are what that block has to CONTAIN.
 INTEGRATION_PATTERN='^ok .*ghostty|^not ok'
 SYSTEM_REAL_PATTERN='^# (chain|chain-host|hang|single-instance)|^ok .*ghostty chain|^not ok'
+
+# The `ok` cases doc/acceptance.md lists for each tier, keyed by the case
+# DESCRIPTION rather than by `ok <n>`: bats numbers shift whenever a case is
+# added anywhere earlier in the tier, and a number is not evidence. Each
+# description must appear exactly once, and nothing else may appear - which
+# also pins the case count per tier (9 and 5). Adding a chain case means
+# adding it to the document's block and to the list here; that is the point.
+INTEGRATION_CASES=(
+    "setup --tmux inside after host: status shows the tmux.conf block gone, ghostty still present"
+    "preflight: a real ghostty is on PATH and reports its version"
+    "setup.sh writes a ghostty config that +validate-config accepts"
+    "+show-config follows setup.sh --box work (the box name reaches ghostty)"
+    "#175: the effective command ghostty resolves is an ABSOLUTE distrobox path, not the bare name"
+    "#175r2: a distrobox path holding a newline is refused, because ghostty could not parse what it would write"
+    "#175r1: a distrobox path with spaces and metacharacters survives ghostty and the shell it hands the command to"
+    "after setup.sh --auto-enter no there is no enter command left for ghostty to run"
+    "+validate-config refuses a config ghostty cannot parse (the check bites)"
+)
+SYSTEM_REAL_CASES=(
+    "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)"
+    "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)"
+    "ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging"
+    "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)"
+    "ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH"
+)
+
+# The diagnostic criteria doc/acceptance.md publishes for each tier, as
+# anchored extended regexes; each must be matched by exactly one line of the
+# tier's block. The values the document names as judgements (`tmux=yes`,
+# `FORWARDED_STARTED=yes`, `FORWARDED_AFTER_RETURN=yes`,
+# `COMMAND_FINISHED=no`, and the 124 the hang case is cut by) are literal;
+# the values the document explicitly calls per-run measurements (`host=`,
+# `fish=`, `SECOND_ELAPSED=`, `FORWARDED_DELAY_MS=`, the budget in seconds)
+# are matched by shape, so a slower or faster runner cannot go red for it.
+INTEGRATION_CRITERIA=()
+SYSTEM_REAL_CRITERIA=(
+    '^# chain: inbox-ok fish=[0-9]+(\.[0-9]+)+ tmux=yes host=[^[:space:]]+$'
+    '^# chain-host: marker host=[^[:space:]]+ == docker inspect dev hostname$'
+    '^# hang-ready: hang-ready fish=[0-9]+(\.[0-9]+)+ host=[^[:space:]]+$'
+    '^# hang: in-box command started, then timed out after [0-9]+s \(budget [0-9]+s, status 124\)$'
+    '^# single-instance: PRIMARY=up$'
+    '^# single-instance: SECOND_RC=0$'
+    '^# single-instance: SECOND_ELAPSED=[0-9]+$'
+    '^# single-instance: STARTED_AT_RETURN=1$'
+    '^# single-instance: FORWARDED_STARTED=yes$'
+    '^# single-instance: FORWARDED_AFTER_RETURN=yes$'
+    '^# single-instance: FORWARDED_DELAY_MS=[0-9]+$'
+    '^# single-instance: RUNNING_COMMANDS=2$'
+    '^# single-instance: PRIMARY_WRAPPER_ALIVE=yes$'
+    '^# single-instance: COMMAND_FINISHED=no$'
+    '^# chain-desktop-path: inbox-ok fish=[0-9]+(\.[0-9]+)+ tmux=yes host=[^[:space:]]+$'
+)
+
+# Lines whose ORDER the document turns into a judgement. The hang case only
+# counts as "a command that had STARTED inside the box was cut" when the
+# in-box ready marker came first; a 124 printed before any ready marker is
+# the different failure "the window never reached the box", which the
+# document says must not read as this case passing.
+INTEGRATION_ORDER=()
+SYSTEM_REAL_ORDER=(
+    '^# hang-ready: '
+    '^# hang: '
+    '^ok [0-9]+ ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging$'
+)
 
 # Item 2.4: the negative fixtures of the 2.2 checker and the line each one
 # must produce. A fixture that starts passing is as much a regression as a
@@ -318,6 +402,134 @@ _make_tmpdir() {
     return 0
 }
 
+# True iff $1 is one of the remaining arguments. Taking the elements as
+# arguments rather than the array by name keeps every list below visibly
+# USED at its call site, which is also what lets shellcheck see it.
+_array_has() {
+    local _needle="$1" _e
+    shift
+    for _e in "$@"; do
+        [[ "${_e}" == "${_needle}" ]] && return 0
+    done
+    return 1
+}
+
+# --- Exact-set assertions ----------------------------------------------------
+# The document publishes SETS of lines, not "some output". These three
+# helpers are the difference between reading that promise and reading only
+# that the stream was non-empty.
+
+# Every documented case of a tier appeared exactly once, and nothing else
+# did. $1 is the tier label used in messages, $2 the tier's captured block,
+# and the remaining arguments are the documented case descriptions.
+_check_tier_cases() {
+    local _tier="$1" _block="$2"
+    shift 2
+    local _expected_cases=("$@")
+    local -A _count=()
+    local _line _desc _bad=0
+    local _missing=() _extra=() _repeated=()
+
+    while IFS= read -r _line; do
+        [[ "${_line}" =~ ^ok[[:space:]]+[0-9]+[[:space:]](.*)$ ]] || continue
+        _desc="${BASH_REMATCH[1]}"
+        _count["${_desc}"]=$(( ${_count["${_desc}"]:-0} + 1 ))
+    done <<<"${_block}"
+
+    for _desc in "${_expected_cases[@]}"; do
+        case "${_count["${_desc}"]:-0}" in
+            0) _missing+=("${_desc}") ;;
+            1) ;;
+            *) _repeated+=("${_desc}") ;;
+        esac
+    done
+    if [[ "${#_count[@]}" -gt 0 ]]; then
+        for _desc in "${!_count[@]}"; do
+            _array_has "${_desc}" "${_expected_cases[@]}" || _extra+=("${_desc}")
+        done
+    fi
+
+    if [[ "${#_missing[@]}" -gt 0 ]]; then
+        _err "\`just test ${_tier}\` is missing ${#_missing[@]} of the ${#_expected_cases[@]} case(s) doc/acceptance.md lists for it:"
+        for _desc in "${_missing[@]}"; do
+            _err "  missing case: ${_desc}"
+        done
+        _bad=1
+    fi
+    if [[ "${#_repeated[@]}" -gt 0 ]]; then
+        _err "\`just test ${_tier}\` reported ${#_repeated[@]} documented case(s) more than once:"
+        for _desc in "${_repeated[@]}"; do
+            _err "  repeated ${_count["${_desc}"]}x: ${_desc}"
+        done
+        _bad=1
+    fi
+    if [[ "${#_extra[@]}" -gt 0 ]]; then
+        _err "\`just test ${_tier}\` reported ${#_extra[@]} case(s) doc/acceptance.md does not list (update the document and this script together):"
+        for _desc in "${_extra[@]}"; do
+            _err "  unexpected case: ${_desc}"
+        done
+        _bad=1
+    fi
+    return "${_bad}"
+}
+
+# Every documented criterion of a tier was printed exactly once. $1 is the
+# tier label, $2 the tier's captured block, and the remaining arguments are
+# the documented criteria as anchored extended regexes.
+_check_tier_criteria() {
+    local _tier="$1" _block="$2"
+    shift 2
+    local _pat _line _n _bad=0
+
+    for _pat in "$@"; do
+        _n=0
+        while IFS= read -r _line; do
+            [[ "${_line}" =~ ${_pat} ]] && _n=$(( _n + 1 ))
+        done <<<"${_block}"
+        if [[ "${_n}" -eq 0 ]]; then
+            _err "\`just test ${_tier}\` printed no line meeting the documented criterion ${_pat}"
+            _bad=1
+        elif [[ "${_n}" -gt 1 ]]; then
+            _err "\`just test ${_tier}\` printed ${_n} lines meeting the documented criterion ${_pat} (expected exactly 1)"
+            _bad=1
+        fi
+    done
+    return "${_bad}"
+}
+
+# The documented lines appeared in the documented order. $1 is the tier
+# label, $2 the tier's captured block, and the remaining arguments are the
+# anchored extended regexes in the order they must occur. A pattern that
+# never matched is reported as such rather than as an ordering failure.
+_check_tier_order() {
+    local _tier="$1" _block="$2"
+    shift 2
+    local _pat _line _i=0 _prev=-1 _at=-1 _prev_pat="" _bad=0
+
+    for _pat in "$@"; do
+        _i=0
+        _at=-1
+        while IFS= read -r _line; do
+            if [[ "${_at}" -lt 0 && "${_line}" =~ ${_pat} ]]; then
+                _at="${_i}"
+            fi
+            _i=$(( _i + 1 ))
+        done <<<"${_block}"
+        if [[ "${_at}" -lt 0 ]]; then
+            _err "\`just test ${_tier}\` printed no line matching ${_pat}, so the documented order cannot hold"
+            _bad=1
+            continue
+        fi
+        if [[ "${_at}" -le "${_prev}" ]]; then
+            _err "\`just test ${_tier}\` printed ${_pat} before ${_prev_pat}, which the document requires to come first"
+            _bad=1
+        fi
+        _prev="${_at}"
+        _prev_pat="${_pat}"
+    done
+    return "${_bad}"
+}
+
 # --- Item 2.1 ----------------------------------------------------------------
 
 # The bare `just test` run: all six tiers, in order, stop at the first
@@ -345,10 +557,19 @@ _item_2_1() {
 # block. The check itself is doc/evidence/tdd.sh (unchanged: it is the
 # implementation this item has always used, and #176 item 8 is the reason
 # it lives outside the document). What this item adds is the guard the
-# document could not carry: tdd.sh's own status is read, its output must be
-# non-empty, and EVERY line must be a verdict of the documented shape - so
-# a tdd.sh that exits 0 having printed nothing, or printed something else,
-# fails instead of reading as "no bad PRs found".
+# document could not carry:
+#   - tdd.sh's own status is read, so a gh that prints a plausible body and
+#     then fails cannot be counted as evidence;
+#   - EVERY line must be a verdict of the documented shape, so a tdd.sh that
+#     exits 0 having printed nothing (or printed something else) fails
+#     instead of reading as "no bad PRs found";
+#   - and the verdicts must be EXACTLY the ten PRs TDD_PRS names, once each.
+#     "At least one line looked like a verdict" was the hole: a single
+#     `#152 order=ok red=1 green=2` plus exit 0 used to certify all ten.
+#     Missing, extra and repeated PR numbers are each named.
+#   - green must be a LATER line than red, which is the whole claim of the
+#     item; `red=51 green=31` is a shape tdd.awk cannot produce, so it is a
+#     forged verdict, not a passing one.
 _item_2_2() {
     local _out="" _rc=0
     _out="$(timeout "${VERIFY_TIMEOUT}" bash "${TDD_SH}" 2>&1)" || _rc=$?
@@ -366,21 +587,61 @@ _item_2_2() {
         return 1
     fi
 
-    local _verdict='^#[0-9]+[[:space:]]order=ok[[:space:]]red=[0-9]+[[:space:]]green=[0-9]+$'
-    local _line _bad=0 _n=0
+    local _verdict='^#([0-9]+)[[:space:]]order=ok[[:space:]]red=([0-9]+)[[:space:]]green=([0-9]+)$'
+    local -A _count=()
+    local _line _pr _red _green _bad=0 _n=0
     while IFS= read -r _line; do
         [[ -n "${_line}" ]] || continue
         _n=$(( _n + 1 ))
         if [[ ! "${_line}" =~ ${_verdict} ]]; then
             _err "not a passing verdict: ${_line}"
             _bad=1
+            continue
         fi
+        _pr="${BASH_REMATCH[1]}"
+        _red="${BASH_REMATCH[2]}"
+        _green="${BASH_REMATCH[3]}"
+        if [[ "${_red}" -lt 1 || "${_green}" -le "${_red}" ]]; then
+            _err "not a passing verdict (GREEN must open after RED): ${_line}"
+            _bad=1
+            continue
+        fi
+        _count["${_pr}"]=$(( ${_count["${_pr}"]:-0} + 1 ))
     done <<<"${_out}"
 
     if [[ "${_n}" -eq 0 ]]; then
         _err "doc/evidence/tdd.sh printed no verdict line at all"
         return 1
     fi
+
+    # The exact set, not its non-emptiness.
+    local _missing=() _extra=() _repeated=()
+    for _pr in "${TDD_PRS[@]}"; do
+        case "${_count["${_pr}"]:-0}" in
+            0) _missing+=("#${_pr}") ;;
+            1) ;;
+            *) _repeated+=("#${_pr} (${_count["${_pr}"]}x)") ;;
+        esac
+    done
+    if [[ "${#_count[@]}" -gt 0 ]]; then
+        for _pr in "${!_count[@]}"; do
+            _array_has "${_pr}" "${TDD_PRS[@]}" || _extra+=("#${_pr}")
+        done
+    fi
+
+    if [[ "${#_missing[@]}" -gt 0 ]]; then
+        _err "doc/evidence/tdd.sh printed no passing verdict for ${#_missing[@]} of the ${#TDD_PRS[@]} documented PR(s): ${_missing[*]}"
+        _bad=1
+    fi
+    if [[ "${#_repeated[@]}" -gt 0 ]]; then
+        _err "doc/evidence/tdd.sh printed more than one verdict for: ${_repeated[*]}"
+        _bad=1
+    fi
+    if [[ "${#_extra[@]}" -gt 0 ]]; then
+        _err "doc/evidence/tdd.sh printed a verdict for PR(s) this item does not cover: ${_extra[*]} (expected exactly ${TDD_PRS[*]/#/#})"
+        _bad=1
+    fi
+
     if [[ "${_bad}" -ne 0 ]]; then
         return 1
     fi
@@ -393,26 +654,32 @@ _item_2_2() {
 
 # --- Item 2.3 ----------------------------------------------------------------
 
-# Run one tier and print the lines the document publishes for it. $1 is the
-# tier verb, $2 the extended grep pattern, $3 the file to capture into.
+# Run one tier, print the lines the document publishes for it and store
+# them in the variable named by $4. $1 is the tier verb, $2 the extended
+# grep pattern, $3 the file to capture into.
 # The tier output is captured to a FILE and grepped afterwards, never piped,
 # so `just test` failing is never indistinguishable from "grep matched
 # nothing". The matched lines are printed BEFORE the verdict, so a red run
 # still shows its `not ok` lines.
+# This function answers only "the tier ran, exited 0 and printed a block
+# with no `not ok` in it". WHAT that block has to contain is the caller's
+# question, because it is the one the document answers per tier.
 _run_chain_tier() {
     local _tier="$1" _pattern="$2" _file="$3"
-    local _rc=0 _matched="" _notok=""
+    local -n _block_ref="$4"
+    local _rc=0 _notok=""
 
+    _block_ref=""
     _just_test_into "${_file}" _rc "${_tier}" || return 1
 
-    _grep_file_into _matched "${_pattern}" "${_file}" || return 1
-    [[ -n "${_matched}" ]] && printf '%s\n' "${_matched}"
+    _grep_file_into _block_ref "${_pattern}" "${_file}" || return 1
+    [[ -n "${_block_ref}" ]] && printf '%s\n' "${_block_ref}"
 
     if [[ "${_rc}" -ne 0 ]]; then
         _err "\`just test ${_tier}\` exited ${_rc} - what it printed does not count"
         return 1
     fi
-    if [[ -z "${_matched}" ]]; then
+    if [[ -z "${_block_ref}" ]]; then
         _err "\`just test ${_tier}\` exited 0 but printed no line matching '${_pattern}'"
         return 1
     fi
@@ -425,17 +692,45 @@ _run_chain_tier() {
     return 0
 }
 
+# Judge one tier's block against everything the document publishes for it:
+# the case set, the named criteria and the required order. All three run
+# even when the first one fails - one report naming everything that is
+# missing beats three runs each naming one thing.
+_check_integration_block() {
+    local _block="$1" _bad=0
+    _check_tier_cases integration "${_block}" "${INTEGRATION_CASES[@]}" || _bad=1
+    _check_tier_criteria integration "${_block}" "${INTEGRATION_CRITERIA[@]}" || _bad=1
+    _check_tier_order integration "${_block}" "${INTEGRATION_ORDER[@]}" || _bad=1
+    return "${_bad}"
+}
+
+_check_system_real_block() {
+    local _block="$1" _bad=0
+    _check_tier_cases system-real "${_block}" "${SYSTEM_REAL_CASES[@]}" || _bad=1
+    _check_tier_criteria system-real "${_block}" "${SYSTEM_REAL_CRITERIA[@]}" || _bad=1
+    _check_tier_order system-real "${_block}" "${SYSTEM_REAL_ORDER[@]}" || _bad=1
+    return "${_bad}"
+}
+
 # Item 2.3: the integration ghostty group asserts what a real ghostty
 # resolves out of the managed block; the system-real group opens a real
 # window under xvfb and judges by the marker left INSIDE the box.
 _item_2_3() {
-    local _dir="" _rc=0
+    local _dir="" _rc=0 _block=""
     _make_tmpdir _dir || return 1
 
-    _run_chain_tier integration "${INTEGRATION_PATTERN}" "${_dir}/integration.log" || _rc=1
+    if _run_chain_tier integration "${INTEGRATION_PATTERN}" "${_dir}/integration.log" _block; then
+        _check_integration_block "${_block}" || _rc=1
+    else
+        _rc=1
+    fi
     if [[ "${_rc}" -eq 0 ]]; then
         printf '\n'
-        _run_chain_tier system-real "${SYSTEM_REAL_PATTERN}" "${_dir}/system-real.log" || _rc=1
+        if _run_chain_tier system-real "${SYSTEM_REAL_PATTERN}" "${_dir}/system-real.log" _block; then
+            _check_system_real_block "${_block}" || _rc=1
+        else
+            _rc=1
+        fi
     fi
 
     rm -rf -- "${_dir}" || {
