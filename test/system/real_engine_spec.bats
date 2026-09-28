@@ -608,20 +608,26 @@ _desktop_path() {
     _log_lines desktop-path "PATH=${_gui_path} has no distrobox by name"
 
     # (2) The DELIVERED setup.sh resolves it and writes the managed block.
+    # The program is read back with the delivered decoder, so the assertion
+    # travels through the same shell quoting setup.sh wrote (issue #175
+    # round 1).
     run "${_setup}" --terminal ghostty --box dev
     assert_success
     _ghostty_config="$(enter_ghostty_config)"
-    _prog="$(sed -nE 's/^command = (.*) enter dev -- tmux new -A -s main$/\1/p' "${_ghostty_config}")"
+    _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
-    _log_lines setup-command "command = ${_prog} enter dev -- tmux new -A -s main"
+    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main" \
+        "${_ghostty_config}"
+    assert_success
+    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main"
 
     # (3) The same program, in the chain shape that ends by itself, run by
     # a real ghostty window under the desktop PATH.
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
-        "${_prog} enter dev -- tmux new -A -s chain175 fish $(_chain_script)"
+        "$(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s chain175 fish $(_chain_script)"
     run env PATH="${_gui_path}" \
         timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
     [[ "${status}" -eq 0 ]] || _diag
