@@ -2,8 +2,9 @@
 # system-real-entry.sh - entry point of the docker-in-docker runner for the
 # REAL-ENGINE group of the system tier (M2).
 #
-# Runs INSIDE the worktool-system-real image (dockerfile/Dockerfile.system-real,
-# based on docker:dind), which test.sh --system-real starts with
+# Runs INSIDE the worktool-system-real image (dockerfile/Dockerfile.system-real:
+# ubuntu:26.04 carrying the engine binaries and dind helpers copied from the
+# pinned docker:dind image), which test.sh --system-real starts with
 # `docker run --rm --privileged -v <repo>:/source -w /source`. It:
 #
 #   1. validates the overridable timeouts (positive integers only), then

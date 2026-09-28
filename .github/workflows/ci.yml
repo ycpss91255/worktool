@@ -77,9 +77,19 @@ jobs:
 
   # 5 gates x 2 runners. `needs: build-image` waits for BOTH build legs;
   # each gate leg then downloads the artifact of its own runner.
+  #
+  # test-integration is the one gate that also builds an image of its own:
+  # its ghostty group needs a REAL ghostty, which only Ubuntu 26.04
+  # packages, so `just test integration` builds dockerfile/Dockerfile.ghostty
+  # and runs that group in it (no display, no daemon, no --privileged).
+  # `timeout-minutes` is the outermost of the three anti-hang layers for
+  # the ghostty cases (the other two: ghostty's own defaults, which close
+  # the window when the command returns, and the `timeout -k` around every
+  # ghostty call in the specs).
   gate:
     name: ${{ matrix.gate }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     needs: build-image
     strategy:
       fail-fast: false
