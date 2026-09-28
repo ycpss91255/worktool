@@ -67,7 +67,7 @@ justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完�
 | `just test` | 跑 CI 會跑的**全部**:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
 | `just test build` | 建置測試映像(選用;gate 會按需自動建) |
 | `just test lint` | ShellCheck gate(Docker 內) |
-| `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試 |
+| `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
 | `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`) |

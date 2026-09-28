@@ -103,6 +103,22 @@ setup() {
     mkdir -p "${HOME}"
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
+
+    # The ghostty cases (section (e), issue #172) write their config under
+    # this HOME and read it back through a real ghostty, so the managed
+    # block travels the same XDG path a user's would. The delivered
+    # lib/enter.sh supplies the block markers and the composer, so the
+    # test writes the SAME shape `just box setup` writes.
+    export XDG_CONFIG_HOME="${HOME}/.config"
+    # shellcheck source-path=SCRIPTDIR/../../lib
+    # shellcheck source=enter.sh
+    source "${REPO_ROOT}/lib/enter.sh"
+    # GTK in a container with no GPU and no session bus: software X11 only.
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export GDK_BACKEND=x11
+    export XDG_RUNTIME_DIR="${BATS_FILE_TMPDIR}/run"
+    mkdir -p "${XDG_RUNTIME_DIR}"
+    chmod 700 "${XDG_RUNTIME_DIR}"
 }
 
 # --- bounded engine queries + diagnostics ------------------------------------
@@ -303,7 +319,252 @@ _assert_fish_timed() {
     _log_lines bench-gate "${lines[@]}"
 }
 
-# --- (e) idempotency: assembling again neither errors nor duplicates ---------
+# --- (e) the ghostty chain: a real window enters the real box ----------------
+#
+# Layer 2 of issue #172: a REAL ghostty, on a REAL (headless) X server,
+# reading a REAL managed block, opens a window whose command enters the
+# REAL box of the cases above and leaves a marker INSIDE it. Layer 1 (the
+# display-free half: the block a real ghostty parses and resolves) is
+# test/integration/ghostty_config_spec.bats.
+#
+# WHY THE WITNESS IS THE MARKER FILE, NOT GHOSTTY'S EXIT CODE
+#   With `gtk-single-instance` on, a second `ghostty` only asks an existing
+#   primary instance over D-Bus to open the window, and returns 0 without
+#   waiting for the command it asked for - so exit 0 proves nothing about
+#   that command. The test config therefore
+#   pins `gtk-single-instance = false` (asserted below), and what a case
+#   accepts as success is the marker the command wrote inside the box. The
+#   last case in this section demonstrates the false positive on purpose.
+#
+# WHY IT CANNOT HANG
+#   The config does NOT override `wait-after-command` (default false) or
+#   `quit-after-last-window-closed` (default true on Linux), so ghostty
+#   closes the window and exits by itself once the command returns; every
+#   launch is additionally wrapped in `timeout -k` (_ghostty_run), and the
+#   CI job has its own `timeout-minutes`. The deliberate-hang case proves
+#   the second of the three bites.
+
+# Budgets (seconds) for the ghostty cases.
+GHOSTTY_CLI_TIMEOUT=60      # +version / +show-config: no window at all
+GHOSTTY_CHAIN_TIMEOUT=180   # one windowed run of the whole chain
+GHOSTTY_HANG_TIMEOUT=45     # the deliberate-hang case: must be REACHED
+
+# Where the chain writes its evidence. HOME is the box's bind-mounted home
+# (see setup), so a file the command writes inside the box shows up here.
+# NOTE: this is a SHARED mount, not a namespace the runner cannot reach -
+# what makes the marker in-box evidence is that the runner has no fish (the
+# preflight case asserts that), the file is removed before every launch,
+# and its content is produced by fish syntax plus the box's own node name,
+# which the case compares against `docker inspect dev`.
+_chain_marker() { printf '%s/ghostty-chain.txt\n' "${HOME}"; }
+_chain_script() { printf '%s/ghostty-chain.fish\n' "${HOME}"; }
+
+# The deliberate-hang case's own files: a READY marker the in-box command
+# writes BEFORE blocking forever, and the fish payload that does it.
+_hang_ready() { printf '%s/ghostty-hang-ready.txt\n' "${HOME}"; }
+_hang_script() { printf '%s/ghostty-hang.fish\n' "${HOME}"; }
+
+# Write the fish payload the chain runs INSIDE the box: it records the fish
+# version (only fish sets FISH_VERSION, and this runner has no fish at
+# all), whether it is running under tmux, and the box's own node name.
+_write_chain_script() {
+    cat >"$(_chain_script)" <<EOF
+set -l under_tmux no
+if set -q TMUX
+    set under_tmux yes
+end
+printf 'inbox-ok fish=%s tmux=%s host=%s\n' "\$FISH_VERSION" "\$under_tmux" (uname -n) \
+    >$(_chain_marker)
+EOF
+}
+
+# Write the fish payload of the deliberate-hang case. It announces that it
+# REALLY STARTED INSIDE THE BOX first, and only then blocks forever. That
+# ready marker is what separates the two ways to collect a 124: "a command
+# that had begun was cut at the budget" (what this case must prove) from
+# "Xvfb / GTK / ghostty / distrobox enter wedged before the box was ever
+# reached" (a different bug, and a false green if accepted here).
+_write_hang_script() {
+    cat >"$(_hang_script)" <<EOF
+printf 'hang-ready fish=%s host=%s\n' "\$FISH_VERSION" (uname -n) >$(_hang_ready)
+exec sleep infinity
+EOF
+}
+
+# Write the ghostty config the case under test uses, into the throwaway
+# XDG_CONFIG_HOME: the false-positive guard first, then EXACTLY ONE real
+# worktool managed block (composed by the delivered lib/enter.sh, markers
+# and all) holding `command = $1`. Nothing else is set - in particular
+# `wait-after-command` and `quit-after-last-window-closed` keep their
+# defaults, which is what makes ghostty exit on its own.
+_write_ghostty_config() {
+    local _file
+    _file="$(enter_ghostty_config)"
+    mkdir -p "$(dirname -- "${_file}")"
+    printf 'gtk-single-instance = false\n' >"${_file}"
+    enter_block_compose "${_file}" "command = $1" >"${_file}.new"
+    mv -f "${_file}.new" "${_file}"
+}
+
+# Launch ghostty on a throwaway X server under a hard bound of $1 seconds.
+# LIBGL_ALWAYS_SOFTWARE / GDK_BACKEND keep GTK on the software X11 path in
+# a container with no GPU; `xvfb-run -a` picks a free display number.
+# Exit status is ghostty's (124 when the bound was reached).
+_ghostty_run() {
+    timeout -k 5 "$1" xvfb-run -a ghostty </dev/null
+}
+
+@test "preflight: the runner has a real ghostty and Xvfb, and no fish of its own" {
+    run timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +version
+    assert_success
+    assert_line --regexp '^Ghostty [0-9]+\.[0-9]+'
+    _log_lines ghostty "${lines[0]}"
+    run command -v xvfb-run
+    assert_success
+    # The chain's evidence is "fish answered". The runner must not be able
+    # to produce that itself: the only fish in this container tree is the
+    # box's.
+    run command -v fish
+    assert_failure
+}
+
+@test "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)" {
+    _write_ghostty_config "distrobox enter dev -- true"
+    run env XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+        timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +show-config
+    assert_success
+    # The EFFECTIVE value, not the text on disk: `detect` must not be what
+    # decides whether this window is real or forwarded to a background
+    # process nobody reaps.
+    assert_line 'gtk-single-instance = false'
+    assert_line 'command = distrobox enter dev -- true'
+}
+
+@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)" {
+    rm -f "$(_chain_marker)"
+    _write_chain_script
+    # The full chain #5 promises, in one command, but ending: ghostty ->
+    # distrobox enter dev -> tmux -> fish -> the marker. `tmux new -A -s`
+    # is the delivered shape; the session ends when the script does, so
+    # tmux exits, `distrobox enter` returns and ghostty closes the window.
+    _write_ghostty_config \
+        "distrobox enter dev -- tmux new -A -s chain fish $(_chain_script)"
+    run _ghostty_run "${GHOSTTY_CHAIN_TIMEOUT}"
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    # The witness: the file the command wrote inside the box.
+    assert [ -f "$(_chain_marker)" ]
+    run cat "$(_chain_marker)"
+    assert_success
+    assert_line --regexp '^inbox-ok fish=[0-9]+\.[0-9]+.* tmux=yes host=.+$'
+    _log_lines chain "${lines[@]}"
+
+    # The node name in the marker must be the dev box's own, as the engine
+    # reports it - so the line cannot have been produced anywhere else on
+    # this shared HOME mount.
+    local _marker_host _box_host
+    _marker_host="$(sed -nE 's/^inbox-ok .* host=(.+)$/\1/p' "$(_chain_marker)")"
+    run _docker inspect dev --format '{{.Config.Hostname}}'
+    assert_success
+    _box_host="${output}"
+    assert_equal "${_marker_host}" "${_box_host}"
+    _log_lines chain-host "marker host=${_marker_host} == docker inspect dev hostname"
+}
+
+@test "ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging" {
+    rm -f "$(_chain_marker)" "$(_hang_ready)"
+    _write_hang_script
+    # Same chain as the case above, but the in-box payload announces itself
+    # and then blocks forever.
+    _write_ghostty_config "distrobox enter dev -- fish $(_hang_script)"
+    local _start="${SECONDS}" _elapsed _hang_status
+    run _ghostty_run "${GHOSTTY_HANG_TIMEOUT}"
+    _elapsed=$(( SECONDS - _start ))
+    # Keep ghostty's own status: the `run cat` below would overwrite it.
+    _hang_status="${status}"
+
+    # (1) The thing being cut really was a running in-box command. Without
+    # this, a 124 could just as well mean the window never opened or
+    # `distrobox enter` wedged before reaching the box - a different bug,
+    # and this case would be a false green.
+    if [[ ! -f "$(_hang_ready)" ]]; then
+        _diag
+        fail "no ready marker at $(_hang_ready) after ${_elapsed}s (status ${_hang_status}): the in-box command never STARTED, so this 124 is a start-up / enter hang, not a bounded never-ending command"
+    fi
+    run cat "$(_hang_ready)"
+    assert_success
+    assert_line --regexp '^hang-ready fish=[0-9]+\.[0-9]+.* host=.+$'
+    _log_lines hang-ready "${lines[@]}"
+
+    # (2) It was `timeout` that ended the run: 124 is its own "the bound
+    # was reached" status, so the run was cut here and not left to the CI
+    # job timeout.
+    [[ "${_hang_status}" -eq 124 ]] || _diag
+    assert_equal "${_hang_status}" "124"
+
+    # (3) And it was cut AT the budget: the run lasted essentially the
+    # whole budget (lower bound; `SECONDS` is integer, hence the 2s slack)
+    # and did not drag on far past it (upper bound, covering the -k grace).
+    assert [ "${_elapsed}" -ge $(( GHOSTTY_HANG_TIMEOUT - 2 )) ]
+    assert [ "${_elapsed}" -lt $(( GHOSTTY_HANG_TIMEOUT + 30 )) ]
+
+    # (4) The chain marker of the previous case is gone and was not
+    # recreated: this payload never got past the sleep.
+    assert [ ! -f "$(_chain_marker)" ]
+    _log_lines hang "in-box command started, then timed out after ${_elapsed}s (budget ${GHOSTTY_HANG_TIMEOUT}s, status ${_hang_status})"
+}
+
+@test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)" {
+    local _probe="${REPO_ROOT}/test/system/fixture/ghostty_single_instance.sh"
+    run timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" bash "${_probe}" \
+        "${BATS_TEST_TMPDIR}/si" </dev/null
+    assert_success
+    _log_lines single-instance "${lines[@]}"
+    # The fixture OBSERVES every line below; none of them is a fixed echo.
+    #   The primary was really running before the second launch ...
+    assert_line 'PRIMARY=up'
+    #   ... the second launch reported success ...
+    assert_line 'SECOND_RC=0'
+    #   ... and returned far sooner than the command it asked for could
+    #   ever take, since that command never ends. The threshold is
+    #   generous on purpose: the claim is "did not wait for the command",
+    #   not "within N seconds", and a tight number is only a way for a
+    #   slow runner to go red. Measured at 0-1s.
+    assert_line --regexp '^SECOND_ELAPSED=([0-9]|1[0-5])$'
+    #   Read IMMEDIATELY AFTER the return (timestamp first, then the
+    #   count - see the fixture header: neither is an atomic snapshot of
+    #   the return instant). Still 1: the work this launch reported
+    #   success for had not begun. A forwarded command fast enough to
+    #   slip into that sampling gap would read 2 and fail the case, so
+    #   the delay can only cost a pass, never buy one.
+    assert_line 'STARTED_AT_RETURN=1'
+    #   A second window command did begin ...
+    assert_line 'FORWARDED_STARTED=yes'
+    #   ... and its start time is MEASURED to be later than that return
+    #   (mtime of its own start file vs the timestamp taken at return).
+    assert_line 'FORWARDED_AFTER_RETURN=yes'
+    assert_line --regexp '^FORWARDED_DELAY_MS=[1-9][0-9]*$'
+    #   Both of this run's window commands are still running - asked of
+    #   the command processes themselves: the pid each one recorded is
+    #   present, its starttime is unchanged (so it is not a recycled pid)
+    #   and it is not a zombie. `kill -0` alone would accept both of
+    #   those; process-name or command-line scanning would be wrong too
+    #   (the dev box's leftover sleeps share the runner's PID namespace
+    #   under DinD, and `pgrep -f` matches the harness) ...
+    assert_line 'RUNNING_COMMANDS=2'
+    #   ... under the ghostty process that owns the bus name, which
+    #   outlived the launch that "succeeded" (the wrapper, not the
+    #   command's own shell - STARTED_AT_RETURN is what speaks for the
+    #   command) ...
+    assert_line 'PRIMARY_WRAPPER_ALIVE=yes'
+    #   ... and no window command has returned at all.
+    assert_line 'COMMAND_FINISHED=no'
+    # That is the false positive: exit status alone is not a witness once
+    # ghostty forwards over D-Bus. Which is why every case above pins
+    # `gtk-single-instance = false` and judges on an in-box marker file.
+}
+
+# --- (f) idempotency: assembling again neither errors nor duplicates ---------
 
 @test "real engine: a second assemble.sh run exits 0 and does not duplicate the dev box" {
     cd "${REPO_ROOT}"
@@ -323,7 +584,7 @@ _assert_fish_timed() {
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
 }
 
-# --- (f) teardown: distrobox rm removes the box ------------------------------
+# --- (g) teardown: distrobox rm removes the box ------------------------------
 
 @test "real engine: distrobox rm -f dev removes the box from the engine" {
     run timeout "${RM_TIMEOUT}" distrobox rm -f dev </dev/null

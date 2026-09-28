@@ -12,6 +12,25 @@
 # which assembles the delivered box/dev.ini into a real `dev` box
 # (ubuntu:26.04 + ripgrep fzf tmux fish) and enters it.
 #
+# Since M3 issue #172 the image is Ubuntu 26.04 based rather than the
+# docker:dind image itself: the ghostty chain cases need a REAL ghostty
+# (packaged by 26.04 only) and a headless X server next to the real
+# engine.
+#
+# What is taken from the pinned docker:dind image is exactly three
+# directories - /usr/local/bin (engine binaries + the dind helper
+# scripts), /usr/local/sbin (the legacy-iptables symlinks) and
+# /usr/local/libexec/docker/cli-plugins (buildx / compose) - so how the
+# nested daemon starts is unchanged. Nothing else of that image comes
+# across: this is a REBASE, not a transplant. In particular its
+# `dockremap` user and /etc/subuid + /etc/subgid are deliberately left
+# behind (see the COPY block below), the host side of the real-engine
+# gate now runs on Ubuntu / GNU userland instead of Alpine / busybox - so
+# the gate no longer covers Alpine host compatibility - and a tool that
+# busybox used to provide has to be installed by name (see
+# `bsdextrautils` below). doc/manifest.md records that change of gate
+# meaning.
+#
 # It MUST be started with `docker run --rm --privileged` (a nested dockerd
 # needs it; see issue #129 for the DinD-vs-DooD-vs-podman decision). Every
 # container / image / volume the test creates lives in the nested daemon,
@@ -29,11 +48,15 @@
 #     worktool-system-real:local ./script/test/system-real-entry.sh
 
 # Every version is pinned. DOCKER_DIND_TAG is the official docker image's
-# dind variant (alpine based). DISTROBOX_* is the single source of truth
-# shared with Dockerfile.test (keep them identical).
+# dind variant (alpine based); its engine binaries and dind helpers are
+# COPIED into the ubuntu final stage below. UBUNTU_TAG is 26.04
+# (resolute), the only release whose archive ships ghostty. DISTROBOX_* is
+# the single source of truth shared with Dockerfile.test (keep them
+# identical).
 ARG DOCKER_DIND_TAG=29.8.0-dind
 ARG BATS_TAG=1.14.0
 ARG ALPINE_TAG=3.24
+ARG UBUNTU_TAG=26.04
 ARG DISTROBOX_VERSION=1.8.2.5
 ARG DISTROBOX_SHA256=0c3bc4785ee3be3b89f93abb7cc0a9f60e56989e81319af140a4b60403b18f80
 
@@ -61,25 +84,90 @@ RUN apk add --no-cache curl coreutils && \
     cd "/tmp/distrobox-${DISTROBOX_VERSION}" && \
     ./install --prefix /opt/distrobox
 
-# Final stage: the official docker-in-docker image. It brings dockerd,
-# containerd, runc, the docker CLI, iptables, and the entry helpers
+# The official docker-in-docker image, used here as a SOURCE stage: it
+# brings dockerd, containerd, runc, the docker CLI and the entry helpers
 # (dockerd-entrypoint.sh -> dind wrapper: cgroup v2 nesting, tmpfs /tmp,
 # `mount --make-rshared /`) that the runner entry reuses instead of
-# re-implementing.
-FROM docker:${DOCKER_DIND_TAG}
+# re-implementing. Every one of those binaries is a static Go build, so
+# they run unchanged on the glibc final stage below; the helpers are POSIX
+# shell scripts, and `/usr/local/sbin/.iptables-legacy` is a directory of
+# symlinks into `/usr/sbin`, which ubuntu's iptables package fills in.
+FROM docker:${DOCKER_DIND_TAG} AS docker-engine
+
+# Final stage: Ubuntu 26.04 (resolute) rather than the docker:dind image
+# itself (M3, issue #172). The ghostty chain cases of
+# test/system/real_engine_spec.bats need a REAL ghostty next to the real
+# engine, and ghostty is packaged by 26.04 and nothing older - alpine has
+# none at all. The three directories the runner entry
+# (script/test/system-real-entry.sh) depends on are copied in below -
+# /usr/local/bin, /usr/local/sbin and
+# /usr/local/libexec/docker/cli-plugins - which is why that entry is
+# unchanged. What is NOT carried over is listed at that COPY block.
+FROM ubuntu:${UBUNTU_TAG}
 ARG DISTROBOX_VERSION
-# bash    - bats, the worktool scripts and the runner entry need it
-# git     - test fixtures / future harness
-# grep + coreutils - GNU variants; distrobox's host-side scripts rely on GNU
-#           `base64 -w`, `realpath`, `id -r*`, `mktemp -u`; `timeout` bounds
-#           the long steps in the spec
-# ncurses - `tput`-style terminal queries stay sane under a non-tty harness
-# hadolint ignore=DL3018
-RUN apk add --no-cache \
+ENV DEBIAN_FRONTEND=noninteractive
+# bash          - bats, the worktool scripts and the runner entry need it
+# git           - test fixtures / future harness
+# coreutils/findutils/grep/sed/gawk - GNU by default here; distrobox's
+#                 host-side scripts rely on GNU `base64 -w`, `realpath`,
+#                 `id -r*`, `mktemp -u`, `timeout` bounds the long steps in
+#                 the spec, and the dind wrapper uses `xargs` and `sed`
+# util-linux    - `mount` / `mountpoint`, which the dind wrapper needs to
+#                 mount securityfs, /tmp and to `--make-rshared /`
+# bsdextrautils - `rev`, which distrobox-enter uses to build the command it
+#                 execs. Debian/Ubuntu split it out of util-linux; busybox
+#                 (the old alpine base) had it built in, so this is the one
+#                 tool the rebase had to put back by name - without it every
+#                 `distrobox enter` dies with `rev: not found`
+# iptables      - dockerd's network setup; the package also provides the
+#                 /usr/sbin/*-legacy binaries the copied
+#                 /usr/local/sbin/.iptables-legacy symlinks point at
+# iproute2 kmod - `ip` and `modprobe`, used by the dind entry
+# e2fsprogs xz-utils pigz - what the dind image carried for the engine
+# ncurses-bin   - `tput`-style terminal queries stay sane under a non-tty
+#                 harness
+# ghostty       - issue #172 layer 2: the real terminal under test
+# xvfb xauth    - the headless X server `xvfb-run` starts for it
+# dbus-x11      - `dbus-run-session`, for the single-instance fixture
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         bash \
+        bsdextrautils \
+        ca-certificates \
+        coreutils findutils grep sed gawk \
+        dbus-x11 \
+        e2fsprogs \
+        ghostty \
         git \
-        grep coreutils \
-        ncurses
+        iproute2 iptables kmod \
+        ncurses-bin \
+        pigz \
+        procps \
+        util-linux \
+        xauth xvfb \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# The engine and the dind helpers as the official image builds them
+# (static binaries + POSIX shell wrappers + the legacy-iptables symlink
+# directory), plus its CLI plugins (buildx / compose), so `docker buildx`
+# and `docker compose` exist here exactly as they do in docker:dind.
+#
+# NOT carried over, and deliberately outside this runner's contract: the
+# dind image's `dockremap` user/group and its /etc/subuid + /etc/subgid
+# entries. They only matter for rootless dockerd and userns-remap;
+# script/test/system-real-entry.sh refuses to run as anything but root
+# (its preflight), so the nested daemon here is always rootful. See
+# doc/manifest.md.
+COPY --from=docker-engine /usr/local/bin/ /usr/local/bin/
+COPY --from=docker-engine /usr/local/sbin/ /usr/local/sbin/
+COPY --from=docker-engine /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+
+# The dind image declares this as a volume so the nested daemon's state
+# never lands in the image layer; `docker run --rm` drops it with the
+# runner.
+VOLUME /var/lib/docker
 
 # bats core + extensions (bats-support / bats-assert)
 COPY --from=bats-src /opt/bats /opt/bats
@@ -107,7 +195,14 @@ RUN bash --version >/dev/null && \
     timeout --version >/dev/null && \
     dockerd --version >/dev/null && \
     docker --version >/dev/null && \
+    ghostty +version >/dev/null && \
+    command -v rev >/dev/null && \
+    command -v xvfb-run >/dev/null && \
+    command -v dbus-run-session >/dev/null && \
+    docker buildx version >/dev/null && \
+    docker compose version >/dev/null && \
     [ -x /usr/local/bin/dockerd-entrypoint.sh ] && \
+    [ -x /usr/local/bin/dind ] && \
     [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
 
 WORKDIR /source

@@ -12,8 +12,9 @@
 #                --system / --system-real / --acceptance; NO option runs
 #                all of them, in that order, stopping at the first failure.
 #   Container  - runs the actual gate against the mounted source. Selected
-#                by --ci-lint / --ci-unit / --ci-integration / --ci-system /
-#                --ci-system-real / --ci-acceptance (internal).
+#                by --ci-lint / --ci-unit / --ci-integration /
+#                --ci-integration-ghostty / --ci-system / --ci-system-real /
+#                --ci-acceptance (internal).
 #
 # All test execution happens inside the container (doc/design.md: Docker
 # only). The host never installs packages.
@@ -29,6 +30,18 @@
 #               (script/test/system-real-entry.sh) starts dockerd and then
 #               calls back into --ci-system-real. --privileged is used ONLY
 #               here.
+#
+# The integration tier has two groups for the same reason (M3, issue #172):
+#   default (--integration)  every test/integration/*.bats except the
+#               ghostty spec, in the plain test image. Fast.
+#   ghostty (--integration)  test/integration/ghostty_config_spec.bats only;
+#               needs a REAL ghostty, which only Ubuntu 26.04 packages, so
+#               it runs in dockerfile/Dockerfile.ghostty. No display, no
+#               daemon, no --privileged. `--integration` runs BOTH groups
+#               (default first), so `just test integration` stays the one
+#               command a user types; each group is a gate of its own with
+#               the same tier rules (required spec present and non-empty,
+#               at least one case, no failure, no skip).
 #
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
@@ -63,6 +76,20 @@ DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 SYSTEM_REAL_IMAGE="${SYSTEM_REAL_IMAGE:-worktool-system-real:local}"
 SYSTEM_REAL_DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.system-real"
 SYSTEM_REAL_ENTRY="./script/test/system-real-entry.sh"
+
+# Ubuntu 26.04 image for the ghostty group of the integration tier (built
+# on demand, like the DinD runner: it is not part of the prebuilt
+# test-image artifact). It carries a REAL ghostty; no display, no daemon
+# and no --privileged are involved.
+GHOSTTY_IMAGE="${GHOSTTY_IMAGE:-worktool-ghostty:local}"
+GHOSTTY_DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.ghostty"
+
+# The one integration spec that needs a real ghostty (ghostty group).
+# Every other test/integration/*.bats is the default group. The
+# test/-relative form is the single source for both the exclusion below
+# and the required list.
+INTEGRATION_GHOSTTY_SPEC_REL="integration/ghostty_config_spec.bats"
+INTEGRATION_GHOSTTY_SPEC="${REPO_ROOT}/test/${INTEGRATION_GHOSTTY_SPEC_REL}"
 
 # The one system spec that needs a real engine (real-engine group). Every
 # other test/system/*.bats is the shim group. The test/-relative form is the
@@ -103,6 +130,7 @@ _required_specs() {
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
+                unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
                 unit/workflow_spec.bats
@@ -113,6 +141,7 @@ _required_specs() {
                 integration/assemble_spec.bats \
                 integration/setup_spec.bats
             ;;
+        integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;
         system-real) printf '%s\n' "${SYSTEM_REAL_SPEC_REL}" ;;
         acceptance)  printf '%s\n' acceptance/m2_selfcheck_spec.bats ;;
@@ -174,6 +203,30 @@ _run_in_container() {
         -w /source \
         "${TEST_IMAGE}" \
         ./script/test/test.sh "${_flag}"
+}
+
+# Build the ubuntu image that carries a real ghostty (always built here:
+# like the DinD runner it is not part of the prebuilt test-image artifact
+# and its Dockerfile is self-contained).
+_ensure_ghostty_image() {
+    _info "building ghostty image ${GHOSTTY_IMAGE}"
+    docker build -t "${GHOSTTY_IMAGE}" -f "${GHOSTTY_DOCKERFILE}" "${REPO_ROOT}" \
+        || _die "docker build of the ghostty image failed"
+}
+
+# Run the ghostty group of the integration tier in that image. Plain
+# `docker run --rm`: the cases are CLI-only ghostty actions, so no
+# display, no daemon and no extra privilege are needed.
+_run_ghostty_in_container() {
+    command -v docker >/dev/null 2>&1 \
+        || _die "docker not found on host - required (tests run in Docker only)"
+    _ensure_ghostty_image
+    _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
+    docker run --rm \
+        -v "${REPO_ROOT}:/source" \
+        -w /source \
+        "${GHOSTTY_IMAGE}" \
+        ./script/test/test.sh --ci-integration-ghostty
 }
 
 # Build the docker-in-docker runner image (always built here: it is not part
@@ -304,8 +357,27 @@ _run_bats_tier() {
 }
 
 _run_unit()        { _run_bats_tier unit; }
-_run_integration() { _run_bats_tier integration; }
 _run_acceptance()  { _run_bats_tier acceptance; }
+
+# Integration tier, default group: every test/integration/*.bats except
+# the ghostty spec (which needs a real ghostty and has its own image).
+_run_integration() {
+    local _specs=() _f
+    for _f in "${REPO_ROOT}"/test/integration/*.bats; do
+        [[ -f "${_f}" ]] || continue
+        [[ "${_f}" == "${INTEGRATION_GHOSTTY_SPEC}" ]] && continue
+        _specs+=("${_f}")
+    done
+    [[ "${#_specs[@]}" -gt 0 ]] \
+        || _die "no integration (default group) specs found under ${REPO_ROOT}/test/integration"
+    _run_bats_tier integration "${_specs[@]}"
+}
+
+# Integration tier, ghostty group: exactly the ghostty spec, run in the
+# ubuntu image that carries ghostty. Same green rules as every tier.
+_run_integration_ghostty() {
+    _run_bats_tier integration-ghostty "${INTEGRATION_GHOSTTY_SPEC}"
+}
 
 # System tier, shim group: every test/system/*.bats except the real-engine
 # spec (which needs a live daemon and has its own runner).
@@ -342,7 +414,10 @@ given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
   --unit          Unit bats (test/unit/).
-  --integration   Integration bats (test/integration/).
+  --integration   Integration bats (test/integration/), BOTH groups: the
+                  default one in the test image, then the ghostty one
+                  (test/integration/ghostty_config_spec.bats) in the ubuntu
+                  image that carries a real ghostty. No display needed.
   --system        System bats, shim group (test/system/ minus the real-engine
                   spec; real distrobox + fake container manager).
   --system-real   System bats, real-engine group (test/system/real_engine_spec
@@ -352,13 +427,14 @@ given):
   -h, --help      Show this help and exit.
 
 Internal (what the steps above run inside the container; not for hosts):
-  --ci-lint --ci-unit --ci-integration --ci-system --ci-system-real
-  --ci-acceptance
+  --ci-lint --ci-unit --ci-integration --ci-integration-ghostty --ci-system
+  --ci-system-real --ci-acceptance
 
 Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+  GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
 }
 
@@ -380,6 +456,7 @@ _run_ci_gate() {
         --ci-lint)         _run_shellcheck ;;
         --ci-unit)         _run_unit ;;
         --ci-integration)  _run_integration ;;
+        --ci-integration-ghostty) _run_integration_ghostty ;;
         --ci-system)       _run_system ;;
         --ci-system-real)  _run_system_real ;;
         --ci-acceptance)   _run_acceptance ;;
@@ -393,7 +470,10 @@ _run_host_step() {
         build)       _ensure_image ;;
         lint)        _run_in_container --ci-lint ;;
         unit)        _run_in_container --ci-unit ;;
-        integration) _run_in_container --ci-integration ;;
+        # Both groups, default first; the ghostty one only runs when the
+        # default one passed, so a plain integration break is reported
+        # before the slower image build.
+        integration) _run_in_container --ci-integration && _run_ghostty_in_container ;;
         system)      _run_in_container --ci-system ;;
         acceptance)  _run_in_container --ci-acceptance ;;
         system-real) _run_system_real_in_runner ;;
@@ -411,7 +491,7 @@ main() {
             # Recorded, not served: the rest of the line is still validated
             # (`--help --bogus` is a usage error, not help).
             -h|--help) _help=1 ;;
-            --ci-lint|--ci-unit|--ci-integration|--ci-system|--ci-system-real|--ci-acceptance)
+            --ci-lint|--ci-unit|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
             --build|--lint|--unit|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
