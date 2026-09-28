@@ -40,7 +40,7 @@ lint *args:
 unit *args:
     ./script/test/test.sh --unit "$@"
 
-# Integration bats (test/integration/).
+# Integration bats (test/integration/), both groups: the default one, then the ghostty one (real ghostty, Ubuntu 26.04 image, no display).
 integration *args:
     ./script/test/test.sh --integration "$@"
 
