@@ -25,10 +25,10 @@
 # missing host source is skipped (no dangling link is made). Every entry is
 # logged on stderr (lib/log.sh); stdout carries data only.
 #
-# The box HOME is the caller's: script/box/assemble.sh takes it from the
-# manifest's `home=` (lib/manifest.sh manifest_home, ADR 0002 decision 1).
-# A box without one shares the host HOME, where the user config already is,
-# so there is nothing to link.
+# The box HOME is the caller's: script/box/assemble.sh passes the one it
+# resolved and recorded (lib/home.sh, issue #198), script/box/status.sh the
+# recorded one. A box whose HOME is the host HOME already sees the user
+# config, so there is nothing to link.
 #
 # Public API:
 #   link_defaults                  -> the default entries, one per line

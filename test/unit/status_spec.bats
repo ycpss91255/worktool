@@ -23,6 +23,13 @@
 #     alternative is a terminal window that flashes `not found` and closes.
 #   - The script owns its CLI: --help / -h exit 0; an unknown option is
 #     refused with `status.sh: unknown option '<x>' (see --help)`, exit 2.
+#   - Issue #199: before that line, one `link: <box home>/<path> -> $HOME/<path>
+#     (<state>)` line per user-config entry, under the box HOME #198
+#     recorded - or one line saying none is recorded / it is the host HOME.
+#   - Issue #198: the report ends with a `home: <path> (<source>)` line -
+#     the box HOME `just box assemble` recorded - or `home: not recorded
+#     (run: just box assemble)`. A recorded home that is not an absolute
+#     path (or a bad home.source) is refused like any corrupt value.
 #   - status never writes anything.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
@@ -76,6 +83,7 @@ _write_config() {
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+    assert_line "home: not recorded (run: just box assemble)"
     assert [ ! -e "${CONFIG}" ]
 }
 
@@ -107,8 +115,47 @@ _write_config() {
     assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_line --index 8 "link: box work: ${REPO_ROOT}/box/work.ini not found - box HOME unknown"
-    assert_equal "${#lines[@]}" 9
+    assert_line --index 8 "link: box HOME not recorded - user config not linked yet (run: just box assemble)"
+    assert_line --index 9 "home: not recorded (run: just box assemble)"
+    assert_equal "${#lines[@]}" 10
+}
+
+# --- #198: the box home assemble recorded ------------------------------------
+
+@test "#198: the recorded box home is shown with its source, as the last line" {
+    _write_config 'box=dev' 'box.source=default' 'home=/srv/my box' 'home.source=user'
+    run "${STATUS}"
+    assert_success
+    assert_equal "${lines[${#lines[@]} - 1]}" "home: /srv/my box (user)"
+    _write_config 'home=/h/dev-box' 'home.source=default'
+    run "${STATUS}"
+    assert_success
+    assert_line "home: /h/dev-box (default)"
+}
+
+@test "#198: a recorded home that is not an absolute path is refused (exit 1, nothing on stdout)" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    _write_config 'home=dev-box' 'home.source=user'
+    run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
+    assert_failure 1
+    run cat "${_err}"
+    assert_output "[ERROR] ${CONFIG}: invalid value 'dev-box' for home (expected an absolute path)"
+    assert [ ! -s "${_out}" ]
+    _write_config 'home=/srv/box' 'home.source=maybe'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value 'maybe' for home.source (expected default|user)"
+}
+
+@test "#198 r1: a lone home.source, or a root home, is refused like any corrupt value (exit 1)" {
+    _write_config 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: home.source without home (the two are recorded together)"
+    _write_config 'home=/' 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '/' for home (expected a path other than the root directory)"
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------
@@ -221,49 +268,47 @@ _write_block() {
 }
 
 # --- #199: the user-config links into the box HOME ---------------------------
-# The box HOME is the box manifest's `home=` (box/<box>.ini, ADR 0002
-# decision 1); without one the box shares the host HOME and there is
-# nothing to link.
+# The box HOME is the one `just box assemble` recorded in the state file
+# (issue #198, `home=`); none recorded means nothing is linked yet, and a
+# recorded host HOME means there is nothing to link.
 
-# A copy of status.sh + lib/ with its own box/dev.ini holding the given
-# manifest lines, so the manifest's `home=` can vary per case. Prints the
-# copied status.sh.
-_status_with_manifest() {
-    local _root="${BATS_TEST_TMPDIR}/repo"
-    mkdir -p "${_root}/script/box" "${_root}/box"
-    cp "${STATUS}" "${_root}/script/box/status.sh"
-    cp -R "${REPO_ROOT}/lib" "${_root}/lib"
-    printf '%s\n' "$@" >"${_root}/box/dev.ini"
-    printf '%s\n' "${_root}/script/box/status.sh"
-}
-
-@test "#199: a manifest without home= reports the box shares the host HOME, one line" {
+@test "#199: without a recorded box HOME one link line says nothing is linked yet" {
     run "${STATUS}"
     assert_success
-    assert_line --index 8 "link: box dev shares the host HOME (no home= in ${REPO_ROOT}/box/dev.ini) - user config already in place"
-    assert_equal "${#lines[@]}" 9
+    assert_line "link: box HOME not recorded - user config not linked yet (run: just box assemble)"
+    run grep -c '^link: ' <<<"${output}"
+    assert_output "1"
 }
 
-@test "#199: with home= every default link is reported, in list order, under that box HOME" {
-    local _status
-    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=~/dev-box')"
-    run "${_status}"
+@test "#199: a recorded box HOME that is the host HOME reports the user config already in place" {
+    _write_config "home=${HOME}/" 'home.source=user'
+    run "${STATUS}"
+    assert_success
+    assert_line "link: the box HOME is the host HOME - user config already in place"
+    run grep -c '^link: ' <<<"${output}"
+    assert_output "1"
+}
+
+@test "#199: with a recorded box HOME every default link is reported, in list order, before the home line" {
+    _write_config "home=${HOME}/dev-box" 'home.source=default'
+    run "${STATUS}"
     assert_success
     assert_line --index 8 "link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh (missing source)"
     assert_line --index 9 "link: ${HOME}/dev-box/.gitconfig -> ${HOME}/.gitconfig (missing source)"
     assert_line --index 10 "link: ${HOME}/dev-box/.gnupg -> ${HOME}/.gnupg (missing source)"
     assert_line --index 11 "link: ${HOME}/dev-box/.config/gh -> ${HOME}/.config/gh (missing source)"
-    assert_equal "${#lines[@]}" 12
+    assert_line --index 12 "home: ${HOME}/dev-box (default)"
+    assert_equal "${#lines[@]}" 13
 }
 
 @test "#199: each link state is reported: linked, blocked by existing file, not linked yet" {
-    local _status _box="${HOME}/dev-box"
-    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=~/dev-box')"
+    local _box="${HOME}/dev-box"
+    _write_config "home=${_box}" 'home.source=default'
     mkdir -p "${HOME}/.ssh" "${HOME}/.gnupg" "${_box}"
     printf '[user]\n' >"${HOME}/.gitconfig"
     ln -s "${HOME}/.ssh" "${_box}/.ssh"
     printf 'box-own\n' >"${_box}/.gitconfig"
-    run "${_status}"
+    run "${STATUS}"
     assert_success
     assert_line "link: ${_box}/.ssh -> ${HOME}/.ssh (linked)"
     assert_line "link: ${_box}/.gitconfig -> ${HOME}/.gitconfig (blocked by existing file)"
@@ -274,15 +319,12 @@ _status_with_manifest() {
     assert_equal "$(cat "${_box}/.gitconfig")" "box-own"
 }
 
-@test "#199: link= entries are reported; a home= in the state file is not an interface" {
-    local _status
-    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=/srv/dev-home')"
-    _write_config 'home=~/boxes/dev' 'link=~/.aws'
-    run "${_status}"
+@test "#199: link= entries are reported under the recorded box HOME, not a manifest home=" {
+    _write_config 'home=/srv/dev-home' 'home.source=user' 'link=~/.aws'
+    run "${STATUS}"
     assert_success
     assert_line "link: /srv/dev-home/.ssh -> ${HOME}/.ssh (missing source)"
     assert_line "link: /srv/dev-home/.aws -> ${HOME}/.aws (missing source)"
-    refute_output --partial "boxes/dev"
 }
 
 # --- #161 (2): a corrupt state file is refused ------------------------------

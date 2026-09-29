@@ -5,9 +5,9 @@
 # (auto-enter, terminal, tmux, box), each with its source (default | user),
 # whether the worktool managed block is present in each managed file (the
 # ghostty config and ~/.tmux.conf), since issue #175 whether the distrobox
-# those blocks name can still be run, and since issue #199 the state of
-# each user-config link into the box HOME (lib/link.sh). Read-only: it
-# never writes.
+# those blocks name can still be run, since issue #199 the state of each
+# user-config link into the box HOME (lib/link.sh), and since issue #198
+# the box HOME `just box assemble` recorded. Read-only: it never writes.
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -45,8 +45,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
-# shellcheck source=manifest.sh
-source "${LIB_DIR}/manifest.sh"
+# shellcheck source=home.sh
+source "${LIB_DIR}/home.sh"
 # shellcheck source=link.sh
 source "${LIB_DIR}/link.sh"
 
@@ -58,10 +58,10 @@ Usage: status.sh
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
-~/.tmux.conf, whether the distrobox those blocks name can still be run, and
-the state of each user-config link into the box HOME named by the box
-manifest's `home=` (linked | missing source | blocked by existing file | not
-linked yet), or that the box shares the host HOME. Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
+~/.tmux.conf, whether the distrobox those blocks name can still be run, the
+state of each user-config link into the box HOME recorded by `just box
+assemble` (linked | missing source | blocked by existing file | not linked
+yet), and that box HOME. Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
@@ -98,7 +98,10 @@ _report_block() {
 # message as setup.sh): exit 1 upstream.
 _config_check() {
     local _problem
-    _problem="$(enter_config_check "$1")" && return 0
+    if _problem="$(enter_config_check "$1")" \
+        && _problem="$(home_config_check "$1")"; then
+        return 0
+    fi
     log_error "$1: ${_problem}"
     return 1
 }
@@ -119,29 +122,24 @@ _report() {
     _report_block tmux.conf "$(enter_tmux_conf)"
     _report_distrobox
     _report_links "${_config}"
+    _report_home "${_config}"
 }
 
 # `link: <box home>/<path> -> $HOME/<path> (<state>)` per user-config entry
-# (issue #199): the box HOME is the `home=` of the manifest of the box in
-# force (box/<box>.ini), each link's state as lib/link.sh reads it. Without
-# a `home=` the box shares the host HOME: one line says so.
+# (issue #199), each state as lib/link.sh reads it. The box HOME is the one
+# `just box assemble` recorded in state file $1 (issue #198, the same value
+# _report_home prints); none recorded, or the host HOME itself: one line
+# says so.
 _report_links() {
-    local _config="$1" _box _manifest _box_home _rel _state
-    _box="$(enter_config_get "${_config}" box)"
-    _box="${_box:-$(enter_default box)}"
-    _manifest="${REPO_ROOT}/box/${_box}.ini"
-    if [[ ! -f "${_manifest}" ]]; then
-        printf 'link: box %s: %s not found - box HOME unknown\n' "${_box}" "${_manifest}"
+    local _config="$1" _box_home _rel _state
+    _box_home="$(enter_config_get "${_config}" home)"
+    if [[ -z "${_box_home}" ]]; then
+        printf 'link: box HOME not recorded - user config not linked yet (run: just box assemble)\n'
         return 0
     fi
-    local _rc=0
-    _box_home="$(manifest_home "${_manifest}")" || _rc=$?
-    if [[ "${_rc}" -eq 2 ]]; then
-        printf 'link: box %s: home= in %s is not a safe absolute path - box HOME unknown\n' "${_box}" "${_manifest}"
-        return 0
-    fi
-    if [[ "${_rc}" -ne 0 || "${_box_home}" == "${HOME}" ]]; then
-        printf 'link: box %s shares the host HOME (no home= in %s) - user config already in place\n' "${_box}" "${_manifest}"
+    _box_home="$(home_normalize "${_box_home}")"
+    if [[ "${_box_home}" == "$(home_normalize "${HOME}")" ]]; then
+        printf 'link: the box HOME is the host HOME - user config already in place\n'
         return 0
     fi
     while IFS= read -r _rel; do
@@ -153,6 +151,18 @@ _report_links() {
         esac
         printf 'link: %s/%s -> %s/%s (%s)\n' "${_box_home}" "${_rel}" "${HOME}" "${_rel}" "${_state}"
     done < <(link_entries "${_config}")
+}
+
+# `home: <path> (<source>)` - the box HOME `just box assemble` recorded in
+# state file $1 (issue #198), or that none is recorded yet.
+_report_home() {
+    local _home
+    _home="$(enter_config_get "$1" home)"
+    if [[ -z "${_home}" ]]; then
+        printf 'home: not recorded (run: just box assemble)\n'
+        return 0
+    fi
+    printf 'home: %s (%s)\n' "${_home}" "$(enter_config_get "$1" home.source)"
 }
 
 # `distrobox: <path> (<state>)` - the readable answer to "will the managed

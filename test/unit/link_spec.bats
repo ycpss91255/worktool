@@ -18,8 +18,8 @@
 #     symlink) is never overwritten: [WARN] and skip.
 #   - A missing host source is skipped (no dangling link is made).
 #   - Every entry is logged on stderr; stdout stays empty.
-#   - The box HOME is given by the caller (assemble.sh reads it from the
-#     manifest's `home=`, lib/manifest.sh manifest_home); nothing is linked
+#   - The box HOME is given by the caller (assemble.sh passes the one it
+#     resolved and recorded, lib/home.sh); nothing is linked
 #     outside it: the box HOME itself, or a parent directory in it, that is
 #     a symlink (or not a directory) blocks the entry - [WARN] and skip.
 #   - Every path derives from HOME / XDG_CONFIG_HOME: a throwaway HOME per

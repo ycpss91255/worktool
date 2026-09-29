@@ -13,6 +13,15 @@
 #   second assemble is idempotent (exit 0, still exactly one `dev`), and
 #   `distrobox rm -f dev` removes the box.
 #
+#   M3 (issue #198) gives the box its own HOME: the first assemble passes
+#   `--home BOX_HOME`, and a case asserts that `$HOME` INSIDE the real box
+#   is exactly that path (and DISTROBOX_HOST_HOME the runner's HOME). The
+#   second assemble, without --home, reuses the recorded user choice; a
+#   third one with a DIFFERENT --home is refused with exit 1 and leaves the
+#   box and its HOME as they were. Issue #199: that first assemble also
+#   links the host user config (~/.ssh, ~/.gitconfig) into BOX_HOME, and a
+#   case reads it back at `$HOME` INSIDE the box.
+#
 #   M3 (issue #160) adds tmux and fish to the manifest: `just box setup`
 #   points the terminal at `distrobox enter dev -- tmux new -A -s main` and
 #   #5 requires "open a terminal, get the box's fish", so both must exist
@@ -39,6 +48,15 @@
 #   message, so the gate is proven to bite on a real box - a green positive
 #   case can never be a no-op threshold. The runtime decision (docker +
 #   default runc stays; CI measured ~88 ms) is recorded in issue #22.
+#
+#   Issue #181 puts a quiet-host precondition in front of the gate: bench.sh
+#   first waits for CPU pressure (PSI) `some avg10 <= 2.00` held for 5 s
+#   (120 s at most on CI, where test.sh passes CI into the runner) and a
+#   host that stays busy, or turns busy mid-run, is exit 3 (inconclusive).
+#   Both cases here require their own verdict (0 / 1), so a 3 is red too:
+#   CI never skips the gate because the runner is busy. Both cases also
+#   require the precondition's evidence line (the PSI path, its value and
+#   loadavg, or the warning that no PSI is readable) in the TAP stream.
 #
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
@@ -105,6 +123,10 @@ setup() {
     # per-test BATS_TEST_TMPDIR that bats removes after each case.
     export HOME="${BATS_FILE_TMPDIR}/home"
     mkdir -p "${HOME}"
+    # Issue #198: the box's own HOME, requested with --home. Per-FILE for
+    # the same reason as HOME, and deliberately NOT the default
+    # ~/dev-box, so the case proves the requested path is the one used.
+    BOX_HOME="${BATS_FILE_TMPDIR}/box-home"
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
 
@@ -186,11 +208,19 @@ _diag() {
 # --- (b) real assemble: the box is created by the real engine ----------------
 
 @test "real engine: assemble.sh with the delivered box/dev.ini creates the dev box from ubuntu:26.04" {
+    # Issue #199: host user config for assemble to link into the box HOME
+    # (read back inside the box by the #199 case below).
+    mkdir -p "${HOME}/.ssh"
+    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
+    printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
     cd "${REPO_ROOT}"
-    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" </dev/null
+    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_output --partial "Distrobox 'dev' successfully created."
+    assert_line "[INFO] box home: ${BOX_HOME} (user)"
+    assert_line "[INFO] link: ${BOX_HOME}/.ssh -> ${HOME}/.ssh"
+    assert_line "[INFO] link: ${BOX_HOME}/.gitconfig -> ${HOME}/.gitconfig"
 
     # Exactly one container named dev now exists in the nested daemon ...
     run _count_named dev
@@ -256,51 +286,44 @@ _log_lines() {
     _log_lines fish "${lines[@]}"
 }
 
-# Issue #199 (ADR 0002 decisions 1 and 3): a box with its OWN HOME - the
-# manifest's `home=`, which distrobox-assemble hands to `distrobox create
-# --home` - gets the user config linked into that HOME by assemble.sh, and
-# the tools inside the box find it where they look: at `$HOME/.ssh` and
-# `$HOME/.gitconfig` of the box, not by a host path. Self-contained: the
-# case writes the host user config, assembles its own `linkbox` from a
-# throwaway manifest (git in additional_packages, so `git config --global`
-# really reads the linked ~/.gitconfig), reads it back inside the box and
-# removes the box. The delivered dev box gets its home= in #198.
-@test "real engine (#199): a box with its own HOME (manifest home=) finds the linked user config at \$HOME inside the box" {
-    local _box=linkbox _home="${HOME}/linkbox-home" _m="${BATS_TEST_TMPDIR}/linkbox.ini"
-    mkdir -p "${HOME}/.ssh"
-    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
-    printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
-    printf '[%s]\nimage=ubuntu:26.04\nadditional_packages="git"\nhome=%s\n' \
-        "${_box}" "${_home}" >"${_m}"
-    cd "${REPO_ROOT}"
-    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --file "${_m}" </dev/null
+# --- (c2) the box's own HOME (issue #198) -------------------------------------
+
+@test "real engine (#198): \$HOME inside the box is the path assemble --home asked for" {
+    # printenv prints the two values in the order asked, one per line.
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
+        printenv HOME DISTROBOX_HOST_HOME </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_line "[INFO] link: ${_home}/.ssh -> ${HOME}/.ssh"
-    assert_line "[INFO] link: ${_home}/.gitconfig -> ${HOME}/.gitconfig"
-    # The probe runs INSIDE the box, so $HOME is the box's own HOME there
-    # (quoted heredoc: nothing expands on the host side). It leaves the
-    # repo directory first: a worktree's .git file points at a host path
-    # git cannot resolve inside the box.
-    local _probe="${HOME}/linkbox-probe.sh" _probe_status _probe_output
+    assert_equal "${lines[0]}" "${BOX_HOME}"
+    assert_equal "${lines[1]}" "${HOME}"
+    _log_lines box-home "${lines[@]}"
+    # distrobox created the directory on the host side, and recorded it.
+    assert [ -d "${BOX_HOME}" ]
+    run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
+    assert_success
+}
+
+# Issue #199 (ADR 0002 decision 3): the dev box has its own HOME (BOX_HOME,
+# #198), so assemble.sh linked the host user config into it - the first
+# assemble case writes that config before it runs. The tools inside the
+# box find it where they look: at `$HOME/.ssh` and `$HOME/.gitconfig` of
+# the box, not by a host path.
+@test "real engine (#199): the user config linked into the box HOME is found at \$HOME inside the box" {
+    # The links sit in the box HOME on the host side ...
+    assert_equal "$(readlink "${BOX_HOME}/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(readlink "${BOX_HOME}/.gitconfig")" "${HOME}/.gitconfig"
+    # ... and resolve INSIDE the box, where $HOME is the box's own HOME
+    # (quoted heredoc: nothing expands on the host side).
+    local _probe="${HOME}/link-probe.sh"
     cat >"${_probe}" <<'PROBE'
-cd / || exit 1
 printf 'home=%s\n' "$HOME"
 printf 'ssh=%s\n' "$(cat "$HOME/.ssh/worktool-link-probe")"
-printf 'git=%s\n' "$(git config --global user.name)"
+printf 'git=%s\n' "$(sed -n 's/^[[:space:]]*name = //p' "$HOME/.gitconfig")"
 PROBE
-    run timeout "${FIRST_ENTER_TIMEOUT}" distrobox enter "${_box}" -- sh "${_probe}" </dev/null
-    _probe_status="${status}" _probe_output="${output}"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh "${_probe}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
-    # Remove the box before judging, so a red probe cannot leave it running
-    # under the latency gate that follows.
-    run timeout "${RM_TIMEOUT}" distrobox rm -f "${_box}" </dev/null
     assert_success
-    run _count_named "${_box}"
-    assert_output "0"
-    assert_equal "${_probe_status}" 0
-    run printf '%s\n' "${_probe_output}"
-    assert_line "home=${_home}"
+    assert_line "home=${BOX_HOME}"
     assert_line "ssh=worktool-link-probe"
     assert_line "git=worktool-link-probe"
     _log_lines link "${lines[@]}"
@@ -319,6 +342,13 @@ _assert_metric_lines() {
     assert_line --regexp "^enter: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
     assert_line --regexp "^shell: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
     assert_line --regexp "^inbox: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
+}
+
+# Assert that the last `run` printed the quiet-host evidence (issue #181):
+# the PSI file read, its value and loadavg - or the warning that no PSI
+# file is readable and the run went unguarded.
+_assert_quiet_host_evidence() {
+    assert_line --regexp '^\[INFO\] host quiet: /.+ some avg10=[0-9.]+ <= 2\.00 for 5s; loadavg=.+$|^\[WARN\] no CPU pressure \(PSI\) readable .* measuring anyway; loadavg=.+$'
 }
 
 # The shell metric is measured on the box's fish (issue #160): `fish -c
@@ -352,6 +382,7 @@ _assert_fish_timed() {
     _assert_metric_lines
     # Both the shell metric and the in-box timer really ran fish.
     _assert_fish_timed 2 5
+    _assert_quiet_host_evidence
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
     _log_lines bench "${lines[@]}"
@@ -368,6 +399,7 @@ _assert_fish_timed() {
     assert_failure 1
     _assert_metric_lines
     _assert_fish_timed 0 1
+    _assert_quiet_host_evidence
     assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
     refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
     _log_lines bench-gate "${lines[@]}"
@@ -700,6 +732,9 @@ _desktop_path() {
     # box is left alone, nothing is re-created.
     assert_output --partial "dev already exists"
     refute_output --partial "successfully created"
+    # Issue #198: no --home given, so the recorded user choice is reused -
+    # the same HOME the box has, hence no refusal.
+    assert_line "[INFO] box home: ${BOX_HOME} (user)"
     run _count_named dev
     assert_output "1"
     # And it is still the same usable box.
@@ -707,6 +742,24 @@ _desktop_path() {
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+}
+
+@test "real engine (#198): assemble with a DIFFERENT --home is refused (exit 1) and the box keeps its HOME" {
+    cd "${REPO_ROOT}"
+    local _other="${BATS_FILE_TMPDIR}/other-home"
+    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${_other}" </dev/null
+    assert_failure 1
+    assert_line --partial "[ERROR] box 'dev' already exists with HOME ${BOX_HOME}"
+    assert_line "[ERROR]   distrobox rm dev"
+    refute_output --partial "Creating dev"
+    assert [ ! -e "${_other}" ]
+    run _count_named dev
+    assert_output "1"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- printenv HOME </dev/null
+    assert_success
+    assert_output "${BOX_HOME}"
+    run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
+    assert_success
 }
 
 # --- (g) teardown: distrobox rm removes the box ------------------------------

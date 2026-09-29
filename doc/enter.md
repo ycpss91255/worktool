@@ -54,7 +54,7 @@ exit 2。
 
 | 檔案 | 內容 |
 |------|------|
-| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`) |
+| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」),setup 重寫時原樣保留 |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<distrobox>' enter <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
 | `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<distrobox>" enter <盒>'` |
 
@@ -301,9 +301,18 @@ box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
 tmux.conf: /home/me/.tmux.conf (managed block: absent)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (linked)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (linked)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (linked)
+home: /home/me/dev-box (default)
 ```
 
-最後一行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
+`home:` 是 `just box assemble` 記下的盒子 HOME 與來源(issue #198);還沒 assemble
+過時是 `home: not recorded (run: just box assemble)`。記錄的值不是絕對路徑時,和其他
+壞掉的值一樣以 `[ERROR] <設定檔>: invalid value ...` 拒絕、exit 1。
+
+`distrobox:` 那行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
 之後被移走 / 移除 / 升級掉時,這裡會直接講清楚,而不是讓你開窗看到一閃而過的
 `not found`:
 
@@ -317,7 +326,7 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 第二行是**舊版**留下來的形狀:現在的 setup 不會再寫裸名字(解析不到就拒絕),
 但使用者機器上可能還有先前寫入的區塊,所以報告仍然認得並指出它。
 
-報告最後是 user config 連結(issue #199,由 `just box assemble` 建立,見
+`home:` 前面是 user config 連結(issue #199,由 `just box assemble` 建立,見
 [`manifest.md`](manifest.md)「user config 連結」),每一項一行,四種狀態:
 
 ```text
@@ -327,21 +336,18 @@ link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (missing source)
 link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (not linked yet; run: just box assemble)
 ```
 
-盒子 HOME 是 `box` 決策那個盒子的清單(`box/<盒名>.ini`)裡的 `home=`
-(見 [`manifest.md`](manifest.md)「user config 連結」)。清單沒有 `home=` 時盒子
-與 host 共用 HOME,不需要連結,這部分只有一行:
+盒子 HOME 就是 `home:` 那行的值,也就是 `just box assemble` 記下的那一個(#198),
+連結報告與 `home:` 讀的是設定檔裡同一個 `home=`。還沒記錄時連結只有一行;記錄的
+盒子 HOME 就是 host HOME(`--home ~`)時兩邊共用 HOME、不需要連結,也只有一行:
 
 ```text
-link: box dev shares the host HOME (no home= in /path/to/worktool/box/dev.ini) - user config already in place
+link: box HOME not recorded - user config not linked yet (run: just box assemble)
+link: the box HOME is the host HOME - user config already in place
 ```
-
-清單不存在時是 `link: box <盒名>: <清單> not found - box HOME unknown`;`home=`
-無法解析成安全絕對路徑時是 `link: box <盒名>: home= in <清單> is not a safe
-absolute path - box HOME unknown`。
 
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
-後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態與 `distrobox:` 那行,
+後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態、`distrobox:`、`link:` 與 `home:` 那三行,
 報告永遠不會是空的。
 
 ## 測試對應
@@ -376,7 +382,7 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、
   建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 / 外來 symlink 不覆蓋且
   warn、盒子 HOME 本身或上層目錄是 symlink 或檔案時不跟隨、來源不存在不建連結、每項都有 log、
-  重跑冪等(盒子 HOME 的 `home=` 解析在 `test/unit/manifest_spec.bats`);
+  重跑冪等(盒子 HOME 由 #198 解析並記錄,見 `lib/home.sh`);
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
   拒絕。四個都是 `test.sh` 的**必要 spec**。
