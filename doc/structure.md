@@ -29,13 +29,14 @@ worktool/
 │   │   ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊(distrobox 寫已 quote 的絕對路徑;見 enter.md)
 │   │   └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
 │   └── verify/          驗收清單的可執行形式(just verify ...);doc/acceptance.md 只留判準與預期輸出,不留 shell 邏輯
-│       ├── justfile.verify      `verify` 命名空間:薄轉發到 ui.sh / gate.sh / setup.sh / diagram.sh / realbox.sh / evidence.sh
+│       ├── justfile.verify      `verify` 命名空間:薄轉發到 ui.sh / gate.sh / setup.sh / diagram.sh / realbox.sh / evidence.sh / all.sh
 │       ├── ui.sh                M3 1.1:box 命名空間的使用者介面(六個動詞、四支腳本的 usage)
 │       ├── gate.sh              M3 2.1-2.4:六層 gate、TDD 證據、開窗->進盒鏈的 CI 證據,以及驗收程式自己的負向
 │       ├── setup.sh             M3 3.1-3.9:進盒設定與 status,每項自建並清掉拋棄式 HOME
 │       ├── diagram.sh           M3 4.1:doc/diagram/ 三張 drawio.svg 與 README 引用
 │       ├── realbox.sh           M3 5.1-5.3:實機項目,需 --allow-real-box;同名盒存在就拒絕、只刪自己建的
-│       └── evidence.sh          M3 6.1-6.3:以 gh 查外部 CI 與流程證據
+│       ├── evidence.sh          M3 6.1-6.3:以 gh 查外部 CI 與流程證據
+│       └── all.sh               依序跑全部非實機組(ui gate setup diagram evidence),遇第一個失敗即停,每組一行摘要加一行總判決(#182)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
@@ -146,14 +147,15 @@ worktool/
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
-| `just verify` | 列出 verify 的動詞(`just --justfile script/verify/justfile.verify --list`) |
+| `just verify` | 列出 verify 的動詞(`just --justfile script/verify/justfile.verify --list`),並明說只列出、尚未驗證任何項目(rc=0 不是通過),指向 `just verify all` |
+| `just verify all [args]` | `./script/verify/all.sh [args]`(`--list`、`--help`):依序跑 ui、gate、setup、diagram、evidence,遇第一個失敗即停、回非 0;realbox 需實機,不在內 |
 | `just verify ui [args]` | `./script/verify/ui.sh [args]`(`ITEM`、`--list`、`--help`) |
 | `just verify gate [args]` | `./script/verify/gate.sh [args]`(`ITEM`、`--list`、`--help`) |
 | `just verify setup [args]` | `./script/verify/setup.sh [args]`(`ITEM`、`--list`、`--help`) |
 | `just verify diagram [args]` | `./script/verify/diagram.sh [args]`(`ITEM`、`--root <repo>`、`--help`) |
 | `just verify realbox [args]` | `./script/verify/realbox.sh [args]`(需 `--allow-real-box`;`ITEM`、`--repo`、`--issue`、`--box`、`--image`、`--help`) |
 | `just verify evidence [args]` | `./script/verify/evidence.sh [args]`(`ITEM`、`--list`、`--help`) |
-| `just verify help` / `just verify h` | 依序 `./script/verify/ui.sh --help`、`gate.sh --help`、`setup.sh --help`、`diagram.sh --help`、`realbox.sh --help`、`evidence.sh --help` |
+| `just verify help` / `just verify h` | 依序 `./script/verify/ui.sh --help`、`gate.sh --help`、`setup.sh --help`、`diagram.sh --help`、`realbox.sh --help`、`evidence.sh --help`、`all.sh --help` |
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
