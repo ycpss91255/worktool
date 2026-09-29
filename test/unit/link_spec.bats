@@ -18,8 +18,10 @@
 #     symlink) is never overwritten: [WARN] and skip.
 #   - A missing host source is skipped (no dangling link is made).
 #   - Every entry is logged on stderr; stdout stays empty.
-#   - The box HOME is the state file's `home=` value (leading `~/`
-#     expanded), else ~/<box>-box - the default #198 records.
+#   - The box HOME is given by the caller (assemble.sh reads it from the
+#     manifest's `home=`, lib/manifest.sh manifest_home); nothing is linked
+#     outside it: a parent directory in the box HOME that is a symlink (or
+#     not a directory) blocks the entry - [WARN] and skip.
 #   - Every path derives from HOME / XDG_CONFIG_HOME: a throwaway HOME per
 #     case, the real home is never touched.
 
@@ -55,10 +57,27 @@ _write_config() {
     printf '%s\n' "$@" >"${CONFIG}"
 }
 
-# A fingerprint of every host source: path, type and content.
+# A fingerprint of every host source: path and type of each entry, then the
+# content hash of each regular file. Any failure (find, stat, sha256sum)
+# fails the fingerprint - a hash that could not be taken must never compare
+# equal. (No `find -printf`: the test image's busybox find lacks it.)
 _host_fingerprint() {
-    (cd "${HOME}" && find .ssh .gitconfig .gnupg .config/gh -printf '%p %y\n' \
-        -exec sh -c '[ -f "$1" ] && sha256sum "$1" || true' _ {} \; | sort)
+    (
+        set -o pipefail
+        cd "${HOME}" || exit 1
+        { find .ssh .gitconfig .gnupg .config/gh -exec stat -c '%n %F' -- {} + | sort; } \
+            && { find .ssh .gitconfig .gnupg .config/gh -type f -exec sha256sum -- {} + | sort; }
+    )
+}
+
+@test "the host fingerprint fails when a hash cannot be taken" {
+    _make_sources
+    local _stub="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "${_stub}"
+    printf '#!/bin/sh\nexit 1\n' >"${_stub}/sha256sum"
+    chmod +x "${_stub}/sha256sum"
+    PATH="${_stub}:${PATH}" run _host_fingerprint
+    assert_failure
 }
 
 @test "this spec is a required unit spec of test.sh" {
@@ -92,25 +111,6 @@ _host_fingerprint() {
     [[ "${stderr:-}" == *".config/../../x"* ]] || fail "no warning for .config/../../x: ${stderr}"
 }
 
-# --- the box HOME ----------------------------------------------------------------
-
-@test "the box HOME defaults to ~/<box>-box" {
-    run link_box_home dev "${CONFIG}"
-    assert_success
-    assert_output "${HOME}/dev-box"
-    run link_box_home work "${CONFIG}"
-    assert_output "${HOME}/work-box"
-}
-
-@test "the box HOME is the state file's home= value, leading ~/ expanded" {
-    _write_config 'home=~/boxes/dev'
-    run link_box_home dev "${CONFIG}"
-    assert_output "${HOME}/boxes/dev"
-    _write_config 'home=/srv/dev-home'
-    run link_box_home dev "${CONFIG}"
-    assert_output "/srv/dev-home"
-}
-
 # --- applying the links ---------------------------------------------------------
 
 @test "the default list is linked into the box HOME as absolute symlinks" {
@@ -129,6 +129,8 @@ _host_fingerprint() {
     _make_sources
     local _before
     _before="$(_host_fingerprint)"
+    [[ "${_before}" == *".ssh/id_test regular file"* ]] || fail "fingerprint has no content: ${_before}"
+    [[ "${_before}" =~ [0-9a-f]{64}\ +\.gitconfig ]] || fail "fingerprint has no hash: ${_before}"
     run link_apply "${BOX_HOME}" "${CONFIG}"
     assert_success
     assert_equal "$(_host_fingerprint)" "${_before}"
@@ -215,6 +217,31 @@ _host_fingerprint() {
     assert_equal "$(readlink "${BOX_HOME}/.ssh")" "${HOME}/.ssh"
     [[ "${stderr:-}" == *"already linked"* ]] || fail "${stderr:-}"
     [[ "${stderr:-}" != *"[WARN]"* ]] || fail "our own link was reported as blocked: ${stderr}"
+}
+
+@test "a symlinked parent in the box HOME is never followed: warn and skip, nothing written outside" {
+    _make_sources
+    local _outside="${BATS_TEST_TMPDIR}/outside"
+    mkdir -p "${BOX_HOME}" "${_outside}"
+    ln -s "${_outside}" "${BOX_HOME}/.config"
+    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    assert_success
+    [[ ! -e "${_outside}/gh" && ! -L "${_outside}/gh" ]] || fail "linked through the parent symlink into ${_outside}"
+    assert_equal "$(readlink "${BOX_HOME}/.config")" "${_outside}"
+    [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME}/.config"* ]] || fail "no warning: ${stderr}"
+    [[ -L "${BOX_HOME}/.ssh" ]] || fail "the other entries were not linked"
+    run link_state .config/gh "${BOX_HOME}"
+    assert_output "blocked"
+}
+
+@test "a parent in the box HOME that is a file blocks the entry: warn and skip" {
+    _make_sources
+    mkdir -p "${BOX_HOME}"
+    printf 'not a dir\n' >"${BOX_HOME}/.config"
+    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    assert_success
+    assert_equal "$(cat "${BOX_HOME}/.config")" "not a dir"
+    [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME}/.config"* ]] || fail "no warning: ${stderr}"
 }
 
 # --- states (read by `just box status`) ----------------------------------------

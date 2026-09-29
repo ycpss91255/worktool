@@ -108,12 +108,6 @@ setup() {
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
 
-    # Issue #199: a host user-config file for assemble.sh to link into the
-    # box HOME (~/dev-box). Written before every case (idempotent) so it is
-    # already there when the first assemble runs.
-    mkdir -p "${HOME}/.ssh"
-    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
-
     # The ghostty cases (section (e), issue #172) write their config under
     # this HOME and read it back through a real ghostty, so the managed
     # block travels the same XDG path a user's would. The delivered
@@ -262,25 +256,54 @@ _log_lines() {
     _log_lines fish "${lines[@]}"
 }
 
-# Issue #199: assemble.sh linked ~/.ssh into the box HOME (~/dev-box) on
-# the host side, as an ABSOLUTE symlink. Inside the box the host HOME is
-# mounted at the same path, so the link resolves there and the user config
-# is readable through it. (The box is created with --home ~/dev-box by
-# #198; until then the box's own $HOME is the shared one, so the link is
-# read by its absolute path - the same path it has after #198.)
-@test "real engine (#199): the user config linked into the box HOME is readable inside the box" {
+# Issue #199 (ADR 0002 decisions 1 and 3): a box with its OWN HOME - the
+# manifest's `home=`, which distrobox-assemble hands to `distrobox create
+# --home` - gets the user config linked into that HOME by assemble.sh, and
+# the tools inside the box find it where they look: at `$HOME/.ssh` and
+# `$HOME/.gitconfig` of the box, not by a host path. Self-contained: the
+# case writes the host user config, assembles its own `linkbox` from a
+# throwaway manifest (git in additional_packages, so `git config --global`
+# really reads the linked ~/.gitconfig), reads it back inside the box and
+# removes the box. The delivered dev box gets its home= in #198.
+@test "real engine (#199): a box with its own HOME (manifest home=) finds the linked user config at \$HOME inside the box" {
+    local _box=linkbox _home="${HOME}/linkbox-home" _m="${BATS_TEST_TMPDIR}/linkbox.ini"
+    mkdir -p "${HOME}/.ssh"
+    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
+    printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
+    printf '[%s]\nimage=ubuntu:26.04\nadditional_packages="git"\nhome=%s\n' \
+        "${_box}" "${_home}" >"${_m}"
     cd "${REPO_ROOT}"
-    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
-        readlink "${HOME}/dev-box/.ssh" </dev/null
+    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --file "${_m}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_output "${HOME}/.ssh"
-    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
-        cat "${HOME}/dev-box/.ssh/worktool-link-probe" </dev/null
+    assert_line "[INFO] link: ${_home}/.ssh -> ${HOME}/.ssh"
+    assert_line "[INFO] link: ${_home}/.gitconfig -> ${HOME}/.gitconfig"
+    # The probe runs INSIDE the box, so $HOME is the box's own HOME there
+    # (quoted heredoc: nothing expands on the host side). It leaves the
+    # repo directory first: a worktree's .git file points at a host path
+    # git cannot resolve inside the box.
+    local _probe="${HOME}/linkbox-probe.sh" _probe_status _probe_output
+    cat >"${_probe}" <<'PROBE'
+cd / || exit 1
+printf 'home=%s\n' "$HOME"
+printf 'ssh=%s\n' "$(cat "$HOME/.ssh/worktool-link-probe")"
+printf 'git=%s\n' "$(git config --global user.name)"
+PROBE
+    run timeout "${FIRST_ENTER_TIMEOUT}" distrobox enter "${_box}" -- sh "${_probe}" </dev/null
+    _probe_status="${status}" _probe_output="${output}"
     [[ "${status}" -eq 0 ]] || _diag
+    # Remove the box before judging, so a red probe cannot leave it running
+    # under the latency gate that follows.
+    run timeout "${RM_TIMEOUT}" distrobox rm -f "${_box}" </dev/null
     assert_success
-    assert_output "worktool-link-probe"
-    _log_lines link "${HOME}/dev-box/.ssh -> ${HOME}/.ssh read inside the box: ${output}"
+    run _count_named "${_box}"
+    assert_output "0"
+    assert_equal "${_probe_status}" 0
+    run printf '%s\n' "${_probe_output}"
+    assert_line "home=${_home}"
+    assert_line "ssh=worktool-link-probe"
+    assert_line "git=worktool-link-probe"
+    _log_lines link "${lines[@]}"
 }
 
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------

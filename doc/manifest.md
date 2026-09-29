@@ -100,7 +100,8 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
    清單時。從 repo 根目錄執行預設清單時仍是 `box/dev.ini`;從其他目錄則是絕對的
    `${REPO_ROOT}/box/dev.ini`。
 2. **驗證清單**(`lib/manifest.sh` 的 `manifest_validate`):清單檔存在、有盒子
-   名稱、只有單一區段、且該區段內有非空的 `image=`(詳見上面「驗證規則」);任一
+   名稱、只有單一區段、且該區段內有非空的 `image=`(詳見上面「驗證規則」);有
+   `home=` 時它必須解析得出安全的絕對路徑(見下方「user config 連結」);任一
    不符即以清楚的 `[ERROR]` 訊息快速失敗(fail fast)。驗證失敗時**完全不會**呼叫
    distrobox。
 3. **組出 distrobox 呼叫**:`distrobox assemble create --file <解析後的清單>`。
@@ -135,13 +136,25 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
   以外的路徑、含 `..` 的路徑會 `[WARN]` 並略過。
 - 盒子 HOME 已有同名項目(檔案、目錄、別的 symlink,含失效的 symlink)→
   **不覆蓋**,`[WARN]` 並略過。host 上沒有的來源 → 略過,不建失效連結。
+- **只寫在盒子 HOME 之內**:某一項的上層目錄在盒子 HOME 裡是 symlink(例如
+  `.config -> /elsewhere`)或不是目錄 → 不跟隨,`[WARN]` 並略過該項,不會經由
+  它把連結建到盒子 HOME 外面。
 - 每一項都印 log(stderr):`[INFO] link: <盒子 HOME>/.ssh -> $HOME/.ssh`、
   `(already linked)`、`not found on the host - skipped` 或上述 `[WARN]`。
   有連結建不起來時 exit 1。
-- 盒子 HOME:設定檔的 `home=`(開頭 `~/` 會展開),沒有就是 `~/<盒名>-box`
-  (盒名取自清單區段,dev 盒 = `~/dev-box`)。建盒時帶 `--home` 由 #198 實作;
-  在那之前盒子仍是共用 HOME,連結照樣建在 `~/dev-box`,#198 上線後即成為盒內的
-  `~/.ssh` 等。
+- 盒子 HOME 就是**清單區段裡的 `home=`**:這是 distrobox-assemble 原生的鍵,
+  建盒時交給 `distrobox create --home`([ADR 0002](adr/0002-box-owns-its-home.md)
+  決策 1),所以連結建在盒內 `$HOME` 實際指向的目錄,盒內的 git、gh、ssh 在
+  `$HOME/.ssh`、`$HOME/.gitconfig` 就找得到。值照上游 shell 的解讀:未加引號時
+  開頭的 `~`、`$HOME`、`${HOME}` 展開成 HOME;加一對引號則照字面。解析後不是
+  絕對路徑、仍含 `$`、`~` 或反引號、或含 `.`/`..` 路徑段的值,worktool 無法確定
+  distrobox 會用哪個目錄,驗證時就拒絕(`[ERROR] manifest home value is not a safe
+  absolute path ...`,exit 1,不呼叫 distrobox)。
+- 清單**沒有 `home=`** 時盒子與 host 共用 HOME,user config 本來就在盒內的
+  `$HOME`,所以**不建任何連結**,只印一行
+  `[INFO] link: box dev shares the host HOME (no home= in <清單>) - user config already in place`。
+  目前交付的 `box/dev.ini` 還沒有 `home=`;預設 `~/dev-box` 與
+  `just box assemble --home` 由 #198 加上,之後 dev 盒即走上面的連結流程。
 - 專案目錄不連結:盒內以絕對路徑就讀得到。
 - 每一項的狀態由 `just box status` 報告(見 [`enter.md`](enter.md))。
 

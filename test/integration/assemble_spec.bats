@@ -100,45 +100,70 @@ setup() {
 }
 
 # --- issue #199: user config is linked into the box HOME after create -------
+# The box HOME is the manifest's `home=` (ADR 0002 decision 1). The
+# delivered box/dev.ini has none yet (#198 adds it), so the dev box shares
+# the host HOME: nothing is linked and the log says why.
 
-@test "#199: after a successful create the user config is linked into ~/<box>-box and logged" {
+# A manifest for box `work` whose HOME is ~/work-home. Prints its path.
+_home_manifest() {
+    local _m="${BATS_TEST_TMPDIR}/work.ini"
+    printf '[work]\nimage=ubuntu:26.04\nhome=~/work-home\n' >"${_m}"
+    printf '%s\n' "${_m}"
+}
+
+@test "#199: a box that shares the host HOME gets no links, and the log says so" {
     cd "${REPO_ROOT}"
     run "${ASSEMBLE}"
     assert_success
-    assert_equal "$(readlink "${HOME}/dev-box/.ssh")" "${HOME}/.ssh"
-    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "fake-private-key"
-    assert_line "[INFO] link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh"
-    # The box name comes from the manifest section.
-    local _other="${BATS_TEST_TMPDIR}/work.ini"
-    printf '[work]\nimage=ubuntu:26.04\n' >"${_other}"
-    run "${ASSEMBLE}" --file "${_other}"
+    [[ ! -e "${HOME}/dev-box" ]] || fail "a box HOME was created for a box that has none"
+    assert_output --partial "[INFO] link: box dev shares the host HOME (no home= in box/dev.ini) - user config already in place"
+}
+
+@test "#199: after a successful create the user config is linked into the manifest's home= and logged" {
+    local _m
+    _m="$(_home_manifest)"
+    run "${ASSEMBLE}" --file "${_m}"
     assert_success
-    assert_equal "$(readlink "${HOME}/work-box/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(readlink "${HOME}/work-home/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(cat "${HOME}/work-home/.ssh/id_test")" "fake-private-key"
+    assert_line "[INFO] link: ${HOME}/work-home/.ssh -> ${HOME}/.ssh"
 }
 
 @test "#199: an existing entry in the box HOME survives assemble with a warning" {
-    mkdir -p "${HOME}/dev-box/.ssh"
-    printf 'box-own\n' >"${HOME}/dev-box/.ssh/id_test"
-    cd "${REPO_ROOT}"
-    run "${ASSEMBLE}"
+    local _m
+    _m="$(_home_manifest)"
+    mkdir -p "${HOME}/work-home/.ssh"
+    printf 'box-own\n' >"${HOME}/work-home/.ssh/id_test"
+    run "${ASSEMBLE}" --file "${_m}"
     assert_success
-    [[ ! -L "${HOME}/dev-box/.ssh" ]] || fail "the existing .ssh was replaced"
-    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "box-own"
+    [[ ! -L "${HOME}/work-home/.ssh" ]] || fail "the existing .ssh was replaced"
+    assert_equal "$(cat "${HOME}/work-home/.ssh/id_test")" "box-own"
     assert_equal "$(cat "${HOME}/.ssh/id_test")" "fake-private-key"
     assert_output --partial "[WARN]"
 }
 
 @test "#199: a failed create links nothing" {
+    local _m
+    _m="$(_home_manifest)"
     printf '#!/usr/bin/env bash\nexit 1\n' >"${MOCKBIN}/distrobox"
-    cd "${REPO_ROOT}"
-    run "${ASSEMBLE}"
+    run "${ASSEMBLE}" --file "${_m}"
     assert_failure 1
-    [[ ! -e "${HOME}/dev-box" ]] || fail "the box HOME was touched after a failed create"
+    [[ ! -e "${HOME}/work-home" ]] || fail "the box HOME was touched after a failed create"
 }
 
 @test "#199: dry-run links nothing" {
-    cd "${REPO_ROOT}"
-    run "${ASSEMBLE}" --dry-run
+    local _m
+    _m="$(_home_manifest)"
+    run "${ASSEMBLE}" --dry-run --file "${_m}"
     assert_success
-    [[ ! -e "${HOME}/dev-box" ]] || fail "dry-run touched the box HOME"
+    [[ ! -e "${HOME}/work-home" ]] || fail "dry-run touched the box HOME"
+}
+
+@test "#199: a home= that cannot be resolved is refused before distrobox runs" {
+    local _m="${BATS_TEST_TMPDIR}/bad.ini"
+    printf '[work]\nimage=ubuntu:26.04\nhome=relative/dir\n' >"${_m}"
+    run "${ASSEMBLE}" --file "${_m}"
+    assert_failure 1
+    assert_output --partial "relative/dir"
+    assert [ ! -f "${RECORD}" ]
 }

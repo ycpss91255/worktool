@@ -45,6 +45,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
+# shellcheck source=manifest.sh
+source "${LIB_DIR}/manifest.sh"
 # shellcheck source=link.sh
 source "${LIB_DIR}/link.sh"
 
@@ -57,8 +59,9 @@ Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
 ~/.tmux.conf, whether the distrobox those blocks name can still be run, and
-the state of each user-config link into the box HOME (linked | missing source
-| blocked by existing file | not linked yet). Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
+the state of each user-config link into the box HOME named by the box
+manifest's `home=` (linked | missing source | blocked by existing file | not
+linked yet), or that the box shares the host HOME. Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
@@ -119,12 +122,28 @@ _report() {
 }
 
 # `link: <box home>/<path> -> $HOME/<path> (<state>)` per user-config entry
-# (issue #199): the box HOME of the box in force (the `box` decision), and
-# each link's state as lib/link.sh reads it.
+# (issue #199): the box HOME is the `home=` of the manifest of the box in
+# force (box/<box>.ini), each link's state as lib/link.sh reads it. Without
+# a `home=` the box shares the host HOME: one line says so.
 _report_links() {
-    local _config="$1" _box _box_home _rel _state
+    local _config="$1" _box _manifest _box_home _rel _state
     _box="$(enter_config_get "${_config}" box)"
-    _box_home="$(link_box_home "${_box:-$(enter_default box)}" "${_config}")"
+    _box="${_box:-$(enter_default box)}"
+    _manifest="${REPO_ROOT}/box/${_box}.ini"
+    if [[ ! -f "${_manifest}" ]]; then
+        printf 'link: box %s: %s not found - box HOME unknown\n' "${_box}" "${_manifest}"
+        return 0
+    fi
+    local _rc=0
+    _box_home="$(manifest_home "${_manifest}")" || _rc=$?
+    if [[ "${_rc}" -eq 2 ]]; then
+        printf 'link: box %s: home= in %s is not a safe absolute path - box HOME unknown\n' "${_box}" "${_manifest}"
+        return 0
+    fi
+    if [[ "${_rc}" -ne 0 || "${_box_home}" == "${HOME}" ]]; then
+        printf 'link: box %s shares the host HOME (no home= in %s) - user config already in place\n' "${_box}" "${_manifest}"
+        return 0
+    fi
     while IFS= read -r _rel; do
         case "$(link_state "${_rel}" "${_box_home}")" in
             linked)         _state="linked" ;;

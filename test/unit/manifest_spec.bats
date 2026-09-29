@@ -10,6 +10,8 @@
 #   - manifest_image <file>  -> prints the first `image=` value (one matched
 #                               outer pair of quotes stripped); returns 2 on
 #                               an unbalanced outer quote
+#   - manifest_home  <file>  -> the box HOME from the section's `home=` (issue
+#                               #199): 1 when none, 2 when unresolvable
 #   - manifest_validate <file>:
 #       * returns 0 for a manifest that has a section name AND a non-empty image
 #       * returns non-zero with a clear stderr message when the file is
@@ -319,4 +321,65 @@ setup() {
     run manifest_validate "${TMP}/multi.ini"
     assert_failure
     assert_output --partial "multiple sections"
+}
+
+# --- manifest_home (issue #199, ADR 0002 decision 1) ---------------------------
+# The box HOME is the manifest's own `home=` key (distrobox-assemble's native
+# key, passed to `distrobox create --home`). No `home=` means the box shares
+# the host HOME. The value is resolved the way the shell distrobox-assemble
+# sources it would: an unquoted leading `~`, `$HOME` or `${HOME}` expands;
+# anything worktool cannot predict is refused (return 2) instead of guessed.
+
+@test "manifest_home: no home= line returns 1 (the box shares the host HOME)" {
+    printf '[dev]\nimage=ubuntu:26.04\n' >"${TMP}/nohome.ini"
+    run manifest_home "${TMP}/nohome.ini"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "manifest_home: an absolute home= is printed as-is" {
+    printf '[dev]\nimage=ubuntu:26.04\nhome=/srv/dev-home\n' >"${TMP}/abs.ini"
+    run manifest_home "${TMP}/abs.ini"
+    assert_success
+    assert_output "/srv/dev-home"
+    printf '[dev]\nimage=ubuntu:26.04\nhome="/srv/dev home"\n' >"${TMP}/q.ini"
+    run manifest_home "${TMP}/q.ini"
+    assert_success
+    assert_output "/srv/dev home"
+}
+
+@test "manifest_home: an unquoted leading ~, \$HOME or \${HOME} expands to HOME" {
+    local _v _t='~'
+    for _v in "${_t}/dev-box" "\$HOME/dev-box" "\${HOME}/dev-box"; do
+        printf '[dev]\nimage=ubuntu:26.04\nhome=%s\n' "${_v}" >"${TMP}/tilde.ini"
+        run manifest_home "${TMP}/tilde.ini"
+        assert_success
+        assert_output "${HOME}/dev-box"
+    done
+}
+
+@test "manifest_home: home= outside the box section is not the box's" {
+    printf 'home=/srv/pre\n[dev]\nimage=ubuntu:26.04\n' >"${TMP}/pre.ini"
+    run manifest_home "${TMP}/pre.ini"
+    assert_failure 1
+}
+
+@test "manifest_home: a value worktool cannot resolve safely returns 2" {
+    local _v
+    for _v in 'relative/dir' '.' '/srv/../etc' '"~/dev-box"' "/srv/\$USER" '' '"/srv'; do
+        printf '[dev]\nimage=ubuntu:26.04\nhome=%s\n' "${_v}" >"${TMP}/bad.ini"
+        run manifest_home "${TMP}/bad.ini"
+        assert_failure 2
+    done
+}
+
+@test "manifest_validate rejects a home= it cannot resolve, before distrobox runs" {
+    printf '[dev]\nimage=ubuntu:26.04\nhome=relative/dir\n' >"${TMP}/bad.ini"
+    run manifest_validate "${TMP}/bad.ini"
+    assert_failure
+    assert_output --partial "home"
+    assert_output --partial "relative/dir"
+    printf '[dev]\nimage=ubuntu:26.04\nhome=~/dev-box\n' >"${TMP}/ok.ini"
+    run manifest_validate "${TMP}/ok.ini"
+    assert_success
 }

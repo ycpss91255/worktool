@@ -29,10 +29,16 @@
 #                                if the section has no `image=` line; returns
 #                                2 (printing the trimmed raw value) when the
 #                                value has an unbalanced outer quote
+#   manifest_home     <file>  -> prints the box HOME the section's `home=`
+#                                gives (issue #199, ADR 0002); returns 1 when
+#                                there is none (the box shares the host HOME)
+#                                and 2 for a value that cannot be resolved to
+#                                a safe absolute path (see manifest_home)
 #   manifest_validate <file>  -> 0 if the manifest has a name, exactly one
-#                                section, AND a non-empty, well-quoted image
-#                                inside that section; otherwise logs a clear
-#                                [ERROR] to stderr and returns 1
+#                                section, a non-empty, well-quoted image
+#                                inside that section, and no unresolvable
+#                                `home=`; otherwise logs a clear [ERROR] to
+#                                stderr and returns 1
 #
 # This is a library: it defines functions and must be sourced, not executed.
 # It sources lib/log.sh (same dir) so callers get consistent diagnostics.
@@ -127,6 +133,51 @@ _manifest_section_count() {
     printf '%s\n' "${_n}"
 }
 
+# Print the raw value (text after `<key>=`) of the first `<key>=` line of
+# manifest $1 for key $2 that belongs to the box's own (first) section. A
+# line before the first section header, or inside a later section, does
+# NOT belong to the box and is ignored. Returns 1 when there is none.
+_manifest_raw() {
+    # _state: pre  = before the first section header
+    #         in   = inside the box's (first) section
+    #         post = a later section has started
+    local _file="$1" _key="$2" _line _state="pre"
+    [[ -f "${_file}" ]] || return 1
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        _line="$(_manifest_ltrim "${_line}")"
+        case "${_line}" in
+            \#*|\;*) continue ;;
+            \[*\]*)
+                if [[ "${_state}" == "pre" ]]; then
+                    _state="in"
+                else
+                    _state="post"
+                fi
+                ;;
+            "${_key}="*)
+                [[ "${_state}" == "in" ]] || continue
+                printf '%s\n' "${_line#"${_key}="}"
+                return 0
+                ;;
+        esac
+    done <"${_file}"
+    return 1
+}
+
+# Expand an unquoted leading `~`, `$HOME` or `${HOME}` of value $1 to $HOME,
+# as the shell does for an unquoted assignment; anything else is printed
+# unchanged.
+_manifest_expand_home() {
+    local _v="$1" _p
+    for _p in '~' "\${HOME}" "\$HOME"; do
+        if [[ "${_v}" == "${_p}" || "${_v}" == "${_p}/"* ]]; then
+            printf '%s\n' "${HOME}${_v#"${_p}"}"
+            return 0
+        fi
+    done
+    printf '%s\n' "${_v}"
+}
+
 # --- Public: field extraction ------------------------------------------------
 
 # manifest_name <file>: print the trimmed inner name of the first `[name]`
@@ -163,31 +214,39 @@ manifest_name() {
 # Returns 2 - printing the trimmed raw value - when the value has an
 # unbalanced outer quote (see _manifest_image_value).
 manifest_image() {
-    # _state: pre  = before the first section header
-    #         in   = inside the box's (first) section
-    #         post = a later section has started
-    local _file="$1" _line _val _state="pre" _rc=0
-    [[ -f "${_file}" ]] || return 1
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        _line="$(_manifest_ltrim "${_line}")"
-        case "${_line}" in
-            \#*|\;*) continue ;;
-            \[*\]*)
-                if [[ "${_state}" == "pre" ]]; then
-                    _state="in"
-                else
-                    _state="post"
-                fi
-                ;;
-            image=*)
-                [[ "${_state}" == "in" ]] || continue
-                _val="$(_manifest_image_value "${_line#image=}")" || _rc=$?
-                printf '%s\n' "${_val}"
-                return "${_rc}"
-                ;;
-        esac
-    done <"${_file}"
-    return 1
+    local _raw _val _rc=0
+    _raw="$(_manifest_raw "$1" image)" || return 1
+    _val="$(_manifest_image_value "${_raw}")" || _rc=$?
+    printf '%s\n' "${_val}"
+    return "${_rc}"
+}
+
+# manifest_home <file>: print the box HOME the manifest's own `home=` key
+# gives (distrobox-assemble's native key, handed to `distrobox create
+# --home`; ADR 0002 decision 1), resolved the way the shell upstream sources
+# it would: a value in ONE matched pair of quotes is taken literally; an
+# unquoted leading `~`, `$HOME` or `${HOME}` expands to $HOME. Returns 1
+# (printing nothing) when the box section has no `home=` line - the box
+# then shares the host HOME. Returns 2 (printing the trimmed raw value) for
+# a value worktool cannot resolve safely: empty, an unbalanced quote,
+# relative, still holding `$`, `~` or a backquote, or a `.`/`..` component.
+manifest_home() {
+    local _raw _val
+    _raw="$(_manifest_raw "$1" home)" || return 1
+    _raw="$(_manifest_trim "${_raw}")"
+    if [[ "${_raw:0:1}" == [\"\'] || "${_raw: -1}" == [\"\'] ]]; then
+        _val="$(_manifest_unquote "${_raw}")" || { printf '%s\n' "${_raw}"; return 2; }
+    else
+        _val="$(_manifest_expand_home "${_raw}")"
+    fi
+    case "/${_val}/" in
+        *'$'*|*'`'*|*'~'*|*/../*|*/./*) _val="" ;;
+    esac
+    if [[ "${_val}" != /* ]]; then
+        printf '%s\n' "${_raw}"
+        return 2
+    fi
+    printf '%s\n' "${_val}"
 }
 
 # --- Public: validation ------------------------------------------------------
@@ -234,6 +293,17 @@ manifest_validate() {
     fi
     if [[ "${_rc}" -ne 0 || -z "${_image}" ]]; then
         log_error "manifest missing required key 'image' in section [${_name}]: ${_file}"
+        return 1
+    fi
+
+    # `home=` is optional (none: the box shares the host HOME), but one that
+    # cannot be resolved to a safe absolute path is refused here, before
+    # distrobox would create a box with an unpredictable HOME.
+    local _home
+    _rc=0
+    _home="$(manifest_home "${_file}")" || _rc=$?
+    if [[ "${_rc}" -eq 2 ]]; then
+        log_error "manifest home value is not a safe absolute path: '${_home}' (section [${_name}]; use /abs/path or ~/path): ${_file}"
         return 1
     fi
 

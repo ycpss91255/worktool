@@ -107,9 +107,8 @@ _write_config() {
     assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_line --index 8 "link: ${HOME}/work-box/.ssh -> ${HOME}/.ssh (missing source)"
-    assert_line --index 11 "link: ${HOME}/work-box/.config/gh -> ${HOME}/.config/gh (missing source)"
-    assert_equal "${#lines[@]}" 12
+    assert_line --index 8 "link: box work: ${REPO_ROOT}/box/work.ini not found - box HOME unknown"
+    assert_equal "${#lines[@]}" 9
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------
@@ -222,23 +221,49 @@ _write_block() {
 }
 
 # --- #199: the user-config links into the box HOME ---------------------------
+# The box HOME is the box manifest's `home=` (box/<box>.ini, ADR 0002
+# decision 1); without one the box shares the host HOME and there is
+# nothing to link.
 
-@test "#199: without a state file every default link is reported, in list order, under ~/dev-box" {
+# A copy of status.sh + lib/ with its own box/dev.ini holding the given
+# manifest lines, so the manifest's `home=` can vary per case. Prints the
+# copied status.sh.
+_status_with_manifest() {
+    local _root="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_root}/script/box" "${_root}/box"
+    cp "${STATUS}" "${_root}/script/box/status.sh"
+    cp -R "${REPO_ROOT}/lib" "${_root}/lib"
+    printf '%s\n' "$@" >"${_root}/box/dev.ini"
+    printf '%s\n' "${_root}/script/box/status.sh"
+}
+
+@test "#199: a manifest without home= reports the box shares the host HOME, one line" {
     run "${STATUS}"
+    assert_success
+    assert_line --index 8 "link: box dev shares the host HOME (no home= in ${REPO_ROOT}/box/dev.ini) - user config already in place"
+    assert_equal "${#lines[@]}" 9
+}
+
+@test "#199: with home= every default link is reported, in list order, under that box HOME" {
+    local _status
+    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=~/dev-box')"
+    run "${_status}"
     assert_success
     assert_line --index 8 "link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh (missing source)"
     assert_line --index 9 "link: ${HOME}/dev-box/.gitconfig -> ${HOME}/.gitconfig (missing source)"
     assert_line --index 10 "link: ${HOME}/dev-box/.gnupg -> ${HOME}/.gnupg (missing source)"
     assert_line --index 11 "link: ${HOME}/dev-box/.config/gh -> ${HOME}/.config/gh (missing source)"
+    assert_equal "${#lines[@]}" 12
 }
 
 @test "#199: each link state is reported: linked, blocked by existing file, not linked yet" {
-    local _box="${HOME}/dev-box"
+    local _status _box="${HOME}/dev-box"
+    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=~/dev-box')"
     mkdir -p "${HOME}/.ssh" "${HOME}/.gnupg" "${_box}"
     printf '[user]\n' >"${HOME}/.gitconfig"
     ln -s "${HOME}/.ssh" "${_box}/.ssh"
     printf 'box-own\n' >"${_box}/.gitconfig"
-    run "${STATUS}"
+    run "${_status}"
     assert_success
     assert_line "link: ${_box}/.ssh -> ${HOME}/.ssh (linked)"
     assert_line "link: ${_box}/.gitconfig -> ${HOME}/.gitconfig (blocked by existing file)"
@@ -249,12 +274,15 @@ _write_block() {
     assert_equal "$(cat "${_box}/.gitconfig")" "box-own"
 }
 
-@test "#199: link= entries and home= from the state file are reported" {
+@test "#199: link= entries are reported; a home= in the state file is not an interface" {
+    local _status
+    _status="$(_status_with_manifest '[dev]' 'image=ubuntu:26.04' 'home=/srv/dev-home')"
     _write_config 'home=~/boxes/dev' 'link=~/.aws'
-    run "${STATUS}"
+    run "${_status}"
     assert_success
-    assert_line "link: ${HOME}/boxes/dev/.ssh -> ${HOME}/.ssh (missing source)"
-    assert_line "link: ${HOME}/boxes/dev/.aws -> ${HOME}/.aws (missing source)"
+    assert_line "link: /srv/dev-home/.ssh -> ${HOME}/.ssh (missing source)"
+    assert_line "link: /srv/dev-home/.aws -> ${HOME}/.aws (missing source)"
+    refute_output --partial "boxes/dev"
 }
 
 # --- #161 (2): a corrupt state file is refused ------------------------------

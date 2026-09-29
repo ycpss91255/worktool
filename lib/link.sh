@@ -18,18 +18,21 @@
 #            `..` component is warned about and skipped.
 #
 # Rules: an existing entry in the box HOME (file, directory or a foreign
-# symlink, dangling or not) is NEVER overwritten - [WARN] and skip. A
+# symlink, dangling or not) is NEVER overwritten - [WARN] and skip. Nothing
+# is ever written outside the box HOME: a parent directory of an entry that
+# is a symlink (or not a directory) is never followed - [WARN] and skip. A
 # missing host source is skipped (no dangling link is made). Every entry is
 # logged on stderr (lib/log.sh); stdout carries data only.
 #
-# The box HOME is the state file's `home=` value (leading `~/` expanded),
-# else ~/<box>-box - the default issue #198 records there.
+# The box HOME is the caller's: script/box/assemble.sh takes it from the
+# manifest's `home=` (lib/manifest.sh manifest_home, ADR 0002 decision 1).
+# A box without one shares the host HOME, where the user config already is,
+# so there is nothing to link.
 #
 # Public API:
 #   link_defaults                  -> the default entries, one per line
 #   link_normalize <entry>         -> the HOME-relative path, or return 1
 #   link_entries <config>          -> defaults + `link=` entries, deduped
-#   link_box_home <box> <config>   -> the box HOME path
 #   link_state <rel> <box_home>    -> linked | missing-source | blocked | absent
 #   link_apply <box_home> <config> -> make the links; 1 when one could not be made
 #
@@ -80,29 +83,34 @@ link_entries() {
     done < <(link_defaults; _link_config_all "$1" link)
 }
 
-# The box HOME of box $1: `home=` from state file $2 (a leading `~/` is
-# expanded), else ~/<box>-box.
-link_box_home() {
-    local _home
-    _home="$(_link_config_all "$2" home)"
-    _home="${_home%%$'\n'*}"
-    if [[ -z "${_home}" ]]; then
-        printf '%s/%s-box\n' "${HOME}" "$1"
-    elif [[ "${_home}" == \~/* ]]; then
-        printf '%s/%s\n' "${HOME}" "${_home#\~/}"
-    else
-        printf '%s\n' "${_home}"
-    fi
+# Return 0, printing it, when a parent directory of entry $1 (HOME-relative)
+# inside box HOME $2 is a symlink or exists as something other than a
+# directory: following it could create the link outside the box HOME.
+_link_parent_unsafe() {
+    local _dir="$2" _part
+    local -a _parts
+    IFS=/ read -r -a _parts <<<"$1"
+    for _part in "${_parts[@]:0:${#_parts[@]}-1}"; do
+        _dir="${_dir}/${_part}"
+        if [[ -L "${_dir}" || (-e "${_dir}" && ! -d "${_dir}") ]]; then
+            printf '%s\n' "${_dir}"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # The state of entry $1 (HOME-relative) in box HOME $2:
 #   linked          <box home>/<rel> is our link and the source exists
 #   missing-source  the host source does not exist
-#   blocked         something else already sits at <box home>/<rel>
+#   blocked         something else already sits at <box home>/<rel>, or a
+#                   parent of it there is a symlink or not a directory
 #   absent          not linked yet, the source exists
 link_state() {
     local _src="${HOME}/$1" _dst="$2/$1"
-    if [[ -L "${_dst}" && "$(readlink -- "${_dst}")" == "${_src}" ]]; then
+    if _link_parent_unsafe "$1" "$2" >/dev/null; then
+        printf 'blocked\n'
+    elif [[ -L "${_dst}" && "$(readlink -- "${_dst}")" == "${_src}" ]]; then
         [[ -e "${_src}" ]] && { printf 'linked\n'; return 0; }
         printf 'missing-source\n'
     elif [[ -e "${_dst}" || -L "${_dst}" ]]; then
@@ -117,14 +125,18 @@ link_state() {
 # Link one entry $1 into box HOME $2, logging what happened. Returns 1 only
 # when a link that should be made could not be.
 _link_one() {
-    local _rel="$1" _src="${HOME}/$1" _dst="$2/$1"
+    local _rel="$1" _src="${HOME}/$1" _dst="$2/$1" _parent
     case "$(link_state "${_rel}" "$2")" in
         linked)
             log_info "link: ${_dst} -> ${_src} (already linked)" ;;
         missing-source)
             log_info "link: ${_src} not found on the host - skipped" ;;
         blocked)
-            log_warn "link: ${_dst} already exists and is not a link to ${_src} - left as is (skipped)" ;;
+            if _parent="$(_link_parent_unsafe "${_rel}" "$2")"; then
+                log_warn "link: ${_parent} (parent of ${_dst}) is a symlink or not a directory - not followed (skipped)"
+            else
+                log_warn "link: ${_dst} already exists and is not a link to ${_src} - left as is (skipped)"
+            fi ;;
         absent)
             if ! mkdir -p -- "$(dirname -- "${_dst}")" \
                 || ! ln -s -- "${_src}" "${_dst}"; then

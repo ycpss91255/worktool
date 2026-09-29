@@ -327,7 +327,17 @@ link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (missing source)
 link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (not linked yet; run: just box assemble)
 ```
 
-盒子 HOME 取 `box` 決策的盒名(`~/<盒名>-box`,設定檔有 `home=` 時用它)。
+盒子 HOME 是 `box` 決策那個盒子的清單(`box/<盒名>.ini`)裡的 `home=`
+(見 [`manifest.md`](manifest.md)「user config 連結」)。清單沒有 `home=` 時盒子
+與 host 共用 HOME,不需要連結,這部分只有一行:
+
+```text
+link: box dev shares the host HOME (no home= in /path/to/worktool/box/dev.ini) - user config already in place
+```
+
+清單不存在時是 `link: box <盒名>: <清單> not found - box HOME unknown`;`home=`
+無法解析成安全絕對路徑時是 `link: box <盒名>: home= in <清單> is not a safe
+absolute path - box HOME unknown`。
 
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
@@ -363,9 +373,10 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   `--help` / 未知選項,以及 `distrobox:` 那行的四種狀態(runnable / NOT
   RUNNABLE / 裸名字 / PATH 上找不到)與三種記錄形狀的解碼(單引號、tmux 雙層
   引用、以及舊版沒有 quote 的絕對路徑),以及 user config 連結的四種狀態(#199);
-  `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、盒子
-  HOME 的預設與 `home=`、建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 /
-  外來 symlink 不覆蓋且 warn、來源不存在不建連結、每項都有 log、重跑冪等;
+  `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、
+  建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 / 外來 symlink 不覆蓋且
+  warn、上層目錄是 symlink 或檔案時不跟隨、來源不存在不建連結、每項都有 log、
+  重跑冪等(盒子 HOME 的 `home=` 解析在 `test/unit/manifest_spec.bats`);
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
   拒絕。四個都是 `test.sh` 的**必要 spec**。

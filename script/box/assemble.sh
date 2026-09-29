@@ -8,8 +8,10 @@
 # invoking distrobox, which manages the container itself, and - after a
 # successful create, never in dry-run - symlinking the user config
 # (~/.ssh, ~/.gitconfig, ~/.gnupg, ~/.config/gh, plus `link=` lines of the
-# state file) into the box HOME (lib/link.sh, issue #199). Nothing is
-# copied, no host file is modified, an existing entry is never overwritten.
+# state file) into the box HOME the manifest's `home=` names (lib/link.sh,
+# issue #199). A box without `home=` shares the host HOME: nothing to link.
+# Nothing is copied, no host file is modified, an existing entry is never
+# overwritten.
 #
 # The backing script of `just box assemble` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -66,8 +68,9 @@ Usage: assemble.sh [--file <manifest>] [--dry-run]
 Assemble the worktool dev box from its manifest with
 `distrobox assemble create --file <manifest>`. After a successful create,
 symlink the user config (~/.ssh ~/.gitconfig ~/.gnupg ~/.config/gh, plus
-`link=<path>` lines of ~/.config/worktool/config) into the box HOME
-(`home=` there, default ~/<box>-box); an existing entry is never overwritten.
+`link=<path>` lines of ~/.config/worktool/config) into the box HOME, the
+manifest's `home=`; an existing entry is never overwritten. A box without
+`home=` shares the host HOME and needs no links.
 
   --file <manifest>  Box manifest to assemble (default: box/dev.ini).
   --dry-run          Print the distrobox command without executing it
@@ -172,16 +175,19 @@ _assemble_exec() {
     _assemble_link "${_resolved}"
 }
 
-# Link the user config into the box HOME of the box manifest $1 names
-# (issue #199, lib/link.sh): only after a successful create, never in
-# dry-run. The box HOME is the state file's `home=` or ~/<box>-box.
+# Link the user config into the box HOME of manifest $1 (issue #199,
+# lib/link.sh): only after a successful create, never in dry-run. The box
+# HOME is the manifest's `home=` (validated already); without one the box
+# shares the host HOME, where the user config already is.
 _assemble_link() {
-    local _config _box _box_home
-    _config="$(enter_config_path)"
+    local _box _box_home
     _box="$(manifest_name "$1")"
-    _box_home="$(link_box_home "${_box}" "${_config}")"
+    if ! _box_home="$(manifest_home "$1")" || [[ "${_box_home}" == "${HOME}" ]]; then
+        log_info "link: box ${_box} shares the host HOME (no home= in $1) - user config already in place"
+        return 0
+    fi
     log_info "linking user config into the box HOME ${_box_home}"
-    link_apply "${_box_home}" "${_config}"
+    link_apply "${_box_home}" "$(enter_config_path)"
 }
 
 # Guard: only run when executed directly, not when sourced (keeps the file
