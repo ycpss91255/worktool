@@ -2,6 +2,7 @@
 
 - 狀態：已採納（2026-09-29）
 - 討論：#200（不變量定案）、#203（本 ADR）
+- 索引：`doc/contract.md` 尚未建立，其不變量索引連到本 ADR 的連結由 #201 回填。
 
 ## 一句話
 
@@ -38,6 +39,9 @@ worktool 的核心承諾是「驅動裝好之後，一個指令建好 worktool �
 待補：
 
 - **沒有任何檢查擋住第二份盒子定義。** 目前沒有測試確認 `box/` 底下只有一份清單，或腳本裡沒有另寫套件與映像。
-- **盒名 `dev` 目前另有一份。** `lib/enter.sh` 的 `enter_default box` 直接寫死 `dev`（`just box setup --box` 的預設值由此而來），不是從 `box/dev.ini` 讀出；沒有測試確認兩者一致。
+- **盒名 `dev` 目前另有多份。** 下列檔案直接寫死 `dev`，不是從 `box/dev.ini` 讀出；沒有測試確認它們與 `box/dev.ini` 一致：
+  - `lib/enter.sh` 的 `enter_default box`（`just box setup --box` 的預設值由此而來）。
+  - `script/box/bench.sh` 的 `OPT_BOX="dev"`（`just box bench --box` 的預設值），`--help` 也寫著 `default: dev`。
+  - `script/test/system-real-entry.sh` 的 `BOX_NAME="dev"`：real-engine 系統測試清理時要刪的盒名。
 - **文件內的抄本沒有檢查。** `doc/manifest.md` 引用了 `box/dev.ini` 的內容（例如 `additional_packages="ripgrep fzf tmux fish"`），`README.md` 寫了映像 `ubuntu:26.04`；`box/dev.ini` 改了，這些文字不會跟著變，也沒有測試發現。
 - **tool config 的部分整條待補。** repo 內還沒有任何 tool config（排在 M5），也就沒有機制或測試守住「只有一份」。
