@@ -341,7 +341,7 @@ _hook_heredoc_to_shell() {
 # _hook_herestring <body> <quoted> - the heredoc body as a single-quoted
 # here-string word (`<<<'...'`). Unquoted delimiter (<quoted> empty): the
 # outer shell expands the body, so each unescaped $ and ` is prefixed with
-# \002 (marked as an expansion by the quoting pass in any quoting) and the
+# \006 (marked as an expansion by the quoting pass in any quoting) and the
 # escapes \$ \` \\ are resolved the way the outer shell resolves them.
 _hook_herestring() {
     local _b="$1" _q="'" _sq="'\\''"
@@ -349,8 +349,8 @@ _hook_herestring() {
         _b="${_b//\\\\/$'\004'}"
         _b="${_b//\\\$/$'\003'}"
         _b="${_b//\\\`/$'\005'}"
-        _b="${_b//\$/$'\002'\$}"
-        _b="${_b//\`/$'\002'\`}"
+        _b="${_b//\$/$'\006'\$}"
+        _b="${_b//\`/$'\006'\`}"
         _b="${_b//$'\003'/\$}"
         _b="${_b//$'\005'/\`}"
         _b="${_b//$'\004'/\\}"
@@ -638,9 +638,9 @@ _hook_emit() {
     _lead="$(hook_timeout_lead "$1")"
     if _script="$(_hook_inner_script "$(_hook_strip_wrappers "${1#"${_lead}"}")")"; then
         # An expansion of this shell is unknown to the script it builds:
-        # carry it in as \002, which the quoting pass marks again.
-        _script="${_script//$'\001'v/$'\002'}"
-        _script="${_script//$'\001'[su]/$'\002'_}"
+        # carry it in as \006, which the quoting pass marks again.
+        _script="${_script//$'\001'v/$'\006'}"
+        _script="${_script//$'\001'[su]/$'\006'_}"
         while IFS= read -r _line; do
             printf '%s%s\n' "${_lead}" "${_line}"
         done < <(hook_subcommands "$(_hook_decode "${_script}")")

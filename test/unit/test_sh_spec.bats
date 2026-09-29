@@ -201,6 +201,16 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
 }
 
+# issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
+# CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
+# it. `-e CI` without a value passes the host's CI through only when set.
+@test "test.sh --system-real passes CI through to the DinD runner (-e CI)" {
+    CI=true run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker run --rm --privileged -e CI .* \./script/test/system-real-entry\.sh$'
+}
+
 @test "test.sh --build builds the test image and runs no gate" {
     unset TEST_IMAGE_PREBUILT
     run "${TEST_SH}" --build
@@ -217,4 +227,12 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+}
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${TEST_SH}"
+    assert_success
+    assert_output 'set -euo pipefail'
 }

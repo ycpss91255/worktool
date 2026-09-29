@@ -31,7 +31,7 @@ set positional-arguments
 default:
     @just --justfile '{{source_file()}}' --list
 
-# Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+# Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
 assemble *args:
     ./script/box/assemble.sh "$@"
 

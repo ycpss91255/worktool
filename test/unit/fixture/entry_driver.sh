@@ -14,11 +14,23 @@
 #   dead  the same, then killed, so the pid is gone (daemon died early)
 #   none  DOCKERD_PID stays empty, as when the trap fires before
 #         _start_dockerd
-# then sets the pending exit status to <pending-rc> (what `_cleanup` reads
-# from `$?`) and calls <function> with any remaining [arg...]. Exit status
-# is the function's.
+# then calls <function> with any remaining [arg...]. Exit status is the
+# function's. `_cleanup` is the entry's EXIT trap, so it is driven as one:
+# installed with `trap`, then `exit <pending-rc>` - it reads the pending
+# status from `$?` exactly as it does in the entry. <pending-rc> is only
+# meaningful for `_cleanup`.
+#
+# Two optional knobs, applied after the stand-in is in place:
+#   DRIVER_STOP_TIMEOUT=<s>      overrides DOCKERD_STOP_TIMEOUT (default 20)
+#                                so the SIGKILL escalation is reached fast
+#   DRIVER_REFUSE_SIGNALS=<...>  space-separated signal names (TERM KILL)
+#                                that `kill` refuses (returns 1), as when
+#                                the daemon exited between probe and signal
+#
+# Sourcing the entry turns on its `set -euo pipefail` here too, so every
+# expected non-zero below is handled explicitly.
 
-set -uo pipefail
+set -euo pipefail
 
 entry="$1"
 pidfile="$2"
@@ -36,9 +48,26 @@ if [[ "${stand_in}" != "none" ]]; then
     printf '%s\n' "${DOCKERD_PID}" >"${pidfile}"
     if [[ "${stand_in}" == "dead" ]]; then
         kill -KILL "${DOCKERD_PID}"
-        wait "${DOCKERD_PID}" 2>/dev/null
+        # A SIGKILLed child reports 128 + 9: expected, anything else is not.
+        wait "${DOCKERD_PID}" 2>/dev/null || [[ $? -eq 137 ]]
     fi
 fi
 
-(exit "${pending_rc}")
+if [[ -n "${DRIVER_STOP_TIMEOUT:-}" ]]; then
+    DOCKERD_STOP_TIMEOUT="${DRIVER_STOP_TIMEOUT}"
+fi
+if [[ -n "${DRIVER_REFUSE_SIGNALS:-}" ]]; then
+    kill() {
+        local _sig
+        for _sig in ${DRIVER_REFUSE_SIGNALS}; do
+            [[ "$1" != "-${_sig}" ]] || return 1
+        done
+        builtin kill "$@"
+    }
+fi
+
+if [[ "${fn}" == "_cleanup" ]]; then
+    trap _cleanup EXIT
+    exit "${pending_rc}"
+fi
 "${fn}" "$@"

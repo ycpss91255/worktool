@@ -21,7 +21,7 @@
 #     outside single quotes; a lone $ is literal) and, unquoted, a glob
 #     (* ?, [ with a closing ] in the same word) or a brace expansion ({ with
 #     a , or .. and a closing } in the same word)
-#   - a \002 (an expansion of an outer shell, carried into a bash -c /
+#   - a \006 (an expansion of an outer shell, carried into a bash -c /
 #     eval script by subcommand.sh) becomes \001v in any quoting
 BEGIN {
     RS = "\001"; SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
@@ -53,7 +53,7 @@ function pop() {
     n = length($0); q = ""; buf = ""; extra = ""; sd = 0; par = 0
     for (i = 1; i <= n; i++) {
         c = substr($0, i, 1); nx = substr($0, i + 1, 1)
-        if (c == "\002") { buf = buf ESC "v"; continue }
+        if (c == "\006") { buf = buf ESC "v"; continue }
         if (q == SQ) { if (c == SQ) q = ""; else buf = buf enc(c); continue }
         if (c == "\\" && i < n) {
             i++; c = substr($0, i, 1)

@@ -145,6 +145,18 @@ _block_count() {
     assert [ ! -e "${TMUX_CONF}" ]
 }
 
+@test "#198: setup keeps the box home lines assemble recorded in the state file" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux.source=user\nhome=/srv/my box\nhome.source=user\n' >"${CONFIG}"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    run cat "${CONFIG}"
+    assert_line "tmux=host"
+    assert_line "home=/srv/my box"
+    assert_line "home.source=user"
+    assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
+}
+
 @test "terminal none with auto-enter yes says no terminal profile is managed and names the manual command" {
     run "${SETUP}"
     assert_success
@@ -890,4 +902,36 @@ _assert_control_char_refused() {
     assert_success
     assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
     assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
+}
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "setup.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${SETUP}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# lib/enter.sh enter_block_count, which _block_write reads. `grep -c` exits
+# 1 on "no match" (expected: the count is 0) and 2 on a real error, which
+# must reach the caller instead of being swallowed (codex round 1 on PR
+# #214). A `grep` stand-in first on PATH produces the error.
+@test "enter_block_count prints 0 and succeeds under errexit when no block is present" {
+    printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/cfg"
+    run bash -c 'set -euo pipefail; source "$1/enter.sh"; enter_block_count "$2"; printf "reached\n"' \
+        _ "${LIB_DIR}" "${BATS_TEST_TMPDIR}/cfg"
+    assert_success
+    assert_line --index 0 "0"
+    assert_line --index 1 "reached"
+}
+
+@test "enter_block_count returns grep's error status instead of a count" {
+    local _bin="${BATS_TEST_TMPDIR}/grepbin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 2\n' >"${_bin}/grep"
+    chmod +x "${_bin}/grep"
+    printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/cfg"
+    run bash -c 'source "$1/enter.sh"; PATH="$3:${PATH}"; enter_block_count "$2"' \
+        _ "${LIB_DIR}" "${BATS_TEST_TMPDIR}/cfg" "${_bin}"
+    assert_failure 2
 }
