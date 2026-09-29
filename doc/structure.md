@@ -268,8 +268,8 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 失敗。上述每個 job 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
-的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。全綠才視為
-milestone gate 通過,交由人類審核合併。
+的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
+全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
 tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
