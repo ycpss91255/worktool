@@ -31,11 +31,21 @@
 #       stdin: one record per line, `<sha>\t<author name>\t<author email>
 #       \t<committer name>\t<committer email>` (the last newline may be
 #       missing).
-#       -> exit 0 = every commit passes, 1 = at least one fails; stdout
-#       lists every offending commit and the fix command.
+#       -> exit 0 = every commit passes, 1 = at least one fails. Every
+#       line it prints is a diagnostic (each offending commit, the counts,
+#       the fix command, the success summary), so it all goes to stderr
+#       through lib/log.sh; stdout stays empty.
 #
 # This is a library: it defines functions and must be sourced, not
 # executed. It sets no shell options and prints nothing at source time.
+# It sources lib/log.sh (same dir) so callers get consistent diagnostics.
+
+# --- Dependencies ------------------------------------------------------------
+# `source=` below resolves against this file's own dir (lib/).
+# shellcheck source-path=SCRIPTDIR
+_COMMIT_EMAIL_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./log.sh
+source "${_COMMIT_EMAIL_LIB_DIR}/log.sh"
 
 commit_email_log_format() {
     printf '%s\n' '%H%x09%an%x09%ae%x09%cn%x09%ce'
@@ -73,15 +83,13 @@ commit_email_range() {
     esac
 }
 
-# Print the fix instructions for offending commits.
+# Print the fix instructions for offending commits (stderr).
 _commit_email_fix() {
-    printf '%s\n' \
-        '' \
-        'Fix: set the noreply address, rewrite the PR branch, push it again:' \
-        '  git config user.email "<id>+<login>@users.noreply.github.com"' \
-        "  git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main" \
-        '  git push --force-with-lease' \
-        'A single last commit: git commit --amend --no-edit --reset-author'
+    log_info 'Fix: set the noreply address, rewrite the PR branch, push it again:'
+    log_info '  git config user.email "<id>+<login>@users.noreply.github.com"'
+    log_info "  git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main"
+    log_info '  git push --force-with-lease'
+    log_info 'A single last commit: git commit --amend --no-edit --reset-author'
 }
 
 commit_email_evaluate() {
@@ -90,16 +98,14 @@ commit_email_evaluate() {
         _n=$((_n + 1))
         if ! commit_email_commit_ok "${_ae}" "${_ce}"; then
             _bad=$((_bad + 1))
-            printf '%s author %s <%s> committer %s <%s>\n' \
-                "${_sha}" "${_an}" "${_ae}" "${_cn}" "${_ce}"
+            log_error "${_sha} author ${_an} <${_ae}> committer ${_cn} <${_ce}>"
         fi
         _sha=''
     done
     if ((_bad > 0)); then
-        printf '%s of %s commits need a @users.noreply.github.com author and committer email.\n' \
-            "${_bad}" "${_n}"
+        log_error "${_bad} of ${_n} commits need a @users.noreply.github.com author and committer email."
         _commit_email_fix
         return 1
     fi
-    printf '%s commits checked: author and committer email ok.\n' "${_n}"
+    log_info "${_n} commits checked: author and committer email ok."
 }

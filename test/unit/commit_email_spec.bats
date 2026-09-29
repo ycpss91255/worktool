@@ -17,6 +17,8 @@
 #     (`<sha>\t<author name>\t<author email>\t<committer name>\t
 #     <committer email>`), lists every offending commit with sha, author
 #     and emails plus the fix command, and exits 1; all clean exits 0;
+#     every line it prints is a diagnostic, so all of it goes to stderr
+#     and stdout stays empty (stdout is kept for data);
 #   - commit_email_range picks the commit range from the event data;
 #   - the record format fed through a real `git log` round-trips, and a
 #     forged old committer date or a forged noreply@github.com committer
@@ -25,6 +27,8 @@
 #     at source time.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+
+bats_require_minimum_version 1.5.0
 
 setup() {
     # shellcheck source=../../lib/commit_email.sh
@@ -190,6 +194,37 @@ _log_evaluate() {
     assert_output --partial 'users.noreply.github.com'
     assert_output --partial 'git commit --amend --no-edit --reset-author'
     assert_output --partial 'git push --force-with-lease'
+}
+
+# Run commit_email_evaluate keeping only its stderr (stdout is dropped), so
+# `run` captures what the job log shows as diagnostics.
+_evaluate_stderr_only() {
+    { commit_email_evaluate >/dev/null; } 2>&1
+}
+
+@test "evaluate: a failure writes nothing to stdout" {
+    run --separate-stderr commit_email_evaluate < <(_rec aaa1 "${NR}" "${NR}"; _rec bbb2 "${PLAIN}" "${NR}")
+    assert_failure 1
+    assert_output ''
+}
+
+@test "evaluate: a failure writes every diagnostic to stderr" {
+    run _evaluate_stderr_only < <(_rec aaa1 "${NR}" "${NR}"; _rec bbb2 "${PLAIN}" "${NR}")
+    assert_failure 1
+    assert_output --partial 'bbb2'
+    assert_output --partial "${PLAIN}"
+    assert_output --partial '1 of 2 commits'
+    assert_output --partial 'git commit --amend --no-edit --reset-author'
+    assert_output --partial 'git push --force-with-lease'
+}
+
+@test "evaluate: a pass writes nothing to stdout and its summary to stderr" {
+    run --separate-stderr commit_email_evaluate < <(_rec aaa1 "${NR}" "${NR}")
+    assert_success
+    assert_output ''
+    run _evaluate_stderr_only < <(_rec aaa1 "${NR}" "${NR}")
+    assert_success
+    assert_output --partial '1 commits checked'
 }
 
 @test "evaluate: the last record may lack its newline" {
