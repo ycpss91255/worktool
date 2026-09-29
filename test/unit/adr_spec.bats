@@ -24,6 +24,10 @@
 #   name every writer of a user file (setup.sh AND assemble.sh through
 #   home_record), and doc/contract.md, once #201 creates it, must link
 #   invariant 1 to this ADR. RED against the round-0 ADR, GREEN after.
+#   Codex round 2 on PR #253: the contract link is checked fail-closed
+#   (no contract = failure), and the ADR must state that worktool owns its
+#   state keys in ~/.config/worktool/config (the file has no managed block)
+#   and mark the user lines setup.sh drops from it as a gap (待補).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -44,6 +48,11 @@ _adr4_citations() {
     _adr4_guard_section \
         | grep -oE "${_q}test/[^${_q}]+\\.bats${_q}:「[^」]+」" \
         | sed -E "s/^${_q}([^${_q}]+)${_q}:「(.*)」\$/\\1\\t\\2/"
+}
+
+# Entry 1 of the invariant index (section 6) of doc/contract.md.
+_contract_invariant_1() {
+    sed -n '/^## 6\./,$p' "${REPO_ROOT}/doc/contract.md" | grep -E '^1\. '
 }
 
 # Decision item $1 (the "N. ..." line under "## 決策") of ADR 0002.
@@ -143,16 +152,31 @@ _adr4_definition() {
     assert_output --regexp "test/[a-z]+/assemble_spec\.bats"
 }
 
-@test "doc/contract.md, once it exists, links invariant 1 to this ADR's path" {
-    # The index links this exact path, so the ADR file must keep it.
+@test "doc/contract.md invariant index entry 1 links this ADR (issue #202 backfill)" {
+    # Codex round 2 on PR #253: the backfill is part of #202, so the check
+    # is fail-closed - a missing contract is a failure, not a pass.
     assert [ -f "${REPO_ROOT}/doc/adr/0004-invariant-user-content.md" ]
-    # Until #201 creates the contract there is nothing to link from (no
-    # skip: a skipped case is not green); from then on the link must be there.
-    local _contract="${REPO_ROOT}/doc/contract.md"
-    if [[ -f "${_contract}" ]]; then
-        run grep -F "adr/0004-invariant-user-content.md" "${_contract}"
-        assert_success
-    fi
+    assert [ -f "${REPO_ROOT}/doc/contract.md" ]
+    run _contract_invariant_1
+    assert_success
+    assert_output --partial "](adr/0004-invariant-user-content.md)"
+    assert_output --partial "#202"
+    refute_output --partial "待寫"
+}
+
+@test "ADR 0004 states the state-file key ownership exception and lists the dropped user lines as 待補" {
+    # Codex round 2 on PR #253: setup.sh and home_record replace state keys
+    # in ~/.config/worktool/config, which has no managed block.
+    run sed -n '/^## 性質/,/^## /p' "${ADR_0004}"
+    assert_success
+    assert_output --partial "狀態鍵"
+    assert_output --partial "\`~/.config/worktool/config\`"
+    assert_output --partial "\`home.source\`"
+    run _adr4_guard_section
+    assert_success
+    refute_output --partial "沒有刻意改動受管區塊以外既有內容的路徑"
+    refute_output --partial "保留它不管的行"
+    assert_output --regexp "狀態檔裡使用者自己加的行.*待補"
 }
 
 @test "this spec is a required unit spec of test.sh" {
