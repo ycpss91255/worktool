@@ -28,6 +28,8 @@
 #     with stand-in agents, so arg rejection, shell quoting of repoDir /
 #     repo (every shell step is really run against a hostile path) and the
 #     fail-closed Verify / Synthesize / Record flow are proven, not grepped.
+#     Issue #223: the Record carries only codex's final answer (a matrix of
+#     real transcript shapes) and no local absolute path in any form.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
 
@@ -370,6 +372,103 @@ _rv_with() {
     assert_output "1"
     run cat "${BATS_TEST_TMPDIR}/gh.args"
     assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file "${scratch}/body.md")"
+}
+
+# The [codex] section of the Record body $1: the lines between the
+# "[codex] ..." header and the "<details>" fold, blank edges dropped.
+_rv_codex_section() {
+    awk '/^\[codex\] /{f=1;next} /^<details>/{f=0} f' "$1" | sed '/./,$!d'
+}
+
+# Run research-verify with every step played (exec) under repoDir $1 and
+# args $2 (merged into the base args); codex is a stub that prints
+# ${SHAPE}/raw (stdout + stderr of a real run) and, when ${SHAPE}/last
+# exists, writes it to the -o (--output-last-message) file. Leaves the
+# scratch dir of issue 7 under $1.
+_rv_run_shape() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${stub}"
+    printf '#!/bin/sh\necho "1. agy-claim [原始碼 %s/agy-src]"\n' "$1" > "${stub}/agy"
+    cat > "${stub}/codex" <<'SH'
+#!/bin/sh
+cat >/dev/null
+o=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && o=$2; shift; done
+[ -f "${SHAPE}/last" ] && [ -n "${o}" ] && cp "${SHAPE}/last" "${o}"
+cat "${SHAPE}/raw"
+SH
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    PATH="${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
+}
+
+@test "research-verify (node): the Record keeps only codex's final answer, whatever shape codex printed" {
+    local dir="${BATS_TEST_TMPDIR}/w" name expected
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    # name | raw output (printf format) | -o file ('-' = codex wrote none) | expected answer
+    while IFS='|' read -r name raw last expected; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${dir}/.worktree/.scratch/research-7"
+        # a stale -o file of an earlier run must never be reused
+        echo STALE > "${dir}/.worktree/.scratch/research-7/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        [[ "${last}" == - ]] || printf '%b' "${last}" > "${SHAPE}/last"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        run jq -r '.result.status' <<<"${output}"
+        assert_output recorded
+        run _rv_codex_section "${dir}/.worktree/.scratch/research-7/body.md"
+        assert_output "$(printf '%b' "${expected}")"
+    done <<'EOF'
+single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
+duplicated|codex\nA1\nA2\ntokens used\n5\nA1\nA2\n|-|A1\nA2
+transcript|OpenAI Codex v0\nuser\nthe prompt\ncodex\ncommentary line\nexec\n/usr/bin/bash -lc pwd in /x\n succeeded in 0ms:\n/x\n\ncodex\nA1\nA2\ntokens used\n1,716\nA1\nA2\n|-|A1\nA2
+answer first|A1\nReading additional input from stdin...\nuser\np\ncodex\nA1\ntokens used\n9\n|-|A1
+tool logs|thinking\nplan\ncodex\nnote\nexec\nls in /x\n succeeded in 0ms:\nf\nexec\ncat f in /x\n exited 1 in 1ms:\nerr\ncodex\nA1\ntokens used\n9\n|-|A1
+last message file|codex\njunk\nexec\nls\ncodex\nnot this\ntokens used\n9\nnot this\n|L1\nL2\n|L1\nL2
+EOF
+}
+
+@test "research-verify (node): no local absolute path reaches the Record, in any form" {
+    local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    mkdir -p "${SHAPE}" "${dir}"
+    printf 'codex\nignored\ntokens used\n1\n' > "${SHAPE}/raw"
+    {
+        printf 'repo file %s/script/x.sh:3\n' "${dir}"
+        printf 'repo root %s\n' "${dir}"
+        printf 'not the repo %s2/k\n' "${dir}"
+        printf 'source %s/lib/a.c:10\n' "${src}"
+        printf 'slash-ended source %sb.md\n' "${ref}"
+        printf 'home /home/alice/.config/x\n'
+        printf 'other home /home/bob/proj/y and /Users/carol/z\n'
+        printf 'uri file:///home/dave/w\n'
+        printf 'session /tmp/claude-1000/-home-eve-ws/scratchpad/q.txt end\n'
+        printf 'system /usr/bin/distrobox\n'
+    } > "${SHAPE}/last"
+    HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
+    assert_success
+    body="${dir}/.worktree/.scratch/research-7/body.md"
+    run _rv_codex_section "${body}"
+    assert_output "$(printf '%s\n' \
+        'repo file ./script/x.sh:3' \
+        'repo root .' \
+        "not the repo ${dir}2/k" \
+        'source distrobox-1.8/lib/a.c:10' \
+        'slash-ended source ref/b.md' \
+        'home ~/.config/x' \
+        'other home ~/proj/y and ~/z' \
+        'uri file://~/w' \
+        'session <tmp> end' \
+        'system /usr/bin/distrobox')"
+    # agy's original is scrubbed the same way
+    run grep -c '^1\. agy-claim \[原始碼 \./agy-src\]$' "${body}"
+    assert_output "1"
+    run grep -cE "/home/|/Users/|/tmp/claude-|${src}|${ref}" "${body}"
+    assert_output "0"
 }
 
 @test "research-verify (node): the claude verifier's schema demands at least one claim" {
