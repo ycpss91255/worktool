@@ -102,7 +102,7 @@ _assert_bytes() {
     run config_get tmux
     assert_success
     assert_output ""
-    _bytes "${CONFIG}" '# c\ntmux=host\ntmux=inside\nhome\npath=/a=b'
+    _bytes "${CONFIG}" '# c\ntmux=host\ntmux=inside\nhome\npath=/a=b\nhome=/late'
     run config_get tmux
     assert_output "host"
     run config_get path
@@ -144,8 +144,8 @@ _stop_at_home() { [[ "$2" != home ]] || { echo "stop at $1"; return 3; }; }
 
 @test "config_set replaces its keys in place, drops their duplicates, appends new keys, keeps every other line" {
     _bytes "${CONFIG}" '# notes\n\nlink=~/.aws\ntmux=host\nfuture=x = y\nlink=~/.aws\nbox=dev\r\nlink=.b\ntmux=inside\nhome\n  \n# end\n'
-    _bytes "${EXPECTED}" '# notes\n\nlink=~/.aws\ntmux=inside\nfuture=x = y\nlink=~/.aws\nbox=dev\r\nlink=.b\nhome=/srv/box\n  \n# end\nhome.source=user\n'
-    run config_set tmux inside home /srv/box home.source user
+    _bytes "${EXPECTED}" '# notes\n\nlink=~/.aws\ntmux=inside\nfuture=x = y\nlink=~/.aws\nbox=dev\r\nlink=.b\nhome=/srv/box\n  \n# end\nhome.source=user\nextra=1\n'
+    run config_set tmux inside home /srv/box home.source user extra 1
     assert_success
     _assert_bytes
 }
@@ -242,12 +242,36 @@ _framings() {
     assert_success
 }
 
+@test "a failing render writes nothing: config_set returns 1, the file keeps its bytes" {
+    _bytes "${CONFIG}" '# keep\nhome=/old\n'
+    cp "${CONFIG}" "${EXPECTED}"
+    _config_render() { printf 'partial\n'; return 1; }
+    run config_set home /new
+    assert_failure 1
+    _assert_bytes
+    run ls -A "$(dirname -- "${CONFIG}")"
+    assert_output "config"
+}
+
 @test "config_set with an odd number of arguments is refused and writes nothing" {
     _bytes "${CONFIG}" 'tmux=host'
     cp "${CONFIG}" "${EXPECTED}"
     run config_set tmux
     assert_failure
     _assert_bytes
+}
+
+@test "config_write_atomic replaces by rename: a reader holding the old file still reads the old bytes" {
+    local _f="${BATS_TEST_TMPDIR}/other" _fd _held="${BATS_TEST_TMPDIR}/held"
+    _bytes "${_f}" 'old\n'
+    cp "${_f}" "${EXPECTED}"
+    exec {_fd}<"${_f}"
+    run config_write_atomic "${_f}" <<<"new"
+    assert_success
+    cat <&"${_fd}" >"${_held}"
+    exec {_fd}<&-
+    run cmp -- "${EXPECTED}" "${_held}"
+    assert_success
 }
 
 @test "config_write_atomic replaces the file with stdin byte-for-byte and keeps its mode" {
