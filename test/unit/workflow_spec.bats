@@ -507,11 +507,12 @@ _rv_stub() {
     chmod +x "${BATS_TEST_TMPDIR}/bin/$1"
 }
 
-# Stand-in agy / codex / gh that succeed; gh logs its args to gh.args.
+# Stand-in agy / codex / gh that succeed; gh logs its args to gh.args and
+# appends one line per call to gh.calls, so a repeated call is visible.
 _rv_stubs() {
     _rv_stub agy 'echo "1. agy-claim [官方文件 https://x]"'
     _rv_stub codex 'cat >/dev/null; printf "banner\ncodex\ncodex-verdict-line\ntokens used\n5\n"'
-    _rv_stub gh "printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    _rv_stub gh "printf '%s\n' \"\$*\" >> '${BATS_TEST_TMPDIR}/gh.calls'; printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
 }
 
 # Run research-verify (exec, stub tools) with args question $3 (default q),
@@ -522,7 +523,7 @@ _rv_stubs() {
 _rv_fail_case() {
     local replies
     _rv_stubs
-    rm -f "${BATS_TEST_TMPDIR}/gh.args"
+    rm -f "${BATS_TEST_TMPDIR}/gh.args" "${BATS_TEST_TMPDIR}/gh.calls"
     replies="$(_rv_with "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')" 'nonce:' '{"nonce":"<stdout>"}')"
     case "$1:$2" in
         research:nonzero) _rv_stub agy 'echo "1. c"; exit 3' ;;
@@ -566,7 +567,10 @@ _rv_assert_fails_closed() {
     assert_success
     run jq -r '.error, .result.status, .result.comment' <<<"${output}"
     assert_output "$(printf '%s\n' null recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
-    assert [ -s "${BATS_TEST_TMPDIR}/gh.args" ]
+    run grep -c '^issue comment 7 ' "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+    run wc -l < "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
 }
 
 @test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
