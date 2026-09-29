@@ -428,6 +428,7 @@ transcript|OpenAI Codex v0\nuser\nthe prompt\ncodex\ncommentary line\nexec\n/usr
 answer first|A1\nReading additional input from stdin...\nuser\np\ncodex\nA1\ntokens used\n9\n|-|A1
 tool logs|thinking\nplan\ncodex\nnote\nexec\nls in /x\n succeeded in 0ms:\nf\nexec\ncat f in /x\n exited 1 in 1ms:\nerr\ncodex\nA1\ntokens used\n9\n|-|A1
 last message file|codex\njunk\nexec\nls\ncodex\nnot this\ntokens used\n9\nnot this\n|L1\nL2\n|L1\nL2
+prose about tokens|codex\nA1\ntokens used by the build\nA2\ntokens used\n9\n|-|A1\ntokens used by the build\nA2
 EOF
 }
 
@@ -454,6 +455,8 @@ aborted in a tool call|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\n
 aborted with an error|codex\nnote\nERROR: stream disconnected before completion\n
 boundary after a tool log|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\ntokens used\n9\n
 answer then aborted commentary|codex\nA1\ntokens used\n9\ncodex\nmore commentary\n
+fake boundary in commentary|codex\nnote\ntokens used by the build are listed below\n
+fake boundary with a count|codex\nnote\ntokens used: see below\nmore\n
 EOF
 }
 
@@ -473,7 +476,9 @@ EOF
         printf 'other home /home/bob/proj/y and /Users/carol/z\n'
         printf 'uri file:///home/dave/w\n'
         printf 'session /tmp/claude-1000/-home-eve-ws/scratchpad/q.txt end\n'
-        printf 'system /usr/bin/distrobox\n'
+        printf 'system /usr/bin/distrobox and /etc/passwd and /dev/null\n'
+        printf 'no scheme location:/root/private and host:/srv/x and C:/Temp/y\n'
+        printf 'unc \\\\server\\share\\c.txt and \\\\?\\D:\\e\n'
         printf 'mac /private/tmp/x and /var/folders/ab/T/y\n'
         printf 'root /root/.codex/log and ws /workspace/proj\n'
         printf 'wsl /mnt/c/Users/frank/a.txt\n'
@@ -495,7 +500,9 @@ EOF
         'other home ~/proj/y and ~/z' \
         'uri file://~/w' \
         'session <tmp> end' \
-        'system /usr/bin/distrobox' \
+        'system <path> and <path> and <path>' \
+        'no scheme location:<path> and host:<path> and C:<path>' \
+        'unc <path> and <path>' \
         'mac <path> and <path>' \
         'root <path> and ws <path>' \
         'wsl <path>' \
@@ -505,8 +512,13 @@ EOF
     # agy's original is scrubbed the same way
     run grep -c '^1\. agy-claim \[原始碼 \./agy-src\]$' "${body}"
     assert_output "1"
-    run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|\\\\Users|${src}|${ref}" "${body}"
+    run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|/usr/|/etc/|/dev/|server|\\\\Users|${src}|${ref}" "${body}"
     assert_output "0"
+    # the fold's own HTML closing tags are not paths
+    run tail -n 1 "${body}"
+    assert_output '</details>'
+    run grep -c '^<details><summary>agy 原文</summary>$' "${body}"
+    assert_output "1"
 }
 
 @test "research-verify (node): the claude verifier's schema demands at least one claim" {

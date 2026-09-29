@@ -58,26 +58,29 @@ const CD = `cd ${sq(SCRATCH)}`
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 // Shell that prints codex's final answer, never its transcript (issue #223):
 // the file codex writes itself with -o (--output-last-message); when it wrote
-// none, the LAST "codex" block of the transcript, and only when a "tokens
-// used" line closes that block directly (codex prints it once the turn has
-// completed). A run that stopped after commentary, inside a tool call or on
-// an error has no such boundary, so it prints nothing and the Record fails
-// closed on the empty codex.md. Commentary, tool logs and the answer echoed
-// after "tokens used" all stay out.
-const CODEX_ANSWER = (last, raw) => `if [ -s ${last} ]; then cat ${last}; else awk '/^codex$/{a="";b="";f=1;next} /^tokens used/{if(f)a=b;f=0;next} /^(exec|thinking|user)$/{f=0} f{b=b $0 "\\n"} END{printf "%s", a}' ${raw}; fi`
+// none, the LAST "codex" block of the transcript, and only when a line that
+// is exactly "tokens used" closes that block directly (codex prints it once
+// the turn has completed; prose such as "tokens used by ..." is answer text,
+// never the boundary). A run that stopped after commentary, inside a tool
+// call or on an error has no such boundary, so it prints nothing and the
+// Record fails closed on the empty codex.md. Commentary, tool logs and the
+// answer echoed after "tokens used" all stay out.
+const CODEX_ANSWER = (last, raw) => `if [ -s ${last} ]; then cat ${last}; else awk '/^codex$/{a="";b="";f=1;next} /^tokens used$/{if(f)a=b;f=0;next} /^(exec|thinking|user)$/{f=0} f{b=b $0 "\\n"} END{printf "%s", a}' ${raw}; fi`
 // Shell filter that keeps local absolute paths out of the issue (issue #223):
 // each source becomes its basename and repoDir becomes ".", longest first and
 // only at path boundaries; then $HOME and any /home/<user> or /Users/<user>
 // become "~" and a Claude session dir under /tmp becomes <tmp>. Last, deny
-// by default: every other absolute path (/root, /workspace, /private/tmp,
-// /var/folders, /mnt/c/Users, a file:/// URI, C:\Users\...) becomes <path>;
-// only system trees (/usr, /etc, /bin, /sbin, /lib*, /proc, /sys, /dev) and
-// URLs stay. No quote or backtick in the program: it sits in one '...' span.
+// by default: every other absolute path (/usr, /etc, /root, /workspace,
+// /private/tmp, /var/folders, /mnt/c/Users, the path of a file:/// URI, one
+// after a bare "word:" such as location:/root or host:/srv, C:\Users\...,
+// a \\server\share UNC path) becomes <path>. Only "scheme://host" URLs, a
+// lone "/" and HTML closing tags (</details>) stay. No quote or backtick in
+// the program: it sits in one '...' span.
 const PFX = [...SOURCES.map(s => s.replace(/\/+$/, '')).map(s => [s, s.split('/').pop()]), [REPO_DIR.replace(/\/+$/, ''), '.']]
   .filter(([p, r]) => p && r).sort((a, b) => b[0].length - a[0].length)
 const SCRUB_LIT = String.raw`function lit(s, a, r,  o, k, p, c) { o = ""; while (a != "" && (k = index(s, a)) > 0) { o = o substr(s, 1, k - 1); p = substr(o, length(o), 1); c = substr(s, k + length(a), 1); o = o (((p !~ "[A-Za-z0-9._/-]" || (length(o) > 2 && substr(o, length(o) - 2) == "://")) && c !~ "[A-Za-z0-9._-]") ? r : a); s = substr(s, k + length(a)) } return o s }`
-const SCRUB_MASK = String.raw`function mask(s,  o, t, p, q, g) { o = ""; while (match(s, "/" PC "*")) { o = o substr(s, 1, RSTART - 1); t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH); p = substr(o, length(o), 1); q = ""; if (p == ":") { if (substr(t, 1, 3) != "///") { o = o t; continue } q = "//"; t = substr(t, 3) } else if (p ~ "[A-Za-z0-9._~/-]") { o = o t; continue } g = substr(t, 2); sub("/.*", "", g); o = o q ((t == "/" || g ~ "^(usr|etc|bin|sbin|lib|lib32|lib64|libx32|proc|sys|dev)$") ? t : "<path>") } return o s }`
-const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
+const SCRUB_MASK = String.raw`function keep(o, t, s,  p) { p = substr(o, length(o), 1); return p ~ "[A-Za-z0-9._~/-]" || t == "/" || (p == "<" && t ~ "^/[A-Za-z][A-Za-z0-9]*$" && substr(s, 1, 1) == ">") } function url(o, t) { return substr(o, length(o), 1) == ":" && match(o, "[A-Za-z][A-Za-z0-9+.-]*:$") && substr(t, 1, 2) == "//" } function mask(s,  o, t, q) { o = ""; while (match(s, "/" PC "*")) { o = o substr(s, 1, RSTART - 1); t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH); q = ""; if (keep(o, t, s)) { o = o t; continue } if (url(o, t)) { if (substr(t, 1, 3) != "///") { o = o t; continue } q = "//"; t = substr(t, 3) } o = o q "<path>" } return o s }`
+const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("\\\\\\\\[A-Za-z0-9._$?-]" PC "*", "<path>"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
 const SCRUB = `${PFX.map(([p, r], i) => `RV_P${i}=${sq(p)} RV_R${i}=${sq(r)} `).join('')}RV_N=${PFX.length} awk '${SCRUB_LIT} ${SCRUB_MASK} ${SCRUB_MAIN}'`
 
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
