@@ -160,7 +160,7 @@ bash 內建的 `EPOCHREALTIME`(微秒精度的 wall clock)計時,**不依賴 hyp
 ### 用法
 
 ```text
-bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [-h|--help]
+bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [--max-wait N] [-h|--help]
 ```
 
 | 選項 | 說明 | 預設 |
@@ -171,12 +171,14 @@ bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD
 | `--max-ms N` | 門檻:**shell 指標的中位數**超過 N ms 即 exit 1(供 gate 使用) | 無門檻 |
 | `--json` | 改印**一個** JSON 物件,不印三行文字 | 關 |
 | `--shell CMD` | shell 與 inbox 指標要跑的指令(以空白拆成參數);不得含控制字元(見下方「輸入驗證」) | `sh -c :` |
+| `--max-wait N` | 量測前最多等幾秒讓主機安靜下來(N >= 1;見下方「安靜主機前置條件」);逾時 exit 3 | `60`;有設 `CI` 時 `120` |
 | `-h`, `--help` | 印 usage 後 exit 0 | |
 
 ```bash
 just box bench                          # dev 盒,每個指標 2 次暖身 + 10 次量測
 just box bench --runs 3 --warmup 1      # 快一點
 just box bench --max-ms 300             # 當 gate:shell 中位數 > 300 ms 即 exit 1
+just box bench --max-wait 30            # 最多等 30 秒安靜,等不到即 exit 3
 just box bench --json                   # 一個 JSON 物件
 just box bench --shell 'fish -c exit'   # 量另一個 shell 的啟動
 just box bench --help                   # 說明(由腳本印出)
@@ -209,6 +211,41 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 {"box":"dev","runs":10,"warmup":2,"shell_cmd":"sh -c :","unit":"ms","enter":{"min":..,"median":..,"max":..},"shell":{"min":..,"median":..,"max":..},"inbox":{"min":..,"median":..,"max":..}}
 ```
 
+### 安靜主機前置條件(issue #181)
+
+在忙碌主機上量到的 wall-clock 延遲不是證據:同一個 commit 在同一台機器上,曾因負載
+不同得到相反的判定(issue #181)。所以 bench.sh 在**第一次量測之前**先確認主機安靜,
+量測途中也持續確認;結果因此分成三種(通過、退化、未判定),決議與依據見
+`doc/adr/0003-latency-gate-inconclusive.md`。
+
+- **安靜判準**:CPU pressure(PSI)的 `some avg10 <= 2.00`(含 2.00),**連續 5 秒**
+  成立(每秒讀一次,t .. t+5 都成立)。PSI 優先讀 bench.sh **自己所在 cgroup v2** 的
+  `cpu.pressure`(`/proc/self/cgroup` 的 `0::<路徑>` 對到 `/sys/fs/cgroup<路徑>/cpu.pressure`),
+  讀不到才讀 `/proc/pressure/cpu`。loadavg(`/proc/loadavg`)**只記錄、不判定**。
+- **最多等待**:`--max-wait` 秒,預設 60;有設 `CI` 環境變數時預設 120
+  (`script/test/test.sh` 以 `-e CI` 把它傳進 system-real 的 DinD runner)。逾時 →
+  exit 3,STDERR 印
+  `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
+  STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
+- **量測途中**:每一次執行(暖身也算)的**前後**都再讀一次 PSI;任何一次超標,
+  **整批作廢** → exit 3,STDERR 印
+  `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
+  不印任何指標行、不判 `--max-ms`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
+- **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
+  幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
+  擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、
+  整批作廢(見 ADR 0003「影響」的實跑數字)。
+- **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
+  量完印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+- **沒有 PSI**:兩個來源都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
+  印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
+  並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。
+- **測試專用**:環境變數 `BENCH_PSI_FILE` 取代上述查找,直接讀指定檔案(`--help` 標為
+  tests only);單元測試以假 PSI 檔與假 `sleep` 驅動等待。
+
+CI 與實機同一套規則、同一個入口:CI 上的 3 一樣讓 job 失敗,不因 runner 忙而跳過 gate;
+300 ms 門檻不變。
+
 ### 輸入驗證(`--json` 永遠是合法 JSON)
 
 物件裡只有兩個字串(`box`、`shell_cmd`),bench.sh 不寫完整的 JSON 跳脫器,而是在
@@ -223,14 +260,16 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 訊息裡的 `<值>` 以 `printf %q` 引用,所以就算值裡有換行,錯誤訊息仍是 STDERR 上的
 **一行**。
 
-結束碼:`0` 完成(且未超過 `--max-ms`);`1` 量測失敗(任一指標任一次 enter 非零結束,
+結束碼:`0` 量測有效且完成(且未超過 `--max-ms`);`1` 量測失敗(任一指標任一次 enter 非零結束,
 或 inbox 的 timer 印出的不是整數;失敗的 enter 沒有值得報告的延遲,立即中止、不印統計)
 或 shell 中位數超過 `--max-ms`(統計仍會印出,原因印在 STDERR;`--max-ms` **只看
 shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 `bench.sh: unknown option '<x>' (see --help)` 拒絕,整條指令列先解析完才動作,
 所以 `--help --bogus` 也是 exit 2、什麼都不跑;`--runs 0`、`--warmup -1`、
-`--max-ms abc`、以及上表的 `--box` / `--shell` 違規同樣 exit 2);`127` PATH 上沒有
-distrobox。
+`--max-ms abc`、`--max-wait 0`、以及上表的 `--box` / `--shell` 違規同樣 exit 2);
+`3` **未判定(inconclusive)**:主機在 `--max-wait` 內沒有安靜下來,或量測途中壓力
+超標(見上方「安靜主機前置條件」;不給通過也不給退化、不印指標行);`127` PATH 上
+沒有 distrobox。
 
 ### 達標由 system-real gate 強制,runtime 決策不在這裡
 
@@ -273,7 +312,12 @@ issue #129),不再延後到 M5。
     `--max-ms` 的通過/失敗結束碼且不看 inbox、`--json` 形狀(以文法斷言整個物件、
     反斜線與雙引號的跳脫)、`--box` / `--shell` 的輸入驗證(`a"b`、含換行的 shell 等
     exit 2 且什麼都沒呼叫)、enter 全過之後 shell 或 inbox 失敗、timer 印非整數、
-    `--help`、未知選項 exit 2 且什麼都沒呼叫;
+    `--help`、未知選項 exit 2 且什麼都沒呼叫;issue #181 再以假 PSI 檔
+    (`BENCH_PSI_FILE`)與假 `sleep`(每次呼叫計為一秒、可逐次改寫 PSI)驗證安靜主機
+    前置條件:安靜即量、忙到 `--max-wait` 用完 exit 3 且 distrobox 一次都沒呼叫、
+    安靜秒數必須連續、幾秒後變安靜就量、量測途中 PSI 超標整批作廢 exit 3、讀不到 PSI
+    時警告並照常量測、PSI 來源的優先順序(cgroup v2 → `/proc/pressure/cpu`)、
+    `--max-wait` 的預設(60 / CI 120)與輸入驗證;
     `test/unit/justfile_spec.bats` 另證明 `just box bench --runs 3` 原樣轉發。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
@@ -412,7 +456,9 @@ issue #129),不再延後到 M5。
     判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell
     'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、三行指標仍在、同樣兩行
     fish INFO 仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬
-    (見上方「進盒延遲量測」);(e) **ghostty 鏈**(M3,issue #172):在 runner 內
+    (見上方「進盒延遲量測」);兩個案例都要求安靜主機前置條件的證據行
+    (`[INFO] host quiet: <PSI 路徑> ...` 或讀不到 PSI 的 `[WARN]`,issue #181),
+    且只接受自己的判定碼(0 / 1),所以 runner 太忙回 3 一樣是紅;(e) **ghostty 鏈**(M3,issue #172):在 runner 內
     用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
     ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
     釘住 `gtk-single-instance = false`,command 為
