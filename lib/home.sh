@@ -30,7 +30,9 @@
 #                                    box exists but its HOME cannot be
 #                                    read; 3 when the manager (the one
 #                                    distrobox would use, distrobox.conf
-#                                    included) cannot be asked - prints why
+#                                    included) cannot be asked, or a
+#                                    container_manager= line cannot be
+#                                    read - prints why
 #
 # This is a library: it defines functions and must be sourced, not executed.
 # It sources lib/enter.sh (same dir) for the state-file reader.
@@ -172,10 +174,14 @@ home_manifest_sets_home() {
 # last `container_manager=` of its config files (read, never sourced),
 # else autodetect in its order (podman, podman-launcher, docker, lilipod).
 # Prints the name; returns 1 (still printing the name, or `autodetect`)
-# when that manager is not on PATH.
+# when that manager is not on PATH; 2 (printing the config file) when a
+# `container_manager=` line there cannot be read as a manager name.
 _home_manager() {
     local _m="${DBX_CONTAINER_MANAGER:-}"
-    [[ -n "${_m}" ]] || _m="$(_home_conf_manager)"
+    if [[ -z "${_m}" ]] && ! _m="$(_home_conf_manager)"; then
+        printf '%s\n' "${_m}"
+        return 2
+    fi
     [[ -n "${_m}" ]] || _m=autodetect
     if [[ "${_m}" == autodetect ]]; then
         local _c
@@ -207,14 +213,28 @@ _home_conf_files() {
         "${HOME}/.distroboxrc"
 }
 
-# The last plain `container_manager=<value>` assignment (quotes dropped)
-# across distrobox's config files; nothing when none sets it.
+# The last `container_manager=<value>` assignment across distrobox's
+# config files, read the way the shell reads a plain name: optional
+# matching quotes, optional trailing `# comment`. Nothing when none sets
+# it. A line it cannot read that way (empty, a substitution, ...) returns
+# 1 printing that file: distrobox sources it, so skipping it could ask a
+# different manager than the one distrobox uses.
 _home_conf_manager() {
-    local _f _v _m=""
+    local _f _line _m=""
+    local _q="'" _re
+    # No back-reference: POSIX ERE (musl) has none, so spell the 3 quotings.
+    _re='^[[:space:]]*container_manager=([A-Za-z0-9_-]+|"[A-Za-z0-9_-]+"|'
+    _re+="${_q}[A-Za-z0-9_-]+${_q}"')([[:space:]]+#.*)?[[:space:]]*$'
     while IFS= read -r _f; do
         [[ -f "${_f}" && -r "${_f}" ]] || continue
-        _v="$(sed -nE 's/^[[:space:]]*container_manager=["'\'']?([A-Za-z0-9_-]*)["'\'']?[[:space:]]*$/\1/p' "${_f}" | tail -n 1)"
-        [[ -z "${_v}" ]] || _m="${_v}"
+        while IFS= read -r _line || [[ -n "${_line}" ]]; do
+            [[ "${_line}" =~ ^[[:space:]]*container_manager= ]] || continue
+            if [[ ! "${_line}" =~ ${_re} ]]; then
+                printf '%s\n' "${_f}"
+                return 1
+            fi
+            _m="${BASH_REMATCH[1]//[\"\']/}"
+        done <"${_f}"
     done < <(_home_conf_files)
     printf '%s\n' "${_m}"
 }
@@ -228,8 +248,12 @@ _home_conf_manager() {
 # (inspect failed, or no `--home` argument: not a box distrobox created),
 # 3 when the manager cannot be asked (prints why, one line).
 home_of_box() {
-    local _manager _names _args
-    if ! _manager="$(_home_manager)"; then
+    local _manager _names _args _rc=0
+    _manager="$(_home_manager)" || _rc=$?
+    if [[ "${_rc}" -eq 2 ]]; then
+        printf 'cannot read container_manager in %s\n' "${_manager}"
+        return 3
+    elif [[ "${_rc}" -ne 0 ]]; then
         printf "container manager '%s' not found on PATH\n" "${_manager}"
         return 3
     fi
