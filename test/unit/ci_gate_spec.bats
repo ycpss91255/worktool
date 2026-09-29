@@ -103,6 +103,12 @@ EOF
     assert_line "unit/justfile_spec.bats"
     # M3: the enter-latency tool (issue #150).
     assert_line "unit/bench_spec.bats"
+    # Repo-level agent config (issue #189): layout, hooks, agent scripts.
+    assert_line "unit/agent_config_spec.bats"
+    assert_line "unit/hook/hook_bootstrap_spec.bats"
+    assert_line "unit/hook/test_must_use_docker_spec.bats"
+    assert_line "unit/script/wait_pr_ci_spec.bats"
+    assert_line "unit/script/watch_user_replies_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of the integration tier" {
