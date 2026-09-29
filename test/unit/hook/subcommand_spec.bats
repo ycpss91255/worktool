@@ -6,10 +6,12 @@
 # actually launches, one per line, so a PreToolUse hook can judge each
 # launch by its first word instead of pattern-matching the raw text:
 #   - heredoc bodies are data (dropped); a here-string is not a heredoc
-#   - quoted spans are data (dropped)
+#   - a quoted span is one opaque word (quotes removed; its whitespace and
+#     separators become '_'), so it splits nothing and a quoted executable
+#     name is still seen
 #   - split on ; && || | and newlines
 #   - leading VAR=val assignments and sudo / env / command / time / nohup /
-#     exec wrappers are stripped; timeout(1) is kept (it is a bound the
+#     exec wrappers (with their options) are stripped; timeout(1) is kept (it is a bound the
 #     long-job hook must see)
 #   - empty pieces are dropped
 
@@ -32,16 +34,46 @@ setup() {
     assert_output "$(printf '%s\n' 'cd /repo' a b c d e)"
 }
 
-@test "quoted spans are dropped" {
+@test "a quoted span is one opaque word: its separators split nothing" {
     run hook_subcommands "git commit -m 'bats; just test' -m \"x && docker build\""
     assert_success
-    assert_output "git commit -m  -m"
+    assert_output "git commit -m bats__just_test -m x____docker_build"
+}
+
+@test "a quoted executable name is unquoted, so it is still seen" {
+    run hook_subcommands "\"bats\" t; 'just' test; b\"at\"s u"
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'just test' 'bats u')"
+}
+
+@test "a multi-line quoted argument stays inside its sub-command" {
+    run hook_subcommands "$(printf 'git commit -m "a\nbats t"\nls')"
+    assert_success
+    assert_output "$(printf '%s\n' 'git commit -m a_bats_t' 'ls')"
+}
+
+@test "strips wrapper options and their values" {
+    run hook_subcommands "sudo -u root -E -- env -i -u HOME -C /tmp A=1 time -p nohup exec -a n bats t"
+    assert_success
+    assert_output "bats t"
+}
+
+@test "strips long wrapper options with and without =" {
+    run hook_subcommands "sudo --user root --preserve-env env --unset=HOME bats t"
+    assert_success
+    assert_output "bats t"
+}
+
+@test "command -v is a lookup and is kept as is" {
+    run hook_subcommands "command -v bats"
+    assert_success
+    assert_output "command -v bats"
 }
 
 @test "heredoc bodies are dropped, the line after the terminator is kept" {
     run hook_subcommands "$(printf 'cat > f <<%s\nbats test\njust test unit\nEOF\ngit status' "'EOF'")"
     assert_success
-    assert_output "$(printf '%s\n' 'cat > f <<' 'git status')"
+    assert_output "$(printf '%s\n' 'cat > f <<EOF' 'git status')"
 }
 
 @test "an indented terminator of <<- ends the heredoc" {

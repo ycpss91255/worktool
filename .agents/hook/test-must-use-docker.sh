@@ -7,7 +7,8 @@
 # integration, system, acceptance, system-real; bare `just test` = all).
 # The host never runs bats and never installs packages. This hook BLOCKS
 # (exit 2) a Bash command that launches, on the host:
-#   1. `bats` directly (also behind cd / sudo / env / timeout(1))
+#   1. `bats` directly (also quoted, and behind cd / sudo / env / command /
+#      timeout(1), with or without their options: sudo -u root, env -i)
 #   2. script/test/test.sh directly - its host steps are what `just test`
 #      forwards to, and its --ci-* flags are the container-side gates
 #   3. a hand-rolled `docker run|exec ... bats` / `... test.sh` (the image,
@@ -16,8 +17,9 @@
 # and allows everything else, including `just test ...`.
 #
 # Only real launches count: the command is reduced to its sub-commands by
-# lib/subcommand.sh (quoted spans and heredoc bodies are data, so a commit
-# message or a spec being written may mention bats freely).
+# lib/subcommand.sh (a quoted span is one opaque word and heredoc bodies
+# are dropped, so a commit message or a spec being written may mention bats
+# freely, while a quoted executable name is still seen).
 #
 # The command is read with jq when present, else with a small sed parser:
 # this hook guards the host, where jq might be missing.
@@ -57,7 +59,8 @@ _strip_timeout() {
 # nothing when it is fine.
 _violation() {
     local _sub _first _second
-    _sub="$(_strip_timeout "$1")"
+    # timeout(1) is kept by the lib; a wrapper may sit on either side of it.
+    _sub="$(_hook_strip_wrappers "$(_strip_timeout "$1")")"
     read -r _first _second _ <<<"${_sub}"
     [[ "${_first}" == bash || "${_first}" == sh ]] && _first="${_second}"
     case "${_first}" in
