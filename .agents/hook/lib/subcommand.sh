@@ -8,7 +8,14 @@
 # one by its first word:
 #
 #   hook_subcommands <command>   one sub-command per line on stdout:
-#     1. heredoc bodies are dropped (a here-string `<<<` is not a heredoc)
+#     1. heredoc bodies are dropped (a here-string `<<<` is not a heredoc),
+#        except the body of a heredoc a shell interpreter reads as its
+#        script (`sh <<EOF`, `env bash -s <<'EOF'`; bash sh dash zsh ksh
+#        fish, no -c, no script file): that heredoc becomes a here-string
+#        of its body, which step 7 runs. With an unquoted delimiter the
+#        outer shell expands the body first, so each $ and ` in it stays
+#        marked as an expansion (hook_word_has_expansion); a quoted
+#        delimiter ('EOF', "EOF", \EOF) keeps it literal
 #     2. each quoted span ('...' and "...", across lines too) becomes ONE
 #        opaque word: the quotes go, and inside the span whitespace and the
 #        separators ; & | < > ( ) become '_'. So a quoted message splits
@@ -34,7 +41,9 @@
 #        the condition of if / while / until / for / case / { ...; } are
 #        judged as launches; a `for x in ...` or `case x in` header is kept
 #        as is and launches nothing
-#     7. `bash|sh|dash|zsh|ksh [opts] -c <script>` and `eval <words>` run a
+#     7. `bash|sh|dash|zsh|ksh|fish [opts] -c <script>`, the same shells
+#        reading a here-string as their script (`bash <<< '<script>'`,
+#        `sh -s <<<...`, no script file) and `eval <words>` run a
 #        command line: it is split by these same rules in place of the
 #        wrapper. A timeout(1) leading the wrapper leads each of them, since
 #        it bounds the whole script
@@ -63,8 +72,9 @@
 #     -k 5 / --signal TERM included), or nothing when it has none
 #
 # Deliberately simple (no full shell parser): $'...' escapes are not
-# expanded, a `#` comment is not recognised, and a script run by name
-# (`bash x.sh`) or a function body run later is not read.
+# expanded, a `#` comment is not recognised, and a script FILE run by name
+# (`bash x.sh`, `python x.py`, `just ...`) or a function body run later is
+# not read.
 #
 # Library: sourced, sets no shell options, only declares functions.
 
@@ -74,24 +84,121 @@ if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
     return 0 2>/dev/null
 fi
 
+# _hook_is_shell <word> - 0 when <word> names a shell interpreter.
+_hook_is_shell() {
+    case "$1" in
+        bash|sh|dash|zsh|ksh|fish|*/bash|*/sh|*/dash|*/zsh|*/ksh|*/fish) return 0 ;;
+    esac
+    return 1
+}
+
+# _hook_shell_reads_stdin <word>... - 0 when the words (wrappers already
+# stripped) run a shell interpreter whose script is its stdin: options
+# only (no -c), redirections, or arguments after -s; no script file.
+_hook_shell_reads_stdin() {
+    local _s=''
+    _hook_is_shell "${1:-}" || return 1
+    shift
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            -[oO]|+[oO]|--rcfile|--init-file) shift ;;
+            --*) ;;
+            [-+]*c*) [[ "$1" =~ ^[-+][A-Za-z]*c ]] && return 1 ;;
+            -*s*) _s=1 ;;
+            -*|+*) ;;
+            [0-9]*[\<\>]*|[\<\>]*) ;;
+            *) [[ -n "${_s}" ]] || return 1 ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+# _hook_heredoc_to_shell <text before the heredoc operator> - 0 when the
+# heredoc it opens is the script of a shell interpreter (header step 1).
+_hook_heredoc_to_shell() {
+    local _seg="$1" _re='[0-9]*[<>]&[0-9-]*' _lead
+    local -a _w
+    while [[ "${_seg}" =~ ${_re} ]]; do
+        _seg="${_seg/"${BASH_REMATCH[0]}"/ }"
+    done
+    _seg="${_seg##*[;&|(]}"
+    _seg="$(_hook_strip_wrappers "${_seg}")"
+    _lead="$(hook_timeout_lead "${_seg} ")"
+    _seg="${_seg#"${_lead}"}"
+    read -r -a _w <<<"${_seg}"
+    _hook_shell_reads_stdin "${_w[@]}"
+}
+
+# _hook_herestring <body> <quoted> - the heredoc body as a single-quoted
+# here-string word (`<<<'...'`). Unquoted delimiter (<quoted> empty): the
+# outer shell expands the body, so each unescaped $ and ` is prefixed with
+# \002 (marked as an expansion by the quoting pass in any quoting) and the
+# escapes \$ \` \\ are resolved the way the outer shell resolves them.
+_hook_herestring() {
+    local _b="$1" _q="'" _sq="'\\''"
+    if [[ -z "$2" ]]; then
+        _b="${_b//\\\\/$'\004'}"
+        _b="${_b//\\\$/$'\003'}"
+        _b="${_b//\\\`/$'\005'}"
+        _b="${_b//\$/$'\002'\$}"
+        _b="${_b//\`/$'\002'\`}"
+        _b="${_b//$'\003'/\$}"
+        _b="${_b//$'\005'/\`}"
+        _b="${_b//$'\004'/\\}"
+    fi
+    printf '<<<%s%s%s' "${_q}" "${_b//\'/${_sq}}" "${_q}"
+}
+
+# _hook_held_line - print the held heredoc line with its operator replaced
+# by the here-string of the body (split, not ${x/p/r}: a body holding & must
+# not trip patsub_replacement). Reads _held / _op / _body / _quoted of
+# _hook_strip_heredocs.
+_hook_held_line() {
+    printf '%s %s%s\n' "${_held%%"${_op}"*}" "$(_hook_herestring "${_body}" "${_quoted}")" "${_held#*"${_op}"}"
+}
+
 # _hook_strip_heredocs <command> - the command minus every heredoc body. A
-# line opening a heredoc (`<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`, not
-# `<<<`) is kept; the lines up to the terminator line WORD (leading blanks
-# allowed, for <<-) are dropped.
+# line opening a heredoc (`<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`,
+# `<<\WORD`, not `<<<`) is kept; the lines up to the terminator line WORD
+# (leading blanks allowed, for <<-) are dropped. A heredoc a shell reads as
+# its script is turned into a here-string of its body instead (header
+# step 1).
 _hook_strip_heredocs() {
-    local _line _term='' _trim
-    local _re="(^|[^<])<<-?[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?"
+    local _line _term='' _trim _held='' _op='' _quoted='' _dash='' _body='' _pre
+    local _re="(^|[^<])<<(-?)[[:space:]]*(['\"\\\\]?)([A-Za-z_][A-Za-z0-9_]*)['\"]?"
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         if [[ -n "${_term}" ]]; then
             _trim="${_line#"${_line%%[![:space:]]*}"}"
-            [[ "${_trim}" == "${_term}" ]] && _term=''
+            if [[ "${_trim}" == "${_term}" ]]; then
+                _term=''
+                if [[ -n "${_held}" ]]; then
+                    _hook_held_line
+                    _held=''
+                fi
+            elif [[ -n "${_held}" ]]; then
+                [[ -n "${_dash}" ]] && _line="${_line#"${_line%%[!$'\t']*}"}"
+                _body+="${_line}"$'\n'
+            fi
             continue
         fi
-        printf '%s\n' "${_line}"
         if [[ "${_line}" =~ ${_re} ]]; then
-            _term="${BASH_REMATCH[2]}"
+            _term="${BASH_REMATCH[4]}"
+            _dash="${BASH_REMATCH[2]}"
+            _quoted="${BASH_REMATCH[3]}"
+            _op="${BASH_REMATCH[0]#"${BASH_REMATCH[1]}"}"
+            _pre="${_line%%"${BASH_REMATCH[0]}"*}${BASH_REMATCH[1]}"
+            if _hook_heredoc_to_shell "${_pre}"; then
+                _held="${_line}"
+                _body=''
+                continue
+            fi
         fi
+        printf '%s\n' "${_line}"
     done <<<"$1"
+    # An unterminated heredoc still runs its body as the script.
+    [[ -n "${_held}" ]] && _hook_held_line
+    return 0
 }
 
 # The quoting pass (header steps 2 and 3), next to this file.
@@ -201,9 +308,19 @@ _hook_inner_script() {
             [[ "${#_w[@]}" -gt 1 ]] || return 1
             printf '%s' "${_w[*]:1}"
             return 0 ;;
-        bash|sh|dash|zsh|ksh|*/bash|*/sh|*/dash|*/zsh|*/ksh) ;;
-        *) return 1 ;;
+        *) _hook_is_shell "${_w[0]:-}" || return 1 ;;
     esac
+    # A here-string the shell reads as its script (no -c, no script file).
+    for ((_i = 1; _i < ${#_w[@]}; _i++)); do
+        [[ "${_w[_i]}" == '<<<'* ]] || continue
+        _hook_shell_reads_stdin "${_w[@]:0:_i}" || break
+        if [[ "${_w[_i]}" == '<<<' ]]; then
+            printf '%s' "${_w[_i + 1]:-}"
+        else
+            printf '%s' "${_w[_i]#<<<}"
+        fi
+        return 0
+    done
     for ((_i = 1; _i < ${#_w[@]}; _i++)); do
         case "${_w[_i]}" in
             -[oO]|+[oO]|--rcfile|--init-file) _i=$((_i + 1)) ;;

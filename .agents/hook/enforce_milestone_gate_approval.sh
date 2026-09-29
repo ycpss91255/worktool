@@ -47,6 +47,13 @@
 #        segment is a literal name other than gh ($HOME/bin/tool).
 #      - gh run by another command (nice gh, xargs gh) blocks when the
 #        sub-command is relevant: run gh directly.
+#      - A heredoc or here-string a shell reads as its script (sh <<EOF,
+#        bash <<< '...') is judged like any command line (lib/subcommand.sh);
+#        a script FILE run by name (bash x.sh, python x.py, just ...) is
+#        not read (a documented limit: the server-side status check of
+#        #187 still refuses an unapproved merge).
+#   4. --help / -h (as a flag of its own, not an option's value) only
+#      prints usage: such a launch passes without calling gh.
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
@@ -611,6 +618,22 @@ _check_api_comment() {
     return 0
 }
 
+# _asks_help - 0 when the (normalised, literal) launch carries -h / --help
+# as a flag of its own, not as the value of a valued option and not after
+# `--`: gh then prints usage and runs nothing.
+_asks_help() {
+    local _i _w
+    for ((_i = 1; _i < ${#_W[@]}; _i++)); do
+        _w="${_W[_i]}"
+        case "${_w}" in
+            --) return 1 ;;
+            -h|--help) return 0 ;;
+        esac
+        [[ "${_VALUE_OPTS}" == *" ${_w} "* ]] && _i=$((_i + 1))
+    done
+    return 1
+}
+
 # _check_launch <encoded sub-command> - judge one launch; blocks (exit 2)
 # or returns.
 _check_launch() {
@@ -637,6 +660,8 @@ _check_launch() {
     [[ -n "${_ROOT_BAD}" ]] && _block_root "${_ROOT_BAD}"
     _normalize
     _check_closed
+    # --help only prints usage: it never merges or writes.
+    _asks_help && return 0
     case "$(_sub)" in
         "pr merge") _check_pr_merge ;;
         "pr close"|"pr reopen"|"issue close"|"issue reopen") _check_close_comment ;;
