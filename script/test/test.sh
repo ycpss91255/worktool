@@ -57,11 +57,13 @@
 # option validation: an unknown option is refused with exit 2 before
 # anything runs, so the justfile in front of it never has to.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail`
-# (no `-e`); failures are surfaced explicitly via _die so a nonzero exit
-# is always intentional.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -135,8 +137,10 @@ _required_specs() {
                 unit/status_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/commit_email_spec.bats \
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
+                unit/adr_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -145,7 +149,9 @@ _required_specs() {
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_spec.bats \
+                unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
+                unit/hook/enforce_codex_round_cap_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \
@@ -183,8 +189,9 @@ _check_required_specs() {
         _abs="${REPO_ROOT}/test/${_rel}"
         [[ -f "${_abs}" ]] \
             || _die "${_tier} required spec missing: test/${_rel}"
-        _n="$(bats --count "${_abs}")"
-        if [[ ! "${_n}" =~ ^[0-9]+$ ]]; then
+        # A count bats cannot produce is the gate's own failure, not bats'
+        # exit status: handled here, never left to errexit.
+        if ! _n="$(bats --count "${_abs}")" || [[ ! "${_n}" =~ ^[0-9]+$ ]]; then
             _die "${_tier} required spec unreadable by bats: test/${_rel}"
         fi
         [[ "${_n}" -gt 0 ]] \
@@ -262,12 +269,14 @@ _ensure_system_real_image() {
 # container / image / volume the test creates lives in that nested daemon
 # and is destroyed with the runner (--rm also drops the dind image's
 # anonymous /var/lib/docker volume). The host daemon never sees the box.
+# `-e CI` passes the host's CI through (only when it is set): bench.sh's
+# quiet-host wait is 120 s instead of 60 s on CI (issue #181).
 _run_system_real_in_runner() {
     command -v docker >/dev/null 2>&1 \
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged \
+    docker run --rm --privileged -e CI \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -314,8 +323,10 @@ _run_shellcheck() {
 # itself exits 0 on a skip). Prints the reason and returns 1 on any miss.
 _verify_tap() {
     local _tier="$1" _tap="$2" _min="$3" _plan
-    _plan="$(sed -nE 's/^1\.\.([0-9]+)$/\1/p' "${_tap}" | head -n 1)"
-    if [[ ! "${_plan}" =~ ^[0-9]+$ ]]; then
+    # One awk, no `| head`: an unreadable stream is a missing plan (return
+    # 1 below), and there is no early-closed pipe to fail under pipefail.
+    if ! _plan="$(awk '/^1\.\.[0-9]+$/ { sub(/^1\.\./, ""); print; exit }' "${_tap}")" \
+        || [[ ! "${_plan}" =~ ^[0-9]+$ ]]; then
         _err "${_tier} bats emitted no TAP plan"
         return 1
     fi
@@ -505,7 +516,7 @@ _run_host_step() {
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
 # container gate instead and stands alone.
 main() {
-    local _steps=() _ci="" _step _rc _help=0
+    local _steps=() _ci="" _step _help=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             # Recorded, not served: the rest of the line is still validated
@@ -527,15 +538,17 @@ main() {
         _usage
         return 0
     fi
+    # A failing gate or step ends the script right there with its own exit
+    # status: errexit is what stops the run at the first failure, so the
+    # steps are called plainly (never in an `if` / `||`, which would turn
+    # errexit off inside them).
     if [[ -n "${_ci}" ]]; then
         _run_ci_gate "${_ci}"
-        return $?
+        return 0
     fi
     [[ "${#_steps[@]}" -gt 0 ]] || _steps=("${HOST_STEPS[@]}")
     for _step in "${_steps[@]}"; do
         _run_host_step "${_step}"
-        _rc=$?
-        [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     done
     return 0
 }

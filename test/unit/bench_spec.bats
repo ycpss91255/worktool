@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/bench_spec.bats - script/box/bench.sh enter-latency measurement
-# and CLI (M3, issues #150 and #162)
+# and CLI (M3, issues #150, #162 and #181)
 #
 # Written test-first (RED) before the tool exists, then bench.sh is
 # implemented to pass (GREEN). #162 adds the third metric (inbox) and the
@@ -41,6 +41,17 @@
 #     no statistics line), whichever metric it belongs to; an in-box timer
 #     that prints something other than an integer aborts the same way; a
 #     missing distrobox is exit 127.
+#   - Quiet-host precondition (issue #181): before the first run, CPU
+#     pressure (PSI) `some avg10 <= 2.00` must hold for 5 consecutive
+#     seconds (one poll a second); not within --max-wait seconds (default
+#     60, 120 when CI is set) -> exit 3 "host too busy to measure
+#     (inconclusive)", distrobox never called, nothing on stdout. PSI is
+#     read again and recorded (one stderr line each) before and after
+#     every run, a failed run included; one reading above the limit
+#     (exact at any precision: 2.001 is above 2.00) voids the whole batch
+#     -> exit 3, no metric line, even when that run also failed. No readable PSI ->
+#     a warning and an unguarded measurement. The PSI source is the
+#     process's own cgroup v2 cpu.pressure, then /proc/pressure/cpu.
 #
 # HOW
 #   A FAKE `distrobox` sits first on PATH. It records every call (one line
@@ -67,6 +78,13 @@
 #   case), unlike the host-clocked enter / shell metrics which only admit
 #   lower bounds. Whether the real timer prints what the fake prints is the
 #   system-real gate's business (test/system/real_engine_spec.bats).
+#
+#   The quiet-host wait is driven by BENCH_PSI_FILE (bench.sh's test-only
+#   PSI path) and a FAKE `sleep` first on PATH (see _install_fake_sleep):
+#   the wait costs no real time and every poll is counted, and the fake
+#   distrobox can turn the host busy mid-batch (FAKE_DBX_PSI_AT). setup()
+#   starts every case on a quiet fake PSI, so the real host's load never
+#   decides a unit verdict.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -81,8 +99,55 @@ setup() {
     TMP="${BATS_TEST_TMPDIR}"
     MOCKBIN="${TMP}/bin"
     export FAKE_DBX_CALLS="${TMP}/distrobox.calls"
+    export FAKE_SLEEP_CALLS="${TMP}/sleep.calls"
+    # The fake distrobox still really sleeps (its sleep is a latency floor);
+    # it must not hit the fake `sleep` below, so it gets the real one.
+    FAKE_REAL_SLEEP="$(command -v sleep)"
+    export FAKE_REAL_SLEEP
+    # Every case measures on a QUIET fake PSI unless it says otherwise:
+    # the host this spec runs on must never decide a unit verdict.
+    export BENCH_PSI_FILE="${TMP}/cpu.pressure"
+    _psi 0.00
     _install_fake_distrobox
+    _install_fake_sleep
     PATH="${MOCKBIN}:${PATH}"
+}
+
+# Write a PSI cpu.pressure file whose `some avg10` is $1 (to $2, default
+# BENCH_PSI_FILE), in the kernel's own two-line format.
+_psi() {
+    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' \
+        "$1" >"${2:-${BENCH_PSI_FILE}}"
+}
+
+# A fake `sleep` first on PATH: bench.sh's quiet-host wait polls PSI once a
+# second with `sleep 1`, so the fake makes the wait instant and COUNTABLE
+# (one line per call, its argv, in FAKE_SLEEP_CALLS). With FAKE_PSI_SEQ
+# set, the k-th call rewrites BENCH_PSI_FILE with the k-th value of the
+# list (the last one sticks): the host "changes" between two polls.
+_install_fake_sleep() {
+    cat >"${MOCKBIN}/sleep" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FAKE_SLEEP_CALLS}"
+if [[ -n "${FAKE_PSI_SEQ:-}" ]]; then
+    read -r -a _seq <<<"${FAKE_PSI_SEQ}"
+    _k="$(wc -l <"${FAKE_SLEEP_CALLS}")"
+    _i=$(( _k - 1 ))
+    (( _i < ${#_seq[@]} )) || _i=$(( ${#_seq[@]} - 1 ))
+    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${_seq[_i]}" >"${BENCH_PSI_FILE}"
+fi
+exit 0
+EOF
+    chmod +x "${MOCKBIN}/sleep"
+}
+
+# Number of `sleep` calls bench.sh made (each one is one second of wait).
+_sleeps() {
+    if [[ -f "${FAKE_SLEEP_CALLS}" ]]; then
+        wc -l <"${FAKE_SLEEP_CALLS}" | tr -d ' '
+    else
+        printf '0\n'
+    fi
 }
 
 # The fake distrobox described in the header.
@@ -106,7 +171,13 @@ if [[ -n "${FAKE_DBX_SLEEP_MS_TRUE:-}" && "${_kind}" == enter ]]; then
 fi
 if (( _ms > 0 )); then
     printf -v _s '%d.%03d' $(( _ms / 1000 )) $(( _ms % 1000 ))
-    sleep "${_s}"
+    "${FAKE_REAL_SLEEP}" "${_s}"
+fi
+# The host turns busy DURING the batch: the FAKE_DBX_PSI_AT-th call leaves
+# a PSI of FAKE_DBX_PSI_VALUE behind (read by bench.sh after the run).
+if [[ -n "${FAKE_DBX_PSI_AT:-}" ]] \
+    && (( $(wc -l <"${FAKE_DBX_CALLS}") == FAKE_DBX_PSI_AT )); then
+    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${FAKE_DBX_PSI_VALUE}" >"${BENCH_PSI_FILE}"
 fi
 _rc="${FAKE_DBX_EXIT:-0}"
 [[ "${_kind}" == shell && -n "${FAKE_DBX_EXIT_SHELL:-}" ]] && _rc="${FAKE_DBX_EXIT_SHELL}"
@@ -600,6 +671,281 @@ _json_object_re() {
     assert_equal "$(_calls)" ""
 }
 
+# --- quiet-host precondition and the inconclusive verdict (issue #181) ------
+
+# The ERROR line of a host that never got quiet: PSI path, last avg10, the
+# seconds waited, loadavg (recorded only), and what to do.
+_busy_re() {
+    printf '^\\[ERROR\\] host too busy to measure \\(inconclusive\\): %s some avg10=%s for %ss; loadavg=[^;]+; re-run when idle$\n' \
+        "${BENCH_PSI_FILE//./\\.}" "${1//./\\.}" "$2"
+}
+
+@test "a quiet host is measured after 5 quiet seconds: exit 0, the PSI path, value and loadavg on stderr" {
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --runs 2 --warmup 0 >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
+    assert_success
+    # Readings at t = 0..5 s: five one-second polls, no more.
+    assert_equal "$(_sleeps)" "5"
+    run sort -u "${FAKE_SLEEP_CALLS}"
+    assert_output "1"
+    assert_equal "$(_calls | wc -l)" "6"
+    run cat "${_out}"
+    assert_equal "${#lines[@]}" 3
+    run cat "${_err}"
+    assert_line --regexp "^\[INFO\] host quiet: ${BENCH_PSI_FILE//./\\.} some avg10=0\.00 <= 2\.00 for 5s; loadavg=.+$"
+    assert_line --regexp "^\[INFO\] host stayed quiet: ${BENCH_PSI_FILE//./\\.} some avg10 peak=0\.00 over every run; loadavg=.+$"
+}
+
+@test "some avg10 of exactly 2.00 counts as quiet (the limit is inclusive)" {
+    _psi 2.00
+    run "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_equal "$(_sleeps)" "5"
+}
+
+@test "a host busy until --max-wait runs out is inconclusive: exit 3, no distrobox call, nothing on stdout" {
+    _psi 9.50
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --max-wait 7 --max-ms 300 >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
+    assert_failure 3
+    assert_equal "$(_sleeps)" "7"
+    assert_equal "$(_calls)" ""
+    run cat "${_out}"
+    assert_output ""
+    run cat "${_err}"
+    assert_line --regexp "$(_busy_re 9.50 7)"
+    refute_line --partial "within --max-ms"
+    refute_line --partial "exceeds --max-ms"
+}
+
+@test "quiet seconds must be CONSECUTIVE: a spike restarts the 5-second count" {
+    # t=0..2 quiet, t=3 busy, quiet from t=4: done at t=9 (9 polls).
+    FAKE_PSI_SEQ="0.00 0.00 5.00 0.00" run "${BENCH}" --runs 1 --warmup 0 --max-wait 20
+    assert_success
+    assert_equal "$(_sleeps)" "9"
+}
+
+@test "fewer than 5 quiet seconds before --max-wait is still inconclusive (exit 3)" {
+    run "${BENCH}" --runs 1 --warmup 0 --max-wait 3
+    assert_failure 3
+    assert_line --regexp "$(_busy_re 0.00 3)"
+    assert_equal "$(_calls)" ""
+}
+
+@test "a host that turns quiet after a few seconds is then measured: exit 0" {
+    _psi 9.00
+    # t=0..2 busy, quiet from t=3 on: 5 quiet seconds end at t=8.
+    FAKE_PSI_SEQ="9.00 9.00 1.50" run "${BENCH}" --runs 2 --warmup 0 --max-wait 10
+    assert_success
+    assert_equal "$(_sleeps)" "8"
+    assert_line --regexp "$(_metric_re shell)"
+    assert_line --regexp '^\[INFO\] host quiet: .* some avg10=1\.50 <= 2\.00 for 5s; loadavg=.+$'
+}
+
+@test "--max-wait defaults to 60 s, or 120 s when CI is set" {
+    _psi 50.00
+    run env -u CI "${BENCH}"
+    assert_failure 3
+    assert_equal "$(_sleeps)" "60"
+    rm -f "${FAKE_SLEEP_CALLS}"
+    CI=true run "${BENCH}"
+    assert_failure 3
+    assert_equal "$(_sleeps)" "120"
+    assert_equal "$(_calls)" ""
+}
+
+@test "a PSI spike mid-run voids the whole batch: exit 3, no metric line, measuring stops there" {
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c 'FAKE_DBX_PSI_AT=2 FAKE_DBX_PSI_VALUE=7.25 "$1" --runs 3 --warmup 0 --max-ms 5000 >"$2" 2>"$3"' \
+        _ "${BENCH}" "${_out}" "${_err}"
+    assert_failure 3
+    # The 2nd run left the host busy: its after-run reading voids the batch.
+    assert_equal "$(_calls | wc -l)" "2"
+    run cat "${_out}"
+    assert_output ""
+    run cat "${_err}"
+    assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=7\.25 after enter run 2; loadavg=[^;]+; batch void, re-run when idle$"
+    refute_line --partial "max-ms"
+}
+
+@test "a PSI spike mid-run voids the batch even when --json and every sample so far were fast" {
+    run env FAKE_DBX_PSI_AT=5 FAKE_DBX_PSI_VALUE=3.00 "${BENCH}" --runs 2 --warmup 0 --json
+    assert_failure 3
+    refute_line --regexp '^\{'
+    assert_line --regexp 'after inbox run 1; loadavg='
+}
+
+# Codex round 1 on PR #236: a run that FAILS must still get its after-run
+# PSI check. A failure on a host that turned busy during that very run is
+# not evidence of a broken box, so the verdict is 3 (inconclusive), not 1.
+@test "a failing run on a host that turned busy during it is inconclusive (exit 3), not a failure (exit 1)" {
+    run env FAKE_DBX_EXIT=4 FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=7.25 \
+        "${BENCH}" --runs 2 --warmup 0
+    assert_failure 3
+    assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=7\.25 after enter run 1; loadavg=[^;]+; batch void, re-run when idle$"
+    refute_line --partial "measurement aborted"
+    refute_output --regexp '^(enter|shell|inbox): min='
+    assert_equal "$(_calls | wc -l)" "1"
+}
+
+@test "a failing run on a host that stayed quiet is still a failure (exit 1)" {
+    run env FAKE_DBX_EXIT_SHELL=4 "${BENCH}" --runs 1 --warmup 0
+    assert_failure 1
+    assert_line --partial "exited 4 on run 1 - measurement aborted"
+    refute_line --partial "inconclusive"
+}
+
+# Issue #181 決定: PSI is RECORDED before and after every sample - one
+# stderr line per sample boundary (path and value), stdout unchanged.
+@test "every run records its PSI before and after it on stderr (path and value), stdout unchanged" {
+    local _out="${TMP}/out" _err="${TMP}/err" _m _k _p
+    run bash -c '"$1" --runs 2 --warmup 1 >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
+    assert_success
+    run cat "${_out}"
+    assert_equal "${#lines[@]}" 3
+    run grep -c '^\[INFO\] psi ' "${_err}"
+    assert_output "18"
+    run cat "${_err}"
+    _p="${BENCH_PSI_FILE//./\\.}"
+    for _m in enter shell inbox; do
+        for _k in 1 2 3; do
+            assert_line --regexp "^\[INFO\] psi before ${_m} run ${_k}: ${_p} some avg10=0\.00$"
+            assert_line --regexp "^\[INFO\] psi after ${_m} run ${_k}: ${_p} some avg10=0\.00$"
+        done
+    done
+}
+
+@test "the per-run PSI records come in run order: before run k, then after run k" {
+    run "${BENCH}" --runs 1 --warmup 1
+    assert_success
+    run bash -c 'grep -E "^\[INFO\] psi " <<<"$1" | sed -E "s/: .*//"' _ "${output}"
+    assert_output "$(printf '[INFO] psi %s\n' \
+        'before enter run 1' 'after enter run 1' 'before enter run 2' 'after enter run 2' \
+        'before shell run 1' 'after shell run 1' 'before shell run 2' 'after shell run 2' \
+        'before inbox run 1' 'after inbox run 1' 'before inbox run 2' 'after inbox run 2')"
+}
+
+# Codex round 1 on PR #236: `some avg10 <= 2.00` is exact at any number of
+# decimals - nothing is truncated to two places.
+@test "the 2.00 limit is exact at any precision: 2.00 and 1.999 are quiet, 2.001 and 2.01 are busy" {
+    local _v
+    for _v in 2.00 1.999 2.000 0.5 2; do
+        _psi "${_v}"
+        rm -f "${FAKE_SLEEP_CALLS}"
+        run "${BENCH}" --runs 1 --warmup 0 --max-wait 6
+        assert_success
+        assert_equal "$(_sleeps)" "5"
+    done
+    for _v in 2.001 2.01 2.0000001 10.00 3; do
+        _psi "${_v}"
+        rm -f "${FAKE_SLEEP_CALLS}" "${FAKE_DBX_CALLS}"
+        run "${BENCH}" --runs 1 --warmup 0 --max-wait 6
+        assert_failure 3
+        assert_line --regexp "$(_busy_re "${_v}" 6)"
+        assert_equal "$(_calls)" ""
+    done
+}
+
+@test "a mid-run reading just above the limit (2.001) voids the batch" {
+    run env FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=2.001 "${BENCH}" --runs 1 --warmup 0
+    assert_failure 3
+    assert_line --regexp 'some avg10=2\.001 after enter run 1; loadavg='
+}
+
+@test "the stayed-quiet peak compares exactly (1.999 beats 1.99)" {
+    FAKE_PSI_SEQ="1.99" run env FAKE_DBX_PSI_AT=2 FAKE_DBX_PSI_VALUE=1.999 \
+        "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --regexp '^\[INFO\] host stayed quiet: .* some avg10 peak=1\.999 over every run; loadavg=.+$'
+}
+
+# A reading that fails after an earlier good one must not report the stale
+# value: the error shows `?` for "no reading".
+@test "an unreadable PSI mid-run is reported as avg10=? (never the last good value)" {
+    run env FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=garbage "${BENCH}" --runs 1 --warmup 0
+    assert_failure 3
+    assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=\? after enter run 1; loadavg=[^;]+; batch void, re-run when idle$"
+}
+
+@test "no readable PSI: a warning says so and the measurement runs unguarded (exit 0, no wait)" {
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c 'BENCH_PSI_FILE="$4" "$1" --runs 2 --warmup 0 >"$2" 2>"$3"' \
+        _ "${BENCH}" "${_out}" "${_err}" "${TMP}/absent"
+    assert_success
+    assert_equal "$(_sleeps)" "0"
+    run cat "${_out}"
+    assert_equal "${#lines[@]}" 3
+    run cat "${_err}"
+    assert_line --regexp '^\[WARN\] no CPU pressure \(PSI\) readable .* - quiet-host check skipped, measuring anyway; loadavg=.+$'
+}
+
+@test "a PSI file without a parsable some avg10 counts as no PSI (warned, measured)" {
+    printf 'garbage\n' >"${BENCH_PSI_FILE}"
+    run "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --regexp '^\[WARN\] no CPU pressure \(PSI\) readable'
+    assert_equal "$(_sleeps)" "0"
+}
+
+# Print the PSI path bench.sh picks (sourced, no BENCH_PSI_FILE) with the
+# cgroup v2 mount $1, the /proc/self/cgroup stand-in $2 and the
+# /proc/pressure/cpu stand-in $3.
+_resolved_psi() {
+    bash -c 'unset BENCH_PSI_FILE; source "$1"; CGROUP_FS="$2"; PROC_SELF_CGROUP="$3"; PROC_PSI="$4"; _psi_resolve; printf "%s\n" "${PSI_PATH}"' \
+        _ "${BENCH}" "$@"
+}
+
+@test "PSI source: the process's own cgroup v2 cpu.pressure first, /proc/pressure/cpu as fallback, none when neither reads" {
+    local _cg="${TMP}/cgfs" _proc="${TMP}/proc.cpu" _self="${TMP}/self.cgroup"
+    mkdir -p "${_cg}/user.slice/x.scope"
+    printf '0::/user.slice/x.scope\n' >"${_self}"
+    _psi 0.10 "${_cg}/user.slice/x.scope/cpu.pressure"
+    _psi 0.20 "${_proc}"
+    run _resolved_psi "${_cg}" "${_self}" "${_proc}"
+    assert_success
+    assert_output "${_cg}/user.slice/x.scope/cpu.pressure"
+    rm "${_cg}/user.slice/x.scope/cpu.pressure"
+    run _resolved_psi "${_cg}" "${_self}" "${_proc}"
+    assert_output "${_proc}"
+    rm "${_proc}"
+    run _resolved_psi "${_cg}" "${_self}" "${_proc}"
+    assert_success
+    assert_output ""
+}
+
+@test "--max-wait 0, abc, -1 and 1.5 are refused with exit 2; a missing value too; nothing recorded, no wait" {
+    local _bad
+    for _bad in 0 abc -1 1.5; do
+        run "${BENCH}" --max-wait "${_bad}"
+        assert_failure 2
+        assert_output --regexp "^bench\.sh: --max-wait requires an integer >= 1, got '${_bad//./\\.}' \(see --help\)$"
+    done
+    run "${BENCH}" --max-wait
+    assert_failure 2
+    assert_output "bench.sh: --max-wait requires an argument (see --help)"
+    assert_equal "$(_calls)" ""
+    assert_equal "$(_sleeps)" "0"
+}
+
+@test "--max-wait=N is accepted like the other options" {
+    _psi 9.00
+    run "${BENCH}" --max-wait=2
+    assert_failure 3
+    assert_equal "$(_sleeps)" "2"
+}
+
+@test "--help documents --max-wait, the quiet-host rule, exit 3 and the test-only BENCH_PSI_FILE" {
+    run "${BENCH}" --help
+    assert_success
+    assert_output --partial "--max-wait N"
+    assert_output --partial "some avg10 <= 2.00"
+    assert_output --partial "/proc/pressure/cpu"
+    assert_output --regexp "3 +inconclusive"
+    assert_output --partial "BENCH_PSI_FILE"
+    assert_output --partial "tests only"
+    assert_equal "$(_sleeps)" "0"
+}
+
 # --- doc/manifest.md states the system-real evidence contract ---------------
 
 # Print the "(d) 進盒延遲 gate" paragraph of doc/manifest.md 測試對應 (from
@@ -627,4 +973,29 @@ _manifest_gate_paragraph() {
     assert_output --partial "\`sh -c :\`"
     refute_output --partial "兩行指標"
     refute_output --partial "兩行 指標"
+}
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "bench.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${BENCH}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# A run that exits non-zero must be REPORTED by _run_metric (the documented
+# `exited <rc> on run <n> - measurement aborted` line, return 1), not kill
+# the shell at the runner under errexit with the command's own status.
+@test "a failing host-clocked run is reported and returns 1 with errexit on in the caller" {
+    run bash -c 'set -euo pipefail; source "$1"; OPT_WARMUP=0; OPT_RUNS=1; s=(); _run_metric enter s _time_cmd bash -c "exit 3"' \
+        _ "${BENCH}"
+    assert_failure 1
+    assert_output --partial "enter: 'bash -c exit 3' exited 3 on run 1 - measurement aborted"
+}
+
+@test "a failing in-box run is reported and returns 1 with errexit on in the caller" {
+    run bash -c 'set -euo pipefail; source "$1"; OPT_WARMUP=0; OPT_RUNS=1; s=(); _run_metric inbox s _inbox_cmd bash -c "exit 4"' \
+        _ "${BENCH}"
+    assert_failure 1
+    assert_output --partial "inbox: 'bash -c exit 4' exited 4 on run 1 - measurement aborted"
 }
