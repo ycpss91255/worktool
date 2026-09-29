@@ -22,7 +22,7 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 
 - **一律 push 到分支，進 `main` 只能走 merge。** 不准直接 push main、更不准 force push main。遠端有 branch protection 擋（`ci-passed` 必過、strict、enforce_admins）。
 - **一個 issue 一個 PR，一個 PR 只做一件事。** milestone 由多個 sub-issue PR 組成，各自 CI 綠 + codex 確認後合併；只有 milestone 驗收 PR 是人類 gate，不得自動合併。
-- **milestone 驗收 PR 要有維護者的核准紀錄才能合併（#187）。** 驗收 PR 貼 `milestone-gate` 標籤；核准＝該 PR 上一則 `author_association` 為 `OWNER`、本文開頭不是 `[claude]`／`[codex]`、內容含「允許合併」的留言。對話裡的同意、agent 對留言的解讀都不算。`.github/workflows/milestone-gate.yml` 以 `lib/approval.sh` 判斷，在 PR head SHA 設 commit status `milestone-gate-approval`（沒貼標籤＝success）。agent 的留言一律以 `[claude]`／`[codex]` 開頭，且絕不寫「允許合併」。已知限制：agent 用維護者的 token 發留言，GitHub 分不出本人與代發，所以這道檢查擋的是「忘了等核准」，擋不住冒名；agent 端的 hook 追蹤於 #190。
+- **milestone 驗收 PR 要有維護者的核准紀錄才能合併（#187）。** 驗收 PR 貼 `milestone-gate` 標籤；核准＝該 PR 上一則 `author_association` 為 `OWNER`、本文開頭不是 `[claude]`／`[codex]`、內容含「允許合併」的留言。對話裡的同意、agent 對留言的解讀都不算。`.github/workflows/milestone-gate.yml` 以 `lib/approval.sh` 判斷，在 PR head SHA 設 commit status `milestone-gate-approval`（沒貼標籤＝success）。agent 的留言一律以 `[claude]`／`[codex]` 開頭，且絕不寫「允許合併」。已知限制：agent 用維護者的 token 發留言，GitHub 分不出本人與代發，所以這道檢查擋的是「忘了等核准」，擋不住冒名；冒名由 agent 端 hook `.agents/hook/enforce_milestone_gate_approval.sh`（#190）擋：對 `milestone-gate` PR 的 `gh pr merge`／`gh api .../pulls/<n>/merge` 沒有核准就拒絕（查詢失敗也拒絕），未標記 `[claude]`／`[codex]` 卻含「允許合併」的留言、review、issue/PR 內文一律拒絕；規則共用 `lib/approval.sh`。
 - **一個 commit = 一個最小單元或一次完整修復。** 不要把不相干的東西包成一個 commit。
 - 語言：issue、PR、設計文件、ADR 用繁體中文；commit message、程式碼與註解用英文。不用 emoji。
 - 測試只在 Docker 內跑（`just test ...`）；不在 host 上跑 bats、不在 host 上裝套件。

@@ -84,8 +84,8 @@ worktool/
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
-│   │   │                remind_main_sync、enforce_gh_body_file、enforce_shellcheck_disable_approval、worktree_create、
-│   │   │                remind_workflow_tdd、remind_no_emoji)
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
+│   │   │                enforce_shellcheck_disable_approval、worktree_create、remind_workflow_tdd、remind_no_emoji)
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
@@ -306,7 +306,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
   deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
   `<author_association>\t<body>` 的 NUL 分隔紀錄交給 `lib/approval.sh` 的
-  `approval_evaluate`(純函式,不呼叫 GitHub API,之後 agent 端 hook #190 共用),
+  `approval_evaluate`(純函式,不呼叫 GitHub API,與 agent 端 hook #190 共用),
   再於 PR head SHA 設 commit status `milestone-gate-approval`:未貼標籤或已核准為
   success,否則 failure,description 為「需要維護者留言:允許合併」。權限只有
   `statuses: write`、`pull-requests: read`、`issues: read`,加上 checkout 私有 repo
@@ -317,9 +317,23 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   權限與 context 名稱。
 - **已知限制**:agent 用維護者的 token 發留言,GitHub 上無法區分維護者本人與 agent
   代發;這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫「允許合併」。後者由
-  agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
-  「允許合併」一律拒絕;對貼了 `milestone-gate` 的 PR 執行 `gh pr merge` 時沒有核准
-  留言也拒絕。
+  agent 端的 Claude Code PreToolUse(Bash)hook `.agents/hook/enforce_milestone_gate_approval.sh`
+  擋(#190,與 `enforce_gh_body_file` 並列註冊在 `.claude/settings.json`,exit 2 = 擋下、
+  原因寫 stderr),規則一律 source `lib/approval.sh`,不另寫一份:
+  - **合併閘門**:`gh pr merge <n>`(任何旗標,含 `--auto`)與 `gh api .../pulls/<n>/merge`。
+    repo 取自 `-R`/`--repo`、PR URL 或 api 路徑,都沒有就用當下目錄的 `gh repo view`;
+    分支或省略的 PR 以 `gh pr view` 解析。以 `gh api` 取標籤與留言交給
+    `approval_evaluate`,不過就擋並說明缺什麼;任何查詢失敗都擋(fail closed)。
+  - **防冒名**:`gh pr comment`/`gh pr review`/`gh pr create`/`gh issue comment`/
+    `gh issue create` 的內文(`--body`、`-b`、`--body-file`/`-F` 的檔案內容)與
+    `gh api` 對 `.../comments` 的寫入(`-f`/`-F`/`--raw-field`/`--field body=...`、
+    `body=@檔案`、`--input` JSON 的 `body`),只要 `approval_is_human_approval` 會把它當成
+    核准(含「允許合併」且開頭不是 `[claude]`/`[codex]`)就擋;有標記的 agent 內文引用
+    這四個字放行。讀不到的內文(stdin、不存在的檔案、command substitution)一律擋。
+  - 只看真正啟動的 gh(`lib/subcommand.sh`),複合指令逐段判斷;commit 訊息、echo、
+    heredoc 內文提到 gh 都只是資料。其餘指令放行且不呼叫 gh。
+    `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
+    不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
   程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
   一樣跑預設分支上的 workflow 檔;checkout 釘在預設分支(`ref` 為 default branch、
