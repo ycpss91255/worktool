@@ -26,7 +26,7 @@
 機制：
 
 - `just` 是唯一的使用者入口：root `justfile` 只有 `mod?` 行與 `default`，每個 recipe 是把參數原樣交給腳本的薄轉發器，`--help` 與參數驗證都在腳本裡（`doc/design.md`「決策」2026-09-16「just 是使用者的通用介面」的模型規則 1 與 4）。
-- CI 的每一個 gate 都以 `just test <tier>` 或 `just test system-real` 執行（`.github/workflows/ci.yml`），與維護者在本機跑的是同一個指令。
+- CI 的測試 gate（lint、unit、integration、system、acceptance、system-real）都以 `just test <tier>` 或 `just test system-real` 執行（`.github/workflows/ci.yml`），與維護者在本機跑的是同一個指令。建 image 的 `build-image` job 不在此列：它直接執行 `docker build`，不經 `just test build`（見待補）。
 - agent 端的 hook（`.agents/hook/test-must-use-docker.sh`）擋下在 host 直接跑 bats 或直接呼叫 `script/test/test.sh`，要求改用 `just test`。
 - 人類實機驗收清單（`doc/acceptance.md`）規定清單上的 worktool 動作一律以 `just` 執行。
 
