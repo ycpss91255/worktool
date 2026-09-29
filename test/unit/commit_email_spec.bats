@@ -19,7 +19,13 @@
 #     and emails plus the fix command, and exits 1; all clean exits 0;
 #     every line it prints is a diagnostic, so all of it goes to stderr
 #     and stdout stays empty (stdout is kept for data);
-#   - commit_email_range picks the commit range from the event data;
+#   - commit_email_range validates every input (event, PR base/head, push
+#     before/after, default ref) and fails closed on a missing, empty or
+#     malformed value; only an all-zero `before` means a new ref, which
+#     checks every commit reachable from `after` that is not on the default
+#     branch. An input-state matrix pins the failures, and real git repos
+#     pin the exact set of checked commits (1, many, merge, force-push
+#     rewrite, new ref);
 #   - the record format fed through a real `git log` round-trips, and a
 #     forged old committer date or a forged noreply@github.com committer
 #     does not let a plain author email through;
@@ -233,33 +239,233 @@ _evaluate_stderr_only() {
     assert_output --partial 'eee5'
 }
 
-# --- commit_email_range ----------------------------------------------------------
+# --- commit_email_range: input-state matrix --------------------------------
+#
+# Every input of the range (event, base, head, before, after, default ref)
+# is validated; a missing, empty or malformed value fails closed (exit 1,
+# a message on stderr, nothing on stdout) instead of falling back to a
+# default. Only an all-zero `before` means a new ref, and a new ref checks
+# every commit reachable from `after` that is not on the default branch.
 
-@test "range: pull_request checks base..head" {
-    run commit_email_range pull_request base1 head2 '' ''
-    assert_success
-    assert_output 'base1..head2'
+# Two distinct well-formed shas (values only; no repo needed).
+SHA_A='1111111111111111111111111111111111111111'
+SHA_B='2222222222222222222222222222222222222222'
+DEF='refs/remotes/origin/main'
+
+# Run commit_email_range keeping only its stderr (stdout is dropped).
+_range_stderr_only() {
+    { commit_email_range "$@" >/dev/null; } 2>&1
 }
 
-@test "range: push checks before..after" {
-    run commit_email_range push '' '' before1 after2
-    assert_success
-    assert_output 'before1..after2'
+# Assert that commit_email_range fails closed for the given arguments:
+# status 1, nothing on stdout, a message naming the range on stderr.
+_range_fails() {
+    run --separate-stderr commit_email_range "$@"
+    assert_failure 1
+    assert_output ''
+    run _range_stderr_only "$@"
+    assert_failure 1
+    assert_output --partial 'commit_email_range:'
 }
 
-@test "range: push of a new ref (before is all zeros) checks the pushed commit alone" {
-    run commit_email_range push '' '' "${ZERO}" after2
-    assert_success
-    assert_output 'after2^!'
+@test "range: a missing argument (fewer or more than six) fails closed" {
+    _range_fails
+    _range_fails push
+    _range_fails push '' '' "${SHA_A}" "${SHA_B}"
+    _range_fails pull_request "${SHA_A}" "${SHA_B}" '' ''
+    _range_fails push '' '' "${SHA_A}" "${SHA_B}" "${DEF}" extra
 }
 
-@test "range: missing data or an unknown event fails" {
-    run commit_email_range pull_request '' head2 '' ''
-    assert_failure
-    run commit_email_range push '' '' before1 ''
-    assert_failure
-    run commit_email_range workflow_dispatch a b c d
-    assert_failure
+@test "range: an unknown, empty or miscased event fails closed" {
+    local _ev
+    for _ev in '' workflow_dispatch Push PUSH pull_request_target 'push ' merge_group; do
+        _range_fails "${_ev}" "${SHA_A}" "${SHA_B}" "${SHA_A}" "${SHA_B}" "${DEF}"
+    done
+}
+
+# Values that are never a usable commit sha.
+_MALFORMED=('' 'abc' '111111111111111111111111111111111111111' '11111111111111111111111111111111111111111'
+    'gggggggggggggggggggggggggggggggggggggggg' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'HEAD' 'main' '-n' "${SHA_A} " "${SHA_A}..${SHA_B}" "${SHA_A}^!")
+
+@test "range: push with before missing, empty or malformed fails closed (no new-ref fallback)" {
+    local _b
+    for _b in "${_MALFORMED[@]}"; do
+        _range_fails push '' '' "${_b}" "${SHA_B}" "${DEF}"
+    done
+}
+
+@test "range: push with after missing, empty, all-zero or malformed fails closed" {
+    local _a
+    for _a in "${_MALFORMED[@]}" "${ZERO}"; do
+        _range_fails push '' '' "${SHA_A}" "${_a}" "${DEF}"
+        _range_fails push '' '' "${ZERO}" "${_a}" "${DEF}"
+    done
+}
+
+@test "range: pull_request with base or head missing, empty, all-zero or malformed fails closed" {
+    local _v
+    for _v in "${_MALFORMED[@]}" "${ZERO}"; do
+        _range_fails pull_request "${_v}" "${SHA_B}" '' '' "${DEF}"
+        _range_fails pull_request "${SHA_A}" "${_v}" '' '' "${DEF}"
+    done
+}
+
+@test "range: push with the default ref missing, empty or malformed fails closed" {
+    local _d
+    for _d in '' 'refs/remotes/origin/' '/main' '-main' 'a..b' 'a b' 'main^' 'main~1' 'a//b'; do
+        _range_fails push '' '' "${ZERO}" "${SHA_B}" "${_d}"
+        _range_fails push '' '' "${SHA_A}" "${SHA_B}" "${_d}"
+    done
+}
+
+@test "range: pull_request prints base..head" {
+    run --separate-stderr commit_email_range pull_request "${SHA_A}" "${SHA_B}" '' '' "${DEF}"
+    assert_success
+    assert_output "${SHA_A}..${SHA_B}"
+    # A synchronize event carries before/after too; they do not change the range.
+    run --separate-stderr commit_email_range pull_request "${SHA_A}" "${SHA_B}" "${SHA_B}" "${SHA_A}" "${DEF}"
+    assert_success
+    assert_output "${SHA_A}..${SHA_B}"
+}
+
+@test "range: push with a valid before prints before..after" {
+    run --separate-stderr commit_email_range push '' '' "${SHA_A}" "${SHA_B}" "${DEF}"
+    assert_success
+    assert_output "${SHA_A}..${SHA_B}"
+}
+
+@test "range: push of a new ref (all-zero before) prints after and ^default, not after^!" {
+    run --separate-stderr commit_email_range push '' '' "${ZERO}" "${SHA_B}" "${DEF}"
+    assert_success
+    assert_equal "${#lines[@]}" 2
+    assert_line --index 0 "${SHA_B}"
+    assert_line --index 1 "^${DEF}"
+    refute_output --partial '^!'
+}
+
+# --- commit_email_range: exact set of checked commits (real git) ------------
+
+# Commit in repo $1 on the current branch with message $2 (noreply
+# identity) and print the new sha.
+_c() {
+    GIT_AUTHOR_NAME='Some One' GIT_AUTHOR_EMAIL="${NR}" \
+        GIT_COMMITTER_NAME='Some One' GIT_COMMITTER_EMAIL="${NR}" \
+        git -C "$1" commit -q --allow-empty -m "$2"
+    git -C "$1" rev-parse HEAD
+}
+
+# Print, sorted, the shas `git log` checks for the range computed from the
+# event data $2..$7 in repo $1 (the CI wiring: one revision per line, fed
+# to git log as separate arguments).
+_checked() {
+    local _repo="$1" _out _revs
+    shift
+    _out="$(commit_email_range "$@")" || return 1
+    mapfile -t _revs <<< "${_out}"
+    git -C "${_repo}" log --format=%H "${_revs[@]}" -- | sort
+}
+
+# Print the given shas sorted, one per line.
+_set() { printf '%s\n' "$@" | sort; }
+
+# A repo with main at one base commit, mirrored as refs/remotes/origin/main.
+_repo_with_main() {
+    local _repo="$1"
+    git init -q -b main "${_repo}"
+    _c "${_repo}" base > /dev/null
+    git -C "${_repo}" update-ref refs/remotes/origin/main HEAD
+}
+
+@test "checked set: push of one commit is exactly that commit" {
+    local _r="${BATS_TEST_TMPDIR}/r" _b _c1
+    _repo_with_main "${_r}"
+    _b="$(git -C "${_r}" rev-parse HEAD)"
+    _c1="$(_c "${_r}" one)"
+    run _checked "${_r}" push '' '' "${_b}" "${_c1}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_c1}")"
+}
+
+@test "checked set: push of many commits is every one of them, not only the tip" {
+    local _r="${BATS_TEST_TMPDIR}/r" _b _c1 _c2 _c3
+    _repo_with_main "${_r}"
+    _b="$(git -C "${_r}" rev-parse HEAD)"
+    _c1="$(_c "${_r}" one)"; _c2="$(_c "${_r}" two)"; _c3="$(_c "${_r}" three)"
+    run _checked "${_r}" push '' '' "${_b}" "${_c3}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_c1}" "${_c2}" "${_c3}")"
+}
+
+@test "checked set: push with a merge commit covers the merge and both merged-in commits" {
+    local _r="${BATS_TEST_TMPDIR}/r" _b _f1 _f2 _m1 _mg
+    _repo_with_main "${_r}"
+    _b="$(git -C "${_r}" rev-parse HEAD)"
+    git -C "${_r}" checkout -q -b feat
+    _f1="$(_c "${_r}" f1)"; _f2="$(_c "${_r}" f2)"
+    git -C "${_r}" checkout -q main
+    _m1="$(_c "${_r}" m1)"
+    GIT_AUTHOR_NAME='Some One' GIT_AUTHOR_EMAIL="${NR}" \
+        GIT_COMMITTER_NAME='Some One' GIT_COMMITTER_EMAIL="${NR}" \
+        git -C "${_r}" merge -q --no-ff --no-edit feat
+    _mg="$(git -C "${_r}" rev-parse HEAD)"
+    run _checked "${_r}" push '' '' "${_b}" "${_mg}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_f1}" "${_f2}" "${_m1}" "${_mg}")"
+}
+
+@test "checked set: a force-push rewrite checks every rewritten commit, not the dropped ones" {
+    local _r="${BATS_TEST_TMPDIR}/r" _b _o1 _o2 _n1 _n2
+    _repo_with_main "${_r}"
+    _b="$(git -C "${_r}" rev-parse HEAD)"
+    _o1="$(_c "${_r}" old1)"; _o2="$(_c "${_r}" old2)"
+    git -C "${_r}" reset -q --hard "${_b}"
+    _n1="$(_c "${_r}" new1)"; _n2="$(_c "${_r}" new2)"
+    run _checked "${_r}" push '' '' "${_o2}" "${_n2}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_n1}" "${_n2}")"
+    refute_output --partial "${_o1}"
+}
+
+@test "checked set: a new ref checks every commit not on the default branch (1, many, merge)" {
+    local _r="${BATS_TEST_TMPDIR}/r" _f1 _f2 _f3 _s1 _mg
+    _repo_with_main "${_r}"
+    git -C "${_r}" checkout -q -b feat
+    _f1="$(_c "${_r}" f1)"
+    run _checked "${_r}" push '' '' "${ZERO}" "${_f1}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_f1}")"
+    _f2="$(_c "${_r}" f2)"; _f3="$(_c "${_r}" f3)"
+    run _checked "${_r}" push '' '' "${ZERO}" "${_f3}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_f1}" "${_f2}" "${_f3}")"
+    git -C "${_r}" checkout -q -b side main
+    _s1="$(_c "${_r}" s1)"
+    git -C "${_r}" checkout -q feat
+    GIT_AUTHOR_NAME='Some One' GIT_AUTHOR_EMAIL="${NR}" \
+        GIT_COMMITTER_NAME='Some One' GIT_COMMITTER_EMAIL="${NR}" \
+        git -C "${_r}" merge -q --no-ff --no-edit side
+    _mg="$(git -C "${_r}" rev-parse HEAD)"
+    run _checked "${_r}" push '' '' "${ZERO}" "${_mg}" "${DEF}"
+    assert_success
+    assert_output "$(_set "${_f1}" "${_f2}" "${_f3}" "${_s1}" "${_mg}")"
+}
+
+@test "checked set: pull_request covers every commit of base..head including a merge" {
+    local _r="${BATS_TEST_TMPDIR}/r" _b _f1 _s1 _mg
+    _repo_with_main "${_r}"
+    _b="$(git -C "${_r}" rev-parse HEAD)"
+    git -C "${_r}" checkout -q -b side
+    _s1="$(_c "${_r}" s1)"
+    git -C "${_r}" checkout -q -b feat main
+    _f1="$(_c "${_r}" f1)"
+    GIT_AUTHOR_NAME='Some One' GIT_AUTHOR_EMAIL="${NR}" \
+        GIT_COMMITTER_NAME='Some One' GIT_COMMITTER_EMAIL="${NR}" \
+        git -C "${_r}" merge -q --no-ff --no-edit side
+    _mg="$(git -C "${_r}" rev-parse HEAD)"
+    run _checked "${_r}" pull_request "${_b}" "${_mg}" '' '' "${DEF}"
+    assert_success
+    assert_output "$(_set "${_f1}" "${_s1}" "${_mg}")"
 }
 
 # --- round trip through a real git log -------------------------------------------
