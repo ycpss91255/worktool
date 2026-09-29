@@ -33,9 +33,11 @@ case " $* " in
     *" pr view "*) [[ -f "${d}/fail_view" ]] && exit 1
         printf '%s\n' "${GH_STUB_PR:-7}" ;;
     */labels" "*) [[ -f "${d}/fail_labels" ]] && exit 1
-        cat "${d}/labels.json" ;;
+        cat "${d}/labels.json"
+        [[ ! -f "${d}/late_fail_labels" ]] || exit 1 ;;
     */comments" "*) [[ -f "${d}/fail_comments" ]] && exit 1
-        cat "${d}/comments.json" ;;
+        cat "${d}/comments.json"
+        [[ ! -f "${d}/late_fail_comments" ]] || exit 1 ;;
     *) printf 'gh stub: unexpected call: %s\n' "$*" >&2; exit 1 ;;
 esac
 STUB
@@ -69,6 +71,12 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/hook/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "the hook sets set -uo pipefail itself, as issue #190 requires" {
+    assert [ -f "${HOOK_DIR}/enforce_milestone_gate_approval.sh" ]
+    run grep -cx 'set -uo pipefail' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
+    assert_output "1"
 }
 
 @test "the hook reuses lib/approval.sh instead of re-implementing the rule" {
@@ -194,6 +202,26 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output --partial "fail closed"
 }
 
+@test "a gh lookup that prints JSON and then fails blocks the merge (fail closed)" {
+    _labels milestone-gate
+    _comment OWNER "${PHRASE}"
+    touch "${GH_STUB_DIR}/late_fail_labels"
+    _check "gh pr merge 7 -R ycpss91255/worktool --merge"
+    assert_failure 2
+    assert_output --partial "cannot read the PR labels"
+    rm "${GH_STUB_DIR}/late_fail_labels"
+    touch "${GH_STUB_DIR}/late_fail_comments"
+    _check "gh pr merge 7 -R ycpss91255/worktool --merge"
+    assert_failure 2
+    assert_output --partial "cannot read the PR comments"
+}
+
+@test "the lookup failure check does not rely on pipefail" {
+    assert [ -f "${HOOK_DIR}/enforce_milestone_gate_approval.sh" ]
+    run grep -En '^[[:space:]]*\|[[:space:]]*jq' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
+    assert_failure
+}
+
 @test "a failed repo or PR resolution blocks the merge (fail closed)" {
     touch "${GH_STUB_DIR}/fail_repo"
     _check "gh pr merge 7 --merge"
@@ -208,6 +236,20 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     _labels milestone-gate
     _check "git fetch origin && timeout 60 gh pr merge 7 -R ycpss91255/worktool --merge; echo done"
     assert_failure 2
+}
+
+@test "a timeout(1) with valued options before gh does not hide the merge" {
+    _labels milestone-gate
+    local _c
+    for _c in "timeout -k 5 60 gh pr merge 7 -R ycpss91255/worktool --merge" \
+        "timeout --signal TERM 60 gh pr merge 7 -R ycpss91255/worktool --merge" \
+        "timeout -s 9 --preserve-status 60 gh pr merge 7 -R ycpss91255/worktool" \
+        "gtimeout --kill-after=5 60 gh api -X PUT repos/o/r/pulls/7/merge" \
+        "timeout -k 5 60 bash -c 'gh pr merge 7 -R ycpss91255/worktool'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
 }
 
 # --- anti-forgery ----------------------------------------------------------------
@@ -251,6 +293,21 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_failure 2
 }
 
+@test "every repeated body flag is checked, not only the first" {
+    local _f="${BATS_TEST_TMPDIR}/body.md" _ok="${BATS_TEST_TMPDIR}/ok.md" _c
+    printf '%s\n' "${PHRASE}" >"${_f}"
+    printf 'looks good\n' >"${_ok}"
+    for _c in "gh pr comment 7 --body safe --body '${PHRASE}'" \
+        "gh pr comment 7 -b safe --body=${PHRASE}" \
+        "gh issue comment 7 --body-file ${_ok} --body-file ${_f}" \
+        "gh pr create --title t -F ${_ok} -F ${_f}" \
+        "gh pr comment 7 --body safe --body \"\$(cat ${_f})\"" \
+        "gh pr comment 7 -F ${_ok} -F -"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+}
+
 @test "a marked body quoting the phrase passes (inline and file)" {
     local _f="${BATS_TEST_TMPDIR}/marked.md"
     printf '[codex] 等維護者留言「%s」\n' "${PHRASE}" >"${_f}"
@@ -272,6 +329,21 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         "gh api -X POST repos/o/r/issues/7/comments --raw-field 'body=ok ${PHRASE}'" \
         "gh api --method PATCH repos/o/r/issues/comments/99 -F body=@${_f}" \
         "gh api repos/o/r/pulls/7/comments --input ${_j}"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+}
+
+@test "gh api --raw-field=body= / --field=body= and attached -f forms are checked" {
+    local _f="${BATS_TEST_TMPDIR}/api.md" _c
+    printf '%s\n' "${PHRASE}" >"${_f}"
+    for _c in "gh api repos/o/r/issues/7/comments --raw-field=body=${PHRASE}" \
+        "gh api repos/o/r/issues/7/comments --field=body=${PHRASE}" \
+        "gh api repos/o/r/issues/7/comments --field=body=@${_f}" \
+        "gh api repos/o/r/issues/7/comments -fbody=${PHRASE}" \
+        "gh api repos/o/r/issues/7/comments -F=body=@${_f}" \
+        "gh api repos/o/r/issues/7/comments --raw-field=body=\"\$(cat ${_f})\"" \
+        "gh api -X GET -X POST repos/o/r/issues/7/comments -f body=${PHRASE}"; do
         _check "${_c}"
         assert_failure 2
     done

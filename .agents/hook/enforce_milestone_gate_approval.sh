@@ -17,16 +17,24 @@
 #      `gh issue comment|create` (--body / -b, --body-file / -F read from
 #      disk) and of `gh api` writes to .../comments (-f / -F / --raw-field /
 #      --field body=..., body=@file, --input <json>) must not read as a
-#      human approval by approval_is_human_approval: a body holding the
+#      human approval by approval_is_human_approval. Every occurrence of a
+#      repeated flag is judged, in every form (-b x, -bx, -b=x, --body=x),
+#      and the last -X / --method decides a read. A body holding the
 #      approval phrase must start with [claude] or [codex]. A body the hook
 #      cannot read (stdin, a missing file, a command substitution) blocks.
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real gh launches count
-# (lib/subcommand.sh): quoted text, commit messages and heredoc bodies that
-# merely mention gh are data. Everything else passes silently, without
-# calling gh.
+# (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
+# included, is skipped by hook_timeout_lead): quoted text, commit messages
+# and heredoc bodies that merely mention gh are data. Everything else
+# passes silently, without calling gh.
 
 # shellcheck source-path=SCRIPTDIR/lib
+# Exit-code-contract hook: `set -uo pipefail`, NOT -e (a probe returning 1
+# must not abort the decision); every gh lookup is still checked on its own,
+# never through a pipe, so fail closed does not depend on pipefail.
+set -uo pipefail
+
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
@@ -49,18 +57,13 @@ readonly _MERGE_VALUE_OPTS=' -R --repo -b --body -F --body-file -t --subject -A 
 readonly _API_VALUE_OPTS=' -X --method -f -F --field --raw-field -H --header --input -q --jq -t --template --hostname --cache -p --preview '
 
 # _load_launch <encoded sub-command> - fill _W / _E from a gh launch (a
-# leading timeout(1) and its options are skipped); fail when it is no gh.
+# leading timeout(1), its options and duration are skipped, by
+# hook_timeout_lead of lib/subcommand.sh); fail when it is no gh.
 _load_launch() {
-    local -a _enc
-    local _i=0
-    read -r -a _enc <<<"$1"
-    if [[ "${_enc[0]:-}" =~ ^g?timeout$ ]]; then
-        _i=1
-        while [[ "${_enc[_i]:-}" == -* ]]; do _i=$((_i + 1)); done
-        _i=$((_i + 1))
-    fi
-    [[ "${_enc[_i]:-}" == gh || "${_enc[_i]:-}" == */gh ]] || return 1
-    _E=("${_enc[@]:_i}")
+    local _lead _i
+    _lead="$(hook_timeout_lead "$1")"
+    read -r -a _E <<<"${1#"${_lead}"}"
+    [[ "${_E[0]:-}" == gh || "${_E[0]:-}" == */gh ]] || return 1
     _W=()
     for _i in "${!_E[@]}"; do _W[_i]="$(hook_word "${_E[_i]}")"; done
     _ARG0=2
@@ -80,39 +83,61 @@ _sub() {
     fi
 }
 
-# _opt_at <name>... - print the index of the value of the first given
-# option, as `<index>` (separate word) or `<index>=` (inside --name=value).
+# _opt_at <name>... - print, one per line, where the value of EVERY
+# occurrence of the given options sits: `<index>` (the next word) or
+# `<index>:<offset>` (inside the word: --name=value, -nvalue, -n=value).
+# gh keeps the last value of a repeated flag; a check reads them all.
 _opt_at() {
-    local _i _n
+    local _i _n _w _found=1
     for ((_i = 2; _i < ${#_W[@]}; _i++)); do
+        _w="${_W[_i]}"
         for _n in "$@"; do
-            if [[ "${_W[_i]}" == "${_n}" ]]; then
-                printf '%s' "$((_i + 1))"; return 0
-            elif [[ "${_n}" == --* && "${_W[_i]}" == "${_n}="* ]]; then
-                printf '%s=' "${_i}"; return 0
+            if [[ "${_w}" == "${_n}" ]]; then
+                printf '%s\n' "$((_i + 1))"; _i=$((_i + 1)); _found=0; break
+            elif [[ "${_n}" == --* && "${_w}" == "${_n}="* ]]; then
+                printf '%s:%s\n' "${_i}" "$((${#_n} + 1))"; _found=0; break
+            elif [[ "${_n}" == -? && "${_w}" == "${_n}"?* ]]; then
+                [[ "${_w}" == "${_n}="* ]] && printf '%s:3\n' "${_i}" || printf '%s:2\n' "${_i}"
+                _found=0; break
             fi
         done
     done
-    return 1
+    return "${_found}"
 }
 
-# _opt <name>... - the decoded value of the first given option.
-_opt() {
-    local _at
-    _at="$(_opt_at "$@")" || return 1
-    if [[ "${_at}" == *= ]]; then
-        printf '%s' "${_W[${_at%=}]#*=}"
+# _opt_word <at> - the decoded value at <at> (a line of _opt_at).
+_opt_word() {
+    if [[ "$1" == *:* ]]; then
+        printf '%s' "${_W[${1%:*}]:${1#*:}}"
     else
-        printf '%s' "${_W[_at]:-}"
+        printf '%s' "${_W[$1]:-}"
     fi
 }
 
-# _opt_has_subst <name>... - 0 when that option's value holds a command
-# substitution (the hook cannot know what it expands to).
+# _opt <name>... - the decoded value of the LAST given option, as gh reads it.
+_opt() {
+    local _at
+    _at="$(_opt_at "$@" | tail -n 1)"
+    [[ -n "${_at}" ]] || return 1
+    _opt_word "${_at}"
+}
+
+# _opt_values <name>... - every value of the given options, NUL-terminated.
+_opt_values() {
+    local _at
+    while IFS= read -r _at; do
+        printf '%s\0' "$(_opt_word "${_at}")"
+    done < <(_opt_at "$@")
+}
+
+# _opt_has_subst <name>... - 0 when any value of those options holds a
+# command substitution (the hook cannot know what it expands to).
 _opt_has_subst() {
     local _at
-    _at="$(_opt_at "$@")" || return 1
-    hook_word_has_subst "${_E[${_at%=}]:-}"
+    while IFS= read -r _at; do
+        hook_word_has_subst "${_E[${_at%:*}]:-}" && return 0
+    done < <(_opt_at "$@")
+    return 1
 }
 
 # _positional <value-opts> <from> - the first positional word from index
@@ -166,15 +191,20 @@ _repo_of() {
 # _gate <owner/repo> <number> - block the merge unless lib/approval.sh
 # passes it on the PR's labels and comments.
 _gate() {
-    local _repo="$1" _pr="$2" _labels _records _reason _rc
+    local _repo="$1" _pr="$2" _json _labels _records _reason _rc
     local _what="merge of ${_repo}#${_pr}"
-    _labels="$(_gh api --paginate "repos/${_repo}/issues/${_pr}/labels" \
-        | jq -r '.[].name')" || _fail_closed "${_what}: cannot read the PR labels"
+    # Each gh call is checked by its own exit status (never through a pipe).
+    _json="$(_gh api --paginate "repos/${_repo}/issues/${_pr}/labels")" \
+        || _fail_closed "${_what}: cannot read the PR labels"
+    _labels="$(jq -r '.[].name' <<<"${_json}")" \
+        || _fail_closed "${_what}: cannot read the PR labels"
+    _json="$(_gh api --paginate "repos/${_repo}/issues/${_pr}/comments")" \
+        || _fail_closed "${_what}: cannot read the PR comments"
     _records="$(mktemp)" || _fail_closed "${_what}: cannot create a temp file"
     # One NUL-terminated `<author_association>\t<body>` record per comment,
     # the input format of approval_evaluate.
-    if ! _gh api --paginate "repos/${_repo}/issues/${_pr}/comments" \
-        | jq -j '.[] | .author_association + "\t" + (.body // "") + "\u0000"' >"${_records}"; then
+    if ! jq -j '.[] | .author_association + "\t" + (.body // "") + "\u0000"' \
+        <<<"${_json}" >"${_records}"; then
         rm -f -- "${_records}"
         _fail_closed "${_what}: cannot read the PR comments"
     fi
@@ -251,15 +281,18 @@ _read_body() {
 _check_gh_body() {
     local _src _body _file
     _src="gh $(_sub) body"
-    if _opt_has_subst --body -b; then
-        hook_block "${_src}: an inline body with a command substitution cannot be checked (fail closed)." \
-            "Write the body to a file first, then pass --body-file <file>."
+    if _opt_has_subst --body -b --body-file -F; then
+        hook_block "${_src}: a body (or body file name) with a command substitution cannot be checked (fail closed)." \
+            "Write the body to a file first, then pass --body-file <literal path>."
     fi
-    _body="$(_opt --body -b)" && _judge_body "${_body}" "${_src}"
-    if _file="$(_opt --body-file -F)"; then
+    # Every value, not only the one gh keeps: a repeated flag hides none.
+    while IFS= read -r -d '' _body; do
+        _judge_body "${_body}" "${_src}"
+    done < <(_opt_values --body -b)
+    while IFS= read -r -d '' _file; do
         _body="$(_read_body "${_file}" "${_src}")" || exit 2
         _judge_body "${_body}" "${_src} file '${_file}'"
-    fi
+    done < <(_opt_values --body-file -F)
     return 0
 }
 
@@ -276,27 +309,32 @@ _api_field_body() {
     fi
 }
 
+# _check_api_fields <is -F/--field> <name>... - judge the comment body that
+# any of those field options sets (every form: -f x, -fx, -f=x, --field=x).
+_check_api_fields() {
+    local _typed="$1" _v _body _rc
+    shift
+    while IFS= read -r -d '' _v; do
+        _body="$(_api_field_body "${_v}" "${_typed}")"
+        _rc=$?
+        [[ "${_rc}" -eq 2 ]] && exit 2
+        [[ "${_rc}" -eq 0 ]] && _judge_body "${_body}" "gh api comment body"
+    done < <(_opt_values "$@")
+    return 0
+}
+
 # _check_api_comment <endpoint> - anti-forgery for gh api writes to
 # .../comments (a read, -X GET / DELETE, passes).
 _check_api_comment() {
     [[ "$1" =~ /comments(/[0-9]+)?/?(\?.*)?$ ]] || return 0
-    local _m _i _typed _body _input _rc
+    local _m _body _input
     _m="$(_opt -X --method)"
     [[ "${_m^^}" =~ ^(GET|DELETE|HEAD)$ ]] && return 0
-    for ((_i = 2; _i < ${#_W[@]}; _i++)); do
-        case "${_W[_i]}" in
-            -f|--raw-field) _typed=0 ;;
-            -F|--field) _typed=1 ;;
-            *) continue ;;
-        esac
-        _i=$((_i + 1))
-        hook_word_has_subst "${_E[_i]:-}" \
-            && hook_block "gh api comment field with a command substitution cannot be checked (fail closed)."
-        _body="$(_api_field_body "${_W[_i]:-}" "${_typed}")"
-        _rc=$?
-        [[ "${_rc}" -eq 2 ]] && exit 2
-        [[ "${_rc}" -eq 0 ]] && _judge_body "${_body}" "gh api comment body"
-    done
+    if _opt_has_subst -f --raw-field -F --field; then
+        hook_block "gh api comment field with a command substitution cannot be checked (fail closed)."
+    fi
+    _check_api_fields 0 -f --raw-field
+    _check_api_fields 1 -F --field
     if _input="$(_opt --input)"; then
         _body="$(_read_body "${_input}" "gh api --input")" || exit 2
         _judge_body "$(jq -r '.body // empty' <<<"${_body}" 2>/dev/null)" "gh api --input '${_input}'"

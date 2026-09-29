@@ -180,6 +180,25 @@ setup() {
     assert_output "$(printf '%s\n' 'timeout 600 cd /r' 'timeout 600 just test unit')"
 }
 
+@test "a timeout(1) with valued options before bash -c still bounds its script" {
+    local _t
+    for _t in "timeout -k 5 60" "timeout --signal TERM 60" "timeout -s 9 60" \
+        "gtimeout --kill-after=5 --preserve-status 60"; do
+        run hook_subcommands "${_t} bash -c 'cd /r && just test unit'"
+        assert_success
+        assert_output "$(printf '%s\n' "${_t} cd /r" "${_t} just test unit")"
+    done
+}
+
+@test "hook_timeout_lead prints a leading timeout(1) with its options and duration" {
+    run hook_timeout_lead "timeout -k 5 --signal TERM 60 gh pr merge 7"
+    assert_success
+    assert_output "timeout -k 5 --signal TERM 60 "
+    run hook_timeout_lead "gh pr merge 7"
+    assert_success
+    assert_output ""
+}
+
 @test "bash without -c runs a script file and is kept as is" {
     run hook_subcommands "bash script/x.sh -c y"
     assert_success

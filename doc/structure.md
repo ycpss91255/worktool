@@ -329,8 +329,13 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     `gh api` 對 `.../comments` 的寫入(`-f`/`-F`/`--raw-field`/`--field body=...`、
     `body=@檔案`、`--input` JSON 的 `body`),只要 `approval_is_human_approval` 會把它當成
     核准(含「允許合併」且開頭不是 `[claude]`/`[codex]`)就擋;有標記的 agent 內文引用
-    這四個字放行。讀不到的內文(stdin、不存在的檔案、command substitution)一律擋。
-  - 只看真正啟動的 gh(`lib/subcommand.sh`),複合指令逐段判斷;commit 訊息、echo、
+    這四個字放行。重複的旗標每一個值都檢查(gh 取最後一個,但不讓前面的值掩護),
+    各種寫法都算(`-b x`、`-bx`、`-b=x`、`--body=x`、`--raw-field=body=...`);
+    `-X`/`--method` 以最後一個為準。讀不到的內文(stdin、不存在的檔案、
+    command substitution)一律擋。
+  - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
+    (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
+    複合指令逐段判斷;commit 訊息、echo、
     heredoc 內文提到 gh 都只是資料。其餘指令放行且不呼叫 gh。
     `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
     不連網。

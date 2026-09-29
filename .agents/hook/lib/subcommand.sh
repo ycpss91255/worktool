@@ -48,6 +48,9 @@
 #     command substitution in it shows as '_'
 #   hook_word_has_subst <encoded word>   0 when the word holds a $(...) /
 #     `...` / <(...) substitution
+#   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
+#     [options] <duration> ` of a sub-command (valued options such as
+#     -k 5 / --signal TERM included), or nothing when it has none
 #
 # Deliberately simple (no full shell parser): $'...' escapes are not
 # expanded, a `#` comment is not recognised, and a script run by name
@@ -194,14 +197,24 @@ _hook_inner_script() {
     return 1
 }
 
+# timeout(1) options that take the NEXT word as their value.
+_HOOK_TIMEOUT_VALUE_OPTS='-k|-s|--kill-after|--signal'
+
+# hook_timeout_lead <sub-command> - see the header.
+hook_timeout_lead() {
+    local _o='[[:space:]]+(('"${_HOOK_TIMEOUT_VALUE_OPTS}"')[[:space:]]+[^[:space:]]+|-[^[:space:]]*)'
+    local _re='^g?timeout('"${_o}"')*[[:space:]]+[^-[:space:]][^[:space:]]*[[:space:]]+'
+    [[ "$1" =~ ${_re} ]] && printf '%s' "${BASH_REMATCH[0]}"
+    return 0
+}
+
 # _hook_emit <sub-command> - print the sub-command with its opaque words
 # shown as '_' (kept encoded under hook_subcommands_raw), or, when it runs a
 # command line (header step 7), that command line's own sub-commands behind
 # any leading timeout(1).
 _hook_emit() {
-    local _lead='' _script _line
-    local _re='^g?timeout([[:space:]]+[^[:space:]0-9][^[:space:]]*)*[[:space:]]+[0-9][^[:space:]]*[[:space:]]+'
-    [[ "$1" =~ ${_re} ]] && _lead="${BASH_REMATCH[0]}"
+    local _lead _script _line
+    _lead="$(hook_timeout_lead "$1")"
     if _script="$(_hook_inner_script "$(_hook_strip_wrappers "${1#"${_lead}"}")")"; then
         while IFS= read -r _line; do
             printf '%s%s\n' "${_lead}" "${_line}"
