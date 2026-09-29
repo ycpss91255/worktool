@@ -7,51 +7,35 @@ metadata:
   originSessionId: 15320221-f6f9-442e-9faa-924d66c5db63
 ---
 
-On 2026-07-05 the 38GB dev machine hit 35/38GB used + swapping, appearing to
-stall many parallel workflows. I WRONGLY blamed the workflows' kcov coverage
-runs and stopped three of them. The real cause: FIVE runaway `tmux-powerline`
-processes (`~/.config/tmux/plugins/tmux-powerline/powerline.sh`), each stuck ~49
-min at ~6GB RSS = ~30GB. Killing those five PIDs dropped usage from 34GB to 4GB
-instantly. The Docker workflows used real but MANAGEABLE RAM; they were not the
-hog. (The tmux-powerline runaway is the maintainer's to fix separately.)
+On 2026-07-05 (while running init_ubuntu workflows, worktool's predecessor)
+the dev machine hit 35/38GB used + swapping, appearing to stall many
+parallel workflows. I WRONGLY blamed the workflows' test runs and stopped
+three of them. The real cause: FIVE runaway `tmux-powerline` processes, each
+stuck ~49 min at ~6GB RSS = ~30GB. Killing those five PIDs dropped usage
+from 34GB to 4GB instantly. The Docker workflows used real but MANAGEABLE
+RAM; they were not the hog.
 
 **Lessons:**
 1. Before attributing high RAM to the workflows, READ the actual top processes'
    cmdline: `ps -eo pid,rss,etime,comm --sort=-rss | head` then
    `tr '\\0' ' ' < /proc/<PID>/cmdline`. A "bash" at 6GB is suspicious -- check
-   what it is. Do not assume it is kcov/Docker.
-2. The earlier "coverage gate = ~29GB, cap concurrency at 2" conclusion was WRONG
-   on the REASON (that 29GB was powerline, not kcov). RAM is NOT the binding
-   limit. But there IS a real CONCURRENCY cap and it is CPU: each workflow's gate
-   (`ci.sh --ci-unit`) parallelizes internally to nproc (sharded bats + the
-   parallel `shellcheck -P nproc` from PR #297), so N concurrent workflows spawn
-   ~N*nproc busy processes. Running 4 at once drove load average to ~65 on an
-   8-core box -- gates that take ~5min crawled to 25min+ (CPU-oversubscribed, NOT
-   hung: confirmed via `docker stats` showing 120-159% CPU on the "stuck" ci-run
-   containers). So cap concurrent workflows at ~2 for CPU reasons. Distinguish
-   hung (low CPU + long) from slow (high CPU + long = oversubscription) with
-   `docker stats --no-stream` before intervening.
-3. Failed/stopped workflows DO orphan Docker containers (they do not auto-clean);
-   remove them targeted by name prefix `docker ps -aq --filter name=wf_<runid> |
-   xargs -r docker rm -f` (never prune / global ops).
-4. The compose-based `just -f justfile.ci` gate recipes leak containers across
-   stages (a workflow accumulates 7-10). Worth a teardown fix, but it is not the
-   RAM emergency it looked like.
-5. They ALSO leak a compose NETWORK per worktree (named `<worktree>_default`, i.e.
-   `wf_*_default` / `agent-*_default`). These accumulate and eventually SUBNET THE
-   DOCKER ADDRESS POOL DRY (seen 2026-07-10: ~34 orphaned bridge networks blocked
-   every new compose-network create, so `just test-unit`/`lint` failed to start;
-   agents worked around it via a bare `docker run` on the default bridge). Clean
-   targeted (NOT `docker network prune`): `docker network ls --format '{{.Name}}'
-   | grep -E '^(wf_|agent-).*_default$' | xargs -r docker network rm` when no
-   Docker compose workflow is running. This is the same class of leak as the
-   worktree accumulation - sweep both between big batches.
+   what it is. Do not assume it is Docker.
+2. RAM is NOT the binding limit, CPU is: a gate parallelizes internally to
+   nproc, so N concurrent workflows spawn ~N*nproc busy processes. Running 4
+   at once drove load average to ~65 on an 8-core box -- gates that take
+   ~5min crawled to 25min+ (CPU-oversubscribed, NOT hung). Cap concurrent
+   workflows at ~2. Distinguish hung (low CPU + long) from slow (high CPU +
+   long) with `docker stats --no-stream` before intervening.
+3. Failed/stopped workflows can orphan Docker containers. Remove them
+   targeted by name or label (`docker ps -aq --filter name=<prefix> | xargs
+   -r docker rm -f`), never with prune / global ops. worktool's gates run in
+   one-shot `docker run --rm` containers (script/test/test.sh), so a clean
+   exit leaves none; check after a killed run.
 
 - NEVER run two agents/gates on the SAME worktree concurrently: they share the
-  Docker `/source` bind mount, so two `ci.sh` runs racing while git mutates the
-  tree produce SPURIOUS gate failures (seen 2026-07-05: a one-file deletion got
-  3 overlapping agents on one worktree -> 8 bogus test-unit failures; GitHub's
-  isolated CI was green). For a tiny cleanup, use ONE workflow with a proper
-  integrate stage, not several ad-hoc agents on a shared worktree.
+  Docker `/source` bind mount, so two gate runs racing while git mutates the
+  tree produce SPURIOUS failures (seen 2026-07-05: 3 overlapping agents on one
+  worktree -> 8 bogus unit failures; GitHub's isolated CI was green). Each
+  workflow item gets its own `.worktree/<name>`.
 
 Related: [[project-workflow-long-implement-no-schema]], [[feedback-use-monitor-for-ci]].

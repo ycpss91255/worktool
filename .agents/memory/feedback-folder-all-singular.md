@@ -1,42 +1,35 @@
 ---
 name: feedback-folder-all-singular
-description: Folder names are all-singular (supersedes ADR-0005's plural-for-collections); see ADR-0021
+description: Folder names are all-singular (doc/structure.md); only upstream-imposed and acronym exceptions
 metadata:
   type: feedback
 ---
 
-Folder naming in init_ubuntu is **all-singular**, zero judgment calls:
+Folder naming in worktool is **all-singular**, zero judgment calls
+(inherited from init_ubuntu, whose ADR-0021 set the rule; worktool records
+it in doc/structure.md, 目錄結構):
 
 - **Every repo-owned directory** → **singular**:
-  `test/`, `script/`, `doc/`, `module/`, `template/`, `lib/`,
-  `config/`, `changelog/`, `.claude/hook/`, `.claude/script/`.
-- **Acronyms** → preserve OSS convention:
-  `adr/`, `prd/`, `ci/` (not `adrs/`, `prds/`, `cis/`).
+  `test/`, `script/`, `doc/`, `lib/`, `box/`, `tool/`, `dockerfile/`,
+  `doc/agent/`, `doc/diagram/`, `.agents/hook/`, `.agents/script/`,
+  `.agents/memory/`.
+- **Acronyms** → preserve OSS convention: `doc/adr/` (not `adrs/`).
 - **Upstream-imposed** → keep upstream's choice (fish `completions/` /
-  `functions/`, yazi `plugins/` / `flavors/`, QMK `keyboards/`,
-  tmux-powerline `segments/` / `themes/`, lnav `formats/`, nvimdots
-  dirs, `.claude/skills/` / `.claude/commands/` / `.claude/agents/`
-  Claude Code scan paths).
-- **File names** (including ones ending in `s`, e.g.
-  `apt-essentials.module.sh`) are **out of scope** — separate
-  discussion deferred to 0.2.0.
+  `functions/`, `.agents/skills/` / `.claude/skills/` / `.claude/workflows/`
+  Claude Code scan paths, `.github/workflows/`).
+- **File names** are out of scope.
 
-**History:** M7-A set "all singular" (commit 6fc3d6c) → ADR-0005
-(2026-05-16) reverted to plural-for-collections + singular-for-concepts
-citing industry convention → owner re-reverted on 2026-05-21
-(issue #32, ADR-0021): the per-directory "collection vs concept"
+**Why:** init_ubuntu tried plural-for-collections (its ADR-0005) and
+reverted (its ADR-0021): the per-directory "collection vs concept"
 classification cost exceeded the industry-alignment benefit for a
-single-maintainer repo. A zero-exception singular rule needs no
-judgment; the only remaining questions are "upstream-imposed?" and
-"acronym?".
+single-maintainer repo. A zero-exception singular rule needs no judgment;
+the only remaining questions are "upstream-imposed?" and "acronym?".
 
 **How to apply:** Name every new directory singular. Only deviate when
 an upstream tool mandates the name or the name is an acronym. Never
-reintroduce a collection-vs-concept distinction.
-
-Supersedes the previous plural-for-collections memory
-(`feedback-folder-plural-for-collections.md`, renamed to this file) and
-ADR-0005 (now marked Superseded by ADR-0021).
+reintroduce a collection-vs-concept distinction. Where an upstream skill
+template names a plural `docs` directory for ADRs or agent config,
+worktool's paths are `doc/adr/` and `doc/agent/` (doc/agent/domain.md).
 
 Related: [[feedback-unify-formats]] (one source of truth — the naming
-rule lives in ADR-0021; AGENTS.md and this memory file just point at it).
+rule lives in doc/structure.md; this memory just points at it).
