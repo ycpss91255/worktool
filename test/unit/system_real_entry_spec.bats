@@ -322,3 +322,32 @@ FAKE
     assert_output --partial "cleanup: docker rm -f dev failed or timed out"
     assert_output --partial "[system-real] stopping nested dockerd"
 }
+
+# The rewritten expected non-zero paths of the log tail and the daemon stop
+# (codex round 1 on PR #214): each failure is said and handled, none ends
+# the entry under errexit. `tail` is shadowed by a failing stand-in on PATH;
+# the `kill` refusals come from the driver (DRIVER_REFUSE_SIGNALS).
+@test "_tail_dockerd_log says when the daemon log cannot be read and still returns 0" {
+    printf 'daemon line\n' >"${WORKTOOL_DOCKERD_LOG}"
+    printf '#!/usr/bin/env bash\nexit 1\n' >"${FAKEBIN}/tail"
+    chmod +x "${FAKEBIN}/tail"
+    _with_entry _tail_dockerd_log none
+    assert_success
+    assert_output --partial "[system-real] (the dockerd log could not be read)"
+    assert_output --partial "[system-real] --- end of dockerd log"
+}
+
+@test "_stop_dockerd says when SIGTERM is refused and still escalates to SIGKILL" {
+    DRIVER_REFUSE_SIGNALS=TERM DRIVER_STOP_TIMEOUT=1 _with_entry _stop_dockerd live
+    assert_success
+    assert_output --partial "exited before SIGTERM"
+    assert_output --partial "dockerd did not stop in 1s - killing"
+    refute_output --partial "exited before SIGKILL"
+}
+
+@test "_stop_dockerd says when SIGKILL is refused too and still returns 0" {
+    DRIVER_REFUSE_SIGNALS="TERM KILL" DRIVER_STOP_TIMEOUT=1 _with_entry _stop_dockerd live
+    assert_success
+    assert_output --partial "exited before SIGTERM"
+    assert_output --partial "exited before SIGKILL"
+}
