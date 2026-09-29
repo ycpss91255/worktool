@@ -821,7 +821,10 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     for _c in "curl -X PUT -H 'Authorization: token x' https://api.github.com/repos/o/r/pulls/7/merge" \
         "wget --post-data='{}' https://api.github.com/repos/o/r/issues/7/comments" \
         "http POST https://api.github.com/graphql query=x" \
-        "curl -X PATCH https://ghe.example.com/api/v3/repos/o/r/issues/comments/9"; do
+        "curl -X PATCH https://ghe.example.com/api/v3/repos/o/r/issues/comments/9" \
+        "curl -X PUT https://api.github.com:443/repos/o/r/pulls/7/merge" \
+        "curl -X POST https://api.github.com:443/repos/o/r/issues/7/comments" \
+        "http POST https://api.github.com:443/graphql query=x"; do
         _check "${_c}"
         assert_failure 2
         assert_output --partial "cannot verify"

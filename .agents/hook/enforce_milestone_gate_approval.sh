@@ -753,8 +753,9 @@ _tripwire() {
     local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
     local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
     # A direct REST / GraphQL call (curl, wget, http ...) to a merge,
-    # comments or graphql URL, unless it is the URL of a checked gh api call.
-    local _api='(api\.github\.com|/api/v3)/repos/[^[:space:]"'"'"']+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments)|(api\.github\.com|/api)/graphql'
+    # comments or graphql URL (an explicit :port included), unless it is the
+    # URL of a checked gh api call.
+    local _api='(api\.github\.com(:[0-9]+)?|/api/v3)/repos/[^[:space:]"'"'"']+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments)|(api\.github\.com(:[0-9]+)?|/api)/graphql'
     _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
