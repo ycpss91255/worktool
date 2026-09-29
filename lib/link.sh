@@ -51,7 +51,7 @@ link_defaults() { printf '%s\n' .ssh .gitconfig .gnupg .config/gh; }
 
 # Print entry $1 as a clean HOME-relative path: a leading `~/` or `$HOME/`
 # is removed, trailing slashes are dropped. Returns 1 (printing nothing)
-# for an empty path, one outside HOME, or one with a `..` component.
+# for an empty or blank path, one outside HOME, or one with a `..` component.
 link_normalize() {
     local _e="$1"
     if [[ "${_e}" == \~/* ]]; then
@@ -60,7 +60,7 @@ link_normalize() {
         _e="${_e#"${HOME}/"}"
     fi
     while [[ "${_e}" == */ ]]; do _e="${_e%/}"; done
-    [[ -n "${_e}" && "${_e}" != \~ && "${_e}" != /* ]] || return 1
+    [[ "${_e}" =~ [^[:space:]] && "${_e}" != \~ && "${_e}" != /* ]] || return 1
     case "/${_e}/" in
         */../*|*/./*) return 1 ;;
     esac
