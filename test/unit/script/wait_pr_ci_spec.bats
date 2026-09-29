@@ -78,6 +78,25 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     assert_output --partial "FAIL 21"
 }
 
+@test "a SKIPPED ci-passed is a failure, not a pass (doc/structure.md CI)" {
+    _fixture ci-passed SKIPPED 3600
+    _once
+    assert_failure 1
+    assert_output --partial "PR21: checks=FAIL"
+    assert_output --partial "FAIL 21"
+    refute_output --partial "ALL_DONE"
+}
+
+@test "a CANCELLED or TIMED_OUT ci-passed is a failure" {
+    local _c
+    for _c in CANCELLED TIMED_OUT; do
+        _fixture ci-passed "${_c}" 3600
+        _once
+        assert_failure 1
+        assert_output --partial "FAIL 21"
+    done
+}
+
 @test "a conflicting PR exits 1 and names no script this repo lacks" {
     _fixture ci-passed SUCCESS 3600 CONFLICTING
     _once
