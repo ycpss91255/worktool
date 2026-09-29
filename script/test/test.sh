@@ -144,6 +144,7 @@ _required_specs() {
                 unit/hook/check_main_fresh_before_worktree_spec.bats \
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
+                unit/hook/enforce_milestone_gate_approval_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
