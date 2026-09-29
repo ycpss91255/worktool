@@ -6,8 +6,8 @@
 # sourced from another checkout). Pins the public contract through real
 # behaviour:
 #   - the lib refuses to run as a top-level script (library guard)
-#   - hook_bootstrap turns on the exit-code-contract strict mode (set -u +
-#     pipefail, NOT -e) and self-locates HOOK_LIB_DIR / HOOK_REPO_ROOT from
+#   - hook_bootstrap turns on strict mode (set -euo pipefail, ADR 0001 /
+#     issue #218) and self-locates HOOK_LIB_DIR / HOOK_REPO_ROOT from
 #     its own file - a LIB_DIR in the environment (the worktool test helper
 #     exports one for lib/) never redirects it
 #   - hook_read_input / hook_command / hook_field parse the stdin payload
@@ -75,18 +75,18 @@ EOF
     assert_output "ALL_DEFINED"
 }
 
-@test "hook_bootstrap turns on set -u + pipefail but NOT -e" {
+@test "hook_bootstrap turns on set -euo pipefail (issue #218)" {
     cat >"${SNIPPET}" <<'EOF'
 source "$1/hook_bootstrap.sh"
 hook_bootstrap snip
-[[ "$-" == *u* ]] && echo HAS_U
-[[ "$-" != *e* ]] && echo NO_E
-set -o | grep -q "pipefail.*on" && echo HAS_PIPEFAIL
+if [[ "$-" == *u* ]]; then echo HAS_U; fi
+if [[ "$-" == *e* ]]; then echo HAS_E; fi
+if [[ "$(set -o)" =~ pipefail[[:space:]]+on ]]; then echo HAS_PIPEFAIL; fi
 EOF
     run bash "${SNIPPET}" "${HOOK_LIB}"
     assert_success
     assert_output --partial "HAS_U"
-    assert_output --partial "NO_E"
+    assert_output --partial "HAS_E"
     assert_output --partial "HAS_PIPEFAIL"
 }
 
@@ -132,6 +132,18 @@ EOF
     _run "ls"
     assert_success
     assert_output "CWD=[]"
+}
+
+@test "hook_field on a payload that is not JSON prints nothing and does not abort (errexit)" {
+    _write_hook <<'EOF'
+hook_bootstrap fieldtest
+hook_read_input
+cmd="$(hook_command)"
+printf 'CMD=[%s]\n' "${cmd}"
+EOF
+    run bash -c 'printf "%s" "not json {" | "$1"' _ "${HOOKF}"
+    assert_success
+    assert_output "CMD=[]"
 }
 
 @test "hook_block blocks with exit 2 and the standard message" {

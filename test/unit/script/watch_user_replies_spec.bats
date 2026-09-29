@@ -157,7 +157,8 @@ line two"
 # (id 901 a reply, id 902 agent output).
 #   <api-mode>  ok | fail (every `api` call exits 1) | paged (a second page
 #               holds reply 903, returned only when --paginate is passed -
-#               without it gh stops at the first page)
+#               without it gh stops at the first page) | badb64 (comment 900,
+#               listed first, carries a body that is not valid base64)
 #   [list-mode] ok (default) | issue-fail | pr-fail (that `list` call prints
 #               an HTTP error on stderr and exits 1)
 _fake_gh() {
@@ -190,6 +191,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ "${_jq}" == *'["5",'* ]] || { echo "jq program lacks the issue number" >&2; exit 1; }
+if [[ "${_mode}" == badb64 ]]; then
+    printf '5\t900\tmaintainer\t%s\n' '!!not-base64!!'
+fi
 printf '5\t901\tmaintainer\t%s\n' "$(printf 'please look at #5' | base64 -w0)"
 printf '5\t902\tmaintainer\t%s\n' "$(printf '[claude] agent note' | base64 -w0)"
 if [[ "${_mode}" == paged && "${_paginate}" -eq 1 ]]; then
@@ -208,6 +212,15 @@ EOF
     assert_output "USER REPLY on #5 : please look at #5"
     run grep -cxF 901 "${STATE}"
     assert_output "1"
+}
+
+@test "a comment body that is not valid base64 does not abort the cycle (errexit, #218)" {
+    _fake_gh badb64
+    run "${SCRIPT}" --repo owner/repo --login maintainer \
+        --state-file "${STATE}" --once
+    assert_success
+    assert_line "USER REPLY on #5 : please look at #5"
+    assert_line --partial "comment 900 body is not valid base64"
 }
 
 @test "--seed through the real gh api flags marks replies seen silently" {

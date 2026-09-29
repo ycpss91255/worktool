@@ -186,3 +186,28 @@ _check() { run_hook test-must-use-docker "$(hook_json "$1")"; }
     _check "bats test/unit & wait"
     assert_failure 2
 }
+
+# --- no jq on the host: the sed fallback (errexit, issue #218) -----------------
+
+# A PATH holding the tools the hook needs, minus jq.
+_no_jq_path() {
+    local _bin="${BATS_TEST_TMPDIR}/nojq" _t
+    mkdir -p "${_bin}"
+    for _t in bash cat dirname sed head awk; do
+        ln -sf "$(command -v "${_t}")" "${_bin}/${_t}"
+    done
+    printf '%s' "${_bin}"
+}
+
+@test "without jq, a payload whose fallback parse outruns the pipe still blocks bats" {
+    local _payload="${BATS_TEST_TMPDIR}/payload.json" _i
+    {
+        printf '{"tool_input":{"command":"bats test/unit"}}\n'
+        for ((_i = 0; _i < 4000; _i++)); do
+            printf '"command": "echo padding padding padding padding padding padding"\n'
+        done
+    } >"${_payload}"
+    run env PATH="$(_no_jq_path)" "${HOOK_DIR}/test-must-use-docker.sh" <"${_payload}"
+    assert_failure 2
+    assert_output --partial "direct 'bats' on the host"
+}

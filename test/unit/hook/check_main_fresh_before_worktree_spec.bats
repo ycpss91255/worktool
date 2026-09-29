@@ -134,3 +134,21 @@ _advance_origin() {
     run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
     assert_output "deny"
 }
+
+# --- errexit (issue #218): a git probe that fails means "cannot tell" ---------
+
+@test "allows (exit 0, no output) when git cannot count the lag" {
+    _advance_origin
+    local _bin="${BATS_TEST_TMPDIR}/bin" _real
+    _real="$(command -v git)"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do if [[ "\$a" == rev-list ]]; then exit 1; fi; done
+exec "${_real}" "\$@"
+EOF
+    chmod +x "${_bin}/git"
+    PATH="${_bin}:${PATH}" _check "git -C ${CLONE} worktree add ${BATS_TEST_TMPDIR}/wt main"
+    assert_success
+    assert_output ""
+}

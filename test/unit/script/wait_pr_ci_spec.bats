@@ -5,7 +5,8 @@
 # worktool adaptation: the default filter is the one required check,
 # `ci-passed`; the script follows the worktool CLI contract (whole command
 # line parsed before --help is served, `wait-pr-ci.sh: unknown option '<x>'
-# (see --help)` exit 2, `set -uo pipefail`); a conflicting PR fails without
+# (see --help)` exit 2, `set -euo pipefail` with every expected non-zero
+# handled - issue #218); a conflicting PR fails without
 # pointing at scripts this repo does not have. The stale-rollup guards from
 # initialization (issue #22 there) are kept.
 #
@@ -110,6 +111,13 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     _once --check-filter '.name=="lint"'
     assert_success
     assert_output --partial "ALL_DONE"
+}
+
+@test "a gh reply that is not JSON leaves the PR pending instead of aborting (errexit, #218)" {
+    printf 'HTTP 502: bad gateway\n' >"${FIXTURE_JSON}"
+    _once
+    assert_failure 124
+    assert_output --partial "PR21: checks=pending mergeable=?"
 }
 
 # --- CLI contract ------------------------------------------------------------

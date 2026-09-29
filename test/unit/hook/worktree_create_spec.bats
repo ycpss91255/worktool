@@ -89,3 +89,12 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
     assert_output ""
     [ ! -e "${FAKE_REPO}/.worktree" ]
 }
+
+@test "outside a repo with no CLAUDE_PROJECT_DIR it fails with 'no repo root' (errexit, #218)" {
+    local _away="${BATS_TEST_TMPDIR}/away"
+    mkdir -p "${_away}"
+    run bash -c 'cd "$1" && printf "%s" "{\"name\":\"x\"}" | env -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$1/.." "$2"' _ \
+        "${_away}" "${HOOK_DIR}/worktree_create.sh"
+    assert_failure 1
+    assert_output "worktree_create: no repo root"
+}
