@@ -2,8 +2,7 @@
 # shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # test/unit/hook/transcript_reader_spec.bats
 #
-# Unit tests for `read_latest_user_message` (.agents/hook/lib/transcript.sh),
-# as sourced by
+# Unit tests for `read_latest_user_message` in
 # .agents/hook/enforce_shellcheck_disable_approval.sh.
 #
 # Module contract:

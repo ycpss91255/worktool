@@ -2,23 +2,30 @@
 # .agents/hook/enforce_codex_round_cap.sh - Claude Code PreToolUse hook
 # (matcher: Bash), registered in .claude/settings.json.
 #
-# pr-loop runs at most 3 codex fix rounds. A PR that keeps collecting the
-# same class of finding past that (PR #219 ran 8 rounds) has a design
-# problem, not a wording problem: continuing to patch finding by finding
-# only moves the next hole. This hook BLOCKS (exit 2, reason on stderr) a
-# `codex exec` whose prompt says "第 N 輪" with N >= 4 unless the latest
-# user-typed message of the session transcript says `approve codex round N`
-# (the exact N). Rounds 1-3, and prompts without a round, pass.
+# pr-loop runs 3 codex fix rounds. A PR that keeps collecting the same
+# class of finding past that (PR #219 ran 8 rounds) has a design problem,
+# not a wording problem: patching finding by finding only moves the next
+# hole. This hook BLOCKS (exit 2, reason on stderr) a `codex exec` whose
+# prompt says "第 N 輪" with N >= 4 unless the prompt carries the agent's
+# own root-cause analysis: a "## 根因" section (up to the next "# " / "## "
+# heading) holding three non-empty items, one line each,
+#   類別: <which class / dimension the earlier blocking findings share>
+#   根因: <why the class keeps coming back, e.g. a deny-list, one-example
+#         tests, an unpinned scope, the same parser written twice>
+#   修法: <the fix for the whole class and its equivalence-class tests>
+# (optionally list-marked `- ` / `* ` / `1.`; `:` or full-width `：`).
+# No maintainer approval is involved: the agent does the analysis itself.
+# Rounds 1-3, and prompts without a round, pass.
 #
 # Only real launches count: lib/subcommand.sh reduces the command to its
 # sub-commands (wrappers such as env / sudo / bash -c / eval stripped, a
 # leading timeout(1) skipped), so a commit message or an echo that merely
 # mentions `codex exec` is data. The prompt is every word after
 # `codex exec` (or its alias `codex e`). Every launch is judged on its own:
-# a command with rounds 4 and 5 needs both approvals.
+# a command with rounds 4 and 5 needs the root cause in both prompts.
 #
 # The hook reads the prompt as literal text only, and fails closed on what
-# it cannot read (blocked, and no approval helps): each `$(cat <path>)` with
+# it cannot read (blocked): each `$(cat <path>)` with
 # a plain path - the `"$(cat prompt.txt)"` form pr-loop uses - is replaced
 # by the file's text, in place inside its word; a missing file, any other
 # $(...) / `...` substitution, and any `$` left in a word (a variable,
@@ -32,13 +39,16 @@
 #   codex_round_of <prompt_text>
 #       the largest N of every "第 N 輪" in the text, leading zeros
 #       dropped; nothing when none
-#   codex_round_allowed <round> <user_msg>
-#       0 when the round is empty or below 4, or the message says
-#       `approve codex round <round>` (words case-insensitive, exact N)
-#   codex_command_rounds <command> <cwd>
-#       one line per codex exec launch of the command: its round, or `?`
-#       when its prompt cannot be read; a launch without a round prints
-#       nothing
+#   codex_root_cause_ok <prompt_text>
+#       0 when the text has a "## 根因" section with 類別 / 根因 / 修法
+#       each followed by non-blank text
+#   codex_prompt_allowed <prompt_text>
+#       0 when the prompt has no round, a round below 4, or a complete
+#       root-cause section
+#   codex_command_refusals <command> <cwd>
+#       one line per codex exec launch of the command the hook refuses:
+#       its round, or `?` when its prompt cannot be read; an allowed
+#       launch prints nothing
 #
 # Output contract: allow = exit 0, no output; block = exit 2 with the
 # "[hook:enforce-codex-round-cap] BLOCKED" reason on stderr.
@@ -49,12 +59,10 @@ _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 # shellcheck source=subcommand.sh
 source "${_HOOK_HERE}/lib/subcommand.sh"
-# shellcheck source=transcript.sh
-source "${_HOOK_HERE}/lib/transcript.sh"
 hook_bootstrap "enforce-codex-round-cap"
 
-# The first round that needs the maintainer's approval.
-readonly CODEX_ROUND_CAP=4
+# The first round whose prompt must carry the root cause.
+readonly CODEX_ROOT_CAUSE_ROUND=4
 
 # _num_ge <a> <b> - 0 when the digit string <a> >= <b> (no leading zeros),
 # compared by length and then text, never by shell arithmetic.
@@ -77,15 +85,38 @@ codex_round_of() {
     return 0
 }
 
-# codex_round_allowed <round> <user_msg> - see the header.
-codex_round_allowed() {
-    local _round="${1:-}" _msg
+# _root_cause_section <prompt_text> - the lines under the first "## 根因"
+# heading, up to the next "# " / "## " heading (CR line ends dropped).
+_root_cause_section() {
+    local _line _in=''
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        _line="${_line%$'\r'}"
+        if [[ -z "${_in}" ]]; then
+            [[ "${_line}" =~ ^##[[:space:]]*根因[[:space:]]*$ ]] && _in=1
+            continue
+        fi
+        [[ "${_line}" =~ ^#{1,2}([[:space:]]|$) ]] && break
+        printf '%s\n' "${_line}"
+    done <<<"${1:-}"
+}
+
+# codex_root_cause_ok <prompt_text> - see the header.
+codex_root_cause_ok() {
+    local _section _label
+    _section="$(_root_cause_section "${1:-}")"
+    for _label in 類別 根因 修法; do
+        grep -qE "^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*${_label}[[:space:]]*(:|：)[[:space:]]*[^[:space:]]" \
+            <<<"${_section}" || return 1
+    done
+}
+
+# codex_prompt_allowed <prompt_text> - see the header.
+codex_prompt_allowed() {
+    local _round
+    _round="$(codex_round_of "${1:-}")"
     [[ -n "${_round}" ]] || return 0
-    [[ "${_round}" =~ ^[0-9]+$ ]] || return 1
-    _num_ge "${_round}" "${CODEX_ROUND_CAP}" || return 0
-    _msg="$(printf '%s' "${2:-}" | tr '[:upper:]\n' '[:lower:] ')"
-    printf '%s' "${_msg}" | grep -qE \
-        "(^|[^[:alnum:]_])approve[[:space:]]+codex[[:space:]]+round[[:space:]]+${_round}([^[:alnum:]_]|\$)"
+    _num_ge "${_round}" "${CODEX_ROOT_CAUSE_ROUND}" || return 0
+    codex_root_cause_ok "${1:-}"
 }
 
 # _resolve_path <path> <dir> - the path, relative ones joined to <dir>.
@@ -153,8 +184,8 @@ _launch_prompt() {
     done
 }
 
-# codex_command_rounds <command> <cwd> - see the header.
-codex_command_rounds() {
+# codex_command_refusals <command> <cwd> - see the header.
+codex_command_refusals() {
     local _dir="${2:-${PWD}}" _sub _prompt
     local -a _subs
     # A \002 of its own would pose as a placeholder: unreadable.
@@ -167,40 +198,36 @@ codex_command_rounds() {
             continue
         fi
         _codex_words "${_sub}" >/dev/null || continue
-        if _prompt="$(_launch_prompt "${_sub}" "${_dir}")"; then
-            codex_round_of "${_prompt}"
-        else
+        if ! _prompt="$(_launch_prompt "${_sub}" "${_dir}")"; then
             printf '?\n'
+        elif ! codex_prompt_allowed "${_prompt}"; then
+            codex_round_of "${_prompt}"
         fi
     done
     return 0
 }
 
-# _block_round <round> - block an unapproved round, with the root-cause steps.
+# _block_round <round> - block a round whose prompt lacks the root cause.
 _block_round() {
-    hook_block "codex re-verification round $1 (pr-loop allows 3 fix rounds)." \
-        "A finding class that keeps coming back is a design problem; another patch only moves the hole. Stop and find the root cause first:" \
-        "  1. deny-list patched item by item? Switch to normalisation or an allow-list." \
-        "  2. tests that add one example per finding? Switch to an equivalence-class test matrix." \
-        "  3. does the issue have a '## 範圍' section that pins the scope? If not, agree on it before more rounds." \
-        "Then report the root cause to the maintainer and ask for a reply of: approve codex round $1"
+    hook_block "codex re-verification round $1 without a complete '## 根因' section in its prompt." \
+        "A finding class that keeps coming back is a design problem; another patch only moves the hole." \
+        "Find the root cause yourself (no maintainer approval needed) and add it to the prompt:" \
+        "  ## 根因" \
+        "  - 類別: <the class / dimension the earlier blocking findings share>" \
+        "  - 根因: <why it keeps coming back: deny-list, one-example tests, unpinned scope, duplicated parser ...>" \
+        "  - 修法: <the fix for the whole class and its equivalence-class tests>"
 }
 
 main() {
     hook_read_input
-    local _cmd _round _msg='' _read=''
+    local _cmd _refusal
     _cmd="$(hook_command)"
     [[ "${_cmd}" == *codex* ]] || hook_allow
-    while IFS= read -r _round; do
-        [[ "${_round}" == '?' ]] && hook_block "a codex exec prompt that cannot be read as literal text." \
+    while IFS= read -r _refusal; do
+        [[ "${_refusal}" == '?' ]] && hook_block "a codex exec prompt that cannot be read as literal text." \
             "The round check fails closed: pass the prompt inline or as \"\$(cat <file>)\" of an existing file, with no other substitution or \$ in it."
-        codex_round_allowed "${_round}" "" && continue
-        if [[ -z "${_read}" ]]; then
-            _msg="$(read_latest_user_message "$(hook_field '.transcript_path')")"
-            _read=1
-        fi
-        codex_round_allowed "${_round}" "${_msg}" || _block_round "${_round}"
-    done < <(codex_command_rounds "${_cmd}" "$(hook_field '.cwd')")
+        _block_round "${_refusal}"
+    done < <(codex_command_refusals "${_cmd}" "$(hook_field '.cwd')")
     hook_allow
 }
 
