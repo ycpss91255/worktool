@@ -348,8 +348,8 @@ _sorted_set() {
     run _job_block commit-email
     assert_success
     assert_line --regexp '^ +source lib/commit_email\.sh$'
-    assert_line --partial 'commit_email_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}"'
-    assert_line --partial 'TZ=UTC git log --date=format-local:%Y-%m-%dT%H:%M:%SZ --format="$(commit_email_log_format)" "${range}"'
+    assert_line --partial "commit_email_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\""
+    assert_line --partial "TZ=UTC git log --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=\"\$(commit_email_log_format)\" \"\${range}\""
     assert_line --regexp '^ +commit_email_evaluate < '
     refute_output --partial 'users.noreply.github.com'
 }
@@ -357,9 +357,9 @@ _sorted_set() {
 @test "commit-email feeds the PR and push event data to the range" {
     run _job_block commit-email
     assert_success
-    assert_line '          EVENT: ${{ github.event_name }}'
-    assert_line '          PR_BASE: ${{ github.event.pull_request.base.sha }}'
-    assert_line '          PR_HEAD: ${{ github.event.pull_request.head.sha }}'
-    assert_line '          PUSH_BEFORE: ${{ github.event.before }}'
-    assert_line '          PUSH_AFTER: ${{ github.event.after }}'
+    assert_line "          EVENT: \${{ github.event_name }}"
+    assert_line "          PR_BASE: \${{ github.event.pull_request.base.sha }}"
+    assert_line "          PR_HEAD: \${{ github.event.pull_request.head.sha }}"
+    assert_line "          PUSH_BEFORE: \${{ github.event.before }}"
+    assert_line "          PUSH_AFTER: \${{ github.event.after }}"
 }
