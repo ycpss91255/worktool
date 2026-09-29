@@ -326,16 +326,29 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     `approval_evaluate`,不過就擋並說明缺什麼;任何查詢失敗都擋(fail closed)。
     `gh api graphql` 的合併 mutation(`mergePullRequest`、`enablePullRequestAutoMerge`、
     `mergeBranch`)一律擋。
-  - **防冒名**:`gh pr comment`/`review`/`create`/`new`、`gh issue comment`/`create`/`new`
-    的內文(`--body`、`-b`、`--body-file`/`-F` 的檔案內容)、`gh pr|issue close|reopen` 的
-    `--comment`/`-c`,與 `gh api` 對 `.../comments` 的寫入(`-f`/`-F`/`--raw-field`/
-    `--field body=...`、`body=@檔案`、`--input` JSON 的 `body`),只要
-    `approval_is_human_approval` 會把它當成核准(含「允許合併」且開頭不是
-    `[claude]`/`[codex]`)就擋;有標記的 agent 內文引用這四個字放行。重複的旗標每一個值都
-    檢查(gh 取最後一個,但不讓前面的值掩護),各種寫法都算(`-b x`、`-bx`、`-b=x`、
-    `--body=x`、`--raw-field=body=...`);`-X`/`--method` 以最後一個為準。讀不到的內文
-    (stdin、不存在的檔案)一律擋;`gh api graphql` 寫留言的 mutation(`addComment`、
-    `updateIssueComment`)一律擋。
+  - **留言一律帶 agent 標記**(#190「範圍修訂」,取代原本「未標記且含核准字樣才擋」):agent
+    送出的每一則留言類內文,開頭(去掉前導空白後)不是 `[claude]` 或 `[codex]` 就擋,不論是否
+    含「允許合併」;依據是 CI(#187)把開頭沒有標記的 OWNER 留言認定為維護者本人。適用
+    `gh pr comment`、`gh issue comment`、有內文的 `gh pr review`、`gh pr|issue close|reopen`
+    的 `--comment`/`-c`,以及 `gh api` 對 comments/reviews 端點的**寫入**(`issues/<n>/comments`、
+    `issues/comments/<id>`、`pulls/<n>/comments`、`pulls/comments/<id>`、`pulls/<n>/reviews[...]`;
+    `-f`/`-F`/`--raw-field`/`--field` 的 `body=`/`message=`、`body=@檔案`、`--input` JSON 裡每個
+    `body`/`message`)。內文來源:`--body`、`-b`、`--body-file`/`-F` 的檔案內容,以及 `-` 配字面
+    heredoc/here-string。重複的旗標每一個值都檢查,各種寫法都算(`-b x`、`-bx`、`-b=x`、
+    `--body=x`)。讀不到的內文(展開、不存在的檔案、非字面的 stdin、留言指令沒給內文、
+    `--editor`、`--web`)一律擋。PR/issue 的 create 內文不是留言,不在此規則內。GraphQL 的
+    留言/review mutation(`addComment`、`updateIssueComment`、`addPullRequestReview`、
+    `addPullRequestReviewComment`、`submitPullRequestReview` 等)一律擋。擋下訊息:agent 的留言
+    必須以 `[claude]` 或 `[codex]` 開頭,未標記的留言視為維護者本人(見 #187)。
+  - **HTTP 方法(讀或寫)**(codex 第 9 輪):只有**寫入**才算。`gh api`:最後的 `-X`/`--method`
+    不是 GET/HEAD,或沒有 `-X` 但有任何 `-f`/`-F`/`--field`/`--raw-field`/`--input`(gh 改用
+    POST)就是寫入;對 merge endpoint 的讀取(GET/HEAD)不走閘門。`curl`:`-X`/`--request` 為
+    GET/HEAD 以外,或有 `-d`/`--data*`/`--json`/`-F`/`--form`/`-T`/`--upload-file`(未配 `-G`)
+    就是寫入;藏了 `-X`/`-d`/`-F`/`-T` 的合併短旗標一律當寫入。`wget`:`--post-data`/`--post-file`/
+    `--body-data`/`--body-file` 或 `--method` 非 GET/HEAD 是寫入。httpie(`http`/`https`):方法字
+    為 GET/HEAD/OPTIONS 以外,或沒寫方法但有資料項(`=`、`:=`、`@`)是寫入。GraphQL:內文是
+    `mutation` 或無法判斷(讀檔、stdin、跳脫字元)算寫入,字面的 `query { ... }` 是讀取。
+    不認得的工具、或指令字含展開,一律當寫入(fail closed)。
   - **封閉規則**(codex 第 3 輪後定案:靜態解析追不完所有 shell 寫法,改成只判斷看得懂的、
     其餘 fail closed):
     - 相關指令(任何 `gh api`,以及上述 pr/issue 子命令)只要有**任何一個字**含 shell 會先
@@ -363,14 +376,14 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     (`sh <<'EOF' ... EOF`)或 here-string(`bash <<< '...'`)是看得見的腳本,內文照一般
     指令逐段判斷。分隔字未加引號時外層 shell 會先展開內文,所以其中的 `$`、反引號都算展開;
     加引號(`'EOF'`、`"EOF"`、`\EOF`)則為字面。餵給非直譯器(`cat`、`tee`、
-    `gh --body-file -`)的 heredoc 仍只是資料。
+    `gh --body-file -` 除外:其 heredoc 內文當作留言內文檢查)的 heredoc 仍只是資料。
   - **raw-text tripwire**(codex 第 5 輪定案:不再逐一追 parser 邊角,改加封閉規則的後盾):
     在任何解析之前,對**整段原始指令文字**(含 heredoc 內文與 here-string)找以空白連接的相關
     gh 呼叫(`gh [root 旗標] pr merge|comment|review|create|new|close|reopen`、
     `gh issue comment|create|new|close|reopen`、`gh api`)、核准片語,以及 GitHub API 的
     merge/comments/graphql 字面 URL(`api.github.com` 或 GHES `/api/v3` 的
     `.../pulls/<n>/merge`、`.../comments`、`/graphql`,即 `curl`/`wget`/`http` 的直接呼叫);
-    URL 由 `lib/subcommand.sh` 的 `hook_api_write_urls` **先正規化再比對**(codex 第 8 輪:
+    URL 由 `lib/subcommand.sh` 的 `hook_api_endpoint_urls` **先正規化再比對**(codex 第 8 輪:
     不再逐一補寫法):scheme 可有可無(`http`、`https`、無、`//`),host 轉小寫並去掉帳密前綴
     `user[:pw]@`、`:port` 與結尾的點,路徑轉小寫、解 percent-encoding、去掉 query/fragment、
     處理空段、`.` 與 `..`;
