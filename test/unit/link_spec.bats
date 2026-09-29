@@ -89,21 +89,21 @@ _host_fingerprint() {
 # --- the list ------------------------------------------------------------------
 
 @test "the default list is .ssh .gitconfig .gnupg .config/gh" {
-    run link_entries "${CONFIG}"
+    run link_entries
     assert_success
     assert_equal "${output}" "$(printf '.ssh\n.gitconfig\n.gnupg\n.config/gh')"
 }
 
 @test "link= lines in the state file extend the list, ~/ and duplicates handled" {
     _write_config 'box=dev' 'link=~/.aws' 'link=.config/nvim/' 'link=.ssh' "link=${HOME}/.netrc"
-    run link_entries "${CONFIG}"
+    run link_entries
     assert_success
     assert_equal "${output}" "$(printf '.ssh\n.gitconfig\n.gnupg\n.config/gh\n.aws\n.config/nvim\n.netrc')"
 }
 
 @test "an entry outside HOME or with a .. component is warned about and skipped" {
     _write_config 'link=/etc/passwd' 'link=../escape' 'link=.config/../../x' 'link=' 'link=~'
-    run --separate-stderr link_entries "${CONFIG}"
+    run --separate-stderr link_entries
     assert_success
     assert_equal "${output}" "$(printf '.ssh\n.gitconfig\n.gnupg\n.config/gh')"
     [[ "${stderr:-}" == *"[WARN]"*"/etc/passwd"* ]] || fail "no warning for /etc/passwd: ${stderr}"
@@ -115,7 +115,7 @@ _host_fingerprint() {
 
 @test "the default list is linked into the box HOME as absolute symlinks" {
     _make_sources
-    run link_apply "${BOX_HOME}" "${CONFIG}"
+    run link_apply "${BOX_HOME}"
     assert_success
     local _rel
     for _rel in .ssh .gitconfig .gnupg .config/gh; do
@@ -131,7 +131,7 @@ _host_fingerprint() {
     _before="$(_host_fingerprint)"
     [[ "${_before}" == *".ssh/id_test regular file"* ]] || fail "fingerprint has no content: ${_before}"
     [[ "${_before}" =~ [0-9a-f]{64}\ +\.gitconfig ]] || fail "fingerprint has no hash: ${_before}"
-    run link_apply "${BOX_HOME}" "${CONFIG}"
+    run link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(_host_fingerprint)" "${_before}"
     # The sources are still real files / directories, not moved or replaced.
@@ -146,7 +146,7 @@ _host_fingerprint() {
 @test "every entry is logged on stderr and stdout stays empty" {
     _make_sources
     rm -rf "${HOME}/.gnupg"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     assert_output ""
     [[ "${stderr:-}" == *"[INFO] link: ${BOX_HOME}/.ssh -> ${HOME}/.ssh"* ]] || fail "${stderr:-}"
@@ -159,7 +159,7 @@ _host_fingerprint() {
     _make_sources
     mkdir -p "${BOX_HOME}"
     printf 'box-own\n' >"${BOX_HOME}/.gitconfig"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     [[ ! -L "${BOX_HOME}/.gitconfig" ]] || fail ".gitconfig was replaced by a link"
     assert_equal "$(cat "${BOX_HOME}/.gitconfig")" "box-own"
@@ -172,7 +172,7 @@ _host_fingerprint() {
 @test "an existing directory in the box HOME is not replaced and gets no link inside it" {
     _make_sources
     mkdir -p "${BOX_HOME}/.ssh"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     [[ ! -L "${BOX_HOME}/.ssh" ]] || fail ".ssh was replaced"
     [[ ! -e "${BOX_HOME}/.ssh/.ssh" ]] || fail "a link was created inside the existing directory"
@@ -183,14 +183,14 @@ _host_fingerprint() {
     _make_sources
     mkdir -p "${BOX_HOME}"
     ln -s /nonexistent/elsewhere "${BOX_HOME}/.gnupg"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(readlink "${BOX_HOME}/.gnupg")" "/nonexistent/elsewhere"
     [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME}/.gnupg"* ]] || fail "no warning: ${stderr}"
 }
 
 @test "a missing host source makes no (dangling) link and is not a failure" {
-    run link_apply "${BOX_HOME}" "${CONFIG}"
+    run link_apply "${BOX_HOME}"
     assert_success
     local _rel
     for _rel in .ssh .gitconfig .gnupg .config/gh; do
@@ -203,7 +203,7 @@ _host_fingerprint() {
     mkdir -p "${HOME}/.config/nvim"
     printf 'set number\n' >"${HOME}/.config/nvim/init.vim"
     _write_config 'link=~/.config/nvim'
-    run link_apply "${BOX_HOME}" "${CONFIG}"
+    run link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(readlink "${BOX_HOME}/.config/nvim")" "${HOME}/.config/nvim"
     [[ -d "${BOX_HOME}/.config" && ! -L "${BOX_HOME}/.config" ]] || fail "parent not a real dir"
@@ -211,8 +211,8 @@ _host_fingerprint() {
 
 @test "a second run is idempotent: the links stay and are reported as already linked" {
     _make_sources
-    link_apply "${BOX_HOME}" "${CONFIG}" 2>/dev/null
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    link_apply "${BOX_HOME}" 2>/dev/null
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(readlink "${BOX_HOME}/.ssh")" "${HOME}/.ssh"
     [[ "${stderr:-}" == *"already linked"* ]] || fail "${stderr:-}"
@@ -224,7 +224,7 @@ _host_fingerprint() {
     local _outside="${BATS_TEST_TMPDIR}/outside"
     mkdir -p "${BOX_HOME}" "${_outside}"
     ln -s "${_outside}" "${BOX_HOME}/.config"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     [[ ! -e "${_outside}/gh" && ! -L "${_outside}/gh" ]] || fail "linked through the parent symlink into ${_outside}"
     assert_equal "$(readlink "${BOX_HOME}/.config")" "${_outside}"
@@ -238,7 +238,7 @@ _host_fingerprint() {
     _make_sources
     mkdir -p "${BOX_HOME}"
     printf 'not a dir\n' >"${BOX_HOME}/.config"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(cat "${BOX_HOME}/.config")" "not a dir"
     [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME}/.config"* ]] || fail "no warning: ${stderr}"
@@ -249,7 +249,7 @@ _host_fingerprint() {
     local _outside="${BATS_TEST_TMPDIR}/outside"
     mkdir -p "${_outside}"
     ln -s "${_outside}" "${BOX_HOME}"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME} (parent of ${BOX_HOME}/.ssh)"* ]] || fail "no warning: ${stderr}"
     assert_equal "$(readlink "${BOX_HOME}")" "${_outside}"
@@ -264,7 +264,7 @@ _host_fingerprint() {
     local _outside="${BATS_TEST_TMPDIR}/outside"
     mkdir -p "${_outside}"
     ln -s "${_outside}" "${BOX_HOME}"
-    run --separate-stderr link_apply "${BOX_HOME}/" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}/"
     assert_success
     run find "${_outside}" -mindepth 1
     assert_output ""
@@ -275,7 +275,7 @@ _host_fingerprint() {
 @test "a box HOME that is a file blocks every entry: warn and skip" {
     _make_sources
     printf 'not a dir\n' >"${BOX_HOME}"
-    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    run --separate-stderr link_apply "${BOX_HOME}"
     assert_success
     assert_equal "$(cat "${BOX_HOME}")" "not a dir"
     [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME} (parent of ${BOX_HOME}/.gitconfig)"* ]] || fail "no warning: ${stderr}"
@@ -289,7 +289,7 @@ _host_fingerprint() {
     _make_sources
     run link_state .ssh "${BOX_HOME}"
     assert_output "absent"
-    link_apply "${BOX_HOME}" "${CONFIG}" 2>/dev/null
+    link_apply "${BOX_HOME}" 2>/dev/null
     run link_state .ssh "${BOX_HOME}"
     assert_output "linked"
     rm -rf "${HOME}/.gnupg" "${BOX_HOME}/.gnupg"

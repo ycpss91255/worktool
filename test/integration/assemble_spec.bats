@@ -452,6 +452,9 @@ _tail() {
         blanks) printf '%s' 'link=.config/foo\n\n\n' ;;
         ws)     printf '%s' 'link=.config/foo\n  \t ' ;;
         crlf)   printf '%s' '# crlf note\r\nlink=.config/foo\r\n' ;;
+        crlf-nonl)   printf '%s' '# crlf note\r\nlink=.config/foo\r' ;;
+        crlf-blanks) printf '%s' 'link=.config/foo\r\n\r\n\r\n' ;;
+        crlf-ws)     printf '%s' 'link=.config/foo\r\n  \t \r' ;;
     esac
 }
 
@@ -462,7 +465,7 @@ _OWN_OUT='home=/srv/new\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture
 @test "#199 r4: a recorded home x every EOF framing keeps every foreign byte and updates home once" {
     local _framing _tail
     cd "${REPO_ROOT}"
-    for _framing in nl nonl blanks ws crlf; do
+    for _framing in nl nonl blanks ws crlf crlf-nonl crlf-blanks crlf-ws; do
         _tail="$(_tail "${_framing}")"
         mkdir -p "$(dirname -- "${CONFIG}")"
         printf '%b' "${_HEAD}${_OWN_IN}${_tail}" >"${CONFIG}"
@@ -477,7 +480,7 @@ _OWN_OUT='home=/srv/new\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture
 @test "#199 r4: a refused home change x every EOF framing leaves the state file byte-for-byte" {
     local _framing
     cd "${REPO_ROOT}"
-    for _framing in nl nonl blanks ws crlf; do
+    for _framing in nl nonl blanks ws crlf crlf-nonl crlf-blanks crlf-ws; do
         mkdir -p "$(dirname -- "${CONFIG}")"
         printf '%b' "${_HEAD}${_OWN_IN}$(_tail "${_framing}")" >"${CONFIG}"
         cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
