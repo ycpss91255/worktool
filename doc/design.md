@@ -25,8 +25,10 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
   前,不開始下一個 milestone 的開發。不使用 issue lock。
 - 追蹤:每個 milestone 對應一個 GitHub Milestone 與一個 parent issue(見 epic
   #1),parent 底下有多個 sub-issue(移植 milestone 每工具一個、其餘依任務);
-  該 milestone 的實作 PR 掛在對應的 Milestone 下,merge 前不自動合併(等人類
-  gate)。
+  該 milestone 的實作 PR 掛在對應的 Milestone 下。一個 sub-issue 一個 PR,
+  CI 綠且 codex「可合併」後自主合併(merge commit,不 squash);只有 milestone
+  驗收 PR(驗收清單 + Closes parent issue)是人類 gate,不自動合併
+  (2026-09-19 修訂,見 doc/workflow.md)。
 - 驗收標準:每個 milestone 與 sub-issue 都有明確驗收標準(自動 + 人類實機),
   累積於 doc/acceptance.md;milestone 的人類 gate 檢查「自動測試綠」與「人類
   實機項目已勾」兩者。這是確保 distrobox UX 最終可驗收的機制。
