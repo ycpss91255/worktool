@@ -24,14 +24,21 @@
 #   config_write_atomic <file>         stdin -> <file> (the terminal
 #                                      profiles; not the state file)
 #
-# Contract. Each `@prop` line is one promise with a stable ID. The list is
-# the claim AND the test plan: test/unit/config_mutation_spec.bats holds a
-# mutant for every ID (and fails when this list and its table differ), and
-# requires the named spec cases to fail on it.
-#   @prop location      the state file is $XDG_CONFIG_HOME/worktool/config,
-#                       else ~/.config/worktool/config
-#   @prop owner         only this file reaches the state file: no other
-#                       module reads or writes it by building its path
+# Contract. Each `@prop` line is one promise with a stable ID. What is
+# checked (test/unit/config_mutation_spec.bats), and nothing more:
+#   - exactly one table row per @prop line, every ID once in each (a drift
+#     guard fails otherwise);
+#   - each row's mutant makes the spec cases the row names fail;
+#   - renderer rows (what config_set writes) also change only their own
+#     element of the written bytes; behavioural rows are only "caught";
+#   - `owner` is checked over every entry point the argument parsers expose
+#     and every module in the source graph of the scripts under script/
+#     (test/unit/config_owner_spec.bats).
+#   @prop location      the state file resolves to
+#                       $XDG_CONFIG_HOME/worktool/config, else
+#                       ~/.config/worktool/config
+#   @prop owner         no other module reads or writes the state file by
+#                       building its path
 #   @prop exists        config_exists succeeds only when the state file exists
 #   @prop get-first     config_get prints the value of the FIRST line of the key
 #   @prop get-bare      a bare `<key>` line counts as that key with an empty value
