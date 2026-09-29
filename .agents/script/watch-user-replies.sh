@@ -36,8 +36,13 @@
 #   WATCH FETCH FAILED: <failed> of <total> thread(s) unreadable this cycle
 #   WATCH FETCH FAILED: could not list the open issues/PRs this cycle
 # Heartbeats and fetch warnings go to STDERR.
+#
+# Strict mode (doc/adr/0001-scripts-use-errexit.md, issue #218): every
+# expected non-zero - a failed list or fetch, grep finding no id, a body
+# that is not valid base64 - is handled explicitly. A help request travels
+# in W_HELP, so _parse_args returns 0 and is called directly.
 
-set -uo pipefail
+set -euo pipefail
 
 AGENT_TAGS=('[claude]' '[codex]')
 
@@ -66,7 +71,10 @@ watch_replies_filter() {
     [[ -f "${_state}" ]] || : > "${_state}"
     while IFS=$'\t' read -r _num _id _author _b64; do
         [[ -n "${_id}" ]] || continue
-        _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)"
+        # Undecodable: say so and keep what did decode (it may be a reply).
+        if ! _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)"; then
+            printf '[watch] comment %s body is not valid base64\n' "${_id}" >&2
+        fi
         watch_reply_is_user "${_login}" "${_author}" "${_body}" || continue
         grep -qxF "${_id}" "${_state}" && continue
         printf '%s\n' "${_id}" >> "${_state}"
@@ -170,9 +178,10 @@ W_INTERVAL=180
 W_STATE=''
 W_ONCE=0
 W_SEED=0
+W_HELP=0
 
 # _parse_args "$@" - the whole command line before anything is served;
-# returns 3 when help was asked for and the line is otherwise valid.
+# sets W_HELP=1 when help was asked for and the line is otherwise valid.
 _parse_args() {
     local _help=0
     while [[ $# -gt 0 ]]; do
@@ -193,7 +202,10 @@ _parse_args() {
         esac
         shift
     done
-    [[ "${_help}" -eq 1 ]] && return 3
+    if [[ "${_help}" -eq 1 ]]; then
+        W_HELP=1
+        return 0
+    fi
     [[ -n "${W_REPO}" ]] || _die_args "--repo is required"
     [[ -n "${W_LOGIN}" ]] || _die_args "--login is required"
     [[ "${W_INTERVAL}" =~ ^[1-9][0-9]*$ ]] \
@@ -244,7 +256,7 @@ _watch() {
 
 main() {
     _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    if [[ "${W_HELP}" -eq 1 ]]; then
         _usage
         exit 0
     fi
@@ -254,12 +266,14 @@ main() {
 
     WATCH_TMP="$(mktemp)" || exit 1
     trap 'rm -f "${WATCH_TMP}"' EXIT
+    # Called directly so -e holds inside them; a refused seed returns 1,
+    # and -e makes that the exit code (the documented 1).
     if [[ "${W_SEED}" -eq 1 ]]; then
         _seed "${WATCH_TMP}"
-        exit $?
+        exit 0
     fi
     _watch "${WATCH_TMP}"
-    exit $?
+    exit 0
 }
 
 # Only run main when executed, so the pure functions can be sourced by tests.

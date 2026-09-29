@@ -41,9 +41,11 @@ _extract_cmd() {
         hook_command
         return 0
     fi
-    printf '%s' "${HOOK_INPUT}" \
-        | sed -n 's/.*"command":[[:space:]]*"\(\([^"\\]*\|\\.\)*\)".*/\1/p' \
-        | head -n 1
+    # One sed that quits after the first match, fed by a here-string: no
+    # pipe that closes early (a `| head -n 1`, or sed quitting on a writer
+    # still sending), whose SIGPIPE would fail the call under pipefail.
+    sed -n -e 's/.*"command":[[:space:]]*"\(\([^"\\]*\|\\.\)*\)".*/\1/' \
+        -e 't hit' -e 'd' -e ':hit' -e 'p' -e 'q' <<<"${HOOK_INPUT}"
 }
 
 # Drop a leading timeout(1) / gtimeout wrapper with its options and duration.

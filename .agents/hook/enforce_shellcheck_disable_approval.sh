@@ -38,12 +38,15 @@ read_latest_user_message() {
     local _path="${1:-}" _line _text
     [[ -n "${_path}" && -r "${_path}" ]] || return 0
     while IFS= read -r _line; do
-        _text="$(printf '%s' "${_line}" | jq -r '
+        # A malformed line makes jq fail: skip it, keep scanning.
+        if ! _text="$(printf '%s' "${_line}" | jq -r '
             select(.type == "user") | select(.message.role == "user")
             | .message.content
             | if type == "string" then .
               elif type == "array" then (map(select(.type == "text")) | .[0].text // empty)
-              else empty end' 2>/dev/null)"
+              else empty end' 2>/dev/null)"; then
+            continue
+        fi
         if [[ -n "${_text}" ]]; then
             printf '%s\n' "${_text}"
             return 0
@@ -53,13 +56,16 @@ read_latest_user_message() {
 }
 
 # _extract_disable_codes <content> - each SC code of every disable
-# directive, one per line, sorted and unique.
+# directive, one per line, sorted and unique; nothing (and success) when the
+# content has none, so `x="$(_extract_disable_codes ...)"` holds under -e.
 _extract_disable_codes() {
+    local _directives
     [[ -n "${1:-}" ]] || return 0
-    printf '%s' "$1" \
-        | grep -oE '#[[:space:]]*shellcheck[[:space:]]+disable=SC[0-9]+(,SC[0-9]+)*' \
-        | grep -oE 'SC[0-9]+' \
-        | sort -u
+    # grep exits 1 when no line matches: no directive, nothing to print.
+    if ! _directives="$(grep -oE '#[[:space:]]*shellcheck[[:space:]]+disable=SC[0-9]+(,SC[0-9]+)*' <<<"$1")"; then
+        return 0
+    fi
+    grep -oE 'SC[0-9]+' <<<"${_directives}" | sort -u
 }
 
 # new_shellcheck_disables <new_content> <existing_file_path> - see header.

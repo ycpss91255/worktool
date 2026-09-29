@@ -27,9 +27,13 @@
 # Exit: 0 ALL_DONE (every PR all-pass + MERGEABLE), 1 FAIL (a check failed
 # or a PR conflicts), 2 argument error, 124 --max-iterations exhausted.
 #
-# Exit-code-contract script: `set -uo pipefail`, no -e.
+# Strict mode (doc/adr/0001-scripts-use-errexit.md, issue #218): every
+# expected non-zero - a failed gh call, jq on a gh reply that is not JSON -
+# is handled explicitly. A help request and a poll that is not done are
+# answers, not failures: they travel in WANT_HELP / POLL_RC, so _parse_args
+# and _poll_all return 0 and are called directly, with -e in force inside.
 
-set -uo pipefail
+set -euo pipefail
 
 readonly DEFAULT_FILTER='.name=="ci-passed"'
 
@@ -41,6 +45,7 @@ MIN_CHECKS=1
 INTERVAL=45
 STALE_WINDOW=120
 MAX_ITER=0
+WANT_HELP=0
 
 _usage() {
     cat >&2 <<'EOF'
@@ -86,7 +91,7 @@ _need_int() {
 }
 
 # _parse_args "$@" - the whole command line, before anything is served.
-# Prints nothing; returns 0, or 3 when help was asked for (and the line is
+# Prints nothing; sets WANT_HELP=1 when help was asked for (and the line is
 # otherwise valid).
 _parse_args() {
     local _help=0 _prs=''
@@ -108,7 +113,10 @@ _parse_args() {
         esac
         shift 2
     done
-    [[ "${_help}" -eq 1 ]] && return 3
+    if [[ "${_help}" -eq 1 ]]; then
+        WANT_HELP=1
+        return 0
+    fi
     _validate "${_prs}"
 }
 
@@ -132,7 +140,7 @@ _validate() {
 # "CI").
 _checks_state() {
     local _state
-    _state="$(jq -r --argjson min "${MIN_CHECKS}" --argjson ws "$2" \
+    if ! _state="$(jq -r --argjson min "${MIN_CHECKS}" --argjson ws "$2" \
         --argjson sw "${STALE_WINDOW}" \
         "[.statusCheckRollup[]? | select(${CHECK_FILTER})] as \$c
         | if (\$c | length) == 0 then \"no-checks\"
@@ -144,7 +152,9 @@ _checks_state() {
                 and (\$c | all((.completedAt | fromdateiso8601) > (\$ws - \$sw)))
              then \"pending\" else \"all-pass\" end)
           elif (\$c | any(.conclusion != null and .conclusion != \"SUCCESS\")) then \"FAIL\"
-          else \"pending\" end" <<<"$1" 2>/dev/null)"
+          else \"pending\" end" <<<"$1" 2>/dev/null)"; then
+        _state=pending
+    fi
     printf '%s' "${_state:-pending}"
 }
 
@@ -162,7 +172,8 @@ _poll_pr() {
     local _pr="$1" _json _oid _prev _state _m
     _json="$(gh pr view "${_pr}" --repo "${REPO}" \
         --json mergeable,statusCheckRollup,headRefOid 2>/dev/null)" || _json='{}'
-    _oid="$(jq -r '.headRefOid // ""' <<<"${_json}" 2>/dev/null)"
+    # A reply that is not JSON reads as "no head, no mergeable": pending.
+    _oid="$(jq -r '.headRefOid // ""' <<<"${_json}" 2>/dev/null)" || _oid=''
     _prev="${HEAD_BY_PR[${_pr}]:-}"
     HEAD_BY_PR[${_pr}]="${_oid}"
     _state="$(_checks_state "${_json}" "$2")"
@@ -170,7 +181,7 @@ _poll_pr() {
         printf '[head-moved] PR%s %s..%s\n' "${_pr}" "${_prev:0:7}" "${_oid:0:7}"
         [[ "${_state}" == all-pass ]] && _state=pending
     fi
-    _m="$(jq -r '.mergeable // "?"' <<<"${_json}" 2>/dev/null)"
+    _m="$(jq -r '.mergeable // "?"' <<<"${_json}" 2>/dev/null)" || _m='?'
     POLL_LINE="PR${_pr}: checks=${_state} mergeable=${_m:-?}"
     case "${_state}:${_m}" in
         FAIL:*) POLL_VERDICT=fail-check ;;
@@ -181,8 +192,9 @@ _poll_pr() {
 }
 
 # _poll_all <watch-start> <prev-snapshot-var> - one poll over every PR.
-# Prints the snapshot when it changed; returns 0 all ready, 1 a failure
-# (FAIL line printed), 2 still waiting.
+# Prints the snapshot when it changed; sets POLL_RC = 0 all ready, 1 a
+# failure (FAIL line printed), 2 still waiting.
+POLL_RC=0
 _poll_all() {
     local -n _prev_ref="$2"
     local _pr _out='' _rc=0 _fail=''
@@ -200,13 +212,15 @@ _poll_all() {
     done
     [[ "${_out}" != "${_prev_ref}" ]] && printf '%s---\n' "${_out}"
     _prev_ref="${_out}"
-    [[ -n "${_fail}" ]] && printf '%s\n' "${_fail}"
-    return "${_rc}"
+    if [[ -n "${_fail}" ]]; then
+        printf '%s\n' "${_fail}"
+    fi
+    POLL_RC="${_rc}"
 }
 
 main() {
     _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    if [[ "${WANT_HELP}" -eq 1 ]]; then
         _usage
         return 0
     fi
@@ -215,7 +229,7 @@ main() {
     while :; do
         _iter=$((_iter + 1))
         _poll_all "${_start}" _prev
-        _rc=$?
+        _rc="${POLL_RC}"
         [[ "${_rc}" -eq 1 ]] && return 1
         if [[ "${_rc}" -eq 0 ]]; then
             echo "ALL_DONE"

@@ -84,7 +84,7 @@ _behind() {
     git -C "${_root}" fetch --quiet origin main 2>/dev/null || return 0
     git -C "${_root}" rev-parse --verify --quiet origin/main >/dev/null 2>&1 || return 0
     git -C "${_root}" rev-parse --verify --quiet main >/dev/null 2>&1 || return 0
-    git -C "${_root}" rev-list --count main..origin/main 2>/dev/null
+    git -C "${_root}" rev-list --count main..origin/main 2>/dev/null || return 0
 }
 
 _deny() {
@@ -106,7 +106,7 @@ main() {
     [[ -z "${_cwd}" ]] && _cwd="${PWD}"
     [[ -n "${_cmd}" ]] || return 0
     _dir="$(_worktree_dir "${_cmd}" "${_cwd}")" || return 0
-    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)"
+    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)" || return 0
     [[ -n "${_root}" ]] || return 0
     _n="$(_behind "${_root}")"
     [[ "${_n}" =~ ^[1-9][0-9]*$ ]] || return 0

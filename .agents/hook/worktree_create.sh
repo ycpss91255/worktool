@@ -41,7 +41,9 @@ main() {
     fi
 
     _root="${CLAUDE_PROJECT_DIR:-}"
-    [[ -n "${_root}" ]] || _root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    if [[ -z "${_root}" ]]; then
+        _root="$(git rev-parse --show-toplevel 2>/dev/null)" || _fail "no repo root"
+    fi
     # .git is a directory in the main checkout and a file in a linked worktree.
     [[ -n "${_root}" && -e "${_root}/.git" ]] || _fail "no repo root"
 
