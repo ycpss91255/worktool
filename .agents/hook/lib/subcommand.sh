@@ -48,6 +48,9 @@
 #     command substitution in it shows as '_'
 #   hook_word_has_subst <encoded word>   0 when the word holds a $(...) /
 #     `...` / <(...) substitution
+#   hook_word_has_bare_subst <encoded word>   0 when the word holds an
+#     UNQUOTED $(...) / `...`: the shell word-splits its output, so the one
+#     word seen here may launch as several (options included)
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -94,13 +97,13 @@ _hook_unquote() {
 }
 
 # _hook_decode <word> - an opaque word with its separators restored and
-# each substitution marker (\001s) shown as '_'.
+# each substitution marker (\001s quoted, \001u unquoted) shown as '_'.
 _hook_decode() {
     local _s="$1" _i _seps=$' \t\r\n;&|<>()' _let=abcdefghijk
     for ((_i = 0; _i < ${#_seps}; _i++)); do
         _s="${_s//$'\001'"${_let:_i:1}"/"${_seps:_i:1}"}"
     done
-    printf '%s' "${_s//$'\001's/_}"
+    printf '%s' "${_s//$'\001'[su]/_}"
 }
 
 # hook_word <encoded word> - see the header.
@@ -110,7 +113,12 @@ hook_word() {
 
 # hook_word_has_subst <encoded word> - see the header.
 hook_word_has_subst() {
-    [[ "$1" == *$'\001's* ]]
+    [[ "$1" == *$'\001'[su]* ]]
+}
+
+# hook_word_has_bare_subst <encoded word> - see the header.
+hook_word_has_bare_subst() {
+    [[ "$1" == *$'\001'u* ]]
 }
 
 # Long wrapper options that take their value as the NEXT word.

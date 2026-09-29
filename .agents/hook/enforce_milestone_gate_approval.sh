@@ -24,6 +24,12 @@
 #      cannot read (stdin, a missing file, a command substitution, --input
 #      included) blocks. A gh api endpoint (or other bare word) built by a
 #      command substitution blocks unless the call only reads.
+#   3. substitutions: a command substitution decodes to '_', so the hook
+#      cannot know what it expands to. It blocks in any word of a
+#      `gh pr merge` (selector, -R, flags), in a word naming the gh
+#      sub-command (`gh pr "$(echo merge)"`), and, when UNQUOTED (the shell
+#      word-splits it into words the hook never saw, -X PUT or --body
+#      included), anywhere in a gh api or body-command launch.
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real gh launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
@@ -142,6 +148,22 @@ _opt_has_subst() {
     return 1
 }
 
+# _has_subst <from> [bare] - 0 when a word of the launch from index <from>
+# on holds a command substitution; with `bare`, only an unquoted one.
+_has_subst() {
+    local _i _test=hook_word_has_subst
+    [[ "${2:-}" == bare ]] && _test=hook_word_has_bare_subst
+    for ((_i = $1; _i < ${#_E[@]}; _i++)); do
+        "${_test}" "${_E[_i]}" && return 0
+    done
+    return 1
+}
+
+# _block_subst <what> <fix> - fail closed on a command substitution.
+_block_subst() {
+    hook_block "$1 built by a command substitution cannot be checked (fail closed)." "$2"
+}
+
 # _positionals_at <value-opts> <from> - the index of every positional word
 # from index <from> on, one per line, skipping the value of every option
 # listed in <value-opts>.
@@ -232,6 +254,10 @@ _gate() {
 _check_pr_merge() {
     local _sel _repo _pr=''
     local -a _view=(pr view --json number -q .number)
+    # A substitution decodes to '_': `gh pr merge "$(printf 7)"` would be
+    # judged as the PR '_' while the shell merges PR 7.
+    _has_subst 2 && _block_subst "gh pr merge: a selector, -R or flag" \
+        "Spell the PR number and -R owner/repo out literally."
     _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")"
     _repo="$(_opt -R --repo)"
     if [[ "${_sel}" =~ ^https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
@@ -274,11 +300,14 @@ _api_is_read() {
 # or to options the hook never saw. A read of a built endpoint passes.
 _check_api_subst() {
     local _i _n=0
+    # Unquoted, it word-splits: `gh api $(printf '%s' '-X PUT') <merge>`.
+    _has_subst 2 bare && _block_subst "gh api: an unquoted word" \
+        "Spell the options and endpoint out literally, or quote the substitution."
     while IFS= read -r _i; do
         _n=$((_n + 1))
         hook_word_has_subst "${_E[_i]}" || continue
         [[ "${_n}" -eq 1 ]] && _api_is_read && continue
-        hook_block "gh api: an endpoint (or bare word) built by a command substitution cannot be checked for a merge or a comment write (fail closed)." \
+        _block_subst "gh api: an endpoint (or bare word) of a write" \
             "Spell the endpoint out literally (a separate step may compute it first)."
     done < <(_positionals_at "${_API_VALUE_OPTS}" 2)
     return 0
@@ -319,6 +348,8 @@ _read_body() {
 _check_gh_body() {
     local _src _body _file
     _src="gh $(_sub) body"
+    _has_subst "$((_ARG0 + 1))" bare && _block_subst "gh $(_sub): an unquoted word" \
+        "Spell the options out literally, or quote the substitution."
     if _opt_has_subst --body -b --body-file -F; then
         hook_block "${_src}: a body (or body file name) with a command substitution cannot be checked (fail closed)." \
             "Write the body to a file first, then pass --body-file <literal path>."
@@ -382,11 +413,24 @@ _check_api_comment() {
     return 0
 }
 
+# _check_sub_words - fail closed when a word naming the gh sub-command
+# (`gh <group> [-R x] <sub>`, or `gh api`) holds a command substitution:
+# `gh pr "$(echo merge)" 7` merges while the hook reads `gh pr _`.
+_check_sub_words() {
+    local _i _last="${_ARG0}"
+    [[ "${_W[1]:-}" == api ]] && _last=1
+    for ((_i = 1; _i <= _last; _i++)); do
+        hook_word_has_subst "${_E[_i]:-}" || continue
+        _block_subst "gh: a sub-command word" "Spell the gh sub-command out literally."
+    done
+}
+
 # _check_launch <encoded sub-command> - judge one launch; blocks (exit 2)
 # or returns.
 _check_launch() {
     _load_launch "$1" || return 0
     local _ep
+    _check_sub_words
     case "$(_sub)" in
         "pr merge") _check_pr_merge ;;
         "pr comment"|"pr review"|"pr create"|"issue comment"|"issue create") _check_gh_body ;;

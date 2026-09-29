@@ -276,3 +276,27 @@ setup() {
     run hook_word "${w[5]}"
     assert_output "x _"
 }
+
+@test "hook_word_has_bare_subst tells an unquoted substitution from a quoted one" {
+    local d='$' b='`' w _i
+    run hook_subcommands_raw "gh x ${d}(a) \"${d}(b)\" ${b}c${b} \"${b}d${b}\" p/${d}(e) \"p/${d}(f)\" <(g) '${d}(h)'"
+    read -r -a w <<<"${lines[0]}"
+    for _i in 2 4 6; do
+        run hook_word_has_bare_subst "${w[_i]}"
+        assert_success
+        run hook_word_has_subst "${w[_i]}"
+        assert_success
+    done
+    for _i in 3 5 7 8; do
+        run hook_word_has_bare_subst "${w[_i]}"
+        assert_failure
+        run hook_word_has_subst "${w[_i]}"
+        assert_success
+    done
+    run hook_word_has_subst "${w[9]}"
+    assert_failure
+    run hook_word "${w[6]}"
+    assert_output "p/_"
+    run hook_subcommands "gh x ${d}(a) \"${d}(b)\""
+    assert_line --index 0 "gh x _ _"
+}

@@ -252,6 +252,38 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     done
 }
 
+@test "a gh pr merge with any word built by a command substitution is blocked" {
+    # A substitution decodes to '_': `gh pr merge "$(printf 7)"` would be
+    # resolved as the PR '_' while the shell merges PR 7.
+    local _c
+    for _c in "gh pr merge \"\$(printf 7)\" -R ycpss91255/worktool --merge" \
+        "gh pr merge \`printf 7\` -R ycpss91255/worktool" \
+        "gh pr merge 7 -R \"\$(printf ycpss91255/worktool)\"" \
+        "gh pr merge 7 --repo=\$(printf ycpss91255/worktool)" \
+        "gh pr merge 7 -R ycpss91255/worktool \$(printf -- --admin)" \
+        "gh pr merge 7 -R ycpss91255/worktool --body \"\$(printf x)\""; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a gh sub-command word built by a command substitution is blocked" {
+    local _c
+    for _c in "gh pr \"\$(printf merge)\" 7 -R ycpss91255/worktool" \
+        "gh \"\$(printf pr)\" merge 7" \
+        "gh \$(printf 'pr merge') 7" \
+        "gh pr -R ycpss91255/worktool \`printf merge\` 7"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+    run _calls
+    assert_output ""
+}
+
 # --- anti-forgery ----------------------------------------------------------------
 
 @test "an unmarked inline body with the phrase is blocked on every comment path" {
@@ -380,6 +412,43 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         assert_output --partial "command substitution"
     done
     run _calls
+    assert_output ""
+}
+
+@test "an unquoted command substitution in gh api is blocked, even as the first positional" {
+    # The shell word-splits an unquoted substitution: it may inject -X PUT
+    # or -f body=... the hook never saw, so no read can be assumed.
+    _labels milestone-gate
+    local _c
+    for _c in "gh api \$(printf '%s' '-X PUT') repos/o/r/pulls/7/merge" \
+        "gh api \$(printf '%s' '-f body=x') repos/o/r/issues/7/comments" \
+        "gh api \`printf repos/o/r/pulls/7/merge\` -X PUT" \
+        "gh api repos/\$(printf o/r)/pulls/7" \
+        "gh api repos/o/r/pulls -q \$(printf .x)" \
+        "gh api repos/o/r/pulls -f per_page=\$(printf 1)"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "an unquoted command substitution in a gh body command is blocked" {
+    local _c
+    for _c in "gh pr comment 7 \$(printf -- '--body x')" \
+        "gh issue comment 7 \`printf -- '-b x'\`" \
+        "gh pr create --title t \$(printf -- '--body-file f')" \
+        "gh pr review \$(printf 7) --approve"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+}
+
+@test "a quoted command substitution outside the body of a gh body command passes" {
+    _check "gh pr comment \"\$(printf 7)\" --body 'looks good'"
+    assert_success
     assert_output ""
 }
 

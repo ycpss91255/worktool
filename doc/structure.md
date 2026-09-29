@@ -336,6 +336,11 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   - `gh api` 的 endpoint(或其他裸字)由 command substitution 組成時,hook 無法判斷它是否
     展開成 merge 或 comments endpoint,除非是讀取(最後的 `-X` 為 GET/DELETE/HEAD,或沒有
     `-X` 也沒有任何欄位與 `--input`),一律擋(fail closed)。
+  - command substitution 在 hook 眼中只是 `_`,不知道會展開成什麼(codex 第 3 輪):
+    `gh pr merge` 的任何字(selector、`-R`、旗標)、決定 gh 子命令的字
+    (`gh pr "$(echo merge)"`)含 substitution 一律擋;**未加引號**的 substitution
+    會被 shell 斷字成 hook 沒看到的多個字(可注入 `-X PUT`、`--body ...`),出現在
+    `gh api` 或上述內文類指令的任何位置都擋。加了引號、且不在內文與寫入位置的仍照前述規則判斷。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo、
