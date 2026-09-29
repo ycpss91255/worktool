@@ -13,11 +13,32 @@
 #
 # Written test-first: RED against the round-0 ADR (present-tense items,
 # diagram listed among the deferred rewrites), GREEN after the fix.
+#
+#   ADR 0004 (invariant 1, user content belongs to the user, issue #202)
+#   lists the specs that guard the invariant. Every cited case must exist
+#   under that exact name in that exact spec file, so the ADR cannot claim
+#   a guard nobody runs; and "ask before changing", which nothing enforces
+#   yet, must stay marked as a gap (待補).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     ADR_0002="${REPO_ROOT}/doc/adr/0002-box-owns-its-home.md"
+    ADR_0004="${REPO_ROOT}/doc/adr/0004-invariant-user-content.md"
+}
+
+# The "## 目前由哪些機制或測試守住" section of ADR 0004, heading excluded.
+_adr4_guard_section() {
+    sed -n '/^## 目前由哪些機制或測試守住/,/^## /p' "${ADR_0004}" | sed '1d;/^## /d'
+}
+
+# Every spec citation in the guard section, one `<file>\t<case>` per line.
+# A citation is written `test/<...>.bats`:「<case name>」.
+_adr4_citations() {
+    local _q='`'
+    _adr4_guard_section \
+        | grep -oE "${_q}test/[^${_q}]+\\.bats${_q}:「[^」]+」" \
+        | sed -E "s/^${_q}([^${_q}]+)${_q}:「(.*)」\$/\\1\\t\\2/"
 }
 
 # Decision item $1 (the "N. ..." line under "## 決策") of ADR 0002.
@@ -55,6 +76,41 @@ _decision_item() {
     # ... and the ADR states the diagram is updated in this same change.
     run grep -c "架構圖.*同一個 PR" "${ADR_0002}"
     assert_success
+}
+
+@test "ADR 0004 has the four invariant sections, in order" {
+    run grep -E '^## ' "${ADR_0004}"
+    assert_success
+    assert_line --index 0 "## 一句話"
+    assert_line --index 1 "## 性質"
+    assert_line --index 2 "## 為什麼固定"
+    assert_line --index 3 "## 目前由哪些機制或測試守住"
+}
+
+@test "ADR 0004 names its issue and its parent" {
+    run grep -E '^- 討論：' "${ADR_0004}"
+    assert_success
+    assert_output --partial "#200"
+    assert_output --partial "#202"
+}
+
+@test "every spec case ADR 0004 cites exists under that name in that file" {
+    local _citations _file _case _n=0
+    _citations="$(_adr4_citations)"
+    [[ -n "${_citations}" ]] || fail "ADR 0004 cites no spec case"
+    while IFS=$'\t' read -r _file _case; do
+        _n=$((_n + 1))
+        [[ -f "${REPO_ROOT}/${_file}" ]] || fail "cited spec missing: ${_file}"
+        grep -qxF "@test \"${_case}\" {" "${REPO_ROOT}/${_file}" \
+            || fail "no case '${_case}' in ${_file}"
+    done <<<"${_citations}"
+    assert [ "${_n}" -ge 5 ]
+}
+
+@test "ADR 0004 marks 'ask before changing' as not yet guarded (待補)" {
+    run bash -c 'sed -n "/^## 目前由哪些機制或測試守住/,\$p" "$1" | grep -E "要改先問"' _ "${ADR_0004}"
+    assert_success
+    assert_output --partial "待補"
 }
 
 @test "this spec is a required unit spec of test.sh" {
