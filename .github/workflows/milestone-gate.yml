@@ -15,6 +15,15 @@ name: milestone-gate
 # event that can change the answer (new head SHA, label added/removed) and
 # on every PR comment created, edited or deleted.
 #
+# Trusted code only: the token holds statuses: write, so no code a PR can
+# change may run here. pull_request_target and issue_comment both run the
+# workflow file of the default branch, and the checkout is pinned to the
+# default branch (no PR head, no persisted credentials), so the sourced
+# lib/approval.sh is always main's. The PR is read only as API data: head
+# SHA, labels and comments come from gh api. A PR that changes the rule
+# therefore takes effect only after it merges. Never switch this back to
+# pull_request, and never check out or execute the PR head here.
+#
 # Known limitation: agents post with the maintainer's token, so GitHub
 # cannot tell the maintainer from an agent writing on their behalf. This
 # check stops "merged without waiting for approval", not an agent forging
@@ -24,7 +33,7 @@ name: milestone-gate
 # `milestone-gate-approval` as a required check after this merges.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   issue_comment:
     types: [created, edited, deleted]
@@ -45,10 +54,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issue_comment also fires for plain issues; only PR comments matter.
-    if: github.event_name == 'pull_request' || github.event.issue.pull_request
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
     steps:
-      - name: Checkout
+      - name: Checkout the default branch (trusted code, never the PR head)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Evaluate approval and set commit status
         env:
