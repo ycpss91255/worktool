@@ -158,10 +158,10 @@ jobs:
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
         run: just test system-real
 
-  # Commit email (issue #234): the repo is public, so every commit made on
-  # or after the cutoff in lib/commit_email.sh must carry a GitHub noreply
-  # author AND committer email (GitHub-generated web-flow commits and
-  # commits made before the cutoff pass). The rule lives in
+  # Commit email (issue #234): the repo is public, so every new commit must
+  # carry a GitHub noreply author email and a noreply (or GitHub's own
+  # noreply@github.com) committer email; no commit date exempts anything,
+  # old history stays out through the range. The rule lives in
   # lib/commit_email.sh (pure bash, unit tested in
   # test/unit/commit_email_spec.bats); this job only picks the range (PR:
   # base..head, push: before..after), collects the records with git log
@@ -190,7 +190,7 @@ jobs:
           source lib/commit_email.sh
           range="$(commit_email_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}")" || exit 1
           records="${RUNNER_TEMP}/commits"
-          TZ=UTC git log --date=format-local:%Y-%m-%dT%H:%M:%SZ --format="$(commit_email_log_format)" "${range}" > "${records}" || exit 1
+          git log --format="$(commit_email_log_format)" "${range}" > "${records}" || exit 1
           commit_email_evaluate < "${records}"
 
   # Single required status: green only if every build-image leg AND every

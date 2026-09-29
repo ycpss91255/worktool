@@ -349,7 +349,9 @@ _sorted_set() {
     assert_success
     assert_line --regexp '^ +source lib/commit_email\.sh$'
     assert_line --partial "commit_email_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\""
-    assert_line --partial "TZ=UTC git log --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=\"\$(commit_email_log_format)\" \"\${range}\""
+    assert_line --partial "git log --format=\"\$(commit_email_log_format)\" \"\${range}\""
+    refute_output --partial '--date='
+    refute_output --partial 'cutoff'
     assert_line --regexp '^ +commit_email_evaluate < '
     refute_output --partial 'users.noreply.github.com'
 }
