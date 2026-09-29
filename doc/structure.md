@@ -370,6 +370,11 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     `gh issue comment|create|new|close|reopen`、`gh api`)、核准片語,以及 GitHub API 的
     merge/comments/graphql 字面 URL(`api.github.com` 或 GHES `/api/v3` 的
     `.../pulls/<n>/merge`、`.../comments`、`/graphql`,即 `curl`/`wget`/`http` 的直接呼叫);
+    URL 由 `lib/subcommand.sh` 的 `hook_api_write_urls` **先正規化再比對**(codex 第 8 輪:
+    不再逐一補寫法):scheme 可有可無(`http`、`https`、無、`//`),host 轉小寫並去掉帳密前綴
+    `user[:pw]@`、`:port` 與結尾的點,路徑轉小寫、解 percent-encoding、去掉 query/fragment、
+    處理空段、`.` 與 `..`;
+
     出現次數多於結構化解析實際檢查並放行的字面 gh 啟動,就表示有一處沒被檢查到,一律擋,
     訊息要 agent 把 gh 指令單獨、以字面參數執行,長文字寫檔用 `--body-file`。已檢查放行的
     呼叫(含以完整 URL 寫的 `gh api`)不會被重複擋。**接受的代價**:只是「提到」這些東西的
@@ -386,10 +391,19 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   - **涵蓋範圍與已知限制**(codex 第 6 輪定案,最終範圍):
     - **有檢查**:字面的 gh 啟動(含子命令前的 root 旗標、`timeout`/`sudo`/`env` 等包裝);
       shell 的 `-c`、`eval`、heredoc 與 here-string 腳本;上述 raw-text tripwire 與
-      inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API。
+      inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API
+      (網址先正規化:大小寫、結尾點、連接埠、帳密前綴、scheme、路徑寫法)。`gh api` 不接受
+      `-R`/`--repo`,帶了就擋(hook 無法判斷 endpoint)。
+    - **測法**:`test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
+      測,不再只釘單一例子:操作(pr merge、帶片語的 pr comment、api merge、api comments、
+      graphql `mergePullRequest`)× gh 寫法(一般、`-R`/`--repo`/`--repo=` 在子命令前後)×
+      包裝(無、`bash -c`、`sh -c`、`eval`、`env`、`timeout`、`busybox sh`、heredoc 餵 `sh`、
+      here-string 餵 `bash`、`python3 -c` argv、`perl -e`、`node -e`)全部要擋;API 網址則是
+      endpoint × host 寫法(一般、大寫、結尾點、`:443`、結尾點加 `:443`、帳密前綴、`http`、
+      無 scheme)× 路徑寫法。新的繞過類別＝在某個維度加一個值,而不是加一個例子。
     - **不檢查**:直譯器執行的腳本**檔**(`bash script/x.sh`、`python x.py`、`node x.js`、
       `just ...`,檔案內容不在指令文字裡);混淆過的 inline 程式(字串拼接、編碼);執行時才組出
-      呼叫的程式。這一類沒有邊界(任何語言、任何組字方式),agent 端 hook 只做到上述後盾;
+      呼叫的程式;以 IP 位址、DNS 別名或轉址連到 API(網址裡沒有可辨識的 API host)。這一類沒有邊界(任何語言、任何組字方式),agent 端 hook 只做到上述後盾;
       並非「不認得的直譯器都擋得住」。
     - **合併仍由伺服器端保證**:未核准的合併不論從哪裡發出,都會被 main 的 required status
       check `milestone-gate-approval`(#187)擋下;hook 剩下的缺口只有「刻意以上述不檢查的

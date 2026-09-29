@@ -71,6 +71,16 @@
 #     non-shell interpreter that runs inline code (python, perl, ruby, node,
 #     php, awk, lua ...); a heredoc fed to one becomes a here-string word of
 #     its launch, so a hook can read the program text
+#   hook_api_write_urls <text>   one line per URL-like token of <text> that
+#     names a GitHub API merge / comments / graphql endpoint, printed
+#     normalised (<host><path>). Every token is normalised the same way
+#     before matching: scheme optional (http, https, none, //), host
+#     lower-cased with userinfo (user[:pw]@), :port and trailing dots
+#     dropped; path lower-cased and percent-decoded, query / fragment
+#     dropped, empty, . and .. segments resolved. Rules: host
+#     api.github.com with /repos/<o>/<r>/pulls/<n>/merge, /repos/<o>/<r>/
+#     (issues|pulls)/[<n>/]comments[/<id>] or /graphql; any host with the
+#     GHES prefix /api/v3/ of the same repos paths, or /api/graphql
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -121,6 +131,55 @@ _hook_shell_reads_stdin() {
         esac
         shift
     done
+    return 0
+}
+
+# _hook_norm_path <path> - a URL path lower-cased, percent-decoded, with
+# empty, . and .. segments resolved: /seg/seg (or empty).
+_hook_norm_path() {
+    local _p="$1" _seg _out=''
+    local -a _segs _keep=()
+    _p="$(printf '%b' "${_p//%/\\x}")"
+    _p="${_p,,}"
+    IFS=/ read -r -a _segs <<<"${_p}"
+    for _seg in "${_segs[@]}"; do
+        case "${_seg}" in
+            ''|.) ;;
+            ..) [[ "${#_keep[@]}" -gt 0 ]] && unset '_keep[-1]' ;;
+            *) _keep+=("${_seg}") ;;
+        esac
+    done
+    for _seg in "${_keep[@]}"; do _out+="/${_seg}"; done
+    printf '%s' "${_out}"
+}
+
+# hook_api_write_urls <text> - see the header.
+hook_api_write_urls() {
+    local _tok _h _p _sch _u
+    local _rest='repos/[^/]+/[^/]+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments(/[0-9]+)?)'
+    while IFS= read -r _tok; do
+        _tok="${_tok,,}"
+        [[ "${_tok}" == *api* && "${_tok}" == */* ]] || continue
+        _sch=''
+        if [[ "${_tok}" =~ ^[a-z][a-z0-9+.-]*:// ]]; then
+            _sch=1
+            _tok="${_tok#*://}"
+        elif [[ "${_tok}" == //* ]]; then
+            _sch=1
+            _tok="${_tok#//}"
+        fi
+        _h="${_tok%%[/?#]*}"
+        _p="${_tok:${#_h}}"
+        _p="${_p%%[?#]*}"
+        _h="${_h##*@}"
+        [[ "${_h}" =~ ^(.*):[0-9]*$ ]] && _h="${BASH_REMATCH[1]}"
+        while [[ "${_h}" == *. ]]; do _h="${_h%.}"; done
+        [[ -n "${_h}" && (-n "${_sch}" || "${_h}" == *.*) ]] || continue
+        _u="${_h}$(_hook_norm_path "${_p}")"
+        if [[ "${_u}" =~ ^api\.github\.com/(${_rest}|graphql)$ || "${_u}" =~ ^[^/]+/api/(v3/${_rest}|graphql)$ ]]; then
+            printf '%s\n' "${_u}"
+        fi
+    done < <(tr -s ' \t\n"'"'"'`<>(){}|;,\\=' '\n' <<<"$1")
     return 0
 }
 
