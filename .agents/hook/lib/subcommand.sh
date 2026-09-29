@@ -14,18 +14,27 @@
 #        separators ; & | < > ( ) become '_'. So a quoted message splits
 #        nothing, while a quoted executable ("bats", b"at"s) is still seen
 #        by its real name. A backslash-escaped character outside quotes is
-#        taken literally the same way.
-#     3. the rest is split on ; && || | and newlines
-#     4. leading VAR=val assignments and sudo / env / command / time /
+#        taken literally the same way (lib/unquote.awk)
+#     3. the body of every $(...), `...` and <(...) / >(...) is launched
+#        too, so it becomes its own sub-command(s) after the command that
+#        holds it, where it is replaced by the word '_'. $(...) and `...`
+#        run inside double quotes as well; inside single quotes nothing is
+#        special
+#     4. the rest is split on ; && || | and newlines
+#     5. leading VAR=val assignments and sudo / env / command / time /
 #        nohup / exec wrappers are stripped together with their options
 #        (sudo -u root, env -i -u X, exec -a n, --user=x, --); `command -v`
 #        / `-V` only looks a name up, so it is kept as is. timeout(1) is
 #        kept, since the long-job hook treats it as a bound
-#     5. pieces are trimmed and their words single-spaced; empty ones are
+#     6. `bash|sh|dash|zsh|ksh [opts] -c <script>` and `eval <words>` run a
+#        command line: it is split by these same rules in place of the
+#        wrapper. A timeout(1) leading the wrapper leads each of them, since
+#        it bounds the whole script
+#     7. pieces are trimmed and their words single-spaced; empty ones are
 #        dropped
 #
-# Deliberately simple (no full shell parser): $(...) inside double quotes
-# and $'...' escapes are not expanded; the calling hooks accept that.
+# Deliberately simple (no full shell parser): $'...' escapes are not
+# expanded, and a script run by name (`bash x.sh`) is not read.
 #
 # Library: sourced, sets no shell options, only declares functions.
 
@@ -55,28 +64,22 @@ _hook_strip_heredocs() {
     done <<<"$1"
 }
 
-# _hook_unquote - read a command on stdin and print it with every quoted
-# span turned into one opaque word (see the header, step 2). The whole
-# input is one awk record, so a span may cross lines; index() instead of a
-# bracket class keeps it portable to mawk.
+# The quoting pass (header steps 2 and 3), next to this file.
+_HOOK_UNQUOTE_AWK="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/unquote.awk"
+
+# _hook_unquote - read a command on stdin and print it through the quoting
+# pass: opaque words carry each separator as \001 plus a letter.
 _hook_unquote() {
-    awk 'BEGIN { RS = "\001"; SEP = " \t\r\n;&|<>()"; SQ = sprintf("%c", 39) }
-    {
-        n = length($0); q = ""
-        for (i = 1; i <= n; i++) {
-            c = substr($0, i, 1)
-            if (q == "" && (c == SQ || c == "\"")) { q = c; continue }
-            if (q != "" && c == q) { q = ""; continue }
-            if (c == "\\" && q != SQ && i < n) {
-                i++; c = substr($0, i, 1)
-                if (c == "\n" && q == "") continue
-                if (index(SEP, c) > 0) c = "_"
-            } else if (q != "" && index(SEP, c) > 0) {
-                c = "_"
-            }
-            printf "%s", c
-        }
-    }'
+    awk -f "${_HOOK_UNQUOTE_AWK}"
+}
+
+# _hook_decode <word> - an opaque word with its separators restored.
+_hook_decode() {
+    local _s="$1" _i _seps=$' \t\r\n;&|<>()' _let=abcdefghijk
+    for ((_i = 0; _i < ${#_seps}; _i++)); do
+        _s="${_s//$'\001'"${_let:_i:1}"/"${_seps:_i:1}"}"
+    done
+    printf '%s' "${_s}"
 }
 
 # Long wrapper options that take their value as the NEXT word.
@@ -133,6 +136,52 @@ _hook_strip_wrappers() {
     printf '%s' "${_w[*]:_i}"
 }
 
+# _hook_inner_script <words> - print the (still encoded) command line that
+# `bash|sh|dash|zsh|ksh [opts] -c <script>` or `eval <words>` runs; fail
+# when the words run no such command line.
+_hook_inner_script() {
+    local -a _w
+    local _i
+    read -r -a _w <<<"$1"
+    case "${_w[0]:-}" in
+        eval)
+            [[ "${#_w[@]}" -gt 1 ]] || return 1
+            printf '%s' "${_w[*]:1}"
+            return 0 ;;
+        bash|sh|dash|zsh|ksh|*/bash|*/sh|*/dash|*/zsh|*/ksh) ;;
+        *) return 1 ;;
+    esac
+    for ((_i = 1; _i < ${#_w[@]}; _i++)); do
+        case "${_w[_i]}" in
+            -[oO]|+[oO]|--rcfile|--init-file) _i=$((_i + 1)) ;;
+            --*) ;;
+            -*c*|+*c*)
+                [[ "${_w[_i]}" =~ ^[-+][A-Za-z]*c[A-Za-z]*$ && -n "${_w[_i + 1]:-}" ]] || return 1
+                printf '%s' "${_w[_i + 1]}"
+                return 0 ;;
+            -*|+*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 1
+}
+
+# _hook_emit <sub-command> - print the sub-command with its opaque words
+# shown as '_', or, when it runs a command line (header step 6), that
+# command line's own sub-commands behind any leading timeout(1).
+_hook_emit() {
+    local _lead='' _script _line
+    local _re='^g?timeout([[:space:]]+[^[:space:]0-9][^[:space:]]*)*[[:space:]]+[0-9][^[:space:]]*[[:space:]]+'
+    [[ "$1" =~ ${_re} ]] && _lead="${BASH_REMATCH[0]}"
+    if _script="$(_hook_inner_script "$(_hook_strip_wrappers "${1#"${_lead}"}")")"; then
+        while IFS= read -r _line; do
+            printf '%s%s\n' "${_lead}" "${_line}"
+        done < <(hook_subcommands "$(_hook_decode "${_script}")")
+        return 0
+    fi
+    printf '%s\n' "${1//$'\001'?/_}"
+}
+
 # hook_subcommands <command> - see the header.
 hook_subcommands() {
     local _text _sub
@@ -143,7 +192,7 @@ hook_subcommands() {
     _text="${_text//|/$'\n'}"
     while IFS= read -r _sub; do
         _sub="$(_hook_strip_wrappers "${_sub}")"
-        [[ -n "${_sub}" ]] && printf '%s\n' "${_sub}"
+        [[ -n "${_sub}" ]] && _hook_emit "${_sub}"
     done <<<"${_text}"
     return 0
 }

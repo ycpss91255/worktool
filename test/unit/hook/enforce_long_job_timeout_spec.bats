@@ -140,3 +140,21 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check "git status"
     assert_success
 }
+
+# --- nested launches (codex round 1 on #193) ----------------------------------
+
+@test "blocks a long launch inside a command substitution" {
+    local d='$'
+    _check "x=${d}(just test unit)"
+    assert_failure 2
+}
+
+@test "blocks a long launch run through bash -c" {
+    _check "bash -c 'just test unit'"
+    assert_failure 2
+}
+
+@test "allows a timeout(1) that wraps bash -c" {
+    _check "timeout 600 bash -c 'cd /r && just test unit'"
+    assert_success
+}

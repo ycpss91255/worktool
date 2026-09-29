@@ -197,3 +197,24 @@ _registered() {
     assert_failure 1
     assert_output ""
 }
+
+@test "issue-tracker docs list only gh commands the hooks accept, each with -R" {
+    local _f _cmd _bad='' _bt=$'\x60'
+    for _f in "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md" \
+        "${REPO_ROOT}/doc/agent/issue-tracker.md"; do
+        while IFS= read -r _cmd; do
+            [[ "${_cmd}" =~ ^gh\ (issue|pr)\  ]] || continue
+            [[ "${_cmd}" == *"-R ycpss91255/worktool"* ]] || _bad+="no -R: ${_cmd}"$'\n'
+            run bash -c 'jq -n --arg c "$1" "{tool_name:\"Bash\",tool_input:{command:\$c}}" | "$2"' \
+                _ "${_cmd}" "${REPO_ROOT}/.agents/hook/enforce_gh_body_file.sh"
+            [[ -z "${output}" ]] || _bad+="denied: ${_cmd}"$'\n'
+        done < <(grep -E '^- ' "${_f}" | grep -oE "${_bt}gh [^${_bt}]+${_bt}" | tr -d "${_bt}")
+    done
+    assert_equal "${_bad}" ""
+}
+
+@test "the carried issue-tracker skill template names no heredoc body" {
+    run grep -nE '^- .*(heredoc|--body ")' "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md"
+    assert_failure 1
+    assert_output ""
+}

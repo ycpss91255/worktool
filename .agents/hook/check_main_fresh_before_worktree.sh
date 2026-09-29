@@ -7,7 +7,8 @@
 # new worktree never starts from a stale base and later needs a rebase
 # (worktool: every sub-issue works in its own .worktree/<name>, and `main`
 # only moves by merged PRs - see AGENTS.md git conventions). Allows when:
-#   - the command does not start a worktree from main / origin/main
+#   - the command launches no worktree from main / origin/main (quoted
+#     text and heredoc bodies that mention one are data: lib/subcommand.sh)
 #   - the working directory is not a git repo
 #   - `git fetch` fails (offline / auth: never false-deny when degraded)
 #   - the repo has no origin/main or no local main yet
@@ -20,28 +21,43 @@
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
+# shellcheck source=subcommand.sh
+source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "check-main-fresh-before-worktree"
 
-# _from_main <command> - 0 when it is a `git worktree add` from main or
-# origin/main (a standalone token).
+# _from_main <sub-command> - 0 when this launch is a `git [-C <dir>]
+# worktree add` from main or origin/main (a standalone word).
 _from_main() {
-    local _re_add='git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?worktree[[:space:]]+add'
+    local _re_add='^git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?worktree[[:space:]]+add[[:space:]]'
     [[ "$1" =~ ${_re_add} ]] || return 1
-    [[ "$1" =~ ([[:space:]]|^)(origin/)?main([[:space:]]|$) ]]
+    [[ " $1 " =~ [[:space:]](origin/)?main[[:space:]] ]]
 }
 
-# _work_dir <command> <cwd> - the directory the command runs git in: its
-# `git -C <dir>`, else a leading `cd <dir> &&`, else the hook's cwd.
-_work_dir() {
-    local _dir=''
-    if [[ "$1" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
-        _dir="${BASH_REMATCH[1]}"
-    elif [[ "$1" =~ cd[[:space:]]+([^[:space:]\&\;]+)[[:space:]]*\&\& ]]; then
-        _dir="${BASH_REMATCH[1]}"
-    fi
-    [[ -z "${_dir}" ]] && _dir="$2"
-    [[ "${_dir}" != /* ]] && _dir="$2/${_dir}"
-    printf '%s' "${_dir}"
+# _resolve <base> <dir> - <dir>, taken relative to <base> unless absolute.
+_resolve() {
+    if [[ "$2" == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi
+}
+
+# _worktree_dir <command> <cwd> - print the directory the first
+# worktree-from-main launch runs git in (its `git -C <dir>`, else the last
+# `cd <dir>` before it, else <cwd>); fail when the command launches none.
+# Only real launches count (lib/subcommand.sh), so quoted text or a heredoc
+# body that mentions such a command is data.
+_worktree_dir() {
+    local _sub _dir="$2"
+    while IFS= read -r _sub; do
+        if [[ "${_sub}" =~ ^cd[[:space:]]+([^[:space:]]+)$ ]]; then
+            _dir="$(_resolve "${_dir}" "${BASH_REMATCH[1]}")"
+            continue
+        fi
+        _from_main "${_sub}" || continue
+        if [[ "${_sub}" =~ ^git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
+            _dir="$(_resolve "${_dir}" "${BASH_REMATCH[1]}")"
+        fi
+        printf '%s' "${_dir}"
+        return 0
+    done < <(hook_subcommands "$1")
+    return 1
 }
 
 # _behind <repo-root> - print how many commits local main lags origin/main
@@ -67,13 +83,13 @@ _deny() {
 
 main() {
     hook_read_input
-    local _cmd _cwd _root _n
+    local _cmd _cwd _dir _root _n
     _cmd="$(hook_command)"
     _cwd="$(hook_field '.cwd')"
     [[ -z "${_cwd}" ]] && _cwd="${PWD}"
     [[ -n "${_cmd}" ]] || return 0
-    _from_main "${_cmd}" || return 0
-    _root="$(git -C "$(_work_dir "${_cmd}" "${_cwd}")" rev-parse --show-toplevel 2>/dev/null)"
+    _dir="$(_worktree_dir "${_cmd}" "${_cwd}")" || return 0
+    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)"
     [[ -n "${_root}" ]] || return 0
     _n="$(_behind "${_root}")"
     [[ "${_n}" =~ ^[1-9][0-9]*$ ]] || return 0

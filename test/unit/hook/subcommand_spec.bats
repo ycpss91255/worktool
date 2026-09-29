@@ -106,3 +106,77 @@ setup() {
     assert_success
     assert_output ""
 }
+
+# --- nested launches (codex round 1 on #193) ----------------------------------
+# '$' and the backtick are assembled at run time so ShellCheck sees no live
+# expansion inside single quotes; the runtime strings carry the real syntax.
+
+@test "a \$(...) command substitution is its own sub-command" {
+    local d='$'
+    run hook_subcommands "x=${d}(bats test/unit)"
+    assert_success
+    assert_output "bats test/unit"
+}
+
+@test "a \$(...) inside double quotes is still launched" {
+    local d='$'
+    run hook_subcommands "echo \"a ${d}(just test unit) b\""
+    assert_success
+    assert_output "$(printf '%s\n' 'echo a___b' 'just test unit')"
+}
+
+@test "a \$(...) inside single quotes is data" {
+    local d='$'
+    run hook_subcommands "git commit -m '${d}(bats t)'"
+    assert_success
+    assert_output "git commit -m ${d}_bats_t_"
+}
+
+@test "nested \$(...) and a subshell inside it are seen" {
+    local d='$'
+    run hook_subcommands "a ${d}(b ${d}(bats t) (c))"
+    assert_success
+    assert_line "bats t"
+    assert_line --partial "b _"
+    assert_line "a _"
+}
+
+@test "a backtick substitution is its own sub-command" {
+    local b=$'\x60'
+    run hook_subcommands "x=${b}bats test/unit${b}; ls"
+    assert_success
+    assert_output "$(printf '%s\n' 'ls' 'bats test/unit')"
+}
+
+@test "a process substitution is its own sub-command" {
+    run hook_subcommands "diff <(bats t) f"
+    assert_success
+    assert_output "$(printf '%s\n' 'diff _ f' 'bats t')"
+}
+
+@test "bash -c / sh -lc run their script: it is split like a command line" {
+    run hook_subcommands "bash -c 'bats test/unit'"
+    assert_success
+    assert_output "bats test/unit"
+    run hook_subcommands "sudo sh -lc \"cd /r && just test unit\" arg0"
+    assert_success
+    assert_output "$(printf '%s\n' 'cd /r' 'just test unit')"
+}
+
+@test "eval runs its words as a command line" {
+    run hook_subcommands "eval 'bats t; ls'"
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'ls')"
+}
+
+@test "a timeout(1) before bash -c bounds every launch of its script" {
+    run hook_subcommands "timeout 600 bash -c 'cd /r && just test unit'"
+    assert_success
+    assert_output "$(printf '%s\n' 'timeout 600 cd /r' 'timeout 600 just test unit')"
+}
+
+@test "bash without -c runs a script file and is kept as is" {
+    run hook_subcommands "bash script/x.sh -c y"
+    assert_success
+    assert_output "bash script/x.sh -c y"
+}
