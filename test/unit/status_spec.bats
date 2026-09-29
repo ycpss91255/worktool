@@ -8,9 +8,10 @@
 # Contract under test:
 #   - status prints, on STDOUT (machine-readable, no log tags), the state
 #     file path, one `<key>: <value> (<source>)` line per decision
-#     (auto-enter, terminal, tmux, box), and one line per managed file
-#     (ghostty config, ~/.tmux.conf) saying whether the worktool managed
-#     block is present or absent.
+#     (auto-enter, terminal, box), and one line for the managed file (the
+#     ghostty config) saying whether the worktool managed block is present
+#     or absent. Since issue #179 there is no tmux decision and no
+#     ~/.tmux.conf line: worktool never manages the host's tmux config.
 #   - Without a state file it says so and shows the defaults (source
 #     `default`), so the report is never empty.
 #   - A key missing from the state file falls back to its default.
@@ -65,16 +66,15 @@ _write_config() {
 
 # --- no state file -----------------------------------------------------------
 
-@test "without a state file: says so, shows the defaults as (default), both blocks absent" {
+@test "without a state file: says so, shows the defaults as (default), the block absent" {
     run "${STATUS}"
     assert_success
     assert_line --index 0 "config: ${CONFIG} (not found - defaults shown; run: just box setup)"
     assert_line "auto-enter: yes (default)"
     assert_line "terminal: none (default)"
-    assert_line "tmux: inside (default)"
     assert_line "box: dev (default)"
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
-    assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
+    refute_output --partial "tmux"
     assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
     assert [ ! -e "${CONFIG}" ]
 }
@@ -88,26 +88,36 @@ _write_config() {
 
 # --- with a state file -------------------------------------------------------
 
-@test "prints every stored decision with its source and the block presence per file" {
+@test "prints every stored decision with its source and the block presence: six lines, no tmux" {
     _write_config \
         'auto-enter=yes' 'auto-enter.source=default' \
         'terminal=ghostty' 'terminal.source=user' \
-        'tmux=host' 'tmux.source=user' \
         'box=work' 'box.source=default'
     mkdir -p "${HOME}/.config/ghostty"
-    printf 'theme = dark\n%s\ncommand = tmux new -A -s main\n%s\n' "${BEGIN}" "${END}" >"${GHOSTTY}"
-    printf 'set -g mouse on\n' >"${TMUX_CONF}"
+    printf 'theme = dark\n%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >"${GHOSTTY}"
     run "${STATUS}"
     assert_success
     assert_line --index 0 "config: ${CONFIG}"
     assert_line --index 1 "auto-enter: yes (default)"
     assert_line --index 2 "terminal: ghostty (user)"
-    assert_line --index 3 "tmux: host (user)"
-    assert_line --index 4 "box: work (default)"
-    assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
-    assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
-    assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_equal "${#lines[@]}" 8
+    assert_line --index 3 "box: work (default)"
+    assert_line --index 4 "ghostty: ${GHOSTTY} (managed block: present)"
+    assert_line --index 5 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+    assert_equal "${#lines[@]}" 6
+}
+
+# Issue #179: a state file an earlier worktool wrote still holds `tmux=`
+# lines, and a ~/.tmux.conf may still hold its managed block. Neither is a
+# decision any more: the key is not reported (nor refused), the file is
+# not looked at.
+@test "#179: a stored tmux line and a ~/.tmux.conf block are neither reported nor refused" {
+    _write_config 'tmux=host' 'tmux.source=user' 'box=work' 'box.source=user'
+    printf '%s\nset -g default-command x\n%s\n' "${BEGIN}" "${END}" >"${TMUX_CONF}"
+    run "${STATUS}"
+    assert_success
+    assert_line "box: work (user)"
+    refute_output --partial "tmux"
+    assert_equal "${#lines[@]}" 6
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------
@@ -119,21 +129,14 @@ _write_block() {
 }
 
 @test "#175: a managed block that records a runnable distrobox is reported as runnable" {
-    _write_block "command = '${DISTROBOX}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    _write_block "command = '${DISTROBOX}' enter dev" "${GHOSTTY}"
     run "${STATUS}"
     assert_success
     assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: runnable)"
 }
 
 @test "#175: a managed block whose distrobox path is gone is reported as NOT RUNNABLE with what to do" {
-    _write_block "command = '/nowhere/bin/distrobox' enter dev -- tmux new -A -s main" "${GHOSTTY}"
-    run "${STATUS}"
-    assert_success
-    assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
-}
-
-@test "#175: the distrobox recorded in the ~/.tmux.conf default-command is reported too" {
-    _write_block "set -g default-command '\"/nowhere/bin/distrobox\" enter dev'" "${TMUX_CONF}"
+    _write_block "command = '/nowhere/bin/distrobox' enter dev" "${GHOSTTY}"
     run "${STATUS}"
     assert_success
     assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
@@ -147,18 +150,7 @@ _write_block() {
 @test "#175r1: a recorded path holding spaces and metacharacters is decoded whole, not split at the first space" {
     local _d='$' _path
     _path="/nowhere/my ${_d}dir/distrobox"
-    _write_block "command = '${_path}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
-    run "${STATUS}"
-    assert_success
-    assert_line "distrobox: ${_path} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
-}
-
-@test "#175r1: a recorded tmux default-command path is decoded through BOTH quoting layers" {
-    local _d='$' _path
-    _path="/nowhere/my ${_d}dir/distrobox"
-    # tmux owns the outer single quotes; the shell word inside is
-    # double-quoted, so the dollar arrives backslash-escaped.
-    _write_block "set -g default-command '\"/nowhere/my \\${_d}dir/distrobox\" enter dev'" "${TMUX_CONF}"
+    _write_block "command = '${_path}' enter dev" "${GHOSTTY}"
     run "${STATUS}"
     assert_success
     assert_line "distrobox: ${_path} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
@@ -223,17 +215,17 @@ _write_block() {
 
 @test "a corrupt stored value is refused with [ERROR] on stderr and exit 1, whatever its source" {
     local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
-    _write_config 'tmux=sideways' 'tmux.source=default'
+    _write_config 'terminal=sideways' 'terminal.source=default'
     run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
     assert_failure 1
     run cat "${_err}"
-    assert_output "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_output "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
     # Nothing on stdout: the check runs before any report line.
     assert [ ! -s "${_out}" ]
-    _write_config 'tmux=sideways' 'tmux.source=user'
+    _write_config 'terminal=sideways' 'terminal.source=user'
     run "${STATUS}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
 }
 
 @test "a corrupt stored source is refused with exit 1" {
@@ -246,11 +238,11 @@ _write_block() {
 # A present key with an empty value is a stored value, not an absent key.
 @test "an empty stored value is refused with exit 1, nothing on stdout" {
     local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
-    _write_config 'tmux=' 'tmux.source=user'
+    _write_config 'terminal=' 'terminal.source=user'
     run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
     assert_failure 1
     run cat "${_err}"
-    assert_output "[ERROR] ${CONFIG}: invalid value '' for tmux (expected inside|host)"
+    assert_output "[ERROR] ${CONFIG}: invalid value '' for terminal (expected ghostty|none)"
     assert [ ! -s "${_out}" ]
     _write_config 'box=' 'box.source=user'
     run "${STATUS}"
@@ -265,14 +257,14 @@ _write_block() {
 # Every line is validated: a corrupt duplicate behind a valid first line is
 # refused too (the report would otherwise show the first line and hide it).
 @test "a corrupt duplicate key is refused even when its first occurrence is valid" {
-    _write_config 'tmux=host' 'tmux=sideways' 'tmux.source=user'
+    _write_config 'terminal=none' 'terminal=sideways' 'terminal.source=user'
     run "${STATUS}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
-    _write_config 'tmux=host' 'tmux.source=user' 'tmux.source=guess'
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
+    _write_config 'terminal=none' 'terminal.source=user' 'terminal.source=guess'
     run "${STATUS}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for terminal.source (expected default|user)"
 }
 
 # --- the script owns its CLI -------------------------------------------------

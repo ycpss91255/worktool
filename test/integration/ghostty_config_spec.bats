@@ -3,7 +3,7 @@
 # ghostty reads back (M3, issue #172; integration tier, GHOSTTY group)
 #
 # WHAT THIS PROVES
-#   Layer 1 of the "open a window -> enter the box -> tmux/fish" chain, the
+#   Layer 1 of the "open a window -> enter the box -> fish" chain, the
 #   half that needs no display: what `just box setup` writes into
 #   $XDG_CONFIG_HOME/ghostty/config is a config a REAL ghostty accepts and
 #   resolves to exactly the command #5 promises.
@@ -12,7 +12,7 @@
 #       the delivered managed block (marker lines included - they are `#`
 #       comments to ghostty) parses.
 #     - `ghostty +show-config` under XDG_CONFIG_HOME reports
-#       `command = <distrobox> enter dev -- tmux new -A -s main` - the
+#       `command = <distrobox> enter dev` - the
 #       EFFECTIVE value ghostty would run, not merely the text on disk.
 #       Since issue #175 `<distrobox>` is the ABSOLUTE path setup.sh
 #       resolved, not the bare name: a terminal the desktop starts
@@ -23,8 +23,10 @@
 #       `/bin/sh -c`), and one case runs the value a real ghostty reports
 #       through that same shell; with nothing to resolve the run is
 #       refused rather than written.
-#     - the other setup decisions travel the same way: `--tmux host` resolves
-#       to `command = tmux new -A -s main`, `--box work` names that box.
+#     - the other setup decisions travel the same way: `--box work` names
+#       that box. Since issue #179 nothing follows `enter <box>`: no tmux
+#       is started for the terminal, so a case refutes any tmux in the
+#       effective command.
 #     - the assertion is not vacuous: after `--auto-enter no` removes the
 #       block, ghostty reports no such command, and a config with a bogus
 #       key is REFUSED by +validate-config. Both are the control cases that
@@ -77,7 +79,7 @@ setup() {
     # box. The path is a single-quoted shell word (issue #175 round 1):
     # ghostty runs a `command` without a `direct:` prefix through
     # `/bin/sh -c`, so the value is shell source.
-    EXPECTED_COMMAND="'${DISTROBOX}' enter dev -- tmux new -A -s main"
+    EXPECTED_COMMAND="'${DISTROBOX}' enter dev"
 }
 
 # Every ghostty call goes through here: a hard bound so a wedged ghostty
@@ -128,13 +130,13 @@ _log_lines() {
     _log_lines effective "command = ${EXPECTED_COMMAND}"
 }
 
-@test "+show-config follows setup.sh --tmux host (tmux on the host, not in the box)" {
-    run "${SETUP}" --tmux host
+@test "#179: the effective command starts no tmux, on the host or in the box" {
+    run "${SETUP}"
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line 'command = tmux new -A -s main'
-    refute_line --partial 'distrobox enter'
+    assert_line "command = ${EXPECTED_COMMAND}"
+    refute_line --regexp '^command = .*tmux'
 }
 
 @test "+show-config follows setup.sh --box work (the box name reaches ghostty)" {
@@ -142,7 +144,7 @@ _log_lines() {
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${DISTROBOX}' enter work -- tmux new -A -s main"
+    assert_line "command = '${DISTROBOX}' enter work"
 }
 
 # --- #175: the command ghostty resolves names an ABSOLUTE distrobox ---------
@@ -155,7 +157,7 @@ _log_lines() {
     assert_line "command = ${EXPECTED_COMMAND}"
     # The shape the real machine failed on: a desktop-launched terminal
     # inherits a PATH without ~/.local/bin and dies with `not found`.
-    refute_line 'command = distrobox enter dev -- tmux new -A -s main'
+    refute_line 'command = distrobox enter dev'
     _log_lines effective "${EXPECTED_COMMAND}"
 }
 
@@ -196,7 +198,7 @@ _log_lines() {
     # The check bites: this is the file setup would have written, and a
     # real ghostty refuses it - the managed body is split across two
     # lines, so the second one is not a key it knows.
-    printf "command = '%s' enter dev -- tmux new -A -s main\n" "${_dbx}" >"${GHOSTTY_CONFIG}"
+    printf "command = '%s' enter dev\n" "${_dbx}" >"${GHOSTTY_CONFIG}"
     run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
     assert_failure
     assert_output --partial 'unknown field'
@@ -222,7 +224,7 @@ EOF
     # The EFFECTIVE value, read back from a real ghostty ...
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${_dbx}' enter dev -- tmux new -A -s main"
+    assert_line "command = '${_dbx}' enter dev"
     _cmd="$(printf '%s\n' "${lines[@]}" | sed -n 's/^command = //p')"
     _log_lines effective "${_cmd}"
 
@@ -230,7 +232,7 @@ EOF
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
     assert_success
     run cat "${_dbx}.log"
-    assert_line "enter dev -- tmux new -A -s main"
+    assert_line "enter dev"
     assert [ ! -e "${_sentinel}" ]
 }
 

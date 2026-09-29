@@ -13,14 +13,22 @@
 #   second assemble is idempotent (exit 0, still exactly one `dev`), and
 #   `distrobox rm -f dev` removes the box.
 #
-#   M3 (issue #160) adds tmux and fish to the manifest: `just box setup`
-#   points the terminal at `distrobox enter dev -- tmux new -A -s main` and
-#   #5 requires "open a terminal, get the box's fish", so both must exist
-#   inside the box BEFORE the auto-enter flow can work (their configuration
-#   - dotfiles, theme, plugins - stays M5). Two cases assert `distrobox
-#   enter dev -- tmux -V` and `distrobox enter dev -- fish --version`
-#   succeed and print a version, and echo those versions into the TAP
-#   stream as evidence.
+#   M3 (issue #160) adds tmux and fish to the manifest: #5 requires "open a
+#   terminal, get the box's fish", and tmux is the tool the user starts in
+#   the box (their configuration - dotfiles, theme, plugins - stays M5).
+#   Two cases assert `distrobox enter dev -- tmux -V` and `distrobox enter
+#   dev -- fish --version` succeed and print a version, and echo those
+#   versions into the TAP stream as evidence.
+#
+#   M3 (issue #179): the terminal runs `'<distrobox>' enter dev` and nothing
+#   after it - no tmux. distrobox shares /tmp with the host, so the old
+#   `-- tmux new -A -s main` attached to a HOST tmux server whenever one
+#   was running, and the user got a host shell that looked like the box.
+#   Section (e3) starts a tmux server on the runner (the host side) first
+#   and proves (1) the delivered command still lands in the box and (2) a
+#   `tmux` started in the box gets the box's own server (TMUX_TMPDIR, set
+#   by box/dev.ini), whose process lives in the box's mount namespace and
+#   which does not list the host session.
 #
 #   M3 (issues #150, #23) adds the enter-latency GATE: once the box is
 #   initialised, the delivered `script/box/bench.sh` measures the real
@@ -234,10 +242,9 @@ _log_lines() {
     assert_line --regexp '^[0-9]+\.[0-9]+'
 }
 
-# M3 (issue #160): tmux and fish are the auto-enter prerequisite - the
-# terminal profile written by `just box setup` runs `distrobox enter dev --
-# tmux new -A -s main`, and #5 wants the box's fish behind it. Their
-# versions go into the TAP stream as evidence.
+# M3 (issue #160): fish is the shell #5 wants behind the terminal, and tmux
+# is what the user starts inside the box (issue #179: the terminal itself
+# starts no tmux). Their versions go into the TAP stream as evidence.
 @test "real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)" {
     cd "${REPO_ROOT}"
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux -V </dev/null
@@ -370,16 +377,43 @@ _hang_script() { printf '%s/ghostty-hang.fish\n' "${HOME}"; }
 
 # Write the fish payload the chain runs INSIDE the box: it records the fish
 # version (only fish sets FISH_VERSION, and this runner has no fish at
-# all), whether it is running under tmux, and the box's own node name.
+# all), whether /run/.containerenv exists (the box has one, the runner does
+# not - the preflight asserts that), whether it runs under tmux (issue
+# #179: the terminal must start none), and the box's own node name.
 _write_chain_script() {
     cat >"$(_chain_script)" <<EOF
+set -l containerenv no
+if test -e /run/.containerenv
+    set containerenv yes
+end
 set -l under_tmux no
 if set -q TMUX
     set under_tmux yes
 end
-printf 'inbox-ok fish=%s tmux=%s host=%s\n' "\$FISH_VERSION" "\$under_tmux" (uname -n) \
+printf 'inbox-ok fish=%s containerenv=%s tmux=%s host=%s\n' "\$FISH_VERSION" "\$containerenv" "\$under_tmux" (uname -n) \
     >$(_chain_marker)
 EOF
+}
+
+# The line the chain marker must hold: fish answered, inside a container
+# (/run/.containerenv), with no tmux in between, on some node name (the
+# cases compare that name against `docker inspect dev`).
+CHAIN_OK='^inbox-ok fish=[0-9]+\.[0-9]+[^ ]* containerenv=yes tmux=no host=.+$'
+
+# Assert the chain marker exists, holds CHAIN_OK, and names the dev box's
+# own hostname as the engine reports it - so the line cannot have been
+# produced anywhere else on this shared HOME mount. $1 tags the evidence.
+_assert_chain_marker_in_box() {
+    local _line _marker_host _box_host
+    assert [ -f "$(_chain_marker)" ]
+    _line="$(cat "$(_chain_marker)")"
+    _log_lines "$1" "${_line}"
+    [[ "${_line}" =~ ${CHAIN_OK} ]] \
+        || fail "chain marker '${_line}' does not match ${CHAIN_OK}"
+    _marker_host="$(sed -nE 's/^inbox-ok .* host=(.+)$/\1/p' "$(_chain_marker)")"
+    _box_host="$(_docker inspect dev --format '{{.Config.Hostname}}')"
+    assert_equal "${_marker_host}" "${_box_host}"
+    _log_lines "$1-host" "marker host=${_marker_host} == docker inspect dev hostname"
 }
 
 # Write the fish payload of the deliberate-hang case. It announces that it
@@ -418,7 +452,7 @@ _ghostty_run() {
     timeout -k 5 "$1" xvfb-run -a ghostty </dev/null
 }
 
-@test "preflight: the runner has a real ghostty and Xvfb, and no fish of its own" {
+@test "preflight: the runner has a real ghostty, Xvfb and a host tmux, and no fish and no /run/.containerenv of its own" {
     run timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +version
     assert_success
     assert_line --regexp '^Ghostty [0-9]+\.[0-9]+'
@@ -430,6 +464,13 @@ _ghostty_run() {
     # box's.
     run command -v fish
     assert_failure
+    # Issue #179: the in-box witness is /run/.containerenv, so the runner
+    # (the "host" here) must not have one; and the host-side tmux server of
+    # section (e3) needs a tmux on the runner.
+    assert [ ! -e /run/.containerenv ]
+    run tmux -V
+    assert_success
+    _log_lines host-tmux "${lines[0]}"
 }
 
 @test "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)" {
@@ -444,35 +485,19 @@ _ghostty_run() {
     assert_line 'command = distrobox enter dev -- true'
 }
 
-@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)" {
+@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, /run/.containerenv, no tmux)" {
     rm -f "$(_chain_marker)"
     _write_chain_script
     # The full chain #5 promises, in one command, but ending: ghostty ->
-    # distrobox enter dev -> tmux -> fish -> the marker. `tmux new -A -s`
-    # is the delivered shape; the session ends when the script does, so
-    # tmux exits, `distrobox enter` returns and ghostty closes the window.
-    _write_ghostty_config \
-        "distrobox enter dev -- tmux new -A -s chain fish $(_chain_script)"
+    # distrobox enter dev -> fish -> the marker. Issue #179: no tmux in
+    # between; the script ends, `distrobox enter` returns and ghostty
+    # closes the window.
+    _write_ghostty_config "distrobox enter dev -- fish $(_chain_script)"
     run _ghostty_run "${GHOSTTY_CHAIN_TIMEOUT}"
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     # The witness: the file the command wrote inside the box.
-    assert [ -f "$(_chain_marker)" ]
-    run cat "$(_chain_marker)"
-    assert_success
-    assert_line --regexp '^inbox-ok fish=[0-9]+\.[0-9]+.* tmux=yes host=.+$'
-    _log_lines chain "${lines[@]}"
-
-    # The node name in the marker must be the dev box's own, as the engine
-    # reports it - so the line cannot have been produced anywhere else on
-    # this shared HOME mount.
-    local _marker_host _box_host
-    _marker_host="$(sed -nE 's/^inbox-ok .* host=(.+)$/\1/p' "$(_chain_marker)")"
-    run _docker inspect dev --format '{{.Config.Hostname}}'
-    assert_success
-    _box_host="${output}"
-    assert_equal "${_marker_host}" "${_box_host}"
-    _log_lines chain-host "marker host=${_marker_host} == docker inspect dev hostname"
+    _assert_chain_marker_in_box chain
 }
 
 @test "ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging" {
@@ -617,26 +642,154 @@ _desktop_path() {
     _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
-    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main" \
+    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev" \
         "${_ghostty_config}"
     assert_success
-    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main"
+    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev"
 
     # (3) The same program, in the chain shape that ends by itself, run by
     # a real ghostty window under the desktop PATH.
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
-        "$(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s chain175 fish $(_chain_script)"
+        "$(enter_sh_squote "${_prog}") enter dev -- fish $(_chain_script)"
     run env PATH="${_gui_path}" \
         timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert [ -f "$(_chain_marker)" ]
-    run cat "$(_chain_marker)"
+    _assert_chain_marker_in_box chain-desktop-path
+}
+
+# --- (e3) issue #179: a host tmux server must not capture the box ------------
+#
+# THE BUG
+#   The managed command used to be `'<distrobox>' enter dev -- tmux new -A
+#   -s main`. distrobox bind-mounts the host's /tmp into the box, so the
+#   box's tmux found the HOST server's socket (/tmp/tmux-<uid>/default)
+#   and `-A` attached to the host's `main` session: a fish prompt on the
+#   host, looking like the box. CI stayed green because the runner never
+#   had a tmux server of its own. These cases start one first.
+#
+# WHAT THEY RUN
+#   (1) The command `just box setup` DELIVERS, verbatim: the window gets
+#       whatever shell that command lands in, and ghostty types the payload
+#       (`input`, ghostty >= 1.2) into it. If the command ever attaches to
+#       the host server again, the payload runs on the runner, which has no
+#       fish, and no in-box marker appears.
+#   (2) `tmux` inside the box, with the host server up: the box's server
+#       must be a different process, in the box's mount namespace, on a
+#       socket under the box's TMUX_TMPDIR, listing only its own session.
+
+# The host (runner) side tmux server and its session. `main` is the session
+# the old managed command attached to (`new -A -s main`), so a regression
+# would find it.
+HOST_TMUX_SESSION=main
+
+# Start a detached tmux server on the runner, with no user config and the
+# default socket - the one under the shared /tmp. Prints nothing.
+_host_tmux_up() {
+    env -u TMUX -u TMUX_TMPDIR tmux -f /dev/null new-session -d -s "${HOST_TMUX_SESSION}"
+}
+
+# Stop the runner's tmux server. No server to stop is the expected
+# non-zero here (tmux exits 1); anything else is returned.
+_host_tmux_down() {
+    local _rc=0
+    env -u TMUX -u TMUX_TMPDIR tmux kill-server 2>/dev/null || _rc=$?
+    (( _rc <= 1 )) || return "${_rc}"
+}
+
+# The pid of the runner's tmux server.
+_host_tmux_pid() {
+    env -u TMUX -u TMUX_TMPDIR tmux display-message -p -t "${HOST_TMUX_SESSION}" '#{pid}'
+}
+
+@test "#179 chain: with a host tmux server running, the delivered command lands in the box's fish, not on the host" {
+    local _setup="${REPO_ROOT}/script/box/setup.sh" _body _file
+    _host_tmux_down
+    _host_tmux_up
+    run env -u TMUX -u TMUX_TMPDIR tmux ls
     assert_success
-    assert_line --regexp '^inbox-ok fish=[0-9]+\.[0-9]+.* tmux=yes host=.+$'
-    _log_lines chain-desktop-path "${lines[@]}"
+    assert_line --regexp "^${HOST_TMUX_SESSION}: "
+    _log_lines host-tmux "${lines[@]}"
+
+    # The command exactly as the DELIVERED setup.sh writes it.
+    run "${_setup}" --terminal ghostty --box dev
+    assert_success
+    _file="$(enter_ghostty_config)"
+    _body="$(enter_block_body "${_file}")"
+    [[ "${_body}" == "command = "*" enter dev" ]] \
+        || fail "setup.sh wrote an unexpected managed body: '${_body}'"
+    _log_lines setup-command "${_body}"
+
+    # Run it, verbatim, in a real window; type the payload into whatever
+    # shell it lands in.
+    rm -f "$(_chain_marker)"
+    _write_chain_script
+    _write_ghostty_config "${_body#command = }"
+    printf 'input = "raw:fish %s; exit\\n"\n' "$(_chain_script)" >>"${_file}"
+    run _ghostty_run "${GHOSTTY_CHAIN_TIMEOUT}"
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    _assert_chain_marker_in_box host-tmux-chain
+
+    # The host server is still there, untouched by the window.
+    run env -u TMUX -u TMUX_TMPDIR tmux ls
+    assert_success
+    assert_line --regexp "^${HOST_TMUX_SESSION}: 1 windows"
+    _host_tmux_down
+}
+
+@test "#179 tmux: with a host tmux server running, tmux in the box starts the box's own server (in-box pid, own socket, no host session)" {
+    local _host_pid _box_pid _box_sock _box_ns _host_ns _init_pid _init_ns
+    _host_tmux_down
+    _host_tmux_up
+    _host_pid="$(_host_tmux_pid)"
+
+    # The box's own TMUX_TMPDIR (box/dev.ini) reaches every process in it.
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- printenv TMUX_TMPDIR </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line "${HOME}/dev-box/.cache/tmux"
+
+    # A plain `tmux`, as a user would type it, inside the box.
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh -c \
+        'tmux -f /dev/null new-session -d -s box && tmux display-message -p -t box "#{pid} #{socket_path}" && tmux ls' </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    _log_lines box-tmux "${lines[@]}"
+    # It lists ITS session and not the host's.
+    assert_line --regexp '^box: '
+    refute_line --regexp "^${HOST_TMUX_SESSION}: "
+    _box_pid="${lines[0]%% *}"
+    _box_sock="${lines[0]#* }"
+    # Its socket is under the box's own directory, not the shared /tmp.
+    assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
+
+    # A different server process from the host's ...
+    [[ "${_box_pid}" =~ ^[0-9]+$ && "${_box_pid}" != "${_host_pid}" ]] \
+        || fail "box tmux pid '${_box_pid}' is not a separate server (host pid ${_host_pid})"
+    # ... running INSIDE the box: its mount namespace is the dev
+    # container's (the engine's pid for it), not the runner's. distrobox
+    # shares the pid namespace, so the pid is visible here.
+    _init_pid="$(_docker inspect dev --format '{{.State.Pid}}')"
+    _init_ns="$(readlink "/proc/${_init_pid}/ns/mnt")"
+    _box_ns="$(readlink "/proc/${_box_pid}/ns/mnt")"
+    _host_ns="$(readlink "/proc/${_host_pid}/ns/mnt")"
+    assert_equal "${_box_ns}" "${_init_ns}"
+    [[ "${_box_ns}" != "${_host_ns}" ]] || fail "box tmux server shares the host server's mount namespace (${_host_ns})"
+    assert [ -e "/proc/${_box_pid}/root/run/.containerenv" ]
+    _log_lines box-tmux-ns "box pid=${_box_pid} mnt=${_box_ns} == dev init mnt; host pid=${_host_pid} mnt=${_host_ns}"
+
+    # The host server still lists only its own session.
+    run env -u TMUX -u TMUX_TMPDIR tmux ls
+    assert_success
+    assert_line --regexp "^${HOST_TMUX_SESSION}: "
+    refute_line --regexp '^box: '
+
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
+    assert_success
+    _host_tmux_down
 }
 
 # --- (f) idempotency: assembling again neither errors nor duplicates ---------

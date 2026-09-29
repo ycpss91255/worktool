@@ -192,6 +192,47 @@ _trim() {
     assert_equal "${ARGV[$((_label_i + 1))]}" "manager=distrobox"
 }
 
+# Issue #179: distrobox bind-mounts the host's /tmp into the box, so a
+# `tmux` in the box would find the HOST server's default socket
+# (/tmp/tmux-<uid>/default) and attach to it. box/dev.ini gives the box
+# its own TMUX_TMPDIR (a container env, so every process in the box - any
+# shell, any `distrobox enter dev -- tmux` - inherits it) and an init hook
+# that creates that directory as the box user on every start: tmux falls
+# back to /tmp SILENTLY when TMUX_TMPDIR does not exist.
+@test "#179: the create request gives the box its own TMUX_TMPDIR and an init hook that creates it as the box user" {
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_success
+    local _create
+    _create="$(_argv_file_of create)"
+    _load_argv "${_create}"
+
+    # A container env (before the image, so it is docker's, not
+    # distrobox-init's), under the box's own directory - ${HOME} expanded
+    # at create time, never the shared /tmp.
+    local _ep_i _env_i _found=""
+    _ep_i="$(_index_of --entrypoint)"
+    for _env_i in "${!ARGV[@]}"; do
+        [[ "${_env_i}" -lt "${_ep_i}" && "${ARGV[${_env_i}]}" == "--env" ]] || continue
+        [[ "${ARGV[$((_env_i + 1))]}" == TMUX_TMPDIR=* ]] || continue
+        _found="${ARGV[$((_env_i + 1))]}"
+    done
+    assert_equal "${_found}" "TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
+
+    # The init hook goes to distrobox-init (after the image) as the words
+    # after its `--`, which distrobox-init evals as the box's root on every
+    # start: it creates the directory as the box user, mode 0700. The
+    # expected text is literal - the variables are distrobox-init's and the
+    # container's, expanded there, never here.
+    local _dd_i _want
+    _dd_i="$(_index_of --)"
+    assert [ "${_dd_i}" -gt "$((_ep_i + 1))" ]
+    assert_equal "$((_dd_i + 2))" "${#ARGV[@]}"
+    _want=": ; setpriv --reuid=\"\${container_user_uid}\" --regid=\"\${container_user_gid}\""
+    _want+=" --clear-groups mkdir -p -m 0700 \"\${TMUX_TMPDIR}\""
+    assert_equal "$(_trim "${ARGV[$((_dd_i + 1))]}")" "${_want}"
+}
+
 @test "real assemble: the manifest image is what distrobox asks the manager to pull, before create" {
     cd "${REPO_ROOT}"
     run "${ASSEMBLE}"

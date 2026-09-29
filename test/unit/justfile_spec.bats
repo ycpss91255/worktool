@@ -331,11 +331,11 @@ _listed_names() {
     assert_equal "$(_last_argc)" "0"
 }
 
-@test "just box setup --auto-enter no --tmux host --box <name with spaces> keeps argv boundaries (argc 6)" {
+@test "just box setup --auto-enter no --terminal ghostty --box <name with spaces> keeps argv boundaries (argc 6)" {
     _stub_scripts
-    _just box setup --auto-enter no --tmux host --box "my box"
+    _just box setup --auto-enter no --terminal ghostty --box "my box"
     assert_success
-    assert_equal "$(_stub_calls)" "setup.sh --auto-enter no --tmux host --box my\\ box"
+    assert_equal "$(_stub_calls)" "setup.sh --auto-enter no --terminal ghostty --box my\\ box"
     assert_equal "$(_last_argc)" "6"
 }
 
