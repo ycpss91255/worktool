@@ -11,8 +11,8 @@
 #     literally the same way; an escaped newline outside quotes is dropped
 #   - the body of each $(...), `...` and <(...) / >(...) is launched by the
 #     shell, so it moves to its own line after the command and is replaced
-#     there by the word "_". Inside single quotes none of these is special;
-#     $(...) and `...` inside double quotes still run
+#     there by the marker \001s (shown as "_"). Inside single quotes none of
+#     these is special; $(...) and `...` inside double quotes still run
 BEGIN {
     RS = "\001"; SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
     ESC = sprintf("%c", 1); SQ = sprintf("%c", 39); BQ = sprintf("%c", 96)
@@ -24,7 +24,7 @@ function push(kind) {
 }
 function pop() {
     extra = extra "\n" buf
-    q = sq[sd]; buf = sbuf[sd] "_"; par = spar[sd]; sd--
+    q = sq[sd]; buf = sbuf[sd] ESC "s"; par = spar[sd]; sd--
 }
 {
     n = length($0); q = ""; buf = ""; extra = ""; sd = 0; par = 0

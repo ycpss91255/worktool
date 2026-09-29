@@ -2,7 +2,8 @@
 # .agents/hook/check_main_fresh_before_worktree.sh - Claude Code PreToolUse
 # hook (matcher: Bash), registered in .claude/settings.json.
 #
-# Fires before `git worktree add ... main` (or `... origin/main`). DENIES
+# Fires before `git worktree add <path> main` (or `... origin/main`): a
+# worktree whose commit-ish is main, not a new branch named main. DENIES
 # (permissionDecision "deny") when local main is behind origin/main, so a
 # new worktree never starts from a stale base and later needs a rebase
 # (worktool: every sub-issue works in its own .worktree/<name>, and `main`
@@ -26,11 +27,27 @@ source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "check-main-fresh-before-worktree"
 
 # _from_main <sub-command> - 0 when this launch is a `git [-C <dir>]
-# worktree add` from main or origin/main (a standalone word).
+# worktree add` whose commit-ish (the positional after <path>) is main or
+# origin/main. Options may sit before or after the positionals; -b / -B
+# <new-branch> and --reason <string> take the next word, so the NAME of a
+# new branch (`-b main`) or a path called main is not the base.
 _from_main() {
-    local _re_add='^git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?worktree[[:space:]]+add[[:space:]]'
-    [[ "$1" =~ ${_re_add} ]] || return 1
-    [[ " $1 " =~ [[:space:]](origin/)?main[[:space:]] ]]
+    local -a _w _pos=()
+    local _i=1 _o
+    read -r -a _w <<<"$1"
+    [[ "${_w[0]:-}" == git ]] || return 1
+    [[ "${_w[1]:-}" == -C ]] && _i=3
+    [[ "${_w[_i]:-}" == worktree && "${_w[_i + 1]:-}" == add ]] || return 1
+    for ((_i = _i + 2; _i < ${#_w[@]}; _i++)); do
+        _o="${_w[_i]}"
+        case "${_o}" in
+            --) _pos+=("${_w[@]:_i + 1}"); break ;;
+            -b|-B|--reason) _i=$((_i + 1)) ;;
+            -*) ;;
+            *) _pos+=("${_o}") ;;
+        esac
+    done
+    [[ "${_pos[1]:-}" =~ ^(origin/)?main$ ]]
 }
 
 # _resolve <base> <dir> - <dir>, taken relative to <base> unless absolute.

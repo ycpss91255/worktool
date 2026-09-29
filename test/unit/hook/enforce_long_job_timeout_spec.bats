@@ -158,3 +158,19 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check "timeout 600 bash -c 'cd /r && just test unit'"
     assert_success
 }
+
+# --- compound commands (codex round 2 on #193) ---------------------------------
+
+@test "blocks a long launch inside a subshell, a group or an if body" {
+    _check "(just test unit)"
+    assert_failure 2
+    _check "{ just test unit; }"
+    assert_failure 2
+    _check "if true; then just test unit; fi"
+    assert_failure 2
+}
+
+@test "allows a timeout(1) launch inside a subshell" {
+    _check "(cd /r && timeout 600 just test unit)"
+    assert_success
+}

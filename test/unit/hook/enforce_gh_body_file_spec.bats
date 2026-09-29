@@ -142,3 +142,34 @@ _decision() { jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"; }
     assert_success
     assert_output ""
 }
+
+# --- each gh launch is judged on its own text (codex round 2 on #193) ---------
+
+@test "a substitution in another sub-command's quoted data does not deny a gh launch" {
+    local d='$'
+    _check "gh pr view 3 && git commit -m \"note: --body ${d}(cat f) is refused\""
+    assert_success
+    assert_output ""
+    _check "gh pr view 3 && echo '--body \"${d}(cat f)\"'"
+    assert_success
+    assert_output ""
+}
+
+@test "a long body elsewhere in the command does not deny a short gh comment" {
+    local long
+    long="$(printf 'x%.0s' {1..120})"
+    _check "echo --body '${long}' && gh pr comment 3 --body 'looks good'"
+    assert_success
+    assert_output ""
+    _check "gh pr comment 3 --body 'looks good' && gh issue comment 4 --body '${long}'"
+    assert_output --partial "gh issue comment body is too long"
+    run _decision
+    assert_output "deny"
+}
+
+@test "still denies a substitution inside the gh launch's own body" {
+    local d='$'
+    _check "ls && gh pr comment 3 --body \"see ${d}(cat /tmp/b.md)\""
+    run _decision
+    assert_output "deny"
+}

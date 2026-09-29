@@ -3,13 +3,18 @@
 # test/unit/hook/subcommand_spec.bats - .agents/hook/lib/subcommand.sh
 #
 # hook_subcommands <command> prints the sub-commands a Bash command line
-# actually launches, one per line, so a PreToolUse hook can judge each
+# launches, one per line, so a PreToolUse hook can judge each
 # launch by its first word instead of pattern-matching the raw text:
 #   - heredoc bodies are data (dropped); a here-string is not a heredoc
 #   - a quoted span is one opaque word (quotes removed; its whitespace and
 #     separators become '_'), so it splits nothing and a quoted executable
 #     name is still seen
-#   - split on ; && || | and newlines
+#   - split on ; && || | newlines, a background & and ( ), and the reserved
+#     words of a compound command (if / while / do / { ... ) are stripped,
+#     so a subshell, a group or an if / loop body is launched like any other
+#     command; an array assignment's list is data
+#   - the body of $(...), backticks, <(...) and a bash -c / eval script is
+#     launched too
 #   - leading VAR=val assignments and sudo / env / command / time / nohup /
 #     exec wrappers (with their options) are stripped; timeout(1) is kept (it is a bound the
 #     long-job hook must see)
@@ -179,4 +184,76 @@ setup() {
     run hook_subcommands "bash script/x.sh -c y"
     assert_success
     assert_output "bash script/x.sh -c y"
+}
+
+# --- compound commands (codex round 2 on #193) ---------------------------------
+
+@test "a subshell ( ... ) launches its body" {
+    run hook_subcommands "(bats t)"
+    assert_success
+    assert_output "bats t"
+    run hook_subcommands "ls && (cd /r; bats t)"
+    assert_success
+    assert_output "$(printf '%s\n' 'ls' 'cd /r' 'bats t')"
+}
+
+@test "a group { ...; } launches its body" {
+    run hook_subcommands "{ bats t; }"
+    assert_success
+    assert_output "bats t"
+}
+
+@test "if / while / until bodies and conditions are launched" {
+    run hook_subcommands "if true; then bats t; elif ls; then just test; else ! bats u; fi"
+    assert_success
+    assert_output "$(printf '%s\n' 'true' 'bats t' 'ls' 'just test' 'bats u')"
+    run hook_subcommands "while x; do bats t; done; until y; do just test; done"
+    assert_success
+    assert_output "$(printf '%s\n' 'x' 'bats t' 'y' 'just test')"
+}
+
+@test "a for loop and a case arm launch their bodies" {
+    run hook_subcommands "for f in a b; do bats \"\${f}\"; done"
+    assert_success
+    assert_line "bats \${f}"
+    run hook_subcommands "case x in a) bats t;; esac"
+    assert_success
+    assert_line "bats t"
+}
+
+@test "a background & separates launches, a redirection & does not" {
+    run hook_subcommands "bats t & ls"
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'ls')"
+    run hook_subcommands "just test unit 2>&1 >/dev/null &>x"
+    assert_success
+    assert_output "just test unit 2>&1 >/dev/null &>x"
+}
+
+@test "quoted parentheses and braces stay data" {
+    run hook_subcommands "git commit -m '(bats t) { bats u; }'"
+    assert_success
+    assert_output "git commit -m _bats_t__{_bats_u__}"
+}
+
+@test "an array assignment's list is data, not a subshell" {
+    run hook_subcommands "a=(bats t); ls"
+    assert_success
+    assert_output "ls"
+}
+
+@test "hook_subcommands_raw keeps each opaque word encoded for hook_word" {
+    local d='$' w
+    run hook_subcommands_raw "ls && gh pr comment 3 --body 'a b;c'"
+    assert_success
+    assert_line --index 0 "ls"
+    read -r -a w <<<"${lines[1]}"
+    run hook_word "${w[5]}"
+    assert_output "a b;c"
+    run hook_subcommands_raw "gh pr comment 3 --body \"x ${d}(cat f)\""
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_subst "${w[5]}"
+    assert_success
+    run hook_word "${w[5]}"
+    assert_output "x _"
 }

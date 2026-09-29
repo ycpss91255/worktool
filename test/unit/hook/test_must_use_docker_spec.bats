@@ -173,3 +173,16 @@ _check() { run_hook test-must-use-docker "$(hook_json "$1")"; }
     _check "git commit -m 'never run bash -c bats or ${d}(bats t)'"
     assert_success
 }
+
+# --- compound commands (codex round 2 on #193) ---------------------------------
+
+@test "blocks bats inside a subshell, a group or an if body" {
+    _check "(bats test/unit)"
+    assert_failure 2
+    _check "{ bats test/unit; }"
+    assert_failure 2
+    _check "if true; then bats test/unit; fi"
+    assert_failure 2
+    _check "bats test/unit & wait"
+    assert_failure 2
+}

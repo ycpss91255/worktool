@@ -105,3 +105,32 @@ _advance_origin() {
     run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
     assert_output "deny"
 }
+
+# --- the base is the commit-ish, not any word "main" (codex round 2 on #193) ---
+
+@test "allows a new branch named main that starts from another commit-ish" {
+    _advance_origin
+    _check "git -C ${CLONE} worktree add -b main ${BATS_TEST_TMPDIR}/wt feature"
+    assert_success
+    assert_output ""
+    _check "git -C ${CLONE} worktree add ${BATS_TEST_TMPDIR}/wt -B main HEAD"
+    assert_success
+    assert_output ""
+}
+
+@test "allows a worktree whose path is main (no commit-ish given)" {
+    _advance_origin
+    _check "cd ${CLONE} && git worktree add main"
+    assert_success
+    assert_output ""
+}
+
+@test "denies a new branch that starts from main, options before or after" {
+    _advance_origin
+    _check "git -C ${CLONE} worktree add -b feat/x ${BATS_TEST_TMPDIR}/wt main"
+    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
+    assert_output "deny"
+    _check "git -C ${CLONE} worktree add ${BATS_TEST_TMPDIR}/wt2 origin/main --lock --reason r -b feat/y"
+    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
+    assert_output "deny"
+}
