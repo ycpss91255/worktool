@@ -50,13 +50,9 @@
 #                                     comment header. Rendered straight
 #                                     into a temp file and renamed (atomic),
 #                                     keeps the file's mode, serialised by
-#                                     a lock (flock on the file's
-#                                     directory; where flock is missing, a
-#                                     `<file>.lock` directory stamped with
-#                                     the holder's PID, broken when that
-#                                     PID is gone, waited for up to
-#                                     CONFIG_LOCK_TRIES x 50 ms, default
-#                                     200). 1 on failure (an odd argument
+#                                     flock(1) on the file's directory
+#                                     (without flock: [ERROR], 1, nothing
+#                                     written). 1 on failure (an odd argument
 #                                     count writes nothing).
 #   config_log <info|warn|error> <before> [<after>]
 #                                  -> log `<before><state file><after>`
@@ -205,60 +201,38 @@ config_set() {
         return 1
     fi
     _file="$(_config_file)"
+    if ! _config_have_flock; then
+        log_error "flock (util-linux) not found: cannot lock ${_file} for writing"
+        return 1
+    fi
     mkdir -p -- "$(dirname -- "${_file}")" || return 1
     _config_locked "${_file}" _config_replace "${_file}" _config_render "${_file}" "$@"
 }
 
-# 0 when flock(1) is available (a seam: the tests take the other path).
+# 0 when flock(1) is available (a seam: a test takes the refusal path).
 _config_have_flock() {
     command -v flock >/dev/null 2>&1
 }
 
 # Run $2.. holding the lock of state file $1, so two writers never
 # interleave their read-modify-rename (the second one's rename would erase
-# the first one's keys). flock on the file's directory (the file itself is
-# replaced by the rename, so it cannot carry the lock); without flock, an
-# atomic mkdir of `<file>.lock` holding the owner's PID: a lock whose PID
-# no longer runs is stale (its writer died) and is broken; a live one is
-# waited for, CONFIG_LOCK_TRIES x 50 ms (default 200, i.e. 10 s).
+# the first one's keys): flock on the file's directory (the file itself is
+# replaced by the rename, so it cannot carry the lock). flock(1) is part of
+# util-linux, on every platform worktool supports; without it the write is
+# refused (fails closed) rather than done unserialised - a hand-made lock
+# needs stale-lock breaking, and breaking a lock atomically is exactly
+# what flock already does (the kernel drops it when its holder dies).
 _config_locked() {
     local _file="$1" _rc=0 _fd
     shift
-    if _config_have_flock; then
-        exec {_fd}<"$(dirname -- "${_file}")" || return 1
-        if ! flock -x "${_fd}"; then
-            exec {_fd}<&-
-            return 1
-        fi
-        "$@" || _rc=$?
+    exec {_fd}<"$(dirname -- "${_file}")" || return 1
+    if ! flock -x "${_fd}"; then
         exec {_fd}<&-
-        return "${_rc}"
+        return 1
     fi
-    _config_mkdir_lock "${_file}.lock" || return 1
     "$@" || _rc=$?
-    rm -rf -- "${_file}.lock"
+    exec {_fd}<&-
     return "${_rc}"
-}
-
-# Take the mkdir lock $1: create it and stamp it with this process's PID,
-# breaking a lock whose recorded PID is gone. 1 when a live holder keeps it
-# past the retry budget.
-_config_mkdir_lock() {
-    local _lock="$1" _i _pid
-    for (( _i = 0; _i < ${CONFIG_LOCK_TRIES:-200}; _i++ )); do
-        if mkdir -- "${_lock}" 2>/dev/null; then
-            printf '%s\n' "${BASHPID}" >"${_lock}/pid"
-            return 0
-        fi
-        _pid=""
-        [[ -f "${_lock}/pid" ]] && IFS= read -r _pid <"${_lock}/pid"
-        if [[ "${_pid}" =~ ^[0-9]+$ ]] && ! kill -0 "${_pid}" 2>/dev/null; then
-            rm -rf -- "${_lock}"
-            continue
-        fi
-        sleep 0.05
-    done
-    return 1
 }
 
 # Print file $1 with the key/value pairs $2.. set (see config_set), byte
