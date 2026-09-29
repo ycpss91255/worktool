@@ -137,3 +137,39 @@ _adr8_citations() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+# codex round 1 on PR #256. The ADR states the interface as
+# `just <namespace> [<recipe>]`: a bare `just <namespace>` runs that
+# module's default recipe (doc/design.md 2026-09-16), so the recipe word is
+# optional, never mandatory.
+@test "ADR 0008 writes the interface with an optional recipe and names the default recipe" {
+    local _bt=$'\x60'
+    run grep -cF "${_bt}just <namespace> <recipe>${_bt}" "${ADR_0008}"
+    assert_output "0"
+    run grep -F "${_bt}just <namespace> [<recipe>]${_bt}" "${ADR_0008}"
+    assert_success
+    run sed -n '/^## 性質/,/^## /p' "${ADR_0008}"
+    assert_output --regexp "default.*recipe"
+}
+
+# The cited justfile cases prove thin forwarding and who owns usage and
+# errors; none of them compares the behaviour with and without just. The
+# guard section must not claim that equivalence, and lists it as 待補.
+@test "ADR 0008 does not claim just and the bare script behave the same" {
+    run _adr8_guard_section
+    assert_success
+    refute_output --partial "不會分歧"
+    refute_output --partial "同一個行為"
+    run sed -n '/^### 待補/,$p' "${ADR_0008}"
+    assert_output --partial "行為等價"
+}
+
+# doc/contract.md does not exist yet: its invariant index is created with
+# the file by #201, which links this ADR. The ADR header says so instead of
+# pretending the backfill happened here.
+@test "ADR 0008 header says the doc/contract.md index link is backfilled by #201" {
+    run grep -E '^- 索引：' "${ADR_0008}"
+    assert_success
+    assert_output --partial "doc/contract.md"
+    assert_output --partial "#201"
+}

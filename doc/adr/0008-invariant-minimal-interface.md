@@ -2,17 +2,18 @@
 
 - 狀態：已採納（2026-09-29）
 - 討論：#200（不變量十條定案，第 5 條）；本 ADR 的 issue 是 #206
+- 索引：`doc/contract.md` 尚未建立；它的不變量索引連到本 ADR 的連結由 #201 建立該檔時回填。
 
 ## 一句話
 
-使用者對 worktool 做的每一個動作都經過 `just <namespace> <recipe>`；一個 recipe 的語意一旦發布就不改，要改名時先保留舊名當別名一段時間。
+使用者對 worktool 做的每一個動作都經過 `just <namespace> [<recipe>]`（省略 recipe 時執行該 namespace 的 default recipe）；一個 recipe 的語意一旦發布就不改，要改名時先保留舊名當別名一段時間。
 
 ## 性質
 
 以下兩點必須永遠成立：
 
-1. **just 是唯一入口。** 所有使用者動作都以 `just <namespace> <recipe>` 暴露；使用者不需要知道、也不需要直接呼叫背後的腳本。腳本是實作、不是介面：它們在沒有 `just` 時仍可直接執行，但那不算對外承諾。
-2. **recipe 語意固定。** 一個已發布的 recipe（`just <namespace> <recipe>` 這個名字）做的事不改；要改名時，舊名在一段別名期內仍以原本的語意可用，而不是直接消失或改做別的事。
+1. **just 是唯一入口。** 所有使用者動作都以 `just <namespace> [<recipe>]` 暴露；recipe 可以省略，裸 `just <namespace>` 執行該 namespace 的 default recipe（例如裸 `just test`），它也是一個 recipe、同樣受本 ADR 約束。使用者不需要知道、也不需要直接呼叫背後的腳本。腳本是實作、不是介面：它們在沒有 `just` 時仍可直接執行，但那不算對外承諾。
+2. **recipe 語意固定。** 一個已發布的 recipe（`just <namespace> [<recipe>]` 這個叫法，包括省略 recipe 時的 default recipe）做的事不改；要改名時，舊名在一段別名期內仍以原本的語意可用，而不是直接消失或改做別的事。
 
 適用範圍：使用者透過 worktool 執行的動作，也就是 root `justfile` 與各 namespace 的 module 檔（目前是 `script/test/justfile.test`、`script/box/justfile.box`）暴露的 recipe。
 
@@ -40,7 +41,7 @@
 - `test/unit/justfile_spec.bats`「just --list shows the two namespaces and default, nothing else」
 - `test/unit/justfile_spec.bats`「bare just is just --list」
 
-recipe 只轉發，驗證與說明住在腳本，所以經 `just` 與不經 `just` 得到的是同一個行為，不會分歧：
+recipe 只轉發，參數驗證、使用說明與錯誤訊息由腳本負責，justfile 不自己印 usage、不自己驗證參數。下列案例檢查的只是這種轉發與錯誤歸屬，並沒有比較經 `just` 與直接執行腳本的行為是否等價：
 
 - `test/unit/justfile_spec.bats`「no justfile prints usage or a valid: list of its own」
 - `test/unit/justfile_spec.bats`「just box assemble --bogus is refused by assemble.sh itself (exit 2), not by the justfile」
@@ -73,6 +74,7 @@ CI 也走同一個入口：
 ### 待補
 
 - **別名期整條待補。** 「發布」目前沒有定義（尚未有 release），別名期多長也沒有定案；沒有任何機制或測試確認改名的 recipe 保留了舊名。上面的案例在改名時只會變紅，要求的是改測試，而不是留別名。
+- **經 `just` 與直接執行腳本的行為等價沒有檢查。** 上面的案例只證明 recipe 原封轉發、驗證與說明由腳本負責；沒有任何測試以同一組參數分別經 `just` 與直接執行腳本，比較兩者的輸出、結束碼與副作用。
 - **`test` namespace 的 recipe 清單沒有釘住。** `box` 有列出全部 recipe 的案例，`test` 沒有；`test` 的 recipe 被刪掉時，只有轉發案例裡點名的那幾個會變紅。
 - **文件以 `just` 為入口沒有全面檢查。** 只有 `just box help` 背後的腳本清單有檢查（`test/unit/justfile_spec.bats`「README.md and doc/structure.md list all four scripts behind just box help, in order」）；沒有測試確認 `README.md` 與 `doc/` 不教使用者直接呼叫腳本。
 - **host 端的 install script 未定。** #200 定案驅動與 GUI app 是各自獨立的 host install script，M4 的 host bootstrap 要負責裝好 `just` 本身；這些動作如何經過 `just`，目前沒有定案，也還沒有實作與測試。
