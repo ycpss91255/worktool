@@ -33,7 +33,10 @@
 # ~/.config/worktool/config after a successful run. An EXISTING box whose
 # HOME differs is refused - exit 1, nothing changed, the remove-and-recreate
 # commands printed - because only a new box can take a new HOME; worktool
-# never removes a box by itself. Dry-run never asks the container manager.
+# never removes a box by itself. When the container manager distrobox would
+# use (DBX_CONTAINER_MANAGER, distrobox.conf, autodetect) is missing or
+# fails, the run is refused the same way: it cannot tell whether the box
+# exists. Dry-run never asks the container manager.
 #
 # Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
 # unhandled failure stops the script at once. A non-zero status the script
@@ -110,7 +113,7 @@ _resolve_manifest() {
 
 # --- Main --------------------------------------------------------------------
 assemble_run() {
-    OPT_MANIFEST="${DEFAULT_MANIFEST}" OPT_HOME="" OPT_HOME_SET=0
+    OPT_MANIFEST="${DEFAULT_MANIFEST}" OPT_FILE_SET=0 OPT_HOME="" OPT_HOME_SET=0
     OPT_DRY_RUN=0 OPT_HELP=0
     [[ "${WORKTOOL_DRY_RUN:-}" == "1" ]] && OPT_DRY_RUN=1
     _parse_args "$@" || return 2
@@ -164,7 +167,7 @@ _parse_args() {
 
 _set_opt() {
     if [[ "$1" == --file ]]; then
-        OPT_MANIFEST="$2"
+        OPT_MANIFEST="$2" OPT_FILE_SET=1
     else
         OPT_HOME="$2" OPT_HOME_SET=1
     fi
@@ -204,24 +207,39 @@ _resolve_home() {
 
 # Refuse (return 1) when box BOX_NAME already exists with a HOME other than
 # BOX_HOME: distrobox cannot change it, and removing the box is the user's
-# call. Nothing has been written or run at this point.
+# call. Also refused when the container manager cannot say whether the box
+# exists: guessing "no box" would record a HOME the box may not have.
+# Nothing has been written or run at this point.
 _check_existing_box() {
     local _existing _rc=0
     _existing="$(home_of_box "${BOX_NAME}")" || _rc=$?
-    [[ "${_rc}" -ne 1 ]] || return 0
-    if [[ "${_rc}" -ne 0 ]]; then
-        log_error "box '${BOX_NAME}' already exists, but its HOME cannot be read from the container manager; nothing was changed"
-        return 1
-    fi
+    case "${_rc}" in
+        0) ;;
+        1) return 0 ;;
+        2)
+            log_error "box '${BOX_NAME}' already exists, but its HOME cannot be read from the container manager; nothing was changed"
+            return 1
+            ;;
+        *)
+            log_error "cannot tell whether box '${BOX_NAME}' already exists: ${_existing}; nothing was changed"
+            return 1
+            ;;
+    esac
     [[ "$(home_normalize "${_existing}")" != "${BOX_HOME}" ]] || return 0
     _refuse_home_change "${_existing}"
     return 1
 }
 
+# The rebuild hints repeat --file when the run was given one, as an
+# absolute path: `just box assemble` runs from the repo root, not from
+# where the user stood.
 _refuse_home_change() {
-    local _old="$1" _redo="just box assemble" _keep
+    local _old="$1" _base="just box assemble" _redo _keep
+    [[ "${OPT_FILE_SET}" -eq 0 ]] \
+        || _base+=" --file $(printf '%q' "$(_absolute_path "${RESOLVED}")")"
+    _redo="${_base}"
     [[ "${BOX_HOME_SRC}" == user ]] && _redo+=" --home $(printf '%q' "${BOX_HOME}")"
-    _keep="just box assemble --home $(printf '%q' "${_old}")"
+    _keep="${_base} --home $(printf '%q' "${_old}")"
     log_error "box '${BOX_NAME}' already exists with HOME ${_old}; distrobox sets a box's HOME only when the box is created, so it cannot become ${BOX_HOME}. Nothing was changed."
     log_error "to use ${BOX_HOME}, remove the box and recreate it (the files under ${_old} stay on disk):"
     log_error "  distrobox rm ${BOX_NAME}"
@@ -229,11 +247,17 @@ _refuse_home_change() {
     log_error "or keep the current HOME: ${_keep}"
 }
 
+# Existing file $1 as an absolute path (its directory resolved).
+_absolute_path() {
+    printf '%s/%s\n' "$(cd -P -- "$(dirname -- "$1")" && pwd)" "$(basename -- "$1")"
+}
+
 # Emit (dry-run) or execute the distrobox command for the resolved
 # manifest $1, then record the box home.
 _assemble_exec() {
     local _resolved="$1"
     local _cmd=(distrobox assemble create --file "${_resolved}")
+    RESOLVED="${_resolved}"
 
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
         # Print with per-argument shell escaping so the line is faithfully

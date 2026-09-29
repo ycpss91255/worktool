@@ -143,6 +143,17 @@ _write_config() {
     assert_output "[ERROR] ${CONFIG}: invalid value 'maybe' for home.source (expected default|user)"
 }
 
+@test "#198 r1: a lone home.source, or a root home, is refused like any corrupt value (exit 1)" {
+    _write_config 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: home.source without home (the two are recorded together)"
+    _write_config 'home=/' 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '/' for home (expected a path other than the root directory)"
+}
+
 # --- #175: the report says whether the recorded distrobox still runs --------
 
 # Write a managed block holding exactly the body $1 into file $2.
