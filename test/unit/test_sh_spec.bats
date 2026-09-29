@@ -218,3 +218,11 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${TEST_SH}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
