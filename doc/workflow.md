@@ -89,7 +89,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
-   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
+   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`claude.md`、`agy.md` 或 `codex.md` 為空就不發。
+   留言本文先組成暫存檔、過濾後才改名成 `body.md`,任一步(讀檔或過濾)失敗都不會留下 `body.md`,不發出空白或不完整的留言(fail closed)。
    整則留言發出前經過路徑過濾(#223):`sources` 改寫成其目錄名、`repoDir` 改寫成 `.`(只在路徑邊界),
    `$HOME` 與任何 `/home/<user>`、`/Users/<user>` 改成 `~`,Claude session 的 `/tmp` 暫存路徑改成 `<tmp>`;
    其餘絕對路徑一律遮成 `<path>`(預設拒絕,不留例外:`/usr`、`/etc`、`/root`、`/workspace`、`/private/tmp`、`/var/folders`、

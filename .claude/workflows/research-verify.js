@@ -100,7 +100,7 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
 const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md claude.md\`.
+1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ===BEGIN===
 ${AGY_PROMPT}
@@ -159,7 +159,7 @@ agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在
 
 const RECORD = `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.
-2. Build the body in the foreground: \`${CD} && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md; printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n'; cat codex.md; printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n'; cat agy.md; printf '\\n\\n</details>\\n'; } | ${SCRUB} > body.md\` (the filter rewrites local absolute paths; do not drop it). If it fails (agy.md or codex.md missing or empty), post nothing and return url = "".
+2. Build the body in the foreground: \`${CD} && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md && printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n' && cat codex.md && printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n' && cat agy.md && printf '\\n\\n</details>\\n'; } > body-raw.md && ${SCRUB} < body-raw.md > body-tmp.md && mv body-tmp.md body.md\` (the filter rewrites local absolute paths; do not drop it; body.md appears only once every step succeeded). If it fails (claude.md, agy.md or codex.md missing, empty or unreadable, or the filter failed), post nothing and return url = "".
 3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).
 ===BEGIN===
 `

@@ -460,6 +460,51 @@ fake boundary with a count|codex\nnote\ntokens used: see below\nmore\n
 EOF
 }
 
+@test "research-verify (node): a failing Record producer or filter leaves no body to post (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" fail="${BATS_TEST_TMPDIR}/fail" name scratch
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/.worktree/.scratch/research-7"
+    mkdir -p "${fail}"
+    # cat fails on the file named by FAIL_CAT; awk run as the path filter
+    # (RV_N set) prints its whole output, then fails when FAIL_SCRUB is set
+    REAL_CAT="$(command -v cat)" REAL_AWK="$(command -v awk)"
+    export REAL_CAT REAL_AWK
+    cat > "${fail}/cat" <<'SH'
+#!/bin/sh
+for a; do [ "$a" = "${FAIL_CAT}" ] && exit 1; done
+exec "${REAL_CAT}" "$@"
+SH
+    cat > "${fail}/awk" <<'SH'
+#!/bin/sh
+"${REAL_AWK}" "$@" || exit
+[ -n "${RV_N}" ] && [ -n "${FAIL_SCRUB}" ] && exit 1
+exit 0
+SH
+    chmod +x "${fail}"/*
+    # name | FAIL_CAT | FAIL_SCRUB
+    while IFS='|' read -r name cat_fail scrub_fail; do
+        echo "failure: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${scratch}"
+        printf 'codex\nA1\ntokens used\n9\n' > "${SHAPE}/raw"
+        FAIL_CAT="${cat_fail}" FAIL_SCRUB="${scrub_fail}" PATH="${fail}:${PATH}" run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # the inputs were there, so only the producer or the filter failed
+        [[ -s "${scratch}/agy.md" && -s "${scratch}/codex.md" && -s "${scratch}/claude.md" ]]
+        # the body build (5th shell step) reports the failure ...
+        run jq -r '.ran[4].rc' <<<"${output}"
+        refute_output 0
+        # ... and leaves no body.md, complete or not, for gh to post
+        [[ ! -e "${scratch}/body.md" ]]
+    done <<'EOF'
+claude.md unreadable|claude.md|
+codex.md unreadable|codex.md|
+agy.md unreadable|agy.md|
+path filter fails|-|1
+EOF
+}
+
 @test "research-verify (node): no local absolute path reaches the Record, in any form" {
     local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
     SHAPE="${BATS_TEST_TMPDIR}/shape"
