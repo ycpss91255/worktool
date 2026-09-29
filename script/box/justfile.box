@@ -3,15 +3,16 @@
 # `mod?`d by the root justfile as `box`: `just box` lists the box verbs,
 # `just box assemble [args]` forwards to ./script/box/assemble.sh,
 # `just box bench [args]` to ./script/box/bench.sh, `just box setup [args]`
-# to ./script/box/setup.sh and `just box status [args]` to
-# ./script/box/status.sh. Base model (ycpss91255-docker/base
+# to ./script/box/setup.sh, `just box status [args]` to
+# ./script/box/status.sh and `just box enter [args]` to
+# ./script/box/enter.sh. Base model (ycpss91255-docker/base
 # ADR-00000005/10/11): thin forwarders only - `set positional-arguments` +
 # "$@" hands the arguments over VERBATIM (argv boundaries intact), nothing
 # is validated here and no usage text lives here: `just box help` runs each
 # script's --help in turn, and an unknown option is refused by the script
 # itself (`<script>.sh: unknown option '<x>' (see --help)`, exit 2). M2 had
-# assemble as the only verb; M3 adds bench (#150, #162), setup / status (#21) and
-# later enter / rm.
+# assemble as the only verb; M3 adds bench (#150, #162), setup / status (#21),
+# enter (#180) and later rm.
 #
 # The one-line comment above each recipe is what `just --list` shows.
 
@@ -47,11 +48,16 @@ setup *args:
 status *args:
     ./script/box/status.sh "$@"
 
+# Enter the box; a first launch shows progress, a log and a timeout (args: --box NAME, --distrobox PATH, --timeout SECONDS, -- CMD..., --help).
+enter *args:
+    ./script/box/enter.sh "$@"
+
 alias h := help
 
-# Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh --help).
+# Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh, enter.sh --help).
 help:
     ./script/box/assemble.sh --help
     ./script/box/bench.sh --help
     ./script/box/setup.sh --help
     ./script/box/status.sh --help
+    ./script/box/enter.sh --help
