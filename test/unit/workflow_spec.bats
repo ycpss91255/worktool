@@ -396,7 +396,7 @@ _rv_src_check() {
 @test "research-verify: an agy failure returns a structured failure before Verify and never substitutes another answer" {
     run grep -c "schema: AGY_SCHEMA" "${RESEARCH}"
     assert_output "1"
-    run grep -c "enum: \['ok', 'failed'\]" "${RESEARCH}"
+    run grep -c "enum: \['ok', 'failed', 'bad-source'\]" "${RESEARCH}"
     assert_output "1"
     run grep -c "if (!res || res.status !== 'ok') return" "${RESEARCH}"
     assert_output "1"
