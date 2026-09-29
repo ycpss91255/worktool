@@ -40,6 +40,15 @@
 #   case can never be a no-op threshold. The runtime decision (docker +
 #   default runc stays; CI measured ~88 ms) is recorded in issue #22.
 #
+#   Issue #181 puts a quiet-host precondition in front of the gate: bench.sh
+#   first waits for CPU pressure (PSI) `some avg10 <= 2.00` held for 5 s
+#   (120 s at most on CI, where test.sh passes CI into the runner) and a
+#   host that stays busy, or turns busy mid-run, is exit 3 (inconclusive).
+#   Both cases here require their own verdict (0 / 1), so a 3 is red too:
+#   CI never skips the gate because the runner is busy. Both cases also
+#   require the precondition's evidence line (the PSI path, its value and
+#   loadavg, or the warning that no PSI is readable) in the TAP stream.
+#
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
 #   (dockerfile/Dockerfile.system-real, based on the official docker:dind
@@ -271,6 +280,13 @@ _assert_metric_lines() {
     assert_line --regexp "^inbox: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
 }
 
+# Assert that the last `run` printed the quiet-host evidence (issue #181):
+# the PSI file read, its value and loadavg - or the warning that no PSI
+# file is readable and the run went unguarded.
+_assert_quiet_host_evidence() {
+    assert_line --regexp '^\[INFO\] host quiet: /.+ some avg10=[0-9.]+ <= 2\.00 for 5s; loadavg=.+$|^\[WARN\] no CPU pressure \(PSI\) readable .* measuring anyway; loadavg=.+$'
+}
+
 # The shell metric is measured on the box's fish (issue #160): `fish -c
 # exit` is the cheapest fish start-up, i.e. the floor of "time to a fish
 # prompt". This constant is what the gate below hands to bench.sh --shell.
@@ -302,6 +318,7 @@ _assert_fish_timed() {
     _assert_metric_lines
     # Both the shell metric and the in-box timer really ran fish.
     _assert_fish_timed 2 5
+    _assert_quiet_host_evidence
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
     _log_lines bench "${lines[@]}"
@@ -318,6 +335,7 @@ _assert_fish_timed() {
     assert_failure 1
     _assert_metric_lines
     _assert_fish_timed 0 1
+    _assert_quiet_host_evidence
     assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
     refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
     _log_lines bench-gate "${lines[@]}"
