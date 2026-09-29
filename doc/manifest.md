@@ -112,14 +112,66 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
      shell 跳脫**(`printf '%q'`),因此含有空白、`;` 或 `$()` 的路徑會被表示成
      單一安全參數,直接複製貼上即可忠實重跑,不會被再次拆分或解讀。
 
-包裝器**絕不在 host 上安裝任何東西、也不需要 root**;唯一的副作用是呼叫
-distrobox,由 distrobox 自己管理容器。選項:`--dry-run`、`--file <manifest>`、
-`--help`(`-h`,印 usage 後 exit 0);未知選項以
+包裝器**絕不在 host 上安裝任何東西、也不需要 root**;副作用只有呼叫 distrobox
+(由 distrobox 自己管理容器),以及成功後把盒子 HOME 記進設定檔(見下節)。選項:
+`--dry-run`、`--file <manifest>`、`--home <路徑>`、`--help`(`-h`,印 usage 後 exit 0);未知選項以
 `assemble.sh: unknown option '<x>' (see --help)` 拒絕、exit 2、什麼都不跑。
+
+### 盒子的 HOME(`--home`,issue #198)
+
+盒子有自己的 HOME(決定見 #196)。distrobox **只在建盒時**決定 HOME,之後要換只能
+刪盒重建,所以:
+
+- **解析順序**(與 `just box setup` 相同):`--home <路徑>`(`user`)> 設定檔裡
+  `home.source=user` 的紀錄(`user`)> 預設 `~/<盒名>-box`(`default`;盒名取自清單
+  的區段名,dev 盒 = `~/dev-box`)。解析結果印在 stderr:
+  `[INFO] box home: /home/me/dev-box (default)`。
+- **驗證**(腳本負責):`--home` 必須是絕對路徑、不可含換行、不可是 `/`;結尾的 `/`
+  會去掉(distrobox 也這麼做)。不合格是參數錯誤:
+  `assemble.sh: --home needs an absolute path, got 'dev-box' (see --help)`、exit 2。
+  設定檔裡的 `home` 套用同一組規則(絕對路徑、不可含 CR、不可是 `/`),`home.source`
+  必須是 `default|user`,且 `home` 與 `home.source` 必須成對出現;任一不符時 exit 1:
+  `[ERROR] <設定檔>: invalid value 'dev-box' for home (expected an absolute path)`、
+  `[ERROR] <設定檔>: home.source without home (the two are recorded together)`。
+- **交給 distrobox 的方式**:以環境變數 `DBX_CONTAINER_CUSTOM_HOME`(distrobox-create
+  文件列出的變數,效果等同 `--home`)傳入,所以 dry-run 印出的指令行維持
+  `distrobox assemble create --file <清單>` 不變;使用者環境裡原本的
+  `DBX_CONTAINER_CUSTOM_HOME` 一律被解析結果蓋掉。清單裡若自己寫了
+  distrobox-assemble 的 `home=` 鍵(它會蓋過環境變數)則拒絕、exit 1,盒子 HOME
+  只由 `--home` 決定。
+- **記錄**:distrobox 成功後,把 `home=<路徑>` 與 `home.source=default|user` 寫進
+  `~/.config/worktool/config`(與 `just box setup` 同一份檔、同一種
+  `key=value` + `key.source` 格式;其他行原樣保留,`just box setup` 重寫時也保留
+  這兩行);`just box status` 最後一行顯示它。dry-run 不寫。
+- **已存在的盒子換 HOME 一律拒絕**:真正執行前向 container manager 查詢同名盒子
+  建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
+  與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox
+  設定檔(`distrobox.conf`、`~/.distroboxrc` 等,依 distrobox 的讀取順序,取最後一個
+  `container_manager=`;只讀不 source,接受引號與行尾 `# 註解`;讀不成 manager 名稱的
+  `container_manager=` 行(空值、命令替換等)一律拒絕、exit 1,不跳過),都沒有時照 distrobox 的順序 podman、
+  podman-launcher、docker、lilipod 自動偵測)。盒子是否存在看 `<manager> ps -a`
+  的容器名單。與解析結果不同時 exit 1、**什麼都不改**(不呼叫 distrobox、不寫
+  設定檔),印出刪盒重建的指令(有給 `--file` 時一併帶上清單的絕對路徑),
+  **絕不自動重建**:
+
+```text
+[ERROR] box 'dev' already exists with HOME /home/me/dev-box; distrobox sets a box's HOME only when the box is created, so it cannot become /data/dev-box. Nothing was changed.
+[ERROR] to use /data/dev-box, remove the box and recreate it (the files under /home/me/dev-box stay on disk):
+[ERROR]   distrobox rm dev
+[ERROR]   just box assemble --home /data/dev-box
+[ERROR] or keep the current HOME: just box assemble --home /home/me/dev-box
+```
+
+  沒給 `--home`、而既有的盒子是舊的共用 HOME 盒(HOME 就是 host 的 `~`)時同樣
+  被拒絕,重建指令是不帶 `--home` 的 `just box assemble`。HOME 相同時照常往下跑
+  (distrobox 自己回報 `dev already exists`,不重建)。manager 不在 PATH 上、或名單
+  查詢失敗時無法判斷盒子在不在,盒子存在但讀不到 HOME(inspect 失敗)時也無法比對,
+  兩者都 exit 1、什麼都不改(`[ERROR] cannot tell whether box 'dev' already exists:
+  ...`)。dry-run 不查 manager。
 
 ### 用法
 
-使用者介面是 `just box assemble [--dry-run] [--file <manifest>]`(`box` 是盒子
+使用者介面是 `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]`(`box` 是盒子
 生命週期的 namespace;`just` 是使用者的通用介面,命令模型比照 base
 ADR-00000005/10/11,見 [`design.md`](design.md)「決策」)。recipe 只是把參數**原樣**
 轉發給 `script/box/assemble.sh`;參數驗證與 `--help` 都在腳本。
@@ -136,6 +188,9 @@ just box assemble --dry-run --file box/other.ini
 just box assemble
 just box assemble --file box/other.ini
 
+# 指定盒子的 HOME(預設 ~/dev-box;建盒後不可改)
+just box assemble --home /data/dev-box
+
 # 說明(由腳本印出)
 just box assemble --help
 ```
@@ -147,6 +202,7 @@ just box assemble --help
 WORKTOOL_DRY_RUN=1 ./script/box/assemble.sh           # 以環境變數試跑,同上
 ./script/box/assemble.sh                              # = just box assemble
 ./script/box/assemble.sh --file box/other.ini         # = just box assemble --file box/other.ini
+./script/box/assemble.sh --home /data/dev-box         # = just box assemble --home /data/dev-box
 ```
 
 ## 進盒延遲量測(just box bench)
@@ -322,6 +378,11 @@ issue #129),不再延後到 M5。
     時警告並照常量測、PSI 來源的優先順序(cgroup v2 → `/proc/pressure/cpu`)、
     `--max-wait` 的預設(60 / CI 120)與輸入驗證;
     `test/unit/justfile_spec.bats` 另證明 `just box bench --runs 3` 原樣轉發。
+    M3(issue #198)在 `assemble_spec.bats` 加盒子 HOME:預設 `~/<盒名>-box`(盒名
+    取自清單)、`--home` / `--home=` 為 `user`、結尾 `/` 去掉、設定檔的 user 紀錄
+    優先於預設而 default 紀錄會重新推導;缺參數 / 相對路徑 / 空字串 / `/` / 含換行
+    皆 exit 2 且什麼都不跑;設定檔裡壞掉的 `home` 與清單自帶 `home=` 皆 exit 1;
+    dry-run 的 STDOUT 指令行不變、不寫設定檔。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
 - 整合(`test/integration/assemble_spec.bats`):
@@ -330,6 +391,11 @@ issue #129),不再延後到 M5。
     `assemble create --file <解析後的清單>` 呼叫 distrobox;另外斷言「從 repo 以外
     執行會傳入解析後的絕對路徑」以及「清單無效時(缺 image、image 引號不成對)
     完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
+    M3(issue #198)再加一支假 `docker`(`inspect` 回答既有盒子建盒時的
+    `--home`):盒子 HOME 以 `DBX_CONTAINER_CUSTOM_HOME` 交給 distrobox(argv 不變、
+    環境裡原有的值被蓋掉)、成功後記進設定檔且保留其他行、distrobox 失敗不記;既有
+    盒子 HOME 不同(含沒給 `--home` 的舊盒)時 exit 1、印刪盒重建指令、不呼叫
+    distrobox、設定檔不變;HOME 相同時照常執行;dry-run 不查 manager。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
 - 整合,**ghostty 組**(`test/integration/ghostty_config_spec.bats`,M3 issue
@@ -545,7 +611,12 @@ issue #129),不再延後到 M5。
     自己在指令結束後退出)、每個 ghostty 呼叫外層 `timeout -k`、CI job 的
     `timeout-minutes`;(f) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
-    恰好一個、仍可 `rg --version`;(g) 清理:`distrobox rm -f dev` exit 0 後
+    恰好一個、仍可 `rg --version`;盒子 HOME(issue #198):第一次 assemble 帶
+    `--home <BOX_HOME>`(刻意不是預設 `~/dev-box`),盒內 `printenv HOME` 恰為該路徑、
+    `DISTROBOX_HOST_HOME` 為 runner 的 HOME、設定檔記下 `home=<BOX_HOME>`;第二次
+    不帶 `--home` 沿用紀錄(`(user)`)而不被拒絕;再以不同的 `--home` 執行則
+    exit 1、印 `distrobox rm dev`、新路徑沒被建立、`dev` 仍一個且 HOME 不變;
+    (g) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
     第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
     `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
