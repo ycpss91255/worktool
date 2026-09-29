@@ -15,7 +15,7 @@
 mod? test 'script/test/justfile.test'
 # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status  (M3 adds enter / rm)
 mod? box 'script/box/justfile.box'
-# Acceptance checks of doc/acceptance.md: just verify ui | gate | setup | diagram | realbox | evidence  [ITEM]
+# Acceptance checks of doc/acceptance.md: just verify all (every non-real-machine group) | ui | gate | setup | diagram | realbox | evidence  [ITEM]
 mod? verify 'script/verify/justfile.verify'
 
 # Default: list the namespaces.

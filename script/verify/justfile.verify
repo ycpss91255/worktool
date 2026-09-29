@@ -5,8 +5,12 @@
 # `just verify gate [args]` to ./script/verify/gate.sh, `just verify setup
 # [args]` to ./script/verify/setup.sh, `just verify diagram [args]` to
 # ./script/verify/diagram.sh, `just verify realbox [args]` to
-# ./script/verify/realbox.sh and `just verify evidence [args]` to
-# ./script/verify/evidence.sh. Base model (ycpss91255-docker/base
+# ./script/verify/realbox.sh, `just verify evidence [args]` to
+# ./script/verify/evidence.sh and `just verify all [args]` to
+# ./script/verify/all.sh, which runs every non-real-machine group (ui,
+# gate, setup, diagram, evidence) in order and is the one that verifies.
+# Bare `just verify` only lists and says so (#182): its rc=0 is not a pass.
+# Base model (ycpss91255-docker/base
 # ADR-00000005/10/11): thin forwarders only - `set positional-arguments` +
 # "$@" hands the arguments over VERBATIM (argv boundaries intact), nothing
 # is validated here and no usage text lives here: `just verify help` runs
@@ -33,9 +37,14 @@ set positional-arguments
 # source_file() is THIS module's file: inside a mod?'d module `justfile`
 # resolves to the root entry, so listing that would show the namespaces
 # instead of the verify verbs.
-# List the verify verbs.
+# List the verify verbs (verifies nothing; `just verify all` does).
 default:
     @just --justfile '{{source_file()}}' --list
+    @echo 'NOTE: this only lists the verify groups - nothing has been verified. Run `just verify all` to verify every non-real-machine group (realbox needs --allow-real-box on a real host).'
+
+# Every non-real-machine group in order (ui gate setup diagram evidence), stop at the first failure, one verdict (args: --list, --help).
+all *args:
+    ./script/verify/all.sh "$@"
 
 # Acceptance item 1.1: the box namespace user interface (args: ITEM, --list, --help).
 ui *args:
@@ -63,7 +72,7 @@ evidence *args:
 
 alias h := help
 
-# Show every verify script's help (ui.sh, gate.sh, setup.sh, diagram.sh, realbox.sh, evidence.sh --help).
+# Show every verify script's help (ui.sh, gate.sh, setup.sh, diagram.sh, realbox.sh, evidence.sh, all.sh --help).
 help:
     ./script/verify/ui.sh --help
     ./script/verify/gate.sh --help
@@ -71,3 +80,4 @@ help:
     ./script/verify/diagram.sh --help
     ./script/verify/realbox.sh --help
     ./script/verify/evidence.sh --help
+    ./script/verify/all.sh --help
