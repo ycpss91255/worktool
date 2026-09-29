@@ -47,7 +47,7 @@ worktool/
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
-│   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量連到指定 ADR、structure.md 目錄樹列出(#201)
+│   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
@@ -73,7 +73,7 @@ worktool/
 │   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + jq + 鎖定版 distrobox)
 │   └── Dockerfile.system-real  DinD runner 映像(docker:29.8.0-dind + bash + bats 1.14.0 + 同一鎖定版 distrobox)
 ├── doc/
-│   ├── contract.md      對外契約:痛點、做與不做的事、對使用者與相容性的承諾(各附驗證方式)、十條不變量的 ADR 索引(#201)
+│   ├── contract.md      對外契約:痛點、做與不做的事、對使用者與相容性的承諾(各附驗證方式)、十條不變量索引(各列負責寫 ADR 的 issue #202-#211,ADR 合併後改連結)(#201)
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   ├── workflow.md      Workflow 範本說明:pr-loop(一個 sub-issue -> 一個 PR 的實作/CI/codex/修正迴圈)與 milestone-fanout
