@@ -12,6 +12,7 @@ worktool/
 ├── lib/                 共用 bash helper(被 tool/box/script 腳本 source)
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
 │   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
+│   ├── approval.sh      milestone-gate 核准判斷(純函式,不呼叫 GitHub API):approval_evaluate / approval_is_human_approval(#187)
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
@@ -42,6 +43,8 @@ worktool/
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
+│   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
+│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
@@ -102,7 +105,8 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
-    └── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
+    └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
@@ -269,7 +273,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
@@ -291,6 +295,39 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
+
+### milestone 驗收 PR 的核准 gate(`milestone-gate-approval`,#187)
+
+- **規則**:貼了 `milestone-gate` 標籤的 PR(milestone 驗收 PR)合併前,必須有維護者在
+  該 PR 上留下核准紀錄;沒貼標籤的 PR 不受影響。
+- **核准格式**:一則留言,作者 `author_association` 為 `OWNER`,本文(忽略開頭空白)不以
+  `[claude]` 或 `[codex]` 開頭,內容含「允許合併」。
+- **機制**:`.github/workflows/milestone-gate.yml` 觸發於 `pull_request_target`(opened、
+  synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
+  deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
+  `<author_association>\t<body>` 的 NUL 分隔紀錄交給 `lib/approval.sh` 的
+  `approval_evaluate`(純函式,不呼叫 GitHub API,之後 agent 端 hook #190 共用),
+  再於 PR head SHA 設 commit status `milestone-gate-approval`:未貼標籤或已核准為
+  success,否則 failure,description 為「需要維護者留言:允許合併」。權限只有
+  `statuses: write`、`pull-requests: read`、`issues: read`,加上 checkout 私有 repo
+  需要的 `contents: read`。`ci.yml` 與 `ci-passed` 不變;這個 PR 合併後,
+  `milestone-gate-approval` 才另外列入 main 的 required status checks(與
+  `ci-passed` 並列),避免合併前就擋住所有 PR。`test/unit/approval_spec.bats`
+  測判斷規則,`test/unit/milestone_gate_yml_spec.bats` 以文字層級釘住觸發事件、
+  權限與 context 名稱。
+- **已知限制**:agent 用維護者的 token 發留言,GitHub 上無法區分維護者本人與 agent
+  代發;這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫「允許合併」。後者由
+  agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
+  「允許合併」一律拒絕;對貼了 `milestone-gate` 的 PR 執行 `gh pr merge` 時沒有核准
+  留言也拒絕。
+- **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
+  程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
+  一樣跑預設分支上的 workflow 檔;checkout 釘在預設分支(`ref` 為 default branch、
+  `persist-credentials: false`),不 checkout 也不執行 PR head,所以 source 的
+  `lib/approval.sh` 永遠是 main 的版本。PR 只當 API 資料讀:head SHA、標籤、留言都走
+  `gh api`。因此改動判斷規則或 workflow 本身的 PR,合併後才生效;
+  `milestone_gate_yml_spec.bats` 釘住「沒有 `pull_request` 觸發、checkout 釘在預設分支、
+  不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
 tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
