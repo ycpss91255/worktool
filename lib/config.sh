@@ -1,78 +1,77 @@
 #!/usr/bin/env bash
-# lib/config.sh - the ONE owner of the worktool state file (issue #199
-# rounds 3-5).
+# lib/config.sh - the ONE owner of the worktool state file (issue #199).
 #
 # The state file has several writers: `just box setup` (the four decisions
 # and their `.source`), `just box assemble` (home / home.source, issue
 # #198) and the user (`link=` lines, issue #199, and anything a later
 # version adds). No writer owns the whole file, so none may regenerate it:
-# each one sets ITS keys in place with config_set, and every other byte -
-# comments, blank and whitespace-only lines, other writers' keys, unknown
-# keys, duplicates, CRLF line endings, trailing blank lines, a missing
-# final newline - stays where it was.
-#
-# Ownership: ONLY this file knows where the state file is
-# ($XDG_CONFIG_HOME/worktool/config, else ~/.config/worktool/config). Every
-# public function works on THE state file and takes no path; messages that
-# name it go through config_log / config_say / config_fill. That no other
-# module reaches the file is proven by behaviour, not by a text search
-# (test/unit/config_owner_spec.bats: the state file is moved with the
-# test-only WORKTOOL_CONFIG_FILE seam and the default location poisoned).
+# each one sets ITS keys in place with config_set.
 #
 # Format: one `key=value` per line; the key is the text before the first
-# `=` (a line without `=` is a bare key with an empty value). Reads take
-# the FIRST occurrence of a key. A line's bytes are never re-encoded: a
-# CRLF line keeps its `\r` (as part of its value, which the validators of
-# the known keys then refuse).
+# `=` (a line without `=` is a bare key with an empty value).
 #
-# Public API:
-#   config_xdg_dir                 -> ${XDG_CONFIG_HOME:-$HOME/.config}
-#                                     (the base other XDG files use too)
-#   config_exists                  -> 0 when the state file exists
-#   config_get <key>               -> the value of the first <key> line;
-#                                     nothing for an absent file or key
-#   config_get_all <key>           -> the value of EVERY <key>= line, one
-#                                     per line, in file order (keys that
-#                                     may repeat, e.g. link=)
-#   config_each <fn> [args...]     -> call `<fn> [args...] <lineno> <key>
-#                                     <has_value 0|1> <value>` for every
-#                                     line that is not a comment or blank,
-#                                     in file order; stop at and return the
-#                                     first non-zero status
+# API (what each call promises is the contract below, nothing else):
+#   config_xdg_dir                     ${XDG_CONFIG_HOME:-$HOME/.config}
+#   config_exists
+#   config_get <key>
+#   config_get_all <key>
+#   config_each <fn> [args...]         calls <fn> [args...] <lineno> <key>
+#                                      <has_value 0|1> <value>
 #   config_set <key> <value> [<key> <value> ...]
-#                                  -> set each key in place: its first line
-#                                     is replaced, later lines of the same
-#                                     key are dropped, a missing key is
-#                                     appended (argument order; a newline
-#                                     is added first only when the file's
-#                                     last line has none); every other byte
-#                                     is kept. A new file starts with a
-#                                     comment header. Rendered straight
-#                                     into a temp file and renamed (atomic),
-#                                     keeps the file's mode, serialised by
-#                                     flock(1) on the file's directory
-#                                     (without flock: [ERROR], 1, nothing
-#                                     written). 1 on failure (an odd argument
-#                                     count writes nothing).
-#   config_log <info|warn|error> <before> [<after>]
-#                                  -> log `<before><state file><after>`
-#                                     (lib/log.sh, which the caller sources)
-#   config_say <before> [<after>]  -> the same line on stdout
-#   config_fill                    -> copy stdin to stdout with every
-#                                     `{state-file}` replaced by the
-#                                     location as users read it
-#                                     ($XDG_CONFIG_HOME/worktool/config),
-#                                     for help texts
-#   config_write_atomic <file>     -> replace <file> with stdin atomically
-#                                     (temp file in the same directory, then
-#                                     rename), keeping an existing file's
-#                                     mode; for the OTHER files worktool
-#                                     rewrites (the terminal profiles)
+#   config_log <info|warn|error> <before> [<after>]   (caller sources lib/log.sh)
+#   config_say <before> [<after>]
+#   config_fill                        stdin -> stdout
+#   config_write_atomic <file>         stdin -> <file> (the terminal
+#                                      profiles; not the state file)
 #
-# No file content ever passes through a command substitution here: `$(...)`
-# drops trailing newlines, which would change the bytes this file keeps
-# (test/unit/config_mutation_spec.bats runs the specs against a copy that
-# does, and requires them to fail).
+# Contract. Each `@prop` line is one promise with a stable ID. The list is
+# the claim AND the test plan: test/unit/config_mutation_spec.bats holds a
+# mutant for every ID (and fails when this list and its table differ), and
+# requires the named spec cases to fail on it.
+#   @prop location      the state file is $XDG_CONFIG_HOME/worktool/config,
+#                       else ~/.config/worktool/config
+#   @prop owner         only this file reaches the state file: no other
+#                       module reads or writes it by building its path
+#   @prop exists        config_exists succeeds only when the state file exists
+#   @prop get-first     config_get prints the value of the FIRST line of the key
+#   @prop get-bare      a bare `<key>` line counts as that key with an empty value
+#   @prop get-all       config_get_all prints every `<key>=` value, in file order
+#   @prop each-args     config_each passes line number, key, has_value, value
+#   @prop each-skip     config_each skips comment and blank lines
+#   @prop each-stop     config_each stops at, and returns, the first non-zero status
+#   @prop log           config_log names the state file in its message
+#   @prop say           config_say names the state file on stdout
+#   @prop fill          config_fill replaces every `{state-file}` with
+#                       $XDG_CONFIG_HOME/worktool/config
+#   @prop in-place      config_set replaces a key's first line where it stands
+#   @prop dup-owned     config_set drops the later lines of a key it sets
+#   @prop append-order  config_set appends missing keys in argument order
+#   @prop append-sep    config_set adds a newline before appended keys only
+#                       when the last line has none
+#   @prop new-header    a new state file starts with one comment header line
+#   @prop comments      config_set keeps comment lines
+#   @prop blank         config_set keeps blank and whitespace-only lines,
+#                       anywhere (trailing ones too)
+#   @prop crlf          config_set keeps the CR of every line but the last
+#   @prop eof           config_set keeps the final line's terminator (LF,
+#                       CRLF or none)
+#   @prop foreign-known config_set keeps other writers' keys
+#   @prop unknown       config_set keeps keys worktool does not know
+#   @prop dup-foreign   config_set keeps duplicated lines it does not own
+#   @prop order         config_set keeps the order of the lines it does not own
+#   @prop odd-args      config_set refuses an odd argument count, writing nothing
+#   @prop fail-nothing  config_set writes nothing when rendering fails
+#   @prop atomic        config_set replaces the file by rename (a reader
+#                       holding the old file keeps the old bytes)
+#   @prop mode          config_set keeps the file's mode
+#   @prop lock          config_set calls are serialised by flock(1)
+#   @prop no-flock      without flock(1) config_set refuses (error, exit 1)
+#                       and writes nothing
+#   @prop wa-atomic     config_write_atomic replaces its file by rename
+#   @prop wa-mode       config_write_atomic keeps its file's mode
+#
+# No file content passes through a command substitution here: `$(...)`
+# drops trailing newlines.
 #
 # This is a library: it defines functions and must be sourced, not
 # executed; it sets no shell options.
