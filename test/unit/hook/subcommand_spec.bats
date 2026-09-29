@@ -398,3 +398,21 @@ setup() {
     run hook_subcommands "busybox sh -c 'bats t'"
     assert_output "bats t"
 }
+
+@test "hook_is_interpreter names the non-shell interpreters" {
+    local _w
+    for _w in python3 python3.12 /usr/bin/python perl ruby node nodejs php gawk awk lua Rscript; do
+        run hook_is_interpreter "${_w}"
+        assert_success
+    done
+    for _w in bash gh git cat python-config; do
+        run hook_is_interpreter "${_w}"
+        assert_failure
+    done
+}
+
+@test "a heredoc fed to a non-shell interpreter becomes a here-string word of its launch" {
+    run hook_subcommands "$(printf "python3 - <<'EOF'\nprint(1)\nEOF\nls")"
+    assert_line --index 0 --partial "python3 - <<<print"
+    assert_line --index 1 "ls"
+}

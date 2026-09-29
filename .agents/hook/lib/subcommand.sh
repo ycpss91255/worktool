@@ -67,6 +67,10 @@
 #   hook_word_has_bare_subst <encoded word>   0 when the word holds an
 #     UNQUOTED $(...) / `...`: the shell word-splits its output, so the one
 #     word seen here may launch as several (options included)
+#   hook_is_interpreter <word>   0 when <word> (a path allowed) names a
+#     non-shell interpreter that runs inline code (python, perl, ruby, node,
+#     php, awk, lua ...); a heredoc fed to one becomes a here-string word of
+#     its launch, so a hook can read the program text
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -120,8 +124,15 @@ _hook_shell_reads_stdin() {
     return 0
 }
 
+# hook_is_interpreter <word> - see the header.
+hook_is_interpreter() {
+    [[ "${1##*/}" =~ ^(python[0-9.]*|pypy[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|deno|bun|php[0-9.]*|[gmn]?awk|lua[0-9.]*|luajit|Rscript|tclsh[0-9.]*|osascript)$ ]]
+}
+
 # _hook_heredoc_to_shell <text before the heredoc operator> - 0 when the
-# heredoc it opens is the script of a shell interpreter (header step 1).
+# heredoc it opens is the script of a shell interpreter (header step 1) or
+# the stdin of a non-shell interpreter (hook_is_interpreter), whose program
+# a hook may need to read.
 _hook_heredoc_to_shell() {
     local _seg="$1" _re='[0-9]*[<>]&[0-9-]*' _lead
     local -a _w
@@ -133,7 +144,9 @@ _hook_heredoc_to_shell() {
     _lead="$(hook_timeout_lead "${_seg} ")"
     _seg="${_seg#"${_lead}"}"
     read -r -a _w <<<"${_seg}"
-    _hook_shell_reads_stdin "${_w[@]}"
+    _hook_shell_reads_stdin "${_w[@]}" && return 0
+    [[ "${_w[0]:-}" == busybox || "${_w[0]:-}" == */busybox ]] && _w=("${_w[@]:1}")
+    hook_is_interpreter "${_w[0]:-}"
 }
 
 # _hook_herestring <body> <quoted> - the heredoc body as a single-quoted
