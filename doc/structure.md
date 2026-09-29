@@ -58,7 +58,7 @@ worktool/
 │   └── helper/          bats 共用 helper
 │       └── common.bash  路徑常數 + bats-support / bats-assert 載入
 ├── dockerfile/
-│   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + 鎖定版 distrobox)
+│   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + jq + 鎖定版 distrobox)
 │   └── Dockerfile.system-real  DinD runner 映像(docker:29.8.0-dind + bash + bats 1.14.0 + 同一鎖定版 distrobox)
 ├── doc/
 │   ├── design.md        整體設計、治理、milestone 計畫
