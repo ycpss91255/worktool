@@ -21,7 +21,9 @@
 #      repeated flag is judged, in every form (-b x, -bx, -b=x, --body=x),
 #      and the last -X / --method decides a read. A body holding the
 #      approval phrase must start with [claude] or [codex]. A body the hook
-#      cannot read (stdin, a missing file, a command substitution) blocks.
+#      cannot read (stdin, a missing file, a command substitution, --input
+#      included) blocks. A gh api endpoint (or other bare word) built by a
+#      command substitution blocks unless the call only reads.
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real gh launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
@@ -140,18 +142,27 @@ _opt_has_subst() {
     return 1
 }
 
-# _positional <value-opts> <from> - the first positional word from index
-# <from> on, skipping the value of every option listed in <value-opts>.
-_positional() {
-    local _i
+# _positionals_at <value-opts> <from> - the index of every positional word
+# from index <from> on, one per line, skipping the value of every option
+# listed in <value-opts>.
+_positionals_at() {
+    local _i _found=1
     for ((_i = $2; _i < ${#_W[@]}; _i++)); do
         case "${_W[_i]}" in
             --*=*) ;;
             -*) [[ "$1" == *" ${_W[_i]} "* ]] && _i=$((_i + 1)) ;;
-            *) printf '%s' "${_W[_i]}"; return 0 ;;
+            *) printf '%s\n' "${_i}"; _found=0 ;;
         esac
     done
-    return 1
+    return "${_found}"
+}
+
+# _positional <value-opts> <from> - the first positional word (see above).
+_positional() {
+    local _i
+    _i="$(_positionals_at "$@" | head -n 1)"
+    [[ -n "${_i}" ]] || return 1
+    printf '%s' "${_W[_i]}"
 }
 
 # _gh <args> - run gh from the session's working directory.
@@ -246,6 +257,33 @@ _api_endpoint() {
     printf '%s' "${_ep#/}"
 }
 
+# _api_is_read - 0 when a gh api launch only reads: the last -X / --method
+# is GET / DELETE / HEAD, or, with none, no field or --input makes gh POST.
+_api_is_read() {
+    local _m
+    if _m="$(_opt -X --method)"; then
+        [[ "${_m^^}" =~ ^(GET|DELETE|HEAD)$ ]]
+        return
+    fi
+    ! _opt_at -f --raw-field -F --field --input >/dev/null
+}
+
+# _check_api_subst - fail closed on a gh api launch whose endpoint, or any
+# other bare word, comes from a command substitution: it may expand to a
+# merge or comments endpoint (it decodes to '_', matching neither check)
+# or to options the hook never saw. A read of a built endpoint passes.
+_check_api_subst() {
+    local _i _n=0
+    while IFS= read -r _i; do
+        _n=$((_n + 1))
+        hook_word_has_subst "${_E[_i]}" || continue
+        [[ "${_n}" -eq 1 ]] && _api_is_read && continue
+        hook_block "gh api: an endpoint (or bare word) built by a command substitution cannot be checked for a merge or a comment write (fail closed)." \
+            "Spell the endpoint out literally (a separate step may compute it first)."
+    done < <(_positionals_at "${_API_VALUE_OPTS}" 2)
+    return 0
+}
+
 # _check_api_merge <endpoint> - gate a gh api call to .../pulls/<n>/merge.
 _check_api_merge() {
     local _re='^repos/([^/]+)/([^/]+)/pulls/([0-9]+)/merge/?$' _repo
@@ -327,11 +365,13 @@ _check_api_fields() {
 # .../comments (a read, -X GET / DELETE, passes).
 _check_api_comment() {
     [[ "$1" =~ /comments(/[0-9]+)?/?(\?.*)?$ ]] || return 0
-    local _m _body _input
-    _m="$(_opt -X --method)"
-    [[ "${_m^^}" =~ ^(GET|DELETE|HEAD)$ ]] && return 0
-    if _opt_has_subst -f --raw-field -F --field; then
-        hook_block "gh api comment field with a command substitution cannot be checked (fail closed)."
+    local _body _input
+    _api_is_read && return 0
+    # --input too: its substitution decodes to '_', and a benign '_' file
+    # must not stand in for the file the shell really submits.
+    if _opt_has_subst -f --raw-field -F --field --input; then
+        hook_block "gh api comment field or --input with a command substitution cannot be checked (fail closed)." \
+            "Write the body to a file first, then pass --input <literal path>."
     fi
     _check_api_fields 0 -f --raw-field
     _check_api_fields 1 -F --field
@@ -351,6 +391,7 @@ _check_launch() {
         "pr merge") _check_pr_merge ;;
         "pr comment"|"pr review"|"pr create"|"issue comment"|"issue create") _check_gh_body ;;
         api)
+            _check_api_subst
             _ep="$(_api_endpoint)" || return 0
             _check_api_merge "${_ep}"
             _check_api_comment "${_ep}" ;;

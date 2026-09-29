@@ -332,7 +332,10 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     這四個字放行。重複的旗標每一個值都檢查(gh 取最後一個,但不讓前面的值掩護),
     各種寫法都算(`-b x`、`-bx`、`-b=x`、`--body=x`、`--raw-field=body=...`);
     `-X`/`--method` 以最後一個為準。讀不到的內文(stdin、不存在的檔案、
-    command substitution)一律擋。
+    command substitution,含 `--input` 的檔名)一律擋。
+  - `gh api` 的 endpoint(或其他裸字)由 command substitution 組成時,hook 無法判斷它是否
+    展開成 merge 或 comments endpoint,除非是讀取(最後的 `-X` 為 GET/DELETE/HEAD,或沒有
+    `-X` 也沒有任何欄位與 `--input`),一律擋(fail closed)。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo、
