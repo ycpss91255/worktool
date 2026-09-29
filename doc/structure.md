@@ -42,6 +42,10 @@ worktool/
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
+│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
+│   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單
+│   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同)
+│   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -56,7 +60,8 @@ worktool/
 │   ├── acceptance/      交付/驗收測試(bats):跑交付的公開入口
 │   │   └── m2_selfcheck_spec.bats   script/test/selfcheck.sh 對交付 repo 印 ALL PASS(含負向)
 │   └── helper/          bats 共用 helper
-│       └── common.bash  路徑常數 + bats-support / bats-assert 載入
+│       ├── common.bash  路徑常數 + bats-support / bats-assert 載入
+│       └── hook.bash    hook spec 共用:hook_json / run_hook / disable_line
 ├── dockerfile/
 │   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + jq + 鎖定版 distrobox)
 │   └── Dockerfile.system-real  DinD runner 映像(docker:29.8.0-dind + bash + bats 1.14.0 + 同一鎖定版 distrobox)
@@ -73,11 +78,21 @@ worktool/
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
-├── .agents/
-│   └── skills/          agent skill 的實體檔(repo 層級,不裝在使用者層級)
-│       └── i-have-adhd/
+├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
+│   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_shellcheck_disable_approval、worktree_create、
+│   │   │                remind_workflow_tdd、remind_no_emoji)
+│   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
+│   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
+│   │                    (state 預設在被 gitignore 的 .agents/state/)
+│   ├── skills/          agent skill 的實體檔:i-have-adhd(#191)+ 工程類 skill(tdd、triage、wait-pr-ci ...,#189)
+│   └── memory/          agent memory 的實體檔 + MEMORY.md 索引
 ├── .claude/
-│   ├── skills           -> ../.agents/skills(相對 symlink;Claude Code 從專案目錄載入 skill)
+│   ├── settings.json    進版控的 hook 註冊,一律 ${CLAUDE_PROJECT_DIR}/.claude/hook/<名稱>.sh
+│   ├── hook             -> ../.agents/hook(以下四個都是相對 symlink,真檔在 .agents/)
+│   ├── script           -> ../.agents/script
+│   ├── skills           -> ../.agents/skills(Claude Code 從專案目錄載入 skill)
+│   ├── memory           -> ../.agents/memory
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
@@ -253,7 +268,8 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+`setup_spec`、`status_spec`、`workflow_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
+agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
