@@ -19,8 +19,9 @@
 #
 # Rules: an existing entry in the box HOME (file, directory or a foreign
 # symlink, dangling or not) is NEVER overwritten - [WARN] and skip. Nothing
-# is ever written outside the box HOME: a parent directory of an entry that
-# is a symlink (or not a directory) is never followed - [WARN] and skip. A
+# is ever written outside the box HOME: the box HOME itself, or a parent
+# directory of an entry in it, that is a symlink (or not a directory) is
+# never followed - [WARN] and skip. A
 # missing host source is skipped (no dangling link is made). Every entry is
 # logged on stderr (lib/log.sh); stdout carries data only.
 #
@@ -83,15 +84,18 @@ link_entries() {
     done < <(link_defaults; _link_config_all "$1" link)
 }
 
-# Return 0, printing it, when a parent directory of entry $1 (HOME-relative)
-# inside box HOME $2 is a symlink or exists as something other than a
-# directory: following it could create the link outside the box HOME.
+# Return 0, printing it, when box HOME $2 itself or a parent directory of
+# entry $1 (HOME-relative) inside it is a symlink or exists as something
+# other than a directory: following it could create the link outside the
+# box HOME (mkdir -p and ln -s both follow a symlinked directory).
 _link_parent_unsafe() {
     local _dir="$2" _part
     local -a _parts
+    # A trailing slash would make -L test the symlink's target instead.
+    while [[ "${_dir}" == ?*/ ]]; do _dir="${_dir%/}"; done
     IFS=/ read -r -a _parts <<<"$1"
-    for _part in "${_parts[@]:0:${#_parts[@]}-1}"; do
-        _dir="${_dir}/${_part}"
+    for _part in "" "${_parts[@]:0:${#_parts[@]}-1}"; do
+        _dir="${_dir}${_part:+/${_part}}"
         if [[ -L "${_dir}" || (-e "${_dir}" && ! -d "${_dir}") ]]; then
             printf '%s\n' "${_dir}"
             return 0
@@ -103,8 +107,9 @@ _link_parent_unsafe() {
 # The state of entry $1 (HOME-relative) in box HOME $2:
 #   linked          <box home>/<rel> is our link and the source exists
 #   missing-source  the host source does not exist
-#   blocked         something else already sits at <box home>/<rel>, or a
-#                   parent of it there is a symlink or not a directory
+#   blocked         something else already sits at <box home>/<rel>, or the
+#                   box HOME or a parent of <rel> in it is a symlink or not
+#                   a directory
 #   absent          not linked yet, the source exists
 link_state() {
     local _src="${HOME}/$1" _dst="$2/$1"

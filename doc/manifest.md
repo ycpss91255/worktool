@@ -136,9 +136,9 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
   以外的路徑、含 `..` 的路徑會 `[WARN]` 並略過。
 - 盒子 HOME 已有同名項目(檔案、目錄、別的 symlink,含失效的 symlink)→
   **不覆蓋**,`[WARN]` 並略過。host 上沒有的來源 → 略過,不建失效連結。
-- **只寫在盒子 HOME 之內**:某一項的上層目錄在盒子 HOME 裡是 symlink(例如
-  `.config -> /elsewhere`)或不是目錄 → 不跟隨,`[WARN]` 並略過該項,不會經由
-  它把連結建到盒子 HOME 外面。
+- **只寫在盒子 HOME 之內**:盒子 HOME 本身、或某一項的上層目錄在盒子 HOME 裡
+  是 symlink(例如 `.config -> /elsewhere`)或不是目錄 → 不跟隨,`[WARN]` 並略過
+  該項,不會經由它把連結建到盒子 HOME 外面。
 - 每一項都印 log(stderr):`[INFO] link: <盒子 HOME>/.ssh -> $HOME/.ssh`、
   `(already linked)`、`not found on the host - skipped` 或上述 `[WARN]`。
   有連結建不起來時 exit 1。

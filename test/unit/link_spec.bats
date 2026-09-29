@@ -20,8 +20,8 @@
 #   - Every entry is logged on stderr; stdout stays empty.
 #   - The box HOME is given by the caller (assemble.sh reads it from the
 #     manifest's `home=`, lib/manifest.sh manifest_home); nothing is linked
-#     outside it: a parent directory in the box HOME that is a symlink (or
-#     not a directory) blocks the entry - [WARN] and skip.
+#     outside it: the box HOME itself, or a parent directory in it, that is
+#     a symlink (or not a directory) blocks the entry - [WARN] and skip.
 #   - Every path derives from HOME / XDG_CONFIG_HOME: a throwaway HOME per
 #     case, the real home is never touched.
 
@@ -242,6 +242,45 @@ _host_fingerprint() {
     assert_success
     assert_equal "$(cat "${BOX_HOME}/.config")" "not a dir"
     [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME}/.config"* ]] || fail "no warning: ${stderr}"
+}
+
+@test "a box HOME that is itself a symlink is never followed: warn and skip, nothing written outside" {
+    _make_sources
+    local _outside="${BATS_TEST_TMPDIR}/outside"
+    mkdir -p "${_outside}"
+    ln -s "${_outside}" "${BOX_HOME}"
+    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    assert_success
+    [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME} (parent of ${BOX_HOME}/.ssh)"* ]] || fail "no warning: ${stderr}"
+    assert_equal "$(readlink "${BOX_HOME}")" "${_outside}"
+    run find "${_outside}" -mindepth 1
+    assert_output ""
+    run link_state .ssh "${BOX_HOME}"
+    assert_output "blocked"
+}
+
+@test "a symlinked box HOME given with a trailing slash is still never followed" {
+    _make_sources
+    local _outside="${BATS_TEST_TMPDIR}/outside"
+    mkdir -p "${_outside}"
+    ln -s "${_outside}" "${BOX_HOME}"
+    run --separate-stderr link_apply "${BOX_HOME}/" "${CONFIG}"
+    assert_success
+    run find "${_outside}" -mindepth 1
+    assert_output ""
+    run link_state .ssh "${BOX_HOME}//"
+    assert_output "blocked"
+}
+
+@test "a box HOME that is a file blocks every entry: warn and skip" {
+    _make_sources
+    printf 'not a dir\n' >"${BOX_HOME}"
+    run --separate-stderr link_apply "${BOX_HOME}" "${CONFIG}"
+    assert_success
+    assert_equal "$(cat "${BOX_HOME}")" "not a dir"
+    [[ "${stderr:-}" == *"[WARN]"*"${BOX_HOME} (parent of ${BOX_HOME}/.gitconfig)"* ]] || fail "no warning: ${stderr}"
+    run link_state .gitconfig "${BOX_HOME}"
+    assert_output "blocked"
 }
 
 # --- states (read by `just box status`) ----------------------------------------

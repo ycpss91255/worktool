@@ -375,7 +375,7 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   引用、以及舊版沒有 quote 的絕對路徑),以及 user config 連結的四種狀態(#199);
   `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、
   建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 / 外來 symlink 不覆蓋且
-  warn、上層目錄是 symlink 或檔案時不跟隨、來源不存在不建連結、每項都有 log、
+  warn、盒子 HOME 本身或上層目錄是 symlink 或檔案時不跟隨、來源不存在不建連結、每項都有 log、
   重跑冪等(盒子 HOME 的 `home=` 解析在 `test/unit/manifest_spec.bats`);
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
