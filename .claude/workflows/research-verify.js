@@ -32,8 +32,9 @@ export const meta = {
 // synthesis stops before Record. Nothing is posted unless all of them held.
 // No repo writes (#243): every prompt confines intermediate files to SCRATCH;
 // Research captures `git status --porcelain` of repoDir first, and after
-// Record a repo-check compares it again: any extra line (or no answer) is
-// 'repo-dirty' with the extra lines in detail, even if the comment went out.
+// Record a repo-check compares it again in both directions: a line that
+// appeared or vanished, a git/grep error, or no answer is 'repo-dirty' with
+// the lines in detail, even if the comment went out.
 //
 // Shell safety: repo must be owner/name; repoDir must be an absolute path
 // without control characters or backticks. Every path or value that reaches a
@@ -63,6 +64,10 @@ const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Wri
 // Appended to every phase prompt: the checkout is someone's working tree (#243).
 const SCRATCH_ONLY = `\nFile rule: Intermediate files (notes, drafts, logs) go ONLY under ${JSON.stringify(`${SCRATCH}/`)} (or the system temp dir); never create, edit or delete any other path under ${JSON.stringify(REPO_DIR)}, tracked or untracked. Report findings in your answer, not in files.`
 const GIT_STATUS = (f) => `git -C ${sq(REPO_DIR)} status --porcelain > ${f}`
+// Both directions (a line that appeared AND one that vanished), and grep's
+// exit 2 (an unreadable capture) is a failure, never "no difference".
+const GREP_DIFF = (a, b, f) => `{ grep -vxF -f ${a} ${b} > ${f}; [ $? -le 1 ]; }`
+const REPO_DIFF = `${GIT_STATUS('status-after.txt')} && ${GREP_DIFF('status-before.txt', 'status-after.txt', 'repo-added.txt')} && ${GREP_DIFF('status-after.txt', 'status-before.txt', 'repo-removed.txt')} && { sed 's/^/+ /' repo-added.txt; sed 's/^/- /' repo-removed.txt; } > repo-extra.txt || { echo 'repo-check failed: git status or grep error' > repo-extra.txt; false; }`
 
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
@@ -82,7 +87,7 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
 const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md status-before.txt status-after.txt repo-extra.txt\`, then capture the checkout state BEFORE anything else: \`${CD} && ${GIT_STATUS('status-before.txt')}\`.
+1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt\`, then capture the checkout state BEFORE anything else: \`${CD} && ${GIT_STATUS('status-before.txt')}\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ===BEGIN===
 ${AGY_PROMPT}
@@ -147,8 +152,8 @@ const RECORD = `Post the research result for issue #${A.issue} as ONE comment. N
 `
 
 const REPO_CHECK = `Check that the research run on issue #${A.issue} left the checkout ${JSON.stringify(REPO_DIR)} as it found it. Change nothing; only run and report.
-1. Run in the foreground: \`${CD} && ${GIT_STATUS('status-after.txt')} && { grep -vxF -f status-before.txt status-after.txt || true; } > repo-extra.txt\`.
-2. Return extra = the lines of repo-extra.txt, verbatim, one array item per line (empty array when the file is empty). If the command failed, return extra = ["repo-check failed: <error>"]. Do not clean up or delete any path you find.${SCRATCH_ONLY}`
+1. Run in the foreground: \`${CD} && ${REPO_DIFF}\`. repo-extra.txt gets "+ <line>" for each status line that appeared and "- <line>" for each that vanished (e.g. a deleted untracked file); if git or grep failed it holds a "repo-check failed" line instead.
+2. Return extra = the lines of repo-extra.txt, verbatim, one array item per line (empty array only when the command succeeded and the file is empty). If the command failed, return extra = ["repo-check failed: <error>"]. Do not clean up or delete any path you find.${SCRATCH_ONLY}`
 
 const isList = (x) => Array.isArray(x) && x.every(i => typeof i === 'string')
 const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''

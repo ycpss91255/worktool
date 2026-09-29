@@ -484,7 +484,41 @@ _rv_with() {
     assert_success
     [[ -e "${dir}/stray-note.md" ]]
     run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
-    assert_output "?? stray-note.md"
+    assert_output "+ ?? stray-note.md"
+}
+
+@test "research-verify (node): the repo-check shell step reports a status line that disappeared, e.g. a deleted untracked file (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: deletes an untracked file that was there before the run
+    printf '#!/bin/sh\nrm -f ../../../old-note.md\necho "1. claim [x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    touch "${dir}/old-note.md"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ ! -e "${dir}/old-note.md" ]]
+    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    assert_output "- ?? old-note.md"
+}
+
+@test "research-verify (node): the repo-check shell step fails closed when grep errors, e.g. an unreadable status-before.txt (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: removes the pre-run capture from the scratch dir (its cwd)
+    printf '#!/bin/sh\nrm -f status-before.txt\necho "1. claim [x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    run jq -r '.ran[-1].rc' <<<"${output}"
+    refute_output "0"
+    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    assert_output --partial "repo-check failed"
 }
 
 @test "doc/workflow.md documents research-verify and its args" {
