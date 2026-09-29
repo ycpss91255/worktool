@@ -37,8 +37,11 @@
 #
 # Functions (the file can be sourced; main runs only when executed):
 #   codex_round_of <prompt_text>
-#       the largest N of every "第 N 輪" in the text, leading zeros
-#       dropped; nothing when none
+#       the N of the FIRST "第 N 輪" in the text, leading zeros dropped;
+#       nothing when none. pr-loop declares the round ("這是第 N 輪:")
+#       before it quotes the prior verdict, and that verdict (or quoted
+#       issue text) may name later rounds, so the first mention is the
+#       round and later ones are data
 #   codex_root_cause_ok <prompt_text>
 #       0 when the text has a "## 根因" section with 類別 / 根因 / 修法
 #       each followed by non-blank text
@@ -73,16 +76,11 @@ _num_ge() {
 
 # codex_round_of <prompt_text> - see the header.
 codex_round_of() {
-    local _n _max=''
-    while IFS= read -r _n; do
-        while [[ "${_n}" == 0?* ]]; do _n="${_n#0}"; done
-        [[ -n "${_n}" ]] || continue
-        if [[ -z "${_max}" ]] || ! _num_ge "${_max}" "${_n}"; then
-            _max="${_n}"
-        fi
-    done < <(printf '%s' "${1:-}" | grep -oE '第[[:space:]]*[0-9]+[[:space:]]*輪' | grep -oE '[0-9]+')
-    [[ -n "${_max}" ]] && printf '%s\n' "${_max}"
-    return 0
+    local _re='第[[:space:]]*([0-9]+)[[:space:]]*輪' _n
+    [[ "${1:-}" =~ ${_re} ]] || return 0
+    _n="${BASH_REMATCH[1]}"
+    while [[ "${_n}" == 0?* ]]; do _n="${_n#0}"; done
+    printf '%s\n' "${_n}"
 }
 
 # _root_cause_section <prompt_text> - the lines under the first "## 根因"

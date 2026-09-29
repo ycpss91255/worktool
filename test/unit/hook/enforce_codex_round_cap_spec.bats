@@ -52,8 +52,10 @@ _prompt_file() { printf '%s\n' "$2" >"${FIXTURE_DIR}/$1"; }
     assert_output "12"
 }
 
-@test "codex_round_of: several mentions -> the largest round" {
+@test "codex_round_of: several mentions -> the first one (the declaration), not the largest" {
     _source_hook
+    run codex_round_of "這是第 3 輪:上一輪判定提到第 4 輪與第 5 輪"
+    assert_output "3"
     run codex_round_of "這是第 5 輪:第 4 輪的判定逐字如下"
     assert_output "5"
 }
@@ -160,6 +162,56 @@ _prompt_file() { printf '%s\n' "$2" >"${FIXTURE_DIR}/$1"; }
     assert_failure
     run codex_prompt_allowed "第 9223372036854775808 輪"
     assert_failure
+}
+
+# --- the real pr-loop re-verification prompt ---------------------------------
+# .claude/workflows/pr-loop.js writes prompt-r<N>.txt as a fixed preamble,
+# then (from round 2) "這是第 N 輪:" and the prior verdict verbatim - a
+# verdict that quotes the issue ("第 4 輪起須附根因") and names later rounds.
+
+# _pr_loop_prompt <round> <prior verdict> - prompt-r<round>.txt as pr-loop
+# writes it (the template on pr-loop.js's prompt line, kept in step by the
+# contract test below).
+_pr_loop_prompt() {
+    local _p="你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。"
+    [[ -n "$2" ]] && _p+="這是第 $1 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:"$'\n'"$2"$'\n'
+    _p+="請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN)。最後一行只能是「可合併」或「不可合併:<原因>」。"
+    printf '%s\n' "${_p}"
+}
+
+# A prior verdict that mentions rounds 4 and 5, as the real round-3 one did.
+PRIOR=$'## 阻擋項\n\n- PR 實作了「第 4 輪起須維護者精確核准」;issue 要求第 4 輪起附「## 根因」。\n- 含第 4 輪與第 5 輪的指令只核准第 5 輪不能放行第 4 輪。\n\n不可合併:需求不符'
+
+@test "pr-loop.js still declares the round before quoting the prior verdict" {
+    local _js="${REPO_ROOT}/.claude/workflows/pr-loop.js"
+    local _decl="這是第 \${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\\n\${prior}"
+    run grep -cF "${_decl}" "${_js}"
+    assert_output "1"
+}
+
+@test "hook: pr-loop prompts for rounds 1-3 quoting a verdict that names rounds 4 and 5 pass" {
+    local _n _cmd
+    mkdir -p "${FIXTURE_DIR}/scratch"
+    for _n in 1 2 3; do
+        if (( _n == 1 )); then _pr_loop_prompt 1 '' >"${FIXTURE_DIR}/scratch/prompt-r1.txt"
+        else _pr_loop_prompt "${_n}" "${PRIOR}" >"${FIXTURE_DIR}/scratch/prompt-r${_n}.txt"; fi
+        _cmd="cd ${FIXTURE_DIR}/scratch && { cat ctx-r${_n}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check \"\$(cat prompt-r${_n}.txt)\" > out-r${_n}.txt 2>&1"
+        _check "${_cmd}" /
+        assert_success
+        assert_output ""
+    done
+}
+
+@test "hook: pr-loop prompt for round 4 quoting that verdict -> blocked; with the root cause -> pass" {
+    mkdir -p "${FIXTURE_DIR}/scratch"
+    local _cmd="cd ${FIXTURE_DIR}/scratch && cat pr.diff | timeout 420 codex exec --skip-git-repo-check \"\$(cat prompt-r4.txt)\""
+    _pr_loop_prompt 4 "${PRIOR}" >"${FIXTURE_DIR}/scratch/prompt-r4.txt"
+    _check "${_cmd}" /
+    assert_failure 2
+    assert_output --partial "round 4"
+    _pr_loop_prompt 4 "${PRIOR}"$'\n'"${RC}" >"${FIXTURE_DIR}/scratch/prompt-r4.txt"
+    _check "${_cmd}" /
+    assert_success
 }
 
 # --- the hook end to end ------------------------------------------------------
