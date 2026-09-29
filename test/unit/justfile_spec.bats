@@ -72,7 +72,7 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's twelve forwarding targets with recording stubs. Each
+# Replace the copy's thirteen forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
@@ -80,7 +80,8 @@ _stub_scripts() {
     for _s in script/test/test.sh script/test/selfcheck.sh \
         script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh \
         script/verify/ui.sh script/verify/gate.sh script/verify/setup.sh \
-        script/verify/diagram.sh script/verify/realbox.sh script/verify/evidence.sh; do
+        script/verify/diagram.sh script/verify/realbox.sh script/verify/evidence.sh \
+        script/verify/all.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -364,13 +365,35 @@ _listed_names() {
 
 # --- verify namespace: the acceptance checks of doc/acceptance.md -----------
 
-@test "just verify lists the six verify verbs, default and help (alias h) only" {
+@test "just verify lists the six verify verbs, all, default and help (alias h) only" {
     _just verify
     assert_success
     assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" \
-        "default diagram evidence gate help realbox setup ui "
+        "all default diagram evidence gate help realbox setup ui "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     assert_equal "$(_stub_calls)" ""
+}
+
+@test "bare just verify says it only listed and verified nothing, names just verify all, exits 0" {
+    _stub_scripts
+    _just verify
+    assert_success
+    assert_line "NOTE: this only lists the verify groups - nothing has been verified. Run \`just verify all\` to verify every non-real-machine group (realbox needs --allow-real-box on a real host)."
+    assert_equal "$(_stub_calls)" ""
+}
+
+@test "just verify all forwards to all.sh with no argument" {
+    _stub_scripts
+    _just verify all
+    assert_success
+    assert_equal "$(_stub_calls)" "all.sh"
+    assert_equal "$(_last_argc)" "0"
+}
+
+@test "just verify all --bogus is refused by all.sh itself (exit 2), not by the justfile" {
+    _just verify all --bogus
+    assert_failure 2
+    assert_line "all.sh: unknown option '--bogus' (see --help)"
 }
 
 @test "just verify <verb> forwards to its script with no argument" {
@@ -416,7 +439,7 @@ _listed_names() {
     _stub_scripts
     local _expected
     _expected="$(printf '%s\n' 'ui.sh --help' 'gate.sh --help' 'setup.sh --help' \
-        'diagram.sh --help' 'realbox.sh --help' 'evidence.sh --help')"
+        'diagram.sh --help' 'realbox.sh --help' 'evidence.sh --help' 'all.sh --help')"
     _just verify help
     assert_success
     assert_equal "$(_stub_calls)" "${_expected}"
