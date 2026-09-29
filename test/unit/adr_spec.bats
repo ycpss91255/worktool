@@ -142,16 +142,20 @@ _adr_0011_check_guard() {
     assert_output --partial "127"
 }
 
-@test "ADR 0011 keeps #209 open until doc/contract.md backfills the invariant index" {
-    # #209 also asks for the doc/contract.md index link; that file is not on
-    # main yet (it lands with #201), so the ADR must record the backfill as
-    # still owed and say #209 stays open (codex round 1 on PR #262).
+@test "ADR 0011 hands the doc/contract.md index backfill to #264, split out of #209" {
+    # #209 asked for the doc/contract.md index link, but that file lands with
+    # #201; the backfill was split into its own issue #264 so #209 is one PR
+    # (codex round 2 on PR #262). The ADR must name #264 and #201, and must
+    # no longer claim #209 stays open for it.
     run _adr_0011_section "目前由哪些機制或測試守住"
     assert_success
-    run grep -F "doc/contract.md" <<<"${output}"
+    local _section="${output}"
+    run grep -F "doc/contract.md" <<<"${_section}"
     assert_success
-    assert_output --partial "#209"
+    assert_output --partial "#264"
     assert_output --partial "#201"
-    assert_output --partial "不關閉"
-    assert_output --partial "待補"
+    assert_output --partial "#209"
+    assert_output --partial "拆出"
+    run grep -F "不關閉" <<<"${_section}"
+    assert_failure
 }
