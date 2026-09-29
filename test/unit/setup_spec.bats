@@ -157,62 +157,76 @@ _block_count() {
     assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
 }
 
-# --- #199 r3: setup owns only its own keys in the shared state file --------
+# --- #199 r3/r4: setup owns only its own keys in the shared state file -----
 # The state file has several writers (setup: the four decisions; assemble:
 # home / home.source; the user: link= lines). setup must update its own
-# keys in place and keep every other line byte-for-byte: comments, blank
-# lines, link= entries (duplicates too), the box home, keys a later
-# version may add.
+# keys in place and keep every other byte: comments, blank and
+# whitespace-only lines, link= entries (duplicates too), the box home, keys
+# a later version may add, CRLF lines, trailing blank lines and a missing
+# final newline. The matrix is setup run x EOF framing, and every case
+# compares the whole file byte-for-byte (cmp) with the file it must be:
+# `run cat` / `$(...)` drop trailing newlines and cannot see the framing.
 
-# The foreign lines of state file $1: every line that is not one of
-# setup's own keys (<decision>, <decision>.source, bare or with a value).
-_foreign() {
-    grep -vE '^(auto-enter|terminal|tmux|box)(\.source)?(=|$)' "$1" || true
+# The tail of the state file for EOF framing $1, as a printf %b string.
+_tail() {
+    case "$1" in
+        nl)     printf '%s' 'link=.config/foo\n' ;;
+        nonl)   printf '%s' 'link=.config/foo' ;;
+        blanks) printf '%s' 'link=.config/foo\n\n\n' ;;
+        ws)     printf '%s' 'link=.config/foo\n  \t ' ;;
+        crlf)   printf '%s' '# crlf note\r\nlink=.config/foo\r\n' ;;
+    esac
 }
 
-# A state file mixing setup's own keys (interleaved, one duplicated) with
-# every kind of foreign line.
-_write_mixed_config() {
-    mkdir -p "$(dirname -- "${CONFIG}")"
-    printf '%s\n' \
-        '# my own notes about worktool' \
-        '' \
-        'link=~/.aws' \
-        'tmux=host' \
-        'tmux.source=user' \
-        'link=.config/foo' \
-        'link=~/.aws' \
-        'future-key=some value = with = inside' \
-        'future-key.source=user' \
-        'box=dev' \
-        'box=dev' \
-        'home=/srv/my box' \
-        'home.source=user' \
-        '   ' \
-        '# trailing comment' >"${CONFIG}"
+# The own-key block with tmux / box set to $1 $2 (sources $3 $4). The input
+# holds a duplicated box line, which setup drops.
+_own() {
+    printf 'tmux=%s\\ntmux.source=%s\\nfuture-key=some value = with = inside\\nbox=%s\\nbox.source=%s\\n%slink=~/.aws\\n   \\n' \
+        "$1" "$3" "$2" "$4" "$5"
 }
 
-@test "#199 r3: every setup run keeps every foreign line byte-for-byte and updates its own keys once" {
-    local _args _before
-    local -a _opts
-    for _args in '' '--terminal none --tmux inside --box work' '--auto-enter no'; do
-        read -r -a _opts <<<"${_args}"
-        _write_mixed_config
-        _before="$(_foreign "${CONFIG}")"
-        run "${SETUP}" "${_opts[@]}"
-        assert_success
-        assert_equal "$(_foreign "${CONFIG}")" "${_before}"
-        run grep -cE '^(auto-enter|terminal|tmux|box)(\.source)?=' "${CONFIG}"
-        assert_output "8"
+_HEAD='# my own notes about worktool\n\nlink=~/.aws\n'
+
+@test "#199 r4: every setup run x every EOF framing keeps every foreign byte and updates its own keys once" {
+    local _framing _tail _sep _args _want
+    local -a _opts _case
+    for _framing in nl nonl blanks ws crlf; do
+        _tail="$(_tail "${_framing}")"
+        _sep=''
+        [[ "${_tail}" == *'\n' ]] || _sep='\n'
+        # args | auto-enter src | terminal src | tmux src | box src
+        for _args in '|yes default|none default|host user|dev user' \
+            '--terminal none --tmux inside --box work|yes default|none user|inside user|work user' \
+            '--auto-enter no|no user|none default|host user|dev user'; do
+            IFS='|' read -r -a _case <<<"${_args}"
+            read -r -a _opts <<<"${_case[0]}"
+            local -a _ae _te _tm _bx
+            read -r -a _ae <<<"${_case[1]}"
+            read -r -a _te <<<"${_case[2]}"
+            read -r -a _tm <<<"${_case[3]}"
+            read -r -a _bx <<<"${_case[4]}"
+            mkdir -p "$(dirname -- "${CONFIG}")"
+            printf '%b' "${_HEAD}$(_own host dev user user 'box=dev\n')${_tail}" >"${CONFIG}"
+            _want="${_HEAD}$(_own "${_tm[0]}" "${_bx[0]}" "${_tm[1]}" "${_bx[1]}" '')${_tail}${_sep}"
+            _want+="auto-enter=${_ae[0]}\nauto-enter.source=${_ae[1]}\nterminal=${_te[0]}\nterminal.source=${_te[1]}\n"
+            printf '%b' "${_want}" >"${BATS_TEST_TMPDIR}/expected"
+            run "${SETUP}" "${_opts[@]}"
+            assert_success
+            run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+            [[ "${status}" -eq 0 ]] || fail "framing ${_framing}, setup ${_case[0]:-<defaults>}: ${output}"
+        done
     done
-    # The last run (--auto-enter no) stored its choice; tmux and box kept
-    # their stored values.
-    run cat "${CONFIG}"
-    assert_line "auto-enter=no"
-    assert_line "auto-enter.source=user"
-    assert_line "tmux=host"
-    assert_line "box=dev"
-    assert_line "link=~/.aws"
+}
+
+@test "#199 r4: a CRLF line of one of setup's own keys is refused (exit 1) and the file is left byte-for-byte" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\r\ntmux=host\r\ntmux.source=user\n' >"${CONFIG}"
+    cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
+    run "${SETUP}"
+    assert_failure 1
+    assert_output --partial "invalid value"
+    run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+    assert_success
 }
 
 @test "#199 r3: a user link= line survives just box setup (the lost-entry regression)" {
@@ -225,7 +239,8 @@ _write_mixed_config() {
 }
 
 @test "#199 r3: setup keeps the state file's mode" {
-    _write_mixed_config
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\ntmux=host\ntmux.source=user\n' >"${CONFIG}"
     chmod 0640 "${CONFIG}"
     run "${SETUP}"
     assert_success

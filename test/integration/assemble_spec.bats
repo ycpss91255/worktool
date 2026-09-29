@@ -435,62 +435,62 @@ _user_config() {
     [[ ! -e "${HOME}/dev-box" ]] || fail "dry-run touched the box HOME"
 }
 
-# --- #199 r3: assemble owns only home / home.source in the state file -------
+# --- #199 r3/r4: assemble owns only home / home.source in the state file -
 # The state file has several writers (setup: the four decisions; assemble:
 # home / home.source; the user: link= lines). assemble must update its
-# own keys in place and keep every other line byte-for-byte; a refused run
-# must leave the whole file byte-for-byte.
+# own keys in place and keep every other byte - whitespace-only lines, CRLF
+# lines, trailing blank lines and a missing final newline included - and a
+# refused run must leave the whole file byte-for-byte. The matrix is
+# (record, refuse) x EOF framing, every case compared with cmp: `run cat` /
+# `$(...)` drop trailing newlines and cannot see the framing.
 
-# The foreign lines of state file $1: every line that is not home or
-# home.source (bare or with a value).
-_foreign() {
-    grep -vE '^home(\.source)?(=|$)' "$1" || true
+# The tail of the state file for EOF framing $1, as a printf %b string.
+_tail() {
+    case "$1" in
+        nl)     printf '%s' 'link=.config/foo\n' ;;
+        nonl)   printf '%s' 'link=.config/foo' ;;
+        blanks) printf '%s' 'link=.config/foo\n\n\n' ;;
+        ws)     printf '%s' 'link=.config/foo\n  \t ' ;;
+        crlf)   printf '%s' '# crlf note\r\nlink=.config/foo\r\n' ;;
+    esac
 }
 
-# A state file mixing assemble's own keys (interleaved, one duplicated)
-# with every kind of foreign line.
-_write_mixed_config() {
-    mkdir -p "$(dirname -- "${CONFIG}")"
-    printf '%s\n' \
-        '# my own notes about worktool' \
-        '' \
-        'auto-enter=no' \
-        'home=/srv/old' \
-        'auto-enter.source=user' \
-        'link=~/.aws' \
-        'link=~/.aws' \
-        'home.source=user' \
-        'future-key=some value = with = inside' \
-        'tmux=host' \
-        'tmux=host' \
-        'home=/srv/old' \
-        '# trailing comment' >"${CONFIG}"
-}
+_HEAD='# my own notes about worktool\n\nauto-enter=no\nauto-enter.source=user\n'
+_OWN_IN='home=/srv/old\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture-key=a = b\nhome=/srv/old\n'
+_OWN_OUT='home=/srv/new\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture-key=a = b\n'
 
-@test "#199 r3: a recorded home keeps every foreign line byte-for-byte and updates home once" {
-    local _before
-    _write_mixed_config
-    _before="$(_foreign "${CONFIG}")"
+@test "#199 r4: a recorded home x every EOF framing keeps every foreign byte and updates home once" {
+    local _framing _tail
     cd "${REPO_ROOT}"
-    FAKE_BOX_HOME=/srv/new run "${ASSEMBLE}" --home /srv/new
-    assert_success
-    assert_equal "$(_foreign "${CONFIG}")" "${_before}"
-    run grep -E '^home(\.source)?(=|$)' "${CONFIG}"
-    assert_output "$(printf 'home=/srv/new\nhome.source=user')"
+    for _framing in nl nonl blanks ws crlf; do
+        _tail="$(_tail "${_framing}")"
+        mkdir -p "$(dirname -- "${CONFIG}")"
+        printf '%b' "${_HEAD}${_OWN_IN}${_tail}" >"${CONFIG}"
+        printf '%b' "${_HEAD}${_OWN_OUT}${_tail}" >"${BATS_TEST_TMPDIR}/expected"
+        FAKE_BOX_HOME=/srv/new run "${ASSEMBLE}" --home /srv/new
+        assert_success
+        run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+        [[ "${status}" -eq 0 ]] || fail "framing ${_framing}: ${output}"
+    done
 }
 
-@test "#199 r3: a refused home change leaves the state file byte-for-byte" {
-    local _before
-    _write_mixed_config
-    _before="$(cat "${CONFIG}")"
+@test "#199 r4: a refused home change x every EOF framing leaves the state file byte-for-byte" {
+    local _framing
     cd "${REPO_ROOT}"
-    FAKE_BOX_HOME=/srv/old run "${ASSEMBLE}" --home /srv/new
-    assert_failure 1
-    assert_equal "$(cat "${CONFIG}")" "${_before}"
+    for _framing in nl nonl blanks ws crlf; do
+        mkdir -p "$(dirname -- "${CONFIG}")"
+        printf '%b' "${_HEAD}${_OWN_IN}$(_tail "${_framing}")" >"${CONFIG}"
+        cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
+        FAKE_BOX_HOME=/srv/old run "${ASSEMBLE}" --home /srv/new
+        assert_failure 1
+        run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+        [[ "${status}" -eq 0 ]] || fail "framing ${_framing}: ${output}"
+    done
 }
 
 @test "#199 r3: assemble keeps the state file's mode" {
-    _write_mixed_config
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf '%b' "${_HEAD}${_OWN_IN}" >"${CONFIG}"
     chmod 0640 "${CONFIG}"
     cd "${REPO_ROOT}"
     FAKE_BOX_HOME=/srv/new run "${ASSEMBLE}" --home /srv/new
