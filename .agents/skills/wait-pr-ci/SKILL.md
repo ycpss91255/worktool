@@ -32,7 +32,7 @@ worktool's branch protection requires exactly one check: the `ci-passed` aggrega
 - `FAIL <pr>`, exit 1: a matching check failed - read the failing job's log (`gh pr checks <pr> --repo ycpss91255/worktool`) before retrying.
 - `FAIL <pr> (mergeable=CONFLICTING)`, exit 1: main moved; rebase the branch onto `origin/main` and push, then watch again.
 - Exit 2: argument error (`wait-pr-ci.sh: unknown option '<x>' (see --help)`). Exit 124: `--max-iterations` reached (tests only).
-- `SKIPPED` counts as success, as it does for branch protection.
+- Only `SUCCESS` passes. A completed check that is `SKIPPED`, `CANCELLED`, `TIMED_OUT` or any other conclusion is `FAIL`, the same rule `ci-passed` applies to its gates (`doc/structure.md`, CI).
 
 ## Guards
 

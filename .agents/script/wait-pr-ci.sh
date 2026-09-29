@@ -126,7 +126,10 @@ _validate() {
 }
 
 # _checks_state <pr-json> <watch-start> - the rollup state of the matching
-# checks: no-checks | pending | all-pass | FAIL.
+# checks: no-checks | pending | all-pass | FAIL. Only SUCCESS passes: a
+# completed check that was skipped, cancelled, timed out or anything else
+# is FAIL, the same rule ci-passed applies to its gates (doc/structure.md,
+# "CI").
 _checks_state() {
     local _state
     _state="$(jq -r --argjson min "${MIN_CHECKS}" --argjson ws "$2" \
@@ -135,12 +138,12 @@ _checks_state() {
         | if (\$c | length) == 0 then \"no-checks\"
           elif (\$c | length) < \$min then \"pending\"
           elif (\$c | any(.status != null and .status != \"COMPLETED\")) then \"pending\"
-          elif (\$c | all(.conclusion == \"SUCCESS\" or .conclusion == \"SKIPPED\")) then
+          elif (\$c | all(.conclusion == \"SUCCESS\")) then
             (if (\$c | all(.completedAt != null))
                 and (\$c | all((.completedAt | fromdateiso8601) < \$ws))
                 and (\$c | all((.completedAt | fromdateiso8601) > (\$ws - \$sw)))
              then \"pending\" else \"all-pass\" end)
-          elif (\$c | any(.conclusion == \"FAILURE\")) then \"FAIL\"
+          elif (\$c | any(.conclusion != null and .conclusion != \"SUCCESS\")) then \"FAIL\"
           else \"pending\" end" <<<"$1" 2>/dev/null)"
     printf '%s' "${_state:-pending}"
 }
