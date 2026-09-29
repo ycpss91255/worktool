@@ -381,9 +381,10 @@ host tmux server 的部分在 system-real):
   的 create 請求帶 `--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(在 image 之前,
   是 docker 的容器環境)與建立該目錄的 `--init-hooks`;
   `test/system/real_engine_spec.bats`(system-real,真 engine + 真 ghostty)——
-  ghostty 鏈的標記檔斷言 `/run/.containerenv` 存在、回答的是盒內 fish、不在 tmux
-  底下、節點名等於 `docker inspect dev`(runner 自己沒有 fish、也沒有
-  `/run/.containerenv`,preflight 先證明);issue #179 兩案:**runner(host 端)先開
+  ghostty 鏈的標記檔斷言回答的是盒內 fish、寫檔的程序在 dev 容器的 mount namespace
+  (不是 runner 的)、不在 tmux 底下、節點名等於 `docker inspect dev`(runner 自己
+  沒有 fish,preflight 先證明;`/run/.containerenv` 是 podman 的檔案,docker 建的
+  盒子沒有,所以不拿它當證據);issue #179 兩案:**runner(host 端)先開
   一個 tmux server(session `main`,正是舊命令 `-A` 會附著的名字)**,再以
   setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload 打進落地的
   shell,證明仍落在盒內 fish;以及 host 有 tmux server 時盒內 `tmux` 得到的是盒子

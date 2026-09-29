@@ -428,9 +428,11 @@ issue #129),不再延後到 M5。
     ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
     釘住 `gtk-single-instance = false`,command 為
     `distrobox enter dev -- fish <盒內腳本>`(issue #179:中間沒有 tmux);判準是
-    **盒內**留下的標記檔(內容含 `fish=<版本>`、`containerenv=yes`、`tmux=no`、
-    `host=<節點名>`),而不是 ghostty 的結束碼 —— runner 本身沒有裝 fish、也沒有
-    `/run/.containerenv`(spec 明確斷言兩者),所以會回答的只可能是盒內那一個;標記裡的 `host=` 還要等於
+    **盒內**留下的標記檔(內容含 `fish=<版本>`、`mntns=<mount namespace>`、`tmux=no`、
+    `host=<節點名>`),而不是 ghostty 的結束碼 —— runner 本身沒有裝 fish(spec 明確
+    斷言),所以會回答的只可能是盒內那一個;`mntns=` 必須等於 dev 容器的 mount
+    namespace、且不是 runner 自己的(`/run/.containerenv` 是 podman 的檔案,docker
+    建的盒子沒有,不能當證據);標記裡的 `host=` 還要等於
     `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
     HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
     +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
