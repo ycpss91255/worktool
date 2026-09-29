@@ -497,6 +497,45 @@ _write_fixture_wording_moved() {
     assert_failure
 }
 
+# --- #179: no tmux between the terminal and the box's fish -------------------
+#
+# The terminal runs `distrobox enter dev` and lands in the box's fish; it
+# starts no tmux (the old `-- tmux new -A -s main` attached to a HOST tmux
+# server whenever one was running). The diagrams are the single source of
+# truth for that chain, so they must not draw ghostty -> tmux -> fish.
+# Scoped to the cells of the chain, like the #163 guard.
+
+@test "#179 architecture diagram: the terminal chain is ghostty -> distrobox enter dev -> fish, no tmux cell" {
+    local _f
+    _f="$(_svg architecture)"
+    run _cell_label_lines "${_f}" t_enter
+    assert_success
+    assert_output "distrobox enter dev"
+    run _source_cell "${_f}" t_enter
+    assert_output --partial "value=&quot;distrobox enter dev&quot;"
+    # Both edges of the chain go through t_enter.
+    run _source_cell "${_f}" e_t1
+    assert_output --partial "source=&quot;t_ghostty&quot;"
+    assert_output --partial "target=&quot;t_enter&quot;"
+    run _source_cell "${_f}" e_t2
+    assert_output --partial "source=&quot;t_enter&quot;"
+    assert_output --partial "target=&quot;t_fish&quot;"
+    # The old middle node is gone, rendered and in the source.
+    run _cell_label_lines "${_f}" t_tmux
+    assert_output ""
+    run grep -c "t_tmux" "${_f}"
+    assert_failure
+    run _cell_label_lines "${_f}" t_note
+    refute_output --regexp "由 tmux 帶起"
+}
+
+@test "#179 flow diagram: the enter node names distrobox enter dev -> fish, no tmux" {
+    run _cell_label_lines "$(_svg flow)" f_enter
+    assert_success
+    assert_line --index 2 "→ distrobox enter dev → fish"
+    refute_output --partial "tmux"
+}
+
 # --- README embeds all three -------------------------------------------------
 
 @test "README.md references all three diagram files" {
