@@ -99,7 +99,7 @@ worktool/
 │       └── milestone-fanout.js
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
-├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例);CLAUDE.md 是指向它的 symlink
+├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
