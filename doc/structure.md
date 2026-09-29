@@ -13,7 +13,7 @@ worktool/
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
 │   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
 │   ├── approval.sh      milestone-gate 核准判斷(純函式,不呼叫 GitHub API):approval_evaluate / approval_is_human_approval(#187)
-│   ├── commit_email.sh  commit email 判斷(純函式):截止時間後的 author / committer 必須是 GitHub noreply(commit_email_evaluate / commit_email_range,#234)
+│   ├── commit_email.sh  commit email 判斷(純函式):author 必須是 GitHub noreply,committer 為 noreply 或 noreply@github.com(commit_email_evaluate / commit_email_range,#234)
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
@@ -45,7 +45,7 @@ worktool/
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
-│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、截止前放行、GitHub 產生的 commit 放行、日期格式錯誤即失敗、git log 往返(#234)
+│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
@@ -300,15 +300,16 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 
 ### commit email 必須是 GitHub noreply(`commit-email`,#234)
 
-- **規則**:repo 已公開,committer 日期在 `2026-09-30T00:00:00Z`(含)之後的 commit,
-  author 與 committer email 都必須以 `@users.noreply.github.com` 結尾。截止之前的
-  commit 放行(main 歷史不改寫、不 force push);GitHub 產生的 commit(committer
-  `noreply@github.com`,即 web-flow:合併按鈕、網頁編輯)放行;日期讀不出 UTC 時間
-  一律判失敗。
+- **規則**:repo 已公開,檢查範圍內每個 commit 的 author email 都必須以
+  `@users.noreply.github.com` 結尾;committer email 也必須是 noreply,或正好是
+  `noreply@github.com`(GitHub 自己的 committer:合併按鈕、網頁編輯)。這個
+  committer 例外不洩漏個資,但本機一樣設得出來,所以絕不豁免 author。
+  **不以任何日期豁免**:commit 日期由提交者自訂(`GIT_COMMITTER_DATE`),以日期
+  放行等於留後門;規則之前的歷史靠檢查範圍排除(main 歷史不改寫、不 force push)。
 - **機制**:`ci.yml` 的 `commit-email` job(單一 `ubuntu-latest`,不需 token,
   `fetch-depth: 0`、`persist-credentials: false`)以 `commit_email_range` 取範圍
   (PR:base..head;push:before..after,新 ref 只查推上的那一個),用
-  `TZ=UTC git log` 取出 `<sha>\t<日期>\t<author>\t<email>\t<committer>\t<email>`
+  `git log` 取出 `<sha>\t<author>\t<email>\t<committer>\t<email>`
   紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,列出每個違規 commit 與
   修正指令後失敗。`ci-passed` 要求它 `success`。`test/unit/commit_email_spec.bats`
   測判斷規則,`test/unit/ci_yml_spec.bats` 釘住 job 接線。

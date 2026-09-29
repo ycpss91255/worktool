@@ -1,49 +1,44 @@
 #!/usr/bin/env bash
 # lib/commit_email.sh - noreply commit email predicate (issue #234).
 #
-# The repo is public, so every commit made from the cutoff on must carry a
-# GitHub noreply address (`<id>+<login>@users.noreply.github.com`) as BOTH
-# its author and its committer email. Rules:
+# The repo is public, so every commit the CI checks must carry a GitHub
+# noreply author email (`<id>+<login>@users.noreply.github.com`). Rules:
 #
-#   - committer date before the cutoff (2026-09-30T00:00:00Z): allowed;
-#     that history predates the rule and main is never rewritten;
-#   - committer email `noreply@github.com` (web-flow: the merge button, web
-#     edits): allowed; GitHub itself sets those emails;
-#   - otherwise both emails must end with @users.noreply.github.com;
-#   - a committer date that is not a UTC `YYYY-MM-DDTHH:MM:SSZ` stamp fails
-#     (fail closed: an unreadable date never skips the check).
+#   - the author email must be a noreply address, always;
+#   - the committer email must be a noreply address too, or exactly
+#     `noreply@github.com` (what GitHub commits as for the merge button and
+#     web edits). That address leaks nothing, but it is set locally just as
+#     easily, so it never excuses the author email;
+#   - no date decides anything: a commit carries whatever date its maker
+#     set (GIT_COMMITTER_DATE), so a date exemption would be a bypass. The
+#     history made before the rule stays out of the check through the
+#     revision range instead (PR base..head, push before..after).
 #
 # The predicate is pure: it takes plain data and makes no GitHub API call;
 # the CI job (.github/workflows/ci.yml, job commit-email) collects the
 # records with `git log` and feeds them in.
 #
 # Public API:
-#   commit_email_cutoff            -> prints the cutoff stamp.
 #   commit_email_log_format        -> prints the `git log --format` that
-#       yields one record; run it with
-#       `TZ=UTC git log --date=format-local:%Y-%m-%dT%H:%M:%SZ`.
+#       yields one record.
 #   commit_email_is_noreply <email> -> 0 when <email> is a noreply address.
-#   commit_email_commit_ok <date> <author_email> <committer_email>
+#   commit_email_commit_ok <author_email> <committer_email>
 #       -> 0 when that one commit satisfies the rule, 1 otherwise.
 #   commit_email_range <event> <pr_base> <pr_head> <push_before> <push_after>
 #       -> prints the `git log` revision range to check; 1 on missing data
 #       or an event other than pull_request / push.
 #   commit_email_evaluate          (records on stdin)
-#       stdin: one record per line, `<sha>\t<committer date>\t<author name>
-#       \t<author email>\t<committer name>\t<committer email>` (the last
-#       newline may be missing).
+#       stdin: one record per line, `<sha>\t<author name>\t<author email>
+#       \t<committer name>\t<committer email>` (the last newline may be
+#       missing).
 #       -> exit 0 = every commit passes, 1 = at least one fails; stdout
 #       lists every offending commit and the fix command.
 #
 # This is a library: it defines functions and must be sourced, not
 # executed. It sets no shell options and prints nothing at source time.
 
-commit_email_cutoff() {
-    printf '%s\n' '2026-09-30T00:00:00Z'
-}
-
 commit_email_log_format() {
-    printf '%s\n' '%H%x09%cd%x09%an%x09%ae%x09%cn%x09%ce'
+    printf '%s\n' '%H%x09%an%x09%ae%x09%cn%x09%ce'
 }
 
 commit_email_is_noreply() {
@@ -54,13 +49,9 @@ commit_email_is_noreply() {
 }
 
 commit_email_commit_ok() {
-    local _date="$1" _author="$2" _committer="$3"
-    local _stamp='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-    [[ "${_date}" =~ ${_stamp} ]] || return 1
-    # Same fixed-width UTC format on both sides, so string order is time order.
-    [[ "${_date}" < "$(commit_email_cutoff)" ]] && return 0
-    [[ "${_committer}" == 'noreply@github.com' ]] && return 0
-    commit_email_is_noreply "${_author}" && commit_email_is_noreply "${_committer}"
+    local _author="$1" _committer="$2"
+    commit_email_is_noreply "${_author}" || return 1
+    [[ "${_committer}" == 'noreply@github.com' ]] || commit_email_is_noreply "${_committer}"
 }
 
 commit_email_range() {
@@ -94,19 +85,19 @@ _commit_email_fix() {
 }
 
 commit_email_evaluate() {
-    local _sha _date _an _ae _cn _ce _bad=0 _n=0
-    while IFS=$'\t' read -r _sha _date _an _ae _cn _ce || [[ -n "${_sha}" ]]; do
+    local _sha _an _ae _cn _ce _bad=0 _n=0
+    while IFS=$'\t' read -r _sha _an _ae _cn _ce || [[ -n "${_sha}" ]]; do
         _n=$((_n + 1))
-        if ! commit_email_commit_ok "${_date}" "${_ae}" "${_ce}"; then
+        if ! commit_email_commit_ok "${_ae}" "${_ce}"; then
             _bad=$((_bad + 1))
-            printf '%s author %s <%s> committer %s <%s> (%s)\n' \
-                "${_sha}" "${_an}" "${_ae}" "${_cn}" "${_ce}" "${_date}"
+            printf '%s author %s <%s> committer %s <%s>\n' \
+                "${_sha}" "${_an}" "${_ae}" "${_cn}" "${_ce}"
         fi
         _sha=''
     done
     if ((_bad > 0)); then
-        printf '%s of %s commits need a @users.noreply.github.com author and committer email (from %s on).\n' \
-            "${_bad}" "${_n}" "$(commit_email_cutoff)"
+        printf '%s of %s commits need a @users.noreply.github.com author and committer email.\n' \
+            "${_bad}" "${_n}"
         _commit_email_fix
         return 1
     fi
