@@ -83,13 +83,17 @@ ARG DISTROBOX_VERSION
 # just    - the user-facing task runner (root justfile + the test / box
 #           namespace modules); exercised by test/unit/justfile_spec.bats,
 #           never used to launch the gates from inside the container
+# jq      - the Claude Code hooks under .agents/hook/ read their stdin JSON
+#           payload with jq (as they do on the host); their specs under
+#           test/unit/hook/ build those payloads with it too
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
         bash \
         git \
         grep coreutils \
         ncurses \
-        just
+        just \
+        jq
 
 # bats core + extensions (bats-support / bats-assert)
 COPY --from=bats-src /opt/bats /opt/bats
@@ -114,6 +118,7 @@ RUN bash --version >/dev/null && \
     bats --version >/dev/null && \
     shellcheck --version >/dev/null && \
     just --version && \
+    jq --version >/dev/null && \
     [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
 
 WORKDIR /source
