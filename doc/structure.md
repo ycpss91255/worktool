@@ -46,7 +46,7 @@ worktool/
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
-│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
+│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
@@ -341,6 +341,10 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   `ci-passed` 並列),避免合併前就擋住所有 PR。`test/unit/approval_spec.bats`
   測判斷規則,`test/unit/milestone_gate_yml_spec.bats` 以文字層級釘住觸發事件、
   權限與 context 名稱。
+- **job 不與必要檢查同名**(#258):job id 為 `evaluate`、名稱為 `evaluate-approval`,
+  不得等於 `milestone-gate-approval`,讓必要檢查只對應 workflow 設定的 commit status;
+  否則同名 check run 被 `concurrency` 取消時,會被 branch protection 當成必要檢查的結果,
+  擋住已核准的 PR。`ci.yml` 的 `ci-passed` 則是刻意以 job 本身當必要檢查,不受此限。
 - **已知限制**:agent 用維護者的 token 發留言,GitHub 上無法區分維護者本人與 agent
   代發;這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫「允許合併」。後者由
   agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
