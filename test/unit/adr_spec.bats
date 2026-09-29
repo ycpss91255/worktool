@@ -132,3 +132,28 @@ _adr_0009_check_guard() {
     assert_success
     assert_output --partial "待補"
 }
+
+# Codex round 1 on PR #250: #200 fixed invariant 6 as "the same command
+# re-run gives the same result". The ADR must not add a rule for DIFFERENT
+# inputs (converge, remove the old result), and must not cite a guard for
+# that extra rule.
+@test "ADR 0009 states only the same-input re-run rule of #200, no rule for changed inputs" {
+    run _adr_0009_section "性質"
+    assert_success
+    refute_output --partial "不同的輸入"
+    refute_output --partial "改了選擇"
+    run _adr_0009_section "目前由哪些機制或測試守住"
+    assert_success
+    refute_output --partial "a changed decision replaces the block in place"
+}
+
+# Codex round 1 (non-blocking): only the --auto-enter no restore path
+# reports "nothing to remove"; the ADR must not claim it for every removal.
+@test "ADR 0009 scopes the nothing-to-remove report to --auto-enter no" {
+    run grep -F 'nothing to remove' "$(_adr_0009)"
+    assert_success
+    local _line
+    for _line in "${lines[@]}"; do
+        [[ "${_line}" == *"--auto-enter no"* ]] || fail "unscoped: ${_line}"
+    done
+}

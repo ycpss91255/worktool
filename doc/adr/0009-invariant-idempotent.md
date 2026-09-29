@@ -11,9 +11,8 @@
 
 1. **重跑不累積**：以相同的輸入（指令、選項、已記錄的選擇）重跑任何使用者動作，host 與盒子最後的狀態與只跑一次相同。寫進檔案的內容不會多出第二份，已建立的東西不會再建一次。
 2. **已是最新就說出來**：重跑時如果沒有東西需要改，要明確告訴使用者「沒有改」（unchanged），不能看起來像又做了一次，也不能什麼都不說。
-3. **不同的輸入收斂到新的狀態，而不是疊加**：改了選擇後重跑，舊的結果被原地取代或移除，不會與新的並存。
-4. **適用範圍**：所有經 `just` 觸發、會改變 host 或盒子狀態的使用者動作（目前是 `just box assemble`、`just box setup`；之後新增的動作一併適用）。只讀取、不寫入的動作（例如 `just box status`、`just box bench`）不改變狀態，天生符合。
-5. 本條只規定性質；怎麼做到（受管區塊的標記、狀態檔的寫法、交給上游工具判斷是否已存在）由各機制自己的 ADR 或文件決定。
+3. **適用範圍**：所有經 `just` 觸發、會改變 host 或盒子狀態的使用者動作（目前是 `just box assemble`、`just box setup`；之後新增的動作一併適用）。只讀取、不寫入的動作（例如 `just box status`、`just box bench`）不改變狀態，天生符合。
+4. 本條只規定性質；怎麼做到（受管區塊的標記、狀態檔的寫法、交給上游工具判斷是否已存在）由各機制自己的 ADR 或文件決定。
 
 ## 為什麼固定
 
@@ -27,13 +26,12 @@ worktool 的主痛點是重建成本高（#200 定案 2）：換機、重灌、h
 
 機制：
 
-- `just box setup` 的受管區塊（`script/box/setup.sh` 的 `_block_write`／`_block_remove`，標記與讀寫在 `lib/enter.sh`）：檔案裡恰好一個、內容相同的受管區塊才算最新，此時不重寫並印出 `unchanged: <檔案> (managed block already up to date)`；否則原地取代，重複的區塊一併收斂成一個。移除時沒有區塊就印出 `nothing to remove`。
+- `just box setup` 的受管區塊（`script/box/setup.sh` 的 `_block_write`／`_block_remove`，標記與讀寫在 `lib/enter.sh`）：檔案裡恰好一個、內容相同的受管區塊才算最新，此時不重寫並印出 `unchanged: <檔案> (managed block already up to date)`；否則原地取代，重複的區塊一併收斂成一個。`--auto-enter no` 移除時沒有區塊就印出 `nothing to remove`（其他移除路徑不保證有這行回報）。
 - `just box assemble` 的狀態檔（`lib/home.sh` 的 `home_record`）：`home=`／`home.source=` 原地取代，不追加。已存在的盒子交給上游 distrobox-assemble 判斷，由它回報 `dev already exists` 並不重建。
 
 測試（每一條都是可查的檔名與案例名）：
 
 - `test/unit/setup_spec.bats` 的「the ghostty block is written exactly once and a re-run is idempotent (unchanged)」：同樣的選項跑第二次，exit 0、印出 `unchanged:`、檔案內容與第一次逐字相同、受管區塊仍只有一個。
-- `test/unit/setup_spec.bats` 的「a changed decision replaces the block in place: user lines before and after it survive」：改變選擇後重跑，區塊原地取代，前後的使用者行都在。
 - `test/unit/setup_spec.bats` 的「a file that already holds two managed blocks is collapsed to exactly one, in place of the first」：已經累積兩個區塊的檔案，重跑後收斂成一個。
 - `test/unit/setup_spec.bats` 的「a stored user choice persists across runs; a default key is recomputed」：第二次不帶選項重跑，沿用第一次記錄的使用者選擇。
 - `test/unit/setup_spec.bats` 的「--auto-enter no with nothing managed says so for both files」：沒有受管區塊時執行移除，兩個檔案都印出 `nothing to remove`，也不建立檔案。這是移除之後再跑一次會落入的狀態，但本案例不是真的連跑兩次。
