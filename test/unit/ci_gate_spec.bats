@@ -316,7 +316,9 @@ EOF
 @test "system (shim): a normal tree passes and the plan covers every shim case" {
     _make_repo_copy
     local _n
-    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats")"
+    # Every shim spec: all of test/system/*.bats but the real-engine one.
+    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats" \
+        "${COPY}/test/system/real_enter_env_spec.bats")"
 
     _run_copy_gate --ci-system
     assert_success

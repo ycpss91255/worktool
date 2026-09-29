@@ -1017,6 +1017,11 @@ _e4_cell() {
     local _tag="$1" _real="$2" _out _l
     shift 2
     local -a _dbx=(env "$@" TERM=xterm timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev --)
+    # On the terminal script(1) gives it, the command must stay in the
+    # terminal's foreground process group: timeout(1) moves its child into
+    # a group of its own, where the tmux client is stopped by SIGTTIN /
+    # SIGTTOU for good. So the bound goes around script(1) instead.
+    local -a _pty=(env "$@" TERM=xterm distrobox enter dev --)
     printf '%s env TMUX=%s TMUX_PANE=%s\n' "${_tag}" \
         "$("${_dbx[@]}" printenv TMUX </dev/null)" "$("${_dbx[@]}" printenv TMUX_PANE </dev/null)"
     if _out="$("${_dbx[@]}" "${_real}" ls </dev/null 2>/dev/null)"; then
@@ -1027,11 +1032,11 @@ _e4_cell() {
     "${_dbx[@]}" "${_real}" -f /dev/null new-session -d -s "new-${_tag}" </dev/null || printf '%s failed new\n' "${_tag}"
     "${_dbx[@]}" "${_real}" display-message -p -t "new-${_tag}" "${_tag} server new #{pid} #{socket_path}" </dev/null \
         || printf '%s failed display-new\n' "${_tag}"
-    script -qec "$(printf '%q ' "${_dbx[@]}" "${_real}" new-session -A -s main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
+    timeout -k 5 "${ENTER_TIMEOUT}" script -qec "$(printf '%q ' "${_pty[@]}" "${_real}" new-session -A -s main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
         || printf '%s failed newA\n' "${_tag}"
     "${_dbx[@]}" "${_real}" display-message -p -t main "${_tag} server newA #{pid} #{socket_path}" </dev/null \
         || printf '%s failed display-newA\n' "${_tag}"
-    script -qec "$(printf '%q ' "${_dbx[@]}" "${_real}" attach-session -t main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
+    timeout -k 5 "${ENTER_TIMEOUT}" script -qec "$(printf '%q ' "${_pty[@]}" "${_real}" attach-session -t main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
         || printf '%s failed attach\n' "${_tag}"
     "${_dbx[@]}" "${_real}" display-message -p -t main "${_tag} server attach #{pid} #{socket_path}" </dev/null \
         || printf '%s failed display-attach\n' "${_tag}"
