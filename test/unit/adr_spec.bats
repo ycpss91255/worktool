@@ -28,6 +28,9 @@
 #   (no contract = failure), and the ADR must state that worktool owns its
 #   state keys in ~/.config/worktool/config (the file has no managed block)
 #   and mark the user lines setup.sh drops from it as a gap (待補).
+#   Codex round 3 on PR #253: the invariant-1 promise in doc/contract.md
+#   section 4 must carry the same state-key exception and name the same
+#   state-file gap, so the contract never promises more than the ADR.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -177,6 +180,26 @@ _adr4_definition() {
     refute_output --partial "沒有刻意改動受管區塊以外既有內容的路徑"
     refute_output --partial "保留它不管的行"
     assert_output --regexp "狀態檔裡使用者自己加的行.*待補"
+}
+
+# The invariant-1 promise in section 4 of doc/contract.md: its bullet line
+# and its 驗證 line.
+_contract_promise_1() {
+    sed -n '/^## 4\./,/^## 5\./p' "${REPO_ROOT}/doc/contract.md" \
+        | grep -A1 -E '^- \*\*使用者寫的內容歸使用者'
+}
+
+@test "doc/contract.md invariant-1 promise carries the state-key exception and the known state-file gap" {
+    # Codex round 3 on PR #253: the contract must not promise more than the
+    # ADR. ADR 0004 carves out the state keys of ~/.config/worktool/config
+    # (no managed block) and records that setup.sh drops user lines there.
+    run _contract_promise_1
+    assert_success
+    [ "${#lines[@]}" -eq 2 ]
+    assert_line --index 0 --partial "\`~/.config/worktool/config\`"
+    assert_line --index 0 --partial "狀態鍵"
+    assert_line --index 0 --partial "](adr/0004-invariant-user-content.md)"
+    assert_line --index 1 --regexp "^  - 驗證：.*狀態檔裡使用者自己加的行.*待驗"
 }
 
 @test "this spec is a required unit spec of test.sh" {

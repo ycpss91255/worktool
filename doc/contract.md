@@ -40,8 +40,8 @@
 
 以下每條對應第 6 節的一條不變量；性質的完整定義在該不變量的 ADR。
 
-- **使用者寫的內容歸使用者。** worktool 可以新建檔案；只在自己標記的受管區塊內寫；移除時只移除自己寫的；使用者的內容不刪、不覆蓋，要改既有內容先問（不變量 1）。
-  - 驗證：`test/unit/setup_spec.bats`（受管區塊前後的使用者內容保留；`--auto-enter no` 只移除受管區塊並回報、保留使用者內容；`--dry-run` 不寫）。「要改先問」：待驗。
+- **使用者寫的內容歸使用者。** worktool 可以新建檔案；在既有檔案只在自己標記的受管區塊內寫；移除時只移除自己寫的；使用者的內容不刪、不覆蓋，要改既有內容先問（不變量 1）。例外是 worktool 自己的狀態檔 `~/.config/worktool/config`：它沒有受管區塊，改以狀態鍵劃分歸屬，狀態鍵所在的行歸 worktool、可以不問就換掉，但使用者存進狀態鍵的選擇要沿用；檔內其他的行照樣歸使用者（[ADR 0004](adr/0004-invariant-user-content.md)）。
+  - 驗證：`test/unit/setup_spec.bats`（受管區塊前後的使用者內容保留；`--auto-enter no` 只移除受管區塊並回報、保留使用者內容；`--dry-run` 不寫；使用者存進狀態鍵的選擇沿用）；`test/integration/assemble_spec.bats`（assemble 只換掉狀態檔的 `home` 那一對，其他行原樣留下）。「要改先問」：待驗。狀態檔裡使用者自己加的行：待驗，目前 `just box setup` 重寫狀態檔時會刪掉它們，違反本條（見 ADR 0004 的待補）。
 - **一個來源。** 盒子定義只有 `box/dev.ini` 一份；tool config 在 repo 內只有一份（不變量 2）。
   - 驗證：待驗（tool config 從 M5 起才進 repo）。盒子定義的單一來源由 `test/integration/assemble_spec.bats` 部分檢查：assemble 預設就是用 `box/dev.ini`。
 - **host 與盒子互不干擾。** 見第 3 節「不寫 host shell 設定」（不變量 3）。
