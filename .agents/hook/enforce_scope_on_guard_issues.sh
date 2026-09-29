@@ -14,11 +14,13 @@
 # comes from --title / -t, the body from --body / -b (inline) or
 # --body-file / -F (read from disk; a relative path is resolved against the
 # tool call's cwd). A body file that cannot be read is left to gh, which
-# fails on it anyway. A body read from stdin (-F - / --body-file -) is judged
-# on the command text itself, with a literal \n read as a newline, so a
-# heredoc or a printf pipe is seen; a stdin body the command does not spell
-# out (`cat file | gh issue create -F -`) cannot be checked and a guard issue
-# sent that way is denied: pass the file with --body-file instead.
+# fails on it anyway. A body read from stdin (-F - / --body-file -) is read
+# only from a heredoc opened on the gh launch line itself (`gh issue create
+# ... -F - <<'EOF'`), found with quotes masked and a # comment cut off, so a
+# header spelled in a comment, a quoted <<, another command's heredoc or a
+# pipe cannot stand in for the real stdin. Any other stdin body (a printf or
+# cat pipe, 2<<, a later < file, two stdin launches) is not seen and a guard
+# issue sent that way is denied: use a heredoc or --body-file instead.
 # Everything else passes silently; quoted text that merely mentions
 # `gh issue create` is data (lib/subcommand.sh).
 #
@@ -60,6 +62,81 @@ _read_body_file() {
     cat -- "${_p}"
 }
 
+# _mask_line <line> - the line with every quoted character (and the escaped
+# character after a backslash) replaced by '_' and an unquoted # comment cut
+# off, so offsets still line up with the line. Exit 1 when the line ends
+# inside an open quote.
+_mask_line() {
+    local _l="$1" _m='' _q='' _c _i _p=' ' _sep=$' \t;&|()'
+    for ((_i = 0; _i < ${#_l}; _i++)); do
+        _c="${_l:_i:1}"
+        if [[ "${_c}" == "\\" && "${_q}" != "'" ]]; then
+            _m+='__'
+            _i=$((_i + 1))
+            _p='_'
+            continue
+        fi
+        if [[ -n "${_q}" ]]; then
+            if [[ "${_c}" == "${_q}" ]]; then _q='' _m+="${_c}"; else _m+='_'; fi
+        elif [[ "${_c}" == "'" || "${_c}" == '"' ]]; then
+            _q="${_c}" _m+="${_c}"
+        elif [[ "${_c}" == '#' && "${_sep}" == *"${_p}"* ]]; then
+            break
+        else
+            _m+="${_c}"
+        fi
+        _p="${_c}"
+    done
+    printf '%s' "${_m:0:${#_l}}"
+    [[ -z "${_q}" ]]
+}
+
+# _heredoc_op <line> <mask> - "<offset> <dash> <word>" of the first heredoc
+# the line opens (<<WORD, <<-WORD, <<'WORD', <<"WORD"; not <<<), located on
+# the mask, the word read from the line; nothing when it opens none.
+_heredoc_op() {
+    local _pre="${2%%<<*}"
+    [[ "${_pre}" != "$2" && "${2:${#_pre}:3}" != '<<<' ]] || return 0
+    [[ "${1:${#_pre}}" =~ ^\<\<(-?)[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*) ]] || return 0
+    printf '%s %s %s' "${#_pre}" "${BASH_REMATCH[1]:-+}" "${BASH_REMATCH[2]}"
+}
+
+# _gh_heredoc <mask> <op offset> - 0 when the heredoc at <op offset> is the
+# stdin of the gh issue create launch on the line: it follows the launch,
+# sits on fd 0, and no other < redirect on the launch replaces it.
+_gh_heredoc() {
+    local _re='(^|[[:space:];&|(])gh[[:space:]]+issue[[:space:]]+create([[:space:]].*)$'
+    [[ "$1" =~ ${_re} ]] || return 1
+    local _at=$((${#1} - ${#BASH_REMATCH[2]})) _rest="${BASH_REMATCH[2]/<</}"
+    [[ "$2" -gt "${_at}" && "${_rest}" != *'<'* ]] || return 1
+    [[ "${1:$2-1:1}" == [[:space:]] || "${1:$2-2:2}" =~ ^[[:space:]]0$ ]]
+}
+
+# _stdin_body <command> - the heredoc body fed to the one gh issue create
+# launch of the command (see the header); nothing when it cannot be seen.
+_stdin_body() {
+    local _line _mask _op _term='' _dash='' _mine=0 _hits=0 _body=''
+    local _gh='(^|[[:space:];&|(])gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        if [[ -n "${_term}" ]]; then
+            [[ "${_dash}" == '-' ]] && _line="${_line#"${_line%%[!$'\t']*}"}"
+            if [[ "${_line}" == "${_term}" ]]; then _term=''; continue; fi
+            [[ "${_mine}" -eq 1 ]] && _body+="${_line}"$'\n'
+            continue
+        fi
+        _mask="$(_mask_line "${_line}")" || return 0
+        _mine=0
+        _op="$(_heredoc_op "${_line}" "${_mask}")"
+        if [[ "${_mask}" =~ ${_gh} ]]; then
+            _hits=$((_hits + 1))
+            [[ -n "${_op}" ]] && _gh_heredoc "${_mask}" "${_op%% *}" && _mine=1
+        fi
+        [[ -n "${_op}" ]] && read -r _ _dash _term <<<"${_op}"
+    done <<<"${1//\\$'\n'/}"
+    [[ "${_hits}" -eq 1 ]] && printf '%s' "${_body}"
+    return 0
+}
+
 # _judge_launch <encoded gh issue create launch> <whole command> - print the
 # deny reason, or nothing.
 _judge_launch() {
@@ -77,14 +154,14 @@ _judge_launch() {
         esac
     done
     if [[ "${_file}" == "-" ]]; then
-        _body="${2//\\n/$'\n'}"
+        _body="$(_stdin_body "$2")"
     elif [[ -n "${_file}" ]]; then
         _body="$(_read_body_file "${_file}")" || return 0
     fi
     _is_guard_issue "${_title}" "${_body}" || return 0
     _has_scope "${_body}" && return 0
     printf '%s' 'This issue asks for a guard (hook / gate / check / filter / block; 攔截 / 檢查 / 過濾) but its body has no "## 範圍" section. Add the threat model first: 擋 (what it blocks), 不擋 (what it deliberately lets through), 已知限制 (known limits). pr-loop hands that section to codex as the blocking scope (issue #238).'
-    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is checked on the command text only (heredoc / printf); pipe-from-file bodies cannot be seen, so pass the file with --body-file.'
+    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is read only from a heredoc opened on the gh issue create line itself; a pipe, a comment or another command cannot supply it, so use such a heredoc or --body-file.'
     return 0
 }
 
