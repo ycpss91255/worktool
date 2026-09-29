@@ -13,11 +13,18 @@
 #
 # Written test-first: RED against the round-0 ADR (present-tense items,
 # diagram listed among the deferred rewrites), GREEN after the fix.
+#
+#   ADR 0007 (invariant 4, never fail silently, issue #205) lists the specs
+#   and cases that guard the invariant. Every cited `<spec>`「<case>」 must
+#   name a spec that exists and a case that spec defines, so the list cannot
+#   claim a guard that is not there (or drift when a case is renamed). The
+#   ADR also links the mechanism ADRs 0001 (errexit) and 0003 (exit 3).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     ADR_0002="${REPO_ROOT}/doc/adr/0002-box-owns-its-home.md"
+    ADR_0007="${REPO_ROOT}/doc/adr/0007-invariant-no-silent-failure.md"
 }
 
 # Decision item $1 (the "N. ..." line under "## 決策") of ADR 0002.
@@ -54,6 +61,53 @@ _decision_item() {
     refute_output --partial "架構圖"
     # ... and the ADR states the diagram is updated in this same change.
     run grep -c "架構圖.*同一個 PR" "${ADR_0002}"
+    assert_success
+}
+
+# Every `<spec>`「<case>」 citation of ADR 0007, one per line as
+# "<spec>\t<case>".
+_adr_0007_citations() {
+    # The backtick is held in a variable so the patterns can be
+    # double-quoted without a command substitution.
+    local _bt=$'\x60'
+    grep -oE "${_bt}test/[^${_bt}]+\\.bats${_bt}「[^」]+」" "${ADR_0007}" \
+        | sed -E "s/^${_bt}([^${_bt}]+)${_bt}「(.+)」\$/\\1\\t\\2/"
+}
+
+@test "ADR 0007 has the four invariant sections" {
+    local _h
+    for _h in "## 一句話" "## 性質" "## 為什麼固定" "## 目前由哪些機制或測試守住"; do
+        run grep -cx -- "${_h}" "${ADR_0007}"
+        assert_success
+        assert_output "1"
+    done
+}
+
+@test "ADR 0007 links the mechanism ADRs 0001 (errexit) and 0003 (inconclusive exit 3)" {
+    local _adr
+    for _adr in 0001-scripts-use-errexit.md 0003-latency-gate-inconclusive.md; do
+        assert [ -f "${REPO_ROOT}/doc/adr/${_adr}" ]
+        run grep -c "](${_adr})" "${ADR_0007}"
+        assert_success
+    done
+}
+
+@test "every spec case ADR 0007 cites exists under that exact name" {
+    local _spec _case _n=0
+    while IFS=$'\t' read -r _spec _case; do
+        _n=$((_n + 1))
+        assert [ -f "${REPO_ROOT}/${_spec}" ]
+        run grep -cF -- "@test \"${_case}\" {" "${REPO_ROOT}/${_spec}"
+        assert_success
+        assert_output "1"
+    done < <(_adr_0007_citations)
+    # The list is not empty: a format change that hides every citation from
+    # this check must fail, not pass vacuously.
+    assert [ "${_n}" -ge 10 ]
+}
+
+@test "ADR 0007 marks the parts nothing checks yet as 待補" {
+    run grep -c "待補" "${ADR_0007}"
     assert_success
 }
 
