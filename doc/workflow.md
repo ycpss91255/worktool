@@ -81,8 +81,9 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
 2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
    另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,`codex.md` 只存 codex 的**最終回答**:
-   優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊
-   (遇到下一個段落標頭即止),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
+   優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊,
+   且該區塊必須緊接 `tokens used` 行(回合完成的邊界),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
+   沒有這個邊界(停在 commentary、工具呼叫中或錯誤)就視為沒有最終回答,`codex.md` 為空,Record 不發(fail closed)。
    **兩路都必須有結果**:claude 沒回 claims(空值或空陣列)或 codex 無輸出(配額/認證)就回傳
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
@@ -90,7 +91,9 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
    agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
    整則留言發出前經過路徑過濾(#223):`sources` 改寫成其目錄名、`repoDir` 改寫成 `.`(只在路徑邊界),
-   `$HOME` 與任何 `/home/<user>`、`/Users/<user>` 改成 `~`,Claude session 的 `/tmp` 暫存路徑改成 `<tmp>`。
+   `$HOME` 與任何 `/home/<user>`、`/Users/<user>` 改成 `~`,Claude session 的 `/tmp` 暫存路徑改成 `<tmp>`;
+   其餘絕對路徑一律遮成 `<path>`(預設拒絕:`/root`、`/workspace`、`/private/tmp`、`/var/folders`、`/mnt/c/Users`、
+   `file:///...`、`C:\Users\...` 等),只保留系統目錄(`/usr`、`/etc`、`/bin`、`/sbin`、`/lib*`、`/proc`、`/sys`、`/dev`)與 URL。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
    `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 

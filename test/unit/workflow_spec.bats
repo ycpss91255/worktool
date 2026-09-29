@@ -431,6 +431,32 @@ last message file|codex\njunk\nexec\nls\ncodex\nnot this\ntokens used\n9\nnot th
 EOF
 }
 
+@test "research-verify (node): a codex run with no final answer records nothing (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" name raw scratch
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/.worktree/.scratch/research-7"
+    # name | raw output (printf format); codex writes no -o file in any row
+    while IFS='|' read -r name raw; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${scratch}"
+        echo STALE > "${scratch}/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # codex.md stays empty, so the body is never built
+        [[ -e "${scratch}/codex.md" && ! -s "${scratch}/codex.md" ]]
+        [[ ! -e "${scratch}/body.md" ]]
+    done <<'EOF'
+commentary at EOF|user\np\ncodex\nI will read the files first\n
+aborted in a tool call|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\n
+aborted with an error|codex\nnote\nERROR: stream disconnected before completion\n
+boundary after a tool log|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\ntokens used\n9\n
+answer then aborted commentary|codex\nA1\ntokens used\n9\ncodex\nmore commentary\n
+EOF
+}
+
 @test "research-verify (node): no local absolute path reaches the Record, in any form" {
     local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
     SHAPE="${BATS_TEST_TMPDIR}/shape"
@@ -448,6 +474,12 @@ EOF
         printf 'uri file:///home/dave/w\n'
         printf 'session /tmp/claude-1000/-home-eve-ws/scratchpad/q.txt end\n'
         printf 'system /usr/bin/distrobox\n'
+        printf 'mac /private/tmp/x and /var/folders/ab/T/y\n'
+        printf 'root /root/.codex/log and ws /workspace/proj\n'
+        printf 'wsl /mnt/c/Users/frank/a.txt\n'
+        printf 'win C:\\Users\\gina\\b.txt\n'
+        printf 'opt [原始碼 /opt/tool/x.c] and uri file:///srv/h\n'
+        printf 'kept https://example.com/a/b and a/b and ./c and 1/2 and /\n'
     } > "${SHAPE}/last"
     HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
     assert_success
@@ -456,18 +488,24 @@ EOF
     assert_output "$(printf '%s\n' \
         'repo file ./script/x.sh:3' \
         'repo root .' \
-        "not the repo ${dir}2/k" \
+        'not the repo <path>' \
         'source distrobox-1.8/lib/a.c:10' \
         'slash-ended source ref/b.md' \
         'home ~/.config/x' \
         'other home ~/proj/y and ~/z' \
         'uri file://~/w' \
         'session <tmp> end' \
-        'system /usr/bin/distrobox')"
+        'system /usr/bin/distrobox' \
+        'mac <path> and <path>' \
+        'root <path> and ws <path>' \
+        'wsl <path>' \
+        'win <path>' \
+        'opt [原始碼 <path>] and uri file://<path>' \
+        'kept https://example.com/a/b and a/b and ./c and 1/2 and /')"
     # agy's original is scrubbed the same way
     run grep -c '^1\. agy-claim \[原始碼 \./agy-src\]$' "${body}"
     assert_output "1"
-    run grep -cE "/home/|/Users/|/tmp/claude-|${src}|${ref}" "${body}"
+    run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|\\\\Users|${src}|${ref}" "${body}"
     assert_output "0"
 }
 
