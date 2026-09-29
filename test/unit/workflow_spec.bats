@@ -156,6 +156,22 @@ _meta_skeleton() {
     assert_output "1"
 }
 
+@test "pr-loop codex step pastes the issue's ## 範圍 section verbatim and blocks only on in-scope problems (issue #238)" {
+    # the section is cut from the issue body by the shell, not retyped by the agent
+    run grep -c "awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r" "${PR_LOOP}"
+    assert_output "1"
+    # an issue without the section says so explicitly in the prompt
+    run grep -c "issue 未定範圍" "${PR_LOOP}"
+    assert [ "${output}" -ge 1 ]
+    # the placeholder is written into the prompt and replaced by the file verbatim
+    run grep -cF '逐字如下:\n@@SCOPE@@\n' "${PR_LOOP}"
+    assert_output "1"
+    run grep -cF "'\$0 == \"@@SCOPE@@\" { while ((getline l < f) > 0) print l; next } 1' draft-r" "${PR_LOOP}"
+    assert_output "1"
+    run grep -c '只有落在上述範圍內的具體問題才可列為阻擋項' "${PR_LOOP}"
+    assert_output "1"
+}
+
 @test "pr-loop returns the issue #158 result contract: pr, sha, ciState, codexVerdict, rounds" {
     run grep -c "ciState: 'green', codexVerdict: verdict, rounds: fixes" "${PR_LOOP}"
     assert_output "1"
