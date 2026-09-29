@@ -771,7 +771,8 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         "gh pr comment 7 --body '[claude] next: gh pr merge 7'"; do
         _check "${_c}"
         assert_failure 2
-        assert_output --partial "cannot verify"
+        # perl -e is caught first by the inline-code tripwire (round 6).
+        assert_output --regexp "cannot verify|inline program"
         assert_output --partial "--body-file"
     done
     run _calls
@@ -792,6 +793,67 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         assert_success
         assert_output ""
     done
+}
+
+# --- round 6: inline code of other interpreters, direct API URLs ---------------
+
+@test "inline code of a non-shell interpreter that names gh and a sub-command is blocked" {
+    local _c
+    for _c in "python3 -c 'import os; os.execlp(\"gh\",\"gh\",\"pr\",\"merge\",\"7\")'" \
+        "perl -e 'exec \"gh\", \"pr\", \"merge\", \"7\"'" \
+        "node -e 'require(\"child_process\").execFileSync(\"gh\", [\"pr\", \"merge\", \"7\"])'" \
+        "env python3 -c 'import subprocess as s; s.run([\"gh\", \"api\", \"-X\", \"PUT\", u])'" \
+        "ruby -e 'system(\"gh\", \"issue\", \"comment\", \"7\")'" \
+        "php -r 'passthru(\"gh\".\" \".\"pr\");'" \
+        "awk 'BEGIN { system(\"gh\" \" pr view\") }'" \
+        "python3 -c 'import urllib.request as u; u.urlopen(\"https://api.github.com/x\")'" \
+        "$(printf "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"gh\", \"pr\", \"merge\", \"7\"])\nEOF")"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "inline program"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a direct GitHub API call to a merge / comments / graphql URL is blocked" {
+    local _c
+    for _c in "curl -X PUT -H 'Authorization: token x' https://api.github.com/repos/o/r/pulls/7/merge" \
+        "wget --post-data='{}' https://api.github.com/repos/o/r/issues/7/comments" \
+        "http POST https://api.github.com/graphql query=x" \
+        "curl -X PATCH https://ghe.example.com/api/v3/repos/o/r/issues/comments/9"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "cannot verify"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "inline code without gh, script files and plain API reads pass" {
+    local _c
+    for _c in "python3 -c 'print(1)'" \
+        "node -e 'console.log(1)'" \
+        "perl -e 'print qq(pr merge\n)'" \
+        "python3 tool.py --verbose" \
+        "awk '{ print \$1 }' file" \
+        "curl -s https://api.github.com/repos/o/r/pulls/7"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a checked gh api call with a full api.github.com URL is not blocked twice" {
+    _check "gh api -X GET https://api.github.com/repos/o/r/issues/7/comments"
+    assert_success
+    assert_output ""
+    _labels bug
+    _check "gh api -X PUT https://api.github.com/repos/o/r/pulls/7/merge"
+    assert_success
+    assert_output ""
 }
 
 # --- everything else is untouched ----------------------------------------------

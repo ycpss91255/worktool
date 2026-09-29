@@ -365,21 +365,35 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     加引號(`'EOF'`、`"EOF"`、`\EOF`)則為字面。餵給非直譯器(`cat`、`tee`、
     `gh --body-file -`)的 heredoc 仍只是資料。
   - **raw-text tripwire**(codex 第 5 輪定案:不再逐一追 parser 邊角,改加封閉規則的後盾):
-    在任何解析之前,對**整段原始指令文字**(含 heredoc 內文與 here-string)找相關 gh 呼叫
-    (`gh [root 旗標] pr merge|comment|review|create|new|close|reopen`、
-    `gh issue comment|create|new|close|reopen`、`gh api`)與核准片語;出現次數多於結構化
-    解析實際檢查並放行的字面 gh 啟動,就表示有一處沒被檢查到(parser 缺口、不認得的直譯器、
-    純文字),一律擋,訊息要 agent 把 gh 指令單獨、以字面參數執行,長文字寫檔用
-    `--body-file`。已檢查放行的呼叫不會被重複擋。**接受的代價**:只是「提到」這類 gh 呼叫或
-    核准片語的純文字(commit 訊息、echo、非直譯器的 heredoc)也會被擋,改用 `-F`/`--file`
+    在任何解析之前,對**整段原始指令文字**(含 heredoc 內文與 here-string)找以空白連接的相關
+    gh 呼叫(`gh [root 旗標] pr merge|comment|review|create|new|close|reopen`、
+    `gh issue comment|create|new|close|reopen`、`gh api`)、核准片語,以及 GitHub API 的
+    merge/comments/graphql 字面 URL(`api.github.com` 或 GHES `/api/v3` 的
+    `.../pulls/<n>/merge`、`.../comments`、`/graphql`,即 `curl`/`wget`/`http` 的直接呼叫);
+    出現次數多於結構化解析實際檢查並放行的字面 gh 啟動,就表示有一處沒被檢查到,一律擋,
+    訊息要 agent 把 gh 指令單獨、以字面參數執行,長文字寫檔用 `--body-file`。已檢查放行的
+    呼叫(含以完整 URL 寫的 `gh api`)不會被重複擋。**接受的代價**:只是「提到」這些東西的
+    純文字(commit 訊息、echo、非直譯器的 heredoc)也會被擋,改用 `-F`/`--file`
     (如 `git commit -F <檔案>`)。heredoc 分隔字接受 shell 允許的任何字(`END-X`、`"a.b"`、
     `\EOF` 等),結束行必須與分隔字完全相同(`<<-` 先去掉開頭的 tab);`fish -C <指令>` 等帶值
     選項與 `busybox sh` 也認得為讀 stdin 腳本的直譯器。
-  - **已知限制:不讀腳本檔**(維護者定案):直譯器執行的腳本**檔**(`bash script/x.sh`、
-    `python x.py`、`node x.js`、`just ...`)不檢查。理由:未核准的合併不論從哪裡發出,都會被
-    伺服器端擋下(`milestone-gate-approval` 是 main 的 required status check,#187),剩下的
-    缺口只有「刻意預先寫好一支腳本檔去發冒名核准留言」;若為此擋下所有腳本執行,會擋掉
-    `just test` 等日常工作。
+  - **inline-code tripwire**(codex 第 6 輪):非 shell 直譯器(`hook_is_interpreter`:python、
+    perl、ruby、node、php、awk、lua 等,含 `env`/`busybox` 形式)的指令字(`-c`/`-e`/`-r` 的
+    inline 程式、awk 程式、餵給它的 heredoc/here-string 內文)只要同時含 `gh` 這個字與任一
+    子命令字(pr、issue、api、merge、comment、review、graphql),或含 `api.github.com`、
+    核准片語,就擋(`os.execlp("gh","gh","pr","merge","7")` 這類以 argv 陣列呼叫 gh 的寫法)。
+    只是便宜的後盾。
+  - **涵蓋範圍與已知限制**(codex 第 6 輪定案,最終範圍):
+    - **有檢查**:字面的 gh 啟動(含子命令前的 root 旗標、`timeout`/`sudo`/`env` 等包裝);
+      shell 的 `-c`、`eval`、heredoc 與 here-string 腳本;上述 raw-text tripwire 與
+      inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API。
+    - **不檢查**:直譯器執行的腳本**檔**(`bash script/x.sh`、`python x.py`、`node x.js`、
+      `just ...`,檔案內容不在指令文字裡);混淆過的 inline 程式(字串拼接、編碼);執行時才組出
+      呼叫的程式。這一類沒有邊界(任何語言、任何組字方式),agent 端 hook 只做到上述後盾;
+      並非「不認得的直譯器都擋得住」。
+    - **合併仍由伺服器端保證**:未核准的合併不論從哪裡發出,都會被 main 的 required status
+      check `milestone-gate-approval`(#187)擋下;hook 剩下的缺口只有「刻意以上述不檢查的
+      方式發冒名核准留言」。若為此擋下所有腳本執行,會擋掉 `just test` 等日常工作。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文在結構化解析中

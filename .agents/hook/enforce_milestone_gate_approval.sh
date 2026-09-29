@@ -62,6 +62,13 @@
 #      the structured pass checked blocks: some occurrence escaped it. The
 #      accepted cost: text that merely mentions such a call or the phrase
 #      (a commit message) is blocked too; pass it with -F / --file.
+#      It also counts literal GitHub API URLs of a merge, comments or
+#      graphql call (curl / wget / http straight to the API).
+#   6. inline-code tripwire (codex round 6): a non-shell interpreter
+#      (hook_is_interpreter) whose inline code or stdin program names gh
+#      with a sub-command word, api.github.com or the phrase blocks. A cheap
+#      backstop: script files, obfuscated code and calls built at run time
+#      are not seen; merges are still refused server-side (#187).
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
@@ -701,6 +708,38 @@ _count() {
     printf '%s' "${_n}"
 }
 
+# _check_interp <encoded sub-command> - the inline-code tripwire: a launch
+# of a non-shell interpreter (hook_is_interpreter; env / busybox forms
+# included) whose words - its inline code (-c, -e, -r, an awk program) or
+# the here-string / heredoc it reads - name gh together with a sub-command
+# word, name api.github.com, or hold the approval phrase blocks. A cheap
+# backstop only: code that builds the call at run time is not seen.
+_check_interp() {
+    local _lead _i _text='' _w0 _p
+    local -a _w
+    local _b='(^|[^[:alnum:]_.-])'
+    _lead="$(hook_timeout_lead "$1")"
+    read -r -a _w <<<"${1#"${_lead}"}"
+    [[ "${#_w[@]}" -gt 1 ]] || return 0
+    _w0="$(hook_word "${_w[0]}")"
+    if [[ "${_w0##*/}" == busybox ]]; then
+        _w=("${_w[@]:1}")
+        _w0="$(hook_word "${_w[0]}")"
+    fi
+    hook_is_interpreter "${_w0}" || return 0
+    for ((_i = 1; _i < ${#_w[@]}; _i++)); do
+        _text+="$(hook_word "${_w[_i]}")"$'\n'
+    done
+    _p="$(approval_phrase)"
+    if [[ "${_text}" =~ ${_b}gh([^[:alnum:]_.-]|$) && "${_text}" =~ ${_b}(pr|issue|api|merge|comment|review|graphql)([^[:alnum:]_-]|$) ]] \
+        || [[ "${_text,,}" == *api.github.com* || "${_text}" == *"${_p}"* ]]; then
+        hook_block "an inline program of ${_w0##*/} names gh (or the GitHub API, or the approval phrase): it may merge or comment unseen (fail closed)." \
+            "Run the gh command itself, on its own, with literal arguments; put long text in a file and use --body-file <file>." \
+            "(A cheap backstop: a merge is still refused server-side by the milestone-gate-approval check, #187.)"
+    fi
+    return 0
+}
+
 # _tripwire <command> - the backstop of the closed rule, on the RAW command
 # text (heredoc bodies and here-strings included, before any parsing): a
 # relevant gh call (gh [root flags] pr merge|comment|review|create|new|
@@ -713,10 +752,14 @@ _tripwire() {
     local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase
     local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
     local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
+    # A direct REST / GraphQL call (curl, wget, http ...) to a merge,
+    # comments or graphql URL, unless it is the URL of a checked gh api call.
+    local _api='(api\.github\.com|/api/v3)/repos/[^[:space:]"'"'"']+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments)|(api\.github\.com|/api)/graphql'
     _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
-        && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]]; then
+        && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]] \
+        && [[ "$(grep -oE -- "${_api}" <<<"${_t,,}" | wc -l)" -le "$(grep -oE -- "${_api}" <<<"${_CHECKED_TEXT,,}" | wc -l)" ]]; then
         return 0
     fi
     hook_block "cannot verify this gh call statically: the command text holds a merge / comment gh call or the approval phrase that the hook could not check as a literal gh launch (fail closed)." \
@@ -731,6 +774,7 @@ main() {
     _CWD="$(hook_field '.cwd')"
     [[ -n "${_cmd}" ]] || hook_allow
     while IFS= read -r _sub; do
+        _check_interp "${_sub}"
         _check_launch "${_sub}"
     done < <(hook_subcommands_raw "${_cmd}")
     _tripwire "${_cmd}"
