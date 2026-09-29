@@ -62,3 +62,73 @@ _decision_item() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+# --- ADR 0009: invariant 6 (idempotent), issue #207 -------------------------
+#
+# The ADR lists the specs that guard the invariant today. Each guard line
+# names a spec file in backticks and one case in 「」; the file must exist and
+# hold a @test with exactly that name, so the ADR cannot claim a guard that
+# is not there (or survive a rename of it). Gaps are marked 待補.
+
+_adr_0009() {
+    printf '%s\n' "${REPO_ROOT}/doc/adr/0009-invariant-idempotent.md"
+}
+
+# The body of section "## $1" of ADR 0009 (up to the next "## ").
+_adr_0009_section() {
+    awk -v h="## $1" '$0 == h { on = 1; next } /^## / { on = 0 } on' "$(_adr_0009)"
+}
+
+# Check one guard line ($1): print "<file>: <case>" for a case that is
+# missing, return 1 on a malformed line.
+_adr_0009_check_guard() {
+    local _bt=$'\x60' _file _case
+    _file="$(sed -n "s/^[^${_bt}]*${_bt}\(test\/[^${_bt}]*\.bats\)${_bt}.*/\1/p" <<<"$1")"
+    # Plain substring cuts, not a bracket expression: under the C locale a
+    # [^「] class would work on single bytes of the multibyte characters.
+    [[ "$1" == *「*」* ]] || return 1
+    _case="${1#*「}"
+    _case="${_case%%」*}"
+    [[ -n "${_file}" && -n "${_case}" ]] || return 1
+    if ! grep -qxF "@test \"${_case}\" {" "${REPO_ROOT}/${_file}" 2>/dev/null; then
+        printf '%s: %s\n' "${_file}" "${_case}"
+    fi
+}
+
+@test "ADR 0009 exists with the invariant title and the four sections in order" {
+    run head -n 1 "$(_adr_0009)"
+    assert_success
+    assert_output "# 0009 不變量 6：冪等，同一個指令重跑，結果相同"
+    run grep -E '^## ' "$(_adr_0009)"
+    assert_success
+    assert_line --index 0 "## 一句話"
+    assert_line --index 1 "## 性質"
+    assert_line --index 2 "## 為什麼固定"
+    assert_line --index 3 "## 目前由哪些機制或測試守住"
+    assert_equal "${#lines[@]}" 4
+}
+
+@test "ADR 0009 names its discussion issues (#207, parent #200)" {
+    run grep -E '^- 討論：' "$(_adr_0009)"
+    assert_success
+    assert_output --partial "#200"
+    assert_output --partial "#207"
+}
+
+@test "every spec case ADR 0009 cites as a guard exists under that exact name" {
+    local _bt=$'\x60' _line _missing="" _n=0
+    while IFS= read -r _line; do
+        _n=$((_n + 1))
+        run _adr_0009_check_guard "${_line}"
+        assert_success
+        _missing+="${output}"
+    done < <(_adr_0009_section "目前由哪些機制或測試守住" | grep -E "${_bt}test/[^${_bt}]*\.bats${_bt}")
+    assert [ "${_n}" -ge 3 ]
+    assert_equal "${_missing}" ""
+}
+
+@test "ADR 0009 marks the unguarded parts as 待補 instead of claiming them" {
+    run _adr_0009_section "目前由哪些機制或測試守住"
+    assert_success
+    assert_output --partial "待補"
+}
