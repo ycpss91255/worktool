@@ -21,9 +21,10 @@
 #   ADR also links the mechanism ADRs 0001 (errexit) and 0003 (exit 3).
 #   It must not over-claim where exit codes are documented (they are split
 #   over doc/structure.md, doc/manifest.md and doc/enter.md and cover only
-#   some commands), and since the doc/contract.md index backfill #205 asks
-#   for is not in this change, it must say #205 stays open (codex round 1
-#   on PR #254).
+#   some commands). #205 also asks for the doc/contract.md invariant index
+#   to link this ADR; that backfill is part of this change (one issue, one
+#   PR), so index item 4 must link ADR 0007 and the ADR must not defer the
+#   backfill or keep #205 open (codex round 3 on PR #254).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -138,13 +139,25 @@ _adr_0007_section() {
     assert_output --partial "只記載了部分"
 }
 
-@test "ADR 0007 keeps #205 open until doc/contract.md backfills the invariant index" {
+# Item "$1. ..." of the invariant index (section 6) of doc/contract.md.
+_contract_index_item() {
+    sed -n '/^## 6\. /,$p' "${REPO_ROOT}/doc/contract.md" | grep -E "^$1\. "
+}
+
+@test "doc/contract.md invariant index item 4 links ADR 0007 and still names #205" {
+    run _contract_index_item 4
+    assert_success
+    assert_output --partial "永不靜默失敗"
+    assert_output --partial "](adr/0007-invariant-no-silent-failure.md)"
+    assert_output --partial "#205"
+    refute_output --partial "ADR 待寫"
+}
+
+@test "ADR 0007 does not defer the contract index backfill or keep #205 open" {
     run _adr_0007_section "待補"
     assert_success
-    run grep -F "doc/contract.md" <<<"${output}"
-    assert_success
-    assert_output --partial "#205"
-    assert_output --partial "不關閉"
+    refute_output --partial "不關閉"
+    refute_output --partial "回填"
 }
 
 @test "this spec is a required unit spec of test.sh" {
