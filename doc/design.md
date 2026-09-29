@@ -29,6 +29,18 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
   CI 綠且 codex「可合併」後自主合併(merge commit,不 squash);只有 milestone
   驗收 PR(驗收清單 + Closes parent issue)是人類 gate,不自動合併
   (2026-09-19 修訂,見 doc/workflow.md)。
+- milestone 驗收 PR 的核准紀錄(2026-09-29,#187):驗收 PR 貼 `milestone-gate`
+  標籤,合併前必須有維護者在該 PR 上**留言記錄可以合併**;對話裡的同意、agent
+  對留言的解讀都不算。格式:`author_association` 為 `OWNER`、本文(忽略開頭空白)
+  不以 `[claude]` 或 `[codex]` 開頭(agent 留言一律以這兩個標記開頭)、內容含
+  「允許合併」。機制:`.github/workflows/milestone-gate.yml` 在 PR 事件(opened /
+  synchronize / reopened / labeled / unlabeled)與 PR 留言事件(created / edited /
+  deleted)時以 `gh api` 取標籤與留言,交給純函式 `lib/approval.sh` 判斷,在 PR
+  head SHA 設 commit status `milestone-gate-approval`(未貼標籤或已核准 = success,
+  否則 failure 並寫明「需要維護者留言:允許合併」);合併後列入 main 的 required
+  checks,與 `ci-passed` 並列。已知限制:agent 用維護者的 token 發留言,GitHub
+  無法區分本人與 agent 代發,這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫
+  「允許合併」;後者由 agent 端的 Claude Code hook 擋(#190)。
 - 驗收標準:每個 milestone 與 sub-issue 都有明確驗收標準(自動 + 人類實機),
   累積於 doc/acceptance.md;milestone 的人類 gate 檢查「自動測試綠」與「人類
   實機項目已勾」兩者。這是確保 distrobox UX 最終可驗收的機制。
