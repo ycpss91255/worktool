@@ -156,3 +156,10 @@ _rec() {
     run approval_is_human_approval OWNER 'ok'
     assert_failure
 }
+
+@test "approval_phrase prints the approval phrase without a newline" {
+    run approval_phrase
+    assert_success
+    assert_output "${PHRASE}"
+    [[ "$(approval_phrase; printf x)" == "${PHRASE}x" ]]
+}

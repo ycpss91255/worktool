@@ -364,6 +364,17 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     指令逐段判斷。分隔字未加引號時外層 shell 會先展開內文,所以其中的 `$`、反引號都算展開;
     加引號(`'EOF'`、`"EOF"`、`\EOF`)則為字面。餵給非直譯器(`cat`、`tee`、
     `gh --body-file -`)的 heredoc 仍只是資料。
+  - **raw-text tripwire**(codex 第 5 輪定案:不再逐一追 parser 邊角,改加封閉規則的後盾):
+    在任何解析之前,對**整段原始指令文字**(含 heredoc 內文與 here-string)找相關 gh 呼叫
+    (`gh [root 旗標] pr merge|comment|review|create|new|close|reopen`、
+    `gh issue comment|create|new|close|reopen`、`gh api`)與核准片語;出現次數多於結構化
+    解析實際檢查並放行的字面 gh 啟動,就表示有一處沒被檢查到(parser 缺口、不認得的直譯器、
+    純文字),一律擋,訊息要 agent 把 gh 指令單獨、以字面參數執行,長文字寫檔用
+    `--body-file`。已檢查放行的呼叫不會被重複擋。**接受的代價**:只是「提到」這類 gh 呼叫或
+    核准片語的純文字(commit 訊息、echo、非直譯器的 heredoc)也會被擋,改用 `-F`/`--file`
+    (如 `git commit -F <檔案>`)。heredoc 分隔字接受 shell 允許的任何字(`END-X`、`"a.b"`、
+    `\EOF` 等),結束行必須與分隔字完全相同(`<<-` 先去掉開頭的 tab);`fish -C <指令>` 等帶值
+    選項與 `busybox sh` 也認得為讀 stdin 腳本的直譯器。
   - **已知限制:不讀腳本檔**(維護者定案):直譯器執行的腳本**檔**(`bash script/x.sh`、
     `python x.py`、`node x.js`、`just ...`)不檢查。理由:未核准的合併不論從哪裡發出,都會被
     伺服器端擋下(`milestone-gate-approval` 是 main 的 required status check,#187),剩下的
@@ -371,8 +382,8 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     `just test` 等日常工作。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
-    複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文提到 gh
-    都只是資料。其餘指令放行且不呼叫 gh。
+    複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文在結構化解析中
+    都只是資料(但仍受上述 tripwire 檢查)。其餘指令放行且不呼叫 gh。
     `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
     不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的

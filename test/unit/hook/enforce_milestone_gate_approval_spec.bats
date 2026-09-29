@@ -634,7 +634,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         "[ -f x ] && echo y" \
         "\$HOME/bin/tool --flag" \
         "grep -rn gh src/" \
-        "echo '\$PR gh pr merge'"; do
+        "echo '\$PR gh pr view'"; do
         _check "${_c}"
         assert_success
         assert_output ""
@@ -682,13 +682,20 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output ""
 }
 
-@test "a heredoc fed to a non-shell is still data, and a script file is not read" {
+@test "a heredoc fed to a non-shell is data and a script file is not read, but the tripwire sees their text" {
+    # The structured pass treats them as data; the raw-text tripwire (round
+    # 5) still blocks a relevant gh call or the phrase in the text.
     local _c
     for _c in "$(printf "cat <<EOF\ngh pr merge 7\n%s\nEOF" "${PHRASE}")" \
         "$(printf "tee notes.md <<'EOF' >/dev/null\ngh pr comment 7 --body '%s'\nEOF" "${PHRASE}")" \
-        "bash script/x.sh" \
         "bash script/x.sh <<< 'gh pr merge 7'" \
         "$(printf "bash -c 'cat' <<EOF\ngh pr merge 7\nEOF")"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "cannot verify"
+    done
+    for _c in "bash script/x.sh" \
+        "$(printf "cat <<'EOF' >notes.md\nplain notes, gh pr view 7\nEOF")"; do
         _check "${_c}"
         assert_success
         assert_output ""
@@ -718,10 +725,72 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     _labels milestone-gate
     local _c
     for _c in "gh pr merge 7 -R ycpss91255/worktool --subject --help" \
-        "gh pr merge 7 -R ycpss91255/worktool -t -h"; do
+        "gh pr merge 7 -R ycpss91255/worktool -t -h" \
+        "gh pr merge 7 -R ycpss91255/worktool -- --help"; do
         _check "${_c}"
         assert_failure 2
         assert_output --partial "milestone-gate"
+    done
+}
+
+# --- round 5: heredoc delimiters, fish / busybox, raw-text tripwire -------------
+
+@test "a heredoc delimiter that is not a plain identifier ends where the shell ends it" {
+    _labels milestone-gate
+    local _c
+    for _c in "$(printf "cat <<'END-X'\nhello\nEND-X\ngh pr merge 7 -R ycpss91255/worktool")" \
+        "$(printf 'cat <<"a.b"\nhello\na.b\ngh pr merge 7 -R ycpss91255/worktool')" \
+        "$(printf 'cat <<2EOF\nhello\n2EOF\ngh pr merge 7 -R ycpss91255/worktool')"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
+}
+
+@test "fish with valued options and busybox sh read a heredoc as their script" {
+    _labels milestone-gate
+    local _c
+    for _c in "$(printf "fish -C true <<'EOF'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "$(printf "fish --init-command true <<'EOF'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "$(printf "busybox sh <<'EOF'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "busybox sh -c 'gh pr merge 7 -R ycpss91255/worktool'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
+}
+
+@test "the raw-text tripwire blocks a relevant gh call or the phrase the structured pass did not check" {
+    local _c
+    for _c in "$(printf "foo-shell <<'EOF'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "$(printf "foo-shell <<'EOF'\ngh -R o/r issue comment 7 --body ok\nEOF")" \
+        "$(printf "foo-shell <<'EOF'\ngh api -X PUT repos/o/r/pulls/7/merge\nEOF")" \
+        "perl -e 'system(\"gh pr merge 7\")'" \
+        "echo 'gh pr merge 7'" \
+        "git commit -m 'docs: ${PHRASE} is the approval phrase'" \
+        "gh pr comment 7 --body '[claude] next: gh pr merge 7'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "cannot verify"
+        assert_output --partial "--body-file"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "the tripwire does not double-block a gh call the structured pass checked" {
+    _labels milestone-gate
+    _comment OWNER "${PHRASE}"
+    local _c
+    for _c in "gh pr merge 7 -R ycpss91255/worktool --merge" \
+        "gh -R ycpss91255/worktool pr merge 7 && gh pr view 7" \
+        "gh pr comment 7 --body '[claude] 請維護者留言「${PHRASE}」'" \
+        "gh api repos/o/r/issues/7/comments -f 'body=[codex] 等「${PHRASE}」'" \
+        "$(printf "bash <<'EOF'\ngh pr comment 7 --body ok\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "timeout 60 bash -c 'gh issue comment 7 --body ok'"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
     done
 }
 
@@ -732,8 +801,8 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     for _c in "git status" \
         "gh pr view 7 -R ycpss91255/worktool" \
         "gh pr comment 7 --body 'looks good'" \
-        "echo 'gh pr merge 7'" \
-        "git commit -m 'docs: ${PHRASE} is the approval phrase'" \
+        "echo hi" \
+        "git commit -m 'docs: explain the milestone gate'" \
         "gh pr edit 7 --add-label milestone-gate"; do
         _check "${_c}"
         assert_success

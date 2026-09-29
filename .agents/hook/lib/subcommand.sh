@@ -93,15 +93,21 @@ _hook_is_shell() {
 }
 
 # _hook_shell_reads_stdin <word>... - 0 when the words (wrappers already
-# stripped) run a shell interpreter whose script is its stdin: options
-# only (no -c), redirections, or arguments after -s; no script file.
+# stripped) run a shell interpreter (also as `busybox <shell>`) whose
+# script is its stdin: options only (no -c; fish's valued options such as
+# -C <cmd> included), redirections, or arguments after -s; no script file.
 _hook_shell_reads_stdin() {
-    local _s=''
+    local _s='' _fish=''
+    [[ "${1:-}" == busybox || "${1:-}" == */busybox ]] && shift
     _hook_is_shell "${1:-}" || return 1
+    [[ "${1##*/}" == fish ]] && _fish=1
     shift
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             -[oO]|+[oO]|--rcfile|--init-file) shift ;;
+            -C|--init-command|-d|--debug|-f|--features|-p|--profile|--profile-startup)
+                # fish options that take the next word as their value.
+                [[ -n "${_fish}" ]] && shift ;;
             --*) ;;
             [-+]*c*) [[ "$1" =~ ^[-+][A-Za-z]*c ]] && return 1 ;;
             -*s*) _s=1 ;;
@@ -158,40 +164,111 @@ _hook_held_line() {
     printf '%s %s%s\n' "${_held%%"${_op}"*}" "$(_hook_herestring "${_body}" "${_quoted}")" "${_held#*"${_op}"}"
 }
 
+# _hook_heredoc_ops <line> - one record per heredoc operator of the line
+# (`<<` / `<<-`, not `<<<`, not inside quotes or an arithmetic `((`):
+# <start> US <length> US <dash> US <quoted> US <delimiter>, US = \037. The
+# delimiter is any shell word (END-X, "a.b", 'x y', \EOF, E"O"F): quotes
+# and backslashes go, and any of them makes the body literal (<quoted>).
+_hook_heredoc_ops() {
+    local _l="$1" _i=0 _n=${#1} _q='' _c _st _d _w _qq _pre _us=$'\037'
+    while [[ "${_i}" -lt "${_n}" ]]; do
+        _c="${_l:_i:1}"
+        if [[ -n "${_q}" ]]; then
+            if [[ "${_c}" == "${_q}" ]]; then
+                _q=''
+            elif [[ "${_q}" == '"' && "${_c}" == "\\" ]]; then
+                _i=$((_i + 1))
+            fi
+            _i=$((_i + 1))
+            continue
+        fi
+        case "${_c}" in
+            "\\") _i=$((_i + 2)); continue ;;
+            "'"|'"') _q="${_c}"; _i=$((_i + 1)); continue ;;
+        esac
+        if [[ "${_l:_i:3}" == '<<<' ]]; then
+            _i=$((_i + 3))
+            continue
+        fi
+        if [[ "${_l:_i:2}" == '<<' ]]; then
+            _st="${_i}"
+            _pre="${_l:0:_i}"
+            _i=$((_i + 2))
+            _d=''
+            [[ "${_l:_i:1}" == - ]] && { _d=1; _i=$((_i + 1)); }
+            while [[ "${_l:_i:1}" == [[:blank:]] ]]; do _i=$((_i + 1)); done
+            _w=''
+            _qq=''
+            while [[ "${_i}" -lt "${_n}" ]]; do
+                _c="${_l:_i:1}"
+                case "${_c}" in
+                    [[:space:]]|';'|'&'|'|'|'<'|'>'|'('|')') break ;;
+                    "\\") _qq=1; _w+="${_l:_i+1:1}"; _i=$((_i + 2)) ;;
+                    "'"|'"')
+                        _qq=1
+                        _i=$((_i + 1))
+                        while [[ "${_i}" -lt "${_n}" && "${_l:_i:1}" != "${_c}" ]]; do
+                            _w+="${_l:_i:1}"
+                            _i=$((_i + 1))
+                        done
+                        _i=$((_i + 1)) ;;
+                    *) _w+="${_c}"; _i=$((_i + 1)) ;;
+                esac
+            done
+            # An arithmetic shift ($(( 1 << 2 ))) is no heredoc.
+            local _open="${_pre//[^(]/}" _close="${_pre//[^)]/}"
+            if [[ -n "${_w}" ]] && { [[ "${_pre}" != *'(('* ]] || [[ "${#_open}" -le "${#_close}" ]]; }; then
+                printf '%s%s%s%s%s%s%s%s%s\n' "${_st}" "${_us}" "$((_i - _st))" "${_us}" "${_d}" "${_us}" "${_qq}" "${_us}" "${_w}"
+            fi
+            continue
+        fi
+        _i=$((_i + 1))
+    done
+    return 0
+}
+
 # _hook_strip_heredocs <command> - the command minus every heredoc body. A
-# line opening a heredoc (`<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`,
-# `<<\WORD`, not `<<<`) is kept; the lines up to the terminator line WORD
-# (leading blanks allowed, for <<-) are dropped. A heredoc a shell reads as
-# its script is turned into a here-string of its body instead (header
-# step 1).
+# line opening heredocs (see _hook_heredoc_ops) is kept; the bodies that
+# follow, each up to the line that is exactly its delimiter (leading tabs
+# stripped for <<-), are dropped in order. A line with a single heredoc a
+# shell reads as its script has it turned into a here-string of its body
+# instead (header step 1).
 _hook_strip_heredocs() {
-    local _line _term='' _trim _held='' _op='' _quoted='' _dash='' _body='' _pre
-    local _re="(^|[^<])<<(-?)[[:space:]]*(['\"\\\\]?)([A-Za-z_][A-Za-z0-9_]*)['\"]?"
+    local _line _t _held='' _op='' _quoted='' _body='' _ops _s _len _d _qq _w _n
+    local -a _terms=() _dashes=()
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        if [[ -n "${_term}" ]]; then
-            _trim="${_line#"${_line%%[![:space:]]*}"}"
-            if [[ "${_trim}" == "${_term}" ]]; then
-                _term=''
-                if [[ -n "${_held}" ]]; then
+        if [[ "${#_terms[@]}" -gt 0 ]]; then
+            _t="${_line}"
+            [[ -n "${_dashes[0]}" ]] && _t="${_t#"${_t%%[!$'\t']*}"}"
+            if [[ "${_t}" == "${_terms[0]}" ]]; then
+                _terms=("${_terms[@]:1}")
+                _dashes=("${_dashes[@]:1}")
+                if [[ -n "${_held}" && "${#_terms[@]}" -eq 0 ]]; then
                     _hook_held_line
                     _held=''
                 fi
             elif [[ -n "${_held}" ]]; then
-                [[ -n "${_dash}" ]] && _line="${_line#"${_line%%[!$'\t']*}"}"
-                _body+="${_line}"$'\n'
+                _body+="${_t}"$'\n'
             fi
             continue
         fi
-        if [[ "${_line}" =~ ${_re} ]]; then
-            _term="${BASH_REMATCH[4]}"
-            _dash="${BASH_REMATCH[2]}"
-            _quoted="${BASH_REMATCH[3]}"
-            _op="${BASH_REMATCH[0]#"${BASH_REMATCH[1]}"}"
-            _pre="${_line%%"${BASH_REMATCH[0]}"*}${BASH_REMATCH[1]}"
-            if _hook_heredoc_to_shell "${_pre}"; then
-                _held="${_line}"
-                _body=''
-                continue
+        _ops="$(_hook_heredoc_ops "${_line}")"
+        if [[ -n "${_ops}" ]]; then
+            _n=0
+            while IFS=$'\037' read -r _s _len _d _qq _w; do
+                _terms+=("${_w}")
+                _dashes+=("${_d}")
+                _n=$((_n + 1))
+            done <<<"${_ops}"
+            if [[ "${_n}" -eq 1 ]]; then
+                IFS=$'\037' read -r _s _len _d _qq _w <<<"${_ops}"
+                if _hook_heredoc_to_shell "${_line:0:_s}"; then
+                    _held="${_line}"
+                    _op="${_line:_s:_len}"
+                    _quoted="${_qq}"
+                    _body=''
+                    continue
+                fi
             fi
         fi
         printf '%s\n' "${_line}"
@@ -303,6 +380,9 @@ _hook_inner_script() {
     local -a _w
     local _i
     read -r -a _w <<<"$1"
+    if [[ "${_w[0]:-}" == busybox || "${_w[0]:-}" == */busybox ]] && _hook_is_shell "${_w[1]:-}"; then
+        _w=("${_w[@]:1}")
+    fi
     case "${_w[0]:-}" in
         eval)
             [[ "${#_w[@]}" -gt 1 ]] || return 1
