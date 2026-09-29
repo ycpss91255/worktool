@@ -45,7 +45,7 @@ worktool/
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
-│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(缺值即擋)與實際檢查的 commit 集合、git log 往返(#234)
+│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
@@ -308,9 +308,12 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   放行等於留後門;規則之前的歷史靠檢查範圍排除(main 歷史不改寫、不 force push)。
 - **機制**:`ci.yml` 的 `commit-email` job(單一 `ubuntu-latest`,不需 token,
   `fetch-depth: 0`、`persist-credentials: false`)以 `commit_email_range` 取範圍
-  (PR:base..head;push:before..after;只有 `before` 全為 0 才算新 ref,查 `after`
-  可達、但不在預設分支上的每一個 commit,不只最頂端那個)。每個輸入(事件、base、head、
-  before、after、預設分支 ref)都先驗證,缺值、空值或格式不對一律失敗,不退回任何預設範圍;通過後
+  (PR:base..head;push:before..after;只有 `before` 為 40 個 0 才算新 ref,查 `after`
+  可達、但不在預設分支上的每一個 commit,不只最頂端那個)。只驗證該事件用到的輸入:
+  pull_request 驗 base、head 與預設分支 ref,**忽略** before、after(不論值為何);push 驗
+  before、after 與預設分支 ref,**忽略** base、head。事件只接受這兩種;sha 必須是 40 位小寫
+  hex(GitHub repo 為 SHA-1);預設分支 ref 以 `git check-ref-format` 驗證。用到的輸入缺值、
+  空值或格式不對一律失敗,不退回任何預設範圍;通過後
   再用 `git log` 取出 `<sha>\t<author>\t<email>\t<committer>\t<email>`
   紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,在 stderr 列出每個違規 commit 與
   修正指令後失敗。`ci-passed` 要求它 `success`。`test/unit/commit_email_spec.bats`

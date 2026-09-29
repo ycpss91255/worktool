@@ -19,9 +19,11 @@
 #     and emails plus the fix command, and exits 1; all clean exits 0;
 #     every line it prints is a diagnostic, so all of it goes to stderr
 #     and stdout stays empty (stdout is kept for data);
-#   - commit_email_range validates every input (event, PR base/head, push
-#     before/after, default ref) and fails closed on a missing, empty or
-#     malformed value; only an all-zero `before` means a new ref, which
+#   - commit_email_range validates the inputs the event uses (pull_request:
+#     base, head, default ref; push: before, after, default ref), ignores
+#     the other event's two fields, and fails closed on a missing, empty or
+#     malformed used value (sha = 40 lowercase hex; default ref checked by
+#     `git check-ref-format`); only a 40-zero `before` means a new ref, which
 #     checks every commit reachable from `after` that is not on the default
 #     branch. An input-state matrix pins the failures, and real git repos
 #     pin the exact set of checked commits (1, many, merge, force-push
@@ -241,11 +243,15 @@ _evaluate_stderr_only() {
 
 # --- commit_email_range: input-state matrix --------------------------------
 #
-# Every input of the range (event, base, head, before, after, default ref)
-# is validated; a missing, empty or malformed value fails closed (exit 1,
-# a message on stderr, nothing on stdout) instead of falling back to a
-# default. Only an all-zero `before` means a new ref, and a new ref checks
-# every commit reachable from `after` that is not on the default branch.
+# The inputs the event uses are validated: pull_request -> base, head and
+# the default ref; push -> before, after and the default ref. The other
+# event's two fields are ignored whatever their value. A missing, empty or
+# malformed used input fails closed (exit 1, a message on stderr, nothing
+# on stdout) instead of falling back to a default. A sha is exactly 40
+# lowercase hex (GitHub repos are SHA-1); the default ref must pass
+# `git check-ref-format`. Only a 40-zero `before` means a new ref, and a
+# new ref checks every commit reachable from `after` that is not on the
+# default branch.
 
 # Two distinct well-formed shas (values only; no repo needed).
 SHA_A='1111111111111111111111111111111111111111'
@@ -284,8 +290,12 @@ _range_fails() {
 }
 
 # Values that are never a usable commit sha.
+# States: empty, 39 and 41 hex, uppercase, non-hex, 64 hex and 64 zeros
+# (SHA-256 forms: not accepted, GitHub repos are SHA-1), and rev syntax.
 _MALFORMED=('' 'abc' '111111111111111111111111111111111111111' '11111111111111111111111111111111111111111'
     'gggggggggggggggggggggggggggggggggggggggg' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    '0000000000000000000000000000000000000000000000000000000000000000'
     'HEAD' 'main' '-n' "${SHA_A} " "${SHA_A}..${SHA_B}" "${SHA_A}^!")
 
 @test "range: push with before missing, empty or malformed fails closed (no new-ref fallback)" {
@@ -311,11 +321,41 @@ _MALFORMED=('' 'abc' '111111111111111111111111111111111111111' '1111111111111111
     done
 }
 
+# Default refs `git check-ref-format` rejects (plus missing/empty).
+_BAD_REFS=('' 'main' 'refs/remotes/origin/' '/main' '-main' '--normalize' 'refs/remotes/origin/main.'
+    'refs/remotes/origin/main.lock' 'refs/remotes/origin/a..b' 'refs/remotes/origin/a b'
+    'refs/remotes/origin/main^' 'refs/remotes/origin/main~1' 'refs/remotes//origin/main')
+
 @test "range: push with the default ref missing, empty or malformed fails closed" {
     local _d
-    for _d in '' 'refs/remotes/origin/' '/main' '-main' 'a..b' 'a b' 'main^' 'main~1' 'a//b'; do
+    for _d in "${_BAD_REFS[@]}"; do
         _range_fails push '' '' "${ZERO}" "${SHA_B}" "${_d}"
         _range_fails push '' '' "${SHA_A}" "${SHA_B}" "${_d}"
+    done
+}
+
+@test "range: pull_request with the default ref missing, empty or malformed fails closed" {
+    local _d
+    for _d in "${_BAD_REFS[@]}"; do
+        _range_fails pull_request "${SHA_A}" "${SHA_B}" '' '' "${_d}"
+    done
+}
+
+@test "range: pull_request ignores before and after whatever their value" {
+    local _v
+    for _v in '' 'garbage' "${ZERO}" '-n' 'x y'; do
+        run --separate-stderr commit_email_range pull_request "${SHA_A}" "${SHA_B}" "${_v}" "${_v}" "${DEF}"
+        assert_success
+        assert_output "${SHA_A}..${SHA_B}"
+    done
+}
+
+@test "range: push ignores the PR base and head whatever their value" {
+    local _v
+    for _v in '' 'garbage' "${ZERO}" '-n' 'x y'; do
+        run --separate-stderr commit_email_range push "${_v}" "${_v}" "${SHA_A}" "${SHA_B}" "${DEF}"
+        assert_success
+        assert_output "${SHA_A}..${SHA_B}"
     done
 }
 
