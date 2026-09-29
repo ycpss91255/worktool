@@ -99,6 +99,26 @@ _adr_0006_section() {
     assert_output --partial "待補"
 }
 
+@test "#204: ADR 0006 status says property 3 is not yet in effect for --tmux host (#179)" {
+    # `just box setup --tmux host` writes the host ~/.tmux.conf today, which
+    # breaks property 3; the ADR must not claim the invariant already holds
+    # (codex round 1 on PR #259).
+    run grep -E '^- 狀態：' "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}"
+    assert_success
+    assert_output --partial "尚未生效"
+    assert_output --partial "--tmux host"
+    assert_output --partial "#179"
+}
+
+@test "#204: ADR 0006 properties do not claim to hold unconditionally" {
+    run _adr_0006_section 性質
+    assert_success
+    refute_line "以下三點必須永遠成立："
+    assert_output --partial "尚未生效"
+    assert_output --partial "--tmux host"
+    assert_output --partial "#179"
+}
+
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success

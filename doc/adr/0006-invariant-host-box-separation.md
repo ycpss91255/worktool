@@ -1,6 +1,6 @@
 # 0006 不變量 3：host 與盒子互不干擾
 
-- 狀態：已採納（2026-09-29）
+- 狀態：已採納（2026-09-29）；性質第 3 點對 `--tmux host` 尚未生效：目前 `just box setup --tmux host` 會寫 host 的 `~/.tmux.conf`，待 #179 移除 tmux 決策消除衝突後才生效
 - 討論：#200（不變量定案，第 3 條）、#204（本 ADR）
 - 機制：[ADR 0002](0002-box-owns-its-home.md)（盒子使用獨立 HOME）
 
@@ -10,7 +10,7 @@ worktool 只改盒子，不改 host：不是從 ghostty 開的終端拿到的是
 
 ## 性質
 
-以下三點必須永遠成立：
+以下三點是 worktool 必須守住的性質。已知的例外只有一個：第 3 點對 `--tmux host` 尚未生效：`just box setup --tmux host` 目前會在 host 的 `~/.tmux.conf` 寫受管區塊，違反第 3 點，待 #179 移除 tmux 決策後才生效。除此之外三點都必須永遠成立：
 
 1. 用 ghostty 以外的方式開終端，拿到的是 host 自己的 shell，行為與沒有裝 worktool 時相同；進盒只經由 worktool 寫進 ghostty 設定的受管區塊，不經由 host 的 shell。
 2. worktool 不寫 host 的 shell 設定檔（例如 `~/.bashrc`、`~/.profile`、`~/.config/fish/`），不論是建盒、設定終端或之後任何一個 `just` 指令。
@@ -55,4 +55,4 @@ worktool 的主痛點是重建成本（#200 定案 2）：換機、重灌、host
 - 待補：沒有測試開一個非 ghostty 的終端，確認拿到的是 host shell。
 - 待補：沒有測試在盒內寫入 tool config 後，確認 host HOME 的同名檔不變、host 的設定盒內讀不到。#196 的 demo 驗證過這件事，但只是一次性的留言證據，不在 CI 裡。
 - 待補：tmux 使用盒子自己的 socket（`TMUX_TMPDIR`），由 #179 實作並補測。
-- 待補：目前 `just box setup --tmux host` 會在 host 的 `~/.tmux.conf` 寫受管區塊（`test/unit/setup_spec.bats` 的「--tmux host: ghostty runs tmux on the host and ~/.tmux.conf gets the default-command block」檢查的就是這個行為）。這是 host 上 tmux 的設定，與本性質第 3 點衝突；#179 移除 tmux 決策後才會消失，在那之前本性質對 `--tmux host` 不成立。
+- 已知衝突（不只是缺測試）：目前 `just box setup --tmux host` 會在 host 的 `~/.tmux.conf` 寫受管區塊（`test/unit/setup_spec.bats` 的「--tmux host: ghostty runs tmux on the host and ~/.tmux.conf gets the default-command block」檢查的就是這個行為）。這是 host 上 tmux 的設定，與本性質第 3 點衝突；#179 移除 tmux 決策後才會消失，在那之前本性質第 3 點對 `--tmux host` 尚未生效（見「狀態」與「性質」）。
