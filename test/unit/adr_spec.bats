@@ -20,6 +20,9 @@
 #   it cites (`test/.../x_spec.bats`「case name」) must exist verbatim, and
 #   the parts nothing guards yet are marked 待補. Written test-first: RED
 #   while the ADR does not exist.
+#   Codex round 1 on PR #251: the 待補 list must name EVERY lib/ or script/
+#   file that hardcodes the box name `dev` (bench.sh was missing), and the
+#   ADR must say the doc/contract.md index link is backfilled by #201.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -123,6 +126,33 @@ _decision_item() {
         fi
     done < <(_adr5_citations)
     assert_equal "${_missing}" ""
+}
+
+# Every lib/ or script/ file that hardcodes the box name `dev` as a value
+# (`X="dev"`, `printf 'dev\n'`), one path per line. Comments are skipped.
+_hardcoded_box_name_files() {
+    grep -rlE "^[^#]*(=[\"']dev[\"']|printf 'dev\\\\n')" \
+        --include='*.sh' "${REPO_ROOT}/lib" "${REPO_ROOT}/script" |
+        sed "s|^${REPO_ROOT}/||" | sort
+}
+
+@test "ADR 0005 lists every file that hardcodes a second copy of the box name dev (codex round 1)" {
+    local _file _missing=""
+    run _hardcoded_box_name_files
+    assert_success
+    assert_line "lib/enter.sh"
+    assert_line "script/box/bench.sh"
+    while IFS= read -r _file; do
+        _adr5_guard_section | grep -qF "\`${_file}\`" || _missing+="${_file}"$'\n'
+    done < <(_hardcoded_box_name_files)
+    assert_equal "${_missing}" ""
+}
+
+@test "ADR 0005 says the doc/contract.md invariant index link is backfilled by #201 (codex round 1)" {
+    run grep -E '^- 索引：' "${ADR_0005}"
+    assert_success
+    assert_output --partial "doc/contract.md"
+    assert_output --partial "#201"
 }
 
 @test "this spec is a required unit spec of test.sh" {
