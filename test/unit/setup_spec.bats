@@ -931,6 +931,11 @@ _assert_control_char_refused() {
 # _block_remove, the unchanged branch of _block_write and the multi-block
 # collapse of enter_block_compose. Every case drives the ghostty managed
 # block only (no --tmux, no ~/.tmux.conf), so it holds across #179.
+#
+# Scope: this section is the unit layer of #178 only. The acceptance layer
+# (script/verify/setup.sh items, doc/acceptance.md criteria and the
+# test/unit/verify_setup_spec.bats degraded-copy cases) is tracked in #231,
+# as recorded in the #178 issue body.
 
 # Install a stand-in for command $1 (mv or mktemp) first on the returned
 # PATH directory: it exits 1 when its LAST argument is $FAIL_TARGET (mv's
