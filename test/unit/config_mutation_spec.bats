@@ -1,125 +1,101 @@
 #!/usr/bin/env bats
 # test/unit/config_mutation_spec.bats - the state-file specs can SEE every
-# property lib/config.sh claims (issue #199 rounds 5-6).
+# property lib/config.sh claims (issue #199 rounds 5-7).
 #
-# A spec that passes on a broken implementation proves nothing (round 3's
-# EOF cases compared through `run cat`; round 4's setup matrix always
-# appended; round 5's `unknown` mutant also changed the final newline, so
-# a case could "kill" it for the wrong reason). This spec drives one table:
+# The claim and the coverage are ONE list. lib/config.sh's header states
+# its contract as `@prop <id>` lines; _rows below holds exactly one row per
+# mutant, and each row names the property it breaks. A drift guard fails
+# when the header's IDs and the table's IDs differ, so a property cannot be
+# claimed without a mutant, nor a mutant added for an unclaimed property.
 #
-#   property -> mutant -> the spec cases that must FAIL on it
+# A row: id | mutant | expected bytes after `config_set home /new` on ALL |
+# expected bytes after `config_set home /new zz 1 yy 2` on ALL | cases.
+#   mutant    the function below (_mut_<name>) that prints the mutant code;
+#             appended to a copy of the repo (later definitions win)
+#   expected  a printf %b string, or `=` for "exactly the real library's
+#             bytes" - ALL (below) holds EVERY property's element at once,
+#             so a mutant may change only its own element (purity)
+#   cases     `<spec>@<case-name regex>` separated by `;`: each must FAIL
+#             on the mutated copy (and pass on the clean one: control)
 #
-# Each mutant breaks exactly ONE property of lib/config.sh (or, for
-# `owner`, of the ownership rule) and is appended to a copy of the repo
-# (later definitions win); the listed cases run against the copy with a
-# nested bats and must fail. Two guards keep the table honest:
-#   - control: every listed case passes on the unmutated copy, so a
-#     failure is the mutant's doing;
-#   - purity: on a fixture that holds everything EXCEPT the element its
-#     property is about, a mutant writes exactly the bytes the real
-#     library writes - it cannot kill a case through a side effect. The
-#     purity check itself is shown to catch the round-5 `unknown` mutant.
+# Properties are disjoint by definition: `eof` is only the terminator of
+# the final line (LF, CRLF, none); `blank` is blank and whitespace-only
+# lines anywhere, trailing ones included. The eof mutant deletes no line;
+# the blank mutant keeps the file's final terminator.
 #
-# The render mutants filter the real renderer's output with a pure-bash
-# loop that keeps every line terminator, so they change only what their
-# property names.
+# The tests are generated from the table (bats_test_function), so adding a
+# property touches one row.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 bats_require_minimum_version 1.5.0
 
-# property|mutant|spec|case-name regex
-_table() {
-    local _ip='config_set replaces its keys in place, drops their duplicates'
-    local _ro='config_set replace-only keeps'
-    local _s4='#199 r4: every setup run'
-    local _s5='#199 r5: every setup run'
-    local _a4='#199 r4: a recorded home'
-    local _m _p
+# Every property's element at once: a comment, a blank and a
+# whitespace-only line, an own key (home) not in last place and repeated,
+# known foreign keys (link, box) with a duplicate and a CRLF line, an
+# unknown key, several foreign lines in order, trailing blank lines and a
+# final line without a terminator.
+ALL='# c\n\n  \nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nhome=/old2\nlink=.z\n\n  '
+
+_rows() {
+    local _ip='unit/config_spec.bats@config_set replaces its keys in place, drops their duplicates'
+    local _s4='unit/setup_spec.bats@#199 r4: every setup run'
+    local _s5='unit/setup_spec.bats@#199 r5: every setup run'
+    local _a4='integration/assemble_spec.bats@#199 r4: a recorded home'
+    local _pres="${_ip};${_s4};${_a4}"
+    local _own="${_ip};${_s5};${_a4}"
+    local _cs='unit/config_spec.bats@'
+    local _ow='unit/config_owner_spec.bats@owner: every'
     printf '%s\n' \
-        "EOF framing (missing final newline, trailing blank lines)|eof|unit/config_spec.bats|${_ro}" \
-        "EOF framing (missing final newline, trailing blank lines)|eof|unit/setup_spec.bats|${_s5}" \
-        "EOF framing (missing final newline, trailing blank lines)|eof|integration/assemble_spec.bats|${_a4}"
-    for _m in comments blank crlf foreign-known unknown dup-foreign order; do
-        _p="$(_property "${_m}")"
-        printf '%s\n' \
-            "${_p}|${_m}|unit/config_spec.bats|${_ip}" \
-            "${_p}|${_m}|unit/setup_spec.bats|${_s4}" \
-            "${_p}|${_m}|integration/assemble_spec.bats|${_a4}"
-    done
-    for _m in in-place dup-owned; do
-        _p="$(_property "${_m}")"
-        printf '%s\n' \
-            "${_p}|${_m}|unit/config_spec.bats|${_ip}" \
-            "${_p}|${_m}|unit/setup_spec.bats|${_s5}" \
-            "${_p}|${_m}|integration/assemble_spec.bats|${_a4}"
-    done
-    printf '%s\n' \
-        "file mode kept|mode|unit/config_spec.bats|config_set keeps the file's mode" \
-        "file mode kept|mode|unit/setup_spec.bats|r3: setup keeps the state file's mode" \
-        "file mode kept|mode|integration/assemble_spec.bats|r3: assemble keeps the state file's mode" \
-        "atomic replace (rename)|atomic|unit/config_spec.bats|config_set replaces the file by rename" \
-        "writes serialised (lock)|lock|unit/config_spec.bats|two concurrent config_set calls both land" \
-        "only lib/config.sh reaches the state file|owner|unit/config_owner_spec.bats|read and write only the state file"
+        "get-first|get_first|=|=|${_cs}config_get reads the first occurrence" \
+        "get-bare|get_bare|=|=|${_cs}config_get reads the first occurrence" \
+        "get-all|get_all|=|=|${_cs}config_get_all reads every occurrence" \
+        "each-args|each_args|=|=|${_cs}config_each passes line number" \
+        "each-skip|each_skip|=|=|${_cs}config_each passes line number" \
+        "each-stop|each_stop|=|=|${_cs}config_each stops at the first failing callback" \
+        "exists|exists|=|=|${_cs}the state file is" \
+        "location|location|=|=|${_cs}the state file is" \
+        "log|log|=|=|${_cs}config_log / config_say / config_fill" \
+        "say|say|=|=|${_cs}config_log / config_say / config_fill" \
+        "fill|fill|=|=|${_cs}config_log / config_say / config_fill" \
+        "eof|eof|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \n|=|${_cs}config_set replace-only keeps;${_s5};${_a4}" \
+        "blank|blank|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\nzz=1\nyy=2\n|${_pres}" \
+        "comments|comments|\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "crlf|crlf|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "foreign-known|foreign_known|# c\n\n  \nhome=/new\nfuture=x\n\n  |# c\n\n  \nhome=/new\nfuture=x\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "unknown|unknown|# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "dup-foreign|dup_foreign|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "order|order|# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  |# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "in-place|in_place|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new\nzz=1\nyy=2\n|${_own}" \
+        "dup-owned|dup_owned|# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_own}" \
+        "append-order|append_order|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nyy=2\nzz=1\n|${_ip};${_s4}" \
+        "append-sep|append_sep|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  zz=1\nyy=2\n|${_cs}config_set appending keeps every EOF framing;${_s4}" \
+        "new-header|new_header|=|=|${_cs}config_set creates a missing file" \
+        "odd-args|odd_args|=|=|${_cs}config_set with an odd number of arguments" \
+        "fail-nothing|fail_nothing|=|=|${_cs}a failing render writes nothing" \
+        "atomic|atomic|=|=|${_cs}config_set replaces the file by rename" \
+        "mode|mode|=|=|${_cs}config_set keeps the file.s mode;unit/setup_spec.bats@r3: setup keeps the state file.s mode;integration/assemble_spec.bats@r3: assemble keeps the state file.s mode" \
+        "lock|lock|=|=|${_cs}two concurrent config_set calls both land" \
+        "no-flock|no_flock|=|=|${_cs}without flock" \
+        "wa-atomic|wa_atomic|=|=|${_cs}config_write_atomic replaces by rename" \
+        "wa-mode|wa_mode|=|=|${_cs}config_write_atomic replaces the file with stdin" \
+        "owner|owner_link|=|=|${_ow} assemble row" \
+        "owner|owner_enter|=|=|${_ow} setup row;${_ow} status row" \
+        "owner|owner_home|=|=|${_ow} assemble row" \
+        "owner|owner_setup_restore|=|=|${_ow} setup row" \
+        "owner|owner_assemble_existing|=|=|${_ow} assemble row" \
+        "owner|owner_status|=|=|${_ow} status row"
 }
 
-_property() {
-    case "$1" in
-        comments)      echo "comment lines kept" ;;
-        blank)         echo "blank and whitespace-only lines kept" ;;
-        crlf)          echo "CRLF line endings kept" ;;
-        foreign-known) echo "other writers' known keys kept" ;;
-        unknown)       echo "unknown keys kept" ;;
-        dup-foreign)   echo "duplicated foreign lines kept" ;;
-        order)         echo "foreign line order kept" ;;
-        in-place)      echo "own keys replaced in place" ;;
-        dup-owned)     echo "duplicates of own keys removed" ;;
-    esac
-}
+# --- mutants: each prints the code to add, first line `#> <file>` (append)
+# or `#^ <file>` (insert before the script's run guard) ----------------------
 
-# The neutral fixture of render mutant $1 (printf %b): comments, blank and
-# whitespace-only lines, a CRLF line, known and unknown foreign keys, a
-# duplicated foreign line, several foreign lines in order, a duplicated
-# own key (home) and a last line without a newline - minus the element
-# the mutant's property is about.
-_neutral() {
-    case "$1" in
-        eof)           printf '%s' '# c\n\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\n  \nhome=/old2\nlink=.z\n' ;;
-        comments)      printf '%s' '\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\n  \nhome=/old2\nlink=.z' ;;
-        blank)         printf '%s' '# c\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nhome=/old2\nlink=.z' ;;
-        crlf)          printf '%s' '# c\n\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\n  \nhome=/old2\nlink=.z' ;;
-        foreign-known) printf '%s' '# c\n\nhome=/old\nfuture=x\n  \nhome=/old2\nlast=y' ;;
-        unknown)       printf '%s' '# c\n\nhome=/old\nlink=.a\nlink=.a\nbox=dev\r\n  \nhome=/old2\nlink=.z' ;;
-        dup-foreign)   printf '%s' '# c\n\nhome=/old\nlink=.a\nfuture=x\nbox=dev\r\n  \nhome=/old2\nlink=.z' ;;
-        order)         printf '%s' '# c\n\nhome=/old\nfuture=x\n  \nhome=/old2\n# end' ;;
-        in-place)      printf '%s' '# c\n\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\n  \nhome=/old' ;;
-        dup-owned)     printf '%s' '# c\n\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\n  \nlink=.z' ;;
-        *)             printf '%s' '# c\n\nhome=/old\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\n  \nhome=/old2\nlink=.z' ;;
-    esac
-}
-
-setup_file() {
-    CLEAN="${BATS_FILE_TMPDIR}/clean"
-    mkdir -p "${CLEAN}"
-    cp -R "${REPO_ROOT}/lib" "${REPO_ROOT}/script" "${REPO_ROOT}/test" \
-        "${REPO_ROOT}/box" "${CLEAN}/"
-    export CLEAN
-}
-
-setup() {
-    COPY="${BATS_TEST_TMPDIR}/repo"
-    cp -R "${CLEAN}" "${COPY}"
-}
-
-# The render-filter frame every render mutant shares: the real renderer's
-# output is read line by line WITH each line's terminator (none for a last
-# line without a newline) into L[] / E[], the mutant's _mut_transform edits
-# them (seeing OWN[], the keys being set, and SRC, the file being
-# rendered), and they are printed back byte for byte.
+# The render frame the render mutants share: the real renderer's output is
+# read WITH each line's terminator into L[] / E[], _mut_transform edits them
+# (seeing OWN[] - the keys being set - and SRC, the file being rendered),
+# and they are printed back byte for byte.
 _frame() {
     cat <<'EOF'
-
-# --- MUTANT frame (test/unit/config_mutation_spec.bats) ---
 eval "$(declare -f _config_render | sed '1s/^_config_render /_config_render_real /')"
 _config_render() { _config_render_real "$@" | _mut_filter "$@"; }
 _mut_filter() {
@@ -144,117 +120,203 @@ _mut_meta() { [[ "$1" =~ ^[[:space:]]*(#|$) ]]; }
 _mut_own() { local _k; for _k in "${OWN[@]}"; do [[ "$(_mut_key "$1")" == "${_k}" ]] && return 0; done; return 1; }
 _mut_known() { [[ "$(_mut_key "$1")" =~ ^(auto-enter|terminal|tmux|box|home|link)(\.source)?$ ]]; }
 _mut_foreign() { ! _mut_meta "$1" && ! _mut_own "$1"; }
-# Keep only the lines for which "$@" <line> succeeds.
+_mut_in_src() { local _l; while IFS= read -r _l || [[ -n "${_l}" ]]; do [[ "$(_mut_key "${_l}")" == "$1" ]] && return 0; done <"${SRC}"; return 1; }
+# Keep only the lines for which "$@" <line> succeeds; the file keeps its
+# final terminator (a dropped last line hands it to the new last line).
 _mut_keep() {
-    local -a _l=() _e=(); local _i
+    local -a _l=() _e=(); local _i _fin="${E[${#E[@]}-1]:-}"
     for _i in "${!L[@]}"; do
         if "$@" "${L[_i]}"; then _l+=("${L[_i]}"); _e+=("${E[_i]}"); fi
     done
     L=("${_l[@]}"); E=("${_e[@]}")
+    _mut_final "${_fin}"
+}
+# Give every line but the last a newline and the last one terminator $1.
+_mut_final() {
+    local _i _n=${#L[@]}
+    for (( _i = 0; _i < _n - 1; _i++ )); do [[ -n "${E[_i]}" ]] || E[_i]=$'\n'; done
+    (( _n == 0 )) || E[_n - 1]="$1"
 }
 EOF
 }
 
-# Append mutant $1 to the copy.
-_mutate() {
-    local _cfg="${COPY}/lib/config.sh"
-    case "$1" in
-        eof)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_transform() {
-    local _n=${#L[@]}
-    (( _n > 0 )) && E[_n - 1]=$'\n'
-    while (( ${#L[@]} > 0 )) && [[ "${L[${#L[@]} - 1]}" =~ ^[[:space:]]*$ ]]; do
-        unset 'L[${#L[@]}-1]' 'E[${#E[@]}-1]'
-        L=("${L[@]}"); E=("${E[@]}")
-    done
+_mut_get_first() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+# Returns the LAST occurrence.
+config_get() {
+    local _v="" _f=0 _l
+    while IFS= read -r _l || [[ -n "${_l}" ]]; do
+        if [[ "${_l}" == "$1" ]]; then _v=""; _f=1
+        elif [[ "${_l}" == "$1="* ]]; then _v="${_l#"$1="}"; _f=1; fi
+    done < <(cat -- "$(_config_file)" 2>/dev/null)
+    (( _f == 0 )) || printf '%s\n' "${_v}"
 }
 EOF
-            ;;
-        comments)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_not_comment() { [[ ! "$1" =~ ^[[:space:]]*# ]]; }
-_mut_transform() { _mut_keep _mut_not_comment; }
+}
+_mut_get_bare() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+# A bare `<key>` line does not count as an occurrence.
+_config_get_line() { [[ "$3" == "$1="* ]] || return 0; printf '%s\n' "${3#"$1="}"; return 10; }
 EOF
-            ;;
-        blank)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_not_blank() { [[ ! "$1" =~ ^[[:space:]]*$ ]]; }
-_mut_transform() { _mut_keep _mut_not_blank; }
+}
+_mut_get_all() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_config_get_all_line() { [[ "$3" == "$1="* ]] || return 0; printf '%s\n' "${3#"$1="}"; return 10; }
+config_get_all() { local _r=0; _config_lines "$(_config_file)" _config_get_all_line "$1" || _r=$?; return 0; }
 EOF
-            ;;
-        crlf)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_transform() { local _i; for _i in "${!L[@]}"; do L[_i]="${L[_i]%$'\r'}"; done; }
+}
+_mut_each_args() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_config_each_line() {
+    local _line="${*: -1}" _n="${*: -2:1}"
+    local -a _cb=("${@:1:$#-2}")
+    [[ "${_line}" =~ ^[[:space:]]*(#|$) ]] && return 0
+    "${_cb[@]}" "${_n}" "${_line%%=*}" 1 "${_line#*=}"
+}
 EOF
-            ;;
-        foreign-known)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_not_fk() { ! { _mut_foreign "$1" && _mut_known "$1"; }; }
-_mut_transform() { _mut_keep _mut_not_fk; }
+}
+_mut_each_skip() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_config_each_line() {
+    local _line="${*: -1}" _n="${*: -2:1}"
+    local -a _cb=("${@:1:$#-2}")
+    if [[ "${_line}" == *=* ]]; then "${_cb[@]}" "${_n}" "${_line%%=*}" 1 "${_line#*=}"
+    else "${_cb[@]}" "${_n}" "${_line}" 0 ""; fi
+}
 EOF
-            ;;
-        unknown)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-_mut_not_unknown() { ! { _mut_foreign "$1" && ! _mut_known "$1"; }; }
-_mut_transform() { _mut_keep _mut_not_unknown; }
+}
+_mut_each_stop() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_mut_nostop() { _config_each_line "$@" || :; }
+config_each() { _config_lines "$(_config_file)" _mut_nostop "$@"; }
 EOF
-            ;;
-        dup-foreign)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
+}
+_mut_exists() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_exists() { return 0; }
+EOF
+}
+_mut_location() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+# XDG_CONFIG_HOME is ignored.
+config_xdg_dir() { printf '%s/.config\n' "${HOME}"; }
+EOF
+}
+_mut_log() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_log() { "log_$1" "$2${3:-}"; }
+EOF
+}
+_mut_say() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_say() { printf '%s%s\n' "$1" "${2:-}"; }
+EOF
+}
+_mut_fill() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_fill() { cat; }
+EOF
+}
+
+_mut_eof() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_transform() { (( ${#L[@]} == 0 )) || E[${#L[@]} - 1]=$'\n'; }
+EOF
+}
+_mut_blank() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_nb() { [[ ! "$1" =~ ^[[:space:]]*$ ]]; }
+_mut_transform() { _mut_keep _mut_nb; }
+EOF
+}
+_mut_comments() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_nc() { [[ ! "$1" =~ ^[[:space:]]*# ]]; }
+_mut_transform() { _mut_keep _mut_nc; }
+EOF
+}
+_mut_crlf() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+# Every line but the last loses a trailing CR.
+_mut_transform() { local _i; for (( _i = 0; _i < ${#L[@]} - 1; _i++ )); do L[_i]="${L[_i]%$'\r'}"; done; }
+EOF
+}
+_mut_foreign_known() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_nfk() { ! { _mut_foreign "$1" && _mut_known "$1"; }; }
+_mut_transform() { _mut_keep _mut_nfk; }
+EOF
+}
+_mut_unknown() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_nu() { ! { _mut_foreign "$1" && ! _mut_known "$1"; }; }
+_mut_transform() { _mut_keep _mut_nu; }
+EOF
+}
+_mut_dup_foreign() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
 _mut_transform() {
-    local -a _l=() _e=(); local _i _j _dup
+    local -a _l=() _e=(); local _i _j _dup _fin="${E[${#E[@]}-1]:-}"
     for _i in "${!L[@]}"; do
         _dup=0
         if _mut_foreign "${L[_i]}"; then
-            for (( _j = 0; _j < _i; _j++ )); do
-                [[ "${L[_j]}" == "${L[_i]}" ]] && _dup=1
-            done
+            for (( _j = 0; _j < _i; _j++ )); do [[ "${L[_j]}" == "${L[_i]}" ]] && _dup=1; done
         fi
         (( _dup )) || { _l+=("${L[_i]}"); _e+=("${E[_i]}"); }
     done
     L=("${_l[@]}"); E=("${_e[@]}")
+    _mut_final "${_fin}"
 }
 EOF
-            ;;
-        order)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
+}
+_mut_order() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
 _mut_transform() {
     local -a _idx=() _txt=(); local _i _n
-    for _i in "${!L[@]}"; do
-        _mut_foreign "${L[_i]}" && { _idx+=("${_i}"); _txt+=("${L[_i]}"); }
-    done
+    for _i in "${!L[@]}"; do _mut_foreign "${L[_i]}" && { _idx+=("${_i}"); _txt+=("${L[_i]}"); }; done
     _n=${#_idx[@]}
     for (( _i = 0; _i < _n; _i++ )); do L[${_idx[_i]}]="${_txt[_n - 1 - _i]}"; done
 }
 EOF
-            ;;
-        in-place)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
+}
+_mut_in_place() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+# Own keys move to the end (the file keeps its final terminator).
 _mut_transform() {
-    local -a _l=() _e=() _ol=() _oe=(); local _i
+    local -a _l=() _e=() _ol=() _oe=(); local _i _fin="${E[${#E[@]}-1]:-}"
     for _i in "${!L[@]}"; do
         if _mut_own "${L[_i]}"; then _ol+=("${L[_i]}"); _oe+=("${E[_i]}")
         else _l+=("${L[_i]}"); _e+=("${E[_i]}"); fi
     done
     L=("${_l[@]}" "${_ol[@]}"); E=("${_e[@]}" "${_oe[@]}")
+    _mut_final "${_fin}"
 }
 EOF
-            ;;
-        dup-owned)
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
-# Keep the duplicates of each own key: as many extra copies of its (new)
-# line, right after it, as the source file had extra lines of that key.
+}
+_mut_dup_owned() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+# Each own key keeps as many lines as the source had.
 _mut_transform() {
     local -a _l=() _e=(); local _i _k _n _line
     for _i in "${!L[@]}"; do
@@ -269,31 +331,133 @@ _mut_transform() {
     L=("${_l[@]}"); E=("${_e[@]}")
 }
 EOF
-            ;;
-        mode)
-            printf '%s\n' '_config_copy_mode() { :; }' >>"${_cfg}"
-            ;;
-        atomic)
-            cat >>"${_cfg}" <<'EOF'
-# Same bytes, but written INTO the existing file instead of renamed over it.
+}
+_mut_append_order() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+# The appended keys (own keys the source did not hold) come out reversed.
+_mut_transform() {
+    local -a _idx=() _txt=(); local _i _n
+    [[ -f "${SRC}" ]] || return 0
+    for _i in "${!L[@]}"; do
+        if _mut_own "${L[_i]}" && ! _mut_in_src "$(_mut_key "${L[_i]}")"; then _idx+=("${_i}"); _txt+=("${L[_i]}"); fi
+    done
+    _n=${#_idx[@]}
+    for (( _i = 0; _i < _n; _i++ )); do L[${_idx[_i]}]="${_txt[_n - 1 - _i]}"; done
+}
+EOF
+}
+_mut_append_sep() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+# No newline is added before the appended keys when the source's last
+# line has none.
+_mut_transform() {
+    local _i _last=""
+    [[ -f "${SRC}" && -s "${SRC}" ]] || return 0
+    [[ "$(tail -c 1 -- "${SRC}" | od -An -c | tr -d ' ')" != '\n' ]] || return 0
+    for _i in "${!L[@]}"; do
+        if _mut_own "${L[_i]}" && ! _mut_in_src "$(_mut_key "${L[_i]}")"; then
+            [[ -z "${_last}" ]] || E[_last]=''
+            return 0
+        fi
+        _last="${_i}"
+    done
+}
+EOF
+}
+_mut_new_header() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_transform() { [[ -e "${SRC}" ]] || { L=("${L[@]:1}"); E=("${E[@]:1}"); }; }
+EOF
+}
+_mut_odd_args() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+eval "$(declare -f config_set | sed '1s/^config_set /_config_set_real /')"
+config_set() { if (( $# % 2 )); then _config_set_real "$@" ""; else _config_set_real "$@"; fi; }
+EOF
+}
+# A replace that ignores the render's status.
+_mut_fail_nothing() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
 _config_replace() {
     local _t="$1" _tmp
     shift
     mkdir -p -- "$(dirname -- "${_t}")" || return 1
+    _tmp="$(mktemp "${_t}.XXXXXX")" || return 1
+    "$@" >"${_tmp}"
+    _config_copy_mode "${_t}" "${_tmp}"
+    mv -f -- "${_tmp}" "${_t}"
+}
+EOF
+}
+# config_set writes INTO the existing file (same bytes, not atomic).
+_mut_atomic() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_mut_replace_inplace() {
+    local _t="$1" _tmp
+    shift
     _tmp="$(mktemp)" || return 1
     "$@" >"${_tmp}" || { rm -f -- "${_tmp}"; return 1; }
     cat -- "${_tmp}" >"${_t}"
     rm -f -- "${_tmp}"
 }
+eval "$(declare -f config_set | sed 's/_config_replace/_mut_replace_inplace/')"
 EOF
-            ;;
-        lock)
-            printf '%s\n' '_config_locked() { shift; "$@"; }' >>"${_cfg}"
-            ;;
-        owner)
-            # A module that builds the path itself, in a way no deny-list of
-            # spellings would name.
-            cat >>"${COPY}/lib/link.sh" <<'EOF'
+}
+# config_set renames without copying the mode.
+_mut_mode() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_mut_replace_nomode() {
+    local _t="$1" _tmp
+    shift
+    _tmp="$(mktemp "${_t}.XXXXXX")" || return 1
+    "$@" >"${_tmp}" || { rm -f -- "${_tmp}"; return 1; }
+    mv -f -- "${_tmp}" "${_t}"
+}
+eval "$(declare -f config_set | sed 's/_config_replace/_mut_replace_nomode/')"
+EOF
+}
+_mut_lock() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+eval "$(declare -f config_set | sed 's/_config_locked "${_file}" //')"
+EOF
+}
+_mut_no_flock() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+eval "$(declare -f config_set | sed 's/! _config_have_flock/false/')"
+EOF
+}
+_mut_wa_atomic() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_write_atomic() { mkdir -p -- "$(dirname -- "$1")" && cat >"$1"; }
+EOF
+}
+_mut_wa_mode() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+config_write_atomic() {
+    local _tmp
+    mkdir -p -- "$(dirname -- "$1")" || return 1
+    _tmp="$(mktemp "$1.XXXXXX")" || return 1
+    cat >"${_tmp}" && mv -f -- "${_tmp}" "$1"
+}
+EOF
+}
+
+# --- owner mutants: a module that builds the path itself --------------------
+
+_mut_owner_link() {
+    printf '#> lib/link.sh\n'
+    cat <<'EOF'
 link_entries() {
     local _p=worktool _l
     link_defaults
@@ -302,64 +466,177 @@ link_entries() {
     done <"$(config_xdg_dir)/${_p}/config"
 }
 EOF
-            ;;
-        unknown-grep)
-            # The round-5 mutant: a grep pipeline, which also adds a missing
-            # final newline. Kept to prove the purity check catches it.
-            _frame >>"${_cfg}"
-            cat >>"${_cfg}" <<'EOF'
+}
+_mut_owner_enter() {
+    printf '#> lib/enter.sh\n'
+    cat <<'EOF'
+eval "$(declare -f enter_config_check | sed '1s/^enter_config_check /_mut_ecc_real /')"
+enter_config_check() { local _p=worktool; cat -- "$(config_xdg_dir)/${_p}/config" >&2; _mut_ecc_real "$@"; }
+EOF
+}
+_mut_owner_home() {
+    printf '#> lib/home.sh\n'
+    cat <<'EOF'
+eval "$(declare -f home_config_check | sed '1s/^home_config_check /_mut_hcc_real /')"
+home_config_check() { local _p=worktool; printf 'home=/rogue\n' >>"$(config_xdg_dir)/${_p}/config"; _mut_hcc_real "$@"; }
+EOF
+}
+# Only on setup's restore path (auto-enter no).
+_mut_owner_setup_restore() {
+    printf '#^ script/box/setup.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _apply_disable | sed '1s/^_apply_disable /_mut_ad_real /')"
+_apply_disable() { local _p=worktool; cat -- "$(config_xdg_dir)/${_p}/config" >&2; _mut_ad_real "$@"; }
+EOF
+}
+# Only when the box already exists.
+_mut_owner_assemble_existing() {
+    printf '#^ script/box/assemble.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _check_existing_box | sed '1s/^_check_existing_box /_mut_ceb_real /')"
+_check_existing_box() {
+    local _r=0 _p=worktool
+    if home_of_box "${BOX_NAME}" >/dev/null 2>&1; then cat -- "$(config_xdg_dir)/${_p}/config" >&2; fi
+    _mut_ceb_real "$@" || _r=$?
+    return "${_r}"
+}
+EOF
+}
+_mut_owner_status() {
+    printf '#^ script/box/status.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _report_home | sed '1s/^_report_home /_mut_rh_real /')"
+_report_home() { local _p=worktool; cat -- "$(config_xdg_dir)/${_p}/config"; _mut_rh_real "$@"; }
+EOF
+}
+
+# --- legacy mutants the purity check must reject ----------------------------
+
+# Round 5: a grep pipeline (also adds a missing final newline).
+_mut_legacy_grep() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
 _config_render() {
     _config_render_real "$@" \
         | grep -E '^(#|[[:space:]]*$|(auto-enter|terminal|tmux|box|home|link)(\.source)?(=|$))'
 }
 EOF
+}
+# Round 7: `eof` that also deleted trailing blank lines.
+_mut_legacy_eof() {
+    printf '#> lib/config.sh\n'; _frame
+    cat <<'EOF'
+_mut_transform() {
+    local _n=${#L[@]}
+    (( _n > 0 )) && E[_n - 1]=$'\n'
+    while (( ${#L[@]} > 0 )) && [[ "${L[${#L[@]} - 1]}" =~ ^[[:space:]]*$ ]]; do
+        unset 'L[${#L[@]}-1]' 'E[${#E[@]}-1]'
+        L=("${L[@]}"); E=("${E[@]}")
+    done
+}
+EOF
+}
+
+# --- machinery ---------------------------------------------------------------
+
+setup_file() {
+    CLEAN="${BATS_FILE_TMPDIR}/clean"
+    mkdir -p "${CLEAN}"
+    cp -R "${REPO_ROOT}/lib" "${REPO_ROOT}/script" "${REPO_ROOT}/test" \
+        "${REPO_ROOT}/box" "${CLEAN}/"
+    export CLEAN
+}
+
+setup() {
+    COPY="${BATS_TEST_TMPDIR}/repo"
+    cp -R "${CLEAN}" "${COPY}"
+}
+
+# Add mutant $1 (a _mut_ suffix) to the copy.
+_mutate() {
+    local _code _head _target
+    _code="$("_mut_$1")"
+    _head="${_code%%$'\n'*}"
+    _code="${_code#*$'\n'}"
+    _target="${COPY}/${_head#?? }"
+    case "${_head}" in
+        '#> '*) printf '\n%s\n' "${_code}" >>"${_target}" ;;
+        '#^ '*)
+            # Before the run guard: `if [[ "${BASH_SOURCE[0]:-}" == ...`.
+            awk -v c="${_code}" \
+                '/^if \[\[/ && index($0, "BASH_SOURCE[0]") && !done { print c; done = 1 } { print }' \
+                "${_target}" >"${_target}.new"
+            grep -qF -- "${_code%%$'\n'*}" "${_target}.new" || return 1
+            cat "${_target}.new" >"${_target}"
+            rm -f "${_target}.new"
             ;;
     esac
 }
 
-# Run the cases of spec $1 (relative to test/) matching regex $2 against
-# copy $3: TAP output in CASE_OUT, status in CASE_RC.
-_run_cases() {
+# Run the cases of `<spec>@<regex>` $1 against tree $2: TAP in CASE_OUT,
+# status in CASE_RC.
+_run_case() {
     CASE_RC=0
-    CASE_OUT="$(bats --filter "$2" "$3/test/$1" 2>&1)" || CASE_RC=$?
+    CASE_OUT="$(bats --filter "${1#*@}" "$2/test/${1%%@*}" 2>&1)" || CASE_RC=$?
 }
 
-# Mutant $1 must make every case the table lists for it fail.
+# The row of mutant $1.
+_row() { _rows | awk -F'|' -v m="$1" '$2 == m'; }
+
 _assert_caught() {
-    local _p _m _spec _re _n=0
+    local _id _m _r _a _cases _c
+    IFS='|' read -r _id _m _r _a _cases <<<"$(_row "$1")"
     _mutate "$1"
-    while IFS='|' read -r _p _m _spec _re; do
-        [[ "${_m}" == "$1" ]] || continue
-        _n=$(( _n + 1 ))
-        _run_cases "${_spec}" "${_re}" "${COPY}"
-        grep -qE "^ok [0-9]+ " <<<"${CASE_OUT}" \
-            && fail "mutant $1 (${_p}) survived a case of ${_spec} /${_re}/: ${CASE_OUT}"
-        grep -qE "^not ok [0-9]+ " <<<"${CASE_OUT}" \
-            || fail "mutant $1 (${_p}): ${_spec} /${_re}/ ran no case: ${CASE_OUT}"
-    done < <(_table)
-    (( _n > 0 )) || fail "mutant $1 has no row in the table"
+    IFS=';' read -r -a _c <<<"${_cases}"
+    for _c in "${_c[@]}"; do
+        _run_case "${_c}" "${COPY}"
+        grep -qE '^not ok [0-9]+ ' <<<"${CASE_OUT}" \
+            || fail "mutant $1 (${_id}) was not caught by ${_c}: ${CASE_OUT}"
+        ! grep -qE '^ok [0-9]+ ' <<<"${CASE_OUT}" \
+            || fail "mutant $1 (${_id}) survived a case of ${_c}: ${CASE_OUT}"
+    done
 }
 
-# config_set home /new on the neutral fixture of mutant $2 with the library
-# of tree $1; prints the resulting file's path.
-_render_in() {
-    local _f="${BATS_TEST_TMPDIR}/pure.${1##*/}.$2/state"
-    mkdir -p "${_f%/*}"
-    printf '%b' "$(_neutral "$2")" >"${_f}"
+# Render ALL with the library of tree $1 and config_set args $2..; prints
+# the resulting file's path.
+_render_all() {
+    local _tree="$1" _f
+    shift
+    _f="$(mktemp -d "${BATS_TEST_TMPDIR}/all.XXXXXX")/state"
+    printf '%b' "${ALL}" >"${_f}"
     WORKTOOL_CONFIG_FILE="${_f}" bash -c \
-        'source "$1/lib/log.sh"; source "$1/lib/config.sh"; config_set home /new' _ "$1" \
+        'source "$1/lib/log.sh"; source "$1/lib/config.sh"; shift; config_set "$@"' _ "${_tree}" "$@" \
         || return 1
     printf '%s\n' "${_f}"
 }
 
-# 0 when mutant $1 writes, on its neutral fixture, the real library's bytes.
+# 0 when mutant $1 writes exactly expected bytes $2 (replace) and $3
+# (append) on ALL; `=` means the real library's bytes.
 _pure() {
-    local _real _mut
-    _mutate "$1"
-    _real="$(_render_in "${CLEAN}" "$1")" || return 1
-    _mut="$(_render_in "${COPY}" "$1")" || return 1
-    cmp -s -- "${_real}" "${_mut}"
+    local _m="$1" _er="$2" _ea="$3" _got _want
+    _mutate "${_m}" || return 1
+    _got="$(_render_all "${COPY}" home /new)" || return 1
+    if [[ "${_er}" == = ]]; then _want="$(_render_all "${CLEAN}" home /new)"
+    else _want="${BATS_TEST_TMPDIR}/want.r"; printf '%b' "${_er}" >"${_want}"; fi
+    cmp -s -- "${_want}" "${_got}" || return 1
+    _got="$(_render_all "${COPY}" home /new zz 1 yy 2)" || return 1
+    if [[ "${_ea}" == = ]]; then _want="$(_render_all "${CLEAN}" home /new zz 1 yy 2)"
+    else _want="${BATS_TEST_TMPDIR}/want.a"; printf '%b' "${_ea}" >"${_want}"; fi
+    cmp -s -- "${_want}" "${_got}"
 }
+
+_assert_pure() {
+    local _id _m _r _a _cases
+    IFS='|' read -r _id _m _r _a _cases <<<"$(_row "$1")"
+    _pure "$1" "${_r}" "${_a}" \
+        || fail "mutant $1 (${_id}) is not pure: on ALL it changes bytes outside its property"
+}
+
+# One caught-test and one purity-test per row.
+while IFS='|' read -r _id _m _r _a _cases; do
+    bats_test_function --description "mutant ${_m} (${_id}) is caught" -- _assert_caught "${_m}"
+    bats_test_function --description "purity: mutant ${_m} (${_id}) changes only its own element" -- _assert_pure "${_m}"
+done < <(_rows)
 
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
@@ -367,41 +644,38 @@ _pure() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
+@test "drift guard: lib/config.sh's @prop IDs are exactly the table's IDs" {
+    local _claimed _covered
+    _claimed="$(sed -n 's/^#[[:space:]]*@prop[[:space:]]\{1,\}\([a-z-]\{1,\}\).*/\1/p' "${REPO_ROOT}/lib/config.sh" | sort -u)"
+    _covered="$(_rows | cut -d'|' -f1 | sort -u)"
+    [[ -n "${_claimed}" ]] || fail "lib/config.sh claims no @prop"
+    run diff <(printf '%s\n' "${_claimed}") <(printf '%s\n' "${_covered}")
+    [[ "${status}" -eq 0 ]] || fail "claimed (<) and covered (>) properties differ: ${output}"
+}
+
+@test "drift guard: every row's mutant exists and every mutant has a row" {
+    local _m _fns
+    while IFS='|' read -r _ _m _ _ _; do
+        declare -F "_mut_${_m}" >/dev/null || fail "row names a missing mutant: _mut_${_m}"
+    done < <(_rows)
+    _fns="$(declare -F | awk '{print $3}' | sed -n 's/^_mut_//p' | grep -v '^legacy_' | sort)"
+    run diff <(printf '%s\n' "${_fns}") <(_rows | cut -d'|' -f2 | sort)
+    [[ "${status}" -eq 0 ]] || fail "mutants without a row (<) / rows without a mutant (>): ${output}"
+}
+
 @test "control: every case of the table passes on the unmutated copy" {
-    local _p _m _spec _re
-    while IFS='|' read -r _p _m _spec _re; do
-        _run_cases "${_spec}" "${_re}" "${CLEAN}"
-        [[ "${CASE_RC}" -eq 0 ]] || fail "control ${_spec} /${_re}/ failed: ${CASE_OUT}"
-        grep -qE "^ok [0-9]+ " <<<"${CASE_OUT}" \
-            || fail "control ${_spec} /${_re}/ ran no case: ${CASE_OUT}"
-    done < <(_table | sort -t'|' -k3,4 -u)
+    local _c
+    while IFS= read -r _c; do
+        _run_case "${_c}" "${CLEAN}"
+        [[ "${CASE_RC}" -eq 0 ]] || fail "control ${_c} failed: ${CASE_OUT}"
+        grep -qE '^ok [0-9]+ ' <<<"${CASE_OUT}" || fail "control ${_c} ran no case: ${CASE_OUT}"
+    done < <(_rows | cut -d'|' -f5 | tr ';' '\n' | sort -u)
 }
 
-@test "purity: every render/write mutant writes the real bytes where its property is absent" {
-    local _m
-    for _m in eof comments blank crlf foreign-known unknown dup-foreign order in-place dup-owned mode atomic lock; do
-        rm -rf "${COPY}"
-        cp -R "${CLEAN}" "${COPY}"
-        _pure "${_m}" || fail "mutant ${_m} is not pure: it changes bytes outside its property"
-    done
-}
-
-@test "purity: the check catches a mutant with a side effect (round 5's grep 'unknown')" {
-    run _pure unknown-grep
+@test "purity: the check rejects round 5's grep mutant and round 7's eof mutant" {
+    run _pure legacy_grep "$(_row unknown | cut -d'|' -f3)" "$(_row unknown | cut -d'|' -f4)"
+    assert_failure
+    rm -rf "${COPY}"; cp -R "${CLEAN}" "${COPY}"
+    run _pure legacy_eof "$(_row eof | cut -d'|' -f3)" "$(_row eof | cut -d'|' -f4)"
     assert_failure
 }
-
-@test "mutant eof is caught" { _assert_caught eof; }
-@test "mutant comments is caught" { _assert_caught comments; }
-@test "mutant blank is caught" { _assert_caught blank; }
-@test "mutant crlf is caught" { _assert_caught crlf; }
-@test "mutant foreign-known is caught" { _assert_caught foreign-known; }
-@test "mutant unknown is caught" { _assert_caught unknown; }
-@test "mutant dup-foreign is caught" { _assert_caught dup-foreign; }
-@test "mutant order is caught" { _assert_caught order; }
-@test "mutant in-place is caught" { _assert_caught in-place; }
-@test "mutant dup-owned is caught" { _assert_caught dup-owned; }
-@test "mutant mode is caught" { _assert_caught mode; }
-@test "mutant atomic is caught" { _assert_caught atomic; }
-@test "mutant lock is caught" { _assert_caught lock; }
-@test "mutant owner is caught" { _assert_caught owner; }
