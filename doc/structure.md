@@ -73,7 +73,11 @@ worktool/
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
+├── .agents/
+│   └── skills/          agent skill 的實體檔(repo 層級,不裝在使用者層級)
+│       └── i-have-adhd/
 ├── .claude/
+│   ├── skills           -> ../.agents/skills(相對 symlink;Claude Code 從專案目錄載入 skill)
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
