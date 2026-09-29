@@ -14,8 +14,13 @@
 # comes from --title / -t, the body from --body / -b (inline) or
 # --body-file / -F (read from disk; a relative path is resolved against the
 # tool call's cwd). A body file that cannot be read is left to gh, which
-# fails on it anyway. Everything else passes silently; quoted text that
-# merely mentions `gh issue create` is data (lib/subcommand.sh).
+# fails on it anyway. A body read from stdin (-F - / --body-file -) is judged
+# on the command text itself, with a literal \n read as a newline, so a
+# heredoc or a printf pipe is seen; a stdin body the command does not spell
+# out (`cat file | gh issue create -F -`) cannot be checked and a guard issue
+# sent that way is denied: pass the file with --body-file instead.
+# Everything else passes silently; quoted text that merely mentions
+# `gh issue create` is data (lib/subcommand.sh).
 #
 # Output contract: allow = exit 0, no stdout; deny = exit 0 with the
 # permissionDecision JSON on stdout.
@@ -55,8 +60,8 @@ _read_body_file() {
     cat -- "${_p}"
 }
 
-# _judge_launch <encoded gh issue create launch> - print the deny reason, or
-# nothing.
+# _judge_launch <encoded gh issue create launch> <whole command> - print the
+# deny reason, or nothing.
 _judge_launch() {
     local -a _w
     local _i _title='' _body='' _file=''
@@ -71,12 +76,16 @@ _judge_launch() {
             --body-file=*) _file="$(hook_word "${_w[_i]#*=}")" ;;
         esac
     done
-    if [[ -n "${_file}" ]]; then
+    if [[ "${_file}" == "-" ]]; then
+        _body="${2//\\n/$'\n'}"
+    elif [[ -n "${_file}" ]]; then
         _body="$(_read_body_file "${_file}")" || return 0
     fi
     _is_guard_issue "${_title}" "${_body}" || return 0
     _has_scope "${_body}" && return 0
     printf '%s' 'This issue asks for a guard (hook / gate / check / filter / block; 攔截 / 檢查 / 過濾) but its body has no "## 範圍" section. Add the threat model first: 擋 (what it blocks), 不擋 (what it deliberately lets through), 已知限制 (known limits). pr-loop hands that section to codex as the blocking scope (issue #238).'
+    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is checked on the command text only (heredoc / printf); pipe-from-file bodies cannot be seen, so pass the file with --body-file.'
+    return 0
 }
 
 _deny() {
@@ -96,7 +105,7 @@ main() {
     _cmd="$(hook_command)"
     while IFS= read -r _sub; do
         [[ "${_sub}" =~ ^gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$) ]] || continue
-        _reason="$(_judge_launch "${_sub}")"
+        _reason="$(_judge_launch "${_sub}" "${_cmd}")"
         [[ -n "${_reason}" ]] && break
     done < <(hook_subcommands_raw "${_cmd}")
     [[ -n "${_reason}" ]] && _deny "${_reason}"

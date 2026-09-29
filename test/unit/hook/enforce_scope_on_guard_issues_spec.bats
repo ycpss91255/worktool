@@ -79,6 +79,36 @@ setup() {
     assert_output "deny"
 }
 
+@test "denies a stdin body (-F -, --body-file -, --body-file=-) that has no ## 範圍 section" {
+    local _f
+    for _f in '-F -' '--body-file -' '--body-file=-'; do
+        _check "printf '## 背景\\nx\\n' | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug ${_f}"
+        run _decision
+        assert_output "deny"
+    done
+}
+
+@test "denies a stdin heredoc body without ## 範圍 and allows one that has it" {
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F - <<'EOF'\n## 背景\n\nx\nEOF")"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F - <<'EOF'\n## 背景\n\nx\n\n## 範圍\n\n- 擋:a\nEOF")"
+    assert_success
+    assert_output ""
+}
+
+@test "allows a stdin body whose ## 範圍 section is visible in a printf pipe" {
+    _check "printf '## 背景\\nx\\n## 範圍\\n- 擋:a\\n' | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
+    assert_success
+    assert_output ""
+}
+
+@test "denies a stdin body the hook cannot see (piped from a file), even when the file has ## 範圍" {
+    _check "cat ${WITH_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
+    run _decision
+    assert_output "deny"
+}
+
 # --- allowed -----------------------------------------------------------------
 
 @test "allows a guard issue whose body has a ## 範圍 section" {
