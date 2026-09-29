@@ -49,8 +49,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  approval:
-    name: milestone-gate-approval
+  # The job id and name must never equal the status context
+  # `milestone-gate-approval` (issue #258): a same-named check run would also
+  # satisfy or block the required check, and when concurrency cancels an
+  # older run its cancelled check run blocks an already approved PR.
+  evaluate:
+    name: evaluate-approval
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issue_comment also fires for plain issues; only PR comments matter.
