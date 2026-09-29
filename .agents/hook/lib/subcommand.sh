@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # .agents/hook/lib/subcommand.sh - split a Bash command line into the
-# sub-commands it actually launches, for the PreToolUse Bash hooks.
+# sub-commands it launches, for the PreToolUse Bash hooks.
 #
 # A hook that pattern-matches the raw command text blocks commit messages,
 # PR bodies and files being written just because they MENTION a trigger
@@ -20,21 +20,38 @@
 #        holds it, where it is replaced by the word '_'. $(...) and `...`
 #        run inside double quotes as well; inside single quotes nothing is
 #        special
-#     4. the rest is split on ; && || | and newlines
-#     5. leading VAR=val assignments and sudo / env / command / time /
-#        nohup / exec wrappers are stripped together with their options
+#     4. an array assignment's list (`a=(x y)`) is data and becomes '_'
+#     5. the rest is split on ; && || | and newlines, on a background & (not
+#        the & of a redirection: 2>&1, &>f), and on ( and ), so the body of
+#        a subshell ( ... ) is launched like any other command
+#     6. leading VAR=val assignments, the reserved words that open or close
+#        a compound command (if then elif else fi while until do done
+#        esac ! { }), and sudo / env / command / time / nohup / exec
+#        wrappers are stripped, the wrappers together with their options
 #        (sudo -u root, env -i -u X, exec -a n, --user=x, --); `command -v`
 #        / `-V` only looks a name up, so it is kept as is. timeout(1) is
-#        kept, since the long-job hook treats it as a bound
-#     6. `bash|sh|dash|zsh|ksh [opts] -c <script>` and `eval <words>` run a
+#        kept, since the long-job hook treats it as a bound. So the body and
+#        the condition of if / while / until / for / case / { ...; } are
+#        judged as launches; a `for x in ...` or `case x in` header is kept
+#        as is and launches nothing
+#     7. `bash|sh|dash|zsh|ksh [opts] -c <script>` and `eval <words>` run a
 #        command line: it is split by these same rules in place of the
 #        wrapper. A timeout(1) leading the wrapper leads each of them, since
 #        it bounds the whole script
-#     7. pieces are trimmed and their words single-spaced; empty ones are
+#     8. pieces are trimmed and their words single-spaced; empty ones are
 #        dropped
 #
+#   hook_subcommands_raw <command>   the same sub-commands, but each opaque
+#     word stays encoded (no whitespace inside it), so a hook can split one
+#     launch into words and read a word's own text with hook_word
+#   hook_word <encoded word>         the word's text, separators restored; a
+#     command substitution in it shows as '_'
+#   hook_word_has_subst <encoded word>   0 when the word holds a $(...) /
+#     `...` / <(...) substitution
+#
 # Deliberately simple (no full shell parser): $'...' escapes are not
-# expanded, and a script run by name (`bash x.sh`) is not read.
+# expanded, a `#` comment is not recognised, and a script run by name
+# (`bash x.sh`) or a function body run later is not read.
 #
 # Library: sourced, sets no shell options, only declares functions.
 
@@ -73,13 +90,24 @@ _hook_unquote() {
     awk -f "${_HOOK_UNQUOTE_AWK}"
 }
 
-# _hook_decode <word> - an opaque word with its separators restored.
+# _hook_decode <word> - an opaque word with its separators restored and
+# each substitution marker (\001s) shown as '_'.
 _hook_decode() {
     local _s="$1" _i _seps=$' \t\r\n;&|<>()' _let=abcdefghijk
     for ((_i = 0; _i < ${#_seps}; _i++)); do
         _s="${_s//$'\001'"${_let:_i:1}"/"${_seps:_i:1}"}"
     done
-    printf '%s' "${_s}"
+    printf '%s' "${_s//$'\001's/_}"
+}
+
+# hook_word <encoded word> - see the header.
+hook_word() {
+    _hook_decode "$1"
+}
+
+# hook_word_has_subst <encoded word> - see the header.
+hook_word_has_subst() {
+    [[ "$1" == *$'\001's* ]]
 }
 
 # Long wrapper options that take their value as the NEXT word.
@@ -124,7 +152,7 @@ _hook_strip_wrappers() {
             env) _i="$(_hook_after_opts "${_i}" uCS "${_w[@]}")" ;;
             exec) _i="$(_hook_after_opts "${_i}" a "${_w[@]}")" ;;
             time) _i="$(_hook_after_opts "${_i}" '' "${_w[@]}")" ;;
-            nohup) _i=$((_i + 1)) ;;
+            nohup|'if'|'then'|'elif'|'else'|'fi'|'while'|'until'|'do'|'done'|'esac'|'!'|'{'|'}') _i=$((_i + 1)) ;;
             command)
                 # command -v / -V looks a name up; it launches nothing.
                 [[ "${_w[_i + 1]:-}" == -[vV]* ]] \
@@ -167,8 +195,9 @@ _hook_inner_script() {
 }
 
 # _hook_emit <sub-command> - print the sub-command with its opaque words
-# shown as '_', or, when it runs a command line (header step 6), that
-# command line's own sub-commands behind any leading timeout(1).
+# shown as '_' (kept encoded under hook_subcommands_raw), or, when it runs a
+# command line (header step 7), that command line's own sub-commands behind
+# any leading timeout(1).
 _hook_emit() {
     local _lead='' _script _line
     local _re='^g?timeout([[:space:]]+[^[:space:]0-9][^[:space:]]*)*[[:space:]]+[0-9][^[:space:]]*[[:space:]]+'
@@ -179,20 +208,44 @@ _hook_emit() {
         done < <(hook_subcommands "$(_hook_decode "${_script}")")
         return 0
     fi
-    printf '%s\n' "${1//$'\001'?/_}"
+    if [[ -n "${_HOOK_RAW:-}" ]]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s\n' "${1//$'\001'?/_}"
+    fi
+}
+
+# _hook_split <unquoted command> - the command with every separator of
+# header steps 4 and 5 turned into a newline.
+_hook_split() {
+    local _t="$1" _re_arr='=\(([^()]*)\)' _re_bg='(^|[^<>])&([^>]|$)'
+    while [[ "${_t}" =~ ${_re_arr} ]]; do
+        _t="${_t/"${BASH_REMATCH[0]}"/=_}"
+    done
+    _t="${_t//&&/$'\n'}"
+    _t="${_t//||/$'\n'}"
+    _t="${_t//|/$'\n'}"
+    while [[ "${_t}" =~ ${_re_bg} ]]; do
+        _t="${_t/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]}"$'\n'"${BASH_REMATCH[2]}"}"
+    done
+    _t="${_t//;/$'\n'}"
+    _t="${_t//(/$'\n'}"
+    printf '%s' "${_t//)/$'\n'}"
 }
 
 # hook_subcommands <command> - see the header.
 hook_subcommands() {
     local _text _sub
-    _text="$(_hook_strip_heredocs "$1" | _hook_unquote)"
-    _text="${_text//&&/$'\n'}"
-    _text="${_text//||/$'\n'}"
-    _text="${_text//;/$'\n'}"
-    _text="${_text//|/$'\n'}"
+    _text="$(_hook_split "$(_hook_strip_heredocs "$1" | _hook_unquote)")"
     while IFS= read -r _sub; do
         _sub="$(_hook_strip_wrappers "${_sub}")"
         [[ -n "${_sub}" ]] && _hook_emit "${_sub}"
     done <<<"${_text}"
     return 0
+}
+
+# hook_subcommands_raw <command> - see the header.
+hook_subcommands_raw() {
+    local _HOOK_RAW=1
+    hook_subcommands "$1"
 }
