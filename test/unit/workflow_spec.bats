@@ -456,8 +456,9 @@ _rv_codex_section() {
 # Run research-verify with every step played (exec) under repoDir $1 and
 # args $2 (merged into the base args); codex is a stub that prints
 # ${SHAPE}/raw (stdout + stderr of a real run) and, when ${SHAPE}/last
-# exists, writes it to the -o (--output-last-message) file. Leaves the
-# scratch dir of issue 7 under $1.
+# exists, writes it to the -o (--output-last-message) file. A dir in
+# ${RV_OVERRIDE} comes before these stubs in PATH. Leaves the scratch dir
+# of issue 7 under $1.
 _rv_run_shape() {
     local stub="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${stub}"
@@ -472,7 +473,7 @@ cat "${SHAPE}/raw"
 SH
     printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
     chmod +x "${stub}"/*
-    PATH="${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
+    PATH="${RV_OVERRIDE:+${RV_OVERRIDE}:}${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
 }
 
 @test "research-verify (node): the Record keeps only codex's final answer, whatever shape codex printed" {
@@ -535,14 +536,16 @@ EOF
 
 @test "research-verify (node): a failing Record producer or filter leaves no body to post (fail closed)" {
     local dir="${BATS_TEST_TMPDIR}/w" fail="${BATS_TEST_TMPDIR}/fail" name scratch
+    local cat_fail scrub_mode raw inputs posted="${BATS_TEST_TMPDIR}/posted"
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
     scratch="${dir}/.worktree/.scratch/research-7"
     mkdir -p "${fail}"
     # cat fails on the file named by FAIL_CAT; awk run as the path filter
-    # (RV_N set) prints its whole output, then fails when FAIL_SCRUB is set
-    REAL_CAT="$(command -v cat)" REAL_AWK="$(command -v awk)"
-    export REAL_CAT REAL_AWK
+    # (RV_N set) then misbehaves per SCRUB_MODE: fail = full output, exit 1;
+    # empty = no output, exit 0; truncate = first line only, exit 0
+    REAL_CAT="$(command -v cat)" REAL_AWK="$(command -v awk)" REAL_HEAD="$(command -v head)"
+    export REAL_CAT REAL_AWK REAL_HEAD
     cat > "${fail}/cat" <<'SH'
 #!/bin/sh
 for a; do [ "$a" = "${FAIL_CAT}" ] && exit 1; done
@@ -550,31 +553,66 @@ exec "${REAL_CAT}" "$@"
 SH
     cat > "${fail}/awk" <<'SH'
 #!/bin/sh
-"${REAL_AWK}" "$@" || exit
-[ -n "${RV_N}" ] && [ -n "${FAIL_SCRUB}" ] && exit 1
-exit 0
+[ -n "${RV_N}" ] || exec "${REAL_AWK}" "$@"
+case "${SCRUB_MODE}" in
+    fail) "${REAL_AWK}" "$@"; exit 1 ;;
+    empty) "${REAL_CAT}" >/dev/null; exit 0 ;;
+    truncate) "${REAL_AWK}" "$@" | "${REAL_HEAD}" -n 1; exit 0 ;;
+esac
+exec "${REAL_AWK}" "$@"
+SH
+    # codex runs in the scratch dir after the Research reset: it leaves the
+    # body.md of an earlier successful build there, as a Record retry in the
+    # same scratch dir would find it, then plays the recorded shape
+    cat > "${fail}/codex" <<SH
+#!/bin/sh
+echo STALE-BODY > body.md
+touch "${BATS_TEST_TMPDIR}/stale-placed"
+exec "${BATS_TEST_TMPDIR}/bin/codex" "\$@"
+SH
+    # gh posts (records) the --body-file only when that file exists
+    cat > "${fail}/gh" <<SH
+#!/bin/sh
+f=
+while [ \$# -gt 0 ]; do [ "\$1" = --body-file ] && f=\$2; shift; done
+[ -f "\${f}" ] || exit 1
+"${REAL_CAT}" "\${f}" > "${posted}"
+echo https://example.invalid/c/1
 SH
     chmod +x "${fail}"/*
-    # name | FAIL_CAT | FAIL_SCRUB
-    while IFS='|' read -r name cat_fail scrub_fail; do
+    # name | FAIL_CAT | SCRUB_MODE | codex raw output (printf format) | inputs all there
+    while IFS='|' read -r name cat_fail scrub_mode raw inputs; do
         echo "failure: ${name}"   # names the failing row in the bats report
-        rm -rf "${SHAPE}" "${dir}"
+        rm -rf "${SHAPE}" "${dir}" "${posted}" "${BATS_TEST_TMPDIR}/stale-placed"
         mkdir -p "${SHAPE}" "${scratch}"
-        printf 'codex\nA1\ntokens used\n9\n' > "${SHAPE}/raw"
-        FAIL_CAT="${cat_fail}" FAIL_SCRUB="${scrub_fail}" PATH="${fail}:${PATH}" run _rv_run_shape "${dir}" '{}'
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        FAIL_CAT="${cat_fail}" SCRUB_MODE="${scrub_mode}" RV_OVERRIDE="${fail}" run _rv_run_shape "${dir}" '{}'
         assert_success
-        # the inputs were there, so only the producer or the filter failed
-        [[ -s "${scratch}/agy.md" && -s "${scratch}/codex.md" && -s "${scratch}/claude.md" ]]
+        # the stale body really was there before the Record
+        [[ -e "${BATS_TEST_TMPDIR}/stale-placed" ]]
+        # either every input was there (only the producer or the filter
+        # failed) or codex left no final answer
+        if [[ "${inputs}" == y ]]; then
+            [[ -s "${scratch}/agy.md" && -s "${scratch}/codex.md" && -s "${scratch}/claude.md" ]]
+        else
+            [[ ! -s "${scratch}/codex.md" ]]
+        fi
         # the body build (5th shell step) reports the failure ...
         run jq -r '.ran[4].rc' <<<"${output}"
         refute_output 0
-        # ... and leaves no body.md, complete or not, for gh to post
+        # ... leaves no body.md, stale or partial, for gh to post ...
         [[ ! -e "${scratch}/body.md" ]]
+        # ... and gh posts nothing
+        [[ ! -e "${posted}" ]]
     done <<'EOF'
-claude.md unreadable|claude.md|
-codex.md unreadable|codex.md|
-agy.md unreadable|agy.md|
-path filter fails|-|1
+claude.md unreadable (non-zero exit)|claude.md||codex\nA1\ntokens used\n9\n|y
+codex.md unreadable (non-zero exit)|codex.md||codex\nA1\ntokens used\n9\n|y
+agy.md unreadable (non-zero exit)|agy.md||codex\nA1\ntokens used\n9\n|y
+path filter fails (non-zero exit)|-|fail|codex\nA1\ntokens used\n9\n|y
+path filter prints nothing (empty output)|-|empty|codex\nA1\ntokens used\n9\n|y
+codex printed nothing (empty output)|-||\n|n
+path filter truncates the body (malformed output)|-|truncate|codex\nA1\ntokens used\n9\n|y
+codex stopped before its answer (malformed output)|-||codex\nI will read the files first\n|n
 EOF
 }
 
