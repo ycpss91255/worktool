@@ -24,8 +24,9 @@
 #      and the latest init output line - overwritten in place when stderr
 #      is a TTY, one line per update otherwise.
 #   3. `container_setup_done` in the log is success. An `Error:` line, a
-#      container that stops, a failing `docker start` or the timeout (15 min
-#      by default) is a failure: the reason, the log path, the last 20 log
+#      container that stops, a failing `docker start`, a log follower that
+#      exits early (engine error, permission, lost connection) or the timeout
+#      (15 min by default) is a failure: the reason, the log path, the last 20 log
 #      lines and the recovery (`distrobox rm -f <box>`, then a new terminal)
 #      are printed and the script exits 1. The box is NEVER stopped or
 #      removed here - deleting it is the user's decision.
@@ -83,6 +84,7 @@ DISTROBOX="" TIMEOUT="" INTERVAL=""
 # --- Run state (first launch only) -------------------------------------------
 INIT_LOG=""
 LOGS_PID=""
+FOLLOWER_GONE=""
 PROGRESS_OPEN=0
 
 # --- Usage -------------------------------------------------------------------
@@ -104,7 +106,8 @@ going on instead of two static lines:
     and the recovery (distrobox rm -f <box>, then open a new terminal),
     exit 1. The box is never stopped or removed.
 
-  --box <name>          Box to enter (default: dev).
+  --box <name>          Box to enter (default: dev); a container name:
+                        [A-Za-z0-9][A-Za-z0-9_.-]*.
   --distrobox <path>    Absolute path of the distrobox to run (default: the
                         one on PATH).
   --timeout <seconds>   First-launch timeout (default: 900 = 15 min, or
@@ -136,8 +139,8 @@ _set_opt() {
     local _ok=0 _expected
     case "$1" in
         --box)
-            _expected="a box name"
-            [[ -n "$2" && "$2" != -* ]] && _ok=1 && OPT_BOX="$2" ;;
+            _expected="$(enter_expected box)"
+            enter_value_ok box "$2" && _ok=1 && OPT_BOX="$2" ;;
         --distrobox)
             _expected="an absolute path to an executable file"
             [[ "$2" == /* && -f "$2" && -x "$2" ]] && _ok=1 && OPT_DISTROBOX="$2" ;;
@@ -330,12 +333,31 @@ _init_problem() {
     return 1
 }
 
+# Sample the background `docker logs -f` follower: while it runs FOLLOWER_GONE
+# stays empty; once it is gone it is reaped and FOLLOWER_GONE says why.
+# Without this check a follower that died early (engine error, permission,
+# lost connection) never delivers container_setup_done and the wait ends as
+# a false timeout. Runs in the main shell (never in $(...)): only the parent
+# can reap its own background job.
+_follower_check() {
+    local _status=0
+    FOLLOWER_GONE=""
+    kill -0 "${LOGS_PID}" 2>/dev/null && return 0
+    wait "${LOGS_PID}" 2>/dev/null || _status=$?
+    LOGS_PID=""
+    FOLLOWER_GONE="the log follower (docker logs -f ${OPT_BOX}) exited with status ${_status} before container_setup_done"
+}
+
 # Poll the init log once a second until setup is done (0), something failed
 # or the timeout passed (1, reported). A progress line every INTERVAL s.
+# The follower's liveness is sampled BEFORE the log is read, so the last
+# lines of a follower that just ended (container_setup_done included) are
+# always seen before it counts as gone.
 _wait_for_setup() {
     local _start="${SECONDS}" _elapsed _next="${INTERVAL}" _reason
     while :; do
         _elapsed=$((SECONDS - _start))
+        [[ -z "${LOGS_PID}" ]] || _follower_check
         if grep -q 'container_setup_done' "${INIT_LOG}"; then
             _progress_end
             log_info "first launch: initialisation complete after $(_fmt_duration "${_elapsed}") - entering the box"
@@ -343,6 +365,10 @@ _wait_for_setup() {
         fi
         if _reason="$(_init_problem)"; then
             _fail "${_reason}"
+            return 1
+        fi
+        if [[ -n "${FOLLOWER_GONE}" ]]; then
+            _fail "${FOLLOWER_GONE}"
             return 1
         fi
         if [[ "${_elapsed}" -ge "${TIMEOUT}" ]]; then

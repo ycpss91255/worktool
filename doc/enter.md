@@ -342,7 +342,7 @@ distrobox。`just box setup` 寫出的受管 command 一律跑這支包裝層(�
 
 | 選項 | 值 | 預設 | 意義 |
 |------|----|------|------|
-| `--box` | 盒名 | `dev` | 要進哪個盒 |
+| `--box` | 容器名(`[A-Za-z0-9][A-Za-z0-9_.-]*`) | `dev` | 要進哪個盒;不合規則(空白、換行、`/` 等)exit 2 |
 | `--distrobox` | 絕對路徑的可執行檔 | PATH 上解析到的那一個 | 要執行的 distrobox;受管 command 一律帶這個選項(issue #175 的絕對路徑) |
 | `--timeout` | 正整數(秒) | `900`(15 分鐘),或環境變數 `WORKTOOL_INIT_TIMEOUT` | 首次初始化的逾時 |
 | `-- <指令>...` | — | 無(進登入 shell) | 在盒內執行的指令,原封交給 `distrobox enter <盒> -- <指令>...` |
@@ -368,7 +368,8 @@ distrobox。`just box setup` 寫出的受管 command 一律跑這支包裝層(�
 3. **完成**:log 出現 `container_setup_done` 就印「初始化完成」,清掉背景行程,
    `exec distrobox enter`。
 4. **失敗或逾時**:distrobox-init 印出 `Error:` 行、容器中途停了、`docker start`
-   失敗、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
+   失敗、背景的 `docker logs -f` 提早結束(Docker 錯誤、權限、連線中斷;訊息帶它的
+   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
    **不停止、不刪除盒子**(刪盒是使用者的決定;逾時時盒子可能還在裝,訊息會給
    `docker logs -f <盒>`)。
 5. **清理**:背景的 `docker logs -f` 是唯一的背景行程,成功、失敗、逾時、Ctrl-C

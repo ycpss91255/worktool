@@ -20,7 +20,10 @@
 #                    becomes `sleep 1000` IN PLACE (exec, same PID) - a
 #                    follower that never ends by itself, like `docker logs
 #                    -f` on a running container. A case proves cleanup by
-#                    checking that PID is gone afterwards.
+#                    checking that PID is gone afterwards. With
+#                    $FAKE_LOGS_RC set it exits with that status instead:
+#                    a follower that dies early (engine error, permission,
+#                    lost connection).
 #   distrobox  appends `$*` to $FAKE_DISTROBOX_CALLS and prints
 #              `FAKE-DISTROBOX <args>` on stdout, exit 0: what enter.sh
 #              hands over to at the end.
@@ -56,6 +59,7 @@ case "$1" in
                 printf '%s\n' "${_text}"
             done <"${FAKE_LOGS_SCRIPT}"
         fi
+        [[ -z "${FAKE_LOGS_RC:-}" ]] || exit "${FAKE_LOGS_RC}"
         exec sleep 1000
         ;;
     *) exit 1 ;;

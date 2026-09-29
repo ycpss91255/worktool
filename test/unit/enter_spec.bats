@@ -131,6 +131,21 @@ _enter() {
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "--box follows the container name rule [A-Za-z0-9][A-Za-z0-9_.-]*; anything else is exit 2" {
+    local _name
+    for _name in 'my box' $'dev\nwork' '.dev' '_dev' 'dev/work' 'dev;id' 'dév' ''; do
+        run "${ENTER}" --distrobox "${DISTROBOX}" --box "${_name}"
+        assert_failure 2
+        assert_output --partial "enter.sh: invalid value '${_name}' for --box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*) (see --help)"
+        run "${ENTER}" --distrobox "${DISTROBOX}" "--box=${_name}"
+        assert_failure 2
+    done
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+    FAKE_STARTED_AT='2026-01-01T00:00:00Z' run "${ENTER}" --distrobox "${DISTROBOX}" --box 'W0rk_1.b-x'
+    assert_success
+    assert_output "FAKE-DISTROBOX enter W0rk_1.b-x"
+}
+
 @test "no distrobox on PATH and no --distrobox: exit 1 with a readable error" {
     rm -f "${DISTROBOX}"
     PATH="${FAKE_BIN}:/usr/bin:/bin" run "${ENTER}"
@@ -265,6 +280,26 @@ _enter() {
     assert_output --partial "${INIT_LOG}"
     run enter_fake_logs_alive
     assert_failure
+}
+
+@test "failure: a log follower that dies early fails at once with its status, not a false timeout" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' \
+        '0|permission denied while trying to connect to the Docker daemon socket'
+    FAKE_LOGS_RC=1 _enter --distrobox "${DISTROBOX}" --timeout 30
+    assert_failure 1
+    assert_output --partial "failed: the log follower (docker logs -f dev) exited with status 1 before container_setup_done"
+    assert_output --partial "  | permission denied while trying to connect"
+    assert_output --partial "distrobox rm -f dev"
+    refute_output --partial "timed out"
+    refute_output --partial "FAKE-DISTROBOX"
+}
+
+@test "a follower that ends right after container_setup_done is still a success" {
+    _long_init_script
+    FAKE_LOGS_RC=0 _enter --distrobox "${DISTROBOX}"
+    assert_success
+    assert_output --partial "initialisation complete"
+    assert_line "FAKE-DISTROBOX enter dev"
 }
 
 @test "failure: docker start failing is reported with the recovery, exit 1" {
