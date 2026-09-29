@@ -86,6 +86,10 @@ ARG DISTROBOX_VERSION
 # jq      - the Claude Code hooks under .agents/hook/ read their stdin JSON
 #           payload with jq (as they do on the host); their specs under
 #           test/unit/hook/ build those payloads with it too
+# nodejs  - test/unit/workflow_spec.bats runs the research-verify Workflow
+#           template under node with stand-in agents
+#           (test/unit/fixture/workflow_run.mjs) to prove its arg checks,
+#           shell quoting and fail-closed control flow
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
         bash \
@@ -93,7 +97,8 @@ RUN apk add --no-cache \
         grep coreutils \
         ncurses \
         just \
-        jq
+        jq \
+        nodejs
 
 # bats core + extensions (bats-support / bats-assert)
 COPY --from=bats-src /opt/bats /opt/bats
@@ -119,6 +124,7 @@ RUN bash --version >/dev/null && \
     shellcheck --version >/dev/null && \
     just --version && \
     jq --version >/dev/null && \
+    node --version >/dev/null && \
     [ "$(distrobox --version)" = "distrobox: ${DISTROBOX_VERSION}" ]
 
 WORKDIR /source
