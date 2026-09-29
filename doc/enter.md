@@ -12,12 +12,13 @@ dev 盒。狀態:M3(終端自動進盒 + 效能)。整體設計與治理見
 profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host shell rc 裡
 `exec distrobox enter` 會讓 ssh / 非互動 shell 全部踩雷,**不採用**。
 
-落地成兩個 `box` 動詞:
+落地成三個 `box` 動詞:
 
 | 指令 | 做什麼 |
 |------|--------|
 | `just box setup [選項]` | 決定「要不要自動進盒、用哪個終端、tmux 放哪、進哪個盒」,寫進**單一設定檔**,並寫入(或移除)終端 profile 的**受管區塊** |
 | `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、以及受管區塊在不在 |
+| `just box enter [選項]` | 進盒;盒子**第一次啟動**時顯示進度、log 與逾時(見下方「首次啟動的進度」)。受管 command 跑的就是它 |
 
 只動 HOME / `XDG_CONFIG_HOME` 底下的檔案;不裝任何東西、不動 host 的 shell rc、
 不需要 root。
@@ -37,7 +38,7 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 |------|----|------|------|
 | `--auto-enter` | `yes` \| `no` | `yes` | 要不要自動進盒。`no` = 還原 host shell:移除兩個受管區塊,並印出移除了什麼 |
 | `--terminal` | `ghostty` \| `none` | PATH 上有 **ghostty 執行檔** -> `ghostty`;否則 `$XDG_CONFIG_HOME/ghostty` 或 `~/.config/ghostty` 存在 -> `ghostty`;都沒有才 `none`(見下方「偵測 ghostty:看執行檔,不是看設定目錄」) | 要管理哪個終端的 profile。`none` = 不寫任何終端 profile,**連 `~/.tmux.conf` 也不寫**(`--tmux host` 的決策照樣存進設定檔,只是 tmux.conf 區塊只服務 ghostty + host 這組;log 會告訴你手動進盒的指令) |
-| `--tmux` | `inside` \| `host` | `inside` | tmux 跑在盒內(終端直接 `<distrobox> enter <盒> -- tmux new -A -s main`)或跑在 host(終端跑 `tmux new -A -s main`,tmux 的每個 pane 再進盒:`~/.tmux.conf` 加 `set -g default-command '"<distrobox>" enter <盒>'`)。`<distrobox>` 是 setup 當下解析出的**絕對路徑**,且已 quote(見下方「受管 command 寫絕對路徑」與「受管 command 的 shell quoting」) |
+| `--tmux` | `inside` \| `host` | `inside` | tmux 跑在盒內(終端直接 `<enter.sh> --distrobox <distrobox> --box <盒> -- tmux new -A -s main`)或跑在 host(終端跑 `tmux new -A -s main`,tmux 的每個 pane 再進盒:`~/.tmux.conf` 加 `set -g default-command '"<enter.sh>" --distrobox "<distrobox>" --box <盒>'`)。`<enter.sh>` 是這份 checkout 的進盒包裝層 `script/box/enter.sh`(見下方「首次啟動的進度」),`<distrobox>` 是 setup 當下解析出的**絕對路徑**,兩者都已 quote(見下方「受管 command 寫絕對路徑」與「受管 command 的 shell quoting」) |
 | `--box` | 容器名(`[A-Za-z0-9][A-Za-z0-9_.-]*`) | `dev` | 要進哪個盒 |
 | `--distrobox` | 絕對路徑的可執行檔 | PATH 上解析到的那一個 | 要寫進受管 command 的 distrobox。PATH 上找不到、又沒給這個選項時,整次執行被拒絕(見下方「受管 command 寫絕對路徑」) |
 | `--dry-run` | — | — | 印出每個決策與每個會寫 / 會移除的檔案,**什麼都不寫**(連設定檔都不寫) |
@@ -55,8 +56,8 @@ exit 2。
 | 檔案 | 內容 |
 |------|------|
 | `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`) |
-| `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<distrobox>' enter <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
-| `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<distrobox>" enter <盒>'` |
+| `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<enter.sh>' --distrobox '<distrobox>' --box <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
+| `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<enter.sh>" --distrobox "<distrobox>" --box <盒>'` |
 
 受管區塊以兩行標記包住,**一個檔案恰好一個**,重跑時**原地取代**(不會重複、
 使用者自己的行原封不動;檔案若不知怎地已有兩個以上區塊,重寫時會先全部移除、
@@ -65,7 +66,7 @@ exit 2。
 
 ```text
 # BEGIN worktool managed block (just box setup; do not edit)
-command = '/home/me/.local/bin/distrobox' enter dev -- tmux new -A -s main
+command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box dev -- tmux new -A -s main
 # END worktool managed block
 ```
 
@@ -142,8 +143,8 @@ flatpak)。原因是乾淨機器:剛用 PPA 裝好 `/usr/bin/ghostty`、還沒�
 
 | 檔案 | 形狀 | 為什麼 |
 |------|------|--------|
-| ghostty config | `command = '<路徑>' enter <盒> -- tmux new -A -s main` | 單引號是唯一對任意字元都安全的 POSIX 形式;路徑裡的單引號以 `'\''` 收尾再接回 |
-| `~/.tmux.conf` | `set -g default-command '"<路徑>" enter <盒>'` | 外層由 **tmux** 的單引號擁有(tmux 的單引號字串完全字面、沒有跳脫也沒有展開),內層才是 shell 的雙引號,只需跳脫 `\` `` ` `` `$` `"` 四個字元 |
+| ghostty config | `command = '<enter.sh>' --distrobox '<路徑>' --box <盒> -- tmux new -A -s main` | 單引號是唯一對任意字元都安全的 POSIX 形式;路徑裡的單引號以 `'\''` 收尾再接回 |
+| `~/.tmux.conf` | `set -g default-command '"<enter.sh>" --distrobox "<路徑>" --box <盒>'` | 外層由 **tmux** 的單引號擁有(tmux 的單引號字串完全字面、沒有跳脫也沒有展開),內層才是 shell 的雙引號,只需跳脫 `\` `` ` `` `$` `"` 四個字元 |
 
 代價是 tmux 的單引號沒有任何跳脫,所以**路徑本身含單引號時無法安全寫進
 `~/.tmux.conf`**;這種情況只在 `--tmux host` 下發生,setup 會拒絕而不是寫出一份
@@ -153,7 +154,9 @@ flatpak)。原因是乾淨機器:剛用 PPA 裝好 `/usr/bin/ghostty`、還沒�
 [ERROR] distrobox: /home/me/it's here/distrobox holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written
 ```
 
-`--tmux inside` 只寫 ghostty 那一塊,單引號可以正常編碼,不受此限。
+`--tmux inside` 只寫 ghostty 那一塊,單引號可以正常編碼,不受此限。進盒包裝層
+`<enter.sh>` 的路徑(repo 的所在位置)套用**同樣的兩條檢查**(含換行一律拒絕、
+`--tmux host` 下含單引號拒絕),錯誤訊息以 `entry wrapper:` 開頭。
 
 ### 路徑含換行一律拒絕(issue #175 round 2)
 
@@ -187,7 +190,7 @@ $ just box setup
 [INFO] box: dev (default)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter dev -- tmux new -A -s main)
+[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box dev -- tmux new -A -s main)
 ```
 
 再跑一次是冪等的(區塊已是最新就不重寫):
@@ -216,7 +219,7 @@ $ just box setup --tmux host --box work
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
 [INFO] wrote: /home/me/.config/ghostty/config (managed block: command = tmux new -A -s main)
-[INFO] wrote: /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/.local/bin/distrobox" enter work')
+[INFO] wrote: /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/worktool/script/box/enter.sh" --distrobox "/home/me/.local/bin/distrobox" --box work')
 ```
 
 沒有支援的終端(`terminal: none`):
@@ -254,7 +257,7 @@ $ echo $?
 $ just box setup --distrobox /opt/distrobox/bin/distrobox
 ...
 [INFO] distrobox: /opt/distrobox/bin/distrobox (--distrobox; absolute path written into the managed command)
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/opt/distrobox/bin/distrobox' enter dev -- tmux new -A -s main)
+[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box dev -- tmux new -A -s main)
 ```
 
 還原 host shell(印出還原了什麼;`--auto-enter no` 不寫受管 command,所以不需要
@@ -269,7 +272,7 @@ $ just box setup --auto-enter no
 [INFO] box: work (user)
 [INFO] wrote: /home/me/.config/worktool/config
 [INFO] removed: /home/me/.config/ghostty/config (managed block: command = tmux new -A -s main)
-[INFO] removed: /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/.local/bin/distrobox" enter work')
+[INFO] removed: /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/worktool/script/box/enter.sh" --distrobox "/home/me/.local/bin/distrobox" --box work')
 ```
 
 沒東西可還原時兩個檔案都會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config (no managed block)`。
@@ -286,7 +289,7 @@ $ just box setup --dry-run --tmux host
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] dry-run: would write /home/me/.config/worktool/config
 [INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = tmux new -A -s main)
-[INFO] dry-run: would write /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/.local/bin/distrobox" enter dev')
+[INFO] dry-run: would write /home/me/.tmux.conf (managed block: set -g default-command '"/home/me/worktool/script/box/enter.sh" --distrobox "/home/me/.local/bin/distrobox" --box dev')
 ```
 
 查目前生效的決策(印到 stdout,沒有 log 標籤,可直接 grep):
@@ -321,6 +324,88 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
 後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態與 `distrobox:` 那行,
 報告永遠不會是空的。
+
+## 首次啟動的進度(just box enter,issue #180)
+
+盒子第一次 `distrobox enter` 時,distrobox-init 會在盒內安裝基本套件與
+`additional_packages`(實機約 3.5 分鐘)。distrobox 本身在這段期間只印兩行靜態
+訊息(`Starting container... [ OK ]`、`Installing basic packages...`),apt 的輸出
+全部被它的過濾迴圈丟掉,`--verbose` 也不會即時轉送,而且它等待
+`container_setup_done` 的迴圈**沒有逾時**。研究與決定見 issue #180。
+
+所以 worktool 在**進盒包裝層** `script/box/enter.sh`(`just box enter`)處理,不改
+distrobox。`just box setup` 寫出的受管 command 一律跑這支包裝層(以 repo 裡的
+**絕對路徑**,桌面啟動的終端不需要 `just` 或 repo 在 PATH 上),它最後才
+`exec <distrobox> enter <盒> [-- <指令>...]`。
+
+### 選項
+
+| 選項 | 值 | 預設 | 意義 |
+|------|----|------|------|
+| `--box` | 盒名 | `dev` | 要進哪個盒 |
+| `--distrobox` | 絕對路徑的可執行檔 | PATH 上解析到的那一個 | 要執行的 distrobox;受管 command 一律帶這個選項(issue #175 的絕對路徑) |
+| `--timeout` | 正整數(秒) | `900`(15 分鐘),或環境變數 `WORKTOOL_INIT_TIMEOUT` | 首次初始化的逾時 |
+| `-- <指令>...` | — | 無(進登入 shell) | 在盒內執行的指令,原封交給 `distrobox enter <盒> -- <指令>...` |
+| `-h`, `--help` | — | — | usage |
+
+進度行的間隔預設 10 秒,可用環境變數 `WORKTOOL_INIT_INTERVAL` 改(測試用它縮短)。
+未知選項、無效的值、缺值都由 `enter.sh` 自己拒絕(`enter.sh: unknown option
+'--bogus' (see --help)`,exit 2);整行命令列解析完才處理 `--help`。
+
+### 流程
+
+1. **判斷首次初始化**:`docker inspect --type container -f '{{.State.StartedAt}}' <盒>`
+   是零值(`0001-01-01T00:00:00Z`,從沒啟動過)才算首次。不用 `docker exec` 查
+   `/.containersetupdone`:容器沒在跑時 exec 會失敗。其他情況(盒子啟動過、沒有這個
+   盒、沒有 docker)一律**直接交給** `distrobox enter`,由它自己報錯;平常進盒只多
+   一次 `docker inspect`。
+2. **首次啟動**:stderr 先印說明、查 log 的指令與 host log 路徑,再
+   `docker start <盒>`,並在背景把 `docker logs -f <盒>` 完整寫進
+   `${XDG_CACHE_HOME:-~/.cache}/worktool/<盒>-init.log`。之後每 10 秒一行
+   「目前階段 + 經過時間 + 最新一行初始化輸出」:階段 = log 裡最後一行
+   `distrobox: ...`(distrobox 自己顯示的階段標題),最新一行略過 `+ ` 開頭的 xtrace
+   行、截到 60 字元。stderr 是 TTY 時**原地覆寫同一行**,否則逐行印。
+3. **完成**:log 出現 `container_setup_done` 就印「初始化完成」,清掉背景行程,
+   `exec distrobox enter`。
+4. **失敗或逾時**:distrobox-init 印出 `Error:` 行、容器中途停了、`docker start`
+   失敗、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
+   **不停止、不刪除盒子**(刪盒是使用者的決定;逾時時盒子可能還在裝,訊息會給
+   `docker logs -f <盒>`)。
+5. **清理**:背景的 `docker logs -f` 是唯一的背景行程,成功、失敗、逾時、Ctrl-C
+   (exit 130)、SIGTERM(exit 143)時都由 trap 清掉。中斷時盒子繼續在背景初始化,
+   訊息會說明並給 `docker logs -f`。
+
+不採用 pre_init_hooks 心跳(在盒內印 `distrobox:` 行讓 distrobox 轉送):會打亂
+distrobox 的階段顯示,也有遺留行程的風險。
+
+### 範例
+
+非 TTY(例如接到檔案)時的首次啟動:
+
+```text
+$ just box enter
+[INFO] first launch of box 'dev': distrobox installs its packages first - this can take several minutes (timeout 15m00s)
+[INFO] follow the full output in another terminal: docker logs -f dev
+[INFO] full init log: /home/me/.cache/worktool/dev-init.log
+[INFO] first launch: Installing basic packages... - 10s elapsed - Get:12 http://archive.ubuntu.com/ubuntu resolute/main amd64
+[INFO] first launch: Installing basic packages... - 20s elapsed - Unpacking libfoo (1.2-3) ...
+...
+[INFO] first launch: Setting up read-only mounts... - 3m30s elapsed - distrobox: Setting up read-only mounts...
+[INFO] first launch: initialisation complete after 3m32s - entering the box
+```
+
+逾時(盒子保留,由使用者決定是否重建):
+
+```text
+[ERROR] first launch of box 'dev' failed: timed out after 15m00s without container_setup_done (the box may still be installing: docker logs -f dev)
+[ERROR] init log: /home/me/.cache/worktool/dev-init.log
+[ERROR] last 20 lines of the init log:
+  | ...
+[ERROR] the box was left as it is (not stopped, not removed); to start over: distrobox rm -f dev, then open a new terminal
+```
+
+已知限制:ghostty 的受管 command 結束時(包含這裡的 exit 1)預設會關掉視窗;
+要看完失敗訊息,可以在另一個終端跑 `just box enter`,或查 host log。
 
 ## 測試對應
 
@@ -367,6 +452,13 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   絕對路徑版本仍被 `+validate-config` 接受,PATH 上沒有 distrobox 時整次執行被
   拒絕(不再寫任何檔案),以及安裝路徑含空白 / `$(...)` / 雙引號時,把**真 ghostty
   回報的生效值**丟進 `/bin/sh -c` 仍只會執行那一個執行檔(sentinel 檔不存在)。
+- 首次啟動的進度(issue #180):單元 `test/unit/enter_spec.bats`(假 docker /
+  distrobox:首次偵測、進度行持續產生且會變、host log、逾時在期限內 exit 1 並印
+  log 路徑 / 最後 20 行 / 復原方式、`Error:` 行、容器停止、`docker start` 失敗、
+  成功 / 失敗 / SIGINT / SIGTERM 後沒有遺留背景行程、TTY 原地覆寫、CLI);整合
+  `test/integration/enter_spec.bats`(`just box enter` 與 setup 寫出的 ghostty
+  command 都經過包裝層);system-real 的第一次進盒改走 `enter.sh`,斷言真實首次
+  初始化時 stderr 有進度行與 log 路徑、log 檔存在且非空。
 - 系統 / 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。
