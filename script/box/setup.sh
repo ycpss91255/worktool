@@ -418,6 +418,17 @@ _config_render() {
         terminal "${TERMINAL}" terminal "${TERMINAL_SRC}" \
         tmux "${TMUX}" tmux "${TMUX_SRC}" \
         box "${BOX}" box "${BOX_SRC}"
+    _config_render_home
+}
+
+# Keep the box home `just box assemble` recorded (issue #198): the state
+# file is shared, and this rewrite must not drop lines it does not own.
+_config_render_home() {
+    local _home
+    _home="$(enter_config_get "${CONFIG}" home)"
+    [[ -n "${_home}" ]] || return 0
+    printf 'home=%s\nhome.source=%s\n' \
+        "${_home}" "$(enter_config_get "${CONFIG}" home.source)"
 }
 
 # --- Apply -------------------------------------------------------------------
