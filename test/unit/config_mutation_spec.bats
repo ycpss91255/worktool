@@ -51,6 +51,8 @@ _rows() {
         "get-first|behave|get_first|=|=|${_cs}config_get reads the first occurrence" \
         "get-bare|behave|get_bare|=|=|${_cs}config_get reads the first occurrence" \
         "get-all|behave|get_all|=|=|${_cs}config_get_all reads every occurrence" \
+        "get-all-bare|behave|get_all_bare|=|=|${_cs}config_get_all reads every occurrence;unit/config_validate_spec.bats@bare key = empty value: link" \
+        "bare-validate|behave|bare_validate|=|=|unit/config_validate_spec.bats@bare key = empty value: every validated key" \
         "each-args|behave|each_args|=|=|${_cs}config_each passes line number" \
         "each-skip|behave|each_skip|=|=|${_cs}config_each passes line number" \
         "each-stop|behave|each_stop|=|=|${_cs}config_each stops at the first failing callback" \
@@ -178,6 +180,21 @@ _mut_get_all() {
     cat <<'EOF'
 _config_get_all_line() { [[ "$3" == "$1="* ]] || return 0; printf '%s\n' "${3#"$1="}"; return 10; }
 config_get_all() { local _r=0; _config_lines "$(_config_file)" _config_get_all_line "$1" || _r=$?; return 0; }
+EOF
+}
+# A bare `<key>` line is not an occurrence for config_get_all.
+_mut_get_all_bare() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+_config_get_all_line() { [[ "$3" != "$1="* ]] || printf '%s\n' "${3#"$1="}"; }
+EOF
+}
+# The round-10 bug: the decision validator skips a bare key.
+_mut_bare_validate() {
+    printf '#> lib/enter.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _enter_check_entry | sed '1s/^_enter_check_entry /_mut_ece_real /')"
+_enter_check_entry() { [[ "$3" -eq 1 ]] || return 0; _mut_ece_real "$@"; }
 EOF
 }
 _mut_each_args() {

@@ -113,12 +113,12 @@ _assert_bytes() {
     assert_output ""
 }
 
-@test "config_get_all reads every occurrence in file order, the last line without a newline too" {
-    _bytes "${CONFIG}" 'link=~/.aws\n# link=no\nlinks=no\nlink=.b\nlink=.c'
+@test "config_get_all reads every occurrence in file order (a bare key as empty), the last line without a newline too" {
+    _bytes "${CONFIG}" 'link=~/.aws\n# link=no\nlinks=no\nlink\nlink=.b\nlink=.c'
     local _t='~'
     run config_get_all link
     assert_success
-    assert_output "$(printf '%s\n' "${_t}/.aws" .b .c)"
+    assert_output "$(printf '%s\n' "${_t}/.aws" '' .b .c)"
 }
 
 # Records every config_each call, one line each.
