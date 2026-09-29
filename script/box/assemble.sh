@@ -4,8 +4,12 @@
 # A thin, robust wrapper over `distrobox assemble create --file <manifest>`.
 # It validates the manifest first (fail fast on a missing/invalid file) and
 # then either prints the exact distrobox invocation (dry-run) or executes it.
-# It never installs anything on the host and never needs root - the only
-# side effect is invoking distrobox, which manages the container itself.
+# It never installs anything on the host and never needs root. Side effects:
+# invoking distrobox, which manages the container itself, and - after a
+# successful create, never in dry-run - symlinking the user config
+# (~/.ssh, ~/.gitconfig, ~/.gnupg, ~/.config/gh, plus `link=` lines of the
+# state file) into the box HOME (lib/link.sh, issue #199). Nothing is
+# copied, no host file is modified, an existing entry is never overwritten.
 #
 # The backing script of `just box assemble` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -44,6 +48,10 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source=enter.sh
+source "${LIB_DIR}/enter.sh"
+# shellcheck source=link.sh
+source "${LIB_DIR}/link.sh"
 
 # Default manifest, relative to the repo root. It is resolved to a concrete
 # path at run time (see _resolve_manifest): `box/dev.ini` when invoked from the
@@ -56,7 +64,10 @@ _usage() {
 Usage: assemble.sh [--file <manifest>] [--dry-run]
 
 Assemble the worktool dev box from its manifest with
-`distrobox assemble create --file <manifest>`.
+`distrobox assemble create --file <manifest>`. After a successful create,
+symlink the user config (~/.ssh ~/.gitconfig ~/.gnupg ~/.config/gh, plus
+`link=<path>` lines of ~/.config/worktool/config) into the box HOME
+(`home=` there, default ~/<box>-box); an existing entry is never overwritten.
 
   --file <manifest>  Box manifest to assemble (default: box/dev.ini).
   --dry-run          Print the distrobox command without executing it
@@ -155,7 +166,22 @@ _assemble_exec() {
     fi
 
     log_info "assembling box from ${_resolved}"
-    "${_cmd[@]}"
+    local _rc=0
+    "${_cmd[@]}" || _rc=$?
+    [[ "${_rc}" -eq 0 ]] || return "${_rc}"
+    _assemble_link "${_resolved}"
+}
+
+# Link the user config into the box HOME of the box manifest $1 names
+# (issue #199, lib/link.sh): only after a successful create, never in
+# dry-run. The box HOME is the state file's `home=` or ~/<box>-box.
+_assemble_link() {
+    local _config _box _box_home
+    _config="$(enter_config_path)"
+    _box="$(manifest_name "$1")"
+    _box_home="$(link_box_home "${_box}" "${_config}")"
+    log_info "linking user config into the box HOME ${_box_home}"
+    link_apply "${_box_home}" "${_config}"
 }
 
 # Guard: only run when executed directly, not when sourced (keeps the file
