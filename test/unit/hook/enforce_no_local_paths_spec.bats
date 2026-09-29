@@ -223,6 +223,36 @@ D='$'
     assert_success
 }
 
+# --- several heredocs on one line ------------------------------------------------
+
+@test "blocks a local path in the gh heredoc behind another command's heredoc on one line" {
+    _check "$(printf '%s\n' "cat <<A >/dev/null; gh api repos/o/r/issues/1/comments --input - <<'B'" \
+        lib/x A '{"body":"/home/alice/x"}' B)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "blocks a local path in the second heredoc of one gh launch" {
+    _check "$(printf '%s\n' "gh api repos/o/r/issues/1/comments --input - <<'A' <<'B'" \
+        '{}' A '{"body":"/home/alice/x"}' B)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "blocks an unquoted second heredoc to gh holding a variable" {
+    _check "$(printf '%s\n' "cat <<'A' >/dev/null; gh pr comment 3 --body-file - <<B" \
+        lib/x A "${D}BODY" B)"
+    _blocked
+    assert_output --partial "literal"
+}
+
+@test "allows clean heredocs of two commands on one line" {
+    _check "$(printf '%s\n' "cat <<'A' >/dev/null; gh api repos/o/r/issues/1/comments --input - <<'B'" \
+        lib/x A '{"body":"lib/y"}' B "gh pr comment 3 --body 'lib/z'")"
+    assert_success
+    assert_output ""
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"

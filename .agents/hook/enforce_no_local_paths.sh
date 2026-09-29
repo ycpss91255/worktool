@@ -23,6 +23,7 @@
 # a backtick, a glob, a leading ~), a missing or unreadable file, a stdin
 # body (-) not fed by a heredoc on that same gh launch (a pipe, or a heredoc
 # of another command), and an unquoted heredoc to gh holding '$' or '`'.
+# Every heredoc opened on a line whose gh launch takes one is judged.
 #
 # Only real launches count (lib/subcommand.sh): a path in a commit message,
 # an echo, a cd or a redirection is not a gh body. Everything else passes
@@ -212,46 +213,67 @@ _stdin_fed() {
     _heredoc_word "${_E[@]}" || _block_literal "a gh body read from stdin"
 }
 
-# _line_feeds_gh <line> - 0 when the first heredoc opened on <line> is
-# redirected into a gh launch.
+# _line_feeds_gh <line> - 0 when a gh launch on <line> takes a heredoc. Every
+# heredoc opened on such a line is then judged as a gh body: one line can
+# open several (cat <<A; gh ... <<B, or gh ... <<A <<B), and judging them all
+# fails closed rather than guess which one gh reads.
 _line_feeds_gh() {
     local _s _w
     local -a _ws
     while IFS= read -r _s; do
         read -r -a _ws <<<"${_s}"
-        _heredoc_word "${_ws[@]}" || continue
         _w="$(hook_word "${_ws[0]:-}")"
-        [[ "${_w}" == gh || "${_w}" == */gh ]]
-        return
+        [[ "${_w}" == gh || "${_w}" == */gh ]] || continue
+        _heredoc_word "${_ws[@]}" && return 0
     done < <(hook_subcommands_raw "$1")
     return 1
 }
 
-# _gh_heredocs <command> - print the lines of every heredoc body fed to a gh
-# launch (the complement of lib/subcommand.sh's heredoc stripping). An
-# unquoted terminator lets the shell expand the body, so one holding '$' or
-# a backtick blocks (fail closed).
-_gh_heredocs() {
-    local _line _term='' _trim _fed=0 _raw=0 _body=''
+# _heredoc_openers <line> - print "<raw> <terminator>" for every heredoc the
+# line opens, in order; <raw> is 1 for a quoted terminator (a literal body).
+_heredoc_openers() {
+    local _rest="$1" _raw
     local _re="(^|[^<])<<-?[[:space:]]*(['\"\\]?)([A-Za-z_][A-Za-z0-9_]*)"
+    while [[ "${_rest}" =~ ${_re} ]]; do
+        _raw=0; [[ -n "${BASH_REMATCH[2]}" ]] && _raw=1
+        printf '%s %s\n' "${_raw}" "${BASH_REMATCH[3]}"
+        _rest="${_rest#*"${BASH_REMATCH[0]}"}"
+    done
+}
+
+# _heredoc_done <raw> <body> - a finished heredoc body fed to gh: an unquoted
+# one holding '$' or a backtick blocks (fail closed), else it is printed.
+_heredoc_done() {
+    [[ "$1" -eq 0 && ( "$2" == *'$'* || "$2" == *'`'* ) ]] \
+        && _block_literal "an unquoted heredoc fed to gh"
+    printf '%s' "$2"
+}
+
+# _gh_heredocs <command> - print the lines of every heredoc body fed to a gh
+# launch (the complement of lib/subcommand.sh's heredoc stripping). The
+# heredocs a line opens are read in order, each up to its own terminator.
+_gh_heredocs() {
+    local _line _trim _fed=0 _body='' _o
+    local -a _raws=() _terms=()
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        if [[ -n "${_term}" ]]; then
+        if [[ "${#_terms[@]}" -gt 0 ]]; then
             _trim="${_line#"${_line%%[![:space:]]*}"}"
-            if [[ "${_trim}" != "${_term}" ]]; then
+            if [[ "${_trim}" != "${_terms[0]}" ]]; then
                 [[ "${_fed}" -eq 1 ]] && _body+="${_line}"$'\n'
                 continue
             fi
-            _term=''
-            [[ "${_raw}" -eq 0 && ( "${_body}" == *'$'* || "${_body}" == *'`'* ) ]] \
-                && _block_literal "an unquoted heredoc fed to gh"
-            printf '%s' "${_body}"
+            [[ "${_fed}" -eq 1 ]] && _heredoc_done "${_raws[0]}" "${_body}"
             _body=''
-        elif [[ "${_line}" =~ ${_re} ]]; then
-            _term="${BASH_REMATCH[3]}"
-            _raw=0; [[ -n "${BASH_REMATCH[2]}" ]] && _raw=1
-            _fed=0; _line_feeds_gh "${_line}" && _fed=1
+            _raws=("${_raws[@]:1}"); _terms=("${_terms[@]:1}")
+            continue
         fi
+        while IFS= read -r _o; do
+            _raws+=("${_o%% *}"); _terms+=("${_o#* }")
+        done < <(_heredoc_openers "${_line}")
+        [[ "${#_terms[@]}" -gt 0 ]] || continue
+        _fed=0; _line_feeds_gh "${_line}" && _fed=1
     done <<<"$1"
+    return 0
 }
 
 # _track_cd - follow a literal `cd <dir>` launch in _E for relative files.
