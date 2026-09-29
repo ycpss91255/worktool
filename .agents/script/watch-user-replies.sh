@@ -26,13 +26,15 @@
 # is served; `watch-user-replies.sh: <problem> (see --help)` on stderr +
 # exit 2 for any argument error; usage on stderr.
 #
-# Exit: 0 normal (a cycle completed, --help, --seed; a failed fetch in the
-# loop is reported as a WATCH FETCH FAILED event, not an exit code), 1
-# --seed could not read every thread (nothing seeded), 2 argument error.
+# Exit: 0 normal (a cycle completed, --help, --seed; a failed list or fetch
+# in the loop is reported as a WATCH FETCH FAILED event, not an exit code),
+# 1 --seed could not list or read every thread (nothing seeded), 2 argument
+# error.
 #
 # Output: STDOUT carries only events worth acting on, one per line:
 #   USER REPLY on #<n> : <first 200 chars of the body, newlines folded>
 #   WATCH FETCH FAILED: <failed> of <total> thread(s) unreadable this cycle
+#   WATCH FETCH FAILED: could not list the open issues/PRs this cycle
 # Heartbeats and fetch warnings go to STDERR.
 
 set -uo pipefail
@@ -104,7 +106,7 @@ Options:
   --once                 one check-and-print, then exit
   -h, --help             show this help and exit
 
-Exit: 0 normal, 1 --seed could not read every thread, 2 argument error.
+Exit: 0 normal, 1 --seed could not list or read every thread, 2 argument error.
 EOF
 }
 
@@ -113,30 +115,44 @@ _die_args() {
     exit 2
 }
 
+# _list_numbers <repo> - the numbers of every OPEN issue and PR, one per
+# line. Both list calls run in THIS shell (not a process substitution) so
+# their exit codes are seen; gh's own error stays on stderr. Returns 1 when
+# either call failed (what the other one listed is still printed).
+_list_numbers() {
+    local _repo="$1" _issues _prs _rc=0
+    _issues="$(gh issue list --repo "${_repo}" --state open --limit 1000 \
+        --json number --jq '.[].number')" || _rc=1
+    _prs="$(gh pr list --repo "${_repo}" --state open --limit 1000 \
+        --json number --jq '.[].number')" || _rc=1
+    [[ "${_rc}" -eq 0 ]] \
+        || printf '[watch] listing the open issues/PRs failed, see above\n' >&2
+    printf '%s\n%s\n' "${_issues}" "${_prs}"
+    return "${_rc}"
+}
+
 # _fetch <repo> <out-tsv>
-#   Appends one TSV line per comment on every OPEN issue and PR. A failure on
-#   any single number warns and is skipped: a transient error must not look
-#   like "no replies". Prints "<failed> <total>" on stdout so the caller can
-#   surface a failed cycle instead of treating it as silence.
+#   Appends one TSV line per comment on every OPEN issue and PR, every page
+#   of them (gh api --paginate). A failure on any single number warns and is
+#   skipped: a transient error must not look like "no replies". Prints
+#   "<failed> <total> <list-failed>" on stdout so the caller can surface a
+#   failed cycle instead of treating it as silence; <list-failed> is 1 when
+#   the issue or PR list itself could not be read.
 #
 #   The issue number is spliced into the jq program as a string literal.
 #   `gh api` has no --arg flag (only standalone jq does); passing one made
 #   every fetch fail with "unknown flag: --arg". _n is digits-only (checked
 #   below), so splicing it cannot inject jq.
 _fetch() {
-    local _repo="$1" _out="$2" _n _failed=0 _total=0
+    local _repo="$1" _out="$2" _n _failed=0 _total=0 _list_failed=0 _listed
     local _nums=()
-    mapfile -t _nums < <(
-        gh issue list --repo "${_repo}" --state open --limit 300 \
-            --json number --jq '.[].number' 2>/dev/null
-        gh pr list --repo "${_repo}" --state open --limit 100 \
-            --json number --jq '.[].number' 2>/dev/null
-    )
+    _listed="$(_list_numbers "${_repo}")" || _list_failed=1
+    mapfile -t _nums <<<"${_listed}"
     : > "${_out}"
     for _n in "${_nums[@]:-}"; do
         [[ "${_n}" =~ ^[0-9]+$ ]] || continue
         _total=$((_total + 1))
-        if ! gh api "repos/${_repo}/issues/${_n}/comments?per_page=100" \
+        if ! gh api --paginate "repos/${_repo}/issues/${_n}/comments?per_page=100" \
             --jq ".[] | [\"${_n}\", (.id|tostring), .user.login, (.body|@base64)] | @tsv" \
             >> "${_out}" 2>/dev/null; then
             _failed=$((_failed + 1))
@@ -144,7 +160,7 @@ _fetch() {
                 "${_n}" >&2
         fi
     done
-    printf '%s %s\n' "${_failed}" "${_total}"
+    printf '%s %s %s\n' "${_failed}" "${_total}" "${_list_failed}"
 }
 
 # Settings (filled by _parse_args).
@@ -188,8 +204,12 @@ _parse_args() {
 # _seed <tmp> - mark every current reply as seen without announcing; refuse
 # a partial seed (it would re-announce the unread threads' history later).
 _seed() {
-    local _failed _total
-    read -r _failed _total < <(_fetch "${W_REPO}" "$1")
+    local _failed _total _list_failed
+    read -r _failed _total _list_failed < <(_fetch "${W_REPO}" "$1")
+    if [[ "${_list_failed}" -ne 0 ]]; then
+        printf '[watch] seed aborted: the open issues/PRs could not be listed\n' >&2
+        return 1
+    fi
     if [[ "${_failed}" -gt 0 ]]; then
         printf '[watch] seed aborted: %s of %s thread(s) unreadable\n' \
             "${_failed}" "${_total}" >&2
@@ -203,9 +223,12 @@ _seed() {
 
 # _watch <tmp> - the poll loop (one cycle with --once).
 _watch() {
-    local _failed _total
+    local _failed _total _list_failed
     while true; do
-        read -r _failed _total < <(_fetch "${W_REPO}" "$1")
+        read -r _failed _total _list_failed < <(_fetch "${W_REPO}" "$1")
+        if [[ "${_list_failed}" -ne 0 ]]; then
+            printf 'WATCH FETCH FAILED: could not list the open issues/PRs this cycle\n'
+        fi
         if [[ "${_failed}" -gt 0 ]]; then
             # STDOUT on purpose: the Monitor only notifies on stdout, and a
             # silent failure is indistinguishable from "no replies".
