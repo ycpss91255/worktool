@@ -71,7 +71,10 @@
 # not a terminal choice, so auto-enter no keeps it (lib/enter.sh has WHY).
 #
 # Managed block (begin/end marker lines, exactly one per file, replaced in
-# place, user content and file mode preserved):
+# place, user content and file mode preserved). Malformed markers (an
+# unpaired BEGIN / END, END first, nested, two blocks, a marker with extra
+# text) refuse the whole run before anything is written, exit 1 - a
+# rewrite of such a file would lose user lines (codex round 4 on PR #232):
 #   auto-enter yes, terminal ghostty:
 #     <config dir>/ghostty/config  command = '<distrobox>' enter <box>
 #   auto-enter yes, terminal none: no terminal profile at all, a leftover
@@ -270,10 +273,26 @@ _resolve() {
     printf '%s default\n' "$(enter_default "${_key}")"
 }
 
+# Refuse the run when a managed file's markers are malformed (lib/enter.sh
+# enter_block_check): the block helpers trust the markers, and rewriting a
+# malformed file loses user lines. Every managed file is checked before
+# ANYTHING is written - the state file included - so a refusal leaves the
+# whole run untouched.
+_blocks_check() {
+    local _file _problem _rc=0
+    for _file in "$(enter_distrobox_conf)" "$(enter_ghostty_config)"; do
+        _problem="$(enter_block_check "${_file}")" && continue
+        log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
+        _rc=1
+    done
+    return "${_rc}"
+}
+
 # Resolve every decision into the globals and log each one.
 _resolve_all() {
     local _r _detected
     _config_check || return 1
+    _blocks_check || return 1
     _r="$(_resolve auto-enter "${OPT_AUTO_ENTER}")" || return 1
     AUTO_ENTER="${_r% *}" AUTO_ENTER_SRC="${_r#* }"
     _r="$(_resolve terminal "${OPT_TERMINAL}")" || return 1
@@ -355,8 +374,9 @@ _copy_mode() {
     chmod --reference="$1" "$2"
 }
 
-# Make file $1 hold exactly one managed block with body $2. Only ONE block
-# with that body counts as up to date; duplicates are collapsed on rewrite.
+# Make file $1 hold exactly one managed block with body $2. The markers were
+# validated by _blocks_check before anything was written, so the file holds
+# no block or exactly one.
 _block_write() {
     local _file="$1" _body="$2"
     if [[ "$(enter_block_count "${_file}")" -eq 1 \

@@ -71,8 +71,12 @@
 #                                      `invalid value ...` line and returns 1
 #
 # Managed block: exactly one per file, delimited by exact marker lines, so
-# it can be replaced in place and removed without touching user content. A
-# file that somehow holds several blocks is collapsed to one on rewrite.
+# it can be replaced in place and removed without touching user content.
+# The helpers below TRUST the markers, so a writer validates them first:
+#   enter_block_check <file>           -> 0 when well-formed (no marker, or
+#                                         one exact BEGIN ... END); else
+#                                         prints the problems with their
+#                                         line numbers and returns 1
 #   enter_block_present <file>         -> 0 when the file holds a block
 #   enter_block_count <file>           -> number of blocks (0 when absent)
 #   enter_block_body <file>            -> lines between the FIRST block's markers
@@ -278,18 +282,30 @@ enter_body_distrobox() {
 # no skip-list option and no `--unset` flag (an `--additional-flags "--env
 # TMUX="` would still pass an empty TMUX, and a managed terminal command
 # prefixed with `env -u TMUX` covers that one command only). An `unset`
-# there is simply never copied. Sourced, the file sees distrobox-enter's
-# own arguments as "$@", so the line applies to box $1 only: it scans the
-# arguments up to the command separator (`--`, `-e`, `--exec`) for the box
-# name - the positional `<box>` and `--name <box>` / `-n <box>` alike - and
-# honours DBX_CONTAINER_NAME. Other boxes keep the upstream behaviour.
+# there is simply never copied.
+#
+# ONLY THE BOX WORKTOOL MANAGES: the line applies to box $1 - the box
+# `just box setup` is configured for (`box`, default dev) - and to no other
+# box, which keeps the upstream behaviour. Sourced, the file sees
+# distrobox-enter's own arguments as "$@", and it decides the target the
+# way distrobox-enter's own option loop does (pinned 1.8.2.5), never by
+# "some token equals the box name" (codex round 4 on PR #232: an option
+# VALUE equal to the name must not count):
+#   - -n / --name and -a / --additional-flags take a value; only the
+#     -n / --name value is a box name;
+#   - every other option is a flag; every positional argument sets the
+#     name, so the LAST one wins;
+#   - `--`, `-e`, `--exec` end the options (what follows is the command);
+#   - no name on the command line: DBX_CONTAINER_NAME.
+# It never shifts or sets distrobox-enter's "$@" and unsets its own
+# variables.
 #
 # $1 is a validated box name (enter_value_ok), written single-quoted.
 enter_distrobox_conf_body() {
     local _box _line
     _box="$(enter_sh_squote "$1")"
     _line="$(cat <<'EOF'
-for _worktool_a in "$@"; do case "${_worktool_a}" in --|-e|--exec) break ;; @BOX@) unset TMUX TMUX_PANE; break ;; esac; done; [ "${DBX_CONTAINER_NAME:-}" != @BOX@ ] || unset TMUX TMUX_PANE; unset _worktool_a
+_worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != @BOX@ ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v
 EOF
 )"
     printf '%s\n' "${_line//@BOX@/${_box}}"
@@ -391,6 +407,41 @@ enter_config_check() {
 }
 
 # --- Managed block -----------------------------------------------------------
+
+# Validate the marker structure of file $1 (issue #179, codex round 4 on PR
+# #232): 0 when the file is absent, holds no marker, or holds exactly one
+# well-formed block; otherwise prints the problems, with their line
+# numbers, as ONE `; `-joined line and returns 1. Every writer checks this
+# FIRST: the helpers below trust the markers, and an orphan BEGIN used to
+# make compose / strip drop every line after it. Malformed is:
+#   an unpaired BEGIN or END, END before BEGIN, a BEGIN inside a block,
+#   more than one block, and a marker line with any extra text (leading
+#   blanks, trailing text or blanks).
+enter_block_check() {
+    [[ -f "$1" ]] || return 0
+    awk -v b="${ENTER_BLOCK_BEGIN}" -v e="${ENTER_BLOCK_END}" '
+        function p(s) { msg = msg (msg == "" ? "" : "; ") s }
+        BEGIN { pb = "# BEGIN worktool managed block"; pe = "# END worktool managed block" }
+        { l = $0; sub(/^[ \t]+/, "", l) }
+        $0 == b {
+            if (open) p("nested BEGIN at line " NR " (BEGIN at line " ob " has no END yet)")
+            else { open = 1; ob = NR }
+            nb++; bl = bl (bl == "" ? "" : ", ") NR
+            next
+        }
+        $0 == e {
+            if (!open) p("END at line " NR " has no BEGIN")
+            else open = 0
+            next
+        }
+        index(l, pb) == 1 || index(l, pe) == 1 { p("line " NR " is a marker with extra text") }
+        END {
+            if (open) p("BEGIN at line " ob " has no END")
+            if (nb > 1) p(nb " blocks (BEGIN at lines " bl "), at most one is allowed")
+            if (msg != "") { print msg; exit 1 }
+        }
+    ' "$1"
+}
 
 enter_block_present() {
     [[ -f "$1" ]] && grep -qxF "${ENTER_BLOCK_BEGIN}" "$1"

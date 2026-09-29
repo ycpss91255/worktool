@@ -82,10 +82,16 @@ _report_key() {
     printf '%s: %s (%s)\n' "${_key}" "${_value}" "${_source:-default}"
 }
 
-# Print `<label>: <file> (managed block: present|absent)`.
+# Print `<label>: <file> (managed block: present|absent|MALFORMED - ...)`.
+# Malformed markers are what setup.sh refuses to rewrite, so the report
+# says so rather than calling the block present.
 _report_block() {
-    local _label="$1" _file="$2" _state="absent"
-    enter_block_present "${_file}" && _state="present"
+    local _label="$1" _file="$2" _state="absent" _problem
+    if ! _problem="$(enter_block_check "${_file}")"; then
+        _state="MALFORMED - ${_problem}; fix or remove the markers, then re-run: just box setup"
+    elif enter_block_present "${_file}"; then
+        _state="present"
+    fi
     printf '%s: %s (managed block: %s)\n' "${_label}" "${_file}" "${_state}"
 }
 
