@@ -19,7 +19,10 @@
 #     lookup, CI is a gate, codex verdict is structured, codex=off never
 #     fakes a [codex] line, bounded fix rounds, the issue's result contract,
 #     no merge of any kind inside a template);
-#   - the fan-out validates its items and delegates to pr-loop.
+#   - the fan-out validates its items and delegates to pr-loop;
+#   - research-verify (issue #220: agy researches, claude and codex verify)
+#     keeps its four phases, validates its args, never substitutes another
+#     model's answer when agy fails, and never writes a [codex] line itself.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
 
@@ -29,6 +32,7 @@ setup() {
     WF_DIR="${REPO_ROOT}/.claude/workflows"
     PR_LOOP="${WF_DIR}/pr-loop.js"
     FANOUT="${WF_DIR}/milestone-fanout.js"
+    RESEARCH="${WF_DIR}/research-verify.js"
 }
 
 # The meta block of $1: from the first line to its closing "}" line.
@@ -188,6 +192,123 @@ _meta_skeleton() {
     assert_output "1"
     run grep -c 'await parallel(' "${FANOUT}"
     assert_output "0"
+}
+
+@test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
+    [[ -f "${RESEARCH}" ]]
+    run head -n1 "${RESEARCH}"
+    assert_output "export const meta = {"
+    run _meta_block "${RESEARCH}"
+    assert_output --partial "name: 'research-verify'"
+    assert_output --partial "description: '"
+    assert_output --partial "phases: ["
+    run _meta_skeleton "${RESEARCH}"
+    refute_output --partial "("
+    refute_output --partial "..."
+    refute_output --partial "\${"
+    refute_output --partial "\`"
+}
+
+@test "research-verify declares exactly Research, Verify, Synthesize, Record and uses exactly those" {
+    run _meta_phases "${RESEARCH}"
+    assert_output "$(printf '%s\n' Research Verify Synthesize Record)"
+    run bash -c "diff <($(declare -f _meta_block _meta_phases); _meta_phases '${RESEARCH}' | sort -u) <($(declare -f _used_phases); _used_phases '${RESEARCH}')"
+    assert_success
+    assert_output ""
+}
+
+@test "research-verify requires repo, repoDir, issue, question; validates issue, timeoutMin and sources" {
+    run grep -c "for (const k of \['repo', 'repoDir', 'issue', 'question'\])" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "throw new Error(\`research-verify: args.\\\${k} is required\`)" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "Number.isInteger(A.issue) || A.issue <= 0" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "Number.isInteger(TMIN) || TMIN <= 0" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "!Array.isArray(A.sources)" "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify runs agy headless with a hard timeout and retries once" {
+    run grep -cF "timeout \${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p" "${RESEARCH}"
+    assert_output "1"
+    run grep -cF -- "--print-timeout \${TMIN}m" "${RESEARCH}"
+    assert_output "1"
+    run grep -c 'retry ONCE' "${RESEARCH}"
+    assert_output "1"
+    run grep -c 'UNVERIFIED' "${RESEARCH}"
+    assert [ "${output}" -ge 1 ]
+}
+
+@test "research-verify: an agy failure returns a structured failure before Verify and never substitutes another answer" {
+    run grep -c "schema: AGY_SCHEMA" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "enum: \['ok', 'failed'\]" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "if (!res || res.status !== 'ok') return" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "status: 'agy-failed'" "${RESEARCH}"
+    assert_output "1"
+    run grep -c 'Never answer the question yourself' "${RESEARCH}"
+    assert_output "1"
+    # the failure return comes before the first Verify agent
+    fail_line="$(grep -n "if (!res || res.status !== 'ok') return" "${RESEARCH}" | cut -d: -f1)"
+    verify_line="$(grep -n "^phase('Verify')" "${RESEARCH}" | cut -d: -f1)"
+    assert [ "${fail_line}" -lt "${verify_line}" ]
+}
+
+@test "research-verify verifies with a claude agent and codex exec in parallel, codex fed the agy text on stdin" {
+    run grep -c 'await parallel(\[' "${RESEARCH}"
+    assert_output "1"
+    run grep -c "schema: CLAIMS_SCHEMA" "${RESEARCH}"
+    assert_output "1"
+    run grep -c "enum: \['supported', 'refuted', 'unverifiable'\]" "${RESEARCH}"
+    assert_output "1"
+    run grep -c 'codex exec --skip-git-repo-check' "${RESEARCH}"
+    assert_output "1"
+    run grep -cE 'cat agy\.md[^|]*\| *timeout [0-9]+ codex exec' "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify never writes a [codex] line itself: codex text is copied from its file, no-output is a [claude] note" {
+    run grep -c 'Never write a "\[codex\]" line yourself' "${RESEARCH}"
+    assert [ "${output}" -ge 2 ]
+    run grep -c 'cat codex.md' "${RESEARCH}"
+    assert [ "${output}" -ge 1 ]
+    run grep -c 'codex 無輸出(配額/認證)' "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify synthesizes a structured conclusion and records ONE issue comment via --body-file" {
+    run grep -c "schema: SYNTH_SCHEMA" "${RESEARCH}"
+    assert_output "1"
+    for k in verified refuted needsExperiment recommendation parameters; do
+        run grep -c "${k}: {" "${RESEARCH}"
+        assert_output "1"
+    done
+    run grep -cF "gh issue comment \${A.issue} --repo \${REPO} --body-file" "${RESEARCH}"
+    assert_output "1"
+    run grep -c '<details><summary>agy 原文</summary>' "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify keeps its files under repoDir scratch, hardcodes no machine path, and never merges or pushes" {
+    run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${RESEARCH}"
+    assert_failure
+    run grep -c "const REPO_DIR = A.repoDir$" "${RESEARCH}"
+    assert_output "1"
+    run grep -c 'REPO_DIR}/.worktree/.scratch/research-' "${RESEARCH}"
+    assert_output "1"
+    run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push|--auto' "${RESEARCH}"
+    assert_failure
+}
+
+@test "doc/workflow.md documents research-verify and its args" {
+    run grep -c '^## research-verify' "${REPO_ROOT}/doc/workflow.md"
+    assert_output "1"
+    run grep -c 'repo, repoDir, issue, question, context?, sources?, timeoutMin?' "${REPO_ROOT}/doc/workflow.md"
+    assert_output "1"
 }
 
 @test "this spec is a required unit spec of test.sh" {
