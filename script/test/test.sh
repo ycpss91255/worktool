@@ -133,7 +133,8 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
-                unit/workflow_spec.bats
+                unit/workflow_spec.bats \
+                unit/approval_spec.bats
             ;;
         integration)
             printf '%s\n' \
