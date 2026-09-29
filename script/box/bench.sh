@@ -65,14 +65,17 @@
 # Exit codes: 0 ok (and within --max-ms), 1 measurement failed or the shell
 # median exceeds --max-ms, 2 usage error, 127 distrobox not on PATH.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`);
-# failures are surfaced explicitly so a non-zero exit is always intentional.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # `source=` directives below resolve against lib/ (SCRIPTDIR/../../lib: the
 # repo root is two levels up from script/box/). This file-wide directive
 # must precede the first command (set) to take effect.
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -242,8 +245,8 @@ _time_cmd() {
     shift
     local _t0 _t1 _rc
     _now_us _t0
-    "$@" </dev/null >/dev/null
-    _rc=$?
+    _rc=0
+    "$@" </dev/null >/dev/null || _rc=$?
     _now_us _t1
     _ref_us=$(( _t1 - _t0 ))
     return "${_rc}"
@@ -261,9 +264,8 @@ RUN_ERR=""
 _inbox_cmd() {
     local -n _ref_us="$1"
     shift
-    local _out _rc
-    _out="$("$@" </dev/null)"
-    _rc=$?
+    local _out _rc=0
+    _out="$("$@" </dev/null)" || _rc=$?
     (( _rc == 0 )) || return "${_rc}"
     _out="${_out##*$'\n'}"
     if [[ ! "${_out}" =~ ^[0-9]+$ ]]; then
@@ -285,8 +287,8 @@ _run_metric() {
     local _i _us _rc _shown="${*//"${INBOX_TIMER}"/<timer>}"
     for (( _i = 0; _i < OPT_WARMUP + OPT_RUNS; _i++ )); do
         RUN_ERR=""
-        "${_runner}" _us "$@"
-        _rc=$?
+        _rc=0
+        "${_runner}" _us "$@" || _rc=$?
         if (( _rc != 0 )); then
             log_error "${_name}: ${RUN_ERR:-"'${_shown}' exited ${_rc}"} on run $(( _i + 1 )) - measurement aborted"
             return 1

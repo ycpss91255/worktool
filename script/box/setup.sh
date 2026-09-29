@@ -77,11 +77,14 @@
 # value is refused with `setup.sh: ... (see --help)` on stderr, exit 2,
 # before anything runs. All diagnostics go to STDERR via lib/log.sh.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`);
-# failures are surfaced explicitly so a non-zero exit is always intentional.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
