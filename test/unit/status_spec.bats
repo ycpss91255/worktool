@@ -107,7 +107,9 @@ _write_config() {
     assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_equal "${#lines[@]}" 8
+    assert_line --index 8 "link: ${HOME}/work-box/.ssh -> ${HOME}/.ssh (missing source)"
+    assert_line --index 11 "link: ${HOME}/work-box/.config/gh -> ${HOME}/.config/gh (missing source)"
+    assert_equal "${#lines[@]}" 12
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------
@@ -217,6 +219,42 @@ _write_block() {
     assert_output ""
     run cat "${_out}"
     assert_line "auto-enter: yes (default)"
+}
+
+# --- #199: the user-config links into the box HOME ---------------------------
+
+@test "#199: without a state file every default link is reported, in list order, under ~/dev-box" {
+    run "${STATUS}"
+    assert_success
+    assert_line --index 8 "link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh (missing source)"
+    assert_line --index 9 "link: ${HOME}/dev-box/.gitconfig -> ${HOME}/.gitconfig (missing source)"
+    assert_line --index 10 "link: ${HOME}/dev-box/.gnupg -> ${HOME}/.gnupg (missing source)"
+    assert_line --index 11 "link: ${HOME}/dev-box/.config/gh -> ${HOME}/.config/gh (missing source)"
+}
+
+@test "#199: each link state is reported: linked, blocked by existing file, not linked yet" {
+    local _box="${HOME}/dev-box"
+    mkdir -p "${HOME}/.ssh" "${HOME}/.gnupg" "${_box}"
+    printf '[user]\n' >"${HOME}/.gitconfig"
+    ln -s "${HOME}/.ssh" "${_box}/.ssh"
+    printf 'box-own\n' >"${_box}/.gitconfig"
+    run "${STATUS}"
+    assert_success
+    assert_line "link: ${_box}/.ssh -> ${HOME}/.ssh (linked)"
+    assert_line "link: ${_box}/.gitconfig -> ${HOME}/.gitconfig (blocked by existing file)"
+    assert_line "link: ${_box}/.gnupg -> ${HOME}/.gnupg (not linked yet; run: just box assemble)"
+    assert_line "link: ${_box}/.config/gh -> ${HOME}/.config/gh (missing source)"
+    # status is read-only: nothing was linked or changed.
+    [[ ! -e "${_box}/.gnupg" ]] || fail "status created a link"
+    assert_equal "$(cat "${_box}/.gitconfig")" "box-own"
+}
+
+@test "#199: link= entries and home= from the state file are reported" {
+    _write_config 'home=~/boxes/dev' 'link=~/.aws'
+    run "${STATUS}"
+    assert_success
+    assert_line "link: ${HOME}/boxes/dev/.ssh -> ${HOME}/.ssh (missing source)"
+    assert_line "link: ${HOME}/boxes/dev/.aws -> ${HOME}/.aws (missing source)"
 }
 
 # --- #161 (2): a corrupt state file is refused ------------------------------

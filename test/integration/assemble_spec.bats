@@ -28,6 +28,13 @@ setup() {
     } >"${MOCKBIN}/distrobox"
     chmod +x "${MOCKBIN}/distrobox"
     PATH="${MOCKBIN}:${PATH}"
+    # Issue #199: a real assemble links user config into the box HOME, so
+    # every case gets a throwaway HOME (the real home is never touched).
+    HOME="${BATS_TEST_TMPDIR}/home"
+    export HOME
+    unset XDG_CONFIG_HOME
+    mkdir -p "${HOME}/.ssh"
+    printf 'fake-private-key\n' >"${HOME}/.ssh/id_test"
 }
 
 @test "mock distrobox is the one that will be resolved on PATH" {
@@ -90,4 +97,48 @@ setup() {
     assert_failure 1
     assert_output --partial "unbalanced quote"
     assert [ ! -f "${RECORD}" ]
+}
+
+# --- issue #199: user config is linked into the box HOME after create -------
+
+@test "#199: after a successful create the user config is linked into ~/<box>-box and logged" {
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_success
+    assert_equal "$(readlink "${HOME}/dev-box/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "fake-private-key"
+    assert_line "[INFO] link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh"
+    # The box name comes from the manifest section.
+    local _other="${BATS_TEST_TMPDIR}/work.ini"
+    printf '[work]\nimage=ubuntu:26.04\n' >"${_other}"
+    run "${ASSEMBLE}" --file "${_other}"
+    assert_success
+    assert_equal "$(readlink "${HOME}/work-box/.ssh")" "${HOME}/.ssh"
+}
+
+@test "#199: an existing entry in the box HOME survives assemble with a warning" {
+    mkdir -p "${HOME}/dev-box/.ssh"
+    printf 'box-own\n' >"${HOME}/dev-box/.ssh/id_test"
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_success
+    [[ ! -L "${HOME}/dev-box/.ssh" ]] || fail "the existing .ssh was replaced"
+    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "box-own"
+    assert_equal "$(cat "${HOME}/.ssh/id_test")" "fake-private-key"
+    assert_output --partial "[WARN]"
+}
+
+@test "#199: a failed create links nothing" {
+    printf '#!/usr/bin/env bash\nexit 1\n' >"${MOCKBIN}/distrobox"
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_failure 1
+    [[ ! -e "${HOME}/dev-box" ]] || fail "the box HOME was touched after a failed create"
+}
+
+@test "#199: dry-run links nothing" {
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --dry-run
+    assert_success
+    [[ ! -e "${HOME}/dev-box" ]] || fail "dry-run touched the box HOME"
 }

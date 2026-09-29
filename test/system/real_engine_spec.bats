@@ -108,6 +108,12 @@ setup() {
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
 
+    # Issue #199: a host user-config file for assemble.sh to link into the
+    # box HOME (~/dev-box). Written before every case (idempotent) so it is
+    # already there when the first assemble runs.
+    mkdir -p "${HOME}/.ssh"
+    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
+
     # The ghostty cases (section (e), issue #172) write their config under
     # this HOME and read it back through a real ghostty, so the managed
     # block travels the same XDG path a user's would. The delivered
@@ -254,6 +260,27 @@ _log_lines() {
     assert_success
     assert_line --regexp '^fish, version [0-9]+\.[0-9]+'
     _log_lines fish "${lines[@]}"
+}
+
+# Issue #199: assemble.sh linked ~/.ssh into the box HOME (~/dev-box) on
+# the host side, as an ABSOLUTE symlink. Inside the box the host HOME is
+# mounted at the same path, so the link resolves there and the user config
+# is readable through it. (The box is created with --home ~/dev-box by
+# #198; until then the box's own $HOME is the shared one, so the link is
+# read by its absolute path - the same path it has after #198.)
+@test "real engine (#199): the user config linked into the box HOME is readable inside the box" {
+    cd "${REPO_ROOT}"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
+        readlink "${HOME}/dev-box/.ssh" </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_output "${HOME}/.ssh"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
+        cat "${HOME}/dev-box/.ssh/worktool-link-probe" </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_output "worktool-link-probe"
+    _log_lines link "${HOME}/dev-box/.ssh -> ${HOME}/.ssh read inside the box: ${output}"
 }
 
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------
