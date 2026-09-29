@@ -97,12 +97,12 @@ checkboxes: `- [ ] 大項目` -> `- [ ] 小項目, 驗收標準` -> `- 預期看
 `- 驗收方式` + ```bash block```. Every 預期看到資訊 must be captured from a real
 run, and (maintainer 2026-09-19 "字太多了") shown VERBATIM in a ```text block
 (head/tail kept, middle elided with `...(全部 ok)`), criteria one line, commands in
-```bash blocks, no explanatory prose and no long inline-backtick output strings. Non-git requirements file: ~/Desktop/worktool_ws/note/worktool-ACCEPTANCE-REQUIREMENTS.md
+```bash blocks, no explanatory prose and no long inline-backtick output strings. Non-git requirements file: worktool-ACCEPTANCE-REQUIREMENTS.md in the workspace's `note/` directory (next to the checkout, outside git)
 (sections A-I; G = user-flagged gaps with status). Milestone roadmap:
 M3 auto-enter+perf, M4 host bootstrap, M5-M10 box tools (importance order:
 shell -> nav/file -> editor/git -> runtime/AI -> monitoring -> rest),
 M11-M12 host drivers+GUI scripts, M13-M14 new front-end, M15 full test pyramid,
-M16 docs/migration, M17 release 2.0.0.
+M16 docs + migration, M17 release 2.0.0.
 
 **gh --repo hygiene (gotcha, 2026-09-15):** ALWAYS pass `--repo <owner/name>` on
 every `gh issue`/`gh pr` call in a script, especially locks/edits. A sub-issue
@@ -114,9 +114,10 @@ subs stay unlocked; M3-M17 parents (#5-#19) + their 95 subs stay locked; unlock 
 next milestone's parent+subs after each human gate.
 
 Related: [[feedback-codex-claude-collab]], [[feedback-per-agent-independent-commit]],
-[[feedback-autonomous-issue-pr-merge]], [[project-template-first-program]].
+[[feedback-autonomous-issue-pr-merge]], [[feedback-codex-round-stop-rule]].
 
-**Workspace layout (2026-09-29, mirrors ~/Desktop/vendor-kit_ws):**
-`~/Desktop/worktool_ws/` = `src/` (the checkout; formerly ~/Desktop/worktool),
-`worktree/` (one git worktree per branch, e.g. `worktree/m3gate` for PR #157),
-`note/` (non-git: ACCEPTANCE-REQUIREMENTS.md, M3 handoffs).
+**Workspace layout (2026-09-29):** one workspace directory holds `src/`
+(the checkout) and `note/` (non-git: ACCEPTANCE-REQUIREMENTS.md, M3
+handoffs). Worktrees live inside the checkout under the gitignored
+`.worktree/<name>` (the pr-loop workflow and the WorktreeCreate hook both use
+it). Machine paths are not recorded here; they differ per host.

@@ -9,8 +9,8 @@ metadata:
 ---
 
 Maintainer wants a codex+claude collaboration gate (asked 2026-09-15, for the
-worktool redesign; applies going forward). codex CLI is installed at
-~/.local/bin/codex (codex-cli 0.153.4, model gpt-6-astra, read-only sandbox).
+worktool redesign; applies going forward). The codex CLI is on the
+maintainer's PATH (codex-cli 0.153.4, model gpt-6-astra, read-only sandbox).
 
 **How to invoke codex non-interactively:**
 `<material> | codex exec --skip-git-repo-check "<prompt>"` -- feed the diff/context
@@ -58,4 +58,4 @@ DBX_CONTAINER_MANAGER so distrobox truly parses the INI; acceptance = the 3g
 self-check wired as an automated test + the human checklist.)
 
 Related: [[feedback-autonomous-issue-pr-merge]] (worktool milestones still keep the
-human gate per its own governance), [[project-template-first-program]].
+human gate per its own governance), [[feedback-codex-round-stop-rule]].

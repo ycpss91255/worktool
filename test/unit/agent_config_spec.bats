@@ -14,6 +14,10 @@
 #   - memory entries are real files, all indexed by MEMORY.md
 #   - the issue's skill list is carried (next to i-have-adhd, #191); the
 #     watch state dir is gitignored
+#   - the carried skills and memory are adapted to worktool: doc/agent and
+#     doc/adr (never docs/), no interface this repo lacks (justfile.ci,
+#     release-tag.sh, an auto-merge Monitor ...), no [[link]] to a missing
+#     memory, no personal or machine-specific info (IPs, home paths)
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -154,4 +158,42 @@ _registered() {
     assert_failure 1
     run grep -c '.claude/script/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     refute_output "0"
+}
+
+# --- carried content is adapted to worktool (codex round 1 on #193) ----------
+
+@test "skills and memory point at worktool's doc/agent and doc/adr, not docs/" {
+    run grep -rnE '(^|[^A-Za-z0-9._/-])docs/' \
+        "${REPO_ROOT}/.agents/skills" "${REPO_ROOT}/.agents/memory"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "memory and skills name no interface this repo lacks" {
+    run grep -rnE 'justfile\.ci|release-tag\.sh|auto-merge-on-green|ci\.sh --ci|enforce_gh_review_approval|gen-module-index|serial-land|INDEX\.md|kcov' \
+        "${REPO_ROOT}/.agents/skills" "${REPO_ROOT}/.agents/memory"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "memory never tells an agent to arm or queue an auto-merge" {
+    run grep -rniE 'arm(s|ed|ing)? (the )?auto-merge|pr merge --auto|auto-merge\.$|\+ auto-merge' \
+        "${REPO_ROOT}/.agents/memory"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "every [[link]] in memory resolves to a memory entry" {
+    local _dir="${REPO_ROOT}/.agents/memory" _link _missing=''
+    while IFS= read -r _link; do
+        [[ -f "${_dir}/${_link}.md" ]] || _missing+="${_link} "
+    done < <(grep -rhoE '\[\[[^]]+\]\]' "${_dir}" | tr -d '[]' | sort -u)
+    assert_equal "${_missing}" ""
+}
+
+@test "memory and skills carry no personal or machine-specific info" {
+    run grep -rnE '([0-9]{1,3}\.){3}[0-9]{1,3}|/home/[A-Za-z]|/Users/[A-Za-z]|~/Desktop|/run/user/[0-9]|[A-Za-z0-9._%+-]+@gmail\.com|~/\.local/bin' \
+        "${REPO_ROOT}/.agents/memory" "${REPO_ROOT}/.agents/skills"
+    assert_failure 1
+    assert_output ""
 }

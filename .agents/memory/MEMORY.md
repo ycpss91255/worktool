@@ -10,12 +10,12 @@ Every entry is a real file in this repo (.agents/memory/, reached as
 - [worktool redesign](project-worktool-distrobox-redesign.md) — distrobox-based dev-env, successor to init_ubuntu; own repo ycpss91255/worktool; milestone-gated M1-M17
 
 ## general
-- [Autonomous issue/PR merge](feedback-autonomous-issue-pr-merge.md) — issue/PR need no per-item approval; /tdd + CI-green then merge; ONLY releases need explicit consent
+- [Autonomous issue/PR merge](feedback-autonomous-issue-pr-merge.md) — sub-issue PRs need no per-item approval; TDD + ci-passed + codex, then merge commit; milestone acceptance PR and release need the maintainer
 - [Autonomous test-gap remediation](feedback-autonomous-test-gap-remediation.md) — don't ask to fix bugs / close test gaps; drive via workflow; only ask on product/scope forks (e.g. cutting a release tag)
 - [Codex quota pause](feedback-codex-quota-pause.md) — when codex tokens run out: no codex calls, no impersonation, note gap on PRs; pause work and resume via a Monitor at the maintainer-given time
-- [Folder naming](feedback-folder-all-singular.md) — all singular; only upstream-imposed + acronym exceptions (per ADR-0021, supersedes ADR-0005)
+- [Folder naming](feedback-folder-all-singular.md) — all singular (doc/structure.md); only upstream-imposed + acronym exceptions
 - [No personal info in scripts](feedback-no-personal-info-in-scripts.md) — never hardcode real account identifiers (emails/usernames) in scripts or comments, even as examples; read from config at runtime, keep comments generic
-- [Phase agents run all CI gates](feedback-phase-agent-run-all-ci-gates.md) — implementation sub-agents must run test-unit AND test-integration AND coverage in Docker before reporting green; on red CI check `gh pr checks` for WHICH job first
+- [Phase agents run all CI gates](feedback-phase-agent-run-all-ci-gates.md) — implementation sub-agents must run all six `just test <tier>` gates in Docker before reporting green; on red CI check `gh pr checks` for WHICH job first
 - [Prefer hook over memory](feedback-prefer-hook-over-memory.md) — process rules go to hooks (ADR for why); memory only when a hook can't enforce
 - [feedback-remote-cmd-write-script-copy-run](feedback-remote-cmd-write-script-copy-run.md) — For non-trivial remote ops, write a script file, copy it to the remote /tmp, then run it there — do NOT inline in ssh '...'
 - [feedback-research-priority-agy-codex-claude](feedback-research-priority-agy-codex-claude.md) — Research/lookup: ambiguity -> research first; priority agy (gemini) -> codex -> claude sub-agent as last resort; requests to gemini must be explicit
@@ -24,7 +24,7 @@ Every entry is a real file in this repo (.agents/memory/, reached as
 - [Use Monitor for CI](feedback-use-monitor-for-ci.md) — never poll CI / long jobs; use Monitor tool for streaming events
 - [CI lint covers bats](project-ci-lint-covers-bats.md) — lint runs shellcheck -x on *.bats too (info severity); validate bats files with shellcheck before PR, prefer `VAR=val run ...` over a standalone `export` in @test bodies
 - [Branch protection convention](project-classic-branch-protection-convention.md) — ycpss91255* repos govern main via classic protection + ci-passed aggregator, not rulesets
-- [RAM-crisis postmortem](project-workflow-concurrency-ram-cap.md) — the 30GB hog was runaway tmux-powerline, NOT the workflows; check /proc/PID/cmdline before blaming Docker; failed runs orphan containers (clean by prefix, never prune); compose recipes leak containers
+- [RAM-crisis postmortem](project-workflow-concurrency-ram-cap.md) — the 30GB hog was runaway tmux-powerline, NOT the workflows; check /proc/PID/cmdline before blaming Docker; CPU, not RAM, caps concurrent workflows; failed runs can orphan containers (clean by prefix, never prune)
 - [Workflow long-implement no schema](project-workflow-long-implement-no-schema.md) — long implement stages fail to emit StructuredOutput and error the run; give implement no schema + hardcoded branch + commit, locate worktree by branch in later stages
 - [gh OAuth token limits](reference-gh-oauth-token-limits.md) — gho_ token can GET/DELETE rulesets but not PATCH; classic branch protection PUT works
 - [User profile](user-profile.md) — single-maintainer, personal-use, multi-platform (x86_64 / rpi4 / rpi5 / jetson)
