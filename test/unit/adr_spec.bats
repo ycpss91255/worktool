@@ -132,3 +132,18 @@ _adr_0010_check_guard() {
     assert_success
     assert_output --partial "待補"
 }
+
+@test "ADR 0010 scopes the CI claim to the test gates and excludes build-image" {
+    # codex round 1 on PR #255: the mechanism line said every CI gate runs
+    # through just test, while the same ADR records that the build-image job
+    # runs docker build directly. The claim must cover only the test gates
+    # and name build-image as the exception.
+    run bash -c 'grep -F ".github/workflows/ci.yml" | grep -E "^- CI "' \
+        _ < <(_adr_0010_section "目前由哪些機制或測試守住")
+    assert_success
+    assert_equal "${#lines[@]}" 1
+    refute_output --partial "每一個 gate"
+    assert_output --partial "測試 gate"
+    assert_output --partial "build-image"
+    assert_output --partial "docker build"
+}
