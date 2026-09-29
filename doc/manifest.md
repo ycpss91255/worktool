@@ -147,7 +147,8 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
   建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
   與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox
   設定檔(`distrobox.conf`、`~/.distroboxrc` 等,依 distrobox 的讀取順序,取最後一個
-  `container_manager=`;只讀不 source),都沒有時照 distrobox 的順序 podman、
+  `container_manager=`;只讀不 source,接受引號與行尾 `# 註解`;讀不成 manager 名稱的
+  `container_manager=` 行(空值、命令替換等)一律拒絕、exit 1,不跳過),都沒有時照 distrobox 的順序 podman、
   podman-launcher、docker、lilipod 自動偵測)。盒子是否存在看 `<manager> ps -a`
   的容器名單。與解析結果不同時 exit 1、**什麼都不改**(不呼叫 distrobox、不寫
   設定檔),印出刪盒重建的指令(有給 `--file` 時一併帶上清單的絕對路徑),

@@ -317,6 +317,33 @@ EOF2
     assert_output --regexp '^podman ps '
 }
 
+@test "#198 r2: a trailing comment on container_manager= is read the way the shell reads it" {
+    mkdir -p "${HOME}/.config/distrobox"
+    printf 'container_manager=docker\n' >"${HOME}/.config/distrobox/distrobox.conf"
+    printf 'container_manager="podman"  # mine\n' >"${HOME}/.distroboxrc"
+    cd "${REPO_ROOT}"
+    DBX_CONTAINER_MANAGER='' run "${ASSEMBLE}"
+    assert_success
+    run cat "${PS_RECORD}"
+    assert_output --regexp '^podman ps '
+}
+
+@test "#198 r2: a container_manager= line that cannot be read as a name is refused (exit 1), never skipped" {
+    local _bad
+    mkdir -p "${HOME}/.config/distrobox"
+    printf 'container_manager=podman\n' >"${HOME}/.config/distrobox/distrobox.conf"
+    cd "${REPO_ROOT}"
+    for _bad in 'container_manager=""' "container_manager=\$(echo docker)"; do
+        printf '%s\n' "${_bad}" >"${HOME}/.distroboxrc"
+        DBX_CONTAINER_MANAGER='' run "${ASSEMBLE}" --home /srv/new
+        assert_failure 1
+        assert_output --partial "[ERROR] cannot tell whether box 'dev' already exists: cannot read container_manager in ${HOME}/.distroboxrc; nothing was changed"
+        assert [ ! -f "${PS_RECORD}" ]
+        assert [ ! -f "${RECORD}" ]
+        assert [ ! -e "${CONFIG}" ]
+    done
+}
+
 @test "#198 r1: the refusal keeps --file, so the rebuild hint assembles the same manifest" {
     local _ini="${BATS_TEST_TMPDIR}/my box.ini"
     printf '[dev]\nimage=ubuntu:26.04\n' >"${_ini}"
