@@ -157,3 +157,14 @@ _adr_0009_check_guard() {
         [[ "${_line}" == *"--auto-enter no"* ]] || fail "unscoped: ${_line}"
     done
 }
+
+# Codex rounds 2-3 on PR #250: #207 also asks to backfill the invariant
+# index of doc/contract.md. Item 6 must link ADR 0009 (and keep naming
+# #207); it must no longer say the ADR is still to be written.
+@test "the doc/contract.md invariant index links invariant 6 to ADR 0009" {
+    run grep -E '^6\. ' "${REPO_ROOT}/doc/contract.md"
+    assert_success
+    assert_output --partial "](adr/0009-invariant-idempotent.md)"
+    assert_output --partial "#207"
+    refute_output --partial "ADR 待寫"
+}
