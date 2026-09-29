@@ -133,7 +133,7 @@ _other() {
                 mapfile -t _args < <(_op_args "${_op}")
                 run "${SETUP}" "${_args[@]}"
                 [[ "${status}" -eq 1 ]] || fail "${_cell}: expected exit 1, got ${status}: ${output}"
-                [[ "${output}" == *"[ERROR] ${_path}: malformed worktool managed block markers"*"line "*"nothing was written"* ]] \
+                [[ "${output}" == *"[ERROR] ${_path}: malformed worktool managed block markers: "*"line"*[0-9]*"; nothing was written"* ]] \
                     || fail "${_cell}: no error naming the file and a line: ${output}"
                 [[ "$(sha256sum <"${_path}")" == "${_before}" ]] \
                     || fail "${_cell}: the file changed: $(cat "${_path}")"

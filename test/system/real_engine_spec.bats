@@ -992,8 +992,22 @@ _assert_cell() {
         || fail "cell ${_tag}: a tmux already ran in the box: $(grep -F "${_tag} autostart " <<<"${_out}")"
     # Goal 3: the box server loaded the box's own $HOME/.tmux.conf, and the
     # host's ~/.tmux.conf kept its bytes.
-    grep -qxF "${_tag} config $(_box_home)/.tmux.conf|sentinel" <<<"${_out}" \
-        || fail "cell ${_tag}: the box server did not load $(_box_home)/.tmux.conf: $(grep -F "${_tag} config " <<<"${_out}")"
+    # `#{config_files}` lists every file the server looked at (the system
+    # /etc/tmux.conf and the user files under ITS $HOME); the sentinel's
+    # option proves the user file it loaded was the box $HOME's.
+    local _cfg _home _f
+    _cfg="$(sed -nE "s/^${_tag} config //p" <<<"${_out}")"
+    _home="$(_box_home)"
+    [[ "${_cfg}" == *"|sentinel" ]] \
+        || fail "cell ${_tag}: the box server did not load the sentinel config: ${_cfg}"
+    [[ ",${_cfg%|*}," == *",${_home}/.tmux.conf,"* ]] \
+        || fail "cell ${_tag}: the box server did not read ${_home}/.tmux.conf: ${_cfg}"
+    local -a _files
+    IFS=, read -r -a _files <<<"${_cfg%|*}"
+    for _f in "${_files[@]}"; do
+        [[ "${_f}" == /etc/* || "${_f}" == "${_home}/"* ]] \
+            || fail "cell ${_tag}: the box server read a config outside /etc and the box HOME: ${_f}"
+    done
     assert_equal "$(sha256sum <"$(_tmux_sentinel)")" "$(cat "$(_tmux_sentinel_sum)")"
     for _inv in new newA attach; do
         _line="$(grep -E "^${_tag} server ${_inv} " <<<"${_out}")" \

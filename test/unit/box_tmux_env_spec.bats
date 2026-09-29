@@ -66,7 +66,9 @@ setup() {
 # PR #232). test/system/real_engine_spec.bats restarts a real box over a
 # wrong-mode, wrong-owner directory.
 @test "the TMUX_TMPDIR hook creates the directory as the box user, then sets its owner and mode 0700 explicitly" {
-    run grep -xF 'init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"' "${MANIFEST}"
+    # The variables are distrobox-init's, expanded in the box: literal here.
+    local _uid="\${container_user_uid}" _gid="\${container_user_gid}" _dir="\${TMUX_TMPDIR}"
+    run grep -xF "init_hooks=setpriv --reuid=\"${_uid}\" --regid=\"${_gid}\" --clear-groups mkdir -p -m 0700 \"${_dir}\" && chown \"${_uid}:${_gid}\" \"${_dir}\" && chmod 0700 \"${_dir}\"" "${MANIFEST}"
     assert_success
 }
 
