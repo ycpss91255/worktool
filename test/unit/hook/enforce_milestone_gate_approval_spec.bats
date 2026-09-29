@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # test/unit/hook/enforce_milestone_gate_approval_spec.bats -
 # .agents/hook/enforce_milestone_gate_approval.sh (issue #190)
 #
@@ -816,20 +817,201 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output ""
 }
 
-@test "a direct GitHub API call to a merge / comments / graphql URL is blocked" {
-    local _c
-    for _c in "curl -X PUT -H 'Authorization: token x' https://api.github.com/repos/o/r/pulls/7/merge" \
-        "wget --post-data='{}' https://api.github.com/repos/o/r/issues/7/comments" \
-        "http POST https://api.github.com/graphql query=x" \
-        "curl -X PATCH https://ghe.example.com/api/v3/repos/o/r/issues/comments/9" \
-        "curl -X PUT https://api.github.com:443/repos/o/r/pulls/7/merge" \
-        "curl -X POST https://api.github.com:443/repos/o/r/issues/7/comments" \
-        "http POST https://api.github.com:443/graphql query=x"; do
-        _check "${_c}"
-        assert_failure 2
-        assert_output --partial "cannot verify"
+# --- equivalence-class matrices (round 8) ---------------------------------------
+# Each dimension lists every spelling of one choice; a variant is the product
+# of one value per dimension. A new bypass class is a new dimension VALUE here,
+# not a new example test.
+
+# _q <text> - <text> single-quoted for a shell ('\'' for a quote inside).
+_q() {
+    local _s="$1"
+    printf "'%s'" "${_s//\'/\'\\\'\'}"
+}
+
+# _argv <gh command> - its argv as a JSON array (valid Python / JS / Perl).
+_argv() {
+    eval "set -- $1"
+    printf '%s\0' "$@" | jq -Rsc 'split("\u0000")[:-1]'
+}
+
+# The relevant operations: <group>|<sub>|<arguments>.
+_ops() {
+    printf '%s\n' "pr|merge|7" \
+        "pr|comment|7 --body '${PHRASE}'" \
+        "api||-X PUT repos/o/r/pulls/7/merge" \
+        "api||-X POST repos/o/r/issues/7/comments -f body=${PHRASE}" \
+        "api||graphql -f query='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'"
+}
+_SPELLINGS=(plain R-before repo-eq-before repo-between R-after)
+_SHELL_WRAPPERS=(none bash-c sh-c eval env timeout busybox-sh heredoc-sh herestring-bash)
+_CODE_WRAPPERS=(python3-c perl-e node-e)
+
+# _gh_cmd <op> <spelling> - the gh command line of <op> spelled that way.
+_gh_cmd() {
+    local _g _s _a
+    IFS='|' read -r _g _s _a <<<"$1"
+    case "$2" in
+        plain) printf 'gh %s %s%s' "${_g}" "${_s:+${_s} }" "${_a}" ;;
+        R-before) printf 'gh -R o/r %s %s%s' "${_g}" "${_s:+${_s} }" "${_a}" ;;
+        repo-eq-before) printf 'gh --repo=o/r %s %s%s' "${_g}" "${_s:+${_s} }" "${_a}" ;;
+        repo-between) printf 'gh %s --repo o/r %s%s' "${_g}" "${_s:+${_s} }" "${_a}" ;;
+        R-after) printf 'gh %s %s%s -R o/r' "${_g}" "${_s:+${_s} }" "${_a}" ;;
+    esac
+}
+
+# _wrap <wrapper> <command> - <command> run through <wrapper>.
+_wrap() {
+    local _a
+    case "$1" in
+        none) printf '%s' "$2" ;;
+        bash-c) printf 'bash -c %s' "$(_q "$2")" ;;
+        sh-c) printf 'sh -c %s' "$(_q "$2")" ;;
+        eval) printf 'eval %s' "$(_q "$2")" ;;
+        env) printf 'env %s' "$2" ;;
+        timeout) printf 'timeout 60 %s' "$2" ;;
+        busybox-sh) printf 'busybox sh -c %s' "$(_q "$2")" ;;
+        heredoc-sh) printf "sh <<'EOF'\n%s\nEOF" "$2" ;;
+        herestring-bash) printf 'bash <<< %s' "$(_q "$2")" ;;
+        python3-c)
+            _a="$(_argv "$2")"
+            printf 'python3 -c %s' "$(_q "import subprocess; subprocess.run(${_a})")" ;;
+        perl-e)
+            _a="$(_argv "$2")"
+            printf 'perl -e %s' "$(_q "system(${_a:1:${#_a}-2})")" ;;
+        node-e)
+            _a="$(_argv "$2")"
+            printf 'node -e %s' "$(_q "const a=${_a}; require(\"child_process\").execFileSync(a[0], a.slice(1))")" ;;
+    esac
+}
+
+# _expect <want status> <label> <command> - run the hook; on a mismatch,
+# append the variant to _MISS.
+_expect() {
+    local _rc=0
+    printf '%s' "$(hook_json "$3")" | "${HOOK_DIR}/enforce_milestone_gate_approval.sh" >/dev/null 2>&1 || _rc=$?
+    [[ "${_rc}" -eq "$1" ]] || _MISS+="$2 -> status ${_rc}, want $1: $3"$'\n'
+}
+
+# _report - fail naming every variant that missed.
+_report() {
+    [[ -z "${_MISS}" ]] || fail "$(printf 'variants that missed:\n%s' "${_MISS}")"
+}
+
+@test "matrix: every operation x gh spelling x wrapper is blocked" {
+    _labels milestone-gate
+    local _oper _sp _wr _MISS=''
+    local -a _all
+    mapfile -t _all < <(_ops)
+    for _oper in "${_all[@]}"; do
+        for _sp in "${_SPELLINGS[@]}"; do
+            for _wr in "${_SHELL_WRAPPERS[@]}" "${_CODE_WRAPPERS[@]}"; do
+                _expect 2 "op=${_oper%%|*}:${_oper#*|} spelling=${_sp} wrapper=${_wr}" \
+                    "$(_wrap "${_wr}" "$(_gh_cmd "${_oper}" "${_sp}")")"
+            done
+        done
     done
+    _report
+}
+
+@test "matrix: a checked literal gh call passes through every shell wrapper and spelling" {
+    _labels milestone-gate
+    _comment OWNER "${PHRASE}"
+    local _o _sp _wr _MISS=''
+    for _o in "pr|merge|7" "pr|comment|7 --body ok" "pr|view|7"; do
+        for _sp in "${_SPELLINGS[@]}"; do
+            for _wr in "${_SHELL_WRAPPERS[@]}"; do
+                _expect 0 "op=${_o%%|*}:${_o#*|} spelling=${_sp} wrapper=${_wr}" \
+                    "$(_wrap "${_wr}" "$(_gh_cmd "${_o}" "${_sp}")")"
+            done
+        done
+    done
+    _report
+}
+
+# The host dimension of a direct API URL: _url <form> <host> <path>.
+_HOST_FORMS=(plain upper trailing-dot port trailing-dot-port userinfo http no-scheme)
+_url() {
+    case "$1" in
+        plain) printf 'https://%s%s' "$2" "$3" ;;
+        upper) printf 'https://%s%s' "${2^^}" "$3" ;;
+        trailing-dot) printf 'https://%s.%s' "$2" "$3" ;;
+        port) printf 'https://%s:443%s' "$2" "$3" ;;
+        trailing-dot-port) printf 'https://%s.:443%s' "$2" "$3" ;;
+        userinfo) printf 'https://user:tok@%s%s' "$2" "$3" ;;
+        http) printf 'http://%s%s' "$2" "$3" ;;
+        no-scheme) printf '%s%s' "$2" "$3" ;;
+    esac
+}
+# The path dimension: _path_form <form> <path>.
+_PATH_FORMS=(plain dot-segment dot-dot double-slash percent trailing-slash query upper)
+_path_form() {
+    local _last="${2##*/}"
+    case "$1" in
+        plain) printf '%s' "$2" ;;
+        dot-segment) printf '%s/./%s' "${2%/*}" "${_last}" ;;
+        dot-dot) printf '%s/x/../%s' "${2%/*}" "${_last}" ;;
+        double-slash) printf '/%s' "$2" ;;
+        percent) printf '%s/%%%02x%s' "${2%/*}" "'${_last:0:1}" "${_last:1}" ;;
+        trailing-slash) printf '%s/' "$2" ;;
+        query) printf '%s?a=1' "$2" ;;
+        upper) printf '%s' "${2^^}" ;;
+    esac
+}
+# The API endpoints of a merge, a comment and GraphQL: <host> <path>.
+_endpoints() {
+    printf '%s\n' "api.github.com /repos/o/r/pulls/7/merge" \
+        "api.github.com /repos/o/r/issues/7/comments" \
+        "api.github.com /repos/o/r/issues/comments/9" \
+        "api.github.com /graphql" \
+        "ghe.example.com /api/v3/repos/o/r/pulls/7/merge" \
+        "ghe.example.com /api/v3/repos/o/r/issues/7/comments" \
+        "ghe.example.com /api/graphql"
+}
+
+@test "matrix: hook_api_write_urls counts every host x path spelling of an API write URL" {
+    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    source "${HOOK_DIR}/lib/subcommand.sh"
+    local _h _p _hf _pf _u _MISS=''
+    while read -r _h _p; do
+        for _hf in "${_HOST_FORMS[@]}"; do
+            for _pf in "${_PATH_FORMS[@]}"; do
+                _u="$(_url "${_hf}" "${_h}" "$(_path_form "${_pf}" "${_p}")")"
+                [[ "$(hook_api_write_urls "curl -X PUT '${_u}'" | wc -l)" -eq 1 ]] \
+                    || _MISS+="host=${_hf} path=${_pf}: ${_u}"$'\n'
+            done
+        done
+    done < <(_endpoints)
+    _report
+}
+
+@test "matrix: a direct API call through curl / wget / http is blocked for every host spelling" {
+    local _h _p _hf _cl _u _MISS=''
+    while read -r _h _p; do
+        for _hf in "${_HOST_FORMS[@]}"; do
+            _u="$(_url "${_hf}" "${_h}" "${_p}")"
+            for _cl in "curl -X PUT" "wget --post-data=x" "http POST"; do
+                _expect 2 "client=${_cl%% *} host=${_hf}" "${_cl} ${_u}"
+            done
+        done
+    done < <(_endpoints)
+    _report
     run _calls
+    assert_output ""
+}
+
+@test "matrix: API reads that are no merge / comment / graphql URL pass for every host spelling" {
+    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    source "${HOOK_DIR}/lib/subcommand.sh"
+    local _hf _u _MISS=''
+    for _hf in "${_HOST_FORMS[@]}"; do
+        for _u in "$(_url "${_hf}" api.github.com /repos/o/r/pulls/7)" \
+            "$(_url "${_hf}" api.github.com /repos/o/r/commits)" \
+            "$(_url "${_hf}" ghe.example.com /api/v3/repos/o/r/pulls)"; do
+            _expect 0 "host=${_hf}" "curl -s ${_u}"
+        done
+    done
+    _report
+    run hook_api_write_urls "see repos/o/r/pulls/7/merge and api docs at https://docs.github.com/rest"
     assert_output ""
 }
 

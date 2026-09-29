@@ -529,6 +529,11 @@ _check_api_unclean() {
 # _check_api - judge a gh api launch: GraphQL, merge and comment writes.
 _check_api() {
     local _ep
+    # gh api has no -R / --repo: the hook would misread its endpoint.
+    if _opt_at -R --repo >/dev/null; then
+        hook_block "gh api: -R / --repo is no gh api flag; the endpoint cannot be told (fail closed)." \
+            "Put the repository in the endpoint path (repos/<owner>/<repo>/...)."
+    fi
     _ep="$(_api_endpoint)" || return 0
     _check_api_graphql "${_ep}"
     _ep="$(_api_path "${_ep}")"
@@ -752,15 +757,11 @@ _tripwire() {
     local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase
     local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
     local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
-    # A direct REST / GraphQL call (curl, wget, http ...) to a merge,
-    # comments or graphql URL (an explicit :port included), unless it is the
-    # URL of a checked gh api call.
-    local _api='(api\.github\.com(:[0-9]+)?|/api/v3)/repos/[^[:space:]"'"'"']+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments)|(api\.github\.com(:[0-9]+)?|/api)/graphql'
     _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
         && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]] \
-        && [[ "$(grep -oE -- "${_api}" <<<"${_t,,}" | wc -l)" -le "$(grep -oE -- "${_api}" <<<"${_CHECKED_TEXT,,}" | wc -l)" ]]; then
+        && [[ "$(hook_api_write_urls "${_t}" | wc -l)" -le "$(hook_api_write_urls "${_CHECKED_TEXT}" | wc -l)" ]]; then
         return 0
     fi
     hook_block "cannot verify this gh call statically: the command text holds a merge / comment gh call or the approval phrase that the hook could not check as a literal gh launch (fail closed)." \
