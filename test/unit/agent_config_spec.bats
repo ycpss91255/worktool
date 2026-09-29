@@ -1,0 +1,157 @@
+#!/usr/bin/env bats
+# test/unit/agent_config_spec.bats - repo-level agent config (issue #189)
+#
+# WHAT THIS PROVES
+#   Every agent setting lives in this repo and depends on no other checkout
+#   and nothing at user level:
+#   - the real files are under .agents/{hook,script,skills,memory}; .claude/
+#     holds only relative symlinks to them, the committed settings.json and
+#     the untouched workflows/
+#   - settings.json registers exactly the carried hooks, each through
+#     ${CLAUDE_PROJECT_DIR}/.claude/hook/<name>.sh, and every registered path
+#     runs from that symlinked location (its lib resolves inside the repo)
+#   - no file under .agents/ or .claude/ points at the initialization checkout
+#   - memory entries are real files, all indexed by MEMORY.md
+#   - the issue's skill list is carried (next to i-have-adhd, #191); the
+#     watch state dir is gitignored
+
+load "${BATS_TEST_DIRNAME}/../helper/common"
+
+setup() {
+    SETTINGS="${REPO_ROOT}/.claude/settings.json"
+}
+
+# Print "<event>|<matcher>|<command>" for every registered hook command.
+_registered() {
+    jq -r '.hooks | to_entries[] | .key as $e | .value[]
+        | (.matcher // "") as $m | .hooks[] | "\($e)|\($m)|\(.command)"' "${SETTINGS}"
+}
+
+# --- layout ------------------------------------------------------------------
+
+@test ".claude/{hook,script,skills,memory} are relative symlinks to ../.agents/*" {
+    local _d
+    for _d in hook script skills memory; do
+        assert [ -L "${REPO_ROOT}/.claude/${_d}" ]
+        assert_equal "$(readlink "${REPO_ROOT}/.claude/${_d}")" "../.agents/${_d}"
+        assert [ -d "${REPO_ROOT}/.claude/${_d}/" ]
+    done
+}
+
+@test ".claude/workflows stays a real directory with both templates" {
+    assert [ ! -L "${REPO_ROOT}/.claude/workflows" ]
+    assert [ -f "${REPO_ROOT}/.claude/workflows/pr-loop.js" ]
+    assert [ -f "${REPO_ROOT}/.claude/workflows/milestone-fanout.js" ]
+}
+
+@test "the agent scripts are executable real files" {
+    local _s
+    for _s in watch-user-replies.sh wait-pr-ci.sh; do
+        assert [ -f "${REPO_ROOT}/.agents/script/${_s}" ]
+        assert [ ! -L "${REPO_ROOT}/.agents/script/${_s}" ]
+        assert [ -x "${REPO_ROOT}/.agents/script/${_s}" ]
+    done
+}
+
+@test "the watch state directory .agents/state/ is gitignored" {
+    run grep -xF '.agents/state/' "${REPO_ROOT}/.gitignore"
+    assert_success
+}
+
+# --- settings.json -----------------------------------------------------------
+
+@test "settings.json registers exactly the carried hooks per event and matcher" {
+    run _registered
+    assert_success
+    local _p="\${CLAUDE_PROJECT_DIR}/.claude/hook"
+    assert_output "$(printf '%s\n' \
+        "PreToolUse|Bash|${_p}/test-must-use-docker.sh" \
+        "PreToolUse|Bash|${_p}/enforce_long_job_timeout.sh" \
+        "PreToolUse|Bash|${_p}/check_main_fresh_before_worktree.sh" \
+        "PreToolUse|Bash|${_p}/remind_main_sync.sh" \
+        "PreToolUse|Bash|${_p}/enforce_gh_body_file.sh" \
+        "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
+        "WorktreeCreate||${_p}/worktree_create.sh" \
+        "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
+        "UserPromptSubmit||${_p}/remind_no_emoji.sh")"
+}
+
+@test "every hook in .agents/hook is registered (no orphan hook)" {
+    local _f _name
+    for _f in "${REPO_ROOT}"/.agents/hook/*.sh; do
+        _name="$(basename -- "${_f}")"
+        run grep -c "/.claude/hook/${_name}\"" "${SETTINGS}"
+        assert_output "1"
+    done
+}
+
+@test "every registered hook runs from its settings.json path and allows an empty payload" {
+    local _line _cmd
+    while IFS= read -r _line; do
+        _cmd="${_line##*|}"
+        _cmd="${_cmd//\$\{CLAUDE_PROJECT_DIR\}/${REPO_ROOT}}"
+        assert [ -x "${_cmd}" ]
+        run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"\"}}" | CLAUDE_PROJECT_DIR="$2" "$1"' \
+            _ "${_cmd}" "${REPO_ROOT}"
+        assert_success
+        refute_output --partial "No such file"
+    done < <(_registered)
+}
+
+# --- no dependency outside the repo -----------------------------------------
+
+@test "nothing under .agents/ or .claude/ points at the initialization checkout" {
+    run grep -rn 'Desktop/initialization' "${REPO_ROOT}/.agents" "${REPO_ROOT}/.claude/"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "hooks and scripts source nothing outside the repo" {
+    run grep -rnE '(^|[[:space:]])(source|\.)[[:space:]]+"?/' \
+        "${REPO_ROOT}/.agents/hook" "${REPO_ROOT}/.agents/script"
+    assert_failure 1
+}
+
+# --- memory -------------------------------------------------------------------
+
+@test "memory entries are real files, not symlinks" {
+    run find "${REPO_ROOT}/.agents/memory" -type l
+    assert_success
+    assert_output ""
+}
+
+@test "MEMORY.md indexes every memory entry and every indexed entry exists" {
+    local _dir="${REPO_ROOT}/.agents/memory" _f _link _n=0
+    for _f in "${_dir}"/*.md; do
+        [[ "$(basename -- "${_f}")" == MEMORY.md ]] && continue
+        _n=$((_n + 1))
+        run grep -cF "]($(basename -- "${_f}"))" "${_dir}/MEMORY.md"
+        assert_output "1"
+    done
+    assert_equal "${_n}" 22
+    while IFS= read -r _link; do
+        assert [ -f "${_dir}/${_link}" ]
+    done < <(grep -oE '\]\([^)]+\.md\)' "${_dir}/MEMORY.md" | sed -E 's/^\]\((.*)\)$/\1/')
+}
+
+# --- skills -------------------------------------------------------------------
+
+@test "the issue's engineering skills are carried next to i-have-adhd, each with a SKILL.md" {
+    local _s
+    for _s in i-have-adhd tdd triage to-issues to-prd grilling grill-me grill-with-docs \
+        domain-modeling ubiquitous-language codebase-design design-an-interface \
+        decision-mapping diagnosing-bugs improve-codebase-architecture implement \
+        prototype qa research review wayfinder handoff setup-matt-pocock-skills \
+        writing-for-agents wait-pr-ci; do
+        assert [ -f "${REPO_ROOT}/.agents/skills/${_s}/SKILL.md" ]
+    done
+    run bash -c 'ls -1 "$1" | wc -l' _ "${REPO_ROOT}/.agents/skills"
+    assert_output "25"
+}
+
+@test "the wait-pr-ci skill names only scripts this repo carries" {
+    run grep -nE 'wait-pr-ci-batch|wait-tag-ci|rebase-pr' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
+    assert_failure 1
+    run grep -c '.claude/script/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
+    refute_output "0"
+}

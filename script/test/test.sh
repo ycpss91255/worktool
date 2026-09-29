@@ -134,6 +134,7 @@ _required_specs() {
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
                 unit/workflow_spec.bats \
+                unit/agent_config_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
