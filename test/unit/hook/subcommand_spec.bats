@@ -300,3 +300,47 @@ setup() {
     run hook_subcommands "gh x ${d}(a) \"${d}(b)\""
     assert_line --index 0 "gh x _ _"
 }
+
+@test "hook_word_has_expansion marks every expansion the shell resolves, not quoted text" {
+    local d='$' b='`' w _i
+    run hook_subcommands_raw "gh x ${d}A \"${d}A\" ${d}{A} p/${d}1 *.md f? [ab] {a,b} {1..3} ${d}'z' ${d}(a) \"${b}c${b}\""
+    read -r -a w <<<"${lines[0]}"
+    for _i in 2 3 4 5 6 7 8 9 10 11 12 13; do
+        run hook_word_has_expansion "${w[_i]}"
+        assert_success
+    done
+    run hook_subcommands_raw "gh x '${d}A' \\${d}A \"*\" [ ]] {owner}/{repo} \"${d}\" ${d}"
+    read -r -a w <<<"${lines[0]}"
+    for _i in 2 3 4 5 6 7 8 9; do
+        run hook_word_has_expansion "${w[_i]}"
+        assert_failure
+    done
+}
+
+@test "an expansion keeps its text in hook_word and hook_subcommands" {
+    local d='$'
+    run hook_subcommands_raw "gh x \"${d}A\" *.md"
+    read -r -a w <<<"${lines[0]}"
+    run hook_word "${w[2]}"
+    assert_output "${d}A"
+    run hook_word "${w[3]}"
+    assert_output "*.md"
+    run hook_subcommands "echo ${d}A *.md"
+    assert_output "echo ${d}A *.md"
+}
+
+@test "an expansion of the outer shell stays marked inside a bash -c / eval script" {
+    local d='$' w
+    run hook_subcommands_raw "bash -c \"gh pr comment 7 --body '${d}B'\""
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_expansion "${w[5]}"
+    assert_success
+    run hook_word "${w[5]}"
+    assert_output "${d}B"
+    run hook_subcommands_raw "eval \"${d}CMD\""
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_expansion "${w[0]}"
+    assert_success
+    run hook_subcommands_raw "bash -c 'gh pr view \"${d}(printf 7)\"'"
+    assert_line --index 0 --partial "gh pr view"
+}

@@ -10,7 +10,12 @@
 #   2. anti-forgery: a comment / review / issue / PR body, or a gh api
 #      POST / PATCH to .../comments, holding 允許合併 without a leading
 #      [claude] / [codex] marker is BLOCKED; a marked body passes
-#   3. everything else passes silently and never calls gh
+#   3. the closed rule: a relevant gh command (any gh api, the pr / issue
+#      merge / comment / review / create / close / reopen sub-commands) with
+#      a word the shell expands ($VAR, $(...), a glob ...), a sub-command
+#      the hook cannot tell, an unknown root flag before it, combined short
+#      options, or a gh run through eval / bash -c "$X" / xargs is BLOCKED
+#   4. everything else passes silently and never calls gh
 #
 # gh is a PATH stub fed from files in BATS_TEST_TMPDIR: nothing touches
 # the network. The stub logs each call to ${GH_STUB_DIR}/calls.
@@ -446,21 +451,33 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     done
 }
 
-@test "a quoted command substitution outside the body of a gh body command passes" {
-    _check "gh pr comment \"\$(printf 7)\" --body 'looks good'"
-    assert_success
+@test "a quoted command substitution anywhere in a gh body command is blocked (closed rule)" {
+    # Quoted, it is still one word the hook cannot read: it may expand to
+    # an option (--body) that turns the next word into the body.
+    local _c
+    for _c in "gh pr comment \"\$(printf 7)\" --body 'looks good'" \
+        "gh pr comment \"\$(printf -- '--body')\" '${PHRASE}'" \
+        "gh pr comment 7 \"\$(printf -- '--body')\" '${PHRASE}'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "literal"
+    done
+    run _calls
     assert_output ""
 }
 
-@test "a gh api read of an endpoint built by a command substitution passes" {
+@test "a gh api call with an endpoint built by a command substitution is blocked, read or not" {
     local _c
     for _c in "gh api \"\$(printf repos/o/r/pulls)\" --paginate" \
         "gh api -X GET \"repos/\$(echo o/r)/issues/7/comments\" -f per_page=100" \
-        "gh api \"repos/\$(echo o/r)/pulls/7\" -q .title --jq \"\$(echo .state)\""; do
+        "gh api \"repos/\$(echo o/r)/pulls/7\" -q .title --jq \"\$(echo .state)\"" \
+        "gh api \"\$(printf -- '-X')\" PUT repos/o/r/pulls/7/merge"; do
         _check "${_c}"
-        assert_success
-        assert_output ""
+        assert_failure 2
+        assert_output --partial "literal"
     done
+    run _calls
+    assert_output ""
 }
 
 @test "gh api to .../comments with a marked body, or a read, passes" {
@@ -468,6 +485,161 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_success
     _check "gh api repos/o/r/issues/7/comments --paginate"
     assert_success
+    assert_output ""
+}
+
+# --- closed rule: root flags, expansions, wrappers ------------------------------
+
+@test "gh root-level repo flags before the sub-command do not hide a merge" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh -R ycpss91255/worktool pr merge 7" \
+        "gh --repo=ycpss91255/worktool pr merge 7 --merge" \
+        "gh --repo ycpss91255/worktool pr merge 7" \
+        "gh -Rycpss91255/worktool pr merge 7" \
+        "gh pr -R ycpss91255/worktool merge 7" \
+        "gh -R ycpss91255/worktool pr comment 7 --body '${PHRASE}'"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+    run _calls
+    assert_line --partial "repos/ycpss91255/worktool/issues/7/labels"
+    refute_line --partial "repo view"
+}
+
+@test "a root-level -R merge with the maintainer's approval passes" {
+    _labels milestone-gate
+    _comment OWNER "${PHRASE}"
+    _check "gh -R ycpss91255/worktool pr merge 7 --merge"
+    assert_success
+    assert_output ""
+    run _calls
+    assert_line --partial "repos/ycpss91255/worktool/issues/7/comments"
+}
+
+@test "an unknown gh root flag before a relevant sub-command is blocked" {
+    local _c
+    for _c in "gh --foo x pr merge 7" \
+        "gh --hostname example.com api -X PUT repos/o/r/pulls/7/merge" \
+        "gh -z pr comment 7 --body ok"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "root flag"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a gh alias or extension (an unknown top-level word) is blocked" {
+    _check "gh pm 7"
+    assert_failure 2
+    assert_output --partial "alias"
+}
+
+@test "a parameter expansion in a relevant gh command is blocked (closed rule)" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh pr merge \$PR -R ycpss91255/worktool" \
+        "gh pr merge \"\$PR\" -R ycpss91255/worktool" \
+        "gh pr merge 7 -R \"\${REPO}\"" \
+        "gh api -X PUT \"\$EP\"" \
+        "gh api -X PUT repos/o/r/pulls/\${N}/merge" \
+        "gh pr comment 7 --body \"\$BODY\"" \
+        "gh issue comment 7 -b \$BODY" \
+        "gh pr comment 7 --body-file \"\$F\"" \
+        "gh api repos/o/r/issues/7/comments -f body=\"\$B\"" \
+        "gh pr comment 7 --body-file *.md" \
+        "gh pr merge 7 -R ycpss91255/worktool --{merge,admin}" \
+        "gh pr comment 7 --body \$'\\x41'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "literal"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a gh command the hook cannot see literally (eval, bash -c, dynamic name) is blocked" {
+    local _c
+    for _c in "eval \"\$CMD\"" \
+        "bash -c \"\$CMD\"" \
+        "bash -c \"gh pr comment 7 --body '\$B'\"" \
+        "bash -c \"gh pr merge '\$(printf 7)'\"" \
+        "\$GH pr merge 7" \
+        "\"\$(command -v gh)\" pr merge 7" \
+        "gh \$SUB 7" \
+        "gh pr \"\$SUB\" 7"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "gh run through another command (nice, xargs) is blocked when relevant" {
+    local _c
+    for _c in "nice -n 5 gh pr merge 7 -R ycpss91255/worktool" \
+        "echo 7 | xargs gh pr merge" \
+        "xargs gh pr comment 7 --body ok"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "directly"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "combined short options in a relevant gh command are blocked" {
+    local _c
+    for _c in "gh pr comment 7 -eb '${PHRASE}'" \
+        "gh api -iX PUT repos/o/r/pulls/7/merge" \
+        "gh pr merge 7 -dR other/repo"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "short option"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "close / reopen --comment, pr new and odd merge endpoints are covered" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh pr close 7 --comment '${PHRASE}'" \
+        "gh issue reopen 7 -c '${PHRASE}'" \
+        "gh pr new --title t --body '${PHRASE}'" \
+        "gh api -X PUT 'repos/o/r/pulls/7/merge?x=1'" \
+        "gh api -X PUT https://api.github.com/repos/o/r/pulls/7/merge" \
+        "gh api -X PUT repos/o/r/pulls/7/%6derge" \
+        "gh api graphql -f query='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'" \
+        "gh api graphql -f query='mutation{addComment(input:{subjectId:\"x\",body:\"y\"}){clientMutationId}}'"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+    _check "gh pr close 7 --comment '[claude] ${PHRASE} 前先關閉'"
+    assert_success
+    _check "gh api graphql -f query='query{viewer{login}}'"
+    assert_success
+    assert_output ""
+}
+
+@test "variables outside a relevant gh command are not blocked" {
+    local _c
+    for _c in "echo \$X" \
+        "git commit -m \"\$MSG\"" \
+        "gh pr view \$N" \
+        "gh pr view \"\$N\" --json title -R ycpss91255/worktool" \
+        "gh run watch \$ID" \
+        "for f in *.sh; do shellcheck \"\$f\"; done" \
+        "[ -f x ] && echo y" \
+        "\$HOME/bin/tool --flag" \
+        "grep -rn gh src/" \
+        "echo '\$PR gh pr merge'"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+    run _calls
     assert_output ""
 }
 

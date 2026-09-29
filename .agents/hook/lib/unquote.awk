@@ -16,11 +16,30 @@
 #     words, options included), else \001s (inside double quotes, or a
 #     <(...) / >(...), which is one path). Inside single quotes none of
 #     these is special; $(...) and `...` inside double quotes still run
+#   - every other expansion the shell resolves is marked \001v right before
+#     its text (kept as is): a $ parameter expansion ($X, ${X}, $1, $'..',
+#     outside single quotes; a lone $ is literal) and, unquoted, a glob
+#     (* ?, [ with a closing ] in the same word) or a brace expansion ({ with
+#     a , or .. and a closing } in the same word)
+#   - a \002 (an expansion of an outer shell, carried into a bash -c /
+#     eval script by subcommand.sh) becomes \001v in any quoting
 BEGIN {
     RS = "\001"; SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
     ESC = sprintf("%c", 1); SQ = sprintf("%c", 39); BQ = sprintf("%c", 96)
 }
 function enc(c,    k) { k = index(SEP, c); return k ? ESC substr(LET, k, 1) : c }
+# closes(i, c) - 1 when the unquoted word going on at i holds the
+# character c; with brace, only after a , or .. (a brace expansion).
+function closes(i, c, brace,    j, d, sep) {
+    sep = 0
+    for (j = i + 1; j <= n; j++) {
+        d = substr($0, j, 1)
+        if (index(SEP, d) || d == SQ || d == "\"") return 0
+        if (d == "," || (d == "." && substr($0, j + 1, 1) == ".")) sep = 1
+        if (d == c) return brace ? sep : 1
+    }
+    return 0
+}
 function push(kind) {
     sd++; skind[sd] = kind; sq[sd] = q; sbuf[sd] = buf; spar[sd] = par
     q = ""; buf = ""; par = 0
@@ -34,6 +53,7 @@ function pop() {
     n = length($0); q = ""; buf = ""; extra = ""; sd = 0; par = 0
     for (i = 1; i <= n; i++) {
         c = substr($0, i, 1); nx = substr($0, i + 1, 1)
+        if (c == "\002") { buf = buf ESC "v"; continue }
         if (q == SQ) { if (c == SQ) q = ""; else buf = buf enc(c); continue }
         if (c == "\\" && i < n) {
             i++; c = substr($0, i, 1)
@@ -47,6 +67,8 @@ function pop() {
             continue
         }
         if (q == "" && c == ")" && par == 0 && sd > 0 && skind[sd] != BQ) { pop(); continue }
+        if (c == "$" && nx != "" && index(" \t\r\n", nx) == 0 && !(q == "\"" && nx == "\"")) buf = buf ESC "v"
+        if (q == "" && (c == "*" || c == "?" || (c == "[" && closes(i, "]", 0)) || (c == "{" && closes(i, "}", 1)))) buf = buf ESC "v"
         if (q == "" && c == "(") par++
         if (q == "" && c == ")" && par > 0) par--
         if (q == "" && (c == SQ || c == "\"")) { q = c; continue }
