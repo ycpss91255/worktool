@@ -377,43 +377,56 @@ _hang_script() { printf '%s/ghostty-hang.fish\n' "${HOME}"; }
 
 # Write the fish payload the chain runs INSIDE the box: it records the fish
 # version (only fish sets FISH_VERSION, and this runner has no fish at
-# all), whether /run/.containerenv exists (the box has one, the runner does
-# not - the preflight asserts that), whether it runs under tmux (issue
+# all), the mount namespace it runs in, whether it runs under tmux (issue
 # #179: the terminal must start none), and the box's own node name.
+#
+# WHY THE MOUNT NAMESPACE AND NOT /run/.containerenv: that file is
+# podman's. A docker box - this runner's, and a docker host's - has none
+# (distrobox itself also accepts /.dockerenv), and this runner is a docker
+# container itself, so /.dockerenv cannot tell the runner from the box.
+# The kernel's answer can: a process in the box shares the dev container's
+# mount namespace, a process on the runner does not.
 _write_chain_script() {
     cat >"$(_chain_script)" <<EOF
-set -l containerenv no
-if test -e /run/.containerenv
-    set containerenv yes
-end
 set -l under_tmux no
 if set -q TMUX
     set under_tmux yes
 end
-printf 'inbox-ok fish=%s containerenv=%s tmux=%s host=%s\n' "\$FISH_VERSION" "\$containerenv" "\$under_tmux" (uname -n) \
+printf 'inbox-ok fish=%s mntns=%s tmux=%s host=%s\n' "\$FISH_VERSION" (readlink /proc/self/ns/mnt) "\$under_tmux" (uname -n) \
     >$(_chain_marker)
 EOF
 }
 
-# The line the chain marker must hold: fish answered, inside a container
-# (/run/.containerenv), with no tmux in between, on some node name (the
-# cases compare that name against `docker inspect dev`).
-CHAIN_OK='^inbox-ok fish=[0-9]+\.[0-9]+[^ ]* containerenv=yes tmux=no host=.+$'
+# The line the chain marker must hold: fish answered, in some mount
+# namespace, with no tmux in between, on some node name (the namespace
+# and the name are compared against the dev container below).
+CHAIN_OK='^inbox-ok fish=[0-9]+\.[0-9]+[^ ]* mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
 
-# Assert the chain marker exists, holds CHAIN_OK, and names the dev box's
+# The mount namespace of the dev container, as the engine's pid for it
+# sees it from here (distrobox shares the pid namespace, so it is visible).
+_dev_mntns() {
+    readlink "/proc/$(_docker inspect dev --format '{{.State.Pid}}')/ns/mnt"
+}
+
+# Assert the chain marker exists, holds CHAIN_OK, was written in the dev
+# container's mount namespace (not the runner's) and names the dev box's
 # own hostname as the engine reports it - so the line cannot have been
 # produced anywhere else on this shared HOME mount. $1 tags the evidence.
 _assert_chain_marker_in_box() {
-    local _line _marker_host _box_host
+    local _line _marker_ns _marker_host _box_host
     assert [ -f "$(_chain_marker)" ]
     _line="$(cat "$(_chain_marker)")"
     _log_lines "$1" "${_line}"
     [[ "${_line}" =~ ${CHAIN_OK} ]] \
         || fail "chain marker '${_line}' does not match ${CHAIN_OK}"
+    _marker_ns="$(sed -nE 's/^inbox-ok .* mntns=([^ ]+) .*$/\1/p' "$(_chain_marker)")"
+    assert_equal "${_marker_ns}" "$(_dev_mntns)"
+    [[ "${_marker_ns}" != "$(readlink /proc/self/ns/mnt)" ]] \
+        || fail "chain marker was written in the runner's own mount namespace ${_marker_ns}"
     _marker_host="$(sed -nE 's/^inbox-ok .* host=(.+)$/\1/p' "$(_chain_marker)")"
     _box_host="$(_docker inspect dev --format '{{.Config.Hostname}}')"
     assert_equal "${_marker_host}" "${_box_host}"
-    _log_lines "$1-host" "marker host=${_marker_host} == docker inspect dev hostname"
+    _log_lines "$1-in-box" "marker mntns=${_marker_ns} == dev container; host=${_marker_host} == docker inspect dev hostname"
 }
 
 # Write the fish payload of the deliberate-hang case. It announces that it
@@ -452,7 +465,7 @@ _ghostty_run() {
     timeout -k 5 "$1" xvfb-run -a ghostty </dev/null
 }
 
-@test "preflight: the runner has a real ghostty, Xvfb and a host tmux, and no fish and no /run/.containerenv of its own" {
+@test "preflight: the runner has a real ghostty, Xvfb and a host tmux, and no fish of its own" {
     run timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +version
     assert_success
     assert_line --regexp '^Ghostty [0-9]+\.[0-9]+'
@@ -464,10 +477,8 @@ _ghostty_run() {
     # box's.
     run command -v fish
     assert_failure
-    # Issue #179: the in-box witness is /run/.containerenv, so the runner
-    # (the "host" here) must not have one; and the host-side tmux server of
-    # section (e3) needs a tmux on the runner.
-    assert [ ! -e /run/.containerenv ]
+    # Issue #179: the host-side tmux server of section (e3) needs a tmux on
+    # the runner (the "host" here).
     run tmux -V
     assert_success
     _log_lines host-tmux "${lines[0]}"
@@ -485,7 +496,7 @@ _ghostty_run() {
     assert_line 'command = distrobox enter dev -- true'
 }
 
-@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, /run/.containerenv, no tmux)" {
+@test "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)" {
     rm -f "$(_chain_marker)"
     _write_chain_script
     # The full chain #5 promises, in one command, but ending: ghostty ->
@@ -741,7 +752,7 @@ _host_tmux_pid() {
 }
 
 @test "#179 tmux: with a host tmux server running, tmux in the box starts the box's own server (in-box pid, own socket, no host session)" {
-    local _host_pid _box_pid _box_sock _box_ns _host_ns _init_pid _init_ns
+    local _host_pid _box_pid _box_sock _box_ns _host_ns _init_ns
     _host_tmux_down
     _host_tmux_up
     _host_pid="$(_host_tmux_pid)"
@@ -772,13 +783,11 @@ _host_tmux_pid() {
     # ... running INSIDE the box: its mount namespace is the dev
     # container's (the engine's pid for it), not the runner's. distrobox
     # shares the pid namespace, so the pid is visible here.
-    _init_pid="$(_docker inspect dev --format '{{.State.Pid}}')"
-    _init_ns="$(readlink "/proc/${_init_pid}/ns/mnt")"
+    _init_ns="$(_dev_mntns)"
     _box_ns="$(readlink "/proc/${_box_pid}/ns/mnt")"
     _host_ns="$(readlink "/proc/${_host_pid}/ns/mnt")"
     assert_equal "${_box_ns}" "${_init_ns}"
     [[ "${_box_ns}" != "${_host_ns}" ]] || fail "box tmux server shares the host server's mount namespace (${_host_ns})"
-    assert [ -e "/proc/${_box_pid}/root/run/.containerenv" ]
     _log_lines box-tmux-ns "box pid=${_box_pid} mnt=${_box_ns} == dev init mnt; host pid=${_host_pid} mnt=${_host_ns}"
 
     # The host server still lists only its own session.
