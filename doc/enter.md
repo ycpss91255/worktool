@@ -54,7 +54,7 @@ exit 2。
 
 | 檔案 | 內容 |
 |------|------|
-| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`) |
+| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」),setup 重寫時原樣保留 |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<distrobox>' enter <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
 | `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<distrobox>" enter <盒>'` |
 
@@ -301,9 +301,14 @@ box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
 tmux.conf: /home/me/.tmux.conf (managed block: absent)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
+home: /home/me/dev-box (default)
 ```
 
-最後一行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
+`home:` 是 `just box assemble` 記下的盒子 HOME 與來源(issue #198);還沒 assemble
+過時是 `home: not recorded (run: just box assemble)`。記錄的值不是絕對路徑時,和其他
+壞掉的值一樣以 `[ERROR] <設定檔>: invalid value ...` 拒絕、exit 1。
+
+`distrobox:` 那行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
 之後被移走 / 移除 / 升級掉時,這裡會直接講清楚,而不是讓你開窗看到一閃而過的
 `not found`:
 
@@ -319,7 +324,7 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
-後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態與 `distrobox:` 那行,
+後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態、`distrobox:` 與 `home:` 那兩行,
 報告永遠不會是空的。
 
 ## 測試對應
