@@ -33,6 +33,37 @@ _check() { run_hook test-must-use-docker "$(hook_json "$1")"; }
     assert_failure 2
 }
 
+@test "blocks a quoted bats executable (\"bats\" is still bats)" {
+    _check '"bats" test/unit'
+    assert_failure 2
+    _check "'bats' test/unit"
+    assert_failure 2
+}
+
+@test "blocks bats behind command with a quoted name" {
+    _check 'command "bats" test/unit'
+    assert_failure 2
+}
+
+@test "blocks bats behind sudo with options (sudo -u root)" {
+    _check "sudo -u root bats test/unit"
+    assert_failure 2
+    _check "sudo -E -- bats test/unit"
+    assert_failure 2
+}
+
+@test "blocks bats behind env with options (env -i / env -u)" {
+    _check "env -i bats test/unit"
+    assert_failure 2
+    _check "env -u HOME PATH=/usr/bin bats test/unit"
+    assert_failure 2
+}
+
+@test "blocks bats behind a timeout(1) and a sudo wrapper together" {
+    _check "timeout 600 sudo -u root bats test/unit"
+    assert_failure 2
+}
+
 @test "blocks the container-side gate run on the host (test.sh --ci-unit)" {
     _check "./script/test/test.sh --ci-unit"
     assert_failure 2
@@ -85,6 +116,16 @@ _check() { run_hook test-must-use-docker "$(hook_json "$1")"; }
 
 @test "allows a git commit whose message mentions bats and test.sh" {
     _check "git commit -m 'never run bats or ./script/test/test.sh --ci-unit on the host'"
+    assert_success
+}
+
+@test "allows a quoted message whose separators hide a bats word" {
+    _check 'git commit -m "fix; bats test/unit && env -i bats"'
+    assert_success
+}
+
+@test "allows 'command -v bats' (a lookup, not a launch)" {
+    _check "command -v bats"
     assert_success
 }
 
