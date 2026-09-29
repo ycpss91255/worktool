@@ -17,9 +17,13 @@
 #     default keys are recomputed on every run.
 #   - auto-enter yes + terminal ghostty writes ONE managed block (begin/end
 #     marker lines) into $XDG_CONFIG_HOME/ghostty/config: tmux inside ->
-#     `command = '<distrobox>' enter <box> -- tmux new -A -s main`; tmux host
-#     -> `command = tmux new -A -s main` plus a managed block in ~/.tmux.conf
-#     (`set -g default-command '"<distrobox>" enter <box>'`). Re-runs are
+#     `command = '<enter.sh>' --distrobox '<distrobox>' --box <box> -- tmux
+#     new -A -s main`; tmux host -> `command = tmux new -A -s main` plus a
+#     managed block in ~/.tmux.conf (`set -g default-command '"<enter.sh>"
+#     --distrobox "<distrobox>" --box <box>'`). <enter.sh> is this checkout's
+#     entry wrapper (issue #180), which hands over to `<distrobox> enter
+#     <box>` - so running a written command still ends in that distrobox,
+#     with the same arguments as before. Re-runs are
 #     idempotent (the block is replaced in place, never duplicated); user
 #     content around the block is preserved.
 #   - auto-enter no removes both managed blocks and reports each removal.
@@ -88,9 +92,11 @@ setup() {
     # QUOTED. ghostty runs its `command` through /bin/sh -c, hence a
     # single-quoted word; the tmux body nests that shell command inside a
     # tmux single-quoted value, so the inner word is double-quoted instead.
-    CMD_INSIDE="command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
+    # Issue #180: every managed command runs the entry wrapper, by path.
+    WRAPPER="${REPO_ROOT}/script/box/enter.sh"
+    CMD_INSIDE="command = '${WRAPPER}' --distrobox '${DISTROBOX}' --box dev -- tmux new -A -s main"
     CMD_HOST="command = tmux new -A -s main"
-    TMUX_BODY="set -g default-command '\"${DISTROBOX}\" enter dev'"
+    TMUX_BODY="set -g default-command '\"${WRAPPER}\" --distrobox \"${DISTROBOX}\" --box dev'"
 }
 
 # Install an executable stand-in for distrobox at $1. setup.sh only
@@ -215,7 +221,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work -- tmux new -A -s main)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${WRAPPER}' --distrobox '${DISTROBOX}' --box work -- tmux new -A -s main)"
 }
 
 # --- ghostty block: exactly once, idempotent, user content preserved ---------
@@ -604,8 +610,8 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
-    refute_line "command = distrobox enter dev -- tmux new -A -s main"
+    assert_line "${CMD_INSIDE}"
+    refute_line --partial "--distrobox distrobox"
 }
 
 @test "#175: --tmux host names the absolute distrobox path in the ~/.tmux.conf default-command too" {
@@ -613,8 +619,8 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${TMUX_CONF}"
-    assert_line "set -g default-command '\"${DISTROBOX}\" enter dev'"
-    refute_line 'set -g default-command "distrobox enter dev"'
+    assert_line "${TMUX_BODY}"
+    refute_line --partial '--distrobox "distrobox"'
 }
 
 # A distrobox reached through a symlink keeps the SYMLINK path: that is the
@@ -632,7 +638,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${_link_dir}/distrobox (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${_link_dir}/distrobox' enter dev -- tmux new -A -s main"
+    assert_line "command = '${WRAPPER}' --distrobox '${_link_dir}/distrobox' --box dev -- tmux new -A -s main"
     refute_line --partial "${_real}"
 }
 
@@ -726,7 +732,7 @@ _assert_ghostty_quoting() {
     run "${SETUP}" --distrobox "${_dbx}"
     assert_success
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "$(_squote "${_dbx}") enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "$(_squote "${WRAPPER}") --distrobox $(_squote "${_dbx}") --box dev -- tmux new -A -s main"
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
     assert_success
     run cat "${_dbx}.log"
@@ -767,7 +773,7 @@ _squote() {
     # tmux owns the outer single quotes (a tmux single-quoted value is fully
     # literal: no escape, no expansion), the shell owns the inner word.
     run cat "${TMUX_CONF}"
-    assert_line "set -g default-command '$(_dquote "${_dbx}") enter dev'"
+    assert_line "set -g default-command '$(_dquote "${WRAPPER}") --distrobox $(_dquote "${_dbx}") --box dev'"
     # The shell half really runs that binary, and runs nothing else.
     _inner="$(sed -n "s/^set -g default-command '\(.*\)'\$/\1/p" "${TMUX_CONF}")"
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_inner}"
@@ -863,7 +869,7 @@ _assert_control_char_refused() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "${CMD_INSIDE#command = }"
 
     # Control: this PATH has no distrobox by name.
     run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev -- tmux new -A -s main'

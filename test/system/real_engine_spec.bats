@@ -22,6 +22,12 @@
 #   succeed and print a version, and echo those versions into the TAP
 #   stream as evidence.
 #
+#   M3 (issue #180): the FIRST enter runs through the delivered entry
+#   wrapper script/box/enter.sh (what the managed terminal command runs),
+#   and asserts that a real first initialisation is observable - the
+#   first-launch notice, the host log path and progress lines on stderr -
+#   and that the host log file exists and is not empty.
+#
 #   M3 (issues #150, #23) adds the enter-latency GATE: once the box is
 #   initialised, the delivered `script/box/bench.sh` measures the real
 #   enter latency (`--box dev --runs 5 --warmup 2`) with `--max-ms
@@ -95,6 +101,7 @@ ENTER_MAX_MS=300
 setup() {
     ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
     BENCH="${REPO_ROOT}/script/box/bench.sh"
+    ENTER="${REPO_ROOT}/script/box/enter.sh"
 
     # Hermetic distrobox environment: a fresh HOME (no ~/.distroboxrc, no
     # cache), docker selected explicitly, no desktop entry generation.
@@ -215,12 +222,34 @@ _log_lines() {
 
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
-@test "real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)" {
+# M3 (issue #180): the FIRST enter goes through the delivered entry wrapper
+# `script/box/enter.sh`, exactly as the managed terminal command does, so a
+# real first initialisation is observable: stderr carries the first-launch
+# notice, the host log path and progress lines (the interval is shortened
+# to 5 s so even a fast CI init shows several), and the host log exists
+# and holds the init output. The progress lines go into the TAP stream as
+# evidence.
+@test "real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version" {
     cd "${REPO_ROOT}"
-    run timeout "${FIRST_ENTER_TIMEOUT}" distrobox enter dev -- rg --version </dev/null
+    local _log="${HOME}/.cache/worktool/dev-init.log"
+    run _docker inspect --type container -f '{{.State.StartedAt}}' dev
+    assert_success
+    assert_output --regexp '^0001-01-01'
+    WORKTOOL_INIT_INTERVAL=5 run timeout "${FIRST_ENTER_TIMEOUT}" \
+        "${ENTER}" --box dev --timeout "${FIRST_ENTER_TIMEOUT}" -- rg --version </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+    assert_output --partial "first launch of box 'dev'"
+    assert_output --partial "full init log: ${_log}"
+    assert_line --regexp '^\[INFO\] first launch: .+ - [0-9m]+s elapsed - '
+    assert_line --regexp 'first launch: initialisation complete after '
+    local _first=()
+    mapfile -t _first < <(printf '%s\n' "${lines[@]}" | grep -F 'first launch')
+    _log_lines first-launch "${_first[@]}"
+    assert [ -s "${_log}" ]
+    run grep -c 'container_setup_done' "${_log}"
+    assert_success
     # The box is now a running, initialised container.
     run _docker inspect dev --format '{{.State.Status}}'
     assert_output "running"
@@ -617,17 +646,18 @@ _desktop_path() {
     _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
-    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main" \
+    run grep -qxF "command = $(enter_sh_squote "${ENTER}") --distrobox $(enter_sh_squote "${_prog}") --box dev -- tmux new -A -s main" \
         "${_ghostty_config}"
     assert_success
-    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s main"
+    _log_lines setup-command "command = $(enter_sh_squote "${ENTER}") --distrobox $(enter_sh_squote "${_prog}") --box dev -- tmux new -A -s main"
 
-    # (3) The same program, in the chain shape that ends by itself, run by
-    # a real ghostty window under the desktop PATH.
+    # (3) The same command - the entry wrapper (issue #180) naming that
+    # program - in the chain shape that ends by itself, run by a real
+    # ghostty window under the desktop PATH.
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
-        "$(enter_sh_squote "${_prog}") enter dev -- tmux new -A -s chain175 fish $(_chain_script)"
+        "$(enter_sh_squote "${ENTER}") --distrobox $(enter_sh_squote "${_prog}") --box dev -- tmux new -A -s chain175 fish $(_chain_script)"
     run env PATH="${_gui_path}" \
         timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
     [[ "${status}" -eq 0 ]] || _diag
