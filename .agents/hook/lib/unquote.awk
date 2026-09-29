@@ -11,7 +11,10 @@
 #     literally the same way; an escaped newline outside quotes is dropped
 #   - the body of each $(...), `...` and <(...) / >(...) is launched by the
 #     shell, so it moves to its own line after the command and is replaced
-#     there by the marker \001s (shown as "_"). Inside single quotes none of
+#     there by a marker shown as "_": \001u for an unquoted $(...) or
+#     `...` (the shell word-splits its output, so it may become several
+#     words, options included), else \001s (inside double quotes, or a
+#     <(...) / >(...), which is one path). Inside single quotes none of
 #     these is special; $(...) and `...` inside double quotes still run
 BEGIN {
     RS = "\001"; SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
@@ -24,7 +27,8 @@ function push(kind) {
 }
 function pop() {
     extra = extra "\n" buf
-    q = sq[sd]; buf = sbuf[sd] ESC "s"; par = spar[sd]; sd--
+    q = sq[sd]; par = spar[sd]
+    buf = sbuf[sd] ESC ((q == "" && skind[sd] != "<") ? "u" : "s"); sd--
 }
 {
     n = length($0); q = ""; buf = ""; extra = ""; sd = 0; par = 0
@@ -37,12 +41,12 @@ function pop() {
             continue
         }
         if (c == "$" && nx == "(") { i++; push("("); continue }
-        if (q == "" && (c == "<" || c == ">") && nx == "(") { i++; push("("); continue }
+        if (q == "" && (c == "<" || c == ">") && nx == "(") { i++; push("<"); continue }
         if (c == BQ) {
             if (sd > 0 && skind[sd] == BQ && q == "") pop(); else push(BQ)
             continue
         }
-        if (q == "" && c == ")" && par == 0 && sd > 0 && skind[sd] == "(") { pop(); continue }
+        if (q == "" && c == ")" && par == 0 && sd > 0 && skind[sd] != BQ) { pop(); continue }
         if (q == "" && c == "(") par++
         if (q == "" && c == ")" && par > 0) par--
         if (q == "" && (c == SQ || c == "\"")) { q = c; continue }
