@@ -84,6 +84,15 @@
 #     pulls/<n>/reviews[/<id>[/events|dismissals|comments]] or /graphql;
 #     any host with the
 #     GHES prefix /api/v3/ of the same repos paths, or /api/graphql
+#   hook_http_is_write <tool> <word>...   0 when a curl / wget / httpie
+#     call (its words after the tool) writes, 1 when it reads (issue #190):
+#     ANY data flag is a write whatever the method (curl -d / --data* /
+#     --json / -F / --form / -T / --upload-file, even with -G or -X GET;
+#     wget --post-data / --post-file / --body-data / --body-file; httpie
+#     data items = := @ or --form / --raw); otherwise only an implicit, GET
+#     or HEAD method reads. A curl short-option cluster hiding X / d / F / T
+#     is a write. Sets HOOK_HTTP_BODY to the literal body text ('@' for a
+#     body read from a file or stdin: undeterminable)
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -183,6 +192,64 @@ hook_api_endpoint_urls() {
             printf '%s\n' "${_u}"
         fi
     done < <(tr -s ' \t\n"'"'"'`<>(){}|;,\\=' '\n' <<<"$1")
+    return 0
+}
+
+# hook_http_is_write <tool> <word>... - see the header.
+HOOK_HTTP_BODY=''
+hook_http_is_write() {
+    local _tool="$1" _w _m='' _data='' _i _pos=0
+    shift
+    local -a _a=("$@")
+    HOOK_HTTP_BODY=''
+    for ((_i = 0; _i < ${#_a[@]}; _i++)); do
+        _w="${_a[_i]}"
+        case "${_tool}" in
+            curl)
+                case "${_w}" in
+                    -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
+                    --request=*) _m="${_w#*=}" ;;
+                    -X?*) _m="${_w:2}" ;;
+                    -d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json|-F|--form|--form-string|-T|--upload-file)
+                        _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
+                    --data*=*|--json=*|--form*=*|--upload-file=*) _data=1; HOOK_HTTP_BODY+="${_w#*=}"$'\n' ;;
+                    -d?*|-F?*|-T?*) _data=1; HOOK_HTTP_BODY+="${_w:2}"$'\n' ;;
+                    --*) ;;
+                    # A cluster hiding -X / -d / -F / -T cannot be read (fail closed).
+                    -*[XdFT]*) HOOK_HTTP_BODY='@'; return 0 ;;
+                esac ;;
+            wget)
+                case "${_w}" in
+                    --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
+                    --method=*) _m="${_w#*=}" ;;
+                    --post-data|--body-data) _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
+                    --post-data=*|--body-data=*) _data=1; HOOK_HTTP_BODY+="${_w#*=}"$'\n' ;;
+                    --post-file|--body-file) _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+='@'$'\n' ;;
+                    --post-file=*|--body-file=*) _data=1; HOOK_HTTP_BODY+='@'$'\n' ;;
+                esac ;;
+            *)
+                # httpie: http [METHOD] URL [ITEMS]
+                case "${_w}" in
+                    -f|--form|--raw=*|--multipart) _data=1 ;;
+                    -*) ;;
+                    *)
+                        _pos=$((_pos + 1))
+                        if [[ "${_pos}" -eq 1 && "${_w^^}" =~ ^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)$ ]]; then
+                            _m="${_w}"
+                            _pos=0
+                        elif [[ "${_pos}" -ge 2 ]]; then
+                            if [[ "${_w}" == *'@'* || ("${_w}" == *=* && "${_w}" != *==*) || "${_w}" == *:=* ]]; then
+                                _data=1
+                                HOOK_HTTP_BODY+="${_w}"$'\n'
+                            fi
+                        fi ;;
+                esac ;;
+        esac
+    done
+    # Any data flag is a write, whatever the method (-G / -X GET included);
+    # a read is no data AND an implicit, GET or HEAD method.
+    [[ -n "${_data}" ]] && return 0
+    [[ -z "${_m}" || "${_m^^}" =~ ^(GET|HEAD)$ ]] && return 1
     return 0
 }
 

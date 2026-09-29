@@ -3,20 +3,35 @@
 # test/unit/hook/enforce_milestone_gate_approval_spec.bats -
 # .agents/hook/enforce_milestone_gate_approval.sh (issue #190)
 #
-# The agent-side half of the milestone-gate approval (#187):
-#   1. merge gate: `gh pr merge <n>` (any flags, --auto included) and
-#      `gh api .../pulls/<n>/merge` are BLOCKED (exit 2, reason on stderr)
+# The agent-side half of the milestone-gate approval (#187), per the
+# "## 範圍" and "## 範圍修訂" sections of issue #190:
+#   1. merge gate: `gh pr merge <n>` (any flags, --auto included) and a gh api
+#      WRITE to .../pulls/<n>/merge are BLOCKED (exit 2, reason on stderr)
 #      when the PR carries `milestone-gate` and no comment is a human
 #      approval by lib/approval.sh; any lookup failure blocks (fail closed)
-#   2. anti-forgery: a comment / review / issue / PR body, or a gh api
-#      POST / PATCH to .../comments, holding 允許合併 without a leading
-#      [claude] / [codex] marker is BLOCKED; a marked body passes
-#   3. the closed rule: a relevant gh command (any gh api, the pr / issue
-#      merge / comment / review / create / close / reopen sub-commands) with
-#      a word the shell expands ($VAR, $(...), a glob ...), a sub-command
-#      the hook cannot tell, an unknown root flag before it, combined short
-#      options, or a gh run through eval / bash -c "$X" / xargs is BLOCKED
-#   4. everything else passes silently and never calls gh
+#   2. tag rule: every comment-like body an agent sends (gh pr|issue
+#      comment, gh pr review with a body, close|reopen --comment, gh api
+#      writes to comments / reviews endpoints, from --body / -b / --body-file
+#      / -F / a literal heredoc / body= / message= / --input) must start,
+#      after leading whitespace, with [claude] or [codex] - phrase or not.
+#      PR / issue create bodies are no comments. An unreadable body, and a
+#      GraphQL comment / review mutation, block
+#   3. method-aware writes: a direct API call (curl, wget, httpie, gh api)
+#      counts only when it writes - ANY data flag, or a method other than an
+#      implicit GET / HEAD; a GraphQL body is a write when it is a mutation
+#      or cannot be read. API URLs are normalised before matching (scheme,
+#      host case, userinfo, port, trailing dot, path spelling)
+#   4. the closed rule: a relevant gh command with a word the shell expands,
+#      a sub-command the hook cannot tell, an unknown root flag, combined
+#      short options, or gh run through eval / bash -c "$X" / xargs blocks;
+#      the raw-text and inline-code tripwires catch what the parser missed
+#   5. everything else passes silently and never calls gh
+#
+# The matrices below generate every variant as a product of explicit
+# dimensions (operation x spelling x wrapper; method x data flag x tool x
+# endpoint; GraphQL body x tool x host; tag x operation x body source, GraphQL
+# included; host x path URL forms); a new bypass class is a new dimension
+# value, and a failure names the variant.
 #
 # gh is a PATH stub fed from files in BATS_TEST_TMPDIR: nothing touches
 # the network. The stub logs each call to ${GH_STUB_DIR}/calls.
@@ -978,7 +993,7 @@ _body_cmd() {
 }
 
 @test "matrix: every comment-writing operation x body source x tag - untagged blocks, tagged passes" {
-    local _cop _src _t _lab _body _want _MISS=''
+    local _cop _src _t _lab _bod _want _MISS=''
     local -a _cases=()
     local _s
     for _cop in "gh pr comment 7" "gh issue comment 7" "gh pr review 7 --comment"; do
@@ -995,10 +1010,10 @@ _body_cmd() {
     done
     for _cop in "${_cases[@]}"; do
         _src="${_cop##*|}"
-        while IFS='|' read -r _lab _body _want; do
-            _body="$(printf '%b' "${_body}")"
+        while IFS='|' read -r _lab _bod _want; do
+            _bod="$(printf '%b' "${_bod}")"
             _expect "${_want}" "op=${_cop%|*} source=${_src} tag=${_lab}" \
-                "$(_body_cmd "${_cop%|*}" "${_src}" "${_body}")"
+                "$(_body_cmd "${_cop%|*}" "${_src}" "${_bod}")"
         done < <(_tags)
     done
     _report
@@ -1027,72 +1042,136 @@ _body_cmd() {
     done
 }
 
-@test "GraphQL comment and review mutations are blocked" {
-    local _m _MISS=''
+@test "matrix: tag x GraphQL comment / review mutation x body source - every cell blocks (these mutations block outright)" {
+    local _m _src _lab _bod _want _q _f="${BATS_TEST_TMPDIR}/q.graphql" _j="${BATS_TEST_TMPDIR}/q.json" _c _MISS=''
     for _m in addComment updateIssueComment addPullRequestReview addPullRequestReviewComment \
         addPullRequestReviewThread addPullRequestReviewThreadReply submitPullRequestReview \
         updatePullRequestReview updatePullRequestReviewComment; do
-        _expect 2 "mutation=${_m}" "gh api graphql -f query='mutation{${_m}(input:{body:\"[claude] x\"}){clientMutationId}}'"
+        while IFS='|' read -r _lab _bod _want; do
+            _bod="$(printf '%b' "${_bod}")"
+            _q="mutation{${_m}(input:{body:$(jq -n --arg b "${_bod}" '$b')}){clientMutationId}}"
+            printf '%s' "${_q}" >"${_f}"
+            jq -n --arg q "${_q}" '{query: $q}' >"${_j}"
+            for _src in f F-at input raw-field; do
+                case "${_src}" in
+                    f) _c="gh api graphql -f $(_q "query=${_q}")" ;;
+                    F-at) _c="gh api graphql -F query=@${_f}" ;;
+                    input) _c="gh api graphql --input ${_j}" ;;
+                    raw-field) _c="gh api graphql --raw-field $(_q "query=${_q}")" ;;
+                esac
+                _expect 2 "mutation=${_m} tag=${_lab} source=${_src}" "${_c}"
+            done
+        done < <(_tags)
     done
     _report
 }
 
 # --- HTTP method dimension (round 9): reads pass, writes are blocked -------------
 
-# Every API endpoint class of the scope: <class> <url>. Comments are the full
-# product (issues|pulls) x (collection|member) x (github.com|GHES).
+# Every REST path of the scope: <class> <path>. Comments are the full
+# (issues|pulls) x (collection|member) product; replies and every reviews
+# path are included.
+_rest_paths() {
+    printf '%s\n' "merge pulls/7/merge" \
+        "comment issues/7/comments" "comment issues/comments/9" \
+        "comment pulls/7/comments" "comment pulls/comments/9" \
+        "reply pulls/7/comments/9/replies" \
+        "review pulls/7/reviews" "review pulls/7/reviews/5" "review pulls/7/reviews/5/events" \
+        "review pulls/7/reviews/5/dismissals" "review pulls/7/reviews/5/comments"
+}
+# ... on both hosts: <class> <url>.
 _api_endpoints() {
-    local _b _k _m
-    for _b in https://api.github.com https://ghe.example.com/api/v3; do
-        printf 'merge %s/repos/o/r/pulls/7/merge\n' "${_b}"
-        for _k in issues pulls; do
-            for _m in 7/comments comments/9; do
-                printf 'comments %s/repos/o/r/%s/%s\n' "${_b}" "${_k}" "${_m}"
-            done
-        done
+    local _b _c _p
+    for _b in https://api.github.com/repos/o/r https://ghe.example.com/api/v3/repos/o/r; do
+        while read -r _c _p; do
+            printf '%s %s/%s\n' "${_c}" "${_b}" "${_p}"
+        done < <(_rest_paths)
     done
 }
-_METHODS=(implicit get head post put patch delete data)
+_METHODS=(implicit GET HEAD POST PUT PATCH DELETE)
 _TOOLS=(curl wget http gh-api)
 
-# _http_cmd <tool> <method> <class> <url> - an API call; a gh api write carries
-# what makes it a forgery / merge (the phrase body; the gate label).
-_http_cmd() {
-    local _m="${2^^}" _body=''
-    [[ "$3" == comments ]] && _body="-f body=${PHRASE}"
-    case "$1:$2" in
-        curl:implicit) printf 'curl -s %s' "$4" ;;
-        curl:get|curl:head) printf 'curl -X %s %s' "${_m}" "$4" ;;
-        curl:data) printf 'curl -d x=1 %s' "$4" ;;
-        curl:*) printf 'curl -X %s %s' "${_m}" "$4" ;;
-        wget:implicit) printf 'wget -qO- %s' "$4" ;;
-        wget:data) printf 'wget --post-data=x=1 %s' "$4" ;;
-        wget:*) printf 'wget --method=%s %s' "${_m}" "$4" ;;
-        http:implicit) printf 'http %s' "$4" ;;
-        http:data) printf 'http %s x=1' "$4" ;;
-        http:*) printf 'http %s %s' "${_m}" "$4" ;;
-        gh-api:implicit) printf 'gh api %s' "$4" ;;
-        gh-api:get|gh-api:head) printf 'gh api -X %s %s' "${_m}" "$4" ;;
-        gh-api:data) printf 'gh api %s %s' "$4" "${_body:--f merge_method=merge}" ;;
-        gh-api:*) printf 'gh api -X %s %s %s' "${_m}" "$4" "${_body}" ;;
+# _data_flags <tool> - every data flag of <tool> ('none' first).
+_data_flags() {
+    case "$1" in
+        curl) printf '%s\n' none "-d x=1" "--data x=1" "--data-raw x=1" "--data-binary x=1" \
+            "--data-urlencode x=1" "--json {}" "-F x=1" "--form x=1" "-T f" "--upload-file f" "-G -d x=1" ;;
+        wget) printf '%s\n' none "--post-data=x" "--post-file=f" "--body-data=x" "--body-file=f" ;;
+        http) printf '%s\n' none "x=1" "x:=1" "x@f" ;;
+        gh-api) printf '%s\n' none "-f body=x" "-F body=x" "--field body=x" "--raw-field body=x" "--input ${BATS_TEST_TMPDIR}/b.json" ;;
     esac
 }
 
-@test "matrix: tool x HTTP method x REST endpoint - reads pass, writes are blocked" {
-    _labels milestone-gate
-    local _t _m _cl _u _want _MISS=''
-    local -a _eps
-    mapfile -t _eps < <(_api_endpoints)
-    for _t in "${_TOOLS[@]}"; do
+# _http_cmd <tool> <method> <data flag> <url> - the call spelled for <tool>.
+_http_cmd() {
+    local _d="$3"
+    [[ "${_d}" == none ]] && _d=''
+    case "$1:$2" in
+        curl:implicit) printf 'curl -s %s %s' "${_d}" "$4" ;;
+        curl:*) printf 'curl -X %s %s %s' "$2" "${_d}" "$4" ;;
+        wget:implicit) printf 'wget -qO- %s %s' "${_d}" "$4" ;;
+        wget:*) printf 'wget --method=%s %s %s' "$2" "${_d}" "$4" ;;
+        http:implicit) printf 'http %s %s' "$4" "${_d}" ;;
+        http:*) printf 'http %s %s %s' "$2" "$4" "${_d}" ;;
+        gh-api:implicit) printf 'gh api %s %s' "$4" "${_d}" ;;
+        gh-api:*) printf 'gh api -X %s %s %s' "$2" "$4" "${_d}" ;;
+    esac
+}
+
+# _want_rw <method> <data flag> - 0 for a read, 2 for a write: a read is no
+# data flag AND an implicit, GET or HEAD method (issue #190, round 10).
+_want_rw() {
+    [[ "$2" == none && "$1" =~ ^(implicit|GET|HEAD)$ ]] && printf 0 || printf 2
+}
+
+@test "matrix: hook_http_is_write - method x data flag x tool (curl, wget, httpie), full product" {
+    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    source "${HOOK_DIR}/lib/subcommand.sh"
+    local _t _m _d _want _got _MISS=''
+    local -a _w
+    for _t in curl wget http; do
         for _m in "${_METHODS[@]}"; do
-            for _cl in "${_eps[@]}"; do
-                _u="${_cl#* }"
-                case "${_m}" in implicit|get|head) _want=0 ;; *) _want=2 ;; esac
-                _expect "${_want}" "tool=${_t} method=${_m} endpoint=${_cl%% *}" \
-                    "$(_http_cmd "${_t}" "${_m}" "${_cl%% *}" "${_u}")"
-            done
+            while IFS= read -r _d; do
+                read -r -a _w <<<"$(_http_cmd "${_t}" "${_m}" "${_d}" https://api.github.com/repos/o/r/issues/7/comments)"
+                _got=0
+                hook_http_is_write "${_t}" "${_w[@]:1}" && _got=2
+                _want="$(_want_rw "${_m}" "${_d}")"
+                [[ "${_got}" == "${_want}" ]] || _MISS+="tool=${_t} method=${_m} data=${_d}: got ${_got}, want ${_want}"$'\n'
+            done < <(_data_flags "${_t}")
         done
     done
+    _report
+}
+
+@test "matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)" {
+    # One path per endpoint class through the whole hook; every path of a
+    # class (both hosts, every spelling) is proven the same endpoint by the
+    # hook_api_endpoint_urls matrix below.
+    _labels milestone-gate
+    jq -n '{body: "x"}' >"${BATS_TEST_TMPDIR}/b.json"
+    local _t _m _d _cl _u _MISS=''
+    local -a _reps=("merge pulls/7/merge" "comment issues/7/comments" "reply pulls/7/comments/9/replies" "review pulls/7/reviews/5/events")
+    for _t in "${_TOOLS[@]}"; do
+        for _m in "${_METHODS[@]}"; do
+            while IFS= read -r _d; do
+                for _cl in "${_reps[@]}"; do
+                    _u="https://api.github.com/repos/o/r/${_cl#* }"
+                    _expect "$(_want_rw "${_m}" "${_d}")" "tool=${_t} method=${_m} data=${_d} endpoint=${_cl%% *}" \
+                        "$(_http_cmd "${_t}" "${_m}" "${_d}" "${_u}")"
+                done
+            done < <(_data_flags "${_t}")
+        done
+    done
+    _report
+}
+
+@test "matrix: every REST endpoint path x host is recognised as an API endpoint" {
+    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    source "${HOOK_DIR}/lib/subcommand.sh"
+    local _cl _MISS=''
+    while IFS= read -r _cl; do
+        [[ "$(hook_api_endpoint_urls "curl ${_cl#* }" | wc -l)" -eq 1 ]] || _MISS+="endpoint=${_cl}"$'\n'
+    done < <(_api_endpoints)
     _report
 }
 
@@ -1109,7 +1188,7 @@ _http_cmd() {
                 local _q=''
                 case "${_b}" in read) _q="${_read}" ;; merge) _q="${_merge}" ;; comment) _q="${_comment}" ;; esac
                 case "${_t}:${_b}" in
-                    *:none) _c="$(_http_cmd "${_t}" implicit graphql "${_u}")" ;;
+                    *:none) _c="$(_http_cmd "${_t}" implicit none "${_u}")" ;;
                     curl:file) _c="curl -d @${BATS_TEST_TMPDIR}/q.graphql ${_u}" ;;
                     wget:file) _c="wget --post-file=${BATS_TEST_TMPDIR}/q.graphql ${_u}" ;;
                     http:file) _c="http POST ${_u} query=@${BATS_TEST_TMPDIR}/q.graphql" ;;
