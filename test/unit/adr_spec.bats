@@ -19,6 +19,11 @@
 #   under that exact name in that exact spec file, so the ADR cannot claim
 #   a guard nobody runs; and "ask before changing", which nothing enforces
 #   yet, must stay marked as a gap (待補).
+#   Codex round 1 on PR #253: the definition must be a closed statement
+#   (user content is what worktool did NOT write), the guard section must
+#   name every writer of a user file (setup.sh AND assemble.sh through
+#   home_record), and doc/contract.md, once #201 creates it, must link
+#   invariant 1 to this ADR. RED against the round-0 ADR, GREEN after.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -111,6 +116,43 @@ _decision_item() {
     run bash -c 'sed -n "/^## 目前由哪些機制或測試守住/,\$p" "$1" | grep -E "要改先問"' _ "${ADR_0004}"
     assert_success
     assert_output --partial "待補"
+}
+
+# The definition paragraph (the first line of "## 性質" that defines the term).
+_adr4_definition() {
+    sed -n '/^## 性質/,/^## /p' "${ADR_0004}" | grep -E '^「使用者寫的內容」'
+}
+
+@test "ADR 0004 defines user content as what worktool did NOT write (a closed statement, not a question)" {
+    run _adr4_definition
+    assert_success
+    refute_output --partial "是不是"
+    assert_output --partial "不是由 worktool 寫出來的"
+}
+
+@test "ADR 0004 names every script that writes a user file: setup.sh and assemble.sh (home_record)" {
+    run _adr4_guard_section
+    assert_success
+    refute_output --partial "只有 \`just box setup\`"
+    assert_output --partial "script/box/setup.sh"
+    assert_output --partial "script/box/assemble.sh"
+    assert_output --partial "home_record"
+    # ... and cites at least one assemble spec for the state-file write.
+    run _adr4_citations
+    assert_success
+    assert_output --regexp "test/[a-z]+/assemble_spec\.bats"
+}
+
+@test "doc/contract.md, once it exists, links invariant 1 to this ADR's path" {
+    # The index links this exact path, so the ADR file must keep it.
+    assert [ -f "${REPO_ROOT}/doc/adr/0004-invariant-user-content.md" ]
+    # Until #201 creates the contract there is nothing to link from (no
+    # skip: a skipped case is not green); from then on the link must be there.
+    local _contract="${REPO_ROOT}/doc/contract.md"
+    if [[ -f "${_contract}" ]]; then
+        run grep -F "adr/0004-invariant-user-content.md" "${_contract}"
+        assert_success
+    fi
 }
 
 @test "this spec is a required unit spec of test.sh" {

@@ -9,7 +9,7 @@
 
 ## 性質
 
-「使用者寫的內容」是不是由 worktool 寫出來的任何檔案與檔案內容，包括使用者自己加進 worktool 也會寫入的檔案（例如 ghostty config、`~/.tmux.conf`）的那些行，以及 user config（`~/.ssh`、金鑰、token 等；名詞見 #200 定案 4）。這條性質對 host HOME 與盒子 HOME 都成立，不論 worktool 是以哪一個 `just` 指令動到它們。
+「使用者寫的內容」是任何不是由 worktool 寫出來的檔案與檔案內容，包括使用者自己加進 worktool 也會寫入的檔案（例如 ghostty config、`~/.tmux.conf`）的那些行，以及 user config（`~/.ssh`、金鑰、token 等；名詞見 #200 定案 4）。這條性質對 host HOME 與盒子 HOME 都成立，不論 worktool 是以哪一個 `just` 指令動到它們。
 
 必須永遠成立的是：
 
@@ -28,7 +28,13 @@ worktool 的核心承諾是重建（#200 定案 2、3）：換機、重灌、升
 
 ## 目前由哪些機制或測試守住
 
-目前會寫進使用者檔案的只有 `just box setup`（`script/box/setup.sh`）：它在 ghostty config 與 `~/.tmux.conf` 各維護一個受管區塊，標記行定義在 `lib/enter.sh`（`ENTER_BLOCK_BEGIN`／`ENTER_BLOCK_END`），寫入走 `enter_block_compose`（把既有區塊全部剝除，再把唯一一個區塊放回第一個區塊原本的位置；沒有區塊時附加在檔尾），移除走 `enter_block_strip`（只剝除受管區塊）。這些 spec 都把 `HOME` 指到測試暫存目錄，不碰真正的 HOME。
+目前會寫進使用者檔案的有兩個指令。
+
+`just box setup`（`script/box/setup.sh`）在 ghostty config 與 `~/.tmux.conf` 各維護一個受管區塊，標記行定義在 `lib/enter.sh`（`ENTER_BLOCK_BEGIN`／`ENTER_BLOCK_END`），寫入走 `enter_block_compose`（把既有區塊全部剝除，再把唯一一個區塊放回第一個區塊原本的位置；沒有區塊時附加在檔尾），移除走 `enter_block_strip`（只剝除受管區塊）。它也改寫 worktool 自己的狀態檔 `~/.config/worktool/config`。
+
+`just box assemble`（`script/box/assemble.sh`）在 distrobox 建好盒子後，透過 `lib/home.sh` 的 `home_record` 把盒子 HOME 記進同一個狀態檔 `~/.config/worktool/config`：只移除舊的 `home=`／`home.source=` 兩行、把新的一對附加在檔尾，其他每一行原樣留下、順序不變；先寫同目錄暫存檔再改名取代；試跑與 distrobox 失敗時不寫。
+
+這些 spec 都把 `HOME` 指到測試暫存目錄，不碰真正的 HOME。
 
 逐條對照：
 
@@ -44,12 +50,13 @@ worktool 的核心承諾是重建（#200 定案 2、3）：換機、重灌、升
   - `test/unit/setup_spec.bats`:「rewriting an existing profile keeps its file mode」：改寫與移除後，檔案權限維持使用者原本設的值。
   - `test/unit/setup_spec.bats`:「--dry-run logs every decision and what it would write, and writes nothing」與 `test/unit/setup_spec.bats`:「--dry-run --auto-enter no reports what it would remove and removes nothing」：試跑不寫、不刪。
   - worktool 自己的狀態檔（`~/.config/worktool/config`）使用者也可以編輯：`test/unit/setup_spec.bats`:「a stored user choice persists across runs; a default key is recomputed」（使用者選的值不被預設蓋掉）、`test/unit/setup_spec.bats`:「#198: setup keeps the box home lines assemble recorded in the state file」（setup 改寫狀態檔時保留它不管的行）、`test/integration/setup_spec.bats`:「a state file setup wrote and a user then corrupted is refused by both scripts, and setup leaves it as is」（使用者改壞的狀態檔被拒絕、原樣留下，不被「修正」）。
+  - `just box assemble` 寫同一個狀態檔：`test/integration/assemble_spec.bats`:「#198: a successful run records home= and home.source= in the state file, keeping the other lines」（註解行與 `auto-enter` 等使用者的行原樣留下、順序不變，只換掉 `home` 那一對）、`test/integration/assemble_spec.bats`:「#198: a failed distrobox run records nothing」（失敗不寫）、`test/unit/assemble_spec.bats`:「#198: dry-run records nothing in the state file」（試跑不寫）、`test/unit/assemble_spec.bats`:「#198: a stored user home is used when --home is not given; --home still wins」（使用者存的 home 不被預設蓋掉）。
 
-這些測試只證明 `setup.sh` 對上述兩個檔案的行為，不能推到其他指令或檔案。以下尚無機制或測試，標為待補：
+這些測試只證明 `setup.sh` 對 ghostty config、`~/.tmux.conf`、狀態檔，以及 `assemble.sh` 對狀態檔的行為，不能推到其他指令或檔案。以下尚無機制或測試，標為待補：
 
 - 要改先問：待補。目前除了下面 symlink 一條，沒有刻意改動受管區塊以外既有內容的路徑，因此也沒有詢問流程；之後任何功能需要改既有內容時，要先有詢問機制與測試。
 - 使用者寫在受管區塊標記之間的行：待補。標記行寫著 do not edit，改寫時區塊內的內容整段換掉；使用者若違反標記在區塊內寫東西，會被覆蓋，目前沒有偵測也沒有測試。
-- profile 是 symlink 時：待補。`setup.sh` 的 `_write_atomic` 先寫暫存檔再改名取代目標；依程式碼，目標若是 symlink，改寫後 symlink 本身會被換成一般檔，連結目標不變但連結消失。目前沒有測試。
+- profile 或狀態檔是 symlink 時：待補。`setup.sh` 的 `_write_atomic` 與 `home_record` 都先寫暫存檔再改名取代目標；依程式碼，目標若是 symlink，改寫後 symlink 本身會被換成一般檔，連結目標不變但連結消失。目前沒有測試。
 - user config（`~/.ssh`、`~/.gitconfig` 等）帶進盒子 HOME 時不覆蓋同名檔：待補，由 #199 實作（見 `doc/adr/0002-box-owns-its-home.md` 決策 3）。
 - 盒子 HOME 目錄（`just box assemble --home`）裡使用者已有的檔案不被刪除或覆蓋：待補，目前沒有測試。
 - 全 repo 層級的守門（例如禁止腳本刪除 HOME 底下非 worktool 建立的檔案）：待補。
