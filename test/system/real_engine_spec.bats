@@ -861,6 +861,18 @@ _host_tmux_pid() {
 #                  holding TMUX / TMUX_PANE for it (what a host pane has)
 #   invocation  `tmux ls`, `tmux new`, `tmux new -A -s main`, `tmux attach`
 #               (the last two on a terminal - script(1) - detaching at once)
+#   Goal 1 of issue #179 (the terminal starts no tmux) is a check in every
+#   cell: before the probe's own tmux runs, no tmux process lives in the
+#   box's mount namespace, the host server (h1) has no client attached,
+#   and with no host server (h0) none was started. Goal 3 (tmux config is
+#   the box's, worktool never writes the host's ~/.tmux.conf) is too: a
+#   sentinel ~/.tmux.conf on the host side keeps its bytes through setup.sh
+#   and every cell, and the box server the cell starts (no -f) loaded its
+#   config from the box's own $HOME/.tmux.conf - `#{config_files}` names
+#   exactly that path. Until issue #198 gives the box its own HOME
+#   (`--home`), the box's $HOME is the host HOME, so that path is the
+#   sentinel itself; the assertion is on the box's $HOME, so it follows
+#   the box HOME when #198 lands.
 #   Every cell must see no TMUX / TMUX_PANE, list nothing before it started
 #   a server (`tmux ls` with the box's server stopped: anything listed
 #   would be another server's), and reach ONE server for every invocation:
@@ -873,11 +885,28 @@ _host_tmux_pid() {
 _box_sock() { printf '%s/dev-box/.cache/tmux/tmux-%s/default\n' "${HOME}" "$(id -u)"; }
 
 # The in-box probe e1/e2/e3/e5 run: $1 is the cell tag. It prints the
-# tmux environment it got, then runs the four invocations with a bare
-# `tmux` and reports the server each one reached.
+# tmux environment it got and how many tmux processes already run in its
+# own mount namespace (goal 1: nothing started one for it), then runs the
+# four invocations with a bare `tmux` and reports the server each one
+# reached and the config file that server loaded (goal 3).
 _matrix_probe() { printf '%s/matrix-probe.sh\n' "${HOME}"; }
+_matrix_autostart() { printf '%s/matrix-autostart.sh\n' "${HOME}"; }
 _write_matrix_probe() {
-    cat >"$(_matrix_probe)" <<'EOF'
+    cat >"$(_matrix_autostart)" <<'EOF'
+me="$(readlink /proc/self/ns/mnt)"
+n=0
+for p in /proc/[0-9]*; do
+    c="$(cat "${p}/comm" 2>/dev/null)" || continue
+    case "${c}" in
+        tmux*) [ "$(readlink "${p}/ns/mnt" 2>/dev/null)" = "${me}" ] && n=$((n + 1)) ;;
+    esac
+done
+printf '%s autostart %s\n' "$1" "${n}"
+EOF
+    cat >"$(_matrix_probe)" <<EOF
+. $(_matrix_autostart)
+EOF
+    cat >>"$(_matrix_probe)" <<'EOF'
 tag="$1"
 printf '%s env TMUX=%s TMUX_PANE=%s\n' "${tag}" "${TMUX-}" "${TMUX_PANE-}"
 if out="$(tmux ls 2>/dev/null)"; then
@@ -885,9 +914,11 @@ if out="$(tmux ls 2>/dev/null)"; then
 else
     printf '%s ls none\n' "${tag}"
 fi
-tmux -f /dev/null new-session -d -s "new-${tag}" || printf '%s failed new\n' "${tag}"
+tmux new-session -d -s "new-${tag}" || printf '%s failed new\n' "${tag}"
 tmux display-message -p -t "new-${tag}" "${tag} server new #{pid} #{socket_path}" \
     || printf '%s failed display-new\n' "${tag}"
+tmux display-message -p -t "new-${tag}" "${tag} config #{config_files}|#{@worktool_cfg}" \
+    || printf '%s failed display-config\n' "${tag}"
 TERM=xterm script -qec 'tmux new-session -A -s main \; detach-client' /dev/null </dev/null >/dev/null 2>&1 \
     || printf '%s failed newA\n' "${tag}"
 tmux display-message -p -t main "${tag} server newA #{pid} #{socket_path}" \
@@ -909,17 +940,31 @@ _host_env() {
     esac
 }
 
+# The box's own $HOME, as the box reports it.
+_box_home() {
+    timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- printenv HOME </dev/null
+}
+
 # The real tmux binary in the box, wherever the package manager's view of
 # /usr/bin/tmux really lives (a dpkg-diverted binary included).
 _real_tmux() {
     timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- dpkg-divert --truename /usr/bin/tmux </dev/null
 }
 
+# Goal 3's sentinel: the host side's ~/.tmux.conf (see THE MATRIX), and
+# the sha256 it must keep.
+_tmux_sentinel() { printf '%s/.tmux.conf\n' "${HOME}"; }
+_tmux_sentinel_sum() { printf '%s/.tmux.conf.sha256\n' "${BATS_FILE_TMPDIR}"; }
+
 # Bring host state $1 up, stop the box's server, and deliver the
 # distrobox.conf block exactly as `just box setup` writes it.
 _cell_prepare() {
     local _rc=0
     TMUX_CASE_ACTIVE=1
+    if [[ ! -e "$(_tmux_sentinel_sum)" ]]; then
+        printf 'set -g @worktool_cfg sentinel\n' >"$(_tmux_sentinel)"
+        sha256sum <"$(_tmux_sentinel)" >"$(_tmux_sentinel_sum)"
+    fi
     run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --box dev
     assert_success
     _host_tmux_down
@@ -942,6 +987,14 @@ _assert_cell() {
         || fail "cell ${_tag}: tmux ls listed another server's sessions: $(grep -F "${_tag} ls " <<<"${_out}")"
     ! grep -qF "${_tag} failed " <<<"${_out}" \
         || fail "cell ${_tag}: an invocation failed: $(grep -F "${_tag} failed " <<<"${_out}")"
+    # Goal 1: nothing started a tmux for the entry before the probe did.
+    grep -qxF "${_tag} autostart 0" <<<"${_out}" \
+        || fail "cell ${_tag}: a tmux already ran in the box: $(grep -F "${_tag} autostart " <<<"${_out}")"
+    # Goal 3: the box server loaded the box's own $HOME/.tmux.conf, and the
+    # host's ~/.tmux.conf kept its bytes.
+    grep -qxF "${_tag} config $(_box_home)/.tmux.conf|sentinel" <<<"${_out}" \
+        || fail "cell ${_tag}: the box server did not load $(_box_home)/.tmux.conf: $(grep -F "${_tag} config " <<<"${_out}")"
+    assert_equal "$(sha256sum <"$(_tmux_sentinel)")" "$(cat "$(_tmux_sentinel_sum)")"
     for _inv in new newA attach; do
         _line="$(grep -E "^${_tag} server ${_inv} " <<<"${_out}")" \
             || fail "cell ${_tag}: no server line for ${_inv}"
@@ -959,6 +1012,14 @@ _assert_cell() {
         run env -u TMUX -u TMUX_TMPDIR tmux ls -F '#{session_name}'
         assert_success
         assert_output "${HOST_TMUX_SESSION}"
+        # Goal 1: no client was attached to the host server either.
+        run env -u TMUX -u TMUX_TMPDIR tmux list-clients
+        assert_success
+        assert_output ""
+    else
+        # Goal 1: with no host server, none was started.
+        run env -u TMUX -u TMUX_TMPDIR tmux ls
+        assert_failure
     fi
     _log_lines "cell-${_tag}-ok" "server pid=${_pid} socket=$(_box_sock) in the dev mount namespace"
 }
@@ -1022,6 +1083,7 @@ _e4_cell() {
     # a group of its own, where the tmux client is stopped by SIGTTIN /
     # SIGTTOU for good. So the bound goes around script(1) instead.
     local -a _pty=(env "$@" TERM=xterm distrobox enter dev --)
+    "${_dbx[@]}" sh "$(_matrix_autostart)" "${_tag}" </dev/null
     printf '%s env TMUX=%s TMUX_PANE=%s\n' "${_tag}" \
         "$("${_dbx[@]}" printenv TMUX </dev/null)" "$("${_dbx[@]}" printenv TMUX_PANE </dev/null)"
     if _out="$("${_dbx[@]}" "${_real}" ls </dev/null 2>/dev/null)"; then
@@ -1029,9 +1091,11 @@ _e4_cell() {
     else
         printf '%s ls none\n' "${_tag}"
     fi
-    "${_dbx[@]}" "${_real}" -f /dev/null new-session -d -s "new-${_tag}" </dev/null || printf '%s failed new\n' "${_tag}"
+    "${_dbx[@]}" "${_real}" new-session -d -s "new-${_tag}" </dev/null || printf '%s failed new\n' "${_tag}"
     "${_dbx[@]}" "${_real}" display-message -p -t "new-${_tag}" "${_tag} server new #{pid} #{socket_path}" </dev/null \
         || printf '%s failed display-new\n' "${_tag}"
+    "${_dbx[@]}" "${_real}" display-message -p -t "new-${_tag}" "${_tag} config #{config_files}|#{@worktool_cfg}" </dev/null \
+        || printf '%s failed display-config\n' "${_tag}"
     timeout -k 5 "${ENTER_TIMEOUT}" script -qec "$(printf '%q ' "${_pty[@]}" "${_real}" new-session -A -s main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
         || printf '%s failed newA\n' "${_tag}"
     "${_dbx[@]}" "${_real}" display-message -p -t main "${_tag} server newA #{pid} #{socket_path}" </dev/null \
@@ -1067,6 +1131,29 @@ _e4_cell() {
     _run_cell e5a h1
     _run_cell e5b h0
     _run_cell e5b h1
+}
+
+# The box's TMUX_TMPDIR is created by an init hook on every box start
+# (box/dev.ini). `mkdir -p -m 0700` only sets the mode of a directory it
+# CREATES: one that already exists with a wider mode or another owner kept
+# them (codex rounds 1-4 on PR #232). The hook now sets owner and mode
+# explicitly after mkdir, so a restart repairs them.
+@test "#179: a box restart resets an existing TMUX_TMPDIR to the box user and mode 0700" {
+    local _dir="${HOME}/dev-box/.cache/tmux"
+    assert [ -d "${_dir}" ]
+    chmod 0755 "${_dir}"
+    chown 1:1 "${_dir}"
+    run stat -c '%a %u:%g' "${_dir}"
+    assert_output "755 1:1"
+    run timeout -k 5 "${RM_TIMEOUT}" distrobox stop -Y dev </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    run timeout -k 5 "${FIRST_ENTER_TIMEOUT}" distrobox enter dev -- true </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    run stat -c '%a %u:%g' "${_dir}"
+    _log_lines tmux-tmpdir-after-restart "${output}"
+    assert_output "700 $(id -u):$(id -g)"
 }
 
 # --- (f) idempotency: assembling again neither errors nor duplicates ---------

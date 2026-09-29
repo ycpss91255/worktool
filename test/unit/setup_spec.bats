@@ -346,14 +346,14 @@ _block_count() {
     local _conf="${HOME}/.config/distrobox/distrobox.conf"
     run "${SETUP}" --box work
     assert_success
-    run grep -c "'work') unset TMUX TMUX_PANE" "${_conf}"
+    run grep -c "!= 'work' ] || unset TMUX TMUX_PANE" "${_conf}"
     assert_output "1"
     run "${SETUP}" --box dev
     assert_success
     assert_equal "$(_block_count "${_conf}")" "1"
-    run grep -c "'dev') unset TMUX TMUX_PANE" "${_conf}"
+    run grep -c "!= 'dev' ] || unset TMUX TMUX_PANE" "${_conf}"
     assert_output "1"
-    run grep -c "'work')" "${_conf}"
+    run grep -c "'work'" "${_conf}"
     assert_output "0"
 }
 
@@ -580,35 +580,34 @@ _block_count() {
 
 # --- #161 (3): exactly one managed block per file ----------------------------
 
-@test "a file that already holds two managed blocks is collapsed to exactly one, in place of the first" {
+# Issue #179 (codex round 4 on PR #232) supersedes #161's collapse: a file
+# holding more than one block has malformed markers, and a rewrite of a
+# malformed file is how user lines were lost (an orphan BEGIN swallowed the
+# rest of the file). Every malformed shape is refused before anything is
+# written; the full matrix is test/unit/managed_block_spec.bats.
+@test "a file that already holds two managed blocks is refused, not collapsed: exit 1, the file unchanged" {
     mkdir -p "${HOME}/.config/ghostty"
     printf 'theme = dark\n%s\n%s\n%s\nfont-size = 12\n%s\n%s\n%s\ntail = 1\n' \
         "${BEGIN}" "${CMD_ENTER}" "${END}" "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
-    assert_equal "$(_block_count "${GHOSTTY}")" "2"
+    local _before
+    _before="$(cat "${GHOSTTY}")"
     run "${SETUP}" --terminal ghostty
-    assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
-    refute_line --partial "unchanged:"
-    assert_equal "$(_block_count "${GHOSTTY}")" "1"
-    run cat "${GHOSTTY}"
-    assert_line --index 0 "theme = dark"
-    assert_line --index 1 "${BEGIN}"
-    assert_line --index 2 "${CMD_ENTER}"
-    assert_line --index 3 "${END}"
-    assert_line --index 4 "font-size = 12"
-    assert_line --index 5 "tail = 1"
-    assert_equal "${#lines[@]}" 6
+    assert_failure 1
+    assert_line --partial "[ERROR] ${GHOSTTY}: malformed worktool managed block markers: 2 blocks (BEGIN at lines 2, 6)"
+    assert_equal "$(cat "${GHOSTTY}")" "${_before}"
+    assert [ ! -e "${CONFIG}" ]
 }
 
-@test "--auto-enter no removes every managed block a file holds" {
+@test "--auto-enter no refuses a file with two managed blocks the same way" {
     mkdir -p "${HOME}/.config/ghostty"
     printf '%s\n%s\n%s\ntheme = dark\n%s\n%s\n%s\n' \
         "${BEGIN}" "${CMD_ENTER}" "${END}" "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
+    local _before
+    _before="$(cat "${GHOSTTY}")"
     run "${SETUP}" --auto-enter no
-    assert_success
-    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_ENTER})"
-    assert_equal "$(_block_count "${GHOSTTY}")" "0"
-    assert_equal "$(cat "${GHOSTTY}")" "theme = dark"
+    assert_failure 1
+    refute_line --partial "removed:"
+    assert_equal "$(cat "${GHOSTTY}")" "${_before}"
 }
 
 # --- #161 (non-blocking): a rewrite keeps the file mode ----------------------

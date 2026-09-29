@@ -59,6 +59,17 @@ setup() {
     assert_output "0"
 }
 
+# --- the box's TMUX_TMPDIR: owner and mode enforced, not only on create ----
+
+# `mkdir -p -m 0700` sets the mode only of a directory it creates; an
+# existing one keeps a wider mode or another owner (codex rounds 1-4 on
+# PR #232). test/system/real_engine_spec.bats restarts a real box over a
+# wrong-mode, wrong-owner directory.
+@test "the TMUX_TMPDIR hook creates the directory as the box user, then sets its owner and mode 0700 explicitly" {
+    run grep -xF 'init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"' "${MANIFEST}"
+    assert_success
+}
+
 # --- (1) the distrobox.conf line: drops TMUX / TMUX_PANE for the box only ----
 
 # Sources the managed line for box $1 in a POSIX sh under `set -u` (the
@@ -84,7 +95,7 @@ printf 'TMUX=%s\n' "${TMUX-<unset>}"
 printf 'TMUX_PANE=%s\n' "${TMUX_PANE-<unset>}"
 [ "$*" = "${before_args}" ] && echo "args=unchanged"
 [ "$(set +o)" = "${before_opts}" ] && echo "options=unchanged"
-[ -z "${_worktool_a+x}" ] && echo "loopvar=unset"
+[ -z "${_worktool_a+x}${_worktool_n+x}${_worktool_v+x}" ] && echo "vars=unset"
 EOF
     TMUX="${TMUX_IN-${HOST_TMUX}}" TMUX_PANE="%3" sh "${_probe}" "${_conf}" "$@"
 }
@@ -93,32 +104,60 @@ EOF
     run enter_distrobox_conf_body dev
     assert_success
     assert_equal "${#lines[@]}" 1
-    assert_output --partial "'dev')"
+    assert_output --partial "'dev'"
     assert_output --partial "unset TMUX TMUX_PANE"
 }
 
-# The equivalence classes of distrobox-enter's command line (pinned
-# 1.8.2.5: a positional name, -n/--name, the command after --/-e/--exec,
-# DBX_CONTAINER_NAME). `drop` = the run targets the box, so TMUX and
-# TMUX_PANE must not reach it; `keep` = another box, upstream behaviour.
-@test "the line drops TMUX / TMUX_PANE exactly when distrobox-enter targets the box (argument-shape table)" {
+# The target box is decided by distrobox-enter's OWN option grammar (pinned
+# 1.8.2.5, its `while :; do case $1 in` loop), not by "some token equals
+# the box name" (codex round 4 on PR #232):
+#   - value-taking options: -n / --name (the box) and -a /
+#     --additional-flags (engine flags): their VALUE is never a box name;
+#   - every other option is a flag (-v -T -H -r -d -nw -Y --clean-path ...);
+#   - every positional argument sets the name, so the LAST one wins;
+#   - `--`, `-e`, `--exec` end the options: what follows is the command;
+#   - with no name at all, DBX_CONTAINER_NAME (then upstream's default).
+# `drop` = the run targets the box, so TMUX and TMUX_PANE must not reach
+# it; `keep` = another box, upstream behaviour.
+@test "the line targets the box by distrobox-enter's option grammar (value-taking option x value = box x targeted)" {
     local _row _want _got
     local -a _args
     local -a _table=(
+        # -n / --name: the value IS the box
+        "drop|-n dev"
+        "drop|--name dev -- tmux ls"
+        "keep|-n other"
+        "keep|--name other -- dev"
+        # -a / --additional-flags: a value equal to the box name is NOT the box
+        "keep|-a dev"
+        "keep|-a dev other"
+        "keep|--additional-flags dev other -- tmux"
+        "drop|-a dev dev"
+        "drop|--additional-flags other dev"
+        "drop|-a --tty -n dev"
+        "keep|-a dev -n other"
+        # positionals: the last one wins, after -n too
         "drop|dev"
+        "drop|other dev"
+        "keep|dev other"
+        "keep|-n dev other"
+        "drop|-n other dev"
+        # flags take no value
+        "drop|-nw dev"
+        "drop|--no-workdir -T dev"
+        "drop|-r -v -d --clean-path -Y -H dev"
+        # the separator ends the options
         "drop|dev --"
-        "drop|dev -- tmux ls"
         "drop|dev -- /usr/bin/tmux new -A -s main"
-        "drop|-n dev -- /usr/bin/tmux attach"
-        "drop|--name dev -e tmux"
-        "drop|--no-workdir dev --exec sh -l"
-        "drop|--clean-path dev"
-        "keep|other"
+        "drop|dev -e other"
         "keep|other -- dev"
         "keep|-e dev"
-        "keep|--name other -- tmux"
-        "keep|devx"
+        "keep|--exec dev"
+        "keep|--name other --exec -n dev"
+        # no name at all
         "keep|"
+        "keep|-nw"
+        "keep|devx"
     )
     for _row in "${_table[@]}"; do
         _want="${_row%%|*}"
@@ -131,16 +170,22 @@ EOF
             [[ "${_got}" == *"TMUX=${HOST_TMUX}"*"TMUX_PANE=%3"* ]] \
                 || fail "args '${_args[*]}': expected TMUX / TMUX_PANE kept, got: ${_got}"
         fi
-        [[ "${_got}" == *"args=unchanged"*"options=unchanged"*"loopvar=unset"* ]] \
+        [[ "${_got}" == *"args=unchanged"*"options=unchanged"*"vars=unset"* ]] \
             || fail "args '${_args[*]}': the line changed the sourcing shell: ${_got}"
     done
 }
 
-@test "DBX_CONTAINER_NAME naming the box drops TMUX / TMUX_PANE too (distrobox-enter's default name)" {
+@test "DBX_CONTAINER_NAME names the box only when the command line names none" {
     DBX_CONTAINER_NAME=dev run _source_conf dev
     assert_success
     assert_line "TMUX=<unset>"
     assert_line "TMUX_PANE=<unset>"
+    DBX_CONTAINER_NAME=dev run _source_conf dev -nw -- tmux
+    assert_line "TMUX=<unset>"
+    DBX_CONTAINER_NAME=dev run _source_conf dev other
+    assert_line "TMUX=${HOST_TMUX}"
+    DBX_CONTAINER_NAME=other run _source_conf dev dev
+    assert_line "TMUX=<unset>"
     DBX_CONTAINER_NAME=other run _source_conf dev
     assert_line "TMUX=${HOST_TMUX}"
 }

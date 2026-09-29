@@ -230,6 +230,11 @@ _trim() {
     assert_equal "$((_dd_i + 2))" "${#ARGV[@]}"
     _want=": ; setpriv --reuid=\"\${container_user_uid}\" --regid=\"\${container_user_gid}\""
     _want+=" --clear-groups mkdir -p -m 0700 \"\${TMUX_TMPDIR}\""
+    # ... then owner and mode set explicitly: `mkdir -p -m` leaves an
+    # EXISTING directory's mode and owner as they are (codex rounds 1-4 on
+    # PR #232).
+    _want+=" && chown \"\${container_user_uid}:\${container_user_gid}\" \"\${TMUX_TMPDIR}\""
+    _want+=" && chmod 0700 \"\${TMUX_TMPDIR}\""
     # ... and then installs the box's login-shell snippets byte for byte
     # (sh / bash: box/tmux-env.sh, fish: box/tmux-env.fish): the in-box
     # second line that drops a host TMUX / TMUX_PANE for everything a box
