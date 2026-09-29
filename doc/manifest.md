@@ -28,8 +28,10 @@ image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
 additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
 init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}"
-init_hooks=dpkg-divert --local --rename --divert /usr/bin/tmux.real --add /usr/bin/tmux
+init_hooks=mkdir -p /usr/libexec/worktool && dpkg-divert --local --rename --divert /usr/libexec/worktool/tmux --add /usr/bin/tmux
 init_hooks=echo <box/tmux-guard.sh 的 base64> | base64 -d >/usr/bin/tmux && chmod 0755 /usr/bin/tmux
+init_hooks=echo <box/tmux-env.sh 的 base64> | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh
+init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | base64 -d >/etc/fish/conf.d/worktool-tmux.fish && chmod 0644 /etc/fish/conf.d/worktool-tmux.fish
 ```
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
@@ -46,15 +48,22 @@ distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid
 盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
 `--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
 —— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`。第二、三個 `init_hooks`
-(codex 第 1、2 輪,PR #232)先用 `dpkg-divert` 把套件的 `/usr/bin/tmux` 移到
-`/usr/bin/tmux.real`(已 divert 時為 no-op;之後 tmux 套件升級也只會寫到
-`tmux.real`,不會蓋掉 guard),再把 [`box/tmux-guard.sh`](../box/tmux-guard.sh)
+(codex 第 1、2、3 輪,PR #232)先用 `dpkg-divert` 把套件的 `/usr/bin/tmux` 移到
+**不在 PATH 上**的 `/usr/libexec/worktool/tmux`(已 divert 時為 no-op;之後 tmux
+套件升級也只會寫到那裡,不會蓋掉 guard;不在 PATH 上,所以 guard 旁邊沒有可以
+順手打或 tab 補完的未受保護 tmux),再把 [`box/tmux-guard.sh`](../box/tmux-guard.sh)
 **直接裝在** `/usr/bin/tmux`——不靠 PATH 順序,所以連用絕對路徑打
 `/usr/bin/tmux` 也會經過 guard。從 host 的 tmux pane 進盒時,`distrobox enter` 帶進來的
 `TMUX` 指向 host server 的 socket,而 tmux 先看 `TMUX`;guard 只保留指向盒子自己
-`TMUX_TMPDIR` 底下的 `TMUX`,其餘丟掉。清單一行放不下腳本,所以該行放的是
-`box/tmux-guard.sh` 的 base64;`test/unit/box_tmux_guard_spec.bats` 斷言兩者逐位元組
-相同,可讀的 `box/tmux-guard.sh` 是唯一來源。同一個鍵出現多次時 distrobox-assemble
+`TMUX_TMPDIR` 底下的 `TMUX`,其餘丟掉。但直接執行被移開的真 tmux 仍會繼承 host 的
+`TMUX`(codex 第 3 輪),所以第四、五個 `init_hooks` 再把
+[`box/tmux-env.sh`](../box/tmux-env.sh) 裝到 `/etc/profile.d/worktool-tmux.sh`
+(sh / bash 登入 shell)、[`box/tmux-env.fish`](../box/tmux-env.fish) 裝到
+`/etc/fish/conf.d/worktool-tmux.fish`(fish):盒內 shell 一啟動就以同一條規則把
+host 的 `TMUX` 從**整個環境**拿掉,之後從這個 shell 啟動的任何東西(含真 tmux)都
+看不到它。清單一行放不下腳本,所以這三行放的是各檔的 base64;
+`test/unit/box_tmux_guard_spec.bats` 斷言 blob 與檔案逐位元組相同,可讀的檔案是
+唯一來源。同一個鍵出現多次時 distrobox-assemble
 以 `&&` 串接,依序執行。每個鍵各佔一行:distrobox-assemble 一行讀一個鍵。
 見 [`enter.md`](enter.md)。
 

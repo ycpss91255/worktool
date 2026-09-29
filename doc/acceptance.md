@@ -485,7 +485,11 @@ prereq-ok
     `TMUX`,再斷言盒內 `tmux` 仍得到盒子自己的 server(同 (2) 各項)——由
     `box/tmux-guard.sh` 丟掉指向 host socket 的 `TMUX`;同一個 pane 再以絕對路徑
     `/usr/bin/tmux` 開 session(codex 第 2 輪),斷言它落在同一個盒內 server、
-    host 的 `tmux ls` 不列它——guard 裝在 `/usr/bin/tmux` 本身,不靠 PATH 順序。
+    host 的 `tmux ls` 不列它——guard 裝在 `/usr/bin/tmux` 本身,不靠 PATH 順序;
+    最後(codex 第 3 輪)斷言 PATH 上沒有 `tmux.real`,並從盒內的 sh 登入 shell
+    (`sh -l`)與 fish 各**直接執行**真 tmux(`/usr/libexec/worktool/tmux`)開
+    session:兩個 shell 看到的 `TMUX` 都已被 `box/tmux-env.sh` /
+    `box/tmux-env.fish` 清空,session 落在同一個盒內 server、host 的 `tmux ls` 不列。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;

@@ -51,10 +51,20 @@ grilling)的目標行為:
    (含 `TMUX`,指向 host server 的 socket)帶進盒內,而 tmux 先看 `TMUX` 才看
    `TMUX_TMPDIR`。所以 `init_hooks` 另外在每次盒子啟動時把
    [`box/tmux-guard.sh`](../box/tmux-guard.sh) **直接裝在**盒內的 `/usr/bin/tmux`
-   (套件的執行檔先以 `dpkg-divert` 移到 `/usr/bin/tmux.real`;不靠 PATH 順序,
-   用絕對路徑打 `/usr/bin/tmux` 也會經過它):`TMUX` 指向盒子自己
+   (套件的執行檔先以 `dpkg-divert` 移到**不在 PATH 上**的
+   `/usr/libexec/worktool/tmux`;不靠 PATH 順序,用絕對路徑打 `/usr/bin/tmux`
+   也會經過它):`TMUX` 指向盒子自己
    `TMUX_TMPDIR` 底下的 socket(盒子自己 server 的 pane)才保留,否則丟掉;
    `TMUX_TMPDIR` 沒設時拒絕執行(否則會退回共用的 `/tmp`)。
+   guard 只管得到 `tmux` 這個名字;直接執行真 tmux 仍會繼承 host 的 `TMUX`
+   (codex 第 3 輪,PR #232)。所以盒內的登入 shell 自己也套用同一條規則,把
+   host 的 `TMUX` 從整個環境拿掉:[`box/tmux-env.sh`](../box/tmux-env.sh)
+   (`/etc/profile.d`,sh / bash)與 [`box/tmux-env.fish`](../box/tmux-env.fish)
+   (`/etc/fish/conf.d`,fish)。之後從盒內 shell 啟動的任何程式(含真 tmux)都看
+   不到 host 的 `TMUX`。剩下的邊界:在 host 端**直接**把
+   `/usr/libexec/worktool/tmux` 寫在 `distrobox enter dev -- <命令>` 後面時,沒有
+   盒內 shell 介入,該命令拿到的是呼叫端原樣的環境——這是刻意指名內部路徑,不是
+   順手會打到的東西。
 3. **tmux 設定**:worktool **不讀也不寫** host 的 `~/.tmux.conf`;tmux 設定屬於工具
    設定,放在盒子自己的 HOME(#196,M5)。
 

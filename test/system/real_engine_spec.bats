@@ -843,7 +843,11 @@ _host_tmux_pid() {
 # The payload a host tmux pane runs in the box (case (3)): it records the
 # TMUX the box inherited, then starts `tmux` as a user would type it and
 # reports the server it reached and the sessions that server lists; then the
-# same through the absolute /usr/bin/tmux, which bypasses PATH.
+# same through the absolute /usr/bin/tmux, which bypasses PATH; then the REAL
+# binary, run directly, from a sh login shell and from a fish shell as a user
+# who entered the box would (codex round 3): the login shells drop the host
+# TMUX, so even the unguarded binary reaches the box's server. It also
+# reports whether a real tmux is left on PATH as `tmux.real`.
 _host_pane_payload() { printf '%s/host-pane-box-tmux.sh\n' "${HOME}"; }
 _host_pane_out() { printf '%s/host-pane-box-tmux.txt\n' "${HOME}"; }
 _write_host_pane_payload() {
@@ -853,6 +857,9 @@ tmux -f /dev/null new-session -d -s box || exit 1
 tmux display-message -p -t box 'box-server=#{pid} #{socket_path}'
 /usr/bin/tmux -f /dev/null new-session -d -s abspath || exit 1
 /usr/bin/tmux display-message -p -t abspath 'abs-server=#{pid} #{socket_path}'
+if command -v tmux.real >/dev/null 2>&1; then echo 'real-on-path=yes'; else echo 'real-on-path=no'; fi
+sh -l -c 'printf "login-sh-TMUX=%s\n" "${TMUX-}"; /usr/libexec/worktool/tmux -f /dev/null new-session -d -s realsh && /usr/libexec/worktool/tmux display-message -p -t realsh "realsh-server=#{pid} #{socket_path}"' || exit 1
+fish -l -c 'printf "fish-TMUX=%s\n" "$TMUX"; /usr/libexec/worktool/tmux -f /dev/null new-session -d -s realfish; and /usr/libexec/worktool/tmux display-message -p -t realfish "realfish-server=#{pid} #{socket_path}"' || exit 1
 tmux ls
 EOF
 }
@@ -897,6 +904,16 @@ _run_in_host_pane() {
     run cat "$(_host_pane_out)"
     assert_line "abs-server=${_box_pid} ${_box_sock}"
     assert_line --regexp '^abspath: '
+    # The real binary is not on PATH, and run directly from the box's login
+    # shells it reached the SAME box server: sh / bash and fish both dropped
+    # the host TMUX before anything ran (codex round 3).
+    assert_line "real-on-path=no"
+    assert_line "login-sh-TMUX="
+    assert_line "fish-TMUX="
+    assert_line "realsh-server=${_box_pid} ${_box_sock}"
+    assert_line "realfish-server=${_box_pid} ${_box_sock}"
+    assert_line --regexp '^realsh: '
+    assert_line --regexp '^realfish: '
 
     # The host server never saw the box's sessions.
     run env -u TMUX -u TMUX_TMPDIR tmux ls
@@ -904,6 +921,8 @@ _run_in_host_pane() {
     assert_line --regexp "^${HOST_TMUX_SESSION}: "
     refute_line --regexp '^box: '
     refute_line --regexp '^abspath: '
+    refute_line --regexp '^realsh: '
+    refute_line --regexp '^realfish: '
 
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
     assert_success
