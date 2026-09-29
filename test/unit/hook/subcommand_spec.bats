@@ -416,3 +416,29 @@ setup() {
     assert_line --index 0 --partial "python3 - <<<print"
     assert_line --index 1 "ls"
 }
+
+@test "matrix: every control byte round-trips exactly in single quotes, double quotes and unquoted" {
+    # No in-band sentinel: no input byte may be taken for a marker. 0x09 and
+    # 0x0a are shell syntax when unquoted (IFS, command separator).
+    local _b _c _ctx _cmd _out _MISS=''
+    local -a w
+    for _b in $(seq 1 31) 127; do
+        printf -v _c '%b' "\\0$(printf '%03o' "${_b}")"
+        for _ctx in single double bare; do
+            case "${_ctx}" in
+                single) _cmd="echo 'a${_c}b'" ;;
+                double) _cmd="echo \"a${_c}b\"" ;;
+                bare)
+                    [[ "${_b}" -eq 9 || "${_b}" -eq 10 ]] && continue
+                    _cmd="echo a${_c}b" ;;
+            esac
+            _out="$(hook_subcommands_raw "${_cmd}")"
+            read -r -a w <<<"${_out%%$'\n'*}"
+            if [[ "$(hook_word "${w[1]:-}")" != "a${_c}b" ]] || hook_word_has_expansion "${w[1]:-}" \
+                || [[ "${#w[@]}" -ne 2 ]]; then
+                _MISS+="byte=$(printf '0x%02x' "${_b}") context=${_ctx}"$'\n'
+            fi
+        done
+    done
+    [[ -z "${_MISS}" ]] || fail "$(printf 'control bytes that did not round-trip:\n%s' "${_MISS}")"
+}

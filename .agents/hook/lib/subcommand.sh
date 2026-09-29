@@ -218,8 +218,8 @@ hook_http_data_flags() {
 # its value and 0; 2 when the value is the next word (separate); 1 when
 # <word> is no data flag. A boolean data flag prints nothing and returns 0.
 _hook_data_flag() {
-    local _f _a
-    while read -r _f _a; do
+    local _f _a _k
+    while read -r _f _a _k; do
         [[ "${_a}" == item ]] && continue
         if [[ "$2" == "${_f}" ]]; then
             [[ "${_a}" == 1 ]] && { printf '%s' "$3"; return 2; }
@@ -241,8 +241,8 @@ _hook_data_flag() {
 # _hook_http_item <tool> <word> - 0 when <word> is a request item with data
 # (a separator of the table: = := @ =@ :=@; not a == query or a : header).
 _hook_http_item() {
-    local _f _a _w="${2//==/}"
-    while read -r _f _a; do
+    local _f _a _k _w="${2//==/}"
+    while read -r _f _a _k; do
         [[ "${_a}" == item && "${_w}" == *"${_f}"* ]] && return 0
     done < <(hook_http_data_flags "$1")
     return 1
@@ -256,7 +256,7 @@ hook_http_is_write() {
     local -a _a=("$@")
     HOOK_HTTP_BODY=''
     # curl short data flags, for a cluster that hides one (-sd x).
-    _short="$(hook_http_data_flags "${_tool}" | sed -n 's/^-\([A-Za-z]\) 1$/\1/p' | tr -d '\n')"
+    _short="$(hook_http_data_flags "${_tool}" | awk '$1 ~ /^-[A-Za-z]$/ && $2 == "1" { printf "%s", substr($1, 2) }')"
     for ((_i = 0; _i < ${#_a[@]}; _i++)); do
         _w="${_a[_i]}"
         _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")"
@@ -340,22 +340,28 @@ _hook_heredoc_to_shell() {
 
 # _hook_herestring <body> <quoted> - the heredoc body as a single-quoted
 # here-string word (`<<<'...'`). Unquoted delimiter (<quoted> empty): the
-# outer shell expands the body, so each unescaped $ and ` is prefixed with
-# \006 (marked as an expansion by the quoting pass in any quoting) and the
-# escapes \$ \` \\ are resolved the way the outer shell resolves them.
+# outer shell expands the body, so each unescaped $ and ` gets the
+# expansion escape \001v before it (kept by the quoting pass in any
+# quoting; no raw marker byte), and the escapes \$ \` \\ are resolved the
+# way the outer shell resolves them.
 _hook_herestring() {
-    local _b="$1" _q="'" _sq="'\\''"
+    local _b="$1" _o='' _i _c _n _sq="'\\''"
     if [[ -z "$2" ]]; then
-        _b="${_b//\\\\/$'\004'}"
-        _b="${_b//\\\$/$'\003'}"
-        _b="${_b//\\\`/$'\005'}"
-        _b="${_b//\$/$'\006'\$}"
-        _b="${_b//\`/$'\006'\`}"
-        _b="${_b//$'\003'/\$}"
-        _b="${_b//$'\005'/\`}"
-        _b="${_b//$'\004'/\\}"
+        _n="${#_b}"
+        for ((_i = 0; _i < _n; _i++)); do
+            _c="${_b:_i:1}"
+            if [[ "${_c}" == "\\" && "${_b:_i+1:1}" == [\\\$\`] ]]; then
+                _i=$((_i + 1))
+                _o+="${_b:_i:1}"
+            elif [[ "${_c}" == '$' || "${_c}" == '`' ]]; then
+                _o+=$'\001'"v${_c}"
+            else
+                _o+="${_c}"
+            fi
+        done
+        _b="${_o}"
     fi
-    printf '<<<%s%s%s' "${_q}" "${_b//\'/${_sq}}" "${_q}"
+    printf "<<<'%s'" "${_b//\'/${_sq}}"
 }
 
 # _hook_held_line - print the held heredoc line with its operator replaced
@@ -366,13 +372,25 @@ _hook_held_line() {
     printf '%s %s%s\n' "${_held%%"${_op}"*}" "$(_hook_herestring "${_body}" "${_quoted}")" "${_held#*"${_op}"}"
 }
 
-# _hook_heredoc_ops <line> - one record per heredoc operator of the line
-# (`<<` / `<<-`, not `<<<`, not inside quotes or an arithmetic `((`):
-# <start> US <length> US <dash> US <quoted> US <delimiter>, US = \037. The
-# delimiter is any shell word (END-X, "a.b", 'x y', \EOF, E"O"F): quotes
-# and backslashes go, and any of them makes the body literal (<quoted>).
+# _hook_heredoc_ops <line> - fill the arrays _HOOK_OP_ST / _LEN / _DASH /
+# _Q / _W with one entry per heredoc operator of the line (`<<` / `<<-`,
+# not `<<<`, not inside quotes or an arithmetic `((`): its start, length,
+# dash, quoted flag and delimiter. Out of band (arrays, no separator byte),
+# so no input byte can split a record. The delimiter is any shell word
+# (END-X, "a.b", 'x y', \EOF, E"O"F): quotes and backslashes go, and any of
+# them makes the body literal (quoted).
+_HOOK_OP_ST=()
+_HOOK_OP_LEN=()
+_HOOK_OP_DASH=()
+_HOOK_OP_Q=()
+_HOOK_OP_W=()
 _hook_heredoc_ops() {
-    local _l="$1" _i=0 _n=${#1} _q='' _c _st _d _w _qq _pre _us=$'\037'
+    local _l="$1" _i=0 _n=${#1} _q='' _c _st _d _w _qq _pre
+    _HOOK_OP_ST=()
+    _HOOK_OP_LEN=()
+    _HOOK_OP_DASH=()
+    _HOOK_OP_Q=()
+    _HOOK_OP_W=()
     while [[ "${_i}" -lt "${_n}" ]]; do
         _c="${_l:_i:1}"
         if [[ -n "${_q}" ]]; then
@@ -420,7 +438,11 @@ _hook_heredoc_ops() {
             # An arithmetic shift ($(( 1 << 2 ))) is no heredoc.
             local _open="${_pre//[^(]/}" _close="${_pre//[^)]/}"
             if [[ -n "${_w}" ]] && { [[ "${_pre}" != *'(('* ]] || [[ "${#_open}" -le "${#_close}" ]]; }; then
-                printf '%s%s%s%s%s%s%s%s%s\n' "${_st}" "${_us}" "$((_i - _st))" "${_us}" "${_d}" "${_us}" "${_qq}" "${_us}" "${_w}"
+                _HOOK_OP_ST+=("${_st}")
+                _HOOK_OP_LEN+=("$((_i - _st))")
+                _HOOK_OP_DASH+=("${_d}")
+                _HOOK_OP_Q+=("${_qq}")
+                _HOOK_OP_W+=("${_w}")
             fi
             continue
         fi
@@ -436,7 +458,7 @@ _hook_heredoc_ops() {
 # shell reads as its script has it turned into a here-string of its body
 # instead (header step 1).
 _hook_strip_heredocs() {
-    local _line _t _held='' _op='' _quoted='' _body='' _ops _s _len _d _qq _w _n
+    local _line _t _held='' _op='' _quoted='' _body=''
     local -a _terms=() _dashes=()
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         if [[ "${#_terms[@]}" -gt 0 ]]; then
@@ -454,23 +476,17 @@ _hook_strip_heredocs() {
             fi
             continue
         fi
-        _ops="$(_hook_heredoc_ops "${_line}")"
-        if [[ -n "${_ops}" ]]; then
-            _n=0
-            while IFS=$'\037' read -r _s _len _d _qq _w; do
-                _terms+=("${_w}")
-                _dashes+=("${_d}")
-                _n=$((_n + 1))
-            done <<<"${_ops}"
-            if [[ "${_n}" -eq 1 ]]; then
-                IFS=$'\037' read -r _s _len _d _qq _w <<<"${_ops}"
-                if _hook_heredoc_to_shell "${_line:0:_s}"; then
-                    _held="${_line}"
-                    _op="${_line:_s:_len}"
-                    _quoted="${_qq}"
-                    _body=''
-                    continue
-                fi
+        _hook_heredoc_ops "${_line}"
+        if [[ "${#_HOOK_OP_W[@]}" -gt 0 ]]; then
+            _terms+=("${_HOOK_OP_W[@]}")
+            _dashes+=("${_HOOK_OP_DASH[@]}")
+            if [[ "${#_HOOK_OP_W[@]}" -eq 1 ]] \
+                && _hook_heredoc_to_shell "${_line:0:_HOOK_OP_ST[0]}"; then
+                _held="${_line}"
+                _op="${_line:_HOOK_OP_ST[0]:_HOOK_OP_LEN[0]}"
+                _quoted="${_HOOK_OP_Q[0]}"
+                _body=''
+                continue
             fi
         fi
         printf '%s\n' "${_line}"
@@ -489,16 +505,26 @@ _hook_unquote() {
     awk -f "${_HOOK_UNQUOTE_AWK}"
 }
 
-# _hook_decode <word> - an opaque word with its separators restored, each
-# expansion marker (\001v) dropped and each substitution marker (\001s
-# quoted, \001u unquoted) shown as '_'.
-_hook_decode() {
+# _hook_decode_sep <word> - the word with its separator escapes (\001a-k)
+# restored; every other escape is kept.
+_hook_decode_sep() {
     local _s="$1" _i _seps=$' \t\r\n;&|<>()' _let=abcdefghijk
     for ((_i = 0; _i < ${#_seps}; _i++)); do
         _s="${_s//$'\001'"${_let:_i:1}"/"${_seps:_i:1}"}"
     done
+    printf '%s' "${_s}"
+}
+
+# _hook_decode <word> - an opaque word as text: separators restored, each
+# expansion escape (\001v) dropped, each substitution (\001s quoted, \001u
+# unquoted) shown as '_', and the literal-\001 escape (\001z) turned back
+# into \001 last, so no decoded byte is read as an escape again.
+_hook_decode() {
+    local _s
+    _s="$(_hook_decode_sep "$1")"
     _s="${_s//$'\001'v/}"
-    printf '%s' "${_s//$'\001'[su]/_}"
+    _s="${_s//$'\001'[su]/_}"
+    printf '%s' "${_s//$'\001'z/$'\001'}"
 }
 
 # hook_word <encoded word> - see the header.
@@ -638,19 +664,20 @@ _hook_emit() {
     _lead="$(hook_timeout_lead "$1")"
     if _script="$(_hook_inner_script "$(_hook_strip_wrappers "${1#"${_lead}"}")")"; then
         # An expansion of this shell is unknown to the script it builds:
-        # carry it in as \006, which the quoting pass marks again.
-        _script="${_script//$'\001'v/$'\006'}"
-        _script="${_script//$'\001'[su]/$'\006'_}"
+        # carry it in as the escape \001v (a substitution as \001v_), which
+        # the quoting pass keeps; the literal-\001 escape \001z stays too.
+        _script="${_script//$'\001'[su]/$'\001'v_}"
         while IFS= read -r _line; do
             printf '%s%s\n' "${_lead}" "${_line}"
-        done < <(hook_subcommands "$(_hook_decode "${_script}")")
+        done < <(_hook_subcommands_enc "$(_hook_decode_sep "${_script}")")
         return 0
     fi
     if [[ -n "${_HOOK_RAW:-}" ]]; then
         printf '%s\n' "$1"
     else
         _t="${1//$'\001'v/}"
-        printf '%s\n' "${_t//$'\001'?/_}"
+        _t="${_t//$'\001'[a-u]/_}"
+        printf '%s\n' "${_t//$'\001'z/$'\001'}"
     fi
 }
 
@@ -672,8 +699,15 @@ _hook_split() {
     printf '%s' "${_t//)/$'\n'}"
 }
 
-# hook_subcommands <command> - see the header.
+# hook_subcommands <command> - see the header. Every \001 of the input is
+# first escaped as \001z, so no input byte can pose as a marker.
 hook_subcommands() {
+    _hook_subcommands_enc "${1//$'\001'/$'\001'z}"
+}
+
+# _hook_subcommands_enc <escaped command> - hook_subcommands on a command
+# whose \001 bytes are already escapes (\001z literal, \001v expansion).
+_hook_subcommands_enc() {
     local _text _sub
     _text="$(_hook_split "$(_hook_strip_heredocs "$1" | _hook_unquote)")"
     while IFS= read -r _sub; do

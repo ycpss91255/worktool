@@ -464,6 +464,11 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
         `--field body=@`、`--input`);未標記擋、有標記放行。GraphQL 的留言/review mutation(9 種)×
         標記 × 內文來源(`-f query=`、`-F query=@檔案`、`--input`、`--raw-field`)全部擋(這些
         mutation 一律擋)。
+      - 控制字元 × 引號情境:0x01–0x1f 與 0x7f 的每個位元組,在單引號、雙引號與無引號(0x09、0x0a
+        在無引號時是 shell 語法,除外)中,`hook_word` 還原後與原文完全相同、不被當成展開;hook 的
+        判斷與去掉該位元組的同一指令相同。解析不使用任何 in-band 哨兵位元組:輸入裡的每個 `\001`
+        先轉成跳脫序列 `\001z`,所有標記都是 `\001` 加字母的跳脫序列,heredoc 運算子的欄位走陣列
+        (out of band),所以沒有輸入位元組能冒充標記。
       - host × 路徑的網址寫法:端點 × host 寫法(一般、大寫、結尾點、`:443`、結尾點加 `:443`、帳密前綴、
         `http`、無 scheme)× 路徑寫法(一般、`/./`、`/x/../`、`//`、percent、結尾斜線、query、大寫),
         由 `hook_api_endpoint_urls` 全部辨識。

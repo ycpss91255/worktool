@@ -21,10 +21,14 @@
 #     outside single quotes; a lone $ is literal) and, unquoted, a glob
 #     (* ?, [ with a closing ] in the same word) or a brace expansion ({ with
 #     a , or .. and a closing } in the same word)
-#   - a \006 (an expansion of an outer shell, carried into a bash -c /
-#     eval script by subcommand.sh) becomes \001v in any quoting
+#   - no input byte is a marker: subcommand.sh escapes every \001 of the
+#     input as \001z before this pass, so a \001 here is always a two-byte
+#     escape - \001z (a literal \001, kept) or \001v (an expansion of an
+#     outer shell carried into a bash -c / eval script or a heredoc body,
+#     kept, in any quoting). Every other byte, control bytes included, is
+#     plain text
 BEGIN {
-    RS = "\001"; SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
+    SEP = " \t\r\n;&|<>()"; LET = "abcdefghijk"
     ESC = sprintf("%c", 1); SQ = sprintf("%c", 39); BQ = sprintf("%c", 96)
 }
 function enc(c,    k) { k = index(SEP, c); return k ? ESC substr(LET, k, 1) : c }
@@ -33,9 +37,9 @@ function enc(c,    k) { k = index(SEP, c); return k ? ESC substr(LET, k, 1) : c 
 function closes(i, c, brace,    j, d, sep) {
     sep = 0
     for (j = i + 1; j <= n; j++) {
-        d = substr($0, j, 1)
+        d = substr(T, j, 1)
         if (index(SEP, d) || d == SQ || d == "\"") return 0
-        if (d == "," || (d == "." && substr($0, j + 1, 1) == ".")) sep = 1
+        if (d == "," || (d == "." && substr(T, j + 1, 1) == ".")) sep = 1
         if (d == c) return brace ? sep : 1
     }
     return 0
@@ -49,14 +53,22 @@ function pop() {
     q = sq[sd]; par = spar[sd]
     buf = sbuf[sd] ESC ((q == "" && skind[sd] != "<") ? "u" : "s"); sd--
 }
-{
-    n = length($0); q = ""; buf = ""; extra = ""; sd = 0; par = 0
+# The whole input is one text (a quoted span may cross lines): read every
+# line, rejoin with newlines, and run the pass at the end.
+{ T = T $0 "\n" }
+END {
+    n = length(T); q = ""; buf = ""; extra = ""; sd = 0; par = 0
     for (i = 1; i <= n; i++) {
-        c = substr($0, i, 1); nx = substr($0, i + 1, 1)
-        if (c == "\006") { buf = buf ESC "v"; continue }
+        c = substr(T, i, 1); nx = substr(T, i + 1, 1)
+        if (c == ESC) {
+            # A two-byte escape (see the header), kept as is in any quoting.
+            buf = buf ESC ((nx == "v") ? "v" : "z")
+            if (nx == "v" || nx == "z") i++
+            continue
+        }
         if (q == SQ) { if (c == SQ) q = ""; else buf = buf enc(c); continue }
         if (c == "\\" && i < n) {
-            i++; c = substr($0, i, 1)
+            i++; c = substr(T, i, 1)
             if (!(c == "\n" && q == "")) buf = buf enc(c)
             continue
         }

@@ -1102,9 +1102,9 @@ _TOOLS=(curl wget http gh-api)
 # short flag, -xV; a boolean flag yields itself; a request item (httpie)
 # yields x<separator><value>.
 _data_flags() {
-    local _f _a _v='body=x'
+    local _f _a _k _v='body=x'
     printf 'none|none\n'
-    while read -r _f _a; do
+    while read -r _f _a _k; do
         case "${_a}" in
             0) printf 'flag|%s\n' "${_f}" ;;
             item) [[ "${_f}" == *@ ]] && printf 'item|x%sf\n' "${_f}" || printf 'item|x%s1\n' "${_f}" ;;
@@ -1394,6 +1394,30 @@ _endpoints() {
     _check "gh api -X PUT https://api.github.com/repos/o/r/pulls/7/merge"
     assert_success
     assert_output ""
+}
+
+# --- round 12: no in-band sentinel ------------------------------------------------
+
+@test "matrix: a control byte in a gh command classifies like the same command without it" {
+    local _b _c _t _cmd _base _want _got _MISS=''
+    local -a _tmpl=("gh pr comment 7 --body '[claude] a@b'" "gh pr comment 7 --body 'a@b'" \
+        "gh pr comment 7 --body \"[claude] a@b\"" "gh pr view a@b" "gh pr comment 7 --body x@y")
+    for _t in "${_tmpl[@]}"; do
+        _base="${_t//@/}"
+        _check "${_base}"
+        _want="${status}"
+        for _b in $(seq 1 31) 127; do
+            printf -v _c '%b' "\\0$(printf '%03o' "${_b}")"
+            # Unquoted, 0x09 / 0x0a are shell syntax, not a byte of a word.
+            [[ "${_t}" == *" a@b" || "${_t}" == *" x@y" ]] && [[ "${_b}" -eq 9 || "${_b}" -eq 10 ]] && continue
+            _cmd="${_t//@/${_c}}"
+            _check "${_cmd}"
+            _got="${status}"
+            [[ "${_got}" == "${_want}" ]] \
+                || _MISS+="byte=$(printf '0x%02x' "${_b}") template=${_t}: status ${_got}, want ${_want}"$'\n'
+        done
+    done
+    _report
 }
 
 # --- everything else is untouched ----------------------------------------------
