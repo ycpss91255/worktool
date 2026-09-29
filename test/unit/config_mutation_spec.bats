@@ -17,8 +17,10 @@
 #     Behavioural rows (kind `behave`) claim "caught", nothing more;
 #   - the `owner` row expands to _owner_rows, one rogue path-builder per
 #     module of the source graph (every script under script/, followed
-#     through `source` lines by test/helper/graph.bash) that names the
-#     config API; a guard fails on such a module without a row.
+#     through `source` lines by test/helper/graph.bash) that names a public
+#     config_* function or XDG_CONFIG_HOME in a non-comment line; a guard
+#     fails on such a module without a row. Modules that name neither are
+#     not checked.
 # The tests are generated from the rows (bats_test_function).
 #
 # eof is only the final line's terminator (LF, CRLF, none); blank is blank
@@ -83,8 +85,9 @@ _rows() {
 
 # The owner property, per module: module | mutant | cases. One row for every
 # module of the source graph (test/helper/graph.bash, from every script
-# under script/) that names the config API; a guard fails on a module
-# without a row, or a row without a module.
+# under script/) that names a public config_* function or XDG_CONFIG_HOME in
+# a non-comment line; a guard fails on such a module without a row, or a row
+# without such a module. Modules that name neither are not checked.
 _owner_rows() {
     local _ow='unit/config_owner_spec.bats@owner: every'
     printf '%s\n' \
@@ -672,8 +675,10 @@ _drift_violations() {
 }
 
 # The owner rows' drift in tree $1: every module of the source graph of
-# every script under script/ that names the config API needs an owner row,
-# and every owner row names such a module. One line per violation.
+# every script under script/ that names a public config_* function or
+# XDG_CONFIG_HOME in a non-comment line (graph_touches_config) needs an
+# owner row, and every owner row names such a module; other modules are not
+# checked. One line per violation.
 _owner_module_violations() {
     local _tree="$1" _s _m _mods=""
     for _s in "${_tree}"/script/*/*.sh; do
@@ -733,7 +738,7 @@ done < <(_rows)
     [[ "${status}" -eq 0 ]] || fail "mutants without a row (<) / rows without a mutant (>): ${output}"
 }
 
-@test "drift guard: every module of the source graph that names the config API has an owner row" {
+@test "drift guard: every module of the source graph that names a public config_* function or XDG_CONFIG_HOME has an owner row" {
     run _owner_module_violations "${REPO_ROOT}"
     assert_output ""
 }

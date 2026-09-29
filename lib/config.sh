@@ -33,7 +33,9 @@
 #     element of the written bytes; behavioural rows are only "caught";
 #   - `owner` is checked over every entry point the argument parsers expose
 #     and every module in the source graph of the scripts under script/
-#     (test/unit/config_owner_spec.bats).
+#     that names a public config_* function or XDG_CONFIG_HOME in a
+#     non-comment line (test/unit/config_owner_spec.bats); modules that
+#     name neither are not checked.
 #   @prop location      the state file resolves to
 #                       $XDG_CONFIG_HOME/worktool/config, else
 #                       ~/.config/worktool/config
