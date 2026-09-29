@@ -55,7 +55,7 @@ prereq-ok
     - 預期看到資訊
       ```text
       Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
           default        # List the box verbs.
           help           # Show the box wrapper help (assemble.sh --help). [alias: h]
       ./script/test/test.sh --help
