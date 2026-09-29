@@ -164,9 +164,11 @@ jobs:
   # old history stays out through the range. The rule lives in
   # lib/commit_email.sh (pure bash, unit tested in
   # test/unit/commit_email_spec.bats); this job only picks the range (PR:
-  # base..head, push: before..after), collects the records with git log
-  # and fails listing each offending commit plus the fix command. No
-  # token is needed: the full history is checked out without credentials.
+  # base..head, push: before..after, new ref: after minus the default
+  # branch; any missing or malformed event value fails the job instead of
+  # shrinking the range), collects the records with git log and fails
+  # listing each offending commit plus the fix command. No token is
+  # needed: the full history is checked out without credentials.
   commit-email:
     name: commit-email
     runs-on: ubuntu-latest
@@ -185,12 +187,14 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.event.after }}
+          DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
         run: |
           set -uo pipefail
           source lib/commit_email.sh
-          range="$(commit_email_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}")" || exit 1
+          range="$(commit_email_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}")" || exit 1
+          mapfile -t revs <<< "${range}"
           records="${RUNNER_TEMP}/commits"
-          git log --format="$(commit_email_log_format)" "${range}" > "${records}" || exit 1
+          git log --format="$(commit_email_log_format)" "${revs[@]}" -- > "${records}" || exit 1
           commit_email_evaluate < "${records}"
 
   # Single required status: green only if every build-image leg AND every
