@@ -85,17 +85,17 @@
 #     any host with the
 #     GHES prefix /api/v3/ of the same repos paths, or /api/graphql
 #   hook_http_data_flags <tool>   THE table of data flags, one
-#     "<flag> <arity>" per line: arity 1 takes a value (in every spelling the
-#     classifier accepts: separate `-d V`, `--data=V`, short attached `-dV`),
-#     0 is a boolean data flag, "item" is an httpie request-item separator
-#     (= := @ =@ :=@). Tools: curl, wget, http (httpie), gh-api
+#     "<flag> <arity> [<kind>]" per line: arity 1 takes a value (accepted in
+#     every spelling: separate `-d V`, `--data=V`, short attached `-dV`), 0
+#     is a boolean data flag, "item" is an httpie request-item separator.
+#     gh-api lines add the kind (raw / typed field, input). Tools: curl,
+#     wget, http (httpie), gh-api. Every reader derives from it: this lib,
+#     the milestone-gate hook's gh api check and the spec's matrices
 #   hook_http_is_write <tool> <word>...   0 when a curl / wget / httpie
-#     call (its words after the tool) writes, 1 when it reads (issue #190):
-#     ANY data flag of the table, in any spelling, is a write whatever the
-#     method (curl -G / -X GET included); otherwise only an implicit, GET
-#     or HEAD method reads. A curl short-option cluster hiding -X or a short
-#     data flag is a write. Sets HOOK_HTTP_BODY to the literal body text
-#     ('@' for a body read from a file or stdin: undeterminable)
+#     call (its words after the tool) is a write by the read / write rule of
+#     doc/structure.md (milestone-gate section), 1 when it reads. Sets
+#     HOOK_HTTP_BODY to the literal body text ('@' for a body read from a
+#     file or stdin: undeterminable)
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -209,7 +209,7 @@ hook_http_data_flags() {
         http|https|httpie|xh|xhs)
             printf '%s\n' "--raw 1" "--form 0" "-f 0" "--multipart 0" \
                 "= item" ":= item" "@ item" "=@ item" ":=@ item" ;;
-        gh-api) printf '%s\n' "-f 1" "-F 1" "--field 1" "--raw-field 1" "--input 1" ;;
+        gh-api) printf '%s\n' "-f 1 raw" "-F 1 typed" "--field 1 typed" "--raw-field 1 raw" "--input 1 input" ;;
     esac
 }
 

@@ -2,85 +2,18 @@
 # .agents/hook/enforce_milestone_gate_approval.sh - Claude Code PreToolUse
 # hook (matcher: Bash), registered in .claude/settings.json (issue #190).
 #
-# The agent-side half of the milestone-gate approval (#187). GitHub cannot
+# The agent-side half of the milestone-gate approval (#187): GitHub cannot
 # tell the maintainer from an agent posting with the maintainer's token, so
-# this hook BLOCKS (exit 2, reason on stderr) what only an agent could do:
-#   1. merge gate: `gh pr merge [<sel>]` (any flags, --auto included) and
-#      `gh api .../repos/<owner>/<repo>/pulls/<n>/merge` (a full URL or a
-#      query string included). The repo comes from -R / --repo, a PR URL
-#      or the api path, else `gh repo view`; a branch or missing selector
-#      is resolved with `gh pr view`. The PR's labels and comments are
-#      fetched with gh and handed to approval_evaluate of lib/approval.sh
-#      (the same predicate the milestone-gate workflow runs). A failed
-#      evaluation blocks, naming what is missing; ANY failed lookup blocks
-#      too (fail closed). A GraphQL mutation that merges (mergePullRequest,
-#      enablePullRequestAutoMerge, mergeBranch) blocks outright.
-#   2. tag rule (issue #190 scope revision; replaces the old "untagged AND
-#      holds the phrase" check): every comment-like body an agent sends must
-#      start, after leading whitespace, with [claude] or [codex] - phrase or
-#      not, since CI (#187) takes an untagged OWNER comment as the
-#      maintainer's own. It covers gh pr|issue comment, gh pr review with a
-#      body, the --comment / -c of gh pr|issue close|reopen, and gh api
-#      writes to comments / reviews endpoints (-f / -F / --raw-field /
-#      --field body= or message=, body=@file, every .body / .message of
-#      --input). Body sources: --body / -b, --body-file / -F from disk, `-`
-#      from a literal here-string / heredoc. Every occurrence of a repeated
-#      flag is judged, in every form (-b x, -bx, -b=x, --body=x). A body the
-#      hook cannot read (an expansion, a missing file, stdin from anything
-#      else, a comment call without a body, --editor, --web) blocks. PR /
-#      issue create bodies are no comments. GraphQL comment / review
-#      mutations (addComment, addPullRequestReview, ...) block outright.
-#      A gh api call is a write when its last -X / --method is not GET /
-#      HEAD, or, with none, a field or --input makes gh POST.
-#   3. the CLOSED rule (fail closed where static parsing cannot follow the
-#      shell): the hook judges only what it can read literally.
-#      - A relevant gh command (`gh api`, any call; the pr / issue
-#        sub-commands above) with ANY word holding an expansion the shell
-#        resolves ($VAR, ${...}, $'...', $(...), `...`, <(...), a glob or
-#        a brace expansion; see hook_word_has_expansion of
-#        lib/subcommand.sh) blocks: re-run it with literal arguments.
-#      - A gh launch whose sub-command cannot be told (an expansion before
-#        or in it, `gh $SUB`, `--` before it) blocks, and so does an
-#        unknown top-level word (a gh alias or extension may run anything).
-#      - gh root flags before the sub-command: -R / --repo / --repo= and
-#        -h / --help are read as if they followed it; any other flag
-#        there blocks when the sub-command is relevant.
-#      - Combined short options (-eb x) block in a relevant command; only
-#        a value attached to a flag the hook reads (-Rx, -bx, -Fx, -fx,
-#        -Xx ...) is taken.
-#      - A launch whose command name is an expansion (`$GH pr merge`,
-#        `eval "$CMD"`, `bash -c "$CMD"`) blocks, unless its last path
-#        segment is a literal name other than gh ($HOME/bin/tool).
-#      - gh run by another command (nice gh, xargs gh) blocks when the
-#        sub-command is relevant: run gh directly.
-#      - A heredoc or here-string a shell reads as its script (sh <<EOF,
-#        bash <<< '...') is judged like any command line (lib/subcommand.sh);
-#        a script FILE run by name (bash x.sh, python x.py, just ...) is
-#        not read (a documented limit: the server-side status check of
-#        #187 still refuses an unapproved merge).
-#   4. --help / -h (as a flag of its own, not an option's value) only
-#      prints usage: such a launch passes without calling gh.
-#   5. raw-text tripwire (codex round 5), the backstop of the closed rule:
-#      a relevant gh call pattern (gh [root flags] pr merge|comment|review|
-#      create|new|close|reopen, issue comment|create|new|close|reopen, gh
-#      api) or the approval phrase found in the RAW command text (heredoc
-#      bodies and here-strings included) more often than in the launches
-#      the structured pass checked blocks: some occurrence escaped it. The
-#      accepted cost: text that merely mentions such a call or the phrase
-#      (a commit message) is blocked too; pass it with -F / --file.
-#      It also counts literal GitHub API URLs of a merge, comments or
-#      graphql call (curl / wget / http straight to the API).
-#   6. inline-code tripwire (codex round 6): a non-shell interpreter
-#      (hook_is_interpreter) whose inline code or stdin program names gh
-#      with a sub-command word, api.github.com or the phrase blocks. A cheap
-#      backstop: script files, obfuscated code and calls built at run time
-#      are not seen; merges are still refused server-side (#187).
-# The approval rule and phrase live only in lib/approval.sh; this hook
-# fetches data and never restates the rule. Only real launches count
-# (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
-# included, is skipped by hook_timeout_lead): quoted text, commit messages
-# and heredoc bodies that merely mention gh are data. Everything else
-# passes silently, without calling gh.
+# this hook blocks (exit 2, reason on stderr) what only an agent could do.
+#
+# WHAT it blocks and lets through - the merge gate, the tag rule, read vs
+# write, the closed rule, the tripwires and the documented limits - is
+# specified in ONE place: doc/structure.md, section "milestone 驗收 PR 的
+# 核准 gate" (from the "## 範圍" sections of issue #190). This header does
+# not restate it; each function below says how its part is implemented.
+# The approval rule and phrase live only in lib/approval.sh; the data-flag
+# table, the URL normaliser and the HTTP read / write classifier only in
+# .agents/hook/lib/subcommand.sh.
 
 # shellcheck source-path=SCRIPTDIR/lib
 # Exit-code-contract hook: `set -uo pipefail`, NOT -e (a probe returning 1
@@ -128,13 +61,47 @@ _STDIN_OK=''
 # be told apart; _ATTACH (per command, in _classify) lists the short flags
 # whose attached value the hook reads (-Rx, -bx ...).
 readonly _MERGE_VALUE_OPTS=' -R --repo -b --body -F --body-file -t --subject -A --author-email --match-head-commit '
-readonly _API_VALUE_OPTS=' -X --method -f -F --field --raw-field -H --header --input -q --jq -t --template --hostname --cache -p --preview '
+# gh api options that take a value but carry no request data. The data
+# flags (and whether each is a raw field, a typed field or --input) come
+# only from the table hook_http_data_flags of lib/subcommand.sh; the value
+# options and the attachable short letters of gh api derive from both.
+readonly _API_OTHER_VALUE_OPTS='-X --method -H --header -q --jq -t --template --hostname --cache -p --preview'
 readonly _BODY_VALUE_OPTS=' -R --repo -b --body -F --body-file '
 readonly _CREATE_VALUE_OPTS=' -R --repo -b --body -F --body-file -t --title -B --base -H --head -a --assignee -l --label -m --milestone -p --project -r --reviewer -T --template --recover '
 readonly _CLOSE_VALUE_OPTS=' -R --repo -c --comment -r --reason '
 # gh's built-in top-level commands; any other first word is an alias or an
 # extension, which may run anything.
 readonly _GH_COMMANDS=' accessibility agent-task alias api attestation auth browse cache co codespace completion config copilot extension gist gpg-key help issue label org pr preview project release repo ruleset run search secret ssh-key status variable version workflow '
+
+# _api_flags <kind>... - the gh api data flags of the table with those kinds
+# (raw, typed, input), one per line.
+_api_flags() {
+    local _f _a _k _want=" $* "
+    while read -r _f _a _k; do
+        [[ "${_want}" == *" ${_k} "* ]] && printf '%s\n' "${_f}"
+    done < <(hook_http_data_flags gh-api)
+}
+_API_RAW=()
+_API_TYPED=()
+_API_INPUT=()
+_API_DATA=()
+_API_VALUE_OPTS=''
+_API_ATTACH=''
+# _api_derive - fill the gh api flag sets from the table (at load).
+_api_derive() {
+    local _o
+    local -a _all
+    mapfile -t _API_RAW < <(_api_flags raw)
+    mapfile -t _API_TYPED < <(_api_flags typed)
+    mapfile -t _API_INPUT < <(_api_flags input)
+    _API_DATA=("${_API_RAW[@]}" "${_API_TYPED[@]}" "${_API_INPUT[@]}")
+    _API_VALUE_OPTS=" ${_API_OTHER_VALUE_OPTS} ${_API_DATA[*]} "
+    _API_ATTACH=''
+    read -r -a _all <<<"${_API_VALUE_OPTS}"
+    for _o in "${_all[@]}"; do
+        [[ "${_o}" == -[!-] ]] && _API_ATTACH+="${_o:1:1}"
+    done
+}
 
 # _is_gh <encoded word> - 0 when the word names gh (gh, /path/to/gh).
 _is_gh() {
@@ -255,7 +222,7 @@ _parse_path() {
 _classify() {
     _REL=1
     case "${_GROUP} ${_SUBC}" in
-        "api "*) _VALUE_OPTS="${_API_VALUE_OPTS}"; _ATTACH=XfFHqtp ;;
+        "api "*) _VALUE_OPTS="${_API_VALUE_OPTS}"; _ATTACH="${_API_ATTACH}" ;;
         "pr merge") _VALUE_OPTS="${_MERGE_VALUE_OPTS}"; _ATTACH=RbFtA ;;
         "pr comment"|"pr review"|"issue comment") _VALUE_OPTS="${_BODY_VALUE_OPTS}"; _ATTACH=RbF ;;
         "pr create"|"pr new"|"issue create"|"issue new") _VALUE_OPTS="${_CREATE_VALUE_OPTS}"; _ATTACH=RbFt ;;
@@ -515,10 +482,7 @@ _api_path() {
 # if any, is GET or HEAD.
 _api_is_read() {
     local _m
-    # The gh api data flags come from the single table (lib/subcommand.sh).
-    local -a _dflags
-    mapfile -t _dflags < <(hook_http_data_flags gh-api | cut -d' ' -f1)
-    _opt_at "${_dflags[@]}" >/dev/null && return 1
+    _opt_at "${_API_DATA[@]}" >/dev/null && return 1
     _m="$(_opt -X --method)" || return 0
     [[ "${_m^^}" =~ ^(GET|HEAD)$ ]]
 }
@@ -533,14 +497,14 @@ _check_api_graphql() {
     local _text='' _v _in
     while IFS= read -r -d '' _v; do
         _text+="${_v}"$'\n'
-    done < <(_opt_values -f --raw-field)
+    done < <(_opt_values "${_API_RAW[@]}")
     while IFS= read -r -d '' _v; do
         if [[ "${_v}" == *=@* ]]; then
             _v="$(_read_body "${_v#*=@}" "gh api graphql field")" || exit 2
         fi
         _text+="${_v}"$'\n'
-    done < <(_opt_values -F --field)
-    if _in="$(_opt --input)"; then
+    done < <(_opt_values "${_API_TYPED[@]}")
+    if _in="$(_opt "${_API_INPUT[@]}")"; then
         _v="$(_read_body "${_in}" "gh api graphql --input")" || exit 2
         _text+="${_v}"$'\n'"$(jq -r '[.. | strings] | join("\n")' <<<"${_v}" 2>/dev/null)"
     fi
@@ -661,7 +625,7 @@ _check_close_comment() {
     return 0
 }
 
-# _api_field_body <value of -f/-F/--field/--raw-field> <is -F/--field> -
+# _api_field_body <value of a raw / typed field flag> <is typed> -
 # print the comment body a field sets; 1 when it sets none, 2 when its
 # @file cannot be read (already reported).
 _api_field_body() {
@@ -696,15 +660,17 @@ _check_api_comment() {
     local _body _input
     _api_is_read && return 0
     # A write must carry a body the hook can judge (none: fail closed).
-    local _fields _re_body='(^|'$'\n'')([^=]*\[)?(body|message)\]?='
-    _fields="$(_opt_values -f --raw-field -F --field | tr '\0' '\n')"
-    if ! _opt_at --input >/dev/null && ! [[ "${_fields}" =~ ${_re_body} ]]; then
+    local _v _has=''
+    while IFS= read -r -d '' _v; do
+        [[ "${_v}" =~ ^([^=]*\[)?(body|message)\]?= ]] && _has=1
+    done < <(_opt_values "${_API_RAW[@]}" "${_API_TYPED[@]}")
+    if ! _opt_at "${_API_INPUT[@]}" >/dev/null && [[ -z "${_has}" ]]; then
         hook_block "gh api: a write to '$1' carries no body / message the hook can check (fail closed)." \
             "Pass the comment as -f body='[claude] ...' (or --input <file> with a tagged .body)."
     fi
-    _check_api_fields 0 -f --raw-field
-    _check_api_fields 1 -F --field
-    if _input="$(_opt --input)"; then
+    _check_api_fields 0 "${_API_RAW[@]}"
+    _check_api_fields 1 "${_API_TYPED[@]}"
+    if _input="$(_opt "${_API_INPUT[@]}")"; then
         _body="$(_read_body "${_input}" "gh api --input")" || exit 2
         # Every .body / .message in the JSON; none (or no JSON) is an empty body.
         local _b _n=0
@@ -884,6 +850,7 @@ _tripwire() {
 }
 
 main() {
+    _api_derive
     hook_read_input
     local _cmd _sub
     _cmd="$(hook_command)"
