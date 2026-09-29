@@ -96,8 +96,10 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
-metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<n>===` / `===END-<n>===` 包住,`n` 每次執行、每個區塊
-依內容挑選,使 marker 不出現在區塊內容與 `repoDir` 中,問題或結論裡的任何文字都不會提早結束區塊。
+metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<n>===` / `===END-<n>===` 包住,`n` 在同一次執行內只增不減,
+每個區塊各用一個不同的 `n`,並跳過會出現在區塊內容或 `repoDir` 中的值,問題或結論裡的任何文字都不會提早結束區塊。
+`n` 是決定性的(Workflow 不能用 `Math.random`,否則無法 resume),同一組 args 的兩次執行會用相同的 marker;
+唯一性的保證範圍是「一次執行內的每個區塊」,不是跨執行。
 
 `test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本(`test/unit/fixture/workflow_run.mjs`,
 agent 以替身代打並真的跑每個 shell 步驟,agy / codex / gh 以 stub 代替),驗證參數拒絕、quoting 與 fail-closed 流程。

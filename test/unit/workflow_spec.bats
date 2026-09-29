@@ -526,6 +526,13 @@ _rv_assert_fails_closed() {
     assert_output "$(printf '%s\n' "${scratch}/agy-prompt.txt:1" "${scratch}/codex-prompt.txt:1" "${scratch}/claude.md:1")"
 }
 
+@test "research-verify (node, exec): every fenced block in a run gets its own marker" {
+    run _rv_fail_case ok ok
+    assert_success
+    run jq -r '[.calls[].prompt | scan("===BEGIN-([0-9]+)===") | .[0]] | (length | tostring) + " " + (unique | length | tostring)' <<<"${output}"
+    assert_output "3 3"
+}
+
 @test "doc/workflow.md documents research-verify and its args" {
     run grep -c '^## research-verify' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"

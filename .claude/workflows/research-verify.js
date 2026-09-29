@@ -38,8 +38,10 @@ export const meta = {
 // without control characters or backticks. Every path or value that reaches a
 // shell command is single-quoted with sq(), so spaces and metacharacters in
 // repoDir are data, never syntax. A verbatim block is fenced by
-// ===BEGIN-<n>=== / ===END-<n>===, n chosen per run and block so neither marker
-// occurs in the block or in repoDir: no content can close the block early.
+// ===BEGIN-<n>=== / ===END-<n>===, n distinct for every block of a run and
+// chosen so neither marker occurs in the block or in repoDir: no content can
+// close the block early. n is deterministic (no Math.random in a Workflow, it
+// would break resume), so two runs with the same args reuse the same markers.
 
 const A = args || {}
 for (const k of ['repo', 'repoDir', 'issue', 'question']) {
@@ -62,9 +64,12 @@ const CD = `cd ${sq(SCRATCH)}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 // Fence body verbatim with markers that occur neither in it nor in REPO_DIR.
+// n only grows during a run, so no two blocks of one run share a marker.
+let lastFence = 0
 const fence = (body) => {
-  let n = 1
+  let n = lastFence + 1
   while ([body, REPO_DIR].some(t => t.includes(`===BEGIN-${n}===`) || t.includes(`===END-${n}===`))) n += 1
+  lastFence = n
   return `===BEGIN-${n}===\n${body}\n===END-${n}===`
 }
 
