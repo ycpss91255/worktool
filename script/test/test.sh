@@ -139,7 +139,8 @@ _required_specs() {
                 unit/verify_setup_spec.bats \
                 unit/verify_diagram_spec.bats \
                 unit/verify_realbox_spec.bats \
-                unit/verify_evidence_spec.bats
+                unit/verify_evidence_spec.bats \
+                unit/verify_all_spec.bats
             ;;
         integration)
             printf '%s\n' \
