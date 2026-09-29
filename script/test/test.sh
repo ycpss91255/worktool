@@ -135,7 +135,19 @@ _required_specs() {
                 unit/status_spec.bats \
                 unit/workflow_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
-                unit/hook/subcommand_spec.bats
+                unit/hook/subcommand_spec.bats \
+                unit/hook/test_must_use_docker_spec.bats \
+                unit/hook/enforce_long_job_timeout_spec.bats \
+                unit/hook/check_main_fresh_before_worktree_spec.bats \
+                unit/hook/remind_main_sync_spec.bats \
+                unit/hook/enforce_gh_body_file_spec.bats \
+                unit/hook/enforce_shellcheck_disable_approval_spec.bats \
+                unit/hook/approval_check_spec.bats \
+                unit/hook/disable_diff_spec.bats \
+                unit/hook/transcript_reader_spec.bats \
+                unit/hook/worktree_create_spec.bats \
+                unit/hook/remind_workflow_tdd_spec.bats \
+                unit/hook/remind_no_emoji_spec.bats
             ;;
         integration)
             printf '%s\n' \
