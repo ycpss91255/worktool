@@ -35,8 +35,11 @@
 # /proc/pressure/cpu. It waits at most --max-wait seconds (60, or 120 when
 # CI is set); a host that does not get quiet in time is exit 3
 # (inconclusive: no verdict, nothing on stdout, distrobox never called).
-# PSI is read again before and after every run; one reading above the
-# limit voids the whole batch (exit 3; slow samples are never dropped).
+# PSI is read again and recorded (one stderr line: `psi before|after
+# <metric> run <k>: <path> some avg10=<value>`) before and after every
+# run, a failed run included; one reading above the limit voids the whole
+# batch (exit 3, even when that run also failed; slow samples are never
+# dropped). The limit is exact at any number of decimals: 2.001 is busy.
 # loadavg is printed next to every PSI verdict as evidence and never
 # decides. When no PSI file is readable (a kernel without PSI), a warning
 # says so and the measurement runs unguarded rather than never at all.
@@ -113,7 +116,7 @@ OPT_MAX_WAIT=""        # empty = 60, or 120 when CI is set (_default_max_wait)
 OPT_HELP=0
 
 # --- Quiet-host precondition (issue #181) ------------------------------------
-PSI_LIMIT_H=200        # `some avg10` limit in hundredths: 2.00
+PSI_LIMIT="2.00"       # `some avg10` limit, compared exactly (_dec_le)
 PSI_QUIET_S=5          # consecutive quiet seconds before the first run
 # Where the PSI comes from. BENCH_PSI_FILE (environment, tests only)
 # replaces the whole lookup below.
@@ -122,10 +125,8 @@ PROC_SELF_CGROUP="/proc/self/cgroup"
 PROC_PSI="/proc/pressure/cpu"
 LOADAVG_FILE="/proc/loadavg"
 PSI_PATH=""            # the PSI file in use; empty = none readable
-PSI_VAL=""             # last `some avg10`, as the kernel printed it
-PSI_H=0                # the same, in hundredths
+PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
-PSI_PEAK_H=-1
 LOADAVG="n/a"
 
 # --- Input validation rules (what keeps --json valid JSON) -------------------
@@ -180,9 +181,11 @@ prints `<metric>: min=<ms> median=<ms> max=<ms> ms` (one line each).
 Quiet host: measuring starts once CPU pressure (PSI) some avg10 <= 2.00
 has held for 5 consecutive seconds, read from this process's cgroup v2
 cpu.pressure, else /proc/pressure/cpu (the path read is printed; loadavg
-is printed too, it never decides). PSI is read again before and after
-every run: one reading above the limit voids the whole batch. No readable
-PSI: a warning, and the measurement runs unguarded.
+is printed too, it never decides). PSI is read again and recorded on
+stderr before and after every run, a failed one included: one reading
+above the limit voids the whole batch (exit 3, even over a failed run).
+The limit is exact (2.001 is above it). No readable PSI: a warning, and
+the measurement runs unguarded.
 
 Exit codes:
   0    measured, and the shell median is within --max-ms (if given)
@@ -334,8 +337,9 @@ _inbox_cmd() {
 # Time metric $1: OPT_WARMUP unrecorded runs, then OPT_RUNS recorded ones
 # appended (microseconds) to the array named $2, each run made by the
 # runner $3 (_time_cmd or _inbox_cmd) on the command $4... The first run
-# that fails aborts the metric (return 1); a PSI reading above the limit
-# before or after any run voids the batch (return 3). Diagnostics show the in-box
+# that fails aborts the metric (return 1) unless the PSI reading after it
+# is above the limit: a reading above the limit before or after any run
+# (failed or not) voids the batch (return 3), and wins over the failure. Diagnostics show the in-box
 # timer as `<timer>` (as --help does), not its one-line source.
 _run_metric() {
     local _name="$1" _runner="$3"
@@ -347,11 +351,14 @@ _run_metric() {
         RUN_ERR=""
         _rc=0
         "${_runner}" _us "$@" || _rc=$?
+        # The after-run check comes FIRST, whatever the run returned: a
+        # run that failed on a host that turned busy during it is no
+        # evidence of a broken box - the batch is void (3), not failed (1).
+        _psi_guard "after ${_name} run $(( _i + 1 ))" || return 3
         if (( _rc != 0 )); then
             log_error "${_name}: ${RUN_ERR:-"'${_shown}' exited ${_rc}"} on run $(( _i + 1 )) - measurement aborted"
             return 1
         fi
-        _psi_guard "after ${_name} run $(( _i + 1 ))" || return 3
         (( _i >= OPT_WARMUP )) && _ref_samples+=("${_us}")
     done
     log_info "${_name}: ${OPT_WARMUP} warmup + ${OPT_RUNS} run(s) of '${_shown}' done"
@@ -360,20 +367,51 @@ _run_metric() {
 
 # --- Quiet host: PSI and loadavg (issue #181) --------------------------------
 
-# Read `some avg10` from the PSI file $1 into PSI_VAL (as printed) and PSI_H
-# (hundredths). Returns 1 when the file is unreadable or has no such line.
+# Return 0 when the decimal number $1 <= the decimal number $2, compared
+# EXACTLY at any number of decimals (2.001 > 2.00; nothing is truncated).
+# Both must match ^[0-9]+(\.[0-9]+)?$ (_psi_read validated them): the
+# integer parts are compared as digit strings without leading zeros (by
+# length, then lexically), the fractions padded with zeros to one length
+# and compared lexically - equal-length digit strings order like numbers.
+_dec_le() {
+    local _ai="${1%%.*}" _bi="${2%%.*}" _af="" _bf=""
+    [[ "$1" == *.* ]] && _af="${1#*.}"
+    [[ "$2" == *.* ]] && _bf="${2#*.}"
+    _ai="${_ai#"${_ai%%[!0]*}"}"
+    _bi="${_bi#"${_bi%%[!0]*}"}"
+    if (( ${#_ai} != ${#_bi} )); then
+        (( ${#_ai} < ${#_bi} ))
+        return
+    fi
+    if [[ "${_ai}" != "${_bi}" ]]; then
+        [[ "${_ai}" < "${_bi}" ]]
+        return
+    fi
+    while (( ${#_af} < ${#_bf} )); do _af+="0"; done
+    while (( ${#_bf} < ${#_af} )); do _bf+="0"; done
+    [[ ! "${_af}" > "${_bf}" ]]
+}
+
+# Read `some avg10` from the PSI file $1 into PSI_VAL (as printed, after
+# checking it is a plain decimal number). PSI_VAL is cleared first, so a
+# failed read never leaves the previous reading behind. Returns 1 when the
+# file is unreadable or has no such line.
 _psi_read() {
-    local _line _f _re='^some avg10=([0-9]+)\.([0-9]+)( |$)'
+    local _line _re='^some avg10=([0-9]+(\.[0-9]+)?)( |$)'
+    PSI_VAL=""
     [[ -r "$1" ]] || return 1
     while IFS= read -r _line; do
         if [[ "${_line}" =~ ${_re} ]]; then
-            _f="${BASH_REMATCH[2]}00"
-            PSI_VAL="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-            PSI_H=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${_f:0:2} ))
+            PSI_VAL="${BASH_REMATCH[1]}"
             return 0
         fi
     done 2>/dev/null <"$1"
     return 1
+}
+
+# Return 0 when the last reading (PSI_VAL) is within the limit.
+_psi_quiet() {
+    [[ -n "${PSI_VAL}" ]] && _dec_le "${PSI_VAL}" "${PSI_LIMIT}"
 }
 
 # Set PSI_PATH to the first PSI file that yields a reading: BENCH_PSI_FILE
@@ -415,7 +453,7 @@ _loadavg() {
 _wait_quiet() {
     local _streak=-1 _waited=0
     while :; do
-        if _psi_read "${PSI_PATH}" && (( PSI_H <= PSI_LIMIT_H )); then
+        if _psi_read "${PSI_PATH}" && _psi_quiet; then
             _streak=$(( _streak + 1 ))
         else
             _streak=-1
@@ -448,14 +486,15 @@ _host_precondition() {
     _wait_quiet
 }
 
-# Read PSI at the moment $1 names ("before enter run 3") and return 3 -
+# Read PSI at the sample boundary $1 names ("before enter run 3"), record
+# it (one stderr line: the boundary, the path and the value) and return 3 -
 # the whole batch is void - when it is above the limit or unreadable.
 # Tracks the batch's peak reading. A no-op when no PSI is in use.
 _psi_guard() {
     [[ -n "${PSI_PATH}" ]] || return 0
-    if _psi_read "${PSI_PATH}" && (( PSI_H <= PSI_LIMIT_H )); then
-        if (( PSI_H > PSI_PEAK_H )); then
-            PSI_PEAK_H="${PSI_H}"
+    if _psi_read "${PSI_PATH}" && _psi_quiet; then
+        log_info "psi $1: ${PSI_PATH} some avg10=${PSI_VAL}"
+        if [[ -z "${PSI_PEAK}" ]] || ! _dec_le "${PSI_VAL}" "${PSI_PEAK}"; then
             PSI_PEAK="${PSI_VAL}"
         fi
         return 0

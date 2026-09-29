@@ -227,10 +227,13 @@ inbox: min=<ms> median=<ms> max=<ms> ms
   exit 3,STDERR 印
   `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
   STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
-- **量測途中**:每一次執行(暖身也算)的**前後**都再讀一次 PSI;任何一次超標,
+- **量測途中**:每一次執行(暖身也算、失敗的那一次也算)的**前後**都讀取並**記錄** PSI
+  (每個邊界在 STDERR 印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
+  STDOUT 不變);任何一次超標(精確比較、不截斷小數:`2.001` 算超標),
   **整批作廢** → exit 3,STDERR 印
   `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
-  不印任何指標行、不判 `--max-ms`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
+  不印任何指標行、不判 `--max-ms`;同一次執行本身失敗時也是 exit 3、不是 1。讀不到
+  數值時 `<值>` 印 `?`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
 - **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
   幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
   擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、

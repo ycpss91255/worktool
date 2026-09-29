@@ -46,8 +46,10 @@
 #     seconds (one poll a second); not within --max-wait seconds (default
 #     60, 120 when CI is set) -> exit 3 "host too busy to measure
 #     (inconclusive)", distrobox never called, nothing on stdout. PSI is
-#     read again before and after every run; one reading above the limit
-#     voids the whole batch -> exit 3, no metric line. No readable PSI ->
+#     read again and recorded (one stderr line each) before and after
+#     every run, a failed run included; one reading above the limit
+#     (exact at any precision: 2.001 is above 2.00) voids the whole batch
+#     -> exit 3, no metric line, even when that run also failed. No readable PSI ->
 #     a warning and an unguarded measurement. The PSI source is the
 #     process's own cgroup v2 cpu.pressure, then /proc/pressure/cpu.
 #
@@ -771,6 +773,98 @@ _busy_re() {
     assert_failure 3
     refute_line --regexp '^\{'
     assert_line --regexp 'after inbox run 1; loadavg='
+}
+
+# Codex round 1 on PR #236: a run that FAILS must still get its after-run
+# PSI check. A failure on a host that turned busy during that very run is
+# not evidence of a broken box, so the verdict is 3 (inconclusive), not 1.
+@test "a failing run on a host that turned busy during it is inconclusive (exit 3), not a failure (exit 1)" {
+    run env FAKE_DBX_EXIT=4 FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=7.25 \
+        "${BENCH}" --runs 2 --warmup 0
+    assert_failure 3
+    assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=7\.25 after enter run 1; loadavg=[^;]+; batch void, re-run when idle$"
+    refute_line --partial "measurement aborted"
+    refute_output --regexp '^(enter|shell|inbox): min='
+    assert_equal "$(_calls | wc -l)" "1"
+}
+
+@test "a failing run on a host that stayed quiet is still a failure (exit 1)" {
+    run env FAKE_DBX_EXIT_SHELL=4 "${BENCH}" --runs 1 --warmup 0
+    assert_failure 1
+    assert_line --partial "exited 4 on run 1 - measurement aborted"
+    refute_line --partial "inconclusive"
+}
+
+# Issue #181 決定: PSI is RECORDED before and after every sample - one
+# stderr line per sample boundary (path and value), stdout unchanged.
+@test "every run records its PSI before and after it on stderr (path and value), stdout unchanged" {
+    local _out="${TMP}/out" _err="${TMP}/err" _m _k _p
+    run bash -c '"$1" --runs 2 --warmup 1 >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
+    assert_success
+    run cat "${_out}"
+    assert_equal "${#lines[@]}" 3
+    run grep -c '^\[INFO\] psi ' "${_err}"
+    assert_output "18"
+    run cat "${_err}"
+    _p="${BENCH_PSI_FILE//./\\.}"
+    for _m in enter shell inbox; do
+        for _k in 1 2 3; do
+            assert_line --regexp "^\[INFO\] psi before ${_m} run ${_k}: ${_p} some avg10=0\.00$"
+            assert_line --regexp "^\[INFO\] psi after ${_m} run ${_k}: ${_p} some avg10=0\.00$"
+        done
+    done
+}
+
+@test "the per-run PSI records come in run order: before run k, then after run k" {
+    run "${BENCH}" --runs 1 --warmup 1
+    assert_success
+    run bash -c 'grep -E "^\[INFO\] psi " <<<"$1" | sed -E "s/: .*//"' _ "${output}"
+    assert_output "$(printf '[INFO] psi %s\n' \
+        'before enter run 1' 'after enter run 1' 'before enter run 2' 'after enter run 2' \
+        'before shell run 1' 'after shell run 1' 'before shell run 2' 'after shell run 2' \
+        'before inbox run 1' 'after inbox run 1' 'before inbox run 2' 'after inbox run 2')"
+}
+
+# Codex round 1 on PR #236: `some avg10 <= 2.00` is exact at any number of
+# decimals - nothing is truncated to two places.
+@test "the 2.00 limit is exact at any precision: 2.00 and 1.999 are quiet, 2.001 and 2.01 are busy" {
+    local _v
+    for _v in 2.00 1.999 2.000 0.5 2; do
+        _psi "${_v}"
+        rm -f "${FAKE_SLEEP_CALLS}"
+        run "${BENCH}" --runs 1 --warmup 0 --max-wait 6
+        assert_success
+        assert_equal "$(_sleeps)" "5"
+    done
+    for _v in 2.001 2.01 2.0000001 10.00 3; do
+        _psi "${_v}"
+        rm -f "${FAKE_SLEEP_CALLS}" "${FAKE_DBX_CALLS}"
+        run "${BENCH}" --runs 1 --warmup 0 --max-wait 6
+        assert_failure 3
+        assert_line --regexp "$(_busy_re "${_v}" 6)"
+        assert_equal "$(_calls)" ""
+    done
+}
+
+@test "a mid-run reading just above the limit (2.001) voids the batch" {
+    run env FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=2.001 "${BENCH}" --runs 1 --warmup 0
+    assert_failure 3
+    assert_line --regexp 'some avg10=2\.001 after enter run 1; loadavg='
+}
+
+@test "the stayed-quiet peak compares exactly (1.999 beats 1.99)" {
+    FAKE_PSI_SEQ="1.99" run env FAKE_DBX_PSI_AT=2 FAKE_DBX_PSI_VALUE=1.999 \
+        "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --regexp '^\[INFO\] host stayed quiet: .* some avg10 peak=1\.999 over every run; loadavg=.+$'
+}
+
+# A reading that fails after an earlier good one must not report the stale
+# value: the error shows `?` for "no reading".
+@test "an unreadable PSI mid-run is reported as avg10=? (never the last good value)" {
+    run env FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=garbage "${BENCH}" --runs 1 --warmup 0
+    assert_failure 3
+    assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=\? after enter run 1; loadavg=[^;]+; batch void, re-run when idle$"
 }
 
 @test "no readable PSI: a warning says so and the measurement runs unguarded (exit 0, no wait)" {
