@@ -25,10 +25,10 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 
 ## shell 慣例
 
-- **可執行腳本用 `set -uo pipefail`,不用 `-e`。** 退出碼是這些腳本的對外契約,`-e` 會讓中途某個預期內的非零結果直接中斷,吞掉本來要回報的狀態。要中止就自己判斷並 `exit`。
-- **`lib/` 底下的檔案是被 source 的,不下 `set`。** 它們不該改變呼叫者的 shell 選項;只提供函式。
-- **診斷走 stderr,stdout 留給資料。** 用 `lib/log.sh` 的 `log_info` / `log_warn` / `log_error`,呼叫者才能安全地把 stdout 接進管線或變數。
-- **參數錯誤一律 exit 2**,訊息格式 `<script>.sh: unknown option '<x>' (see --help)` 寫到 stderr;`--help` 自己 exit 0。功能性失敗用 exit 1,與參數錯誤分開。
-- **每支腳本自己負責 `--help` 與參數驗證**,`just` 只做轉發,不做檢查。
-- **不要新增 `shellcheck disable`。** 目前全 repo 是零;先查 <https://www.shellcheck.net/wiki/SC{code}> 找正解,真的沒有才在 PR 裡說明理由。
-- **管線的第一段失敗不可以被吞掉。** 有 `pipefail` 就夠;沒有的情境用 `${PIPESTATUS[0]}`,或先存進變數檢查退出碼再往下走。
+- **可執行腳本用 `set -uo pipefail`，不用 `-e`。** 退出碼是這些腳本的對外契約，`-e` 會讓中途某個預期內的非零結果直接中斷，吞掉本來要回報的狀態。要中止就自己判斷並 `exit`。
+- **`lib/` 底下的檔案是被 source 的，不下 `set`。** 它們不該改變呼叫者的 shell 選項；只提供函式。
+- **診斷走 stderr，stdout 留給資料。** 用 `lib/log.sh` 的 `log_info`／`log_warn`／`log_error`，呼叫者才能安全地把 stdout 接進管線或變數。
+- **參數錯誤一律 exit 2**，訊息格式 `<script>.sh: unknown option '<x>' (see --help)` 寫到 stderr；`--help` 自己 exit 0。功能性失敗用 exit 1，與參數錯誤分開。
+- **`--help` 與參數驗證由腳本負責**，`just` 只轉發：見 `doc/design.md`「決策」2026-09-16 的規則 4。
+- **不要新增 `shellcheck disable`。** 目前全 repo 是零；先查 <https://www.shellcheck.net/wiki/SC{code}> 找正解，真的沒有，要先取得維護者核准才能加。
+- **管線的第一段失敗不可以被吞掉。** 有 `pipefail` 就夠；沒有的情境用 `${PIPESTATUS[0]}`，或先存進變數檢查退出碼再往下走。
