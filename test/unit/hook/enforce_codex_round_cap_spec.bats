@@ -69,6 +69,21 @@ _source_hook() {
     assert_output ""
 }
 
+@test "codex_round_of: leading zeros are dropped ('第 004 輪') -> 4" {
+    _source_hook
+    run codex_round_of "第 004 輪"
+    assert_output "4"
+}
+
+@test "codex_round_of: a round past the 64-bit range is kept as digits, no arithmetic" {
+    _source_hook
+    run codex_round_of "第 18446744073709551616 輪"
+    assert_success
+    assert_output "18446744073709551616"
+    run codex_round_of "第 9223372036854775808 輪; 第 5 輪"
+    assert_output "9223372036854775808"
+}
+
 # --- codex_round_allowed: rounds 1-3 free, 4+ need the exact approval --------
 
 @test "codex_round_allowed: rounds 1-3 and no round pass without approval" {
@@ -93,6 +108,17 @@ _source_hook() {
     run codex_round_allowed 4 "approve codex round 4"
     assert_success
     run codex_round_allowed 4 $'root cause fixed.\nApprove codex round 4, go.'
+    assert_success
+}
+
+@test "codex_round_allowed: a round past the 64-bit range needs its own exact approval" {
+    _source_hook
+    local _big=18446744073709551616
+    run codex_round_allowed "${_big}" "please continue"
+    assert_failure
+    run codex_round_allowed 9223372036854775808 "approve codex round 0"
+    assert_failure
+    run codex_round_allowed "${_big}" "approve codex round ${_big}"
     assert_success
 }
 
@@ -178,6 +204,83 @@ _source_hook() {
     _check 'git commit -m "run codex exec for 第 4 輪"'
     assert_success
     _check 'echo "codex exec 第 4 輪"'
+    assert_success
+}
+
+@test "hook: a round that wraps the 64-bit range (2^64 -> 0, 2^63 -> negative) -> blocked" {
+    _check 'codex exec "第 18446744073709551616 輪"'
+    assert_failure 2
+    assert_output --partial "approve codex round 18446744073709551616"
+    _check 'codex exec "第 9223372036854775808 輪"'
+    assert_failure 2
+}
+
+# --- every launch is judged on its own -----------------------------------------
+
+@test "hook: two launches (round 4; round 5), only round 5 approved -> blocked on round 4" {
+    _say "approve codex round 5"
+    _check 'codex exec "第 4 輪" ; codex exec "第 5 輪"'
+    assert_failure 2
+    assert_output --partial "approve codex round 4"
+}
+
+@test "hook: two launches, both rounds approved -> pass; one launch of round 3 beside round 4 still needs round 4" {
+    _say "approve codex round 4; approve codex round 5"
+    _check 'codex exec "第 4 輪" && codex exec "第 5 輪"'
+    assert_success
+    _say "please continue"
+    _check 'codex exec "第 3 輪" | codex exec "第 4 輪"'
+    assert_failure 2
+    assert_output --partial "approve codex round 4"
+}
+
+# --- a prompt word the hook cannot read literally fails closed ------------------
+
+@test "hook: a substitution other than \$(cat <path>) in the prompt -> blocked, no approval helps" {
+    _say "approve codex round 4"
+    _check "codex exec \"\$(printf 第%s輪 4)\""
+    assert_failure 2
+    assert_output --partial "cannot be read"
+    _check "codex exec \"\`printf 第4輪\`\""
+    assert_failure 2
+    _check "codex exec \"\$(cat p.txt | tr 3 4)\""
+    assert_failure 2
+}
+
+@test "hook: a variable or \$'...' in the prompt -> blocked" {
+    _check "codex exec \"\$PROMPT\""
+    assert_failure 2
+    assert_output --partial "cannot be read"
+    _check "codex exec \$'\\u7b2c 4 \\u8f2a'"
+    assert_failure 2
+}
+
+@test "hook: \$(cat <path>) of a missing file -> blocked" {
+    _check "codex exec \"\$(cat missing.txt)\""
+    assert_failure 2
+    assert_output --partial "cannot be read"
+}
+
+@test "hook: two \$(cat <path>) in one word are both spliced in place (1 and 2 -> round 12)" {
+    printf '1\n' >"${FIXTURE_DIR}/a.txt"
+    printf '2\n' >"${FIXTURE_DIR}/b.txt"
+    _check "codex exec \"第 \$(cat a.txt)\$(cat b.txt) 輪\""
+    assert_failure 2
+    assert_output --partial "approve codex round 12"
+}
+
+@test "hook: a command carrying the placeholder byte (\\002) itself -> blocked" {
+    _check "codex exec \"第 "$'\002'"0"$'\002'" 輪\""
+    assert_failure 2
+}
+
+@test "hook: text around \$(cat <path>) in one word is read with the file spliced in" {
+    printf '4\n' >"${FIXTURE_DIR}/n.txt"
+    _check "codex exec \"第 \$(cat n.txt) 輪\""
+    assert_failure 2
+    assert_output --partial "approve codex round 4"
+    printf '這是第 3 輪\n' >"${FIXTURE_DIR}/p3.txt"
+    _check "codex exec \"prefix \$(cat p3.txt)\""
     assert_success
 }
 
