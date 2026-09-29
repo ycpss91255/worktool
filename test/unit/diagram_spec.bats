@@ -44,6 +44,13 @@
 #   control fixture (correct f_test) proves the guard accepts the fixture
 #   shape at all, so the rejection is not a vacuous format mismatch.
 #
+#   Box HOME guard (issue #197, ADR 0002): the architecture diagram's HOME
+#   cylinder (cell id home) shows the box's own HOME, not the superseded
+#   shared HOME. Same shape as the f_test guard: one predicate,
+#   _home_cell_ok, checks the rendered group AND the embedded source of that
+#   one cell, and the two captions that describe the diagram (README.md and
+#   doc/structure.md) no longer say "共用 HOME" either.
+#
 # Written test-first: RED while doc/diagram/ is missing, GREEN once the
 # exports and the README section land. The #163 tightening was RED on the
 # wording case until flow.drawio.svg was re-exported; the fixture cases were
@@ -64,6 +71,14 @@ OLD_F_TEST_WORDING="host 不裝任何套件"
 # A paraphrase of the old claim used by the regression fixture: wrong in
 # meaning, yet matched by neither the old string nor the new lines.
 REGRESSED_F_TEST_WORDING="host 免安裝"
+
+# The label lines of the architecture diagram's HOME cylinder (#197).
+HOME_LINE_1="盒子 HOME(--home)"
+HOME_LINE_2="預設 ~/dev-box"
+HOME_LINE_3="tool config:fish tmux nvim"
+HOME_LINE_4="user config 連結自 host"
+HOME_LINE_5="host 設定不受影響"
+OLD_HOME_WORDING="共用 HOME"
 
 setup() {
     README="${REPO_ROOT}/README.md"
@@ -184,6 +199,32 @@ _f_test_source_ok() {
 # True iff the flow diagram $1 passes the #163 wording guard on both sides.
 _f_test_wording_ok() {
     _f_test_rendered_ok "$1" && _f_test_source_ok "$1"
+}
+
+# --- The #197 box-HOME guard (architecture diagram, cell id home) ------------
+
+# The five expected lines, newline-separated, as _cell_label_lines reports.
+_home_expected_lines() {
+    printf '%s\n%s\n%s\n%s\n%s\n' "${HOME_LINE_1}" "${HOME_LINE_2}" \
+        "${HOME_LINE_3}" "${HOME_LINE_4}" "${HOME_LINE_5}"
+}
+
+# True iff the rendered home group AND the embedded home source of file $1
+# both carry exactly the five expected lines; prints the mismatch otherwise.
+_home_cell_ok() {
+    local _got _cell _want
+    _got="$(_cell_label_lines "$1" home)"
+    if [ "${_got}" != "$(_home_expected_lines)" ]; then
+        printf 'rendered home lines:\n%s\n' "${_got}"
+        return 1
+    fi
+    _cell="$(_source_cell "$1" home)"
+    _want="value=&quot;$(_home_expected_lines | sed -E '$!s/$/\&amp;#xa;/' | tr -d '\n')&quot;"
+    case "${_cell}" in
+        *"${_want}"*) return 0 ;;
+    esac
+    printf 'source home cell:\n%s\n' "${_cell}"
+    return 1
 }
 
 # --- Fixtures (written under BATS_TEST_TMPDIR) ------------------------------
@@ -404,6 +445,38 @@ _write_fixture_wording_moved() {
     run _f_test_source_ok "${_f}"
     assert_failure
     run _f_test_wording_ok "${_f}"
+    assert_failure
+}
+
+# --- architecture diagram: the box owns its HOME (issue #197) ----------------
+
+@test "architecture diagram: the HOME cell shows the box's own HOME (rendered and source)" {
+    run _home_cell_ok "$(_svg architecture)"
+    assert_success
+}
+
+@test "architecture diagram and its captions no longer say shared HOME" {
+    local _f
+    for _f in "$(_svg architecture)" "${README}" "${REPO_ROOT}/doc/structure.md"; do
+        run grep -c "${OLD_HOME_WORDING}" "${_f}"
+        assert_failure
+        assert_output "0"
+    done
+}
+
+@test "the box-HOME guard accepts a fixture HOME cell with the five lines (control)" {
+    local _f="${BATS_TEST_TMPDIR}/box_home.svg"
+    _write_fixture_flow "${_f}" "$(_home_expected_lines)" "x"
+    sed -i 's/f_test/home/g' "${_f}"
+    run _home_cell_ok "${_f}"
+    assert_success
+}
+
+@test "the box-HOME guard rejects a HOME cell that still carries the shared-HOME label" {
+    local _f="${BATS_TEST_TMPDIR}/shared_home.svg"
+    _write_fixture_flow "${_f}" "${OLD_HOME_WORDING}"$'\n'"~/.config/*" "x"
+    sed -i 's/f_test/home/g' "${_f}"
+    run _home_cell_ok "${_f}"
     assert_failure
 }
 

@@ -20,9 +20,9 @@
 ## 決策
 
 1. 盒子使用獨立 HOME：建盒時以 distrobox `--home` 指定（`box/` 清單的 `home=` 欄位，見上游 [distrobox-assemble.md 第 126 行](https://github.com/89luca89/distrobox/blob/1.8.2.5/docs/usage/distrobox-assemble.md)）。tool config（tmux、fish、nvim 等盒內工具的設定）只放在盒子 HOME。
-2. 路徑可指定：預設 `~/<盒名>-box`（dev 盒 = `~/dev-box`），`just box assemble --home <路徑>` 覆寫。distrobox 只在建盒時決定 HOME，建盒後要換只能刪盒重建；已存在的盒子給了不同的 `--home` 一律拒絕，不自動重建。細節與驗收見 #198。
-3. user config（`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh` 等）以 symlink 從 host HOME 帶進盒子 HOME：不複製、不修改，host 那份是唯一一份；盒子 HOME 已有同名檔時不覆蓋。細節與驗收見 #199。
-4. `/tmp` 仍是盒內外共用，所以 tmux 要有盒子自己的 socket：建盒時在盒子設定 `TMUX_TMPDIR`，指到盒子 HOME 底下的專用目錄，盒內任何方式啟動的 tmux 都不會連到 host 的 server。細節與驗收見 #179。
+2. 路徑可指定：預設 `~/<盒名>-box`（dev 盒 = `~/dev-box`），以 `just box assemble --home <路徑>` 覆寫。distrobox 只在建盒時決定 HOME，建盒後要換只能刪盒重建；已存在的盒子給了不同的 `--home` 一律拒絕，不自動重建。以上尚未實作（目前 `just box assemble` 只有 `--dry-run`、`--file`、`--help`），將由 #198 實作，細節與驗收見該 issue。
+3. user config（`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh` 等）以 symlink 從 host HOME 帶進盒子 HOME：不複製、不修改，host 那份是唯一一份；盒子 HOME 已有同名檔時不覆蓋。以上尚未實作，將由 #199 實作，細節與驗收見該 issue。
+4. `/tmp` 仍是盒內外共用，所以 tmux 要有盒子自己的 socket：建盒時在盒子設定 `TMUX_TMPDIR`，指到盒子 HOME 底下的專用目錄，盒內任何方式啟動的 tmux 都不會連到 host 的 server。以上尚未實作，將由 #179 實作，細節與驗收見該 issue。
 
 ## 影響
 
@@ -30,7 +30,8 @@
 - 除了 HOME，盒內外還共用 distrobox 預設掛入的其他路徑，其中 `/tmp` 會造成 tmux 連錯 server（上游 [issue #824](https://github.com/89luca89/distrobox/issues/824)，#179 的實機假成功）。以後新增盒內工具時，要檢查它是否把 socket 或狀態放在共用路徑，比照 tmux 以環境變數指回盒子 HOME。
 - 盒子 HOME 是 host 檔案系統上的一個目錄（預設 `~/dev-box`），`distrobox rm` 預設不刪它（上游 1.8.2.5 只有加 `--rm-home` 才會詢問是否刪除）；盒子重建後 tool config 仍在，要從乾淨狀態重來須自行刪除該目錄。
 - 盒子 HOME 初次啟動時由 distrobox-init 以 `/etc/skel` 填入預設檔（demo 第 7 步）。
-- 既有以共用 HOME 為前提的文件與測試（`doc/enter.md`、`doc/manifest.md`、`doc/acceptance.md` 的 M5 項目、架構圖的「共用 HOME」）在 #198、#199、#179 實作時各自改寫；在那之前，實際行為仍是共用 HOME。
+- 既有以共用 HOME 為前提的文件與測試（`doc/enter.md`、`doc/manifest.md`、`doc/acceptance.md` 的 M5 項目）在 #198、#199、#179 實作時各自改寫；在那之前，實際行為仍是共用 HOME。
+- 架構圖（`doc/diagram/architecture.drawio.svg`）與描述它的 `README.md`、`doc/structure.md` 在本 ADR 的同一個 PR 改為盒子 HOME：圖面表達的是採納後的架構，與 `doc/design.md` 一致。
 
 ## 被否決的方案：維持共用 HOME，加上「工具只裝盒內」的紀律
 
