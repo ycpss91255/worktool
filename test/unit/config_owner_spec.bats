@@ -32,9 +32,26 @@ bats_require_minimum_version 1.5.0
 # fake distrobox, @BOX@ the box HOME used by assemble.
 _runs() {
     printf '%s\n' \
-        'setup||--tmux host' \
-        'assemble||--home @BOX@' \
-        'status||'
+        'setup||' \
+        'setup||--auto-enter yes --terminal ghostty --tmux host --box dev --distrobox @DBX@' \
+        'setup||--auto-enter=yes --terminal=ghostty --tmux=inside --box=work --distrobox=@DBX@' \
+        'setup||--terminal none --tmux host' \
+        'setup||--dry-run --tmux host' \
+        'setup||-h' \
+        'setup||--help' \
+        'setup|ghostty-host|--auto-enter no' \
+        'setup|ghostty-inside|--auto-enter=no' \
+        'setup|none-host|--auto-enter no --dry-run' \
+        'assemble||' \
+        'assemble||--file box/dev.ini --home @BOX@' \
+        'assemble||--file=box/dev.ini --home=@BOX@' \
+        'assemble||--dry-run --home @BOX@' \
+        'assemble||-h' \
+        'assemble||--help' \
+        'status||' \
+        'status|ghostty-host|' \
+        'status||-h' \
+        'status||--help'
 }
 
 # The verbs of script/box/justfile.box, one per line.
@@ -151,7 +168,7 @@ _prep() {
 # Every row of script $1, in both manager states and both trap forms.
 _owner_runs() {
     local _s _p _a _state _form _name
-    local -a _states=(none)
+    local -a _states=(none existing)
     while IFS='|' read -r _s _p _a; do
         [[ "${_s}" == "$1" ]] || continue
         for _state in "${_states[@]}"; do
