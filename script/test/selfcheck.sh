@@ -29,11 +29,14 @@
 # `selfcheck.sh: unknown option '<x>' (see --help)` on stderr, exit 2,
 # before any check runs.
 #
-# Exit-code-contract script: `set -uo pipefail` (no -e); every exit is
-# explicit.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 # The repo root is two levels up from script/test/; the wrapper under test
@@ -67,8 +70,13 @@ _usage_error() {
     printf 'selfcheck.sh: %s (see --help)\n' "$1" >&2
 }
 
+# The EXIT trap: an `if`, not `[[ ... ]] && rm`, so nothing to remove still
+# returns 0 - a trap that fails under errexit would replace the run's exit
+# status with its own.
 _cleanup() {
-    [[ -n "${SELFCHECK_TMP}" ]] && rm -rf -- "${SELFCHECK_TMP}"
+    if [[ -n "${SELFCHECK_TMP}" ]]; then
+        rm -rf -- "${SELFCHECK_TMP}"
+    fi
 }
 
 # Result reporting. FAIL lines carry the detail that would let a user see
@@ -103,8 +111,12 @@ _check_reject() {
     _err="${SELFCHECK_TMP}/$(basename -- "${_manifest}").err"
     _out="$(cd -- "${SELFCHECK_ROOT}" \
         && bash "${ASSEMBLE_REL}" --file "${_manifest}" 2>"${_err}")" || _rc=$?
-    local _errtext
-    _errtext="$(cat "${_err}")"
+    # No stderr file means the wrapper never ran (the cd failed): an empty
+    # stderr in the FAIL line, not a failed `cat` that ends the self-check.
+    local _errtext=""
+    if [[ -f "${_err}" ]]; then
+        _errtext="$(cat -- "${_err}")"
+    fi
     if [[ "${_rc}" -eq 1 && -z "${_out}" && "${_errtext}" == *"${_expected_msg}"* ]]; then
         _pass "${_label}"
     else

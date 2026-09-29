@@ -365,10 +365,14 @@ enter_block_present() {
     [[ -f "$1" ]] && grep -qxF "${ENTER_BLOCK_BEGIN}" "$1"
 }
 
-# Number of begin markers in file $1 (0 when the file is absent).
+# Number of begin markers in file $1 (0 when the file is absent). `grep -c`
+# prints 0 AND exits 1 when nothing matches: that 1 is expected and
+# handled; only a real grep error (2) is returned.
 enter_block_count() {
     [[ -f "$1" ]] || { printf '0\n'; return 0; }
-    grep -cxF "${ENTER_BLOCK_BEGIN}" "$1" || true
+    local _rc=0
+    grep -cxF "${ENTER_BLOCK_BEGIN}" "$1" || _rc=$?
+    (( _rc <= 1 )) || return "${_rc}"
 }
 
 # Print the lines between the markers of the FIRST block in file $1.
