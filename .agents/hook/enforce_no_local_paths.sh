@@ -12,7 +12,7 @@
 #     gh api --input <file> (relative paths resolve against the payload's
 #     cwd, or a `cd` earlier in the same command)
 #   - gh api field values (-f / --raw-field / -F / --field)
-#   - a heredoc anywhere in a command that launches such a gh call
+#   - a heredoc redirected into such a gh launch
 # The judged gh launches: gh pr|issue create / new / comment / edit /
 # review / close / reopen, and every gh api call. The path patterns live
 # only in LOCAL_PATH_ERE below; LOCAL_PATH_ALLOWED lists the generic
@@ -20,8 +20,9 @@
 #
 # The closed rule of #190: a body the hook cannot read literally blocks -
 # an inline body or a file path holding a shell expansion ($VAR, $(...),
-# a backtick, a glob, a leading ~), a missing or unreadable file, and a
-# stdin body (-) with no heredoc in the command.
+# a backtick, a glob, a leading ~), a missing or unreadable file, a stdin
+# body (-) not fed by a heredoc on that same gh launch (a pipe, or a heredoc
+# of another command), and an unquoted heredoc to gh holding '$' or '`'.
 #
 # Only real launches count (lib/subcommand.sh): a path in a commit message,
 # an echo, a cd or a redirection is not a gh body. Everything else passes
@@ -42,8 +43,8 @@ readonly LOCAL_PATH_ERE='(^|[^[:alnum:]_.~-])(/home/[^/[:space:]]+/|/Users/[^/[:
 readonly LOCAL_PATH_ALLOWED=' /home/me/ '
 
 # The launch under judgement: encoded words (_E) and the directory its
-# relative files resolve against (_CWD). _STDIN is set when a body is read
-# from stdin; _REL when any relevant gh launch was seen.
+# relative files resolve against (_CWD). _STDIN is set when the launch
+# reads a body from stdin; _REL when any relevant gh launch was seen.
 _E=()
 _CWD=''
 _STDIN=0
@@ -193,18 +194,63 @@ _check_gh() {
     _check_files "gh ${_grp} ${_sub} body" --body-file -F
 }
 
-# _heredoc_bodies <command> - the lines of every heredoc body in <command>
-# (the complement of lib/subcommand.sh's heredoc stripping).
-_heredoc_bodies() {
-    local _line _term='' _trim
-    local _re="(^|[^<])<<-?[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?"
+# _heredoc_word <encoded word>... - 0 when a word opens a heredoc (<<WORD,
+# <<-WORD or a bare <<; a here-string <<< is not one).
+_heredoc_word() {
+    local _w
+    for _w in "$@"; do
+        _w="$(hook_word "${_w}")"
+        [[ "${_w}" == '<<'* && "${_w}" != '<<<'* ]] && return 0
+    done
+    return 1
+}
+
+# _stdin_fed - a stdin body of the launch in _E must come from a heredoc
+# redirected into that same gh launch, not from a pipe or another command.
+_stdin_fed() {
+    [[ "${_STDIN}" -eq 1 ]] || return 0
+    _heredoc_word "${_E[@]}" || _block_literal "a gh body read from stdin"
+}
+
+# _line_feeds_gh <line> - 0 when the first heredoc opened on <line> is
+# redirected into a gh launch.
+_line_feeds_gh() {
+    local _s _w
+    local -a _ws
+    while IFS= read -r _s; do
+        read -r -a _ws <<<"${_s}"
+        _heredoc_word "${_ws[@]}" || continue
+        _w="$(hook_word "${_ws[0]:-}")"
+        [[ "${_w}" == gh || "${_w}" == */gh ]]
+        return
+    done < <(hook_subcommands_raw "$1")
+    return 1
+}
+
+# _gh_heredocs <command> - print the lines of every heredoc body fed to a gh
+# launch (the complement of lib/subcommand.sh's heredoc stripping). An
+# unquoted terminator lets the shell expand the body, so one holding '$' or
+# a backtick blocks (fail closed).
+_gh_heredocs() {
+    local _line _term='' _trim _fed=0 _raw=0 _body=''
+    local _re="(^|[^<])<<-?[[:space:]]*(['\"\\]?)([A-Za-z_][A-Za-z0-9_]*)"
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         if [[ -n "${_term}" ]]; then
             _trim="${_line#"${_line%%[![:space:]]*}"}"
-            if [[ "${_trim}" == "${_term}" ]]; then _term=''; else printf '%s\n' "${_line}"; fi
-            continue
+            if [[ "${_trim}" != "${_term}" ]]; then
+                [[ "${_fed}" -eq 1 ]] && _body+="${_line}"$'\n'
+                continue
+            fi
+            _term=''
+            [[ "${_raw}" -eq 0 && ( "${_body}" == *'$'* || "${_body}" == *'`'* ) ]] \
+                && _block_literal "an unquoted heredoc fed to gh"
+            printf '%s' "${_body}"
+            _body=''
+        elif [[ "${_line}" =~ ${_re} ]]; then
+            _term="${BASH_REMATCH[3]}"
+            _raw=0; [[ -n "${BASH_REMATCH[2]}" ]] && _raw=1
+            _fed=0; _line_feeds_gh "${_line}" && _fed=1
         fi
-        [[ "${_line}" =~ ${_re} ]] && _term="${BASH_REMATCH[2]}"
     done <<<"$1"
 }
 
@@ -230,12 +276,11 @@ main() {
         _w0="$(hook_word "${_E[0]:-}")"
         case "${_w0}" in
             cd) _track_cd ;;
-            gh|*/gh) _check_gh ;;
+            gh|*/gh) _STDIN=0; _check_gh; _stdin_fed ;;
         esac
     done < <(hook_subcommands_raw "${_cmd}")
     [[ "${_REL}" -eq 1 ]] || hook_allow
-    _here="$(_heredoc_bodies "${_cmd}")"
-    [[ "${_STDIN}" -eq 1 && -z "${_here}" ]] && _block_literal "a gh body read from stdin"
+    _here="$(_gh_heredocs "${_cmd}")" || exit 2
     _judge "${_here}" "a heredoc fed to gh"
     hook_allow
 }

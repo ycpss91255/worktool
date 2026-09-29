@@ -180,6 +180,49 @@ D='$'
     _blocked
 }
 
+@test "blocks a stdin body when the heredoc feeds another command" {
+    _check "$(printf '%s\n' 'cat <<EOF >/dev/null' lib/x EOF "printf \"${D}BODY\" | gh pr comment 3 --body-file -")"
+    _blocked
+    assert_output --partial "literal"
+}
+
+@test "blocks a stdin gh call without a heredoc next to one that has it" {
+    _check "$(printf "gh api repos/o/r/issues/1/comments --input - <<'EOF'\n{}\nEOF\nprintf x | gh pr comment 3 --body-file -")"
+    _blocked
+}
+
+@test "blocks an unquoted heredoc to gh holding a variable" {
+    _check "$(printf '%s\n' 'gh api repos/o/r/issues/1/comments --input - <<EOF' "{\"body\":\"${D}BODY\"}" EOF)"
+    _blocked
+    assert_output --partial "literal"
+}
+
+@test "blocks an unquoted heredoc to gh holding a command substitution" {
+    _check "$(printf '%s\n' 'gh api repos/o/r/issues/1/comments --input - << EOF' "{\"body\":\"${D}(cat b.md)\"}" EOF)"
+    _blocked
+}
+
+@test "blocks an unquoted heredoc to gh holding a backtick" {
+    _check "$(printf "gh pr comment 3 --body-file - <<-EOF\n\`cat b.md\`\nEOF")"
+    _blocked
+}
+
+@test "allows a quoted heredoc to gh holding a literal dollar" {
+    _check "$(printf '%s\n' 'gh pr comment 3 --body-file - <<"EOF"' "costs ${D}5 and ${D}(x)" EOF)"
+    assert_success
+    assert_output ""
+}
+
+@test "allows an unquoted heredoc to gh with no expansion" {
+    _check "$(printf "gh pr comment 3 --body-file - <<EOF\nlib/x.sh:12\nEOF")"
+    assert_success
+}
+
+@test "ignores a heredoc with a variable that feeds another command" {
+    _check "$(printf '%s\n' 'cat <<EOF >/dev/null' "${D}X" EOF "gh pr comment 3 --body 'lib/x'")"
+    assert_success
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"
