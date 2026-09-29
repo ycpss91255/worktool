@@ -107,3 +107,38 @@ _decision() { jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"; }
     assert_success
     assert_output ""
 }
+
+# --- only a real gh launch counts (codex round 1 on #193) ---------------------
+
+@test "allows quoted text that mentions gh issue create / gh pr create" {
+    _check "git commit -m 'docs: explain gh issue create and gh pr create --body x'"
+    assert_success
+    assert_output ""
+    _check "echo \"run gh pr create --title x\""
+    assert_success
+    assert_output ""
+}
+
+@test "allows a heredoc body that mentions gh issue create" {
+    _check "$(printf 'cat > /tmp/b.md <<EOF\ngh issue create --title x\nEOF')"
+    assert_success
+    assert_output ""
+}
+
+@test "judges the gh launch, not quoted text before it" {
+    _check "echo 'gh pr create' && gh pr comment 3 --body 'looks good'"
+    assert_success
+    assert_output ""
+    _check "echo ok && GH_TOKEN=x gh pr create --title x"
+    run _decision
+    assert_output "deny"
+}
+
+@test "allows non-gh commands silently, even with gh-like words" {
+    _check "ls -la"
+    assert_success
+    assert_output ""
+    _check "grep -rn 'gh issue create' doc"
+    assert_success
+    assert_output ""
+}

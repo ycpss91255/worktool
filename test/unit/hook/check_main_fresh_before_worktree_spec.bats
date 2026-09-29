@@ -81,3 +81,27 @@ _advance_origin() {
     assert_success
     assert_output ""
 }
+
+# --- only a real launch counts (codex round 1 on #193) ------------------------
+
+@test "allows quoted text that mentions a worktree-from-main command" {
+    _advance_origin
+    _check "cd ${CLONE} && git commit --allow-empty -m \"doc: git worktree add ../wt main (stale base)\""
+    assert_success
+    assert_output ""
+}
+
+@test "allows a heredoc body that mentions a worktree-from-main command" {
+    _advance_origin
+    _check "$(printf 'cat > %s/n.md <<EOF\ngit -C %s worktree add ../wt main\nEOF' "${BATS_TEST_TMPDIR}" "${CLONE}")"
+    assert_success
+    assert_output ""
+}
+
+@test "still denies a real launch next to quoted text, and follows a leading cd" {
+    _advance_origin
+    _check "echo 'main' && cd ${CLONE} && git worktree add ${BATS_TEST_TMPDIR}/wt main"
+    assert_success
+    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
+    assert_output "deny"
+}

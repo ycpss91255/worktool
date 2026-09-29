@@ -150,3 +150,26 @@ _check() { run_hook test-must-use-docker "$(hook_json "$1")"; }
     _check ""
     assert_success
 }
+
+# --- nested launches (codex round 1 on #193) ----------------------------------
+
+@test "blocks bats inside a command substitution" {
+    local d='$' b=$'\x60'
+    _check "x=${d}(bats test/unit)"
+    assert_failure 2
+    _check "echo ${b}bats test/unit${b}"
+    assert_failure 2
+}
+
+@test "blocks bats run through bash -c / sh -c" {
+    _check "bash -c 'bats test/unit'"
+    assert_failure 2
+    _check "sh -ec \"cd /r && bats t\""
+    assert_failure 2
+}
+
+@test "allows a commit message that quotes bash -c and a substitution" {
+    local d='$'
+    _check "git commit -m 'never run bash -c bats or ${d}(bats t)'"
+    assert_success
+}

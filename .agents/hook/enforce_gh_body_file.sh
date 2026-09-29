@@ -15,7 +15,11 @@
 #   6. `--body "$(cat ...)"` or `--body-file -` heredocs on any gh call:
 #      both trip Claude Code's bash parser
 # Everything else (other subcommands, canonical forms, non-gh commands)
-# passes silently.
+# passes silently. Only real gh launches count: lib/subcommand.sh reduces
+# the command to its sub-commands, so a commit message, an echo or a
+# heredoc body that merely mentions `gh issue create` is data. Flags are
+# judged on the parsed launch; an inline body's length and line count on
+# the raw text, where its quotes and newlines survive.
 #
 # Output contract: allow = exit 0, no stdout; deny = exit 0 with the
 # permissionDecision JSON on stdout.
@@ -24,6 +28,8 @@
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
+# shellcheck source=subcommand.sh
+source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "enforce-gh-body-file"
 
 readonly SHORT_LIMIT=80
@@ -70,8 +76,8 @@ _deny() {
     }'
 }
 
-# _check_subcmd <"issue create" | ...> <command> - print the deny reason
-# for this gh subcommand, or nothing.
+# _check_subcmd <"issue create" | ...> <launch> <raw command> - print the
+# deny reason for this gh subcommand, or nothing.
 _check_subcmd() {
     local _sub="$1" _cmd="$2" _body
     local _file='Write the body to a file first, then pass --body-file <file>.'
@@ -91,7 +97,7 @@ _check_subcmd() {
                 printf 'gh pr edit --body inline is denied (it rewrites the whole body). %s' "${_file}"
             fi ;;
         "issue comment"|"pr comment"|"pr review")
-            _body="$(_extract_body "${_cmd}")"
+            _body="$(_extract_body "$3")"
             if [[ -n "${_body}" ]] && ! _short_body_ok "${_body}"; then
                 printf 'gh %s body is too long for inline (%d chars or multi-line; limit %d, one line). %s' \
                     "${_sub}" "${#_body}" "${SHORT_LIMIT}" "${_file}"
@@ -99,19 +105,27 @@ _check_subcmd() {
     esac
 }
 
+# _check_launch <gh launch> <raw command> - print the deny reason for this
+# gh launch, or nothing.
+_check_launch() {
+    if [[ "$2" =~ --(body|comment)[[:space:]]+\"?\$\([[:space:]]*cat[[:space:]] ]]; then
+        printf '%s' "gh --body \"\$(cat ...)\" trips Claude Code's bash parser. Write the body to a file, then pass --body-file <file>."
+    elif [[ "$1" =~ --body-file[[:space:]]+-([[:space:]]|$) ]]; then
+        printf '%s' "gh --body-file - with a stdin heredoc trips Claude Code's bash parser. Write the body to a file, then pass --body-file <file>."
+    elif [[ "$1" =~ ^gh[[:space:]]+(issue|pr)[[:space:]]+([a-z]+) ]]; then
+        _check_subcmd "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" "$1" "$2"
+    fi
+}
+
 main() {
     hook_read_input
-    local _cmd _reason=''
+    local _cmd _sub _reason=''
     _cmd="$(hook_command)"
-    [[ "${_cmd}" =~ (^|[[:space:]\&\|\;])gh[[:space:]] ]] || return 0
-
-    if [[ "${_cmd}" =~ --(body|comment)[[:space:]]+\"?\$\([[:space:]]*cat[[:space:]] ]]; then
-        _reason="gh --body \"\$(cat ...)\" trips Claude Code's bash parser. Write the body to a file, then pass --body-file <file>."
-    elif [[ "${_cmd}" =~ --body-file[[:space:]]+-([[:space:]\&\|\;\<]|$) ]]; then
-        _reason="gh --body-file - with a stdin heredoc trips Claude Code's bash parser. Write the body to a file, then pass --body-file <file>."
-    elif [[ "${_cmd}" =~ gh[[:space:]]+(issue|pr)[[:space:]]+([a-z]+) ]]; then
-        _reason="$(_check_subcmd "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" "${_cmd}")"
-    fi
+    while IFS= read -r _sub; do
+        [[ "${_sub}" =~ ^gh[[:space:]] ]] || continue
+        _reason="$(_check_launch "${_sub}" "${_cmd}")"
+        [[ -n "${_reason}" ]] && break
+    done < <(hook_subcommands "${_cmd}")
     [[ -n "${_reason}" ]] && _deny "${_reason}"
     return 0
 }
