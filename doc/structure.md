@@ -86,7 +86,7 @@ worktool/
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
-│   │   │                remind_main_sync、enforce_gh_body_file、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、worktree_create、
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、worktree_create、
 │   │   │                remind_workflow_tdd、remind_no_emoji)
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
