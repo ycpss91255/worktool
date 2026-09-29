@@ -92,7 +92,7 @@ _parser_awk() {
     cat <<'AWK'
 function heredoc_start(l,   d) {
     if (match(l, /<<-?[ ]*['"]?[A-Za-z_]+['"]?/)) {
-        d = substr(l, RSTART, RLENGTH); gsub(/[<\-'" ]/, "", d); return d
+        d = substr(l, RSTART + 2, RLENGTH - 2); gsub(/[^A-Za-z_]/, "", d); return d
     }
     return ""
 }
