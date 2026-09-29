@@ -38,6 +38,7 @@ setup() {
     PR_LOOP="${WF_DIR}/pr-loop.js"
     FANOUT="${WF_DIR}/milestone-fanout.js"
     RESEARCH="${WF_DIR}/research-verify.js"
+    WORK="${BATS_TEST_TMPDIR}/work"
 }
 
 # The meta block of $1: from the first line to its closing "}" line.
@@ -170,6 +171,62 @@ _meta_skeleton() {
     assert_output "1"
     run grep -c '只有落在上述範圍內的具體問題才可列為阻擋項' "${PR_LOOP}"
     assert_output "1"
+}
+
+# Run pr-loop under node with every shell step played (exec) in a fresh
+# work dir, up to the first codex round; gh is a stub that prints
+# ${BATS_TEST_TMPDIR}/body.md for `issue view --json body` and fails that
+# call when ${BATS_TEST_TMPDIR}/gh.fail exists. The work dir is WORK.
+_pl_codex_round() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${stub}" "${WORK}"
+    cat > "${stub}/gh" <<SH
+#!/bin/sh
+case " \$* " in
+    *" issue view "*" --json body "*)
+        [ -e "${BATS_TEST_TMPDIR}/gh.fail" ] && exit 1
+        cat "${BATS_TEST_TMPDIR}/body.md" ;;
+esac
+exit 0
+SH
+    chmod +x "${stub}/gh"
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
+    (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t"}')" \
+        "${replies}" exec)
+}
+
+# rc of the played step that writes scope-r1.md.
+_pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc] | first' <<<"$1"; }
+
+@test "pr-loop (node): the scope step cuts the issue's ## 範圍 section out verbatim (issue #238)" {
+    printf '## 背景\n\nx\n\n## 範圍\n\n- 擋:a\n- 不擋:b\n\n## Acceptance criteria\n\n- z\n' > "${BATS_TEST_TMPDIR}/body.md"
+    run _pl_codex_round
+    assert_success
+    assert_equal "$(_pl_scope_rc "${output}")" "0"
+    run cat "${WORK}/scope-r1.md"
+    assert_output "$(printf '## 範圍\n\n- 擋:a\n- 不擋:b\n')"
+}
+
+@test "pr-loop (node): an issue without ## 範圍 gets the explicit 'issue 未定範圍' note (issue #238)" {
+    printf '## 背景\n\nx\n' > "${BATS_TEST_TMPDIR}/body.md"
+    run _pl_codex_round
+    assert_success
+    assert_equal "$(_pl_scope_rc "${output}")" "0"
+    run cat "${WORK}/scope-r1.md"
+    assert_output --partial "issue 未定範圍"
+}
+
+@test "pr-loop (node): a failed gh issue view fails the scope step and never becomes 'issue 未定範圍' (issue #238)" {
+    printf '## 範圍\n\n- 擋:a\n' > "${BATS_TEST_TMPDIR}/body.md"
+    touch "${BATS_TEST_TMPDIR}/gh.fail"
+    run _pl_codex_round
+    assert_success
+    refute [ "$(_pl_scope_rc "${output}")" = "0" ]
+    refute [ -s "${WORK}/scope-r1.md" ]
+    # the prompt tells the agent to stop the round instead of reviewing without the scope
+    run jq -r '.calls[] | select(.label | startswith("codex:")) | .prompt' <<<"${output}"
+    assert_output --partial "讀取 issue #238 失敗,本輪未完成"
 }
 
 @test "pr-loop returns the issue #158 result contract: pr, sha, ciState, codexVerdict, rounds" {

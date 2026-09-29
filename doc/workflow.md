@@ -58,6 +58,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    貼到 PR,加一行 `[claude] double-check`(上下文是否完整、每項是否引用 diff 位置)與可重現指令。
    issue 本文的「## 範圍」段(擋 / 不擋 / 已知限制)由 shell 切出、逐字貼進 prompt,codex 只把範圍內的具體問題列為阻擋項;
    issue 沒有該段時 prompt 註明「issue 未定範圍」(#238;攔截型 issue 缺範圍段在建立時就會被 `enforce_scope_on_guard_issues` hook 擋下)。
+   讀取 issue 失敗(`gh` 非零)不會被當成「未定範圍」:重試一次仍失敗就不跑 codex,以 `no-output` 結束本輪。
    第二輪起會把上一輪判定逐字附在 prompt 裡,要求逐項確認是否已修正。判定是結構化欄位(`mergeable` /
    `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
