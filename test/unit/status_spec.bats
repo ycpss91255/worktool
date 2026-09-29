@@ -23,6 +23,10 @@
 #     alternative is a terminal window that flashes `not found` and closes.
 #   - The script owns its CLI: --help / -h exit 0; an unknown option is
 #     refused with `status.sh: unknown option '<x>' (see --help)`, exit 2.
+#   - Issue #198: the report ends with a `home: <path> (<source>)` line -
+#     the box HOME `just box assemble` recorded - or `home: not recorded
+#     (run: just box assemble)`. A recorded home that is not an absolute
+#     path (or a bad home.source) is refused like any corrupt value.
 #   - status never writes anything.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
@@ -76,6 +80,7 @@ _write_config() {
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+    assert_line "home: not recorded (run: just box assemble)"
     assert [ ! -e "${CONFIG}" ]
 }
 
@@ -107,7 +112,46 @@ _write_config() {
     assert_line --index 5 "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line --index 6 "tmux.conf: ${TMUX_CONF} (managed block: absent)"
     assert_line --index 7 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_equal "${#lines[@]}" 8
+    assert_line --index 8 "home: not recorded (run: just box assemble)"
+    assert_equal "${#lines[@]}" 9
+}
+
+# --- #198: the box home assemble recorded ------------------------------------
+
+@test "#198: the recorded box home is shown with its source, as the last line" {
+    _write_config 'box=dev' 'box.source=default' 'home=/srv/my box' 'home.source=user'
+    run "${STATUS}"
+    assert_success
+    assert_equal "${lines[${#lines[@]} - 1]}" "home: /srv/my box (user)"
+    _write_config 'home=/h/dev-box' 'home.source=default'
+    run "${STATUS}"
+    assert_success
+    assert_line "home: /h/dev-box (default)"
+}
+
+@test "#198: a recorded home that is not an absolute path is refused (exit 1, nothing on stdout)" {
+    local _out="${BATS_TEST_TMPDIR}/out" _err="${BATS_TEST_TMPDIR}/err"
+    _write_config 'home=dev-box' 'home.source=user'
+    run bash -c '"$1" >"$2" 2>"$3"' _ "${STATUS}" "${_out}" "${_err}"
+    assert_failure 1
+    run cat "${_err}"
+    assert_output "[ERROR] ${CONFIG}: invalid value 'dev-box' for home (expected an absolute path)"
+    assert [ ! -s "${_out}" ]
+    _write_config 'home=/srv/box' 'home.source=maybe'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value 'maybe' for home.source (expected default|user)"
+}
+
+@test "#198 r1: a lone home.source, or a root home, is refused like any corrupt value (exit 1)" {
+    _write_config 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: home.source without home (the two are recorded together)"
+    _write_config 'home=/' 'home.source=user'
+    run "${STATUS}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '/' for home (expected a path other than the root directory)"
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------

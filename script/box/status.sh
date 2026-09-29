@@ -5,7 +5,8 @@
 # (auto-enter, terminal, tmux, box), each with its source (default | user),
 # whether the worktool managed block is present in each managed file (the
 # ghostty config and ~/.tmux.conf), and - since issue #175 - whether the
-# distrobox those blocks name can still be run. Read-only: it never writes.
+# distrobox those blocks name can still be run, and - since issue #198 -
+# the box HOME `just box assemble` recorded. Read-only: it never writes.
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -43,6 +44,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
+# shellcheck source=home.sh
+source "${LIB_DIR}/home.sh"
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
@@ -52,8 +55,8 @@ Usage: status.sh
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
-~/.tmux.conf, and whether the distrobox those blocks name can still be run.
-Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
+~/.tmux.conf, whether the distrobox those blocks name can still be run,
+and the box HOME recorded by `just box assemble`. Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
@@ -90,7 +93,10 @@ _report_block() {
 # message as setup.sh): exit 1 upstream.
 _config_check() {
     local _problem
-    _problem="$(enter_config_check "$1")" && return 0
+    if _problem="$(enter_config_check "$1")" \
+        && _problem="$(home_config_check "$1")"; then
+        return 0
+    fi
     log_error "$1: ${_problem}"
     return 1
 }
@@ -110,6 +116,19 @@ _report() {
     _report_block ghostty "$(enter_ghostty_config)"
     _report_block tmux.conf "$(enter_tmux_conf)"
     _report_distrobox
+    _report_home "${_config}"
+}
+
+# `home: <path> (<source>)` - the box HOME `just box assemble` recorded in
+# state file $1 (issue #198), or that none is recorded yet.
+_report_home() {
+    local _home
+    _home="$(enter_config_get "$1" home)"
+    if [[ -z "${_home}" ]]; then
+        printf 'home: not recorded (run: just box assemble)\n'
+        return 0
+    fi
+    printf 'home: %s (%s)\n' "${_home}" "$(enter_config_get "$1" home.source)"
 }
 
 # `distrobox: <path> (<state>)` - the readable answer to "will the managed
