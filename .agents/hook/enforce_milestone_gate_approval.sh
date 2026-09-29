@@ -6,32 +6,49 @@
 # tell the maintainer from an agent posting with the maintainer's token, so
 # this hook BLOCKS (exit 2, reason on stderr) what only an agent could do:
 #   1. merge gate: `gh pr merge [<sel>]` (any flags, --auto included) and
-#      `gh api .../repos/<owner>/<repo>/pulls/<n>/merge`. The repo comes from
-#      -R / --repo, a PR URL or the api path, else `gh repo view`; a branch
-#      or missing selector is resolved with `gh pr view`. The PR's labels
-#      and comments are fetched with gh and handed to approval_evaluate of
-#      lib/approval.sh (the same predicate the milestone-gate workflow
-#      runs). A failed evaluation blocks, naming what is missing; ANY
-#      failed lookup blocks too (fail closed).
-#   2. anti-forgery: the body of `gh pr comment|review|create` and
-#      `gh issue comment|create` (--body / -b, --body-file / -F read from
-#      disk) and of `gh api` writes to .../comments (-f / -F / --raw-field /
+#      `gh api .../repos/<owner>/<repo>/pulls/<n>/merge` (a full URL or a
+#      query string included). The repo comes from -R / --repo, a PR URL
+#      or the api path, else `gh repo view`; a branch or missing selector
+#      is resolved with `gh pr view`. The PR's labels and comments are
+#      fetched with gh and handed to approval_evaluate of lib/approval.sh
+#      (the same predicate the milestone-gate workflow runs). A failed
+#      evaluation blocks, naming what is missing; ANY failed lookup blocks
+#      too (fail closed). A GraphQL mutation that merges (mergePullRequest,
+#      enablePullRequestAutoMerge, mergeBranch) blocks outright.
+#   2. anti-forgery: the body of `gh pr comment|review|create|new`,
+#      `gh issue comment|create|new` (--body / -b, --body-file / -F read
+#      from disk), the --comment / -c of `gh pr|issue close|reopen` and
+#      the body of `gh api` writes to .../comments (-f / -F / --raw-field /
 #      --field body=..., body=@file, --input <json>) must not read as a
 #      human approval by approval_is_human_approval. Every occurrence of a
 #      repeated flag is judged, in every form (-b x, -bx, -b=x, --body=x),
 #      and the last -X / --method decides a read. A body holding the
 #      approval phrase must start with [claude] or [codex]. A body the hook
-#      cannot read (stdin, a missing file, a command substitution, --input
-#      included) blocks. A gh api endpoint (or other bare word) built by a
-#      command substitution blocks unless the call only reads.
-#   3. substitutions: a command substitution decodes to '_', so the hook
-#      cannot know what it expands to. It blocks in any word of a
-#      `gh pr merge` (selector, -R, flags), in a word naming the gh
-#      sub-command (`gh pr "$(echo merge)"`), and, when UNQUOTED (the shell
-#      word-splits it into words the hook never saw, -X PUT or --body
-#      included), anywhere in a gh api or body-command launch.
+#      cannot read (stdin, a missing file) blocks. A GraphQL mutation that
+#      writes a comment (addComment, updateIssueComment) blocks outright.
+#   3. the CLOSED rule (fail closed where static parsing cannot follow the
+#      shell): the hook judges only what it can read literally.
+#      - A relevant gh command (`gh api`, any call; the pr / issue
+#        sub-commands above) with ANY word holding an expansion the shell
+#        resolves ($VAR, ${...}, $'...', $(...), `...`, <(...), a glob or
+#        a brace expansion; see hook_word_has_expansion of
+#        lib/subcommand.sh) blocks: re-run it with literal arguments.
+#      - A gh launch whose sub-command cannot be told (an expansion before
+#        or in it, `gh $SUB`, `--` before it) blocks, and so does an
+#        unknown top-level word (a gh alias or extension may run anything).
+#      - gh root flags before the sub-command: -R / --repo / --repo= and
+#        -h / --help are read as if they followed it; any other flag
+#        there blocks when the sub-command is relevant.
+#      - Combined short options (-eb x) block in a relevant command; only
+#        a value attached to a flag the hook reads (-Rx, -bx, -Fx, -fx,
+#        -Xx ...) is taken.
+#      - A launch whose command name is an expansion (`$GH pr merge`,
+#        `eval "$CMD"`, `bash -c "$CMD"`) blocks, unless its last path
+#        segment is a literal name other than gh ($HOME/bin/tool).
+#      - gh run by another command (nice gh, xargs gh) blocks when the
+#        sub-command is relevant: run gh directly.
 # The approval rule and phrase live only in lib/approval.sh; this hook
-# fetches data and never restates the rule. Only real gh launches count
+# fetches data and never restates the rule. Only real launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
 # included, is skipped by hook_timeout_lead): quoted text, commit messages
 # and heredoc bodies that merely mention gh are data. Everything else
@@ -53,32 +70,198 @@ hook_bootstrap "enforce-milestone-gate-approval"
 source "${HOOK_REPO_ROOT}/lib/approval.sh"
 
 # The launch under judgement: decoded words (_W), encoded words (_E), the
-# index of its sub-command word (_ARG0: `merge` of `gh pr [-R x] merge`)
-# and the session's working directory from the payload (_CWD).
+# index of its sub-command word (_ARG0: `merge` of `gh pr merge`, `api` of
+# `gh api`) and the session's working directory from the payload (_CWD).
+# Once a relevant launch is normalised, _W / _E read `gh <group> [<sub>]
+# <every other word, in order>`, root flags included.
 _W=()
 _E=()
 _ARG0=0
 _CWD=''
+# Set by _load_launch / _parse_path / _classify for the launch.
+_WRAP=''
+_UNK=''
+_ROOT_BAD=''
+_GROUP=''
+_SUBC=''
+_PATH_IDX=()
+_REST=()
+_REL=0
+_VALUE_OPTS=''
+_ATTACH=''
 
-# Flags taking a value, per command, so positionals can be told apart.
+# Flags taking a value, per command, so positionals and option values can
+# be told apart; _ATTACH (per command, in _classify) lists the short flags
+# whose attached value the hook reads (-Rx, -bx ...).
 readonly _MERGE_VALUE_OPTS=' -R --repo -b --body -F --body-file -t --subject -A --author-email --match-head-commit '
 readonly _API_VALUE_OPTS=' -X --method -f -F --field --raw-field -H --header --input -q --jq -t --template --hostname --cache -p --preview '
+readonly _BODY_VALUE_OPTS=' -R --repo -b --body -F --body-file '
+readonly _CREATE_VALUE_OPTS=' -R --repo -b --body -F --body-file -t --title -B --base -H --head -a --assignee -l --label -m --milestone -p --project -r --reviewer -T --template --recover '
+readonly _CLOSE_VALUE_OPTS=' -R --repo -c --comment -r --reason '
+# gh's built-in top-level commands; any other first word is an alias or an
+# extension, which may run anything.
+readonly _GH_COMMANDS=' accessibility agent-task alias api attestation auth browse cache co codespace completion config copilot extension gist gpg-key help issue label org pr preview project release repo ruleset run search secret ssh-key status variable version workflow '
+
+# _is_gh <encoded word> - 0 when the word names gh (gh, /path/to/gh).
+_is_gh() {
+    local _w
+    _w="$(hook_word "$1")"
+    [[ "${_w}" == gh || "${_w}" == */gh ]]
+}
+
+# _block_exp <what> - fail closed on a shell expansion (closed rule).
+_block_exp() {
+    hook_block "$1 holds a shell expansion (a variable, command substitution, glob or brace) the hook cannot resolve (fail closed)." \
+        "Re-run gh with literal arguments: compute any value in a separate step first, then spell it out." \
+        "A body goes in a file first, passed as --body-file <literal path>."
+}
+
+# _block_root <flag> - fail closed on a gh root flag the hook cannot read.
+_block_root() {
+    hook_block "gh: the root flag '$1' before the sub-command cannot be checked (fail closed)." \
+        "Put the flags after the sub-command (gh pr merge 7 -R owner/repo); only -R / --repo may precede it."
+}
 
 # _load_launch <encoded sub-command> - fill _W / _E from a gh launch (a
 # leading timeout(1), its options and duration are skipped, by
-# hook_timeout_lead of lib/subcommand.sh); fail when it is no gh.
+# hook_timeout_lead of lib/subcommand.sh); fail when it launches no gh. A
+# gh word behind another command (nice gh, xargs gh) sets _WRAP to that
+# command. A command name built by an expansion blocks (closed rule),
+# unless its last path segment is a literal name other than gh.
 _load_launch() {
-    local _lead _i
+    local _lead _i _g=-1 _base
+    local -a _words
     _lead="$(hook_timeout_lead "$1")"
-    read -r -a _E <<<"${1#"${_lead}"}"
-    [[ "${_E[0]:-}" == gh || "${_E[0]:-}" == */gh ]] || return 1
+    read -r -a _words <<<"${1#"${_lead}"}"
+    [[ "${#_words[@]}" -gt 0 ]] || return 1
+    _WRAP=''
+    if _is_gh "${_words[0]}"; then
+        _g=0
+    else
+        _base="${_words[0]##*/}"
+        if hook_word_has_expansion "${_base}"; then
+            hook_block "the command name '$(hook_word "${_words[0]}")' is a shell expansion: it may run gh unseen (fail closed)." \
+                "Spell the command out literally (a separate step may look it up first); run gh directly, not through eval or bash -c \"\$VAR\"."
+        fi
+        for ((_i = 1; _i < ${#_words[@]}; _i++)); do
+            _is_gh "${_words[_i]}" || continue
+            _g="${_i}"
+            _WRAP="$(hook_word "${_words[0]}")"
+            break
+        done
+        [[ "${_g}" -ge 0 ]] || return 1
+    fi
+    _E=("${_words[@]:_g}")
     _W=()
     for _i in "${!_E[@]}"; do _W[_i]="$(hook_word "${_E[_i]}")"; done
-    _ARG0=2
-    case "${_W[2]:-}" in
-        -R|--repo) _ARG0=4 ;;
-        --repo=*) _ARG0=3 ;;
+    return 0
+}
+
+# _parse_path - find the gh command path the way gh (cobra) does: flags
+# before it are skipped, `--flag` / `-f` without `=` taking the next word.
+# `pr` and `issue` take a second path word. Sets _GROUP / _SUBC, the path
+# indexes (_PATH_IDX), every other index in order (_REST), the first
+# unknown root flag (_ROOT_BAD) and, when an expansion or `--` comes
+# before the path is complete, _UNK (the path cannot be told).
+_parse_path() {
+    local _i _need=1 _w
+    _PATH_IDX=()
+    _REST=()
+    _ROOT_BAD=''
+    _UNK=''
+    for ((_i = 1; _i < ${#_E[@]}; _i++)); do
+        if [[ "${#_PATH_IDX[@]}" -ge "${_need}" ]]; then
+            _REST+=("${_i}")
+            continue
+        fi
+        _w="${_W[_i]}"
+        if hook_word_has_expansion "${_E[_i]}"; then
+            _UNK="${_w}"
+            return 0
+        fi
+        case "${_w}" in
+            --) _UNK='--'; return 0 ;;
+            -R|--repo)
+                _REST+=("${_i}")
+                _i=$((_i + 1))
+                [[ "${_i}" -lt "${#_E[@]}" ]] || continue
+                if hook_word_has_expansion "${_E[_i]}"; then
+                    _UNK="${_W[_i]}"
+                    return 0
+                fi
+                _REST+=("${_i}") ;;
+            -R?*|--repo=*|-h|--help) _REST+=("${_i}") ;;
+            --*=*)
+                [[ -n "${_ROOT_BAD}" ]] || _ROOT_BAD="${_w}" ;;
+            --*|-?)
+                # --flag or -f: gh takes the next word as its value.
+                [[ -n "${_ROOT_BAD}" ]] || _ROOT_BAD="${_w}"
+                _i=$((_i + 1))
+                if [[ "${_i}" -lt "${#_E[@]}" ]] && hook_word_has_expansion "${_E[_i]}"; then
+                    _UNK="${_W[_i]}"
+                    return 0
+                fi ;;
+            -*)
+                # -abc (a cluster) or a lone -: no value word.
+                [[ -n "${_ROOT_BAD}" ]] || _ROOT_BAD="${_w}" ;;
+            *)
+                _PATH_IDX+=("${_i}")
+                [[ "${#_PATH_IDX[@]}" -eq 1 && ("${_w}" == pr || "${_w}" == issue) ]] && _need=2 ;;
+        esac
+    done
+    _GROUP=''
+    _SUBC=''
+    [[ "${#_PATH_IDX[@]}" -ge 1 ]] && _GROUP="${_W[_PATH_IDX[0]]}"
+    [[ "${#_PATH_IDX[@]}" -ge 2 ]] && _SUBC="${_W[_PATH_IDX[1]]}"
+    return 0
+}
+
+# _classify - set _REL (1 when the launch is one the hook judges) with the
+# value options (_VALUE_OPTS) and attachable short flags (_ATTACH) of it.
+_classify() {
+    _REL=1
+    case "${_GROUP} ${_SUBC}" in
+        "api "*) _VALUE_OPTS="${_API_VALUE_OPTS}"; _ATTACH=XfFHqtp ;;
+        "pr merge") _VALUE_OPTS="${_MERGE_VALUE_OPTS}"; _ATTACH=RbFtA ;;
+        "pr comment"|"pr review"|"issue comment") _VALUE_OPTS="${_BODY_VALUE_OPTS}"; _ATTACH=RbF ;;
+        "pr create"|"pr new"|"issue create"|"issue new") _VALUE_OPTS="${_CREATE_VALUE_OPTS}"; _ATTACH=RbFt ;;
+        "pr close"|"pr reopen"|"issue close"|"issue reopen") _VALUE_OPTS="${_CLOSE_VALUE_OPTS}"; _ATTACH=Rc ;;
+        *) _REL=0 ;;
     esac
+}
+
+# _normalize - rewrite _W / _E as `gh <path words> <other words>`, so a
+# root flag reads as if it followed the sub-command, and set _ARG0.
+_normalize() {
+    local -a _e=("${_E[0]}") _w=(gh)
+    local _i
+    for _i in "${_PATH_IDX[@]}" "${_REST[@]}"; do
+        _e+=("${_E[_i]}")
+        _w+=("${_W[_i]}")
+    done
+    _E=("${_e[@]}")
+    _W=("${_w[@]}")
+    _ARG0="${#_PATH_IDX[@]}"
+}
+
+# _check_closed - the closed rule on a relevant launch: no word may hold a
+# shell expansion, and no short options may be combined (-eb x), since
+# the hook reads only what it can see literally.
+_check_closed() {
+    local _i _w
+    for ((_i = 1; _i < ${#_E[@]}; _i++)); do
+        hook_word_has_expansion "${_E[_i]}" && _block_exp "gh $(_sub): the word '${_W[_i]}'"
+    done
+    for ((_i = _ARG0 + 1; _i < ${#_W[@]}; _i++)); do
+        _w="${_W[_i]}"
+        if [[ "${_VALUE_OPTS}" == *" ${_w} "* ]]; then
+            _i=$((_i + 1))
+            continue
+        fi
+        [[ "${_w}" == -[!-]?* && "${_ATTACH}" != *"${_w:1:1}"* ]] || continue
+        hook_block "gh $(_sub): combined short options '${_w}' cannot be checked (fail closed)." \
+            "Spell each short option separately (-e -b <body>); only a value flag the hook reads (one of ${_ATTACH}) may carry an attached value."
+    done
     return 0
 }
 
@@ -136,32 +319,6 @@ _opt_values() {
     while IFS= read -r _at; do
         printf '%s\0' "$(_opt_word "${_at}")"
     done < <(_opt_at "$@")
-}
-
-# _opt_has_subst <name>... - 0 when any value of those options holds a
-# command substitution (the hook cannot know what it expands to).
-_opt_has_subst() {
-    local _at
-    while IFS= read -r _at; do
-        hook_word_has_subst "${_E[${_at%:*}]:-}" && return 0
-    done < <(_opt_at "$@")
-    return 1
-}
-
-# _has_subst <from> [bare] - 0 when a word of the launch from index <from>
-# on holds a command substitution; with `bare`, only an unquoted one.
-_has_subst() {
-    local _i _test=hook_word_has_subst
-    [[ "${2:-}" == bare ]] && _test=hook_word_has_bare_subst
-    for ((_i = $1; _i < ${#_E[@]}; _i++)); do
-        "${_test}" "${_E[_i]}" && return 0
-    done
-    return 1
-}
-
-# _block_subst <what> <fix> - fail closed on a command substitution.
-_block_subst() {
-    hook_block "$1 built by a command substitution cannot be checked (fail closed)." "$2"
 }
 
 # _positionals_at <value-opts> <from> - the index of every positional word
@@ -254,10 +411,6 @@ _gate() {
 _check_pr_merge() {
     local _sel _repo _pr=''
     local -a _view=(pr view --json number -q .number)
-    # A substitution decodes to '_': `gh pr merge "$(printf 7)"` would be
-    # judged as the PR '_' while the shell merges PR 7.
-    _has_subst 2 && _block_subst "gh pr merge: a selector, -R or flag" \
-        "Spell the PR number and -R owner/repo out literally."
     _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")"
     _repo="$(_opt -R --repo)"
     if [[ "${_sel}" =~ ^https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
@@ -276,11 +429,21 @@ _check_pr_merge() {
     _gate "${_repo}" "${_pr}"
 }
 
-# _api_endpoint - the endpoint of a `gh api` launch, leading / dropped.
+# _api_endpoint - the endpoint of a `gh api` launch, as written.
 _api_endpoint() {
-    local _ep
-    _ep="$(_positional "${_API_VALUE_OPTS}" 2)" || return 1
-    printf '%s' "${_ep#/}"
+    _positional "${_API_VALUE_OPTS}" 2
+}
+
+# _api_path <endpoint> - the endpoint as a lower-case API path: a full URL's
+# scheme and host, leading slashes, a GHES api/v3/ prefix, the query string
+# and a fragment dropped (GitHub serves all of them the same route).
+_api_path() {
+    local _p="${1,,}"
+    [[ "${_p}" =~ ^[a-z][a-z0-9+.-]*://[^/]*(/.*)?$ ]] && _p="${BASH_REMATCH[1]}"
+    while [[ "${_p}" == /* ]]; do _p="${_p#/}"; done
+    _p="${_p#api/v3/}"
+    _p="${_p%%\?*}"
+    printf '%s' "${_p%%#*}"
 }
 
 # _api_is_read - 0 when a gh api launch only reads: the last -X / --method
@@ -294,26 +457,62 @@ _api_is_read() {
     ! _opt_at -f --raw-field -F --field --input >/dev/null
 }
 
-# _check_api_subst - fail closed on a gh api launch whose endpoint, or any
-# other bare word, comes from a command substitution: it may expand to a
-# merge or comments endpoint (it decodes to '_', matching neither check)
-# or to options the hook never saw. A read of a built endpoint passes.
-_check_api_subst() {
-    local _i _n=0
-    # Unquoted, it word-splits: `gh api $(printf '%s' '-X PUT') <merge>`.
-    _has_subst 2 bare && _block_subst "gh api: an unquoted word" \
-        "Spell the options and endpoint out literally, or quote the substitution."
-    while IFS= read -r _i; do
-        _n=$((_n + 1))
-        hook_word_has_subst "${_E[_i]}" || continue
-        [[ "${_n}" -eq 1 ]] && _api_is_read && continue
-        _block_subst "gh api: an endpoint (or bare word) of a write" \
-            "Spell the endpoint out literally (a separate step may compute it first)."
-    done < <(_positionals_at "${_API_VALUE_OPTS}" 2)
+# _check_api_graphql <endpoint> - block a GraphQL mutation that merges a
+# PR or writes a comment: the hook cannot judge its body, and gh pr merge /
+# gh pr comment do the same job where it can. The query and fields are
+# read as gh sends them (-F @file and --input from disk, --input decoded
+# as JSON so a \u escape hides no name).
+_check_api_graphql() {
+    [[ "$(_api_path "$1")" == graphql ]] || return 0
+    local _text='' _v _in
+    while IFS= read -r -d '' _v; do
+        _text+="${_v}"$'\n'
+    done < <(_opt_values -f --raw-field)
+    while IFS= read -r -d '' _v; do
+        if [[ "${_v}" == *=@* ]]; then
+            _v="$(_read_body "${_v#*=@}" "gh api graphql field")" || exit 2
+        fi
+        _text+="${_v}"$'\n'
+    done < <(_opt_values -F --field)
+    if _in="$(_opt --input)"; then
+        _v="$(_read_body "${_in}" "gh api graphql --input")" || exit 2
+        _text+="${_v}"$'\n'"$(jq -r '[.. | strings] | join("\n")' <<<"${_v}" 2>/dev/null)"
+    fi
+    if [[ "${_text}" =~ (mergePullRequest|enablePullRequestAutoMerge|mergeBranch) ]]; then
+        hook_block "gh api graphql: the ${BASH_REMATCH[1]} mutation bypasses the milestone-gate check (fail closed)." \
+            "Merge with gh pr merge, which this hook gates."
+    fi
+    if [[ "${_text}" =~ (addComment|updateIssueComment) ]]; then
+        hook_block "gh api graphql: the ${BASH_REMATCH[1]} mutation writes a comment the hook cannot judge (fail closed)." \
+            "Comment with gh pr comment / gh issue comment --body-file <file>, which this hook checks."
+    fi
     return 0
 }
 
-# _check_api_merge <endpoint> - gate a gh api call to .../pulls/<n>/merge.
+# _check_api_unclean <path> - fail closed on a write whose path the hook
+# cannot compare literally (percent-encoding, // or dot segments).
+_check_api_unclean() {
+    case "/$1/" in
+        *%*|*//*|*/./*|*/../*) ;;
+        *) return 0 ;;
+    esac
+    _api_is_read && return 0
+    hook_block "gh api: the endpoint '$1' of a write is not a plain path the hook can check (fail closed)." \
+        "Spell the endpoint as a plain path (repos/<owner>/<repo>/...)."
+}
+
+# _check_api - judge a gh api launch: GraphQL, merge and comment writes.
+_check_api() {
+    local _ep
+    _ep="$(_api_endpoint)" || return 0
+    _check_api_graphql "${_ep}"
+    _ep="$(_api_path "${_ep}")"
+    _check_api_unclean "${_ep}"
+    _check_api_merge "${_ep}"
+    _check_api_comment "${_ep}"
+}
+
+# _check_api_merge <path> - gate a gh api call to .../pulls/<n>/merge.
 _check_api_merge() {
     local _re='^repos/([^/]+)/([^/]+)/pulls/([0-9]+)/merge/?$' _repo
     [[ "$1" =~ ${_re} ]] || return 0
@@ -344,16 +543,11 @@ _read_body() {
     cat -- "${_f}"
 }
 
-# _check_gh_body - anti-forgery for gh pr|issue comment / review / create.
+# _check_gh_body - anti-forgery for gh pr|issue comment / review / create /
+# new.
 _check_gh_body() {
     local _src _body _file
     _src="gh $(_sub) body"
-    _has_subst "$((_ARG0 + 1))" bare && _block_subst "gh $(_sub): an unquoted word" \
-        "Spell the options out literally, or quote the substitution."
-    if _opt_has_subst --body -b --body-file -F; then
-        hook_block "${_src}: a body (or body file name) with a command substitution cannot be checked (fail closed)." \
-            "Write the body to a file first, then pass --body-file <literal path>."
-    fi
     # Every value, not only the one gh keeps: a repeated flag hides none.
     while IFS= read -r -d '' _body; do
         _judge_body "${_body}" "${_src}"
@@ -362,6 +556,16 @@ _check_gh_body() {
         _body="$(_read_body "${_file}" "${_src}")" || exit 2
         _judge_body "${_body}" "${_src} file '${_file}'"
     done < <(_opt_values --body-file -F)
+    return 0
+}
+
+# _check_close_comment - anti-forgery for the --comment / -c of gh pr|issue
+# close / reopen (every occurrence).
+_check_close_comment() {
+    local _body
+    while IFS= read -r -d '' _body; do
+        _judge_body "${_body}" "gh $(_sub) --comment"
+    done < <(_opt_values --comment -c)
     return 0
 }
 
@@ -392,18 +596,12 @@ _check_api_fields() {
     return 0
 }
 
-# _check_api_comment <endpoint> - anti-forgery for gh api writes to
+# _check_api_comment <path> - anti-forgery for gh api writes to
 # .../comments (a read, -X GET / DELETE, passes).
 _check_api_comment() {
-    [[ "$1" =~ /comments(/[0-9]+)?/?(\?.*)?$ ]] || return 0
+    [[ "$1" =~ /comments(/[0-9]+)?/?$ ]] || return 0
     local _body _input
     _api_is_read && return 0
-    # --input too: its substitution decodes to '_', and a benign '_' file
-    # must not stand in for the file the shell really submits.
-    if _opt_has_subst -f --raw-field -F --field --input; then
-        hook_block "gh api comment field or --input with a command substitution cannot be checked (fail closed)." \
-            "Write the body to a file first, then pass --input <literal path>."
-    fi
     _check_api_fields 0 -f --raw-field
     _check_api_fields 1 -F --field
     if _input="$(_opt --input)"; then
@@ -413,32 +611,37 @@ _check_api_comment() {
     return 0
 }
 
-# _check_sub_words - fail closed when a word naming the gh sub-command
-# (`gh <group> [-R x] <sub>`, or `gh api`) holds a command substitution:
-# `gh pr "$(echo merge)" 7` merges while the hook reads `gh pr _`.
-_check_sub_words() {
-    local _i _last="${_ARG0}"
-    [[ "${_W[1]:-}" == api ]] && _last=1
-    for ((_i = 1; _i <= _last; _i++)); do
-        hook_word_has_subst "${_E[_i]:-}" || continue
-        _block_subst "gh: a sub-command word" "Spell the gh sub-command out literally."
-    done
-}
-
 # _check_launch <encoded sub-command> - judge one launch; blocks (exit 2)
 # or returns.
 _check_launch() {
     _load_launch "$1" || return 0
-    local _ep
-    _check_sub_words
+    _parse_path
+    if [[ -n "${_UNK}" ]]; then
+        # A wrapped gh (xargs gh ...) is judged only when literally relevant.
+        [[ -n "${_WRAP}" ]] && return 0
+        [[ "${_UNK}" == -- ]] && hook_block "gh: '--' before the sub-command hides which command runs (fail closed)." \
+            "Spell the gh sub-command out first (gh pr merge ...)."
+        _block_exp "gh: the word '${_UNK}' before or in the sub-command"
+    fi
+    _classify
+    if [[ "${_REL}" -eq 0 ]]; then
+        [[ -z "${_GROUP}" || -n "${_WRAP}" || "${_GH_COMMANDS}" == *" ${_GROUP} "* ]] && return 0
+        [[ -n "${_ROOT_BAD}" ]] && _block_root "${_ROOT_BAD}"
+        hook_block "gh ${_GROUP}: not a built-in gh command; a gh alias or extension may merge or comment unseen (fail closed)." \
+            "Run the built-in gh command it stands for directly."
+    fi
+    if [[ -n "${_WRAP}" ]]; then
+        hook_block "gh ${_GROUP} ${_SUBC} run through '${_WRAP}' cannot be checked (fail closed)." \
+            "Run gh directly, with literal arguments."
+    fi
+    [[ -n "${_ROOT_BAD}" ]] && _block_root "${_ROOT_BAD}"
+    _normalize
+    _check_closed
     case "$(_sub)" in
         "pr merge") _check_pr_merge ;;
-        "pr comment"|"pr review"|"pr create"|"issue comment"|"issue create") _check_gh_body ;;
-        api)
-            _check_api_subst
-            _ep="$(_api_endpoint)" || return 0
-            _check_api_merge "${_ep}"
-            _check_api_comment "${_ep}" ;;
+        "pr close"|"pr reopen"|"issue close"|"issue reopen") _check_close_comment ;;
+        api) _check_api ;;
+        *) _check_gh_body ;;
     esac
     return 0
 }

@@ -320,27 +320,41 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   agent 端的 Claude Code PreToolUse(Bash)hook `.agents/hook/enforce_milestone_gate_approval.sh`
   擋(#190,與 `enforce_gh_body_file` 並列註冊在 `.claude/settings.json`,exit 2 = 擋下、
   原因寫 stderr),規則一律 source `lib/approval.sh`,不另寫一份:
-  - **合併閘門**:`gh pr merge <n>`(任何旗標,含 `--auto`)與 `gh api .../pulls/<n>/merge`。
-    repo 取自 `-R`/`--repo`、PR URL 或 api 路徑,都沒有就用當下目錄的 `gh repo view`;
-    分支或省略的 PR 以 `gh pr view` 解析。以 `gh api` 取標籤與留言交給
+  - **合併閘門**:`gh pr merge <n>`(任何旗標,含 `--auto`)與 `gh api .../pulls/<n>/merge`
+    (完整 URL、query string 也算)。repo 取自 `-R`/`--repo`、PR URL 或 api 路徑,都沒有就用
+    當下目錄的 `gh repo view`;分支或省略的 PR 以 `gh pr view` 解析。以 `gh api` 取標籤與留言交給
     `approval_evaluate`,不過就擋並說明缺什麼;任何查詢失敗都擋(fail closed)。
-  - **防冒名**:`gh pr comment`/`gh pr review`/`gh pr create`/`gh issue comment`/
-    `gh issue create` 的內文(`--body`、`-b`、`--body-file`/`-F` 的檔案內容)與
-    `gh api` 對 `.../comments` 的寫入(`-f`/`-F`/`--raw-field`/`--field body=...`、
-    `body=@檔案`、`--input` JSON 的 `body`),只要 `approval_is_human_approval` 會把它當成
-    核准(含「允許合併」且開頭不是 `[claude]`/`[codex]`)就擋;有標記的 agent 內文引用
-    這四個字放行。重複的旗標每一個值都檢查(gh 取最後一個,但不讓前面的值掩護),
-    各種寫法都算(`-b x`、`-bx`、`-b=x`、`--body=x`、`--raw-field=body=...`);
-    `-X`/`--method` 以最後一個為準。讀不到的內文(stdin、不存在的檔案、
-    command substitution,含 `--input` 的檔名)一律擋。
-  - `gh api` 的 endpoint(或其他裸字)由 command substitution 組成時,hook 無法判斷它是否
-    展開成 merge 或 comments endpoint,除非是讀取(最後的 `-X` 為 GET/DELETE/HEAD,或沒有
-    `-X` 也沒有任何欄位與 `--input`),一律擋(fail closed)。
-  - command substitution 在 hook 眼中只是 `_`,不知道會展開成什麼(codex 第 3 輪):
-    `gh pr merge` 的任何字(selector、`-R`、旗標)、決定 gh 子命令的字
-    (`gh pr "$(echo merge)"`)含 substitution 一律擋;**未加引號**的 substitution
-    會被 shell 斷字成 hook 沒看到的多個字(可注入 `-X PUT`、`--body ...`),出現在
-    `gh api` 或上述內文類指令的任何位置都擋。加了引號、且不在內文與寫入位置的仍照前述規則判斷。
+    `gh api graphql` 的合併 mutation(`mergePullRequest`、`enablePullRequestAutoMerge`、
+    `mergeBranch`)一律擋。
+  - **防冒名**:`gh pr comment`/`review`/`create`/`new`、`gh issue comment`/`create`/`new`
+    的內文(`--body`、`-b`、`--body-file`/`-F` 的檔案內容)、`gh pr|issue close|reopen` 的
+    `--comment`/`-c`,與 `gh api` 對 `.../comments` 的寫入(`-f`/`-F`/`--raw-field`/
+    `--field body=...`、`body=@檔案`、`--input` JSON 的 `body`),只要
+    `approval_is_human_approval` 會把它當成核准(含「允許合併」且開頭不是
+    `[claude]`/`[codex]`)就擋;有標記的 agent 內文引用這四個字放行。重複的旗標每一個值都
+    檢查(gh 取最後一個,但不讓前面的值掩護),各種寫法都算(`-b x`、`-bx`、`-b=x`、
+    `--body=x`、`--raw-field=body=...`);`-X`/`--method` 以最後一個為準。讀不到的內文
+    (stdin、不存在的檔案)一律擋;`gh api graphql` 寫留言的 mutation(`addComment`、
+    `updateIssueComment`)一律擋。
+  - **封閉規則**(codex 第 3 輪後定案:靜態解析追不完所有 shell 寫法,改成只判斷看得懂的、
+    其餘 fail closed):
+    - 相關指令(任何 `gh api`,以及上述 pr/issue 子命令)只要有**任何一個字**含 shell 會先
+      展開的東西(`$VAR`、`${...}`、`$'...'`、`$(...)`、反引號、`<(...)`、glob、brace
+      expansion;判斷在 `lib/subcommand.sh` 的 `hook_word_has_expansion`,單引號與跳脫的
+      字面文字不算)就擋,要 agent 以字面參數重跑(值先在另一步算好;內文先寫檔,
+      `--body-file <字面路徑>`)。含 body-file 的路徑。
+    - 看不出是哪個子命令的 gh(子命令之前或本身含展開,如 `gh $SUB`、`gh pr "$(echo merge)"`,
+      或子命令前出現 `--`)一律擋;不是 gh 內建指令的第一個字(alias 或 extension,可能執行
+      任何東西)也擋。
+    - 子命令前的 gh root 旗標:`-R`/`--repo`/`--repo=` 與 `-h`/`--help` 照常解析(視同寫在
+      子命令後,`gh -R o/r pr merge 7` 照樣判斷);其他旗標出現在相關子命令前一律擋。
+    - 相關指令裡合併的短旗標(`-eb x`)擋;只有 hook 會讀值的旗標(`-Rx`、`-bx`、`-Fx`、
+      `-fx`、`-Xx` 等)可以黏著值。
+    - 指令名稱本身是展開(`$GH pr merge`、`eval "$CMD"`、`bash -c "$CMD"`)一律擋,除非
+      最後一段路徑是 gh 以外的字面名稱(`$HOME/bin/tool`);外層 shell 的展開帶進
+      `bash -c`/`eval` 腳本後仍算展開。
+    - 經其他指令啟動的 gh(`nice gh`、`xargs gh`)是相關子命令就擋,要直接執行 gh。
+    - 不相關的指令(`gh pr view $N`、`echo $X`、`git commit -m "$MSG"`)不受影響。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo、

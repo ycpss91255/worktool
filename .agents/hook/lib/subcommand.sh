@@ -48,6 +48,13 @@
 #     command substitution in it shows as '_'
 #   hook_word_has_subst <encoded word>   0 when the word holds a $(...) /
 #     `...` / <(...) substitution
+#   hook_word_has_expansion <encoded word>   0 when the word holds any
+#     expansion the shell resolves before running the command: a command
+#     substitution (above), a $ parameter expansion ($X, "${X}", $1,
+#     $'..'), an unquoted glob (* ? [..]) or brace expansion ({a,b} {1..3}).
+#     Quoted or escaped text ('$X', \$X, "*") and a lone $ are literal.
+#     An expansion of the outer shell stays marked inside the bash -c /
+#     eval script it builds (bash -c "gh ... '$B'")
 #   hook_word_has_bare_subst <encoded word>   0 when the word holds an
 #     UNQUOTED $(...) / `...`: the shell word-splits its output, so the one
 #     word seen here may launch as several (options included)
@@ -96,13 +103,15 @@ _hook_unquote() {
     awk -f "${_HOOK_UNQUOTE_AWK}"
 }
 
-# _hook_decode <word> - an opaque word with its separators restored and
-# each substitution marker (\001s quoted, \001u unquoted) shown as '_'.
+# _hook_decode <word> - an opaque word with its separators restored, each
+# expansion marker (\001v) dropped and each substitution marker (\001s
+# quoted, \001u unquoted) shown as '_'.
 _hook_decode() {
     local _s="$1" _i _seps=$' \t\r\n;&|<>()' _let=abcdefghijk
     for ((_i = 0; _i < ${#_seps}; _i++)); do
         _s="${_s//$'\001'"${_let:_i:1}"/"${_seps:_i:1}"}"
     done
+    _s="${_s//$'\001'v/}"
     printf '%s' "${_s//$'\001'[su]/_}"
 }
 
@@ -114,6 +123,11 @@ hook_word() {
 # hook_word_has_subst <encoded word> - see the header.
 hook_word_has_subst() {
     [[ "$1" == *$'\001'[su]* ]]
+}
+
+# hook_word_has_expansion <encoded word> - see the header.
+hook_word_has_expansion() {
+    [[ "$1" == *$'\001'[suv]* ]]
 }
 
 # hook_word_has_bare_subst <encoded word> - see the header.
@@ -221,9 +235,13 @@ hook_timeout_lead() {
 # command line (header step 7), that command line's own sub-commands behind
 # any leading timeout(1).
 _hook_emit() {
-    local _lead _script _line
+    local _lead _script _line _t
     _lead="$(hook_timeout_lead "$1")"
     if _script="$(_hook_inner_script "$(_hook_strip_wrappers "${1#"${_lead}"}")")"; then
+        # An expansion of this shell is unknown to the script it builds:
+        # carry it in as \002, which the quoting pass marks again.
+        _script="${_script//$'\001'v/$'\002'}"
+        _script="${_script//$'\001'[su]/$'\002'_}"
         while IFS= read -r _line; do
             printf '%s%s\n' "${_lead}" "${_line}"
         done < <(hook_subcommands "$(_hook_decode "${_script}")")
@@ -232,7 +250,8 @@ _hook_emit() {
     if [[ -n "${_HOOK_RAW:-}" ]]; then
         printf '%s\n' "$1"
     else
-        printf '%s\n' "${1//$'\001'?/_}"
+        _t="${1//$'\001'v/}"
+        printf '%s\n' "${_t//$'\001'?/_}"
     fi
 }
 
