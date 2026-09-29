@@ -15,17 +15,23 @@
 #      evaluation blocks, naming what is missing; ANY failed lookup blocks
 #      too (fail closed). A GraphQL mutation that merges (mergePullRequest,
 #      enablePullRequestAutoMerge, mergeBranch) blocks outright.
-#   2. anti-forgery: the body of `gh pr comment|review|create|new`,
-#      `gh issue comment|create|new` (--body / -b, --body-file / -F read
-#      from disk), the --comment / -c of `gh pr|issue close|reopen` and
-#      the body of `gh api` writes to .../comments (-f / -F / --raw-field /
-#      --field body=..., body=@file, --input <json>) must not read as a
-#      human approval by approval_is_human_approval. Every occurrence of a
-#      repeated flag is judged, in every form (-b x, -bx, -b=x, --body=x),
-#      and the last -X / --method decides a read. A body holding the
-#      approval phrase must start with [claude] or [codex]. A body the hook
-#      cannot read (stdin, a missing file) blocks. A GraphQL mutation that
-#      writes a comment (addComment, updateIssueComment) blocks outright.
+#   2. tag rule (issue #190 scope revision; replaces the old "untagged AND
+#      holds the phrase" check): every comment-like body an agent sends must
+#      start, after leading whitespace, with [claude] or [codex] - phrase or
+#      not, since CI (#187) takes an untagged OWNER comment as the
+#      maintainer's own. It covers gh pr|issue comment, gh pr review with a
+#      body, the --comment / -c of gh pr|issue close|reopen, and gh api
+#      writes to comments / reviews endpoints (-f / -F / --raw-field /
+#      --field body= or message=, body=@file, every .body / .message of
+#      --input). Body sources: --body / -b, --body-file / -F from disk, `-`
+#      from a literal here-string / heredoc. Every occurrence of a repeated
+#      flag is judged, in every form (-b x, -bx, -b=x, --body=x). A body the
+#      hook cannot read (an expansion, a missing file, stdin from anything
+#      else, a comment call without a body, --editor, --web) blocks. PR /
+#      issue create bodies are no comments. GraphQL comment / review
+#      mutations (addComment, addPullRequestReview, ...) block outright.
+#      A gh api call is a write when its last -X / --method is not GET /
+#      HEAD, or, with none, a field or --input makes gh POST.
 #   3. the CLOSED rule (fail closed where static parsing cannot follow the
 #      shell): the hook judges only what it can read literally.
 #      - A relevant gh command (`gh api`, any call; the pr / issue
@@ -114,6 +120,9 @@ _ATTACH=''
 # What the structured pass checked and let through (the tripwire compares).
 _CHECKED=0
 _CHECKED_TEXT=''
+# The launch's stdin when it is a literal here-string / heredoc (_STDIN_OK).
+_STDIN=''
+_STDIN_OK=''
 
 # Flags taking a value, per command, so positionals and option values can
 # be told apart; _ATTACH (per command, in _classify) lists the short flags
@@ -259,8 +268,38 @@ _classify() {
 # root flag reads as if it followed the sub-command, and set _ARG0.
 _normalize() {
     local -a _e=("${_E[0]}") _w=(gh)
-    local _i
+    local _i _skip=''
+    _STDIN=''
+    _STDIN_OK=''
     for _i in "${_PATH_IDX[@]}" "${_REST[@]}"; do
+        if [[ -n "${_skip}" ]]; then
+            _skip=''
+            continue
+        fi
+        # stdin: a literal here-string (a heredoc fed to gh arrives as one,
+        # lib/subcommand.sh) is readable; any other `<` source is not.
+        case "${_W[_i]}" in
+            '<<<')
+                # `<<< word`: the body is the next word.
+                _skip=1
+                if hook_word_has_expansion "${_E[_i + 1]:-}"; then
+                    _STDIN_OK=''
+                else
+                    _STDIN="${_W[_i + 1]:-}"
+                    _STDIN_OK=1
+                fi
+                continue ;;
+            '<<<'*)
+                if hook_word_has_expansion "${_E[_i]}"; then
+                    _STDIN_OK=''
+                else
+                    _STDIN="${_W[_i]#<<<}"
+                    _STDIN_OK=1
+                fi
+                continue ;;
+            '<') _STDIN_OK=''; _skip=1; continue ;;
+            '<'*) _STDIN_OK=''; continue ;;
+        esac
         _e+=("${_E[_i]}")
         _w+=("${_W[_i]}")
     done
@@ -472,11 +511,11 @@ _api_path() {
 }
 
 # _api_is_read - 0 when a gh api launch only reads: the last -X / --method
-# is GET / DELETE / HEAD, or, with none, no field or --input makes gh POST.
+# is GET / HEAD, or, with none, no field or --input makes gh POST.
 _api_is_read() {
     local _m
     if _m="$(_opt -X --method)"; then
-        [[ "${_m^^}" =~ ^(GET|DELETE|HEAD)$ ]]
+        [[ "${_m^^}" =~ ^(GET|HEAD)$ ]]
         return
     fi
     ! _opt_at -f --raw-field -F --field --input >/dev/null
@@ -488,7 +527,7 @@ _api_is_read() {
 # read as gh sends them (-F @file and --input from disk, --input decoded
 # as JSON so a \u escape hides no name).
 _check_api_graphql() {
-    [[ "$(_api_path "$1")" == graphql ]] || return 0
+    [[ "$(_api_path "$1")" == graphql || "$(_api_path "$1")" == api/graphql ]] || return 0
     local _text='' _v _in
     while IFS= read -r -d '' _v; do
         _text+="${_v}"$'\n'
@@ -507,7 +546,7 @@ _check_api_graphql() {
         hook_block "gh api graphql: the ${BASH_REMATCH[1]} mutation bypasses the milestone-gate check (fail closed)." \
             "Merge with gh pr merge, which this hook gates."
     fi
-    if [[ "${_text}" =~ (addComment|updateIssueComment) ]]; then
+    if [[ "${_text}" =~ (addComment|updateIssueComment|addPullRequestReviewComment|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview|submitPullRequestReview|updatePullRequestReviewComment|updatePullRequestReview) ]]; then
         hook_block "gh api graphql: the ${BASH_REMATCH[1]} mutation writes a comment the hook cannot judge (fail closed)." \
             "Comment with gh pr comment / gh issue comment --body-file <file>, which this hook checks."
     fi
@@ -548,23 +587,34 @@ _check_api_merge() {
     [[ "$1" =~ ${_re} ]] || return 0
     local _pr="${BASH_REMATCH[3]}"
     _repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    # A read (GET / HEAD: is it merged?) merges nothing.
+    _api_is_read && return 0
     if [[ "${_repo}" == '{owner}/{repo}' ]]; then
         _repo="$(_repo_of '')" || _fail_closed "gh api merge #${_pr}: cannot resolve the repository"
     fi
     _gate "${_repo}" "${_pr}"
 }
 
-# _judge_body <body> <source> - block a body that reads as a human approval.
+# _judge_body <body> <source> - the tag rule (issue #190 scope revision):
+# every comment an agent posts starts, after leading whitespace, with
+# [claude] or [codex]; an untagged (or empty) one blocks, phrase or not.
+# CI (#187) takes an untagged OWNER comment as the maintainer's own.
 _judge_body() {
-    approval_is_human_approval OWNER "$1" || return 0
-    hook_block "$2 carries the maintainer's approval phrase without a [claude] or [codex] marker." \
-        "Only the maintainer writes an approval; an agent never does, not even on request." \
-        "An agent comment starts with [claude] or [codex] (a marked body may quote the phrase)."
+    local _b="${1#"${1%%[![:space:]]*}"}"
+    case "${_b}" in
+        '[claude]'*|'[codex]'*) return 0 ;;
+    esac
+    hook_block "$2: comments posted by an agent must start with [claude] or [codex]; untagged comments count as the maintainer's own (see #187)." \
+        "Start the body with [claude] (or [codex]) and retry; never write the maintainer's approval."
 }
 
 # _read_body <file> <source> - print a body file, blocking when unreadable.
 _read_body() {
     local _f
+    if [[ "$1" == - && -n "${_STDIN_OK}" ]]; then
+        printf '%s' "${_STDIN}"
+        return 0
+    fi
     _f="$(_path "$1")"
     if [[ "$1" == - || ! -r "${_f}" ]]; then
         hook_block "$2: cannot read the body from '$1' to check it for a forged approval (fail closed)." \
@@ -573,11 +623,21 @@ _read_body() {
     cat -- "${_f}"
 }
 
-# _check_gh_body - anti-forgery for gh pr|issue comment / review / create /
-# new.
+# _check_gh_body - the tag rule for gh pr|issue comment and gh pr review
+# (create / new bodies are no comments). A comment call must carry a body
+# the hook can read: none (an interactive prompt), --editor or --web blocks.
 _check_gh_body() {
     local _src _body _file
     _src="gh $(_sub) body"
+    case "$(_sub)" in
+        "pr create"|"pr new"|"issue create"|"issue new") return 0 ;;
+        "pr comment"|"issue comment")
+            if _opt_at -e --editor -w --web >/dev/null \
+                || ! _opt_at --body -b --body-file -F >/dev/null; then
+                hook_block "${_src}: the comment has no body the hook can read (none, --editor or --web) (fail closed)." \
+                    "Pass the body with --body '[claude] ...' or --body-file <file>."
+            fi ;;
+    esac
     # Every value, not only the one gh keeps: a repeated flag hides none.
     while IFS= read -r -d '' _body; do
         _judge_body "${_body}" "${_src}"
@@ -589,7 +649,7 @@ _check_gh_body() {
     return 0
 }
 
-# _check_close_comment - anti-forgery for the --comment / -c of gh pr|issue
+# _check_close_comment - the tag rule for the --comment / -c of gh pr|issue
 # close / reopen (every occurrence).
 _check_close_comment() {
     local _body
@@ -603,8 +663,8 @@ _check_close_comment() {
 # print the comment body a field sets; 1 when it sets none, 2 when its
 # @file cannot be read (already reported).
 _api_field_body() {
-    [[ "$1" == body=* ]] || return 1
-    local _v="${1#body=}"
+    [[ "$1" =~ ^([^=]*\[)?(body|message)\]?= ]] || return 1
+    local _v="${1#*=}"
     if [[ "$2" == 1 && "${_v}" == @* ]]; then
         _read_body "${_v#@}" "gh api comment body" || exit 2
     else
@@ -626,17 +686,24 @@ _check_api_fields() {
     return 0
 }
 
-# _check_api_comment <path> - anti-forgery for gh api writes to
-# .../comments (a read, -X GET / DELETE, passes).
+# _check_api_comment <path> - the tag rule for gh api writes to a comments
+# or reviews endpoint (a read, -X GET / HEAD, passes): every body / message
+# field and every .body / .message of --input.
 _check_api_comment() {
-    [[ "$1" =~ /comments(/[0-9]+)?/?$ ]] || return 0
+    [[ "$1" =~ /(comments(/[0-9]+)?(/replies)?|reviews(/[0-9]+(/(events|dismissals|comments))?)?)/?$ ]] || return 0
     local _body _input
     _api_is_read && return 0
     _check_api_fields 0 -f --raw-field
     _check_api_fields 1 -F --field
     if _input="$(_opt --input)"; then
         _body="$(_read_body "${_input}" "gh api --input")" || exit 2
-        _judge_body "$(jq -r '.body // empty' <<<"${_body}" 2>/dev/null)" "gh api --input '${_input}'"
+        # Every .body / .message in the JSON; none (or no JSON) is an empty body.
+        local _b _n=0
+        while IFS= read -r -d '' _b; do
+            _n=$((_n + 1))
+            _judge_body "${_b}" "gh api --input '${_input}'"
+        done < <(jq -j '.. | objects | (.body?, .message?) | strings | . + "\u0000"' <<<"${_body}" 2>/dev/null)
+        [[ "${_n}" -gt 0 ]] || _judge_body '' "gh api --input '${_input}'"
     fi
     return 0
 }
@@ -700,7 +767,7 @@ _check_launch() {
 _mark_checked() {
     local IFS=' '
     _CHECKED=$((_CHECKED + 1))
-    _CHECKED_TEXT+="${_W[*]}"$'\n'
+    _CHECKED_TEXT+="${_W[*]}"$'\n'"${_STDIN}"$'\n'
 }
 
 # _count <needle> <text> - how many times <needle> occurs in <text>.
@@ -745,6 +812,109 @@ _check_interp() {
     return 0
 }
 
+# _http_method_write <tool> <word>... - 0 when a curl / wget / httpie call
+# writes (by the method rules of issue #190), 1 when it reads. Sets
+# _HTTP_BODY to the literal request body text; a body read from a file or
+# stdin adds '@' (undeterminable).
+_HTTP_BODY=''
+_http_method_write() {
+    local _tool="$1" _w _m='' _data='' _get='' _i _pos=0
+    shift
+    local -a _a=("$@")
+    _HTTP_BODY=''
+    for ((_i = 0; _i < ${#_a[@]}; _i++)); do
+        _w="${_a[_i]}"
+        case "${_tool}" in
+            curl)
+                case "${_w}" in
+                    -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
+                    --request=*) _m="${_w#*=}" ;;
+                    -X?*) _m="${_w:2}" ;;
+                    -G|--get) _get=1 ;;
+                    -d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json|-F|--form|--form-string|-T|--upload-file)
+                        _i=$((_i + 1)); _data=1; _HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
+                    --data*=*|--json=*|--form*=*|--upload-file=*) _data=1; _HTTP_BODY+="${_w#*=}"$'\n' ;;
+                    -d?*|-F?*|-T?*) _data=1; _HTTP_BODY+="${_w:2}"$'\n' ;;
+                    --*) ;;
+                    # A cluster hiding -X / -d / -F / -T cannot be read (fail closed).
+                    -*[XdFT]*) _HTTP_BODY='@'; return 0 ;;
+                esac ;;
+            wget)
+                case "${_w}" in
+                    --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
+                    --method=*) _m="${_w#*=}" ;;
+                    --post-data|--body-data) _i=$((_i + 1)); _data=1; _HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
+                    --post-data=*|--body-data=*) _data=1; _HTTP_BODY+="${_w#*=}"$'\n' ;;
+                    --post-file|--body-file) _i=$((_i + 1)); _data=1; _HTTP_BODY+='@'$'\n' ;;
+                    --post-file=*|--body-file=*) _data=1; _HTTP_BODY+='@'$'\n' ;;
+                esac ;;
+            *)
+                # httpie: http [METHOD] URL [ITEMS]
+                case "${_w}" in
+                    -f|--form|--raw=*|--multipart) _data=1 ;;
+                    -*) ;;
+                    *)
+                        _pos=$((_pos + 1))
+                        if [[ "${_pos}" -eq 1 && "${_w^^}" =~ ^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)$ ]]; then
+                            _m="${_w}"
+                            _pos=0
+                        elif [[ "${_pos}" -ge 2 ]]; then
+                            if [[ "${_w}" == *'@'* || ("${_w}" == *=* && "${_w}" != *==*) || "${_w}" == *:=* ]]; then
+                                _data=1
+                                _HTTP_BODY+="${_w}"$'\n'
+                            fi
+                        fi ;;
+                esac ;;
+        esac
+    done
+    _m="${_m^^}"
+    if [[ -n "${_m}" ]]; then
+        [[ ! "${_m}" =~ ^(GET|HEAD|OPTIONS)$ ]] && return 0
+        [[ "${_tool}" == curl && -n "${_data}" && -z "${_get}" && "${_m}" != GET && "${_m}" != HEAD ]] && return 0
+        return 1
+    fi
+    [[ -n "${_data}" && -z "${_get}" ]] && return 0
+    return 1
+}
+
+# _check_http - the method-aware read of a direct API call: a curl / wget /
+# httpie launch (every word literal) that names a GitHub API endpoint and
+# only reads - a GET / HEAD to a REST endpoint, a GraphQL body that is a
+# literal query (no mutation, nothing read from a file) - is recorded as
+# checked, so the tripwire does not count its URLs. Anything else (a write,
+# an expansion, an unknown tool) stays counted and blocks (fail closed).
+_check_http() {
+    local _lead _i _tool _u _rest='' _gql='' _text
+    local -a _w _d=()
+    _lead="$(hook_timeout_lead "$1")"
+    read -r -a _w <<<"${1#"${_lead}"}"
+    [[ "${#_w[@]}" -gt 1 ]] || return 0
+    _tool="$(hook_word "${_w[0]}")"
+    _tool="${_tool##*/}"
+    case "${_tool}" in
+        curl|wget|http|https|httpie|xh|xhs) ;;
+        *) return 0 ;;
+    esac
+    for ((_i = 1; _i < ${#_w[@]}; _i++)); do
+        hook_word_has_expansion "${_w[_i]}" && return 0
+        _d+=("$(hook_word "${_w[_i]}")")
+    done
+    _text="${_d[*]}"
+    while IFS= read -r _u; do
+        if [[ "${_u}" == */graphql ]]; then _gql=1; else _rest=1; fi
+    done < <(hook_api_endpoint_urls "${_text}")
+    [[ -n "${_rest}${_gql}" ]] || return 0
+    if _http_method_write "${_tool}" "${_d[@]}"; then
+        # A GraphQL POST is a read when its literal body is a query.
+        [[ -n "${_rest}" ]] && return 0
+    fi
+    if [[ -n "${_gql}" ]]; then
+        [[ "${_HTTP_BODY}" == *mutation* || "${_HTTP_BODY}" == *'@'* || "${_HTTP_BODY}" == *'\u'* ]] && return 0
+    fi
+    _CHECKED_TEXT+="${_text}"$'\n'
+    return 0
+}
+
 # _tripwire <command> - the backstop of the closed rule, on the RAW command
 # text (heredoc bodies and here-strings included, before any parsing): a
 # relevant gh call (gh [root flags] pr merge|comment|review|create|new|
@@ -761,7 +931,7 @@ _tripwire() {
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
         && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]] \
-        && [[ "$(hook_api_write_urls "${_t}" | wc -l)" -le "$(hook_api_write_urls "${_CHECKED_TEXT}" | wc -l)" ]]; then
+        && [[ "$(hook_api_endpoint_urls "${_t}" | wc -l)" -le "$(hook_api_endpoint_urls "${_CHECKED_TEXT}" | wc -l)" ]]; then
         return 0
     fi
     hook_block "cannot verify this gh call statically: the command text holds a merge / comment gh call or the approval phrase that the hook could not check as a literal gh launch (fail closed)." \
@@ -777,6 +947,7 @@ main() {
     [[ -n "${_cmd}" ]] || hook_allow
     while IFS= read -r _sub; do
         _check_interp "${_sub}"
+        _check_http "${_sub}"
         _check_launch "${_sub}"
     done < <(hook_subcommands_raw "${_cmd}")
     _tripwire "${_cmd}"

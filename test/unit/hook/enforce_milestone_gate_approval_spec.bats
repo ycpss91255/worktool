@@ -297,8 +297,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     for _c in "gh pr comment 7 --body '${PHRASE}'" \
         "gh issue comment 7 -b '好,${PHRASE}'" \
         "gh pr review 7 --approve --body=${PHRASE}" \
-        "gh pr create --title t --body '${PHRASE}' --base main" \
-        "gh issue create -R ycpss91255/worktool --title t -b '${PHRASE}'"; do
+        "gh pr close 7 -R ycpss91255/worktool --comment '${PHRASE}'"; do
         _check "${_c}"
         assert_failure 2
         assert_output --partial "[claude]"
@@ -312,7 +311,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_failure 2
     _check "gh issue comment 7 -F ${_f}"
     assert_failure 2
-    _check "gh pr create --title t --body-file=${_f}"
+    _check "gh pr review 7 --comment --body-file=${_f}"
     assert_failure 2
 }
 
@@ -334,12 +333,12 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
 @test "every repeated body flag is checked, not only the first" {
     local _f="${BATS_TEST_TMPDIR}/body.md" _ok="${BATS_TEST_TMPDIR}/ok.md" _c
     printf '%s\n' "${PHRASE}" >"${_f}"
-    printf 'looks good\n' >"${_ok}"
-    for _c in "gh pr comment 7 --body safe --body '${PHRASE}'" \
-        "gh pr comment 7 -b safe --body=${PHRASE}" \
+    printf '[claude] looks good\n' >"${_ok}"
+    for _c in "gh pr comment 7 --body '[claude] safe' --body '${PHRASE}'" \
+        "gh pr comment 7 -b '[claude] safe' --body=${PHRASE}" \
         "gh issue comment 7 --body-file ${_ok} --body-file ${_f}" \
-        "gh pr create --title t -F ${_ok} -F ${_f}" \
-        "gh pr comment 7 --body safe --body \"\$(cat ${_f})\"" \
+        "gh pr review 7 --comment -F ${_ok} -F ${_f}" \
+        "gh pr comment 7 --body '[claude] safe' --body \"\$(cat ${_f})\"" \
         "gh pr comment 7 -F ${_ok} -F -"; do
         _check "${_c}"
         assert_failure 2
@@ -603,12 +602,11 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output ""
 }
 
-@test "close / reopen --comment, pr new and odd merge endpoints are covered" {
+@test "close / reopen --comment and odd merge endpoints are covered; a pr new body is no comment" {
     _labels milestone-gate
     local _c
     for _c in "gh pr close 7 --comment '${PHRASE}'" \
         "gh issue reopen 7 -c '${PHRASE}'" \
-        "gh pr new --title t --body '${PHRASE}'" \
         "gh api -X PUT 'repos/o/r/pulls/7/merge?x=1'" \
         "gh api -X PUT https://api.github.com/repos/o/r/pulls/7/merge" \
         "gh api -X PUT repos/o/r/pulls/7/%6derge" \
@@ -618,6 +616,8 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         assert_failure 2
     done
     _check "gh pr close 7 --comment '[claude] ${PHRASE} 前先關閉'"
+    assert_success
+    _check "gh pr new --title t --body 'untagged create body'"
     assert_success
     _check "gh api graphql -f query='query{viewer{login}}'"
     assert_success
@@ -676,7 +676,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output --partial "literal"
     _check "$(printf "bash <<EOF\ngh pr comment 7 --body \"\\\\\$B\"\nEOF")"
     assert_failure 2
-    _check "$(printf "bash <<'EOF'\ngh pr comment 7 --body '\$B'\nEOF")"
+    _check "$(printf "bash <<'EOF'\ngh pr comment 7 --body '[claude] \$B'\nEOF")"
     assert_success
     assert_output ""
     run _calls
@@ -788,8 +788,8 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
         "gh -R ycpss91255/worktool pr merge 7 && gh pr view 7" \
         "gh pr comment 7 --body '[claude] 請維護者留言「${PHRASE}」'" \
         "gh api repos/o/r/issues/7/comments -f 'body=[codex] 等「${PHRASE}」'" \
-        "$(printf "bash <<'EOF'\ngh pr comment 7 --body ok\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
-        "timeout 60 bash -c 'gh issue comment 7 --body ok'"; do
+        "$(printf "bash <<'EOF'\ngh pr comment 7 --body '[claude] ok'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "timeout 60 bash -c 'gh issue comment 7 --body \"[claude] ok\"'"; do
         _check "${_c}"
         assert_success
         assert_output ""
@@ -835,12 +835,21 @@ _argv() {
 }
 
 # The relevant operations: <group>|<sub>|<arguments>.
+# Every in-scope operation of issue #190 (## 範圍).
 _ops() {
     printf '%s\n' "pr|merge|7" \
         "pr|comment|7 --body '${PHRASE}'" \
+        "pr|review|7 --comment --body '${PHRASE}'" \
+        "pr|close|7 --comment '${PHRASE}'" \
+        "pr|reopen|7 --comment '${PHRASE}'" \
+        "issue|comment|7 --body '${PHRASE}'" \
+        "issue|close|7 --comment '${PHRASE}'" \
+        "issue|reopen|7 --comment '${PHRASE}'" \
         "api||-X PUT repos/o/r/pulls/7/merge" \
         "api||-X POST repos/o/r/issues/7/comments -f body=${PHRASE}" \
-        "api||graphql -f query='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'"
+        "api||-X PATCH repos/o/r/issues/comments/9 -f body=${PHRASE}" \
+        "api||graphql -f query='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'" \
+        "api||graphql -f query='mutation{addComment(input:{subjectId:\"x\",body:\"y\"}){clientMutationId}}'"
 }
 _SPELLINGS=(plain R-before repo-eq-before repo-between R-after)
 _SHELL_WRAPPERS=(none bash-c sh-c eval env timeout busybox-sh heredoc-sh herestring-bash)
@@ -917,8 +926,15 @@ _report() {
     _labels milestone-gate
     _comment OWNER "${PHRASE}"
     local _o _sp _wr _MISS=''
-    for _o in "pr|merge|7" "pr|comment|7 --body ok" "pr|view|7"; do
-        for _sp in "${_SPELLINGS[@]}"; do
+    local -a _sps
+    for _o in "pr|merge|7" "pr|comment|7 --body '[claude] ok'" "pr|view|7" "pr|view|7 --comments" \
+        "pr|create|--title t --body 'untagged create body'" \
+        "api||repos/o/r/issues/7/comments" "api||repos/o/r/issues/comments/123 --jq .body" \
+        "api||graphql -f query='query{viewer{login}}'"; do
+        # gh api has no -R / --repo: only its plain spelling is a real call.
+        _sps=("${_SPELLINGS[@]}")
+        [[ "${_o}" == api* ]] && _sps=(plain)
+        for _sp in "${_sps[@]}"; do
             for _wr in "${_SHELL_WRAPPERS[@]}"; do
                 _expect 0 "op=${_o%%|*}:${_o#*|} spelling=${_sp} wrapper=${_wr}" \
                     "$(_wrap "${_wr}" "$(_gh_cmd "${_o}" "${_sp}")")"
@@ -926,6 +942,198 @@ _report() {
         done
     done
     _report
+}
+
+# --- tag rule (scope revision): every agent comment starts with [claude]/[codex] --
+
+# The tag dimension: <label>|<body>|<want status>.
+_tags() {
+    printf '%s\n' "claude|[claude] ok|0" "codex|[codex] ok|0" "space-then-tag|  \t[claude] ok|0" \
+        "untagged|looks good|2" "tag-not-at-start|ok [claude]|2" "empty||2"
+}
+
+# _body_cmd <op> <source> <body> - a comment-writing call with <body> from
+# <source>; files go to BATS_TEST_TMPDIR. <op> is gh words up to the body.
+_body_cmd() {
+    local _f="${BATS_TEST_TMPDIR}/body.md" _j="${BATS_TEST_TMPDIR}/body.json"
+    printf '%s' "$3" >"${_f}"
+    jq -n --arg b "$3" '{body: $b}' >"${_j}"
+    case "$2" in
+        body) printf "%s --body %s" "$1" "$(_q "$3")" ;;
+        b) printf "%s -b %s" "$1" "$(_q "$3")" ;;
+        body-eq) printf "%s --body=%s" "$1" "$(_q "$3")" ;;
+        body-file) printf '%s --body-file %s' "$1" "${_f}" ;;
+        F) printf '%s -F %s' "$1" "${_f}" ;;
+        herestring) printf '%s --body-file - <<< %s' "$1" "$(_q "$3")" ;;
+        heredoc) printf "%s --body-file - <<'EOF'\n%s\nEOF" "$1" "$3" ;;
+        comment) printf "%s --comment %s" "$1" "$(_q "$3")" ;;
+        c) printf "%s -c %s" "$1" "$(_q "$3")" ;;
+        comment-eq) printf "%s --comment=%s" "$1" "$(_q "$3")" ;;
+        f) printf '%s -f %s' "$1" "$(_q "body=$3")" ;;
+        raw-field) printf '%s --raw-field %s' "$1" "$(_q "body=$3")" ;;
+        F-at) printf '%s -F body=@%s' "$1" "${_f}" ;;
+        field-at) printf '%s --field body=@%s' "$1" "${_f}" ;;
+        input) printf '%s --input %s' "$1" "${_j}" ;;
+    esac
+}
+
+@test "matrix: every comment-writing operation x body source x tag - untagged blocks, tagged passes" {
+    local _cop _src _t _lab _body _want _MISS=''
+    local -a _cases=()
+    local _s
+    for _cop in "gh pr comment 7" "gh issue comment 7" "gh pr review 7 --comment"; do
+        for _s in body b body-eq body-file F herestring heredoc; do _cases+=("${_cop}|${_s}"); done
+    done
+    for _cop in "gh pr close 7" "gh pr reopen 7" "gh issue close 7" "gh issue reopen 7"; do
+        for _s in comment c comment-eq; do _cases+=("${_cop}|${_s}"); done
+    done
+    for _cop in "gh api -X POST repos/o/r/issues/7/comments" "gh api -X PATCH repos/o/r/issues/comments/9" \
+        "gh api -X POST repos/o/r/pulls/7/comments" "gh api -X PATCH repos/o/r/pulls/comments/9" \
+        "gh api -X POST repos/o/r/pulls/7/reviews" "gh api -X PUT repos/o/r/pulls/7/reviews/5" \
+        "gh api -X POST repos/o/r/pulls/7/reviews/5/events" "gh api repos/o/r/issues/7/comments"; do
+        for _s in f raw-field F-at field-at input; do _cases+=("${_cop}|${_s}"); done
+    done
+    for _cop in "${_cases[@]}"; do
+        _src="${_cop##*|}"
+        while IFS='|' read -r _lab _body _want; do
+            _body="$(printf '%b' "${_body}")"
+            _expect "${_want}" "op=${_cop%|*} source=${_src} tag=${_lab}" \
+                "$(_body_cmd "${_cop%|*}" "${_src}" "${_body}")"
+        done < <(_tags)
+    done
+    _report
+}
+
+@test "the tag rule message names the rule and #187" {
+    _check "gh pr comment 7 --body 'looks good'"
+    assert_failure 2
+    assert_output --partial "must start with [claude] or [codex]"
+    assert_output --partial "#187"
+}
+
+@test "a comment call whose body the hook cannot read is blocked; no-body reviews and closes pass" {
+    local _c
+    for _c in "gh pr comment 7" "gh issue comment 7 --editor" "gh pr comment 7 --web" \
+        "gh pr comment 7 --body-file - < notes.md" "cat notes.md | gh issue comment 7 -F -"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+    for _c in "gh pr review 7 --approve" "gh pr close 7" "gh issue reopen 7" \
+        "gh pr create --title t --body 'untagged create body'" \
+        "gh issue create --title t --label bug --body-file /dev/null"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+}
+
+@test "GraphQL comment and review mutations are blocked" {
+    local _m _MISS=''
+    for _m in addComment updateIssueComment addPullRequestReview addPullRequestReviewComment \
+        addPullRequestReviewThread addPullRequestReviewThreadReply submitPullRequestReview \
+        updatePullRequestReview updatePullRequestReviewComment; do
+        _expect 2 "mutation=${_m}" "gh api graphql -f query='mutation{${_m}(input:{body:\"[claude] x\"}){clientMutationId}}'"
+    done
+    _report
+}
+
+# --- HTTP method dimension (round 9): reads pass, writes are blocked -------------
+
+# Every API endpoint class of the scope: <class> <url>. Comments are the full
+# product (issues|pulls) x (collection|member) x (github.com|GHES).
+_api_endpoints() {
+    local _b _k _m
+    for _b in https://api.github.com https://ghe.example.com/api/v3; do
+        printf 'merge %s/repos/o/r/pulls/7/merge\n' "${_b}"
+        for _k in issues pulls; do
+            for _m in 7/comments comments/9; do
+                printf 'comments %s/repos/o/r/%s/%s\n' "${_b}" "${_k}" "${_m}"
+            done
+        done
+    done
+}
+_METHODS=(implicit get head post put patch delete data)
+_TOOLS=(curl wget http gh-api)
+
+# _http_cmd <tool> <method> <class> <url> - an API call; a gh api write carries
+# what makes it a forgery / merge (the phrase body; the gate label).
+_http_cmd() {
+    local _m="${2^^}" _body=''
+    [[ "$3" == comments ]] && _body="-f body=${PHRASE}"
+    case "$1:$2" in
+        curl:implicit) printf 'curl -s %s' "$4" ;;
+        curl:get|curl:head) printf 'curl -X %s %s' "${_m}" "$4" ;;
+        curl:data) printf 'curl -d x=1 %s' "$4" ;;
+        curl:*) printf 'curl -X %s %s' "${_m}" "$4" ;;
+        wget:implicit) printf 'wget -qO- %s' "$4" ;;
+        wget:data) printf 'wget --post-data=x=1 %s' "$4" ;;
+        wget:*) printf 'wget --method=%s %s' "${_m}" "$4" ;;
+        http:implicit) printf 'http %s' "$4" ;;
+        http:data) printf 'http %s x=1' "$4" ;;
+        http:*) printf 'http %s %s' "${_m}" "$4" ;;
+        gh-api:implicit) printf 'gh api %s' "$4" ;;
+        gh-api:get|gh-api:head) printf 'gh api -X %s %s' "${_m}" "$4" ;;
+        gh-api:data) printf 'gh api %s %s' "$4" "${_body:--f merge_method=merge}" ;;
+        gh-api:*) printf 'gh api -X %s %s %s' "${_m}" "$4" "${_body}" ;;
+    esac
+}
+
+@test "matrix: tool x HTTP method x REST endpoint - reads pass, writes are blocked" {
+    _labels milestone-gate
+    local _t _m _cl _u _want _MISS=''
+    local -a _eps
+    mapfile -t _eps < <(_api_endpoints)
+    for _t in "${_TOOLS[@]}"; do
+        for _m in "${_METHODS[@]}"; do
+            for _cl in "${_eps[@]}"; do
+                _u="${_cl#* }"
+                case "${_m}" in implicit|get|head) _want=0 ;; *) _want=2 ;; esac
+                _expect "${_want}" "tool=${_t} method=${_m} endpoint=${_cl%% *}" \
+                    "$(_http_cmd "${_t}" "${_m}" "${_cl%% *}" "${_u}")"
+            done
+        done
+    done
+    _report
+}
+
+@test "matrix: tool x GraphQL body - a query reads, a mutation or an unreadable body is a write" {
+    printf 'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}' \
+        >"${BATS_TEST_TMPDIR}/q.graphql"
+    local _u _b _t _want _c _MISS=''
+    local _read='query{viewer{login}}' _merge='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'
+    local _comment='mutation{addComment(input:{subjectId:\"x\",body:\"y\"}){clientMutationId}}'
+    for _u in https://api.github.com/graphql https://ghe.example.com/api/graphql; do
+        for _b in none read merge comment file; do
+            for _t in "${_TOOLS[@]}"; do
+                case "${_b}" in none|read) _want=0 ;; *) _want=2 ;; esac
+                local _q=''
+                case "${_b}" in read) _q="${_read}" ;; merge) _q="${_merge}" ;; comment) _q="${_comment}" ;; esac
+                case "${_t}:${_b}" in
+                    *:none) _c="$(_http_cmd "${_t}" implicit graphql "${_u}")" ;;
+                    curl:file) _c="curl -d @${BATS_TEST_TMPDIR}/q.graphql ${_u}" ;;
+                    wget:file) _c="wget --post-file=${BATS_TEST_TMPDIR}/q.graphql ${_u}" ;;
+                    http:file) _c="http POST ${_u} query=@${BATS_TEST_TMPDIR}/q.graphql" ;;
+                    gh-api:file) _c="gh api ${_u} -F query=@${BATS_TEST_TMPDIR}/q.graphql" ;;
+                    curl:*) _c="curl -d '{\"query\":\"${_q}\"}' ${_u}" ;;
+                    wget:*) _c="wget --post-data='{\"query\":\"${_q}\"}' ${_u}" ;;
+                    http:*) _c="http POST ${_u} query='${_q//\\/}'" ;;
+                    gh-api:*) _c="gh api ${_u} -f query='${_q//\\/}'" ;;
+                esac
+                _expect "${_want}" "tool=${_t} body=${_b} url=${_u}" "${_c}"
+            done
+        done
+    done
+    _report
+}
+
+@test "an API URL behind an unknown tool or a shell expansion is still a write (fail closed)" {
+    local _c
+    for _c in "fetchit https://api.github.com/repos/o/r/issues/7/comments" \
+        "curl -X \"\$M\" https://api.github.com/repos/o/r/issues/7/comments" \
+        "curl -sX POST https://api.github.com/repos/o/r/pulls/7/merge"; do
+        _check "${_c}"
+        assert_failure 2
+    done
 }
 
 # The host dimension of a direct API URL: _url <form> <host> <path>.
@@ -968,7 +1176,7 @@ _endpoints() {
         "ghe.example.com /api/graphql"
 }
 
-@test "matrix: hook_api_write_urls counts every host x path spelling of an API write URL" {
+@test "matrix: hook_api_endpoint_urls counts every host x path spelling of an API write URL" {
     # shellcheck source=../../../.agents/hook/lib/subcommand.sh
     source "${HOOK_DIR}/lib/subcommand.sh"
     local _h _p _hf _pf _u _MISS=''
@@ -976,7 +1184,7 @@ _endpoints() {
         for _hf in "${_HOST_FORMS[@]}"; do
             for _pf in "${_PATH_FORMS[@]}"; do
                 _u="$(_url "${_hf}" "${_h}" "$(_path_form "${_pf}" "${_p}")")"
-                [[ "$(hook_api_write_urls "curl -X PUT '${_u}'" | wc -l)" -eq 1 ]] \
+                [[ "$(hook_api_endpoint_urls "curl -X PUT '${_u}'" | wc -l)" -eq 1 ]] \
                     || _MISS+="host=${_hf} path=${_pf}: ${_u}"$'\n'
             done
         done
@@ -984,13 +1192,22 @@ _endpoints() {
     _report
 }
 
-@test "matrix: a direct API call through curl / wget / http is blocked for every host spelling" {
-    local _h _p _hf _cl _u _MISS=''
+@test "matrix: a direct API write through curl / wget / http is blocked for every host spelling" {
+    local _h _p _hf _cl _u _b _MISS=''
     while read -r _h _p; do
         for _hf in "${_HOST_FORMS[@]}"; do
             _u="$(_url "${_hf}" "${_h}" "${_p}")"
-            for _cl in "curl -X PUT" "wget --post-data=x" "http POST"; do
-                _expect 2 "client=${_cl%% *} host=${_hf}" "${_cl} ${_u}"
+            for _cl in curl wget http; do
+                # A write: a write method on REST, a mutation body on GraphQL.
+                case "${_cl}:${_p}" in
+                    curl:*graphql) _b="curl -d '{\"query\":\"mutation{x}\"}' ${_u}" ;;
+                    wget:*graphql) _b="wget --post-data='{\"query\":\"mutation{x}\"}' ${_u}" ;;
+                    http:*graphql) _b="http POST ${_u} query='mutation{x}'" ;;
+                    curl:*) _b="curl -X PUT ${_u}" ;;
+                    wget:*) _b="wget --post-data=x ${_u}" ;;
+                    http:*) _b="http POST ${_u}" ;;
+                esac
+                _expect 2 "client=${_cl} host=${_hf} endpoint=${_p}" "${_b}"
             done
         done
     done < <(_endpoints)
@@ -1011,7 +1228,7 @@ _endpoints() {
         done
     done
     _report
-    run hook_api_write_urls "see repos/o/r/pulls/7/merge and api docs at https://docs.github.com/rest"
+    run hook_api_endpoint_urls "see repos/o/r/pulls/7/merge and api docs at https://docs.github.com/rest"
     assert_output ""
 }
 
@@ -1047,7 +1264,7 @@ _endpoints() {
     local _c
     for _c in "git status" \
         "gh pr view 7 -R ycpss91255/worktool" \
-        "gh pr comment 7 --body 'looks good'" \
+        "gh pr comment 7 --body '[claude] looks good'" \
         "echo hi" \
         "git commit -m 'docs: explain the milestone gate'" \
         "gh pr edit 7 --add-label milestone-gate"; do

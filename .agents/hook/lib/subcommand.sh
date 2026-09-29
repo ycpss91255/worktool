@@ -71,15 +71,18 @@
 #     non-shell interpreter that runs inline code (python, perl, ruby, node,
 #     php, awk, lua ...); a heredoc fed to one becomes a here-string word of
 #     its launch, so a hook can read the program text
-#   hook_api_write_urls <text>   one line per URL-like token of <text> that
-#     names a GitHub API merge / comments / graphql endpoint, printed
+#   hook_api_endpoint_urls <text>   one line per URL-like token of <text>
+#     that names a GitHub API merge / comments / reviews / graphql endpoint
+#     (whatever the method: the caller decides read or write), printed
 #     normalised (<host><path>). Every token is normalised the same way
 #     before matching: scheme optional (http, https, none, //), host
 #     lower-cased with userinfo (user[:pw]@), :port and trailing dots
 #     dropped; path lower-cased and percent-decoded, query / fragment
 #     dropped, empty, . and .. segments resolved. Rules: host
 #     api.github.com with /repos/<o>/<r>/pulls/<n>/merge, /repos/<o>/<r>/
-#     (issues|pulls)/[<n>/]comments[/<id>] or /graphql; any host with the
+#     (issues|pulls)/[<n>/]comments[/<id>], pulls/<n>/comments/<id>/replies,
+#     pulls/<n>/reviews[/<id>[/events|dismissals|comments]] or /graphql;
+#     any host with the
 #     GHES prefix /api/v3/ of the same repos paths, or /api/graphql
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
@@ -153,10 +156,10 @@ _hook_norm_path() {
     printf '%s' "${_out}"
 }
 
-# hook_api_write_urls <text> - see the header.
-hook_api_write_urls() {
+# hook_api_endpoint_urls <text> - see the header.
+hook_api_endpoint_urls() {
     local _tok _h _p _sch _u
-    local _rest='repos/[^/]+/[^/]+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments(/[0-9]+)?)'
+    local _rest='repos/[^/]+/[^/]+/(pulls/[0-9]+/merge|(issues|pulls)/([0-9]+/)?comments(/[0-9]+)?|pulls/[0-9]+/comments/[0-9]+/replies|pulls/[0-9]+/reviews(/[0-9]+(/(events|dismissals|comments))?)?)'
     while IFS= read -r _tok; do
         _tok="${_tok,,}"
         [[ "${_tok}" == *api* && "${_tok}" == */* ]] || continue
@@ -189,9 +192,9 @@ hook_is_interpreter() {
 }
 
 # _hook_heredoc_to_shell <text before the heredoc operator> - 0 when the
-# heredoc it opens is the script of a shell interpreter (header step 1) or
-# the stdin of a non-shell interpreter (hook_is_interpreter), whose program
-# a hook may need to read.
+# heredoc it opens is the script of a shell interpreter (header step 1),
+# the stdin of a non-shell interpreter (hook_is_interpreter) or of gh (a
+# --body-file - body), which a hook may need to read.
 _hook_heredoc_to_shell() {
     local _seg="$1" _re='[0-9]*[<>]&[0-9-]*' _lead
     local -a _w
@@ -205,6 +208,8 @@ _hook_heredoc_to_shell() {
     read -r -a _w <<<"${_seg}"
     _hook_shell_reads_stdin "${_w[@]}" && return 0
     [[ "${_w[0]:-}" == busybox || "${_w[0]:-}" == */busybox ]] && _w=("${_w[@]:1}")
+    # gh reads a heredoc as a body (--body-file -): keep it readable too.
+    [[ "${_w[0]:-}" == gh || "${_w[0]:-}" == */gh ]] && return 0
     hook_is_interpreter "${_w[0]:-}"
 }
 
