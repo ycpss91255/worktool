@@ -147,7 +147,9 @@ _required_specs() {
                 unit/hook/transcript_reader_spec.bats \
                 unit/hook/worktree_create_spec.bats \
                 unit/hook/remind_workflow_tdd_spec.bats \
-                unit/hook/remind_no_emoji_spec.bats
+                unit/hook/remind_no_emoji_spec.bats \
+                unit/script/wait_pr_ci_spec.bats \
+                unit/script/watch_user_replies_spec.bats
             ;;
         integration)
             printf '%s\n' \
