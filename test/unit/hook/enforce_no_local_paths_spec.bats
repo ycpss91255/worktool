@@ -253,6 +253,49 @@ D='$'
     assert_output ""
 }
 
+# --- heredoc terminators ---------------------------------------------------------
+
+@test "blocks a local path in a gh heredoc with a quoted non-identifier terminator" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<'END-MARK'" /home/alice/x END-MARK)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "blocks a local path in a gh heredoc with a numeric terminator" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<123" /home/alice/x 123)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "reads the whole terminator word, not its identifier prefix (<<EOF.foo)" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<'EOF.foo'" lib/x EOF /home/alice/x EOF.foo)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "ends a plain << heredoc only on an exact terminator line" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<'EOF'" lib/x '  EOF' /home/alice/x EOF)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "judges a gh heredoc left unterminated at the end of the command" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<'EOF'" lib/x /home/alice/x)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
+@test "blocks a gh heredoc opener without a terminator word" {
+    _check "gh pr comment 3 --body-file - <<"
+    _blocked
+}
+
+@test "allows a clean gh heredoc with a quoted non-identifier terminator" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<'END-MARK'" "lib/x ${D}5" END-MARK)"
+    assert_success
+    assert_output ""
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"

@@ -23,7 +23,9 @@
 # a backtick, a glob, a leading ~), a missing or unreadable file, a stdin
 # body (-) not fed by a heredoc on that same gh launch (a pipe, or a heredoc
 # of another command), and an unquoted heredoc to gh holding '$' or '`'.
-# Every heredoc opened on a line whose gh launch takes one is judged.
+# Every heredoc opened on a line whose gh launch takes one is judged; its
+# delimiter is read as bash reads it (any word, quoted or not: <<'END-MARK',
+# <<123, <<EOF.foo), and one left unterminated runs to the end.
 #
 # Only real launches count (lib/subcommand.sh): a path in a commit message,
 # an echo, a cd or a redirection is not a gh body. Everything else passes
@@ -229,15 +231,59 @@ _line_feeds_gh() {
     return 1
 }
 
-# _heredoc_openers <line> - print "<raw> <terminator>" for every heredoc the
-# line opens, in order; <raw> is 1 for a quoted terminator (a literal body).
+# _heredoc_delim <text> - read the heredoc delimiter word at the start of
+# <text> as bash does: blanks skipped, then up to an unquoted metacharacter,
+# with quote removal. Sets _HD_WORD, _HD_RAW (1 when any part was quoted, so
+# the body is literal) and _HD_LEN (characters consumed).
+_heredoc_delim() {
+    local _t="$1" _i=0 _c _q='' _meta=$' \t;&|<>()'
+    _HD_WORD=''; _HD_RAW=0
+    while [[ "${_t:_i:1}" == [[:blank:]] ]]; do _i=$((_i + 1)); done
+    for ((; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ -n "${_q}" ]]; then
+            [[ "${_c}" == "${_q}" ]] && { _q=''; continue; }
+            if [[ "${_q}" == '"' && "${_c}" == "\\" && "${_t:_i+1:1}" == [\"\\\$\`] ]]; then
+                _i=$((_i + 1)); _c="${_t:_i:1}"
+            fi
+            _HD_WORD+="${_c}"
+            continue
+        fi
+        [[ "${_meta}" == *"${_c}"* ]] && break
+        case "${_c}" in
+            \'|\") _q="${_c}"; _HD_RAW=1 ;;
+            \\) _HD_RAW=1; _i=$((_i + 1)); _HD_WORD+="${_t:_i:1}" ;;
+            *) _HD_WORD+="${_c}" ;;
+        esac
+    done
+    _HD_LEN="${_i}"
+}
+
+# _heredoc_openers <line> - print "<raw> <strip> <delimiter>" for every
+# heredoc the line opens, in order, skipping quoted text and here-strings;
+# <raw> is 1 for a quoted delimiter (a literal body), <strip> 1 for <<-.
+# An opener without a delimiter word prints an empty <delimiter>.
 _heredoc_openers() {
-    local _rest="$1" _raw
-    local _re="(^|[^<])<<-?[[:space:]]*(['\"\\]?)([A-Za-z_][A-Za-z0-9_]*)"
-    while [[ "${_rest}" =~ ${_re} ]]; do
-        _raw=0; [[ -n "${BASH_REMATCH[2]}" ]] && _raw=1
-        printf '%s %s\n' "${_raw}" "${BASH_REMATCH[3]}"
-        _rest="${_rest#*"${BASH_REMATCH[0]}"}"
+    local _l="$1" _i=0 _c _q='' _strip
+    while ((_i < ${#_l})); do
+        _c="${_l:_i:1}"
+        if [[ -n "${_q}" ]]; then
+            [[ "${_q}" == '"' && "${_c}" == "\\" ]] && _i=$((_i + 1))
+            [[ "${_c}" == "${_q}" ]] && _q=''
+            _i=$((_i + 1))
+            continue
+        fi
+        case "${_c}" in
+            \\) _i=$((_i + 2)); continue ;;
+            \'|\") _q="${_c}"; _i=$((_i + 1)); continue ;;
+        esac
+        if [[ "${_l:_i:3}" == '<<<' ]]; then _i=$((_i + 3)); continue; fi
+        if [[ "${_l:_i:2}" != '<<' ]]; then _i=$((_i + 1)); continue; fi
+        _i=$((_i + 2)); _strip=0
+        [[ "${_l:_i:1}" == - ]] && { _strip=1; _i=$((_i + 1)); }
+        _heredoc_delim "${_l:_i}"
+        printf '%s %s %s\n' "${_HD_RAW}" "${_strip}" "${_HD_WORD}"
+        _i=$((_i + _HD_LEN))
     done
 }
 
@@ -249,30 +295,52 @@ _heredoc_done() {
     printf '%s' "$2"
 }
 
+# _heredoc_end <strip> <line> - 0 when <line> is the pending delimiter
+# (_terms[0]): an exact match, or after leading tabs for <<-.
+_heredoc_end() {
+    local _l="$2"
+    [[ "$1" -eq 1 ]] && _l="${_l#"${_l%%[!$'\t']*}"}"
+    [[ "${_l}" == "${_terms[0]}" ]]
+}
+
+# _heredoc_open <line> - queue the heredocs <line> opens and set _fed when a
+# gh launch on it takes one; an opener without a delimiter feeding gh blocks.
+_heredoc_open() {
+    local _o _r
+    while IFS= read -r _o; do
+        _raws+=("${_o%% *}"); _r="${_o#* }"
+        _strips+=("${_r%% *}"); _terms+=("${_r#* }")
+    done < <(_heredoc_openers "$1")
+    [[ "${#_terms[@]}" -gt 0 ]] || return 0
+    _fed=0; _line_feeds_gh "$1" && _fed=1
+    [[ "${_fed}" -eq 1 ]] || return 0
+    for _r in "${_terms[@]}"; do
+        [[ -n "${_r}" ]] || _block_literal "a heredoc to gh without a delimiter word"
+    done
+    return 0
+}
+
 # _gh_heredocs <command> - print the lines of every heredoc body fed to a gh
 # launch (the complement of lib/subcommand.sh's heredoc stripping). The
-# heredocs a line opens are read in order, each up to its own terminator.
+# heredocs a line opens are read in order, each up to its own delimiter; one
+# left open at the end of the command runs to the end, as bash reads it.
 _gh_heredocs() {
-    local _line _trim _fed=0 _body='' _o
-    local -a _raws=() _terms=()
+    local _line _fed=0 _body=''
+    local -a _raws=() _strips=() _terms=()
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        if [[ "${#_terms[@]}" -gt 0 ]]; then
-            _trim="${_line#"${_line%%[![:space:]]*}"}"
-            if [[ "${_trim}" != "${_terms[0]}" ]]; then
-                [[ "${_fed}" -eq 1 ]] && _body+="${_line}"$'\n'
-                continue
-            fi
-            [[ "${_fed}" -eq 1 ]] && _heredoc_done "${_raws[0]}" "${_body}"
-            _body=''
-            _raws=("${_raws[@]:1}"); _terms=("${_terms[@]:1}")
+        if [[ "${#_terms[@]}" -eq 0 ]]; then
+            _heredoc_open "${_line}"
             continue
         fi
-        while IFS= read -r _o; do
-            _raws+=("${_o%% *}"); _terms+=("${_o#* }")
-        done < <(_heredoc_openers "${_line}")
-        [[ "${#_terms[@]}" -gt 0 ]] || continue
-        _fed=0; _line_feeds_gh "${_line}" && _fed=1
+        if ! _heredoc_end "${_strips[0]}" "${_line}"; then
+            [[ "${_fed}" -eq 1 ]] && _body+="${_line}"$'\n'
+            continue
+        fi
+        [[ "${_fed}" -eq 1 ]] && _heredoc_done "${_raws[0]}" "${_body}"
+        _body=''
+        _raws=("${_raws[@]:1}"); _strips=("${_strips[@]:1}"); _terms=("${_terms[@]:1}")
     done <<<"$1"
+    [[ "${#_terms[@]}" -gt 0 && "${_fed}" -eq 1 ]] && _heredoc_done "${_raws[0]}" "${_body}"
     return 0
 }
 
