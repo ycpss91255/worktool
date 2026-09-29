@@ -97,8 +97,53 @@ setup() {
     assert_output ""
 }
 
-@test "allows a stdin body whose ## 範圍 section is visible in a printf pipe" {
+@test "denies a printf-pipe stdin body even when it spells ## 範圍: only a heredoc on the gh line is read" {
     _check "printf '## 背景\\nx\\n## 範圍\\n- 擋:a\\n' | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
+    run _decision
+    assert_output "deny"
+}
+
+@test "a ## 範圍 header forged in a comment after the gh launch is not the stdin body" {
+    _check "printf 'no scope' | gh issue create -R ycpss91255/worktool --title 'hook x' -F - # \\n## 範圍"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook x' -F - # <<EOF\n## 範圍\nEOF")"
+    run _decision
+    assert_output "deny"
+}
+
+@test "a quoted << on the gh line does not open a heredoc body" {
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook <<X' -F -\n## 範圍\nX")"
+    run _decision
+    assert_output "deny"
+}
+
+@test "a ## 範圍 header elsewhere in the command is not the stdin body" {
+    _check "$(printf "cat > /tmp/s.md <<'EOF'\n## 範圍\nEOF\ngh issue create -R ycpss91255/worktool --title 'hook x' -F - <<'EOF'\n## 背景\nEOF")"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "echo '## 範圍'; gh issue create -R ycpss91255/worktool --title 'hook x' -F - <<'EOF'\n## 背景\nEOF")"
+    run _decision
+    assert_output "deny"
+}
+
+@test "a heredoc that does not reach gh's stdin is not the body (2<<, a later < file, a second launch)" {
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook x' -F - 2<<'EOF'\n## 範圍\nEOF")"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook x' -F - <<'EOF' < /dev/null\n## 範圍\nEOF")"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook x' -F - <<'EOF'\n## 範圍\nEOF\ngh issue create -R ycpss91255/worktool --title 'hook z' -F - <<'EOF'\nno\nEOF")"
+    run _decision
+    assert_output "deny"
+}
+
+@test "allows a heredoc body after backslash-continued options and a <<- heredoc with tabs" {
+    _check "$(printf "gh issue create -R ycpss91255/worktool \\\\\\n  --title 'hook y' -l bug -F - <<'EOF'\n## 範圍\n- 擋:a\nEOF")"
+    assert_success
+    assert_output ""
+    _check "$(printf "gh issue create -R ycpss91255/worktool --title 'hook y' -F - <<-EOF\n\t## 範圍\n\t- 擋:a\n\tEOF")"
     assert_success
     assert_output ""
 }
