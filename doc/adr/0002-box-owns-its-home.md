@@ -23,6 +23,7 @@
 2. 路徑可指定：預設 `~/<盒名>-box`（dev 盒 = `~/dev-box`），以 `just box assemble --home <路徑>` 覆寫。distrobox 只在建盒時決定 HOME，建盒後要換只能刪盒重建；已存在的盒子給了不同的 `--home` 一律拒絕，不自動重建。以上尚未實作（目前 `just box assemble` 只有 `--dry-run`、`--file`、`--help`），將由 #198 實作，細節與驗收見該 issue。
 3. user config（`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh` 等）以 symlink 從 host HOME 帶進盒子 HOME：不複製、不修改，host 那份是唯一一份；盒子 HOME 已有同名檔時不覆蓋。以上尚未實作，將由 #199 實作，細節與驗收見該 issue。
 4. `/tmp` 仍是盒內外共用，所以 tmux 要有盒子自己的 socket：建盒時在盒子設定 `TMUX_TMPDIR`，指到盒子 HOME 底下的專用目錄，盒內任何方式啟動的 tmux 都不會連到 host 的 server。以上尚未實作，將由 #179 實作，細節與驗收見該 issue。
+   - 補記（#179 實作，PR #232）：光有 `TMUX_TMPDIR` 不夠。`distrobox enter` 會把呼叫端的環境整批帶進盒內，從 host 的 tmux pane 進盒時盒內會繼承指向 host socket 的 `TMUX`（與 `TMUX_PANE`），而 tmux 先看 `TMUX`。洩漏在環境、不在執行檔，所以不包 tmux，改在環境建立處拿掉：`just box setup` 在 distrobox 自己的 `distrobox.conf` 維護受管區塊（`distrobox-enter` 組 `exec` 請求前 source，進該盒時 `unset TMUX TMUX_PANE`），盒內登入 shell 的 profile.d / fish conf.d 是第二道。機制、涵蓋的進盒路徑與邊界見 `doc/enter.md`「決策：終端不自動開 tmux」第 2 點。
 
 ## 影響
 

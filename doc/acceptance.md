@@ -480,16 +480,20 @@ prereq-ok
     (`~/dev-box/.cache/tmux`)傳到盒內、server pid 與 host 的不同、其 mount
     namespace 等於 dev 容器的(而不是 host server 的)、該行程的根目錄裡有引擎的
     容器檔、socket 在 `TMUX_TMPDIR` 底下,盒內 `tmux ls` 不列 host 的 session、host 的
-    `tmux ls` 也不列盒內的;(3) 從 **host tmux pane 裡**進盒(codex 第 1 輪,PR #232):
-    在 host server 開新視窗執行 `distrobox enter dev`,先斷言盒內繼承到 host pane 的
-    `TMUX`,再斷言盒內 `tmux` 仍得到盒子自己的 server(同 (2) 各項)——由
-    `box/tmux-guard.sh` 丟掉指向 host socket 的 `TMUX`;同一個 pane 再以絕對路徑
-    `/usr/bin/tmux` 開 session(codex 第 2 輪),斷言它落在同一個盒內 server、
-    host 的 `tmux ls` 不列它——guard 裝在 `/usr/bin/tmux` 本身,不靠 PATH 順序;
-    最後(codex 第 3 輪)斷言 PATH 上沒有 `tmux.real`,並從盒內的 sh 登入 shell
-    (`sh -l`)與 fish 各**直接執行**真 tmux(`/usr/libexec/worktool/tmux`)開
-    session:兩個 shell 看到的 `TMUX` 都已被 `box/tmux-env.sh` /
-    `box/tmux-env.fish` 清空,session 落在同一個盒內 server、host 的 `tmux ls` 不列。
+    `tmux ls` 也不列盒內的;(3) 盒內 tmux 環境的**矩陣**(codex 第 1–4 輪,PR #232):
+    洩漏在環境——`distrobox enter` 把呼叫端的 `TMUX` / `TMUX_PANE` 帶進盒內——所以
+    修在環境(`just box setup` 寫的 distrobox.conf 受管區塊,加上盒內登入 shell 的
+    `box/tmux-env.sh` / `box/tmux-env.fish`;見 [`enter.md`](enter.md)),驗收以等價類
+    矩陣斷言:進盒路徑(受管 ghostty 命令、`distrobox enter dev`、
+    `distrobox enter dev -- <命令>`、`distrobox enter dev -- <真 tmux>`、`sh -l` /
+    `fish -l` 登入 shell)× host 狀態(沒有 host tmux / host tmux server 在跑且呼叫端
+    環境帶著它的 `TMUX`、`TMUX_PANE`)× tmux 呼叫(`tmux ls`、`tmux new`、
+    `tmux new -A -s main`、`tmux attach`),每格盒內都看不到 `TMUX` / `TMUX_PANE`、
+    盒子 server 停著時 `tmux ls` 不列任何 session、四種呼叫到的是同一個盒內 server
+    (socket 在 `TMUX_TMPDIR` 底下、行程在 dev 容器的 mount namespace、根目錄有引擎
+    的容器檔、不是 host server 的 pid),host 的 `tmux ls` 只列自己的 `main`。
+    shim 組另以真的 distrobox-enter `--dry-run` 斷言:沒有區塊時 `exec` 請求帶著
+    `--env=TMUX=`(對照),交付的 setup.sh 寫出區塊後每種進盒形狀都不帶。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;

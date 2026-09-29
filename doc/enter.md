@@ -47,24 +47,39 @@ grilling)的目標行為:
    0700)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能省。不採用「規定使用
    `tmux -L`」這種靠記憶的做法。依據:不變量「host 與盒子互不干擾」(#200);共用
    `/tmp` 的問題見 distrobox upstream issue #824。
-   從 **host 的 tmux pane 裡**進盒也一樣:`distrobox enter` 會把 host 的環境變數
-   (含 `TMUX`,指向 host server 的 socket)帶進盒內,而 tmux 先看 `TMUX` 才看
-   `TMUX_TMPDIR`。所以 `init_hooks` 另外在每次盒子啟動時把
-   [`box/tmux-guard.sh`](../box/tmux-guard.sh) **直接裝在**盒內的 `/usr/bin/tmux`
-   (套件的執行檔先以 `dpkg-divert` 移到**不在 PATH 上**的
-   `/usr/libexec/worktool/tmux`;不靠 PATH 順序,用絕對路徑打 `/usr/bin/tmux`
-   也會經過它):`TMUX` 指向盒子自己
-   `TMUX_TMPDIR` 底下的 socket(盒子自己 server 的 pane)才保留,否則丟掉;
-   `TMUX_TMPDIR` 沒設時拒絕執行(否則會退回共用的 `/tmp`)。
-   guard 只管得到 `tmux` 這個名字;直接執行真 tmux 仍會繼承 host 的 `TMUX`
-   (codex 第 3 輪,PR #232)。所以盒內的登入 shell 自己也套用同一條規則,把
-   host 的 `TMUX` 從整個環境拿掉:[`box/tmux-env.sh`](../box/tmux-env.sh)
-   (`/etc/profile.d`,sh / bash)與 [`box/tmux-env.fish`](../box/tmux-env.fish)
-   (`/etc/fish/conf.d`,fish)。之後從盒內 shell 啟動的任何程式(含真 tmux)都看
-   不到 host 的 `TMUX`。剩下的邊界:在 host 端**直接**把
-   `/usr/libexec/worktool/tmux` 寫在 `distrobox enter dev -- <命令>` 後面時,沒有
-   盒內 shell 介入,該命令拿到的是呼叫端原樣的環境——這是刻意指名內部路徑,不是
-   順手會打到的東西。
+   從 **host 的 tmux pane 裡**進盒也一樣。這個洩漏在**環境**,不在執行檔:
+   `distrobox enter` 會把呼叫端的環境變數整批帶進盒內(鎖定版 1.8.2.5 的
+   `distrobox-enter` 把 `printenv` 逐一轉成 `docker exec --env=`,只跳過 HOME、
+   PATH、PWD 等固定幾個),`TMUX`(指向 host server 的 socket)與 `TMUX_PANE`
+   也在其中,而 tmux 先看 `TMUX` 才看 `TMUX_TMPDIR`。任何包在 tmux 執行檔外面的
+   wrapper 都能被「直接執行真執行檔」繞過(codex 第 1–4 輪,PR #232:
+   `distrobox enter dev -- <真 tmux>` 時盒內沒有任何 shell 介入),所以 worktool
+   不包 tmux(盒內的 `/usr/bin/tmux` 就是套件原本的執行檔),而是在環境建立的
+   地方把它拿掉,兩道:
+   - **第一道,`distrobox-enter` 本身**:`just box setup` 每次執行(不論
+     auto-enter / terminal 怎麼選)都在 distrobox 自己的使用者設定
+     `$XDG_CONFIG_HOME/distrobox/distrobox.conf` 維護一個受管區塊。
+     `distrobox-enter` 在讀參數、組 `exec` 請求**之前**就以 shell source 這個檔,
+     區塊裡的一行在這次要進的是該盒(位置參數或 `--name` / `-n`,掃到 `--`、
+     `-e`、`--exec` 為止;或 `DBX_CONTAINER_NAME`)時 `unset TMUX TMUX_PANE`,
+     被 unset 的變數就不會被轉成 `--env`。其他盒子維持上游行為。上游沒有可設定
+     的跳過清單、也沒有 `--unset`;`--additional-flags "--env TMUX="` 仍會帶進
+     空的 `TMUX`;只在受管命令前面加 `env -u TMUX` 則只顧得到那一條命令——所以
+     選 distrobox.conf。
+   - **第二道,盒內的登入 shell**:`init_hooks` 把
+     [`box/tmux-env.sh`](../box/tmux-env.sh)(`/etc/profile.d`,sh / bash)與
+     [`box/tmux-env.fish`](../box/tmux-env.fish)(`/etc/fish/conf.d`,fish)裝進盒內:
+     `TMUX` 指向盒子自己 `TMUX_TMPDIR` 底下的 socket(盒子自己 server 的 pane)才
+     保留,否則連同 `TMUX_PANE` 丟掉;`TMUX_TMPDIR` 空也丟。給沒讀到第一道的情況
+     (另一個 `XDG_CONFIG_HOME`、使用者刪了該區塊)。
+
+   涵蓋的進盒路徑(system-real 以矩陣驗證,見下方「測試」):受管的 ghostty
+   命令、`distrobox enter dev`、`distrobox enter dev -- <命令>`、
+   `distrobox enter dev -- <真 tmux>`、盒內的登入 shell(`sh -l`、`fish -l`)——前四種
+   都經過 `distrobox-enter`(第一道),登入 shell 另有第二道。不涵蓋:不經
+   distrobox、自己下 `docker exec -e TMUX=... dev tmux`(`docker exec` 本身不帶
+   呼叫端環境,這是刻意把 host 的 socket 傳進去);以及沒跑過 `just box setup`
+   (或讀不到該 distrobox.conf)時、`-- <命令>` 不經登入 shell 的路徑。
 3. **tmux 設定**:worktool **不讀也不寫** host 的 `~/.tmux.conf`;tmux 設定屬於工具
    設定,放在盒子自己的 HOME(#196,M5)。
 
@@ -101,6 +116,7 @@ exit 2。
 |------|------|
 | `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`box`) |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`command = '<distrobox>' enter <盒>` |
+| `$XDG_CONFIG_HOME/distrobox/distrobox.conf` | 受管區塊(**每次**都寫,`--auto-enter no` 也保留):進 `<盒>` 時 `unset TMUX TMUX_PANE` 的一行 shell,`distrobox-enter` 組 `exec` 請求前 source 它(issue #179,見上方「決策」第 2 點) |
 
 `~/.tmux.conf` 不在清單裡:worktool 不讀也不寫它(issue #179)。
 
@@ -308,6 +324,7 @@ $ just box setup --dry-run --box work
 [INFO] box: work (user)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] dry-run: would write /home/me/.config/worktool/config
+[INFO] dry-run: would write /home/me/.config/distrobox/distrobox.conf (managed block: for _worktool_a in "$@"; do ... 'work') unset TMUX TMUX_PANE; ...)
 [INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter work)
 ```
 
@@ -320,6 +337,7 @@ auto-enter: yes (default)
 terminal: ghostty (default)
 box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
+distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
 ```
 
@@ -367,12 +385,21 @@ host tmux server 的部分在 system-real):
   command,並斷言 `$(...)` 與反引號的 sentinel 檔沒有被建立)與單引號;issue #179
   一組:受管 command 後面不接任何東西(沒有 tmux)、`--tmux` 是未知選項(exit 2)、
   `~/.tmux.conf` 不論哪種決策都不被讀寫(內容與權限不變)、舊設定檔的 `tmux=` 行被
-  忽略且重寫時消失;
+  忽略且重寫時消失;distrobox.conf 受管區塊每次都寫、`--terminal none` /
+  `--auto-enter no` 保留且冪等、跟著 `--box` 改、`--dry-run` 不寫;
+  `test/unit/box_tmux_env_spec.bats` —— 盒內沒有 tmux wrapper(沒有 guard、沒有
+  dpkg-divert)、distrobox.conf 那一行對 distrobox-enter 參數形狀的等價類表
+  (位置參數 / `--name` / `-n` / `--` 之後的命令 / `-e` / 其他盒 / 沒給名字 /
+  `DBX_CONTAINER_NAME`)只在進該盒時丟掉 `TMUX` 與 `TMUX_PANE`、不改呼叫端的
+  參數與選項、`set -u` 下安全;`box/tmux-env.sh` 對 `TMUX` × `TMUX_TMPDIR`
+  等價類表的保留 / 丟棄規則(含 `TMUX_PANE`),以及兩個 snippet 與清單 blob
+  逐位元組相同;
   `test/unit/status_spec.bats` —— 無設定檔的預設報告、
   有設定檔的逐行輸出與順序、缺 key 回預設、`XDG_CONFIG_HOME`、只印 stdout、
   `--help` / 未知選項,以及 `distrobox:` 那行的四種狀態(runnable / NOT
   RUNNABLE / 裸名字 / PATH 上找不到)與記錄形狀的解碼(單引號、舊版沒有 quote 的
-  絕對路徑、舊版後接 `-- tmux new -A -s main` 的形狀);報告是六行、沒有 tmux 行,
+  絕對路徑、舊版後接 `-- tmux new -A -s main` 的形狀);報告是七行(含
+  `distrobox.conf:` 區塊 present / absent)、沒有 tmux 行,
   舊設定檔的 `tmux=` 行與 `~/.tmux.conf` 裡的區塊既不報告也不拒絕;
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
@@ -394,6 +421,12 @@ host tmux server 的部分在 system-real):
 - 系統:`test/system/real_assemble_spec.bats` —— 真 distrobox 把 `box/dev.ini` 解成
   的 create 請求帶 `--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(在 image 之前,
   是 docker 的容器環境)與建立該目錄的 `--init-hooks`;
+  `test/system/real_enter_env_spec.bats` —— 真的 distrobox-enter(`--dry-run`,印出
+  它會送出的 `exec` 請求):對照案例先證明沒有 distrobox.conf 區塊時請求裡**有**
+  host pane 的 `--env=TMUX=` / `--env=TMUX_PANE=`;交付的 setup.sh 寫出區塊後,
+  每種進盒形狀(`enter dev`、`-- tmux ...`、`-- /usr/bin/tmux ...`、`-- sh -l`、
+  `--name dev`、`-n dev -e ...`)的請求都沒有這兩個,呼叫端其他變數照常帶進;
+  其他盒維持上游行為;
   `test/system/real_engine_spec.bats`(system-real,真 engine + 真 ghostty)——
   ghostty 鏈的標記檔斷言回答的是盒內 fish、寫檔的程序在 dev 容器的 mount namespace
   (不是 runner 的)、不在 tmux 底下、節點名等於 `docker inspect dev`(runner 自己
@@ -403,7 +436,15 @@ host tmux server 的部分在 system-real):
   setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload 打進落地的
   shell,證明仍落在盒內 fish;以及 host 有 tmux server 時盒內 `tmux` 得到的是盒子
   自己的 server(pid 不同、mount namespace 等於 dev 容器、socket 在
-  `TMUX_TMPDIR` 底下、`tmux ls` 只列盒內 session)。
+  `TMUX_TMPDIR` 底下、`tmux ls` 只列盒內 session);再加 issue #179 的**矩陣**
+  (codex 第 4 輪):進盒路徑(受管 ghostty 命令、`distrobox enter dev`、
+  `-- <命令>`、`-- <真 tmux>`、`sh -l` / `fish -l` 登入 shell)× host 狀態(沒有
+  host tmux / host tmux server 在跑且呼叫端環境帶著它的 `TMUX`、`TMUX_PANE`)×
+  tmux 呼叫(`tmux ls`、`tmux new`、`tmux new -A -s main`、`tmux attach`,後兩者
+  在 script(1) 給的終端上),每格都要:盒內看不到 `TMUX` / `TMUX_PANE`、盒子
+  server 停著時 `tmux ls` 什麼都不列、四種呼叫都到同一個 server——socket 在盒子
+  `TMUX_TMPDIR` 底下、行程在 dev 容器的 mount namespace 且根目錄有引擎的容器檔、
+  不是 host server 的 pid——且 host server 只列自己的 `main`。
 - 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。
