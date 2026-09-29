@@ -3,7 +3,7 @@ export const meta = {
   description: 'Research one question with agy (gemini), verify every claim with a claude agent and codex in parallel, synthesize, and record ONE zh-TW comment on the issue; never substitutes another model when agy fails',
   whenToUse: 'Any fact-finding the maintainer wants researched (agy finds, claude and codex verify). Pass args {repo, repoDir, issue, question, context?, sources?, timeoutMin?}.',
   phases: [
-    { title: 'Research', detail: 'agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
+    { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
     { title: 'Verify', detail: 'parallel: claude agent claim by claim (structured) + codex exec with the agy text on stdin (verbatim file)' },
     { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
     { title: 'Record', detail: 'agent: ONE issue comment via --body-file: [claude] conclusion, verbatim [codex], agy original folded' },
@@ -24,8 +24,9 @@ export const meta = {
 //   } })
 //
 // Result: { issue, status, codex, claims, comment, synthesis }.
-// status: 'recorded' | 'agy-failed' | 'verify-failed' | 'synthesize-failed' |
-// 'record-failed'. Every failure stops the run where it happens (fail closed):
+// status: 'recorded' | 'setup-failed' | 'agy-failed' | 'verify-failed' |
+// 'synthesize-failed' | 'record-failed'. Every failure stops the run where it
+// happens (fail closed): no valid run nonce stops before agy runs;
 // agy failing twice stops before Verify (no other model's answer is dressed up
 // as agy's); a claude verifier without claims or a codex without output stops
 // before Synthesize (both verifiers are required); a missing or malformed
@@ -38,10 +39,13 @@ export const meta = {
 // without control characters or backticks. Every path or value that reaches a
 // shell command is single-quoted with sq(), so spaces and metacharacters in
 // repoDir are data, never syntax. A verbatim block is fenced by
-// ===BEGIN-<n>=== / ===END-<n>===, n distinct for every block of a run and
-// chosen so neither marker occurs in the block or in repoDir: no content can
-// close the block early. n is deterministic (no Math.random in a Workflow, it
-// would break resume), so two runs with the same args reuse the same markers.
+// ===BEGIN-<run>-<n>=== / ===END-<run>-<n>===: <run> is a 16-hex nonce the
+// first agent reads from /dev/urandom, so markers are unique per run (issue
+// #225); n is distinct for every block of the run and chosen so neither
+// marker occurs in the block or in repoDir: no content can close the block
+// early. A Workflow may not call Math.random (it would break resume), but a
+// resumed run replays the nonce agent's cached result, so it keeps its own
+// markers while a new run with the same args draws new ones.
 
 const A = args || {}
 for (const k of ['repo', 'repoDir', 'issue', 'question']) {
@@ -64,15 +68,19 @@ const CD = `cd ${sq(SCRATCH)}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 // Fence body verbatim with markers that occur neither in it nor in REPO_DIR.
-// n only grows during a run, so no two blocks of one run share a marker.
+// RUN (the run nonce) keeps markers apart across runs; n only grows during a
+// run, so no two blocks of one run share a marker.
+let RUN = ''
 let lastFence = 0
 const fence = (body) => {
   let n = lastFence + 1
-  while ([body, REPO_DIR].some(t => t.includes(`===BEGIN-${n}===`) || t.includes(`===END-${n}===`))) n += 1
+  while ([body, REPO_DIR].some(t => t.includes(`===BEGIN-${RUN}-${n}===`) || t.includes(`===END-${RUN}-${n}===`))) n += 1
   lastFence = n
-  return `===BEGIN-${n}===\n${body}\n===END-${n}===`
+  return `===BEGIN-${RUN}-${n}===\n${body}\n===END-${RUN}-${n}===`
 }
 
+const NONCE_RE = /^[0-9a-f]{16}$/
+const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
@@ -89,7 +97,9 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 問題:${A.question}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
-const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
+const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
+
+const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
 1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ${fence(AGY_PROMPT)}
@@ -105,7 +115,7 @@ const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的�
 問題:${A.question}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 
-const CODEX_STEP = `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
+const CODEX_STEP = () => `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
 1. Write the text between the markers, byte for byte, ${TO('codex-prompt.txt')}.
 ${fence(CODEX_PROMPT)}
 2. Run in the foreground: \`${CD} && cat agy.md | timeout 600 codex exec --skip-git-repo-check "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract the answer = lines after the line that is exactly "codex", minus trailing "tokens used" lines: \`${CD} && awk '/^codex$/{f=1;next} f' codex-raw.txt | sed '/^tokens used/,$d' > codex.md && [ -s codex.md ]\`.
@@ -158,14 +168,17 @@ const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parame
 const stop = (status, codex, claims, detail, synthesis = null) => ({ issue: A.issue, status, codex, claims, comment: '', synthesis, detail })
 
 phase('Research')
-const res = await agent(RESEARCH, { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
+const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
+if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
+RUN = nonce.nonce
+const res = await agent(RESEARCH(), { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
 if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }
 log(`#${A.issue}: agy ok after ${res.attempts} attempt(s): ${res.detail}`)
 
 phase('Verify')
 const [claude, codex] = await parallel([
   () => agent(CLAIM_CHECK, { label: `claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' }),
-  () => agent(CODEX_STEP, { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' }),
+  () => agent(CODEX_STEP(), { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' }),
 ])
 // Fail closed: both verifiers must have checked the claims, or nothing is concluded.
 const claims = (claude && Array.isArray(claude.claims) && claude.claims.every(claimOk)) ? claude.claims : []

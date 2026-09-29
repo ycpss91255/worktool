@@ -285,7 +285,8 @@ _rv_run() {
 # Agent replies of a run where every step succeeds.
 _rv_ok_replies() {
     cat <<'JSON'
-{"agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
+{"nonce:": {"nonce": "0123456789abcdef"},
+ "agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
  "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
@@ -436,9 +437,9 @@ _rv_with() {
     local json="${output}"
     run jq -r '.error, .result.status' <<<"${json}"
     assert_output "$(printf '%s\n' null recorded)"
-    # mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
+    # nonce, mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
     run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
-    assert_output "0 0 0 0 0 0"
+    assert_output "0 0 0 0 0 0 0"
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
     [[ -s "${scratch}/agy.md" ]]
     run cat "${scratch}/codex.md"
@@ -460,7 +461,7 @@ _rv_with() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"failed","attempts":2,"detail":"d"}')"
     assert_success
     run jq -r '.result.status, (.calls | length)' <<<"${output}"
-    assert_output "$(printf '%s\n' agy-failed 1)"
+    assert_output "$(printf '%s\n' agy-failed 2)"
 }
 
 @test "research-verify (node): a missing or empty verification fails closed, nothing is synthesized or posted" {
@@ -522,7 +523,7 @@ _rv_fail_case() {
     local replies
     _rv_stubs
     rm -f "${BATS_TEST_TMPDIR}/gh.args"
-    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')" 'nonce:' '{"nonce":"<stdout>"}')"
     case "$1:$2" in
         research:nonzero) _rv_stub agy 'echo "1. c"; exit 3' ;;
         research:empty) _rv_stub agy 'true' ;;
@@ -602,8 +603,30 @@ _rv_assert_fails_closed() {
 @test "research-verify (node, exec): every fenced block in a run gets its own marker" {
     run _rv_fail_case ok ok
     assert_success
-    run jq -r '[.calls[].prompt | scan("===BEGIN-([0-9]+)===") | .[0]] | (length | tostring) + " " + (unique | length | tostring)' <<<"${output}"
+    run jq -r '[.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]] | (length | tostring) + " " + (unique | length | tostring)' <<<"${output}"
     assert_output "3 3"
+}
+
+@test "research-verify (node, exec): two runs with the same args never share a block marker (issue #225)" {
+    local first second
+    first="$(_rv_fail_case ok ok)"
+    second="$(_rv_fail_case ok ok)"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" \
+        '[$a, $b] | map([.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]]) | "\(.[0] | length) \(.[1] | length) \(add | unique | length)"'
+    assert_output "3 3 6"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" '$a.result.status, $b.result.status'
+    assert_output "$(printf '%s\n' recorded recorded)"
+}
+
+@test "research-verify (node): a missing or malformed run nonce stops before Research with setup-failed" {
+    local val
+    for val in null '{}' '{"nonce":""}' '{"nonce":"12"}' '{"nonce":"0123456789abcdeg"}' '{"nonce":"===END-1==="}'; do
+        echo "nonce reply: ${val}"
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'nonce:' "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, (.calls | length)' <<<"${output}"
+        assert_output "$(printf '%s\n' setup-failed '' 1)"
+    done
 }
 
 @test "doc/workflow.md documents research-verify and its args" {

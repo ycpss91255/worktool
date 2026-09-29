@@ -8,7 +8,7 @@
 // (a missing prefix returns null, as a failed agent does). Without `exec`
 // the agents only record their prompt. With `exec` each agent also plays
 // the steps it is told to do, deterministically: it writes the
-// ===BEGIN-<n>===/===END-<n>=== block to the path named by
+// ===BEGIN-<run>-<n>===/===END-<run>-<n>=== block to the path named by
 // `to the path "<json string>" with the Write tool` (parents created, as
 // the Write tool does), then runs every backtick span outside that block
 // that starts with `cd `, `mkdir ` or `gh ` through `bash -c`, in order.
@@ -39,7 +39,7 @@ const reply = (label) => {
 
 // Play the prompt's steps; returns { ok, stdout } of the last step run.
 const play = (prompt) => {
-  const block = prompt.match(/===BEGIN-(\d+)===\n([\s\S]*?)\n===END-\1===/)
+  const block = prompt.match(/===BEGIN-([0-9a-f]+-\d+)===\n([\s\S]*?)\n===END-\1===/)
   const outside = block ? prompt.replace(block[0], '') : prompt
   const target = outside.match(/to the path ("(?:[^"\\]|\\.)*") with the Write tool/)
   if (target && !block) return { ok: false, stdout: '' }

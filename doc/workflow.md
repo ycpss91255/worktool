@@ -79,7 +79,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `sources` | 否 | 本機一手資料路徑陣列(例如鎖定版原始碼),給 claude 與 codex 驗證時直接讀 |
 | `timeoutMin` | 否 | agy `--print-timeout` 分鐘數(正整數,預設 15);外層再包 `timeout` 硬上限 |
 
-1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
+1. **Research**:先由一個 agent 以 `od -An -N8 -tx1 /dev/urandom` 取得本次執行的 nonce(16 位小寫十六進位),
+   沒有或格式不對就回傳 `status: 'setup-failed'` 並停在這裡,agy 不會被呼叫;接著 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
    指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
@@ -96,13 +97,14 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
    gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
-   `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+   `recorded` / `setup-failed` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
-metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<n>===` / `===END-<n>===` 包住,`n` 在同一次執行內只增不減,
+metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<run>-<n>===` / `===END-<run>-<n>===` 包住:`<run>` 是上述 nonce,
+所以 marker 每次執行都不同(#225),同一組 args 的兩次執行也不會共用;`n` 在同一次執行內只增不減,
 每個區塊各用一個不同的 `n`,並跳過會出現在區塊內容或 `repoDir` 中的值,問題或結論裡的任何文字都不會提早結束區塊。
-`n` 是決定性的(Workflow 不能用 `Math.random`,否則無法 resume),同一組 args 的兩次執行會用相同的 marker;
-唯一性的保證範圍是「一次執行內的每個區塊」,不是跨執行。
+Workflow 不能用 `Math.random`(否則無法 resume),所以 nonce 由 agent 從 `/dev/urandom` 讀;
+resume 時會重播這個 agent 的快取結果,續跑的執行沿用自己的 marker,resume 的決定性不受影響。
 
 `test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本(`test/unit/fixture/workflow_run.mjs`,
 agent 以替身代打並真的跑每個 shell 步驟,agy / codex / gh 以 stub 代替),驗證參數拒絕、quoting 與 fail-closed 流程。
