@@ -78,21 +78,34 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 
 1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
-   無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
+   指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
+   無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
+   agent 回報的 `attempts` 不是 1 或 2 也算失敗。
 2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
-   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,原文存成 `codex.md`。
-   **兩路都必須有結果**:claude 沒回 claims(空值或空陣列)或 codex 無輸出(配額/認證)就回傳
+   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,原文存成 `codex.md`
+   (codex 非零結束、無輸出或沒有答案標記行,抽取步驟都以非零結束)。
+   **兩路都必須有結果**:claude 沒回 claims(空值、空陣列,或任一條缺 claim / verdict / basis)或 codex 無輸出(配額/認證)就回傳
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
    agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
+   只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
+   gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
    `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
-metacharacter 只會是資料。`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本
-(`test/unit/fixture/workflow_run.mjs`,agent 以替身代打並真的跑每個 shell 步驟),驗證參數拒絕、quoting 與 fail-closed 流程。
+metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<n>===` / `===END-<n>===` 包住,`n` 每次執行、每個區塊
+依內容挑選,使 marker 不出現在區塊內容與 `repoDir` 中,問題或結論裡的任何文字都不會提早結束區塊。
+
+`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本(`test/unit/fixture/workflow_run.mjs`,
+agent 以替身代打並真的跑每個 shell 步驟,agy / codex / gh 以 stub 代替),驗證參數拒絕、quoting 與 fail-closed 流程。
+替身 fail closed:任一 shell 步驟非零結束(或有寫檔目標卻沒有完整區塊)就停下並回傳 null,如同失敗的 agent,
+不會回傳預設結果;因此「shell 失敗 → 不進 Record」是實際執行證明,不是文字比對。
+測試矩陣涵蓋 Research、claude 驗證、codex 驗證、Synthesize、Record 五個階段 × 非零結束、無輸出、格式錯誤三種失敗
+(沒有外部工具的 claude 驗證與 Synthesize,「非零結束」即 agent 本身失敗),每一格都斷言沒有留言被記錄、
+Record 之前的失敗 gh 完全沒被呼叫。
 
 ## 對應的治理規則
 
