@@ -215,8 +215,12 @@ EOF
 _mut_location() {
     printf '#> lib/config.sh\n'
     cat <<'EOF'
-# XDG_CONFIG_HOME is ignored.
-config_xdg_dir() { printf '%s/.config\n' "${HOME}"; }
+# The state file ignores XDG_CONFIG_HOME; config_xdg_dir (other XDG files)
+# and the messages (which name whatever file is used) are left alone.
+_config_file() {
+    if [[ -n "${WORKTOOL_CONFIG_FILE:-}" ]]; then printf '%s\n' "${WORKTOOL_CONFIG_FILE}"
+    else printf '%s/.config/worktool/config\n' "${HOME}"; fi
+}
 EOF
 }
 _mut_log() {
