@@ -165,10 +165,10 @@ jobs:
   # lib/commit_email.sh (pure bash, unit tested in
   # test/unit/commit_email_spec.bats); this job only picks the range (PR:
   # base..head, push: before..after, new ref: after minus the default
-  # branch; any missing or malformed event value fails the job instead of
-  # shrinking the range), collects the records with git log and fails
-  # listing each offending commit plus the fix command. No token is
-  # needed: the full history is checked out without credentials.
+  # branch; a missing or malformed value the event uses fails the job
+  # instead of shrinking the range), collects the records with git log
+  # and fails listing each offending commit plus the fix command. No
+  # token is needed: the full history is checked out without credentials.
   commit-email:
     name: commit-email
     runs-on: ubuntu-latest
