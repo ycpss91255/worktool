@@ -108,6 +108,22 @@ _decision_item() {
     assert_line --regexp '24\.04.*待補.*#148|24\.04.*#148.*待補'
 }
 
+@test "ADR 0012 does not claim build-image runs just test (codex round 1)" {
+    # build-image only builds, saves and uploads the test image; the
+    # `just test <tier>` legs are gate and test-system-real.
+    run _section "${ADR_0012}" "目前由哪些機制或測試守住"
+    assert_success
+    refute_line --regexp 'build-image.*just test|just test.*build-image'
+    assert_line --regexp 'build-image.*docker build'
+}
+
+@test "ADR 0012 says the doc/contract.md invariant index link is backfilled by #201 (codex round 1)" {
+    run grep -E '^- 索引：' "${ADR_0012}"
+    assert_success
+    assert_output --partial "doc/contract.md"
+    assert_output --partial "由 #201 回填"
+}
+
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
