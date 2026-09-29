@@ -950,9 +950,33 @@ STUB
     printf '%s\n' "${_dir}"
 }
 
-# Number of lines of text $2 (a run's output) exactly equal to $1.
+# Number of lines of text $2 (a run's output) exactly equal to $1. grep -c
+# already prints 0 on "no match" (exit 1); only a real error (exit >= 2)
+# is passed on to the caller.
 _count_line() {
-    grep -cxF -- "$1" <<<"$2" || true
+    local _rc=0
+    grep -cxF -- "$1" <<<"$2" || _rc=$?
+    if [[ "${_rc}" -gt 1 ]]; then
+        return "${_rc}"
+    fi
+}
+
+# _count_line itself: "no match" (grep exit 1) is a count of 0, a real grep
+# error (exit 2) must reach the caller instead of being swallowed (codex
+# round 1 on PR #227). A `grep` stand-in first on PATH produces the error.
+@test "#178: _count_line prints 0 and succeeds when no line matches" {
+    run _count_line "absent" $'one\ntwo'
+    assert_success
+    assert_output "0"
+}
+
+@test "#178: _count_line returns grep's error status instead of a count" {
+    local _bin="${BATS_TEST_TMPDIR}/grepbin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 2\n' >"${_bin}/grep"
+    chmod +x "${_bin}/grep"
+    PATH="${_bin}:${PATH}" run _count_line "one" $'one\ntwo'
+    assert_failure 2
 }
 
 # Seed the ghostty config with a user line, the current managed block (via
