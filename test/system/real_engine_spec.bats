@@ -724,6 +724,9 @@ _desktop_path() {
 #       server's socket - into the box, and tmux prefers $TMUX over
 #       TMUX_TMPDIR; the box's tmux guard (box/tmux-guard.sh, installed by
 #       box/dev.ini) must drop it so the box still gets its own server.
+#       Both a bare `tmux` and a path-typed `/usr/bin/tmux` (codex round 2:
+#       a guard that only won on PATH order let the latter reach the host)
+#       must land on the box's server.
 
 # The host (runner) side tmux server and its session. `main` is the session
 # the old managed command attached to (`new -A -s main`), so a regression
@@ -839,7 +842,8 @@ _host_tmux_pid() {
 
 # The payload a host tmux pane runs in the box (case (3)): it records the
 # TMUX the box inherited, then starts `tmux` as a user would type it and
-# reports the server it reached and the sessions that server lists.
+# reports the server it reached and the sessions that server lists; then the
+# same through the absolute /usr/bin/tmux, which bypasses PATH.
 _host_pane_payload() { printf '%s/host-pane-box-tmux.sh\n' "${HOME}"; }
 _host_pane_out() { printf '%s/host-pane-box-tmux.txt\n' "${HOME}"; }
 _write_host_pane_payload() {
@@ -847,6 +851,8 @@ _write_host_pane_payload() {
 printf 'box-saw-TMUX=%s\n' "${TMUX-}"
 tmux -f /dev/null new-session -d -s box || exit 1
 tmux display-message -p -t box 'box-server=#{pid} #{socket_path}'
+/usr/bin/tmux -f /dev/null new-session -d -s abspath || exit 1
+/usr/bin/tmux display-message -p -t abspath 'abs-server=#{pid} #{socket_path}'
 tmux ls
 EOF
 }
@@ -886,12 +892,18 @@ _run_in_host_pane() {
     assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
     assert_equal "$(readlink "/proc/${_box_pid}/ns/mnt")" "$(_dev_mntns)"
     assert [ -e "/proc/${_box_pid}/root$(_engine_ctrenv)" ]
+    # The path-typed /usr/bin/tmux reached the SAME box server, never the
+    # host's: its session is listed by the box's tmux next to `box`.
+    run cat "$(_host_pane_out)"
+    assert_line "abs-server=${_box_pid} ${_box_sock}"
+    assert_line --regexp '^abspath: '
 
-    # The host server never saw the box's session.
+    # The host server never saw the box's sessions.
     run env -u TMUX -u TMUX_TMPDIR tmux ls
     assert_success
     assert_line --regexp "^${HOST_TMUX_SESSION}: "
     refute_line --regexp '^box: '
+    refute_line --regexp '^abspath: '
 
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
     assert_success

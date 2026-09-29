@@ -50,8 +50,9 @@ grilling)的目標行為:
    從 **host 的 tmux pane 裡**進盒也一樣:`distrobox enter` 會把 host 的環境變數
    (含 `TMUX`,指向 host server 的 socket)帶進盒內,而 tmux 先看 `TMUX` 才看
    `TMUX_TMPDIR`。所以 `init_hooks` 另外在每次盒子啟動時把
-   [`box/tmux-guard.sh`](../box/tmux-guard.sh) 裝成盒內的 `/usr/local/bin/tmux`
-   (在盒內 PATH 上排在 `/usr/bin/tmux` 前面):`TMUX` 指向盒子自己
+   [`box/tmux-guard.sh`](../box/tmux-guard.sh) **直接裝在**盒內的 `/usr/bin/tmux`
+   (套件的執行檔先以 `dpkg-divert` 移到 `/usr/bin/tmux.real`;不靠 PATH 順序,
+   用絕對路徑打 `/usr/bin/tmux` 也會經過它):`TMUX` 指向盒子自己
    `TMUX_TMPDIR` 底下的 socket(盒子自己 server 的 pane)才保留,否則丟掉;
    `TMUX_TMPDIR` 沒設時拒絕執行(否則會退回共用的 `/tmp`)。
 3. **tmux 設定**:worktool **不讀也不寫** host 的 `~/.tmux.conf`;tmux 設定屬於工具

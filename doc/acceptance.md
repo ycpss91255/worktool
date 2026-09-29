@@ -483,7 +483,9 @@ prereq-ok
     `tmux ls` 也不列盒內的;(3) 從 **host tmux pane 裡**進盒(codex 第 1 輪,PR #232):
     在 host server 開新視窗執行 `distrobox enter dev`,先斷言盒內繼承到 host pane 的
     `TMUX`,再斷言盒內 `tmux` 仍得到盒子自己的 server(同 (2) 各項)——由
-    `box/tmux-guard.sh` 丟掉指向 host socket 的 `TMUX`。
+    `box/tmux-guard.sh` 丟掉指向 host socket 的 `TMUX`;同一個 pane 再以絕對路徑
+    `/usr/bin/tmux` 開 session(codex 第 2 輪),斷言它落在同一個盒內 server、
+    host 的 `tmux ls` 不列它——guard 裝在 `/usr/bin/tmux` 本身,不靠 PATH 順序。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;

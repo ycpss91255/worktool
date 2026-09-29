@@ -6,10 +6,15 @@
 #   included. Entered from a HOST tmux pane, TMUX names the host server's
 #   socket on the /tmp the box shares, and tmux prefers $TMUX over
 #   TMUX_TMPDIR, so a `tmux` in the box would reach the HOST server (codex
-#   round 1 on PR #232). box/tmux-guard.sh is the box's `tmux`
-#   (/usr/local/bin/tmux): it keeps TMUX only when it names a socket under
+#   round 1 on PR #232). box/tmux-guard.sh is the box's `tmux`: it keeps
+#   TMUX only when it names a socket under
 #   the box's own TMUX_TMPDIR, drops it otherwise, and refuses to run with
 #   no TMUX_TMPDIR at all (tmux would fall back to the shared /tmp).
+#
+#   It sits AT /usr/bin/tmux, not merely ahead of it on PATH (codex round 2
+#   on PR #232): a `/usr/bin/tmux` typed by path must go through it too. The
+#   packaged binary is moved aside with dpkg-divert (/usr/bin/tmux.real), so
+#   a later tmux package upgrade lands there and never overwrites the guard.
 #
 #   box/dev.ini is a plain distrobox-assemble manifest, so the guard reaches
 #   the box as a base64 blob in an init hook. The first case pins that the
@@ -17,7 +22,7 @@
 #   the one source, the blob can never drift from it.
 #
 # HOW
-#   The guard execs /usr/bin/tmux. Each case runs a copy whose exec target
+#   The guard execs /usr/bin/tmux.real. Each case runs a copy whose exec target
 #   is a fake that prints the TMUX / TMUX_TMPDIR it received and its
 #   arguments, so what the real tmux would see is asserted directly.
 #
@@ -38,21 +43,35 @@ for a in "$@"; do printf 'arg=%s\n' "$a"; done
 EOF
     chmod 0755 "${FAKE}"
     UNDER_TEST="${BATS_TEST_TMPDIR}/tmux"
-    sed "s|/usr/bin/tmux|${FAKE}|" "${GUARD}" >"${UNDER_TEST}"
+    sed "s|/usr/bin/tmux.real|${FAKE}|" "${GUARD}" >"${UNDER_TEST}"
     chmod 0755 "${UNDER_TEST}"
 }
 
-@test "box/dev.ini installs box/tmux-guard.sh, byte for byte, as the box's /usr/local/bin/tmux" {
+@test "box/dev.ini diverts the packaged tmux to /usr/bin/tmux.real before installing the guard" {
+    local _divert _guard
+    _divert="$(grep -nxF 'init_hooks=dpkg-divert --local --rename --divert /usr/bin/tmux.real --add /usr/bin/tmux' "${MANIFEST}")" \
+        || fail "no dpkg-divert init hook for /usr/bin/tmux"
+    _guard="$(grep -nE '^init_hooks=echo .* >/usr/bin/tmux ' "${MANIFEST}")" \
+        || fail "no init hook installs the guard at /usr/bin/tmux"
+    (( ${_divert%%:*} < ${_guard%%:*} )) || fail "the guard is installed before the divert"
+}
+
+@test "box/dev.ini installs box/tmux-guard.sh, byte for byte, AT /usr/bin/tmux (a path-typed /usr/bin/tmux is guarded too)" {
     local _hook _blob
-    _hook="$(grep -E '^init_hooks=.*/usr/local/bin/tmux' "${MANIFEST}")"
-    [[ "${_hook}" =~ ^init_hooks=echo\ ([A-Za-z0-9+/=]+)\ \|\ base64\ -d\ \>/usr/local/bin/tmux\ \&\&\ chmod\ 0755\ /usr/local/bin/tmux$ ]] \
+    _hook="$(grep -E '^init_hooks=echo ' "${MANIFEST}")"
+    [[ "${_hook}" =~ ^init_hooks=echo\ ([A-Za-z0-9+/=]+)\ \|\ base64\ -d\ \>/usr/bin/tmux\ \&\&\ chmod\ 0755\ /usr/bin/tmux$ ]] \
         || fail "unexpected install hook: '${_hook}'"
     _blob="${BASH_REMATCH[1]}"
     assert_equal "$(printf '%s' "${_blob}" | base64 -d | sha256sum)" "$(sha256sum <"${GUARD}")"
 }
 
-@test "the guard execs the real tmux at /usr/bin/tmux, not itself" {
-    run grep -cE '^exec /usr/bin/tmux "\$@"$' "${GUARD}"
+@test "box/dev.ini no longer relies on PATH order: nothing is installed at /usr/local/bin/tmux" {
+    run grep -c '/usr/local/bin/tmux' "${MANIFEST}"
+    assert_output "0"
+}
+
+@test "the guard execs the diverted real tmux at /usr/bin/tmux.real, not itself" {
+    run grep -cE '^exec /usr/bin/tmux\.real "\$@"$' "${GUARD}"
     assert_success
     assert_output "1"
 }

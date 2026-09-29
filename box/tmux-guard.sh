@@ -1,10 +1,13 @@
 #!/bin/sh
 # box/tmux-guard.sh - the dev box's `tmux` (issue #179).
 #
-# box/dev.ini installs this file as /usr/local/bin/tmux in the box (an init
-# hook, on every box start), ahead of the packaged /usr/bin/tmux on the
-# box's PATH, so every `tmux` started in the box - from any shell, or as
-# `distrobox enter dev -- tmux` - goes through it.
+# box/dev.ini installs this file AT /usr/bin/tmux in the box (init hooks,
+# on every box start), after moving the packaged binary aside with
+# dpkg-divert to /usr/bin/tmux.real. So every tmux started in the box - a
+# bare `tmux` from any shell, `distrobox enter dev -- tmux`, or a
+# path-typed /usr/bin/tmux (codex round 2 on PR #232) - goes through it,
+# whatever the PATH order; a later tmux package upgrade lands on the
+# diverted path and never overwrites the guard.
 #
 # WHY: the box has its own tmux server because box/dev.ini sets
 # TMUX_TMPDIR. But tmux looks at $TMUX first, and `distrobox enter` copies
@@ -24,4 +27,4 @@ case "${TMUX:-}" in
     "${TMUX_TMPDIR:?TMUX_TMPDIR is not set: refusing to use the shared /tmp}"/*) ;;
     *) unset TMUX ;;
 esac
-exec /usr/bin/tmux "$@"
+exec /usr/bin/tmux.real "$@"
