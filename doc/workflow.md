@@ -2,12 +2,13 @@
 
 worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> codex 複驗 -> 修正 -> 再複驗**,
 CI 綠且 codex「可合併」才由主迴圈合併(一次一個 PR、merge commit、保留各 agent 的 commit)。
-這條迴圈寫成兩個可重用的 Claude Code Workflow 腳本,不再每次臨時寫。
+這條迴圈寫成兩個可重用的 Claude Code Workflow 腳本,不再每次臨時寫;查資料另有 `research-verify.js`。
 
 | 檔案 | 用途 | 何時用 |
 |------|------|--------|
 | `pr-loop.js` | 一個 sub-issue -> 一個 PR,推到「CI 綠 + codex 可合併」 | 每一個 sub-issue |
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
+| `research-verify.js` | 找資料:agy(gemini)查,claude 與 codex 並行逐條驗證,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
 ## 呼叫方式
 
@@ -60,6 +61,30 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge**:合併順序、rebase 衝突由主迴圈處理。
+
+## research-verify
+
+維護者規則:找資料一律用 agy(gemini)查,由 claude 與 codex 做驗證(#220)。`args` = `{ repo, repoDir, issue, question, context?, sources?, timeoutMin? }`:
+
+| 參數 | 必要 | 說明 |
+|------|------|------|
+| `repo` | 是 | `owner/name`;gh 一律帶 `--repo` |
+| `repoDir` | 是 | 本機 checkout;prompt 與原始輸出放在 `<repoDir>/.worktree/.scratch/research-<issue>/`(gitignored) |
+| `issue` | 是 | 正整數;結論以**一則**留言貼到這個 issue |
+| `question` | 是 | 研究問題 |
+| `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
+| `sources` | 否 | 本機一手資料路徑陣列(例如鎖定版原始碼),給 claude 與 codex 驗證時直接讀 |
+| `timeoutMin` | 否 | agy `--print-timeout` 分鐘數(正整數,預設 15);外層再包 `timeout` 硬上限 |
+
+1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
+   prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
+   無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
+2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化);
+   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,原文存成 `codex.md`。
+3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
+4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
+   agent 不自己寫 `[codex]` 行;codex 無輸出時改為 `[claude]` 註記)+ agy 原文放在 `<details>` 摺疊區塊。
+5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為 `recorded` / `agy-failed` / `record-failed`。
 
 ## 對應的治理規則
 
