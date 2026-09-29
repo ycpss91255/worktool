@@ -158,7 +158,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 mod? test 'script/test/justfile.test'
 # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench ... | setup ... | status  (M3 adds enter / rm)
 mod? box 'script/box/justfile.box'
-# Acceptance checks of doc/acceptance.md: just verify ui | gate | setup | diagram | realbox | evidence  [ITEM]
+# Acceptance checks of doc/acceptance.md: just verify all (every non-real-machine group) | ui | gate | setup | diagram | realbox | evidence  [ITEM]
 mod? verify 'script/verify/justfile.verify'
 
 # Default: list the namespaces.
