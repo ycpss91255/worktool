@@ -30,6 +30,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     STATUS="${REPO_ROOT}/script/box/status.sh"
+    SETUP_SH="${REPO_ROOT}/script/box/setup.sh"
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
     unset XDG_CONFIG_HOME
@@ -74,6 +75,7 @@ _write_config() {
     assert_line "terminal: none (default)"
     assert_line "box: dev (default)"
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
+    assert_line "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: absent)"
     refute_output --partial "tmux"
     assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
     assert [ ! -e "${CONFIG}" ]
@@ -88,7 +90,7 @@ _write_config() {
 
 # --- with a state file -------------------------------------------------------
 
-@test "prints every stored decision with its source and the block presence: six lines, no tmux" {
+@test "prints every stored decision with its source and the block presence: seven lines, no tmux" {
     _write_config \
         'auto-enter=yes' 'auto-enter.source=default' \
         'terminal=ghostty' 'terminal.source=user' \
@@ -102,8 +104,9 @@ _write_config() {
     assert_line --index 2 "terminal: ghostty (user)"
     assert_line --index 3 "box: work (default)"
     assert_line --index 4 "ghostty: ${GHOSTTY} (managed block: present)"
-    assert_line --index 5 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
-    assert_equal "${#lines[@]}" 6
+    assert_line --index 5 "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: absent)"
+    assert_line --index 6 "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+    assert_equal "${#lines[@]}" 7
 }
 
 # Issue #179: a state file an earlier worktool wrote still holds `tmux=`
@@ -117,7 +120,17 @@ _write_config() {
     assert_success
     assert_line "box: work (user)"
     refute_output --partial "tmux"
-    assert_equal "${#lines[@]}" 6
+    assert_equal "${#lines[@]}" 7
+}
+
+# Issue #179 (codex round 4 on PR #232): the block in distrobox's own config
+# that keeps a host tmux pane's TMUX out of the box is reported too.
+@test "#179: the distrobox.conf block is reported present once setup.sh wrote it" {
+    run "${SETUP_SH}" --terminal none
+    assert_success
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: present)"
 }
 
 # --- #175: the report says whether the recorded distrobox still runs --------

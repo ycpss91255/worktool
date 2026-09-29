@@ -53,6 +53,7 @@ EOF
     assert_line "terminal: ghostty (default)"
     assert_line "box: work (user)"
     assert_line "ghostty: ${GHOSTTY} (managed block: present)"
+    assert_line "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: present)"
     refute_output --partial "tmux"
     run grep -xF "command = '${DISTROBOX}' enter work" "${GHOSTTY}"
     assert_success
@@ -68,6 +69,8 @@ EOF
     assert_success
     assert_line "auto-enter: no (user)"
     assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
+    # #179: the box's tmux isolation is not a terminal choice.
+    assert_line "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: present)"
 }
 
 @test "setup --dry-run then status: nothing was stored, status still shows the defaults" {

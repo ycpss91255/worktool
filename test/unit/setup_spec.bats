@@ -300,6 +300,70 @@ _block_count() {
     assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "600"
 }
 
+# --- #179 (codex round 4 on PR #232): the box's tmux environment -----------
+#
+# `distrobox enter` copies the caller's environment into the box, TMUX
+# included: from a HOST tmux pane the box would get the host server's
+# socket, whatever tmux binary runs. setup.sh keeps a managed block in
+# distrobox's own user config (sourced by distrobox-enter before it copies
+# the environment) that drops TMUX / TMUX_PANE for the box - on EVERY run:
+# it is the box's isolation, not a terminal choice.
+
+@test "#179: every run writes the distrobox.conf block that drops TMUX / TMUX_PANE for the box, and logs it" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf" _body
+    _body="$(bash -c 'source "$1" && enter_distrobox_conf_body dev' _ "${REPO_ROOT}/lib/enter.sh")"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] wrote: ${_conf} (managed block: ${_body})"
+    run cat "${_conf}"
+    assert_line --index 0 "${BEGIN}"
+    assert_line --index 1 "${_body}"
+    assert_line --index 2 "${END}"
+    assert_equal "${#lines[@]}" 3
+}
+
+@test "#179: the distrobox.conf block is kept by --terminal none and --auto-enter no, idempotent, user lines preserved" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf" _first
+    mkdir -p "$(dirname -- "${_conf}")"
+    printf 'container_manager="docker"
+' >"${_conf}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    _first="$(cat "${_conf}")"
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run "${SETUP}" --terminal none
+    assert_success
+    assert_line "[INFO] unchanged: ${_conf} (managed block already up to date)"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line "[INFO] unchanged: ${_conf} (managed block already up to date)"
+    assert_equal "$(cat "${_conf}")" "${_first}"
+    run cat "${_conf}"
+    assert_line --index 0 'container_manager="docker"'
+}
+
+@test "#179: the distrobox.conf block names the chosen box, and follows a changed --box" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf"
+    run "${SETUP}" --box work
+    assert_success
+    run grep -c "'work') unset TMUX TMUX_PANE" "${_conf}"
+    assert_output "1"
+    run "${SETUP}" --box dev
+    assert_success
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run grep -c "'dev') unset TMUX TMUX_PANE" "${_conf}"
+    assert_output "1"
+    run grep -c "'work')" "${_conf}"
+    assert_output "0"
+}
+
+@test "#179: --dry-run reports the distrobox.conf block it would write and writes nothing" {
+    run "${SETUP}" --dry-run
+    assert_success
+    assert_line --partial "[INFO] dry-run: would write ${HOME}/.config/distrobox/distrobox.conf (managed block: "
+    assert [ ! -e "${HOME}/.config/distrobox" ]
+}
+
 @test "#179: a tmux line an earlier worktool stored is ignored, not refused, and dropped on rewrite" {
     mkdir -p "$(dirname -- "${CONFIG}")"
     printf 'tmux=host\ntmux.source=user\nbox=work\nbox.source=user\n' >"${CONFIG}"

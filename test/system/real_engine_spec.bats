@@ -719,14 +719,8 @@ _desktop_path() {
 #   (2) `tmux` inside the box, with the host server up: the box's server
 #       must be a different process, in the box's mount namespace, on a
 #       socket under the box's TMUX_TMPDIR, listing only its own session.
-#   (3) The same, entered from INSIDE a host tmux pane (codex round 1 on
-#       PR #232). distrobox enter copies the pane's TMUX - the HOST
-#       server's socket - into the box, and tmux prefers $TMUX over
-#       TMUX_TMPDIR; the box's tmux guard (box/tmux-guard.sh, installed by
-#       box/dev.ini) must drop it so the box still gets its own server.
-#       Both a bare `tmux` and a path-typed `/usr/bin/tmux` (codex round 2:
-#       a guard that only won on PATH order let the latter reach the host)
-#       must land on the box's server.
+#   (3) Entered with TMUX in the caller (a host pane): see the matrix in
+#       section (e4).
 
 # The host (runner) side tmux server and its session. `main` is the session
 # the old managed command attached to (`new -A -s main`), so a regression
@@ -754,6 +748,7 @@ _host_tmux_pid() {
 
 @test "#179 chain: with a host tmux server running, the delivered command lands in the box's fish, not on the host" {
     local _setup="${REPO_ROOT}/script/box/setup.sh" _body _file
+    TMUX_CASE_ACTIVE=1
     _host_tmux_down
     _host_tmux_up
     run env -u TMUX -u TMUX_TMPDIR tmux ls
@@ -790,6 +785,7 @@ _host_tmux_pid() {
 
 @test "#179 tmux: with a host tmux server running, tmux in the box starts the box's own server (in-box pid, own socket, no host session)" {
     local _host_pid _box_pid _box_sock _box_ns _host_ns _init_ns
+    TMUX_CASE_ACTIVE=1
     _host_tmux_down
     _host_tmux_up
     _host_pid="$(_host_tmux_pid)"
@@ -840,93 +836,232 @@ _host_tmux_pid() {
     _host_tmux_down
 }
 
-# The payload a host tmux pane runs in the box (case (3)): it records the
-# TMUX the box inherited, then starts `tmux` as a user would type it and
-# reports the server it reached and the sessions that server lists; then the
-# same through the absolute /usr/bin/tmux, which bypasses PATH; then the REAL
-# binary, run directly, from a sh login shell and from a fish shell as a user
-# who entered the box would (codex round 3): the login shells drop the host
-# TMUX, so even the unguarded binary reaches the box's server. It also
-# reports whether a real tmux is left on PATH as `tmux.real`.
-_host_pane_payload() { printf '%s/host-pane-box-tmux.sh\n' "${HOME}"; }
-_host_pane_out() { printf '%s/host-pane-box-tmux.txt\n' "${HOME}"; }
-_write_host_pane_payload() {
-    cat >"$(_host_pane_payload)" <<'EOF'
-printf 'box-saw-TMUX=%s\n' "${TMUX-}"
-tmux -f /dev/null new-session -d -s box || exit 1
-tmux display-message -p -t box 'box-server=#{pid} #{socket_path}'
-/usr/bin/tmux -f /dev/null new-session -d -s abspath || exit 1
-/usr/bin/tmux display-message -p -t abspath 'abs-server=#{pid} #{socket_path}'
-if command -v tmux.real >/dev/null 2>&1; then echo 'real-on-path=yes'; else echo 'real-on-path=no'; fi
-sh -l -c 'printf "login-sh-TMUX=%s\n" "${TMUX-}"; /usr/libexec/worktool/tmux -f /dev/null new-session -d -s realsh && /usr/libexec/worktool/tmux display-message -p -t realsh "realsh-server=#{pid} #{socket_path}"' || exit 1
-fish -l -c 'printf "fish-TMUX=%s\n" "$TMUX"; /usr/libexec/worktool/tmux -f /dev/null new-session -d -s realfish; and /usr/libexec/worktool/tmux display-message -p -t realfish "realfish-server=#{pid} #{socket_path}"' || exit 1
-tmux ls
+# --- (e4) issue #179: the box's tmux environment, as a matrix ---------------
+#
+# THE LEAK (codex rounds 1-4 on PR #232)
+#   `distrobox enter` copies the caller's environment into the box. From a
+#   HOST tmux pane that includes TMUX (the host server's socket, on the
+#   /tmp the box shares) and TMUX_PANE, and tmux prefers the socket in
+#   $TMUX over the box's TMUX_TMPDIR - whatever binary runs, so a wrapper
+#   around tmux is bypassed by naming the real binary. The fix is the
+#   environment: the block `just box setup` keeps in distrobox's own
+#   config (distrobox-enter sources it before copying the environment)
+#   drops TMUX / TMUX_PANE for the box, and the box's login shells drop a
+#   host TMUX as a second line (box/tmux-env.sh, box/tmux-env.fish).
+#
+# THE MATRIX (equivalence classes, not examples)
+#   entry path  e1 the managed ghostty command (delivered by setup.sh)
+#               e2 `distrobox enter dev` (the login shell, commands on stdin)
+#               e3 `distrobox enter dev -- <cmd>` (no login shell)
+#               e4 `distrobox enter dev -- <real tmux> ...` (the real binary,
+#                  no shell at all: the bypass codex round 4 named)
+#               e5 a login shell in the box: `-- sh -l -c`, `-- fish -l -c`
+#   host state  h0 no host tmux server, no TMUX in the caller
+#               h1 a host tmux server running, and the caller's environment
+#                  holding TMUX / TMUX_PANE for it (what a host pane has)
+#   invocation  `tmux ls`, `tmux new`, `tmux new -A -s main`, `tmux attach`
+#               (the last two on a terminal - script(1) - detaching at once)
+#   Every cell must see no TMUX / TMUX_PANE, list nothing before it started
+#   a server (`tmux ls` with the box's server stopped: anything listed
+#   would be another server's), and reach ONE server for every invocation:
+#   its socket under the box's TMUX_TMPDIR, its process in the dev
+#   container's mount namespace with the engine's container file under its
+#   root, never the host server's pid; the host server never lists a
+#   session the box made.
+
+# The socket of the box's own server (box/dev.ini TMUX_TMPDIR).
+_box_sock() { printf '%s/dev-box/.cache/tmux/tmux-%s/default\n' "${HOME}" "$(id -u)"; }
+
+# The in-box probe e1/e2/e3/e5 run: $1 is the cell tag. It prints the
+# tmux environment it got, then runs the four invocations with a bare
+# `tmux` and reports the server each one reached.
+_matrix_probe() { printf '%s/matrix-probe.sh\n' "${HOME}"; }
+_write_matrix_probe() {
+    cat >"$(_matrix_probe)" <<'EOF'
+tag="$1"
+printf '%s env TMUX=%s TMUX_PANE=%s\n' "${tag}" "${TMUX-}" "${TMUX_PANE-}"
+if out="$(tmux ls 2>/dev/null)"; then
+    printf '%s\n' "${out}" | while IFS= read -r l; do printf '%s ls %s\n' "${tag}" "${l}"; done
+else
+    printf '%s ls none\n' "${tag}"
+fi
+tmux -f /dev/null new-session -d -s "new-${tag}" || printf '%s failed new\n' "${tag}"
+tmux display-message -p -t "new-${tag}" "${tag} server new #{pid} #{socket_path}" \
+    || printf '%s failed display-new\n' "${tag}"
+TERM=xterm script -qec 'tmux new-session -A -s main \; detach-client' /dev/null </dev/null >/dev/null 2>&1 \
+    || printf '%s failed newA\n' "${tag}"
+tmux display-message -p -t main "${tag} server newA #{pid} #{socket_path}" \
+    || printf '%s failed display-newA\n' "${tag}"
+TERM=xterm script -qec 'tmux attach-session -t main \; detach-client' /dev/null </dev/null >/dev/null 2>&1 \
+    || printf '%s failed attach\n' "${tag}"
+tmux display-message -p -t main "${tag} server attach #{pid} #{socket_path}" \
+    || printf '%s failed display-attach\n' "${tag}"
 EOF
 }
 
-# Run the payload through `distrobox enter dev` in a NEW WINDOW of the
-# host's tmux server - a real host pane, with the TMUX tmux gives it - and
-# wait (bounded) until the pane signals it is done.
-_run_in_host_pane() {
-    rm -f "$(_host_pane_out)"
-    _write_host_pane_payload
-    env -u TMUX -u TMUX_TMPDIR tmux new-window -d -t "${HOST_TMUX_SESSION}" \
-        "distrobox enter dev -- sh $(_host_pane_payload) >$(_host_pane_out) 2>&1 </dev/null; tmux wait-for -S host-pane-done"
-    timeout -k 5 "${ENTER_TIMEOUT}" env -u TMUX -u TMUX_TMPDIR tmux wait-for host-pane-done
+# The caller environment of host state $1 (h0 / h1), as `env` arguments:
+# h1 names the RUNNING host server's socket in TMUX, as tmux sets it in a
+# pane (`<socket>,<server pid>,<session index>`).
+_host_env() {
+    case "$1" in
+        h0) printf '%s\n' -u TMUX -u TMUX_PANE ;;
+        h1) printf '%s\n' "TMUX=$(env -u TMUX -u TMUX_TMPDIR tmux display-message -p -t "${HOST_TMUX_SESSION}" '#{socket_path},#{pid},0')" TMUX_PANE=%0 ;;
+    esac
 }
 
-@test "#179 tmux: entered from a HOST tmux pane (TMUX inherited), tmux in the box still starts the box's own server, never the host's" {
-    local _host_pid _box_pid _box_sock _rc=0
-    _host_tmux_down
-    _host_tmux_up
-    _host_pid="$(_host_tmux_pid)"
-    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
-    (( status <= 1 )) || fail "could not clear the box's tmux server: ${output}"
+# The real tmux binary in the box, wherever the package manager's view of
+# /usr/bin/tmux really lives (a dpkg-diverted binary included).
+_real_tmux() {
+    timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- dpkg-divert --truename /usr/bin/tmux </dev/null
+}
 
-    _run_in_host_pane || _rc=$?
-    run cat "$(_host_pane_out)"
-    _log_lines host-pane "${lines[@]}"
-    [[ "${_rc}" -eq 0 ]] || { _diag; fail "the host pane did not finish (rc ${_rc})"; }
-    # The regression really ran: the box inherited the HOST pane's TMUX.
-    assert_line --regexp "^box-saw-TMUX=/tmp/tmux-$(id -u)/default,${_host_pid},"
-    # The box's tmux listed ITS session, not the host's.
-    assert_line --regexp '^box: '
-    refute_line --regexp "^${HOST_TMUX_SESSION}: "
-    _box_pid="$(sed -nE 's/^box-server=([0-9]+) .*$/\1/p' "$(_host_pane_out)")"
-    _box_sock="$(sed -nE 's/^box-server=[0-9]+ (.*)$/\1/p' "$(_host_pane_out)")"
-    [[ "${_box_pid}" =~ ^[0-9]+$ && "${_box_pid}" != "${_host_pid}" ]] \
-        || fail "box tmux pid '${_box_pid}' is not a separate server (host pid ${_host_pid})"
-    assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
-    assert_equal "$(readlink "/proc/${_box_pid}/ns/mnt")" "$(_dev_mntns)"
-    assert [ -e "/proc/${_box_pid}/root$(_engine_ctrenv)" ]
-    # The path-typed /usr/bin/tmux reached the SAME box server, never the
-    # host's: its session is listed by the box's tmux next to `box`.
-    run cat "$(_host_pane_out)"
-    assert_line "abs-server=${_box_pid} ${_box_sock}"
-    assert_line --regexp '^abspath: '
-    # The real binary is not on PATH, and run directly from the box's login
-    # shells it reached the SAME box server: sh / bash and fish both dropped
-    # the host TMUX before anything ran (codex round 3).
-    assert_line "real-on-path=no"
-    assert_line "login-sh-TMUX="
-    assert_line "fish-TMUX="
-    assert_line "realsh-server=${_box_pid} ${_box_sock}"
-    assert_line "realfish-server=${_box_pid} ${_box_sock}"
-    assert_line --regexp '^realsh: '
-    assert_line --regexp '^realfish: '
-
-    # The host server never saw the box's sessions.
-    run env -u TMUX -u TMUX_TMPDIR tmux ls
-    assert_success
-    assert_line --regexp "^${HOST_TMUX_SESSION}: "
-    refute_line --regexp '^box: '
-    refute_line --regexp '^abspath: '
-    refute_line --regexp '^realsh: '
-    refute_line --regexp '^realfish: '
-
-    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
+# Bring host state $1 up, stop the box's server, and deliver the
+# distrobox.conf block exactly as `just box setup` writes it.
+_cell_prepare() {
+    local _rc=0
+    TMUX_CASE_ACTIVE=1
+    run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --box dev
     assert_success
     _host_tmux_down
+    [[ "$1" == "h0" ]] || _host_tmux_up
+    timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- "$(_real_tmux)" kill-server </dev/null >/dev/null 2>&1 || _rc=$?
+    (( _rc <= 1 )) || fail "could not stop the box's tmux server (rc ${_rc})"
+    _write_matrix_probe
+}
+
+# Assert the probe lines $2 of cell $1 (host state $3): see THE MATRIX.
+_assert_cell() {
+    local _tag="$1" _out="$2" _hs="$3" _pid="" _line _p _s _inv _host_pid=""
+    local -a _ls
+    mapfile -t _ls <<<"${_out}"
+    _log_lines "cell-${_tag}" "${_ls[@]}"
+    [[ "${_hs}" == "h1" ]] && _host_pid="$(_host_tmux_pid)"
+    grep -qxF "${_tag} env TMUX= TMUX_PANE=" <<<"${_out}" \
+        || fail "cell ${_tag}: the box saw a TMUX / TMUX_PANE: $(grep -F "${_tag} env " <<<"${_out}")"
+    grep -qxF "${_tag} ls none" <<<"${_out}" \
+        || fail "cell ${_tag}: tmux ls listed another server's sessions: $(grep -F "${_tag} ls " <<<"${_out}")"
+    ! grep -qF "${_tag} failed " <<<"${_out}" \
+        || fail "cell ${_tag}: an invocation failed: $(grep -F "${_tag} failed " <<<"${_out}")"
+    for _inv in new newA attach; do
+        _line="$(grep -E "^${_tag} server ${_inv} " <<<"${_out}")" \
+            || fail "cell ${_tag}: no server line for ${_inv}"
+        read -r _ _ _ _p _s <<<"${_line}"
+        [[ "${_p}" =~ ^[0-9]+$ ]] || fail "cell ${_tag} ${_inv}: no server pid in '${_line}'"
+        [[ -z "${_pid}" || "${_p}" == "${_pid}" ]] \
+            || fail "cell ${_tag} ${_inv}: reached server ${_p}, not the one of the other invocations (${_pid})"
+        _pid="${_p}"
+        assert_equal "${_s}" "$(_box_sock)"
+        [[ "${_p}" != "${_host_pid}" ]] || fail "cell ${_tag} ${_inv}: reached the HOST server ${_p}"
+    done
+    assert_equal "$(readlink "/proc/${_pid}/ns/mnt")" "$(_dev_mntns)"
+    assert [ -e "/proc/${_pid}/root$(_engine_ctrenv)" ]
+    if [[ "${_hs}" == "h1" ]]; then
+        run env -u TMUX -u TMUX_TMPDIR tmux ls -F '#{session_name}'
+        assert_success
+        assert_output "${HOST_TMUX_SESSION}"
+    fi
+    _log_lines "cell-${_tag}-ok" "server pid=${_pid} socket=$(_box_sock) in the dev mount namespace"
+}
+
+# Stop whatever a #179 tmux case (the two above, a matrix cell) left
+# running, pass or fail: a failed assertion skips the case's own cleanup.
+teardown() {
+    [[ "${TMUX_CASE_ACTIVE:-0}" == "1" ]] || return 0
+    timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null >/dev/null 2>&1 || :
+    env -u TMUX -u TMUX_TMPDIR tmux kill-server >/dev/null 2>&1 || :
+}
+
+# Runs cell <entry> x <host state> and asserts it. e1..e5b run the probe;
+# e4 runs every invocation as `distrobox enter dev -- <real tmux> ...`.
+_run_cell() {
+    local _e="$1" _hs="$2" _tag="$1-$2" _out _real _rc=0
+    local -a _env
+    _cell_prepare "${_hs}"
+    mapfile -t _env < <(_host_env "${_hs}")
+    case "${_e}" in
+        e1)
+            local _file _body _res="${HOME}/matrix-${_tag}.txt"
+            _file="$(enter_ghostty_config)"
+            _body="$(enter_block_body "${_file}")"
+            [[ "${_body}" == "command = "*" enter dev" ]] \
+                || fail "setup.sh wrote an unexpected managed body: '${_body}'"
+            rm -f "${_res}"
+            _write_ghostty_config "${_body#command = }"
+            printf 'input = "raw:sh %s %s >%s 2>&1; exit\\n"\n' "$(_matrix_probe)" "${_tag}" "${_res}" >>"${_file}"
+            env "${_env[@]}" timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null || _rc=$?
+            [[ "${_rc}" -eq 0 ]] || { _diag; fail "cell ${_tag}: ghostty exited ${_rc}"; }
+            _out="$(cat "${_res}")"
+            ;;
+        e2) _out="$(printf 'sh %s %s\nexit\n' "$(_matrix_probe)" "${_tag}" | env "${_env[@]}" timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev 2>&1)" || _rc=$? ;;
+        e3) _out="$(env "${_env[@]}" timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- sh "$(_matrix_probe)" "${_tag}" </dev/null 2>&1)" || _rc=$? ;;
+        e5a) _out="$(env "${_env[@]}" timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- sh -l -c "sh $(_matrix_probe) ${_tag}" </dev/null 2>&1)" || _rc=$? ;;
+        e5b) _out="$(env "${_env[@]}" timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- fish -l -c "sh $(_matrix_probe) ${_tag}" </dev/null 2>&1)" || _rc=$? ;;
+        e4)
+            _real="$(_real_tmux)"
+            _log_lines "cell-${_tag}-real-tmux" "${_real}"
+            _out="$(_e4_cell "${_tag}" "${_real}" "${_env[@]}")" || _rc=$?
+            ;;
+    esac
+    # A non-zero entry is not judged by itself: the probe's own lines say
+    # which invocation failed, and _assert_cell names it.
+    _log_lines "cell-${_tag}-rc" "${_rc}"
+    _assert_cell "${_tag}" "${_out}" "${_hs}"
+}
+
+# Entry path e4: every invocation IS the distrobox command - the real
+# binary $2, no shell in the box to clean anything - with the caller
+# environment "${@:3}". The terminal ones run under a runner-side
+# script(1), so distrobox itself allocates the box a tty. Prints the same
+# lines as the probe.
+_e4_cell() {
+    local _tag="$1" _real="$2" _out _l
+    shift 2
+    local -a _dbx=(env "$@" TERM=xterm timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev --)
+    printf '%s env TMUX=%s TMUX_PANE=%s\n' "${_tag}" \
+        "$("${_dbx[@]}" printenv TMUX </dev/null)" "$("${_dbx[@]}" printenv TMUX_PANE </dev/null)"
+    if _out="$("${_dbx[@]}" "${_real}" ls </dev/null 2>/dev/null)"; then
+        printf '%s\n' "${_out}" | while IFS= read -r _l; do printf '%s ls %s\n' "${_tag}" "${_l}"; done
+    else
+        printf '%s ls none\n' "${_tag}"
+    fi
+    "${_dbx[@]}" "${_real}" -f /dev/null new-session -d -s "new-${_tag}" </dev/null || printf '%s failed new\n' "${_tag}"
+    "${_dbx[@]}" "${_real}" display-message -p -t "new-${_tag}" "${_tag} server new #{pid} #{socket_path}" </dev/null \
+        || printf '%s failed display-new\n' "${_tag}"
+    script -qec "$(printf '%q ' "${_dbx[@]}" "${_real}" new-session -A -s main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
+        || printf '%s failed newA\n' "${_tag}"
+    "${_dbx[@]}" "${_real}" display-message -p -t main "${_tag} server newA #{pid} #{socket_path}" </dev/null \
+        || printf '%s failed display-newA\n' "${_tag}"
+    script -qec "$(printf '%q ' "${_dbx[@]}" "${_real}" attach-session -t main ';' detach-client)" /dev/null </dev/null >/dev/null 2>&1 \
+        || printf '%s failed attach\n' "${_tag}"
+    "${_dbx[@]}" "${_real}" display-message -p -t main "${_tag} server attach #{pid} #{socket_path}" </dev/null \
+        || printf '%s failed display-attach\n' "${_tag}"
+}
+
+@test "#179 matrix e1 (the managed ghostty command) x h0/h1: every tmux invocation reaches the box's own server" {
+    _run_cell e1 h0
+    _run_cell e1 h1
+}
+
+@test "#179 matrix e2 (distrobox enter dev, the login shell) x h0/h1: every tmux invocation reaches the box's own server" {
+    _run_cell e2 h0
+    _run_cell e2 h1
+}
+
+@test "#179 matrix e3 (distrobox enter dev -- <cmd>, no login shell) x h0/h1: every tmux invocation reaches the box's own server" {
+    _run_cell e3 h0
+    _run_cell e3 h1
+}
+
+@test "#179 matrix e4 (distrobox enter dev -- <real tmux>, no shell at all) x h0/h1: every tmux invocation reaches the box's own server" {
+    _run_cell e4 h0
+    _run_cell e4 h1
+}
+
+@test "#179 matrix e5 (a login shell in the box: sh -l, fish -l) x h0/h1: every tmux invocation reaches the box's own server" {
+    _run_cell e5a h0
+    _run_cell e5a h1
+    _run_cell e5b h0
+    _run_cell e5b h1
 }
 
 # --- (f) idempotency: assembling again neither errors nor duplicates ---------

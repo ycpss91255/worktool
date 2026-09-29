@@ -140,7 +140,7 @@ _required_specs() {
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
                 unit/adr_spec.bats \
-                unit/box_tmux_guard_spec.bats \
+                unit/box_tmux_env_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -165,7 +165,11 @@ _required_specs() {
                 integration/setup_spec.bats
             ;;
         integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
-        system)      printf '%s\n' system/real_assemble_spec.bats ;;
+        system)
+            printf '%s\n' \
+                system/real_assemble_spec.bats \
+                system/real_enter_env_spec.bats
+            ;;
         system-real) printf '%s\n' "${SYSTEM_REAL_SPEC_REL}" ;;
         acceptance)  printf '%s\n' acceptance/m2_selfcheck_spec.bats ;;
         *)           return 1 ;;

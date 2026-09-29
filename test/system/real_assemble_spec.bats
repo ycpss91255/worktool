@@ -199,7 +199,7 @@ _trim() {
 # shell, any `distrobox enter dev -- tmux` - inherits it) and an init hook
 # that creates that directory as the box user on every start: tmux falls
 # back to /tmp SILENTLY when TMUX_TMPDIR does not exist.
-@test "#179: the create request gives the box its own TMUX_TMPDIR and init hooks that create it as the box user and install the tmux guard" {
+@test "#179: the create request gives the box its own TMUX_TMPDIR and init hooks that create it as the box user and install the login-shell snippets" {
     cd "${REPO_ROOT}"
     run "${ASSEMBLE}"
     assert_success
@@ -230,17 +230,12 @@ _trim() {
     assert_equal "$((_dd_i + 2))" "${#ARGV[@]}"
     _want=": ; setpriv --reuid=\"\${container_user_uid}\" --regid=\"\${container_user_gid}\""
     _want+=" --clear-groups mkdir -p -m 0700 \"\${TMUX_TMPDIR}\""
-    # ... and then moves the packaged tmux aside (dpkg-divert, codex round 2
-    # on PR #232) and installs the box's tmux guard (box/tmux-guard.sh, codex
-    # round 1) AT /usr/bin/tmux, byte for byte: a TMUX inherited from a host
-    # tmux pane must not reach the host server, even via a path-typed
-    # /usr/bin/tmux. The real binary goes OFF PATH, and the box's login
-    # shells (sh / bash, fish) drop a host TMUX themselves, so running the
-    # real binary directly does not reach the host either (codex round 3).
-    _want+=" && mkdir -p /usr/libexec/worktool"
-    _want+=" && dpkg-divert --local --rename --divert /usr/libexec/worktool/tmux --add /usr/bin/tmux"
-    _want+=" && echo $(base64 -w0 <"${REPO_ROOT}/box/tmux-guard.sh")"
-    _want+=" | base64 -d >/usr/bin/tmux && chmod 0755 /usr/bin/tmux"
+    # ... and then installs the box's login-shell snippets byte for byte
+    # (sh / bash: box/tmux-env.sh, fish: box/tmux-env.fish): the in-box
+    # second line that drops a host TMUX / TMUX_PANE for everything a box
+    # shell starts. No tmux wrapper, no dpkg-divert: the leak is the
+    # environment, not the binary (codex round 4 on PR #232; the first line
+    # is the distrobox.conf block, test/system/real_enter_env_spec.bats).
     _want+=" && echo $(base64 -w0 <"${REPO_ROOT}/box/tmux-env.sh")"
     _want+=" | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh"
     _want+=" && mkdir -p /etc/fish/conf.d"
