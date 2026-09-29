@@ -59,6 +59,25 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
     assert_failure
 }
 
+@test "rejects '.' (it would hand back .worktree itself)" {
+    _named "."
+    assert_failure
+    assert_output ""
+}
+
+@test "rejects a name that git could read as an option" {
+    _named "-b"
+    assert_failure
+    assert_output ""
+}
+
+@test "does not hand back a plain directory that is not a worktree" {
+    mkdir -p "${FAKE_REPO}/.worktree/plain"
+    _named "plain"
+    assert_failure
+    assert_output ""
+}
+
 @test "fails when .name is missing from the payload" {
     _create "{}"
     assert_failure
