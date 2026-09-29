@@ -152,3 +152,11 @@ setup() {
     assert_failure 2
     assert_output "assemble.sh: unknown option '--bogus' (see --help)"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "assemble.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${ASSEMBLE}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}

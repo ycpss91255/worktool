@@ -891,3 +891,11 @@ _assert_control_char_refused() {
     assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
     assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "setup.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${SETUP}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}

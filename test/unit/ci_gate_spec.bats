@@ -356,3 +356,25 @@ EOF
     assert_failure
     assert_output --partial "[ci] ERROR: integration bats has skipped case(s)"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+# `bats --count` failing is an EXPECTED non-zero the gate maps to its own
+# message and exit 1; under errexit it must not end the gate with bats'
+# status and no word of why.
+@test "a required spec bats cannot count fails the tier with exit 1 and says which one" {
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 3\n' >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+    PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+    assert_failure 1
+    assert_output --partial "acceptance required spec unreadable by bats: test/acceptance/m2_selfcheck_spec.bats"
+}
+
+@test "_verify_tap refuses an unreadable TAP stream as 'no TAP plan' (return 1) with errexit on" {
+    run bash -c 'set -euo pipefail; source "$1"; _verify_tap unit "$2" 1' \
+        _ "${TEST_SH}" "${BATS_TEST_TMPDIR}/missing.tap"
+    assert_failure 1
+    assert_output --partial "unit bats emitted no TAP plan"
+}
