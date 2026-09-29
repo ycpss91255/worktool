@@ -114,6 +114,21 @@ _row() {
     assert_output ""
 }
 
+@test "filter drops a body whose base64 decodes only partly (valid prefix + garbage)" {
+    # shellcheck source=/dev/null
+    source "${SCRIPT}"
+    # 'aGVsbG8h' decodes to "hello!", then '@@@@' is invalid: base64 -d
+    # prints the prefix and fails. The half-decoded body must not pass for
+    # a reply, and its id must not be recorded as seen.
+    printf '5\t333\tmaintainer\t%s\n' 'aGVsbG8h@@@@' > "${TSV}"
+    run --separate-stderr watch_replies_filter maintainer "${STATE}" "${TSV}"
+    assert_success
+    assert_output ""
+    [[ "${stderr:-}" == *"comment 333 body is not valid base64"* ]]
+    run grep -cxF 333 "${STATE}"
+    assert_failure
+}
+
 @test "filter skips agent output and does not record it as seen" {
     # shellcheck source=/dev/null
     source "${SCRIPT}"

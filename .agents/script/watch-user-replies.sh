@@ -39,8 +39,9 @@
 #
 # Strict mode (doc/adr/0001-scripts-use-errexit.md, issue #218): every
 # expected non-zero - a failed list or fetch, grep finding no id, a body
-# that is not valid base64 - is handled explicitly. A help request travels
-# in W_HELP, so _parse_args returns 0 and is called directly.
+# that is not valid base64 (warned about and skipped) - is handled
+# explicitly. A help request travels in W_HELP, so _parse_args returns 0 and
+# is called directly.
 
 set -euo pipefail
 
@@ -71,9 +72,12 @@ watch_replies_filter() {
     [[ -f "${_state}" ]] || : > "${_state}"
     while IFS=$'\t' read -r _num _id _author _b64; do
         [[ -n "${_id}" ]] || continue
-        # Undecodable: say so and keep what did decode (it may be a reply).
+        # Undecodable: say so and skip it. base64 -d prints the valid
+        # prefix before failing, and a half-decoded body must not pass for
+        # a reply or be recorded as seen.
         if ! _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)"; then
             printf '[watch] comment %s body is not valid base64\n' "${_id}" >&2
+            continue
         fi
         watch_reply_is_user "${_login}" "${_author}" "${_body}" || continue
         grep -qxF "${_id}" "${_state}" && continue
