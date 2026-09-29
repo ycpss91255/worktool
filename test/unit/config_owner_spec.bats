@@ -2,7 +2,7 @@
 # test/unit/config_owner_spec.bats - no module but lib/config.sh reaches
 # the state file, over every entry point the parsers expose and every module
 # in the source graph that names a public config_* function or
-# XDG_CONFIG_HOME (issue #199 rounds 6-9).
+# XDG_CONFIG_HOME in a non-comment line (issue #199 rounds 6-10).
 #
 # What is checked, and nothing more:
 #   - lib/config.sh honours a test-only WORKTOOL_CONFIG_FILE, pointed at a

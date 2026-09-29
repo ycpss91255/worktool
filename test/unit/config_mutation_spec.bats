@@ -755,7 +755,7 @@ done < <(_rows)
     [[ "${status}" -eq 0 ]] || fail "mutants without a row (<) / rows without a mutant (>): ${output}"
 }
 
-@test "drift guard: every module of the source graph that names a public config_* function or XDG_CONFIG_HOME has an owner row" {
+@test "drift guard: every module of the source graph that names a public config_* function or XDG_CONFIG_HOME in a non-comment line has an owner row" {
     run _owner_module_violations "${REPO_ROOT}"
     assert_output ""
 }
