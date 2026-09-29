@@ -84,15 +84,18 @@
 #     pulls/<n>/reviews[/<id>[/events|dismissals|comments]] or /graphql;
 #     any host with the
 #     GHES prefix /api/v3/ of the same repos paths, or /api/graphql
+#   hook_http_data_flags <tool>   THE table of data flags, one
+#     "<flag> <arity>" per line: arity 1 takes a value (in every spelling the
+#     classifier accepts: separate `-d V`, `--data=V`, short attached `-dV`),
+#     0 is a boolean data flag, "item" is an httpie request-item separator
+#     (= := @ =@ :=@). Tools: curl, wget, http (httpie), gh-api
 #   hook_http_is_write <tool> <word>...   0 when a curl / wget / httpie
 #     call (its words after the tool) writes, 1 when it reads (issue #190):
-#     ANY data flag is a write whatever the method (curl -d / --data* /
-#     --json / -F / --form / -T / --upload-file, even with -G or -X GET;
-#     wget --post-data / --post-file / --body-data / --body-file; httpie
-#     data items = := @ or --form / --raw); otherwise only an implicit, GET
-#     or HEAD method reads. A curl short-option cluster hiding X / d / F / T
-#     is a write. Sets HOOK_HTTP_BODY to the literal body text ('@' for a
-#     body read from a file or stdin: undeterminable)
+#     ANY data flag of the table, in any spelling, is a write whatever the
+#     method (curl -G / -X GET included); otherwise only an implicit, GET
+#     or HEAD method reads. A curl short-option cluster hiding -X or a short
+#     data flag is a write. Sets HOOK_HTTP_BODY to the literal body text
+#     ('@' for a body read from a file or stdin: undeterminable)
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
@@ -195,53 +198,108 @@ hook_api_endpoint_urls() {
     return 0
 }
 
+# hook_http_data_flags <tool> - see the header. THE single table of data
+# flags: the classifier below, the gh api check of the milestone-gate hook
+# and the spec's matrix generator all read it.
+hook_http_data_flags() {
+    case "$1" in
+        curl) printf '%s\n' "-d 1" "--data 1" "--data-raw 1" "--data-binary 1" "--data-urlencode 1" \
+            "--data-ascii 1" "--json 1" "-F 1" "--form 1" "--form-string 1" "-T 1" "--upload-file 1" ;;
+        wget) printf '%s\n' "--post-data 1" "--post-file 1" "--body-data 1" "--body-file 1" ;;
+        http|https|httpie|xh|xhs)
+            printf '%s\n' "--raw 1" "--form 0" "-f 0" "--multipart 0" \
+                "= item" ":= item" "@ item" "=@ item" ":=@ item" ;;
+        gh-api) printf '%s\n' "-f 1" "-F 1" "--field 1" "--raw-field 1" "--input 1" ;;
+    esac
+}
+
+# _hook_data_flag <tool> <word> <next word> - when <word> is a data flag of
+# <tool> in any spelling (separate `-d V`, `--data=V`, attached `-dV`), print
+# its value and 0; 2 when the value is the next word (separate); 1 when
+# <word> is no data flag. A boolean data flag prints nothing and returns 0.
+_hook_data_flag() {
+    local _f _a
+    while read -r _f _a; do
+        [[ "${_a}" == item ]] && continue
+        if [[ "$2" == "${_f}" ]]; then
+            [[ "${_a}" == 1 ]] && { printf '%s' "$3"; return 2; }
+            return 0
+        fi
+        [[ "${_a}" == 1 ]] || continue
+        if [[ "$2" == "${_f}="* ]]; then
+            printf '%s' "${2#*=}"
+            return 0
+        fi
+        if [[ "${_f}" == -? && "$2" == "${_f}"?* ]]; then
+            printf '%s' "${2:2}"
+            return 0
+        fi
+    done < <(hook_http_data_flags "$1")
+    return 1
+}
+
+# _hook_http_item <tool> <word> - 0 when <word> is a request item with data
+# (a separator of the table: = := @ =@ :=@; not a == query or a : header).
+_hook_http_item() {
+    local _f _a _w="${2//==/}"
+    while read -r _f _a; do
+        [[ "${_a}" == item && "${_w}" == *"${_f}"* ]] && return 0
+    done < <(hook_http_data_flags "$1")
+    return 1
+}
+
 # hook_http_is_write <tool> <word>... - see the header.
 HOOK_HTTP_BODY=''
 hook_http_is_write() {
-    local _tool="$1" _w _m='' _data='' _i _pos=0
+    local _tool="$1" _w _m='' _data='' _i _pos=0 _v _rc _short=''
     shift
     local -a _a=("$@")
     HOOK_HTTP_BODY=''
+    # curl short data flags, for a cluster that hides one (-sd x).
+    _short="$(hook_http_data_flags "${_tool}" | sed -n 's/^-\([A-Za-z]\) 1$/\1/p' | tr -d '\n')"
     for ((_i = 0; _i < ${#_a[@]}; _i++)); do
         _w="${_a[_i]}"
+        _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")"
+        _rc=$?
+        if [[ "${_rc}" -ne 1 ]]; then
+            _data=1
+            [[ "${_rc}" -eq 2 ]] && _i=$((_i + 1))
+            # A body from a file or stdin cannot be read here.
+            [[ "${_w}" =~ (file|^-T|upload|^--input) ]] && _v='@'
+            HOOK_HTTP_BODY+="${_v}"$'\n'
+            continue
+        fi
         case "${_tool}" in
             curl)
                 case "${_w}" in
                     -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
                     --request=*) _m="${_w#*=}" ;;
                     -X?*) _m="${_w:2}" ;;
-                    -d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json|-F|--form|--form-string|-T|--upload-file)
-                        _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
-                    --data*=*|--json=*|--form*=*|--upload-file=*) _data=1; HOOK_HTTP_BODY+="${_w#*=}"$'\n' ;;
-                    -d?*|-F?*|-T?*) _data=1; HOOK_HTTP_BODY+="${_w:2}"$'\n' ;;
                     --*) ;;
-                    # A cluster hiding -X / -d / -F / -T cannot be read (fail closed).
-                    -*[XdFT]*) HOOK_HTTP_BODY='@'; return 0 ;;
+                    # A cluster hiding -X or a data flag cannot be read (fail closed).
+                    -*)
+                        if [[ "${_w:1}" == *[X${_short}]* ]]; then
+                            HOOK_HTTP_BODY='@'
+                            return 0
+                        fi ;;
                 esac ;;
             wget)
                 case "${_w}" in
                     --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
                     --method=*) _m="${_w#*=}" ;;
-                    --post-data|--body-data) _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
-                    --post-data=*|--body-data=*) _data=1; HOOK_HTTP_BODY+="${_w#*=}"$'\n' ;;
-                    --post-file|--body-file) _i=$((_i + 1)); _data=1; HOOK_HTTP_BODY+='@'$'\n' ;;
-                    --post-file=*|--body-file=*) _data=1; HOOK_HTTP_BODY+='@'$'\n' ;;
                 esac ;;
             *)
                 # httpie: http [METHOD] URL [ITEMS]
                 case "${_w}" in
-                    -f|--form|--raw=*|--multipart) _data=1 ;;
                     -*) ;;
                     *)
                         _pos=$((_pos + 1))
                         if [[ "${_pos}" -eq 1 && "${_w^^}" =~ ^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)$ ]]; then
                             _m="${_w}"
                             _pos=0
-                        elif [[ "${_pos}" -ge 2 ]]; then
-                            if [[ "${_w}" == *'@'* || ("${_w}" == *=* && "${_w}" != *==*) || "${_w}" == *:=* ]]; then
-                                _data=1
-                                HOOK_HTTP_BODY+="${_w}"$'\n'
-                            fi
+                        elif [[ "${_pos}" -ge 2 ]] && _hook_http_item "${_tool}" "${_w}"; then
+                            _data=1
+                            HOOK_HTTP_BODY+="${_w}"$'\n'
                         fi ;;
                 esac ;;
         esac

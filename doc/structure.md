@@ -340,16 +340,17 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     留言/review mutation(`addComment`、`updateIssueComment`、`addPullRequestReview`、
     `addPullRequestReviewComment`、`submitPullRequestReview` 等)一律擋。擋下訊息:agent 的留言
     必須以 `[claude]` 或 `[codex]` 開頭,未標記的留言視為維護者本人(見 #187)。
-  - **HTTP 方法(讀或寫)**(codex 第 9、10 輪):只有**寫入**才算。**任何資料旗標都算寫入**,
+  - **HTTP 方法(讀或寫)**(codex 第 9、10、11 輪):只有**寫入**才算。**任何資料旗標都算寫入**,
     不論方法(即使配 `-G`、`-X GET` 或 GET/HEAD;fail closed);**讀取只有「沒有資料旗標且方法為
-    未指定/GET/HEAD」**。資料旗標:`curl` 的 `-d`/`--data*`/`--json`/`-F`/`--form`/`-T`/
-    `--upload-file`,`wget` 的 `--post-data`/`--post-file`/`--body-data`/`--body-file`,httpie
-    (`http`/`https`)的資料項(`=`、`:=`、`@`)與 `--form`/`--raw`,`gh api` 的 `-f`/`-F`/`--field`/
-    `--raw-field`/`--input`。curl 藏了 `-X`/`-d`/`-F`/`-T` 的合併短旗標一律當寫入。分類在
-    `lib/subcommand.sh` 的 `hook_http_is_write`(curl/wget/httpie)與 hook 的 `_api_is_read`(gh api)。
-    對 merge endpoint 的讀取不走閘門;`gh api` 對 comments/reviews 端點的寫入沒有可檢查的
-    `body`/`message` 也擋。GraphQL:內文是 `mutation` 或無法判斷(讀檔、stdin、`\u` 跳脫)算寫入,
-    字面的 `query { ... }` 是讀取。不認得的工具、或指令字含展開,一律當寫入(fail closed)。
+    未指定/GET/HEAD」**。各工具的資料旗標(curl、wget、httpie、gh api)只定義在一個地方:
+    `lib/subcommand.sh` 的 `hook_http_data_flags` 表(每行「旗標 值的個數」;httpie 的 request
+    item 分隔字也在表內)。分類器 `hook_http_is_write`、hook 的 `_api_is_read`(gh api)與 spec 的
+    矩陣產生器都讀這張表,文件不另列清單。帶值的旗標以工具接受的每種寫法辨識:分開
+    (`--raw BODY`、`-d BODY`)、`=`(`--raw=BODY`)、短旗標黏著(`-dBODY`)。curl 藏了 `-X` 或短
+    資料旗標的合併短旗標一律當寫入。對 merge endpoint 的讀取不走閘門;`gh api` 對
+    comments/reviews 端點的寫入沒有可檢查的 `body`/`message` 也擋。GraphQL:內文是 `mutation`
+    或無法判斷(讀檔、stdin、`\u` 跳脫)算寫入,字面的 `query { ... }` 是讀取。不認得的工具、或
+    指令字含展開,一律當寫入(fail closed)。
   - **封閉規則**(codex 第 3 輪後定案:靜態解析追不完所有 shell 寫法,改成只判斷看得懂的、
     其餘 fail closed):
     - 相關指令(任何 `gh api`,以及上述 pr/issue 子命令)只要有**任何一個字**含 shell 會先
@@ -416,14 +417,14 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
         包裝(無、`bash -c`、`sh -c`、`eval`、`env`、`timeout`、`busybox sh -c`、heredoc 餵 `sh`、
         here-string 餵 `bash`、`python3 -c` argv、`perl -e`、`node -e`),全部要擋;已核准/已標記的
         字面呼叫與讀取在所有 shell 包裝與寫法下都放行。
-      - 方法 × 資料旗標 × 工具 × 端點:方法(未指定、GET、HEAD、POST、PUT、PATCH、DELETE)× 該工具
-        的每個資料旗標(含「無」;curl 的 `-d`/`--data*`/`--json`/`-F`/`--form`/`-T`/`--upload-file`/
-        `-G -d`,wget 的 `--post-*`/`--body-*`,httpie 的 `=`/`:=`/`@` 項目,gh api 的
-        `-f`/`-F`/`--field`/`--raw-field`/`--input`)× 工具(curl、wget、http、gh api)× 端點類別
-        (merge、comment、reply、review)。讀取＝無資料旗標且方法為未指定/GET/HEAD,放行;其餘擋。
-        分類函式 `hook_http_is_write` 另以方法 × 資料旗標 × 工具在程序內跑完整乘積;每個類別的所有
-        路徑((issues|pulls) × (集合|成員) 的 comments、replies、所有 reviews 路徑)× 兩種 host 由
-        端點辨識矩陣證明屬於同一類別。
+      - 方法 × 資料旗標 × 寫法 × 工具 × 端點:資料旗標維度由 `hook_http_data_flags` 表產生(spec 不另列
+        清單,並以測試確認產生器裡沒有寫死的旗標)。程序內跑分類器 `hook_http_is_write` 的完整乘積:
+        方法(未指定、GET、HEAD、POST、PUT、PATCH、DELETE)× 表內每個資料旗標(含「無」)× 寫法(分開、
+        `=`、短旗標黏著)× curl 的 `-G` 有無 × 工具(curl、wget、httpie)。端到端經整個 hook:工具(再加
+        gh api)× 方法 × 資料旗標(curl/wget/httpie 取分開寫法;gh api 在 hook 內判斷,取全部寫法)×
+        端點類別(merge、comment、reply、review)。讀取＝無資料旗標且方法為未指定/GET/HEAD,放行;
+        其餘擋。每個類別的所有路徑((issues|pulls) × (集合|成員) 的 comments、replies、所有 reviews
+        路徑)× 兩種 host 由端點辨識矩陣證明屬於同一類別。
       - GraphQL 內文 × 工具 × host:內文(無、query、merge mutation、comment mutation、讀檔)×
         curl/wget/http/gh api × api.github.com/GHES;query 讀取放行,其餘擋。
       - 標記 × 操作 × 內文來源:標記(`[claude]`、`[codex]`、前導空白加標記、未標記、標記不在開頭、

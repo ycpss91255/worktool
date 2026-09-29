@@ -40,6 +40,10 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
 setup() {
+    # The single tables and classifiers the matrices read (hook_http_data_flags,
+    # hook_http_is_write, hook_api_endpoint_urls).
+    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    source "${HOOK_DIR}/lib/subcommand.sh"
     GH_STUB_DIR="${BATS_TEST_TMPDIR}/gh"
     mkdir -p "${GH_STUB_DIR}/bin"
     export GH_STUB_DIR
@@ -1091,15 +1095,26 @@ _api_endpoints() {
 _METHODS=(implicit GET HEAD POST PUT PATCH DELETE)
 _TOOLS=(curl wget http gh-api)
 
-# _data_flags <tool> - every data flag of <tool> ('none' first).
+# _data_flags <tool> [all] - one "<spelling>|<words>" per data variant of
+# <tool>, GENERATED from the single table hook_http_data_flags of
+# lib/subcommand.sh (never repeated here); "none|none" first. A value flag
+# yields its separate spelling, and with "all" also --flag=V and, for a
+# short flag, -xV; a boolean flag yields itself; a request item (httpie)
+# yields x<separator><value>.
 _data_flags() {
-    case "$1" in
-        curl) printf '%s\n' none "-d x=1" "--data x=1" "--data-raw x=1" "--data-binary x=1" \
-            "--data-urlencode x=1" "--json {}" "-F x=1" "--form x=1" "-T f" "--upload-file f" "-G -d x=1" ;;
-        wget) printf '%s\n' none "--post-data=x" "--post-file=f" "--body-data=x" "--body-file=f" ;;
-        http) printf '%s\n' none "x=1" "x:=1" "x@f" ;;
-        gh-api) printf '%s\n' none "-f body=x" "-F body=x" "--field body=x" "--raw-field body=x" "--input ${BATS_TEST_TMPDIR}/b.json" ;;
-    esac
+    local _f _a _v='body=x'
+    printf 'none|none\n'
+    while read -r _f _a; do
+        case "${_a}" in
+            0) printf 'flag|%s\n' "${_f}" ;;
+            item) [[ "${_f}" == *@ ]] && printf 'item|x%sf\n' "${_f}" || printf 'item|x%s1\n' "${_f}" ;;
+            1)
+                printf 'separate|%s %s\n' "${_f}" "${_v}"
+                [[ -n "${2:-}" ]] || continue
+                printf 'eq|%s=%s\n' "${_f}" "${_v}"
+                [[ "${_f}" == -? ]] && printf 'attached|%s%s\n' "${_f}" "${_v}" ;;
+        esac
+    done < <(hook_http_data_flags "$1")
 }
 
 # _http_cmd <tool> <method> <data flag> <url> - the call spelled for <tool>.
@@ -1124,50 +1139,98 @@ _want_rw() {
     [[ "$2" == none && "$1" =~ ^(implicit|GET|HEAD)$ ]] && printf 0 || printf 2
 }
 
-@test "matrix: hook_http_is_write - method x data flag x tool (curl, wget, httpie), full product" {
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
-    source "${HOOK_DIR}/lib/subcommand.sh"
-    local _t _m _d _want _got _MISS=''
+@test "the data-flag table is the single source and holds every data flag the scope names" {
+    run hook_http_data_flags http
+    assert_line "--raw 1"
+    assert_line "--form 0"
+    assert_line "-f 0"
+    assert_line "= item"
+    assert_line ":= item"
+    assert_line "@ item"
+    run hook_http_data_flags curl
+    assert_line "-d 1"
+    assert_line "--upload-file 1"
+    run hook_http_data_flags wget
+    assert_line "--post-file 1"
+    run hook_http_data_flags gh-api
+    assert_line "--input 1"
+    # The spec generates its data dimension from the table, never a list.
+    run declare -f _data_flags
+    assert_success
+    refute_output --regexp '(--data|--post|--body|--raw|--form|--field|--input|--json|--upload)'
+    refute_output --regexp "'-[dFTf] "
+}
+
+@test "matrix: hook_http_is_write - method x data flag x option spelling x curl -G x tool, full product" {
+    # A missing table must not collapse the data dimension to "none".
+    local _tt
+    for _tt in "${_TOOLS[@]}"; do
+        [[ "$(_data_flags "${_tt}" | wc -l)" -gt 1 ]] || fail "empty data-flag dimension for ${_tt}"
+    done
+    local _t _m _v _sp _d _g _want _got _MISS=''
     local -a _w
     for _t in curl wget http; do
         for _m in "${_METHODS[@]}"; do
-            while IFS= read -r _d; do
-                read -r -a _w <<<"$(_http_cmd "${_t}" "${_m}" "${_d}" https://api.github.com/repos/o/r/issues/7/comments)"
-                _got=0
-                hook_http_is_write "${_t}" "${_w[@]:1}" && _got=2
-                _want="$(_want_rw "${_m}" "${_d}")"
-                [[ "${_got}" == "${_want}" ]] || _MISS+="tool=${_t} method=${_m} data=${_d}: got ${_got}, want ${_want}"$'\n'
-            done < <(_data_flags "${_t}")
+            while IFS='|' read -r _sp _d; do
+                for _g in none -G; do
+                    [[ "${_g}" == -G && "${_t}" != curl ]] && continue
+                    _v="${_d}"
+                    [[ "${_g}" == -G ]] && _v="-G ${_d/#none/}"
+                    [[ -z "${_v// /}" ]] && _v=none
+                    read -r -a _w <<<"$(_http_cmd "${_t}" "${_m}" "${_v}" https://api.github.com/repos/o/r/issues/7/comments)"
+                    _got=0
+                    hook_http_is_write "${_t}" "${_w[@]:1}" && _got=2
+                    _want="$(_want_rw "${_m}" "${_d}")"
+                    [[ "${_got}" == "${_want}" ]] \
+                        || _MISS+="tool=${_t} method=${_m} spelling=${_sp} data=${_d} curl-G=${_g}: got ${_got}, want ${_want}"$'\n'
+                done
+            done < <(_data_flags "${_t}" all)
         done
     done
     _report
 }
 
 @test "matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)" {
+    # A missing table must not collapse the data dimension to "none".
+    local _tt
+    for _tt in "${_TOOLS[@]}"; do
+        [[ "$(_data_flags "${_tt}" | wc -l)" -gt 1 ]] || fail "empty data-flag dimension for ${_tt}"
+    done
     # One path per endpoint class through the whole hook; every path of a
     # class (both hosts, every spelling) is proven the same endpoint by the
-    # hook_api_endpoint_urls matrix below.
+    # hook_api_endpoint_urls matrix below. curl / wget / httpie take the
+    # separate spelling here (every spelling runs through hook_http_is_write
+    # above); gh api, judged inside the hook, takes every spelling.
     _labels milestone-gate
-    jq -n '{body: "x"}' >"${BATS_TEST_TMPDIR}/b.json"
-    local _t _m _d _cl _u _MISS=''
+    local _t _m _sp _d _cl _u _all _MISS=''
     local -a _reps=("merge pulls/7/merge" "comment issues/7/comments" "reply pulls/7/comments/9/replies" "review pulls/7/reviews/5/events")
     for _t in "${_TOOLS[@]}"; do
+        _all=''
+        [[ "${_t}" == gh-api ]] && _all=all
         for _m in "${_METHODS[@]}"; do
-            while IFS= read -r _d; do
+            while IFS='|' read -r _sp _d; do
                 for _cl in "${_reps[@]}"; do
                     _u="https://api.github.com/repos/o/r/${_cl#* }"
-                    _expect "$(_want_rw "${_m}" "${_d}")" "tool=${_t} method=${_m} data=${_d} endpoint=${_cl%% *}" \
+                    _expect "$(_want_rw "${_m}" "${_d}")" "tool=${_t} method=${_m} spelling=${_sp} data=${_d} endpoint=${_cl%% *}" \
                         "$(_http_cmd "${_t}" "${_m}" "${_d}" "${_u}")"
                 done
-            done < <(_data_flags "${_t}")
+            done < <(_data_flags "${_t}" "${_all}")
         done
     done
     _report
 }
 
+@test "httpie --raw BODY (separate value) is a write even with GET / HEAD" {
+    local _c
+    for _c in "http GET https://api.github.com/repos/o/r/issues/7/comments --raw untagged" \
+        "http HEAD https://api.github.com/repos/o/r/issues/7/comments --raw untagged" \
+        "http https://api.github.com/repos/o/r/issues/7/comments --raw=untagged"; do
+        _check "${_c}"
+        assert_failure 2
+    done
+}
+
 @test "matrix: every REST endpoint path x host is recognised as an API endpoint" {
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
-    source "${HOOK_DIR}/lib/subcommand.sh"
     local _cl _MISS=''
     while IFS= read -r _cl; do
         [[ "$(hook_api_endpoint_urls "curl ${_cl#* }" | wc -l)" -eq 1 ]] || _MISS+="endpoint=${_cl}"$'\n'
@@ -1256,8 +1319,6 @@ _endpoints() {
 }
 
 @test "matrix: hook_api_endpoint_urls counts every host x path spelling of an API write URL" {
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
-    source "${HOOK_DIR}/lib/subcommand.sh"
     local _h _p _hf _pf _u _MISS=''
     while read -r _h _p; do
         for _hf in "${_HOST_FORMS[@]}"; do
@@ -1296,8 +1357,6 @@ _endpoints() {
 }
 
 @test "matrix: API reads that are no merge / comment / graphql URL pass for every host spelling" {
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
-    source "${HOOK_DIR}/lib/subcommand.sh"
     local _hf _u _MISS=''
     for _hf in "${_HOST_FORMS[@]}"; do
         for _u in "$(_url "${_hf}" api.github.com /repos/o/r/pulls/7)" \

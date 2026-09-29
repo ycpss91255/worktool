@@ -515,7 +515,10 @@ _api_path() {
 # if any, is GET or HEAD.
 _api_is_read() {
     local _m
-    _opt_at -f --raw-field -F --field --input >/dev/null && return 1
+    # The gh api data flags come from the single table (lib/subcommand.sh).
+    local -a _dflags
+    mapfile -t _dflags < <(hook_http_data_flags gh-api | cut -d' ' -f1)
+    _opt_at "${_dflags[@]}" >/dev/null && return 1
     _m="$(_opt -X --method)" || return 0
     [[ "${_m^^}" =~ ^(GET|HEAD)$ ]]
 }
