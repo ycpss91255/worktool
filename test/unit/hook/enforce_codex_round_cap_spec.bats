@@ -4,12 +4,11 @@
 #   - .agents/hook/enforce_codex_round_cap.sh
 #
 # A codex re-verification from round 4 on ("第 N 輪" in the prompt, N >= 4)
-# must stop and look for the root cause of the repeated finding class first;
-# it runs only when the maintainer's latest message says
-# `approve codex round N` (exact N). Rounds 1-3 pass. Blocked = exit 2 with
-# the reason on stderr (lib/hook_bootstrap.sh hook_block). Driven as a
-# subprocess (stdin JSON) the way Claude Code invokes it, plus the decision
-# functions on their own.
+# must carry a "## 根因" section whose three items (類別 / 根因 / 修法) are
+# all filled in; the agent writes it itself, no maintainer approval is
+# involved. Rounds 1-3 pass. Blocked = exit 2 with the reason on stderr
+# (lib/hook_bootstrap.sh hook_block). Driven as a subprocess (stdin JSON)
+# the way Claude Code invokes it, plus the decision functions on their own.
 
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
@@ -18,20 +17,14 @@ setup() {
     HOOK_SH="${HOOK_DIR}/enforce_codex_round_cap.sh"
     FIXTURE_DIR="${BATS_TEST_TMPDIR}/fixtures"
     mkdir -p "${FIXTURE_DIR}"
-    TRANSCRIPT="${FIXTURE_DIR}/transcript.jsonl"
-    _say "please continue"
+    # A complete root-cause section, as a round-4+ prompt must carry it.
+    RC=$'## 根因\n- 類別: 解析器對 wrapper 形式的覆蓋\n- 根因: 黑名單逐項補洞\n- 修法: 改成正規化後白名單;等價類別測試矩陣'
 }
 
-# _say <text> - the maintainer's latest message in the fake transcript.
-_say() {
-    jq -cn --arg t "$1" '{type:"assistant",message:{role:"assistant",content:"asking"}},
-        {type:"user",message:{role:"user",content:$t}}' >"${TRANSCRIPT}"
-}
-
-# _bash <command> [cwd] - a PreToolUse Bash payload with the transcript.
+# _bash <command> [cwd] - a PreToolUse Bash payload.
 _bash() {
-    jq -n --arg c "$1" --arg tp "${TRANSCRIPT}" --arg cwd "${2:-${FIXTURE_DIR}}" \
-        '{tool_name:"Bash", transcript_path:$tp, cwd:$cwd, tool_input:{command:$c}}'
+    jq -n --arg c "$1" --arg cwd "${2:-${FIXTURE_DIR}}" \
+        '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}'
 }
 
 _check() { run_hook enforce_codex_round_cap "$(_bash "$@")"; }
@@ -40,6 +33,9 @@ _source_hook() {
     # shellcheck source=../../../.agents/hook/enforce_codex_round_cap.sh
     source "${HOOK_SH}"
 }
+
+# _prompt_file <name> <text> - write a prompt file under the fixture dir.
+_prompt_file() { printf '%s\n' "$2" >"${FIXTURE_DIR}/$1"; }
 
 # --- codex_round_of: the round number of a prompt ----------------------------
 
@@ -84,53 +80,85 @@ _source_hook() {
     assert_output "9223372036854775808"
 }
 
-# --- codex_round_allowed: rounds 1-3 free, 4+ need the exact approval --------
+# --- codex_root_cause_ok: the "## 根因" section and its three items ----------
 
-@test "codex_round_allowed: rounds 1-3 and no round pass without approval" {
+@test "codex_root_cause_ok: the three items filled in -> ok" {
     _source_hook
-    local _n
-    for _n in "" 1 2 3; do
-        run codex_round_allowed "${_n}" "please continue"
+    run codex_root_cause_ok "這是第 4 輪"$'\n\n'"${RC}"
+    assert_success
+}
+
+@test "codex_root_cause_ok: no '## 根因' section -> refused" {
+    _source_hook
+    run codex_root_cause_ok "這是第 4 輪:請確認"
+    assert_failure
+}
+
+@test "codex_root_cause_ok: only the heading, no content -> refused" {
+    _source_hook
+    run codex_root_cause_ok $'這是第 4 輪\n## 根因\n'
+    assert_failure
+    run codex_root_cause_ok $'這是第 4 輪\n## 根因\n\n## 請確認\n- 類別: x\n- 根因: y\n- 修法: z'
+    assert_failure
+}
+
+@test "codex_root_cause_ok: each item missing or left empty -> refused" {
+    _source_hook
+    local _drop
+    for _drop in 類別 根因 修法; do
+        run codex_root_cause_ok "$(printf '%s\n' "${RC}" | grep -v "^- ${_drop}:")"
+        assert_failure
+        run codex_root_cause_ok "$(printf '%s\n' "${RC}" | sed "s/^- ${_drop}:.*/- ${_drop}:   /")"
+        assert_failure
+    done
+}
+
+@test "codex_root_cause_ok: full-width colon, numbered list and CRLF lines are accepted" {
+    _source_hook
+    run codex_root_cause_ok $'## 根因\n1. 類別：x\n2. 根因：y\n3. 修法：z'
+    assert_success
+    run codex_root_cause_ok $'## 根因\r\n類別: x\r\n根因: y\r\n修法: z\r\n'
+    assert_success
+}
+
+@test "codex_root_cause_ok: items outside the section do not count" {
+    _source_hook
+    run codex_root_cause_ok $'- 類別: x\n- 根因: y\n- 修法: z\n## 根因\n'
+    assert_failure
+}
+
+@test "codex_root_cause_ok: a '### ' sub-heading stays inside the section" {
+    _source_hook
+    run codex_root_cause_ok $'## 根因\n- 類別: x\n### 細節\n- 根因: y\n- 修法: z'
+    assert_success
+}
+
+# --- codex_prompt_allowed: rounds 1-3 free, 4+ need the root cause -----------
+
+@test "codex_prompt_allowed: rounds 1-3 and no round pass without a root cause" {
+    _source_hook
+    local _p
+    for _p in "請確認" "第 1 輪" "第 2 輪" "第 3 輪"; do
+        run codex_prompt_allowed "${_p}"
         assert_success
     done
 }
 
-@test "codex_round_allowed: round 4 and 8 without approval -> refused" {
+@test "codex_prompt_allowed: round 4 and 8 without a root cause -> refused; with it -> ok" {
     _source_hook
-    run codex_round_allowed 4 "please continue"
+    run codex_prompt_allowed "第 4 輪"
     assert_failure
-    run codex_round_allowed 8 ""
+    run codex_prompt_allowed "第 8 輪"
     assert_failure
-}
-
-@test "codex_round_allowed: 'approve codex round 4' allows round 4 (verb case-insensitive)" {
-    _source_hook
-    run codex_round_allowed 4 "approve codex round 4"
-    assert_success
-    run codex_round_allowed 4 $'root cause fixed.\nApprove codex round 4, go.'
+    run codex_prompt_allowed "第 4 輪"$'\n'"${RC}"
     assert_success
 }
 
-@test "codex_round_allowed: a round past the 64-bit range needs its own exact approval" {
+@test "codex_prompt_allowed: a round past the 64-bit range still needs the root cause" {
     _source_hook
-    local _big=18446744073709551616
-    run codex_round_allowed "${_big}" "please continue"
+    run codex_prompt_allowed "第 18446744073709551616 輪"
     assert_failure
-    run codex_round_allowed 9223372036854775808 "approve codex round 0"
-    assert_failure
-    run codex_round_allowed "${_big}" "approve codex round ${_big}"
-    assert_success
-}
-
-@test "codex_round_allowed: approval for another round -> refused" {
-    _source_hook
-    run codex_round_allowed 4 "approve codex round 5"
-    assert_failure
-    run codex_round_allowed 4 "approve codex round 40"
-    assert_failure
-    run codex_round_allowed 5 "approve codex round 4"
-    assert_failure
-    run codex_round_allowed 4 "approve SC2034 round 4"
+    run codex_prompt_allowed "第 9223372036854775808 輪"
     assert_failure
 }
 
@@ -145,52 +173,55 @@ _source_hook() {
     done
 }
 
-@test "hook: inline prompt round 4 without approval -> blocked (exit 2) with the root-cause steps" {
+@test "hook: round 4 without '## 根因' -> blocked (exit 2) with the root-cause template, no approval asked" {
     _check 'codex exec --skip-git-repo-check "這是第 4 輪:請確認"'
     assert_failure 2
     assert_output --partial "BLOCKED"
-    assert_output --partial "approve codex round 4"
-    assert_output --partial "allow-list"
-    assert_output --partial "equivalence-class"
-    assert_output --partial "## 範圍"
+    assert_output --partial "## 根因"
+    assert_output --partial "類別:"
+    assert_output --partial "修法:"
+    refute_output --partial "approve"
 }
 
-@test "hook: round 4 with 'approve codex round 4' passes" {
-    _say "approve codex round 4"
-    _check 'codex exec --skip-git-repo-check "這是第 4 輪:請確認"'
+@test "hook: round 4 with the three items filled in passes" {
+    _prompt_file p4.txt "這是第 4 輪"$'\n'"${RC}"
+    _check "codex exec --skip-git-repo-check \"\$(cat p4.txt)\""
     assert_success
     assert_output ""
 }
 
-@test "hook: round 4 with approval for round 5 -> blocked" {
-    _say "approve codex round 5"
-    _check 'codex exec --skip-git-repo-check "這是第 4 輪:請確認"'
+@test "hook: round 4 with only the heading -> blocked" {
+    _prompt_file p4.txt $'這是第 4 輪\n## 根因\n'
+    _check "codex exec \"\$(cat p4.txt)\""
     assert_failure 2
 }
 
-@test "hook: prompt read from a file via \$(cat <path>) after cd (pr-loop form) -> blocked" {
+@test "hook: prompt read from a file via \$(cat <path>) after cd (pr-loop form) is judged" {
     mkdir -p "${FIXTURE_DIR}/scratch"
     printf '你是 codex。這是第 4 輪:上一輪判定如下\n' >"${FIXTURE_DIR}/scratch/prompt-r4.txt"
-    _check "mkdir -p ${FIXTURE_DIR}/scratch && cd ${FIXTURE_DIR}/scratch && { cat ctx-r4.md; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check \"\$(cat prompt-r4.txt)\" > out-r4.txt 2>&1" /
+    local _cmd="mkdir -p ${FIXTURE_DIR}/scratch && cd ${FIXTURE_DIR}/scratch && { cat ctx-r4.md; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check \"\$(cat prompt-r4.txt)\" > out-r4.txt 2>&1"
+    _check "${_cmd}" /
     assert_failure 2
-    assert_output --partial "approve codex round 4"
+    assert_output --partial "## 根因"
+    printf '這是第 4 輪\n%s\n' "${RC}" >"${FIXTURE_DIR}/scratch/prompt-r4.txt"
+    _check "${_cmd}" /
+    assert_success
 }
 
-@test "hook: prompt file by absolute path, round 3 passes and round 4 with approval passes" {
-    printf '這是第 3 輪\n' >"${FIXTURE_DIR}/p3.txt"
+@test "hook: prompt file by absolute path, round 3 passes and round 4 with the root cause passes" {
+    _prompt_file p3.txt '這是第 3 輪'
     _check "codex exec \"\$(cat ${FIXTURE_DIR}/p3.txt)\""
     assert_success
-    printf '這是第 4 輪\n' >"${FIXTURE_DIR}/p4.txt"
-    _say "approve codex round 4"
+    _prompt_file p4.txt "這是第 4 輪"$'\n'"${RC}"
     _check "codex exec \"\$(cat ${FIXTURE_DIR}/p4.txt)\""
     assert_success
 }
 
-@test "hook: prompt file relative to the payload cwd -> blocked" {
-    printf '這是第 6 輪\n' >"${FIXTURE_DIR}/prompt.txt"
+@test "hook: prompt file relative to the payload cwd without the root cause -> blocked" {
+    _prompt_file prompt.txt '這是第 6 輪'
     _check "codex exec \"\$(cat prompt.txt)\"" "${FIXTURE_DIR}"
     assert_failure 2
-    assert_output --partial "approve codex round 6"
+    assert_output --partial "round 6"
 }
 
 @test "hook: wrapper forms the subcommand parser strips are judged (bash -c, env, timeout)" {
@@ -210,34 +241,33 @@ _source_hook() {
 @test "hook: a round that wraps the 64-bit range (2^64 -> 0, 2^63 -> negative) -> blocked" {
     _check 'codex exec "第 18446744073709551616 輪"'
     assert_failure 2
-    assert_output --partial "approve codex round 18446744073709551616"
+    assert_output --partial "round 18446744073709551616"
     _check 'codex exec "第 9223372036854775808 輪"'
     assert_failure 2
 }
 
 # --- every launch is judged on its own -----------------------------------------
 
-@test "hook: two launches (round 4; round 5), only round 5 approved -> blocked on round 4" {
-    _say "approve codex round 5"
-    _check 'codex exec "第 4 輪" ; codex exec "第 5 輪"'
+@test "hook: two launches, only the round-5 one carries the root cause -> blocked on round 4" {
+    _prompt_file p5.txt "這是第 5 輪"$'\n'"${RC}"
+    _check "codex exec \"第 4 輪\" ; codex exec \"\$(cat p5.txt)\""
     assert_failure 2
-    assert_output --partial "approve codex round 4"
+    assert_output --partial "round 4"
 }
 
-@test "hook: two launches, both rounds approved -> pass; one launch of round 3 beside round 4 still needs round 4" {
-    _say "approve codex round 4; approve codex round 5"
-    _check 'codex exec "第 4 輪" && codex exec "第 5 輪"'
+@test "hook: two launches both with the root cause -> pass; round 3 beside a bare round 4 -> blocked" {
+    _prompt_file p4.txt "這是第 4 輪"$'\n'"${RC}"
+    _prompt_file p5.txt "這是第 5 輪"$'\n'"${RC}"
+    _check "codex exec \"\$(cat p4.txt)\" && codex exec \"\$(cat p5.txt)\""
     assert_success
-    _say "please continue"
     _check 'codex exec "第 3 輪" | codex exec "第 4 輪"'
     assert_failure 2
-    assert_output --partial "approve codex round 4"
+    assert_output --partial "round 4"
 }
 
 # --- a prompt word the hook cannot read literally fails closed ------------------
 
-@test "hook: a substitution other than \$(cat <path>) in the prompt -> blocked, no approval helps" {
-    _say "approve codex round 4"
+@test "hook: a substitution other than \$(cat <path>) in the prompt -> blocked" {
     _check "codex exec \"\$(printf 第%s輪 4)\""
     assert_failure 2
     assert_output --partial "cannot be read"
@@ -266,7 +296,7 @@ _source_hook() {
     printf '2\n' >"${FIXTURE_DIR}/b.txt"
     _check "codex exec \"第 \$(cat a.txt)\$(cat b.txt) 輪\""
     assert_failure 2
-    assert_output --partial "approve codex round 12"
+    assert_output --partial "round 12"
 }
 
 @test "hook: a command carrying the placeholder byte (\\002) itself -> blocked" {
@@ -278,8 +308,8 @@ _source_hook() {
     printf '4\n' >"${FIXTURE_DIR}/n.txt"
     _check "codex exec \"第 \$(cat n.txt) 輪\""
     assert_failure 2
-    assert_output --partial "approve codex round 4"
-    printf '這是第 3 輪\n' >"${FIXTURE_DIR}/p3.txt"
+    assert_output --partial "round 4"
+    _prompt_file p3.txt '這是第 3 輪'
     _check "codex exec \"prefix \$(cat p3.txt)\""
     assert_success
 }
