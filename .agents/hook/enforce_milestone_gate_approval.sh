@@ -510,15 +510,14 @@ _api_path() {
     printf '%s' "${_p%%#*}"
 }
 
-# _api_is_read - 0 when a gh api launch only reads: the last -X / --method
-# is GET / HEAD, or, with none, no field or --input makes gh POST.
+# _api_is_read - 0 when a gh api launch only reads: no field / --input at
+# all (any makes it a write, even with -X GET) and the last -X / --method,
+# if any, is GET or HEAD.
 _api_is_read() {
     local _m
-    if _m="$(_opt -X --method)"; then
-        [[ "${_m^^}" =~ ^(GET|HEAD)$ ]]
-        return
-    fi
-    ! _opt_at -f --raw-field -F --field --input >/dev/null
+    _opt_at -f --raw-field -F --field --input >/dev/null && return 1
+    _m="$(_opt -X --method)" || return 0
+    [[ "${_m^^}" =~ ^(GET|HEAD)$ ]]
 }
 
 # _check_api_graphql <endpoint> - block a GraphQL mutation that merges a
@@ -693,6 +692,13 @@ _check_api_comment() {
     [[ "$1" =~ /(comments(/[0-9]+)?(/replies)?|reviews(/[0-9]+(/(events|dismissals|comments))?)?)/?$ ]] || return 0
     local _body _input
     _api_is_read && return 0
+    # A write must carry a body the hook can judge (none: fail closed).
+    local _fields _re_body='(^|'$'\n'')([^=]*\[)?(body|message)\]?='
+    _fields="$(_opt_values -f --raw-field -F --field | tr '\0' '\n')"
+    if ! _opt_at --input >/dev/null && ! [[ "${_fields}" =~ ${_re_body} ]]; then
+        hook_block "gh api: a write to '$1' carries no body / message the hook can check (fail closed)." \
+            "Pass the comment as -f body='[claude] ...' (or --input <file> with a tagged .body)."
+    fi
     _check_api_fields 0 -f --raw-field
     _check_api_fields 1 -F --field
     if _input="$(_opt --input)"; then
@@ -812,71 +818,6 @@ _check_interp() {
     return 0
 }
 
-# _http_method_write <tool> <word>... - 0 when a curl / wget / httpie call
-# writes (by the method rules of issue #190), 1 when it reads. Sets
-# _HTTP_BODY to the literal request body text; a body read from a file or
-# stdin adds '@' (undeterminable).
-_HTTP_BODY=''
-_http_method_write() {
-    local _tool="$1" _w _m='' _data='' _get='' _i _pos=0
-    shift
-    local -a _a=("$@")
-    _HTTP_BODY=''
-    for ((_i = 0; _i < ${#_a[@]}; _i++)); do
-        _w="${_a[_i]}"
-        case "${_tool}" in
-            curl)
-                case "${_w}" in
-                    -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --request=*) _m="${_w#*=}" ;;
-                    -X?*) _m="${_w:2}" ;;
-                    -G|--get) _get=1 ;;
-                    -d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json|-F|--form|--form-string|-T|--upload-file)
-                        _i=$((_i + 1)); _data=1; _HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
-                    --data*=*|--json=*|--form*=*|--upload-file=*) _data=1; _HTTP_BODY+="${_w#*=}"$'\n' ;;
-                    -d?*|-F?*|-T?*) _data=1; _HTTP_BODY+="${_w:2}"$'\n' ;;
-                    --*) ;;
-                    # A cluster hiding -X / -d / -F / -T cannot be read (fail closed).
-                    -*[XdFT]*) _HTTP_BODY='@'; return 0 ;;
-                esac ;;
-            wget)
-                case "${_w}" in
-                    --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --method=*) _m="${_w#*=}" ;;
-                    --post-data|--body-data) _i=$((_i + 1)); _data=1; _HTTP_BODY+="${_a[_i]:-}"$'\n' ;;
-                    --post-data=*|--body-data=*) _data=1; _HTTP_BODY+="${_w#*=}"$'\n' ;;
-                    --post-file|--body-file) _i=$((_i + 1)); _data=1; _HTTP_BODY+='@'$'\n' ;;
-                    --post-file=*|--body-file=*) _data=1; _HTTP_BODY+='@'$'\n' ;;
-                esac ;;
-            *)
-                # httpie: http [METHOD] URL [ITEMS]
-                case "${_w}" in
-                    -f|--form|--raw=*|--multipart) _data=1 ;;
-                    -*) ;;
-                    *)
-                        _pos=$((_pos + 1))
-                        if [[ "${_pos}" -eq 1 && "${_w^^}" =~ ^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)$ ]]; then
-                            _m="${_w}"
-                            _pos=0
-                        elif [[ "${_pos}" -ge 2 ]]; then
-                            if [[ "${_w}" == *'@'* || ("${_w}" == *=* && "${_w}" != *==*) || "${_w}" == *:=* ]]; then
-                                _data=1
-                                _HTTP_BODY+="${_w}"$'\n'
-                            fi
-                        fi ;;
-                esac ;;
-        esac
-    done
-    _m="${_m^^}"
-    if [[ -n "${_m}" ]]; then
-        [[ ! "${_m}" =~ ^(GET|HEAD|OPTIONS)$ ]] && return 0
-        [[ "${_tool}" == curl && -n "${_data}" && -z "${_get}" && "${_m}" != GET && "${_m}" != HEAD ]] && return 0
-        return 1
-    fi
-    [[ -n "${_data}" && -z "${_get}" ]] && return 0
-    return 1
-}
-
 # _check_http - the method-aware read of a direct API call: a curl / wget /
 # httpie launch (every word literal) that names a GitHub API endpoint and
 # only reads - a GET / HEAD to a REST endpoint, a GraphQL body that is a
@@ -904,12 +845,12 @@ _check_http() {
         if [[ "${_u}" == */graphql ]]; then _gql=1; else _rest=1; fi
     done < <(hook_api_endpoint_urls "${_text}")
     [[ -n "${_rest}${_gql}" ]] || return 0
-    if _http_method_write "${_tool}" "${_d[@]}"; then
+    if hook_http_is_write "${_tool}" "${_d[@]}"; then
         # A GraphQL POST is a read when its literal body is a query.
         [[ -n "${_rest}" ]] && return 0
     fi
     if [[ -n "${_gql}" ]]; then
-        [[ "${_HTTP_BODY}" == *mutation* || "${_HTTP_BODY}" == *'@'* || "${_HTTP_BODY}" == *'\u'* ]] && return 0
+        [[ "${HOOK_HTTP_BODY}" == *mutation* || "${HOOK_HTTP_BODY}" == *'@'* || "${HOOK_HTTP_BODY}" == *'\u'* ]] && return 0
     fi
     _CHECKED_TEXT+="${_text}"$'\n'
     return 0
