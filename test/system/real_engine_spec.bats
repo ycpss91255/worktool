@@ -377,41 +377,69 @@ _hang_script() { printf '%s/ghostty-hang.fish\n' "${HOME}"; }
 
 # Write the fish payload the chain runs INSIDE the box: it records the fish
 # version (only fish sets FISH_VERSION, and this runner has no fish at
-# all), the mount namespace it runs in, whether it runs under tmux (issue
-# #179: the terminal must start none), and the box's own node name.
+# all), the engine's container file it sees, the mount namespace it runs
+# in, whether it runs under tmux (issue #179: the terminal must start
+# none), and the box's own node name.
 #
-# WHY THE MOUNT NAMESPACE AND NOT /run/.containerenv: that file is
-# podman's. A docker box - this runner's, and a docker host's - has none
-# (distrobox itself also accepts /.dockerenv), and this runner is a docker
-# container itself, so /.dockerenv cannot tell the runner from the box.
-# The kernel's answer can: a process in the box shares the dev container's
-# mount namespace, a process on the runner does not.
+# THE CONTAINER IDENTITY (issue #179 asks for /run/.containerenv; codex
+# round 1 on PR #232 asks for an assertion that holds on Docker AND
+# Podman). /run/.containerenv is podman's file; docker writes /.dockerenv
+# instead, and distrobox itself takes either as "in a container"
+# (distrobox-init). So the payload records the one it sees (ctrenv=) and
+# the case requires the file of the engine in use (_engine_ctrenv). That
+# alone cannot tell the box from THIS runner - a docker container itself,
+# with its own /.dockerenv - so the case also requires the mount namespace
+# of the engine's own pid for the dev container (`inspect --format
+# '{{.State.Pid}}'`, the same template on docker and podman): a process in
+# the box shares it, a process on the runner does not.
 _write_chain_script() {
     cat >"$(_chain_script)" <<EOF
 set -l under_tmux no
 if set -q TMUX
     set under_tmux yes
 end
-printf 'inbox-ok fish=%s mntns=%s tmux=%s host=%s\n' "\$FISH_VERSION" (readlink /proc/self/ns/mnt) "\$under_tmux" (uname -n) \
+set -l ctrenv none
+for f in /run/.containerenv /.dockerenv
+    if test -e \$f
+        set ctrenv \$f
+        break
+    end
+end
+printf 'inbox-ok fish=%s ctrenv=%s mntns=%s tmux=%s host=%s\n' "\$FISH_VERSION" \$ctrenv (readlink /proc/self/ns/mnt) "\$under_tmux" (uname -n) \
     >$(_chain_marker)
 EOF
 }
 
-# The line the chain marker must hold: fish answered, in some mount
-# namespace, with no tmux in between, on some node name (the namespace
-# and the name are compared against the dev container below).
-CHAIN_OK='^inbox-ok fish=[0-9]+\.[0-9]+[^ ]* mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
+# The line the chain marker must hold: fish answered, seeing a container
+# file, in some mount namespace, with no tmux in between, on some node
+# name (the file, the namespace and the name are compared against the
+# engine and the dev container below).
+CHAIN_OK='^inbox-ok fish=[0-9]+\.[0-9]+[^ ]* ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
+
+# The container file the engine in use writes into every container:
+# podman /run/.containerenv, docker /.dockerenv.
+_engine_ctrenv() {
+    case "${DBX_CONTAINER_MANAGER}" in
+        podman) printf '/run/.containerenv\n' ;;
+        docker) printf '/.dockerenv\n' ;;
+        *) fail "no container file known for engine '${DBX_CONTAINER_MANAGER}'" ;;
+    esac
+}
 
 # The mount namespace of the dev container, as the engine's pid for it
 # sees it from here (distrobox shares the pid namespace, so it is visible).
+# `inspect --format '{{.State.Pid}}'` is the same on docker and podman.
 _dev_mntns() {
-    readlink "/proc/$(_docker inspect dev --format '{{.State.Pid}}')/ns/mnt"
+    local _pid
+    _pid="$(timeout -k 5 "${QUERY_TIMEOUT}" "${DBX_CONTAINER_MANAGER}" inspect dev --format '{{.State.Pid}}')"
+    readlink "/proc/${_pid}/ns/mnt"
 }
 
-# Assert the chain marker exists, holds CHAIN_OK, was written in the dev
-# container's mount namespace (not the runner's) and names the dev box's
-# own hostname as the engine reports it - so the line cannot have been
-# produced anywhere else on this shared HOME mount. $1 tags the evidence.
+# Assert the chain marker exists, holds CHAIN_OK, saw the engine's own
+# container file, was written in the dev container's mount namespace (not
+# the runner's) and names the dev box's own hostname as the engine reports
+# it - so the line cannot have been produced anywhere else on this shared
+# HOME mount. $1 tags the evidence.
 _assert_chain_marker_in_box() {
     local _line _marker_ns _marker_host _box_host
     assert [ -f "$(_chain_marker)" ]
@@ -419,6 +447,7 @@ _assert_chain_marker_in_box() {
     _log_lines "$1" "${_line}"
     [[ "${_line}" =~ ${CHAIN_OK} ]] \
         || fail "chain marker '${_line}' does not match ${CHAIN_OK}"
+    assert_equal "$(sed -nE 's/^inbox-ok .* ctrenv=([^ ]+) .*$/\1/p' "$(_chain_marker)")" "$(_engine_ctrenv)"
     _marker_ns="$(sed -nE 's/^inbox-ok .* mntns=([^ ]+) .*$/\1/p' "$(_chain_marker)")"
     assert_equal "${_marker_ns}" "$(_dev_mntns)"
     [[ "${_marker_ns}" != "$(readlink /proc/self/ns/mnt)" ]] \
@@ -690,6 +719,11 @@ _desktop_path() {
 #   (2) `tmux` inside the box, with the host server up: the box's server
 #       must be a different process, in the box's mount namespace, on a
 #       socket under the box's TMUX_TMPDIR, listing only its own session.
+#   (3) The same, entered from INSIDE a host tmux pane (codex round 1 on
+#       PR #232). distrobox enter copies the pane's TMUX - the HOST
+#       server's socket - into the box, and tmux prefers $TMUX over
+#       TMUX_TMPDIR; the box's tmux guard (box/tmux-guard.sh, installed by
+#       box/dev.ini) must drop it so the box still gets its own server.
 
 # The host (runner) side tmux server and its session. `main` is the session
 # the old managed command attached to (`new -A -s main`), so a regression
@@ -788,9 +822,72 @@ _host_tmux_pid() {
     _host_ns="$(readlink "/proc/${_host_pid}/ns/mnt")"
     assert_equal "${_box_ns}" "${_init_ns}"
     [[ "${_box_ns}" != "${_host_ns}" ]] || fail "box tmux server shares the host server's mount namespace (${_host_ns})"
+    # ... whose filesystem holds the engine's container file.
+    assert [ -e "/proc/${_box_pid}/root$(_engine_ctrenv)" ]
     _log_lines box-tmux-ns "box pid=${_box_pid} mnt=${_box_ns} == dev init mnt; host pid=${_host_pid} mnt=${_host_ns}"
 
     # The host server still lists only its own session.
+    run env -u TMUX -u TMUX_TMPDIR tmux ls
+    assert_success
+    assert_line --regexp "^${HOST_TMUX_SESSION}: "
+    refute_line --regexp '^box: '
+
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
+    assert_success
+    _host_tmux_down
+}
+
+# The payload a host tmux pane runs in the box (case (3)): it records the
+# TMUX the box inherited, then starts `tmux` as a user would type it and
+# reports the server it reached and the sessions that server lists.
+_host_pane_payload() { printf '%s/host-pane-box-tmux.sh\n' "${HOME}"; }
+_host_pane_out() { printf '%s/host-pane-box-tmux.txt\n' "${HOME}"; }
+_write_host_pane_payload() {
+    cat >"$(_host_pane_payload)" <<'EOF'
+printf 'box-saw-TMUX=%s\n' "${TMUX-}"
+tmux -f /dev/null new-session -d -s box || exit 1
+tmux display-message -p -t box 'box-server=#{pid} #{socket_path}'
+tmux ls
+EOF
+}
+
+# Run the payload through `distrobox enter dev` in a NEW WINDOW of the
+# host's tmux server - a real host pane, with the TMUX tmux gives it - and
+# wait (bounded) until the pane signals it is done.
+_run_in_host_pane() {
+    rm -f "$(_host_pane_out)"
+    _write_host_pane_payload
+    env -u TMUX -u TMUX_TMPDIR tmux new-window -d -t "${HOST_TMUX_SESSION}" \
+        "distrobox enter dev -- sh $(_host_pane_payload) >$(_host_pane_out) 2>&1 </dev/null; tmux wait-for -S host-pane-done"
+    timeout -k 5 "${ENTER_TIMEOUT}" env -u TMUX -u TMUX_TMPDIR tmux wait-for host-pane-done
+}
+
+@test "#179 tmux: entered from a HOST tmux pane (TMUX inherited), tmux in the box still starts the box's own server, never the host's" {
+    local _host_pid _box_pid _box_sock _rc=0
+    _host_tmux_down
+    _host_tmux_up
+    _host_pid="$(_host_tmux_pid)"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- tmux kill-server </dev/null
+    (( status <= 1 )) || fail "could not clear the box's tmux server: ${output}"
+
+    _run_in_host_pane || _rc=$?
+    run cat "$(_host_pane_out)"
+    _log_lines host-pane "${lines[@]}"
+    [[ "${_rc}" -eq 0 ]] || { _diag; fail "the host pane did not finish (rc ${_rc})"; }
+    # The regression really ran: the box inherited the HOST pane's TMUX.
+    assert_line --regexp "^box-saw-TMUX=/tmp/tmux-$(id -u)/default,${_host_pid},"
+    # The box's tmux listed ITS session, not the host's.
+    assert_line --regexp '^box: '
+    refute_line --regexp "^${HOST_TMUX_SESSION}: "
+    _box_pid="$(sed -nE 's/^box-server=([0-9]+) .*$/\1/p' "$(_host_pane_out)")"
+    _box_sock="$(sed -nE 's/^box-server=[0-9]+ (.*)$/\1/p' "$(_host_pane_out)")"
+    [[ "${_box_pid}" =~ ^[0-9]+$ && "${_box_pid}" != "${_host_pid}" ]] \
+        || fail "box tmux pid '${_box_pid}' is not a separate server (host pid ${_host_pid})"
+    assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
+    assert_equal "$(readlink "/proc/${_box_pid}/ns/mnt")" "$(_dev_mntns)"
+    assert [ -e "/proc/${_box_pid}/root$(_engine_ctrenv)" ]
+
+    # The host server never saw the box's session.
     run env -u TMUX -u TMUX_TMPDIR tmux ls
     assert_success
     assert_line --regexp "^${HOST_TMUX_SESSION}: "

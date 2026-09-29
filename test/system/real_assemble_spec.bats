@@ -199,7 +199,7 @@ _trim() {
 # shell, any `distrobox enter dev -- tmux` - inherits it) and an init hook
 # that creates that directory as the box user on every start: tmux falls
 # back to /tmp SILENTLY when TMUX_TMPDIR does not exist.
-@test "#179: the create request gives the box its own TMUX_TMPDIR and an init hook that creates it as the box user" {
+@test "#179: the create request gives the box its own TMUX_TMPDIR and init hooks that create it as the box user and install the tmux guard" {
     cd "${REPO_ROOT}"
     run "${ASSEMBLE}"
     assert_success
@@ -230,6 +230,11 @@ _trim() {
     assert_equal "$((_dd_i + 2))" "${#ARGV[@]}"
     _want=": ; setpriv --reuid=\"\${container_user_uid}\" --regid=\"\${container_user_gid}\""
     _want+=" --clear-groups mkdir -p -m 0700 \"\${TMUX_TMPDIR}\""
+    # ... and then installs the box's tmux guard (box/tmux-guard.sh, codex
+    # round 1 on PR #232) as /usr/local/bin/tmux, byte for byte: a TMUX
+    # inherited from a host tmux pane must not reach the host server.
+    _want+=" && echo $(base64 -w0 <"${REPO_ROOT}/box/tmux-guard.sh")"
+    _want+=" | base64 -d >/usr/local/bin/tmux && chmod 0755 /usr/local/bin/tmux"
     assert_equal "$(_trim "${ARGV[$((_dd_i + 1))]}")" "${_want}"
 }
 

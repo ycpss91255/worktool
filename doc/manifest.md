@@ -28,6 +28,7 @@ image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
 additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
 init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}"
+init_hooks=echo <box/tmux-guard.sh 的 base64> | base64 -d >/usr/local/bin/tmux && chmod 0755 /usr/local/bin/tmux
 ```
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
@@ -43,8 +44,15 @@ distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid
 盒子 HOME `~/dev-box` 底下),盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
 盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
 `--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
-—— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`。兩個鍵各佔一行:
-distrobox-assemble 一行讀一個鍵。見 [`enter.md`](enter.md)。
+—— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`。第二個 `init_hooks`
+(codex 第 1 輪,PR #232)把 [`box/tmux-guard.sh`](../box/tmux-guard.sh) 裝成盒內的
+`/usr/local/bin/tmux`:從 host 的 tmux pane 進盒時,`distrobox enter` 帶進來的
+`TMUX` 指向 host server 的 socket,而 tmux 先看 `TMUX`;guard 只保留指向盒子自己
+`TMUX_TMPDIR` 底下的 `TMUX`,其餘丟掉。清單一行放不下腳本,所以該行放的是
+`box/tmux-guard.sh` 的 base64;`test/unit/box_tmux_guard_spec.bats` 斷言兩者逐位元組
+相同,可讀的 `box/tmux-guard.sh` 是唯一來源。同一個鍵出現多次時 distrobox-assemble
+以 `&&` 串接,依序執行。每個鍵各佔一行:distrobox-assemble 一行讀一個鍵。
+見 [`enter.md`](enter.md)。
 
 ### worktool 要求的必要鍵
 
@@ -428,20 +436,28 @@ issue #129),不再延後到 M5。
     ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
     釘住 `gtk-single-instance = false`,command 為
     `distrobox enter dev -- fish <盒內腳本>`(issue #179:中間沒有 tmux);判準是
-    **盒內**留下的標記檔(內容含 `fish=<版本>`、`mntns=<mount namespace>`、`tmux=no`、
-    `host=<節點名>`),而不是 ghostty 的結束碼 —— runner 本身沒有裝 fish(spec 明確
-    斷言),所以會回答的只可能是盒內那一個;`mntns=` 必須等於 dev 容器的 mount
-    namespace、且不是 runner 自己的(`/run/.containerenv` 是 podman 的檔案,docker
-    建的盒子沒有,不能當證據);標記裡的 `host=` 還要等於
+    **盒內**留下的標記檔(內容含 `fish=<版本>`、`ctrenv=<容器檔>`、
+    `mntns=<mount namespace>`、`tmux=no`、`host=<節點名>`),而不是 ghostty 的結束碼
+    —— runner 本身沒有裝 fish(spec 明確斷言),所以會回答的只可能是盒內那一個;
+    容器身分的斷言 Docker / Podman 通用:`ctrenv=` 必須是**所用引擎**寫進每個容器
+    的檔案(podman `/run/.containerenv`、docker `/.dockerenv`,distrobox 自己也以
+    兩者之一判定「在容器內」),且因為 DinD runner 本身也是 docker 容器、光看檔案
+    分不出 runner 與盒子,`mntns=` 還必須等於引擎回報的 dev 容器 pid
+    (`inspect --format '{{.State.Pid}}'`,兩個引擎同一個模板)的 mount namespace、
+    且不是 runner 自己的;標記裡的 `host=` 還要等於
     `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
     HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
     +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
-    件事,不是路徑本身。issue #179 再加 (e3) 兩案,runner 上先開一個 host 端的
+    件事,不是路徑本身。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
     tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
     tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
     打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
     (`TMUX_TMPDIR` 傳到盒內、pid 與 host server 不同、mount namespace 等於 dev
-    容器、socket 在 `TMUX_TMPDIR` 底下、兩邊的 `tmux ls` 互不列出對方的 session)。
+    容器、該行程的根目錄裡有引擎的容器檔、socket 在 `TMUX_TMPDIR` 底下、兩邊的
+    `tmux ls` 互不列出對方的 session);第三案(codex 第 1 輪,PR #232)在 host
+    tmux server 的**新視窗(真的 host pane)**裡執行 `distrobox enter dev`,先斷言盒內
+    真的繼承了 host pane 的 `TMUX`(回歸情境確實發生),再斷言盒內 `tmux` 仍得到
+    盒子自己的 server(同上各項),host 的 `tmux ls` 不列盒內的 session。
     另兩個負向案例:
     - **永不結束的指令**:盒內 payload **先寫一個獨立的 ready 標記**(內含
       `fish=<版本>`),**再** `exec sleep infinity`。案例只有在 ready 標記出現的

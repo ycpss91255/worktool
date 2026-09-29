@@ -461,12 +461,13 @@ prereq-ok
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
     `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
     `distrobox enter dev -- fish <script>`,斷言**盒內**留下的標記檔顯示 fish 版本、
-    `tmux=no`、寫檔的 fish 所在的 **mount namespace 等於 dev 容器的**(不是 runner
-    自己的),且節點名等於 `docker inspect dev` 的 hostname(runner 自己沒有 fish,
-    preflight 先證明,所以回答的只可能是盒內那一個)。不用 `/run/.containerenv`
-    當證據:那是 podman 的檔案,docker 建的盒子沒有(實跑為 `no`),而 DinD runner
-    本身就是 docker 容器,`/.dockerenv` 也分不出 runner 與盒子。判準是
-    盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
+    `tmux=no`、**所用引擎的容器檔存在**(issue #179 寫的 `/run/.containerenv` 是
+    podman 的;docker 對應的是 `/.dockerenv`,distrobox 自己也以兩者之一判定在容器
+    內——斷言因此 Docker / Podman 通用:要求的是所用引擎的那一個)、寫檔的 fish 所在
+    的 **mount namespace 等於引擎回報的 dev 容器 pid 的**(不是 runner 自己的——
+    DinD runner 本身也是 docker 容器、自己也有 `/.dockerenv`,光看檔案分不出兩者),
+    且節點名等於 `docker inspect dev` 的 hostname(runner 自己沒有 fish,preflight
+    先證明,所以回答的只可能是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
     一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
     distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
     `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
@@ -477,9 +478,12 @@ prereq-ok
     host 的 server,payload 會在沒有 fish 的 runner 上跑、標記檔不會出現);(2) 盒內
     執行 `tmux` 得到盒子自己的 server:`box/dev.ini` 設的 `TMUX_TMPDIR`
     (`~/dev-box/.cache/tmux`)傳到盒內、server pid 與 host 的不同、其 mount
-    namespace 等於 dev 容器的(而不是 host server 的)、socket 在
-    `TMUX_TMPDIR` 底下,盒內 `tmux ls` 不列 host 的 session、host 的 `tmux ls` 也不列
-    盒內的。
+    namespace 等於 dev 容器的(而不是 host server 的)、該行程的根目錄裡有引擎的
+    容器檔、socket 在 `TMUX_TMPDIR` 底下,盒內 `tmux ls` 不列 host 的 session、host 的
+    `tmux ls` 也不列盒內的;(3) 從 **host tmux pane 裡**進盒(codex 第 1 輪,PR #232):
+    在 host server 開新視窗執行 `distrobox enter dev`,先斷言盒內繼承到 host pane 的
+    `TMUX`,再斷言盒內 `tmux` 仍得到盒子自己的 server(同 (2) 各項)——由
+    `box/tmux-guard.sh` 丟掉指向 host socket 的 `TMUX`。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;
@@ -492,7 +496,8 @@ prereq-ok
 - 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲;host 上已有 tmux server
   時開新終端仍在盒內(`test -e /run/.containerenv -o -e /.dockerenv` 成立——docker
   建的盒子只有後者——且 `echo $FISH_VERSION` 有值),
-  盒內打 `tmux` 看不到 host 的 session。
+  盒內打 `tmux` 看不到 host 的 session;在 host 的 tmux pane 裡手動
+  `distrobox enter dev` 後打 `tmux`,同樣看不到 host 的 session。
 
 ## M4 host bootstrap
 

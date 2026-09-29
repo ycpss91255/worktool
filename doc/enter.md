@@ -47,12 +47,15 @@ grilling)的目標行為:
    0700)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能省。不採用「規定使用
    `tmux -L`」這種靠記憶的做法。依據:不變量「host 與盒子互不干擾」(#200);共用
    `/tmp` 的問題見 distrobox upstream issue #824。
+   從 **host 的 tmux pane 裡**進盒也一樣:`distrobox enter` 會把 host 的環境變數
+   (含 `TMUX`,指向 host server 的 socket)帶進盒內,而 tmux 先看 `TMUX` 才看
+   `TMUX_TMPDIR`。所以 `init_hooks` 另外在每次盒子啟動時把
+   [`box/tmux-guard.sh`](../box/tmux-guard.sh) 裝成盒內的 `/usr/local/bin/tmux`
+   (在盒內 PATH 上排在 `/usr/bin/tmux` 前面):`TMUX` 指向盒子自己
+   `TMUX_TMPDIR` 底下的 socket(盒子自己 server 的 pane)才保留,否則丟掉;
+   `TMUX_TMPDIR` 沒設時拒絕執行(否則會退回共用的 `/tmp`)。
 3. **tmux 設定**:worktool **不讀也不寫** host 的 `~/.tmux.conf`;tmux 設定屬於工具
    設定,放在盒子自己的 HOME(#196,M5)。
-
-已知的邊界:從 **host 的 tmux pane 裡**手動 `distrobox enter dev` 時,distrobox 會把
-host 的環境變數(含 `TMUX`)一併帶進盒內,盒內的 tmux 用戶端會依 `TMUX` 指向 host
-的 socket。自動進盒的終端不在 host tmux 裡,不受影響;這個情境另案處理。
 
 舊版留下的東西:設定檔裡的 `tmux=` / `tmux.source=` 行**不再是決策**——不報告、
 不當成壞值拒絕,下次 `just box setup` 重寫設定檔時自然消失;`~/.tmux.conf` 裡若有
