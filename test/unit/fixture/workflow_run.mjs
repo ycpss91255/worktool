@@ -12,6 +12,8 @@
 // `to the path "<json string>" with the Write tool` (parents created, as
 // the Write tool does), then runs every backtick span outside that block
 // that starts with `cd `, `mkdir ` or `gh ` through `bash -c`, in order.
+// A span holding a <placeholder> (e.g. `gh run view <run-id> ...`) is a
+// template the agent fills in, not a runnable step, so it is skipped.
 // Fail closed: a Write target without a well-formed block, or the first
 // step that exits non-zero, stops the agent and it returns null (a shell
 // failure is a failed agent, never the canned reply).
@@ -47,6 +49,7 @@ const play = (prompt) => {
   }
   let stdout = ''
   for (const [, cmd] of outside.matchAll(/`((?:cd|mkdir|gh) [^`]*)`/g)) {
+    if (/<[A-Za-z][A-Za-z0-9_-]*>/.test(cmd)) continue
     try {
       stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
       ran.push({ cmd, rc: 0 })
