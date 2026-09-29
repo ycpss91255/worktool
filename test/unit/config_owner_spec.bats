@@ -1,29 +1,34 @@
 #!/usr/bin/env bats
-# test/unit/config_owner_spec.bats - only lib/config.sh reaches the state
-# file, proven by BEHAVIOUR over every verb and option (issue #199 rounds
-# 6-7).
+# test/unit/config_owner_spec.bats - no module but lib/config.sh reaches
+# the state file, over every entry point the parsers expose and every module
+# in the source graph (issue #199 rounds 6-8).
 #
-# A text search cannot prove that a bash module never builds the path
-# (`p=worktool; "$(config_xdg_dir)/$p/config"` passes any deny-list), and a
-# few hand-picked runs leave branches unexercised. So:
+# What is checked, and nothing more:
 #   - lib/config.sh honours a test-only WORKTOOL_CONFIG_FILE, pointed at a
 #     random path; the DEFAULT location ($XDG_CONFIG_HOME/worktool/config)
-#     is a trap, in two forms, one run each:
-#       poison  a file whose values would show up in any output, or refuse
-#               the run, if anything read them; its bytes and directory
-#               must not change (nothing may write there);
-#       fifo    a named pipe: anything that opens it - to read or to write -
-#               blocks, so the run times out; it must still be a pipe after.
-#   - the runs are ONE table (_runs): every verb whose script can reach the
-#     state file (derived from script/box/justfile.box), every option of its
-#     own option parser (derived from the script source), setup's restore
-#     paths (auto-enter no after a profile was written), and the fake
-#     container manager in both states (no box / an existing box). Drift
-#     guards fail when a verb or a parser option is missing from the table.
+#     is a trap, one run per form:
+#       poison  a file whose values would show up in the output, or refuse
+#               the run, if read; its bytes and directory must not change;
+#       fifo    a named pipe: opening it (to read or write) blocks, so the
+#               run times out; it must still be a pipe after.
+#   - the runs are ONE table (_runs). Entry points: every verb of
+#     script/box/justfile.box whose script's source graph reaches
+#     lib/config.sh (test/helper/graph.bash follows `source` lines), and
+#     every option label of that script's argument loop, in both
+#     `--opt v` and `--opt=v` forms; plus setup's restore paths and the fake
+#     container manager in both states (no box / an existing box). Guards
+#     fail when a verb or a label is missing from the table.
+#   - labels are the whole option surface because every script under
+#     script/ reads its arguments in ONE `while [[ $# -gt 0 ]]; do case "$1"`
+#     loop: a guard fails on a positional parameter used outside that loop
+#     by the entry function (or the parser it hands "$@" to), on a test of
+#     $1 other than the case, and on positional use at the top level.
 # test/unit/config_mutation_spec plants a rogue path-builder in every module
-# that touches the state file and requires these cases to catch each one.
+# of the source graph that names the config API and requires these cases to
+# catch each one.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/graph"
 
 bats_require_minimum_version 1.5.0
 
@@ -59,10 +64,11 @@ _verbs() {
     sed -n 's/^\([a-z][a-z-]*\) \*args:$/\1/p' "${REPO_ROOT}/script/box/justfile.box"
 }
 
-# 0 when script $1 can reach the state file: it sources lib/config.sh, or a
-# library that sources it.
+# 0 when the source graph of verb $1's script reaches lib/config.sh.
 _reaches_config() {
-    grep -qE 'source "\$\{LIB_DIR\}/(config|enter|home|link)\.sh"' "${REPO_ROOT}/script/box/$1.sh"
+    local _mods
+    _mods="$(graph_modules "${REPO_ROOT}" "script/box/$1.sh")" || return 1
+    grep -qx 'lib/config.sh' <<<"${_mods}"
 }
 
 # The options script $1's parser accepts, one per line: every `case` label
@@ -71,6 +77,82 @@ _reaches_config() {
 _parser_options() {
     grep -oE '^[[:space:]]+-[-a-z|=*]+\)' "${REPO_ROOT}/script/box/$1.sh" \
         | tr -d ' )' | tr '|' '\n' | sed 's/=\*$/=/' | sort -u
+}
+
+# Positional-parameter use in script $1 (a path) outside its ONE argument
+# loop, one line per violation. The entry function is the one the run guard
+# calls with "$@"; the parsers are it and the functions it hands "$@" to.
+# Comments and heredoc bodies are skipped; other functions get their own
+# arguments and are not looked at.
+_parser_violations() {
+    # (round 7: options were only the case labels; no structure check)
+    : "$1"
+}
+
+_parser_awk() {
+    cat <<'AWK'
+function heredoc_start(l,   d) {
+    if (match(l, /<<-?[ ]*['"]?[A-Za-z_]+['"]?/)) {
+        d = substr(l, RSTART, RLENGTH); gsub(/[<\-'" ]/, "", d); return d
+    }
+    return ""
+}
+FNR == NR {
+    if (hd != "") { if ($0 == hd) hd = ""; next }
+    if ($0 ~ /^[[:space:]]*#/) next
+    if ($0 ~ /^if \[\[ "\$\{BASH_SOURCE\[0\]:-\}" == "\$\{0:-\}" \]\]; then$/) { guard = 1; next }
+    if (guard == 1) { split($0, w, " "); entry = w[1]; guard = 2 }
+    if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/) { fn = $0; sub(/\(.*/, "", fn); body[fn] = "" }
+    if (fn != "") body[fn] = body[fn] "\n" $0
+    if ($0 ~ /^\}/ || ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/ && $0 ~ /\}[[:space:]]*$/)) fn = ""
+    hd = heredoc_start($0)
+    next
+}
+FNR == 1 {
+    parser[entry] = 1
+    n = split(body[entry], lines, "\n")
+    for (i = 1; i <= n; i++) {
+        l = lines[i]
+        while (match(l, /[A-Za-z_][A-Za-z0-9_]* "\$@"/)) {
+            c = substr(l, RSTART, RLENGTH); sub(/ .*/, "", c)
+            if (c in body) parser[c] = 1
+            l = substr(l, RSTART + RLENGTH)
+        }
+    }
+    hd = ""; fn = ""; loops = 0
+}
+{
+    if (hd != "") { if ($0 == hd) hd = ""; next }
+    if ($0 ~ /^[[:space:]]*#/) next
+    line = $0
+    starts = ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/)
+    if (starts) { fn = $0; sub(/\(.*/, "", fn) }
+    if (fn == "") {
+        if (line ~ /^if \[\[ "\$\{BASH_SOURCE\[0\]:-\}"/) { hd = heredoc_start($0); next }
+        if (line ~ ("^[[:space:]]+" entry " \"\\$@\"$")) next
+        if (line ~ /\$[1-9#*@]|\$\{[1-9#*@]/) print FILENAME ":" FNR ": positional parameter at the top level: " line
+    } else if (fn in parser) {
+        if (line ~ /while \[\[ \$# -gt 0 \]\]/) {
+            loops++; inloop = 1; ind = line; sub(/[^ ].*/, "", ind)
+        } else if (inloop && line ~ ("^" ind "done")) {
+            inloop = 0
+        } else {
+            if ((line ~ /\[\[|\[ |(^|[^A-Za-z_])test /) && (line ~ /\$1([^0-9]|$)|\$\{1[^0-9]/))
+                print FILENAME ":" FNR ": $1 tested outside the case of the argument loop: " line
+            if (!inloop && line ~ /case "\$1" in/)
+                print FILENAME ":" FNR ": case on $1 outside the argument loop: " line
+            if (!inloop) {
+                l = line; gsub(/"\$@"/, "", l)
+                if (l ~ /\$[1-9#*@]|\$\{[1-9#*@]/ || l ~ /(^|[^A-Za-z_])shift([^A-Za-z_]|$)/)
+                    print FILENAME ":" FNR ": positional parameter outside the argument loop: " line
+            }
+        }
+    }
+    if ($0 ~ /^\}/ || (starts && $0 ~ /\}[[:space:]]*$/)) { fn = ""; inloop = 0 }
+    hd = heredoc_start($0)
+}
+END { if (loops > 1) print FILENAME ": " loops " argument loops (one is allowed)" }
+AWK
 }
 
 # The options the table uses for script $1, in the same form.
@@ -218,7 +300,11 @@ _owner_runs() {
 
 @test "drift guard: every option of every parser is used by some row" {
     local _s _o _missing=""
-    for _s in setup assemble status; do
+    local -a _scripts=()
+    while IFS= read -r _s; do
+        _reaches_config "${_s}" && _scripts+=("${_s}")
+    done < <(_verbs)
+    for _s in "${_scripts[@]}"; do
         while IFS= read -r _o; do
             _table_options "${_s}" | grep -qxF -- "${_o}" || _missing+=" ${_s}:${_o}"
         done < <(_parser_options "${_s}")
@@ -227,6 +313,44 @@ _owner_runs() {
     run _parser_options setup
     assert_line -- "--distrobox="
     assert_line -- "-h"
+}
+
+@test "structure guard: every script under script/ reads its arguments only in its one argument loop" {
+    local _f _out=""
+    for _f in "${REPO_ROOT}"/script/*/*.sh; do
+        _out+="$(_parser_violations "${_f}")"
+    done
+    [[ -z "${_out}" ]] || fail "argument use outside the argument loop: ${_out}"
+}
+
+@test "structure guard: it catches an option read outside the loop, at the top level, or a second loop" {
+    local _f="${BATS_TEST_TMPDIR}/rogue.sh"
+    cat >"${_f}" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == --early ]] && echo early
+rogue_run() {
+    if [[ "$1" == --audit ]]; then echo audit; fi
+    _parse "$@"
+}
+_parse() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --ok) : ;;
+            *) [[ "$1" == --late ]] && echo late ;;
+        esac
+        shift
+    done
+    while [[ $# -gt 0 ]]; do shift; done
+}
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
+    rogue_run "$@"
+fi
+EOF
+    run _parser_violations "${_f}"
+    assert_line --partial "rogue.sh:2: positional parameter at the top level"
+    assert_line --partial "rogue.sh:4: \$1 tested outside the case"
+    assert_line --partial "rogue.sh:11: \$1 tested outside the case"
+    assert_line --partial "2 argument loops (one is allowed)"
 }
 
 @test "owner: every setup row reads and writes only the state file lib/config.sh names" {

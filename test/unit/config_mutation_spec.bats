@@ -1,32 +1,32 @@
 #!/usr/bin/env bats
-# test/unit/config_mutation_spec.bats - the state-file specs can SEE every
-# property lib/config.sh claims (issue #199 rounds 5-7).
+# test/unit/config_mutation_spec.bats - every @prop of lib/config.sh has a
+# mutant its spec cases catch (issue #199 rounds 5-8).
 #
-# The claim and the coverage are ONE list. lib/config.sh's header states
-# its contract as `@prop <id>` lines; _rows below holds exactly one row per
-# mutant, and each row names the property it breaks. A drift guard fails
-# when the header's IDs and the table's IDs differ, so a property cannot be
-# claimed without a mutant, nor a mutant added for an unclaimed property.
+# What is checked, and nothing more:
+#   - one table (_rows), one row per `@prop` line of lib/config.sh: a drift
+#     guard requires every @prop ID exactly once in the header and exactly
+#     once in the table (a multiset, not a set);
+#   - every row's mutant, appended to a copy of the repo, makes each case
+#     the row names FAIL, and every named case passes on the clean copy
+#     (control);
+#   - renderer rows (kind `render`: the mutant only changes what config_set
+#     writes) are also PURE: on ALL, a fixture holding every renderer
+#     property's element at once, the mutant writes exactly the bytes the
+#     row states - the real bytes with only its own element changed. The
+#     check is shown to reject round 5's and round 7's impure mutants.
+#     Behavioural rows (kind `behave`) claim "caught", nothing more;
+#   - the `owner` row expands to _owner_rows, one rogue path-builder per
+#     module of the source graph (every script under script/, followed
+#     through `source` lines by test/helper/graph.bash) that names the
+#     config API; a guard fails on such a module without a row.
+# The tests are generated from the rows (bats_test_function).
 #
-# A row: id | mutant | expected bytes after `config_set home /new` on ALL |
-# expected bytes after `config_set home /new zz 1 yy 2` on ALL | cases.
-#   mutant    the function below (_mut_<name>) that prints the mutant code;
-#             appended to a copy of the repo (later definitions win)
-#   expected  a printf %b string, or `=` for "exactly the real library's
-#             bytes" - ALL (below) holds EVERY property's element at once,
-#             so a mutant may change only its own element (purity)
-#   cases     `<spec>@<case-name regex>` separated by `;`: each must FAIL
-#             on the mutated copy (and pass on the clean one: control)
-#
-# Properties are disjoint by definition: `eof` is only the terminator of
-# the final line (LF, CRLF, none); `blank` is blank and whitespace-only
-# lines anywhere, trailing ones included. The eof mutant deletes no line;
-# the blank mutant keeps the file's final terminator.
-#
-# The tests are generated from the table (bats_test_function), so adding a
-# property touches one row.
+# eof is only the final line's terminator (LF, CRLF, none); blank is blank
+# and whitespace-only lines anywhere, trailing ones included. The eof mutant
+# deletes no line; the blank mutant keeps the file's final terminator.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/graph"
 
 bats_require_minimum_version 1.5.0
 
@@ -45,46 +45,55 @@ _rows() {
     local _pres="${_ip};${_s4};${_a4}"
     local _own="${_ip};${_s5};${_a4}"
     local _cs='unit/config_spec.bats@'
+    printf '%s\n' \
+        "get-first|behave|get_first|=|=|${_cs}config_get reads the first occurrence" \
+        "get-bare|behave|get_bare|=|=|${_cs}config_get reads the first occurrence" \
+        "get-all|behave|get_all|=|=|${_cs}config_get_all reads every occurrence" \
+        "each-args|behave|each_args|=|=|${_cs}config_each passes line number" \
+        "each-skip|behave|each_skip|=|=|${_cs}config_each passes line number" \
+        "each-stop|behave|each_stop|=|=|${_cs}config_each stops at the first failing callback" \
+        "exists|behave|exists|=|=|${_cs}the state file is" \
+        "location|behave|location|=|=|${_cs}the state file is" \
+        "log|behave|log|=|=|${_cs}config_log / config_say / config_fill" \
+        "say|behave|say|=|=|${_cs}config_log / config_say / config_fill" \
+        "fill|behave|fill|=|=|${_cs}config_log / config_say / config_fill" \
+        "eof|render|eof|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \n|=|${_cs}config_set replace-only keeps;${_s5};${_a4}" \
+        "blank|render|blank|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\nzz=1\nyy=2\n|${_pres}" \
+        "comments|render|comments|\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "crlf|render|crlf|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "foreign-known|render|foreign_known|# c\n\n  \nhome=/new\nfuture=x\n\n  |# c\n\n  \nhome=/new\nfuture=x\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "unknown|render|unknown|# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "dup-foreign|render|dup_foreign|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "order|render|order|# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  |# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  \nzz=1\nyy=2\n|${_pres}" \
+        "in-place|render|in_place|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new\nzz=1\nyy=2\n|${_own}" \
+        "dup-owned|render|dup_owned|# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_own}" \
+        "append-order|render|append_order|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nyy=2\nzz=1\n|${_ip};${_s4}" \
+        "append-sep|render|append_sep|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  zz=1\nyy=2\n|${_cs}config_set appending keeps every EOF framing;${_s4}" \
+        "new-header|render|new_header|=|=|${_cs}config_set creates a missing file" \
+        "odd-args|behave|odd_args|=|=|${_cs}config_set with an odd number of arguments" \
+        "fail-nothing|behave|fail_nothing|=|=|${_cs}a failing render writes nothing" \
+        "atomic|behave|atomic|=|=|${_cs}config_set replaces the file by rename" \
+        "mode|behave|mode|=|=|${_cs}config_set keeps the file.s mode;unit/setup_spec.bats@r3: setup keeps the state file.s mode;integration/assemble_spec.bats@r3: assemble keeps the state file.s mode" \
+        "lock|behave|lock|=|=|${_cs}two concurrent config_set calls both land" \
+        "no-flock|behave|no_flock|=|=|${_cs}without flock" \
+        "wa-atomic|behave|wa_atomic|=|=|${_cs}config_write_atomic replaces by rename" \
+        "wa-mode|behave|wa_mode|=|=|${_cs}config_write_atomic replaces the file with stdin" \
+        "owner|behave|@owner|=|=|-"
+}
+
+# The owner property, per module: module | mutant | cases. One row for every
+# module of the source graph (test/helper/graph.bash, from every script
+# under script/) that names the config API; a guard fails on a module
+# without a row, or a row without a module.
+_owner_rows() {
     local _ow='unit/config_owner_spec.bats@owner: every'
     printf '%s\n' \
-        "get-first|get_first|=|=|${_cs}config_get reads the first occurrence" \
-        "get-bare|get_bare|=|=|${_cs}config_get reads the first occurrence" \
-        "get-all|get_all|=|=|${_cs}config_get_all reads every occurrence" \
-        "each-args|each_args|=|=|${_cs}config_each passes line number" \
-        "each-skip|each_skip|=|=|${_cs}config_each passes line number" \
-        "each-stop|each_stop|=|=|${_cs}config_each stops at the first failing callback" \
-        "exists|exists|=|=|${_cs}the state file is" \
-        "location|location|=|=|${_cs}the state file is" \
-        "log|log|=|=|${_cs}config_log / config_say / config_fill" \
-        "say|say|=|=|${_cs}config_log / config_say / config_fill" \
-        "fill|fill|=|=|${_cs}config_log / config_say / config_fill" \
-        "eof|eof|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \n|=|${_cs}config_set replace-only keeps;${_s5};${_a4}" \
-        "blank|blank|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z|# c\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\nzz=1\nyy=2\n|${_pres}" \
-        "comments|comments|\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "crlf|crlf|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "foreign-known|foreign_known|# c\n\n  \nhome=/new\nfuture=x\n\n  |# c\n\n  \nhome=/new\nfuture=x\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "unknown|unknown|# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "dup-foreign|dup_foreign|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "order|order|# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  |# c\n\n  \nhome=/new\nlink=.z\nbox=dev\r\nlink=.a\nfuture=x\nlink=.a\n\n  \nzz=1\nyy=2\n|${_pres}" \
-        "in-place|in_place|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new|# c\n\n  \nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nhome=/new\nzz=1\nyy=2\n|${_own}" \
-        "dup-owned|dup_owned|# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  |# c\n\n  \nhome=/new\nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nzz=1\nyy=2\n|${_own}" \
-        "append-order|append_order|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  \nyy=2\nzz=1\n|${_ip};${_s4}" \
-        "append-sep|append_sep|=|# c\n\n  \nhome=/new\nlink=.a\nfuture=x\nlink=.a\nbox=dev\r\nlink=.z\n\n  zz=1\nyy=2\n|${_cs}config_set appending keeps every EOF framing;${_s4}" \
-        "new-header|new_header|=|=|${_cs}config_set creates a missing file" \
-        "odd-args|odd_args|=|=|${_cs}config_set with an odd number of arguments" \
-        "fail-nothing|fail_nothing|=|=|${_cs}a failing render writes nothing" \
-        "atomic|atomic|=|=|${_cs}config_set replaces the file by rename" \
-        "mode|mode|=|=|${_cs}config_set keeps the file.s mode;unit/setup_spec.bats@r3: setup keeps the state file.s mode;integration/assemble_spec.bats@r3: assemble keeps the state file.s mode" \
-        "lock|lock|=|=|${_cs}two concurrent config_set calls both land" \
-        "no-flock|no_flock|=|=|${_cs}without flock" \
-        "wa-atomic|wa_atomic|=|=|${_cs}config_write_atomic replaces by rename" \
-        "wa-mode|wa_mode|=|=|${_cs}config_write_atomic replaces the file with stdin" \
-        "owner|owner_link|=|=|${_ow} assemble row" \
-        "owner|owner_enter|=|=|${_ow} setup row;${_ow} status row" \
-        "owner|owner_home|=|=|${_ow} assemble row" \
-        "owner|owner_setup_restore|=|=|${_ow} setup row" \
-        "owner|owner_assemble_existing|=|=|${_ow} assemble row" \
-        "owner|owner_status|=|=|${_ow} status row"
+        "lib/link.sh|owner_link|${_ow} assemble row" \
+        "lib/enter.sh|owner_enter|${_ow} setup row;${_ow} status row" \
+        "lib/home.sh|owner_home|${_ow} assemble row" \
+        "script/box/setup.sh|owner_setup_restore|${_ow} setup row" \
+        "script/box/assemble.sh|owner_assemble_existing|${_ow} assemble row" \
+        "script/box/status.sh|owner_status|${_ow} status row"
 }
 
 # --- mutants: each prints the code to add, first line `#> <file>` (append)
@@ -581,19 +590,29 @@ _run_case() {
 }
 
 # The row of mutant $1.
-_row() { _rows | awk -F'|' -v m="$1" '$2 == m'; }
+# The row of mutant $1, from the property table.
+_row() { _rows | awk -F'|' -v m="$1" '$3 == m'; }
+
+# The cases of mutant $1: its property row's, or its owner row's.
+_cases_of() {
+    local _c
+    _c="$(_row "$1" | cut -d'|' -f6)"
+    [[ -n "${_c}" ]] || _c="$(_owner_rows | awk -F'|' -v m="$1" '$2 == m' | cut -d'|' -f3)"
+    printf '%s\n' "${_c}"
+}
 
 _assert_caught() {
-    local _id _m _r _a _cases _c
-    IFS='|' read -r _id _m _r _a _cases <<<"$(_row "$1")"
+    local _cases _c
+    _cases="$(_cases_of "$1")"
+    [[ -n "${_cases}" && "${_cases}" != - ]] || fail "mutant $1 has no cases"
     _mutate "$1"
     IFS=';' read -r -a _c <<<"${_cases}"
     for _c in "${_c[@]}"; do
         _run_case "${_c}" "${COPY}"
         grep -qE '^not ok [0-9]+ ' <<<"${CASE_OUT}" \
-            || fail "mutant $1 (${_id}) was not caught by ${_c}: ${CASE_OUT}"
+            || fail "mutant $1 was not caught by ${_c}: ${CASE_OUT}"
         ! grep -qE '^ok [0-9]+ ' <<<"${CASE_OUT}" \
-            || fail "mutant $1 (${_id}) survived a case of ${_c}: ${CASE_OUT}"
+            || fail "mutant $1 survived a case of ${_c}: ${CASE_OUT}"
     done
 }
 
@@ -626,16 +645,49 @@ _pure() {
 }
 
 _assert_pure() {
-    local _id _m _r _a _cases
-    IFS='|' read -r _id _m _r _a _cases <<<"$(_row "$1")"
+    local _id _k _m _r _a _cases
+    IFS='|' read -r _id _k _m _r _a _cases <<<"$(_row "$1")"
     _pure "$1" "${_r}" "${_a}" \
-        || fail "mutant $1 (${_id}) is not pure: on ALL it changes bytes outside its property"
+        || fail "renderer mutant $1 (${_id}) is not pure: on ALL it changes bytes outside its own element"
 }
 
-# One caught-test and one purity-test per row.
-while IFS='|' read -r _id _m _r _a _cases; do
+# The @prop drift of header file $1 against the table, one line per
+# violation: an ID claimed twice, an ID with two rows, an ID claimed but
+# not in the table or the other way round. One row per @prop line.
+_drift_violations() {
+    # (round 7: compared the de-duplicated ID sets)
+    local _claimed _covered
+    _claimed="$(sed -n 's/^#[[:space:]]*@prop[[:space:]]\{1,\}\([a-z-]\{1,\}\).*/\1/p' "$1" | sort -u)"
+    _covered="$(_rows | cut -d'|' -f1 | sort -u)"
+    [[ -n "${_claimed}" ]] || echo "no @prop line in $1"
+    comm -3 <(printf '%s\n' "${_claimed}") <(printf '%s\n' "${_covered}")
+}
+
+# The owner rows' drift in tree $1: every module of the source graph of
+# every script under script/ that names the config API needs an owner row,
+# and every owner row names such a module. One line per violation.
+_owner_module_violations() {
+    # (round 7: the modules a box script sources directly, by fixed name)
+    local _tree="$1" _mods
+    _mods="$( { printf '%s\n' script/box/setup.sh script/box/assemble.sh script/box/status.sh
+        grep -ohE 'source "\$\{LIB_DIR\}/(enter|home|link)\.sh"' "${_tree}"/script/box/*.sh \
+            | sed 's/.*}\/\(.*\)"/lib\/\1/'; } | sort -u)"
+    comm -23 <(printf '%s\n' "${_mods}") <(_owner_rows | cut -d'|' -f1 | sort -u) \
+        | sed 's/^/module names the config API but has no owner row: /'
+}
+
+# Generated tests: every row is caught; renderer rows are also pure; the
+# owner row expands to one caught-test per owner module.
+while IFS='|' read -r _id _k _m _r _a _cases; do
+    if [[ "${_m}" == @owner ]]; then
+        while IFS='|' read -r _mod _om _oc; do
+            bats_test_function --description "mutant ${_om} (${_id}, ${_mod}) is caught" -- _assert_caught "${_om}"
+        done < <(_owner_rows)
+        continue
+    fi
     bats_test_function --description "mutant ${_m} (${_id}) is caught" -- _assert_caught "${_m}"
-    bats_test_function --description "purity: mutant ${_m} (${_id}) changes only its own element" -- _assert_pure "${_m}"
+    [[ "${_k}" != render ]] \
+        || bats_test_function --description "purity: renderer mutant ${_m} (${_id}) changes only its own element" -- _assert_pure "${_m}"
 done < <(_rows)
 
 @test "this spec is a required unit spec of test.sh" {
@@ -644,23 +696,47 @@ done < <(_rows)
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "drift guard: lib/config.sh's @prop IDs are exactly the table's IDs" {
-    local _claimed _covered
-    _claimed="$(sed -n 's/^#[[:space:]]*@prop[[:space:]]\{1,\}\([a-z-]\{1,\}\).*/\1/p' "${REPO_ROOT}/lib/config.sh" | sort -u)"
-    _covered="$(_rows | cut -d'|' -f1 | sort -u)"
-    [[ -n "${_claimed}" ]] || fail "lib/config.sh claims no @prop"
-    run diff <(printf '%s\n' "${_claimed}") <(printf '%s\n' "${_covered}")
-    [[ "${status}" -eq 0 ]] || fail "claimed (<) and covered (>) properties differ: ${output}"
+@test "drift guard: every @prop line of lib/config.sh has exactly one row, every ID exactly once" {
+    run _drift_violations "${REPO_ROOT}/lib/config.sh"
+    assert_output ""
+}
+
+@test "drift guard: a second @prop line with an existing ID is caught" {
+    local _h="${BATS_TEST_TMPDIR}/config.sh"
+    cp "${REPO_ROOT}/lib/config.sh" "${_h}"
+    printf '#   @prop eof           a second promise under an existing ID\n' >>"${_h}"
+    run _drift_violations "${_h}"
+    assert_line "claimed twice: eof"
 }
 
 @test "drift guard: every row's mutant exists and every mutant has a row" {
     local _m _fns
-    while IFS='|' read -r _ _m _ _ _; do
+    while IFS= read -r _m; do
         declare -F "_mut_${_m}" >/dev/null || fail "row names a missing mutant: _mut_${_m}"
-    done < <(_rows)
+    done < <({ _rows | cut -d'|' -f3 | grep -v '^@'; _owner_rows | cut -d'|' -f2; })
     _fns="$(declare -F | awk '{print $3}' | sed -n 's/^_mut_//p' | grep -v '^legacy_' | sort)"
-    run diff <(printf '%s\n' "${_fns}") <(_rows | cut -d'|' -f2 | sort)
+    run diff <(printf '%s\n' "${_fns}") <({ _rows | cut -d'|' -f3 | grep -v '^@'; _owner_rows | cut -d'|' -f2; } | sort)
     [[ "${status}" -eq 0 ]] || fail "mutants without a row (<) / rows without a mutant (>): ${output}"
+}
+
+@test "drift guard: every module of the source graph that names the config API has an owner row" {
+    run _owner_module_violations "${REPO_ROOT}"
+    assert_output ""
+}
+
+@test "drift guard: a module reached only through another library is found" {
+    local _t="${BATS_TEST_TMPDIR}/tree"
+    cp -R "${CLEAN}" "${_t}"
+    cat >"${_t}/lib/audit.sh" <<'EOF'
+audit_path() { printf '%s/x\n' "$(config_xdg_dir)"; }
+EOF
+    # lib/enter.sh (reached from setup and status) sources it, the way the
+    # libraries source each other.
+    cat >>"${_t}/lib/enter.sh" <<'EOF'
+source "${_ENTER_LIB_DIR}/audit.sh"
+EOF
+    run _owner_module_violations "${_t}"
+    assert_line "module names the config API but has no owner row: lib/audit.sh"
 }
 
 @test "control: every case of the table passes on the unmutated copy" {
@@ -669,13 +745,23 @@ done < <(_rows)
         _run_case "${_c}" "${CLEAN}"
         [[ "${CASE_RC}" -eq 0 ]] || fail "control ${_c} failed: ${CASE_OUT}"
         grep -qE '^ok [0-9]+ ' <<<"${CASE_OUT}" || fail "control ${_c} ran no case: ${CASE_OUT}"
-    done < <(_rows | cut -d'|' -f5 | tr ';' '\n' | sort -u)
+    done < <({ _rows | cut -d'|' -f6; _owner_rows | cut -d'|' -f3; } | tr ';' '\n' | grep -vx -- '-' | sort -u)
 }
 
 @test "purity: the check rejects round 5's grep mutant and round 7's eof mutant" {
-    run _pure legacy_grep "$(_row unknown | cut -d'|' -f3)" "$(_row unknown | cut -d'|' -f4)"
+    run _pure legacy_grep "$(_row unknown | cut -d'|' -f4)" "$(_row unknown | cut -d'|' -f5)"
     assert_failure
     rm -rf "${COPY}"; cp -R "${CLEAN}" "${COPY}"
-    run _pure legacy_eof "$(_row eof | cut -d'|' -f3)" "$(_row eof | cut -d'|' -f4)"
+    run _pure legacy_eof "$(_row eof | cut -d'|' -f4)" "$(_row eof | cut -d'|' -f5)"
     assert_failure
+}
+
+@test "the location mutant changes only where the state file resolves" {
+    _mutate location
+    # Other XDG files (the terminal profile) still follow XDG_CONFIG_HOME ...
+    XDG_CONFIG_HOME=/xdg run bash -c 'source "$1/lib/log.sh"; source "$1/lib/config.sh"; config_xdg_dir' _ "${COPY}"
+    assert_output "/xdg"
+    # ... and the messages still name the file config.sh uses.
+    _run_case 'unit/config_spec.bats@config_log / config_say / config_fill' "${COPY}"
+    [[ "${CASE_RC}" -eq 0 ]] || fail "the location mutant also broke the messages: ${CASE_OUT}"
 }
