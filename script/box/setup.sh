@@ -11,8 +11,8 @@
 # The backing script of `just box setup` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
 #
-#   ./script/box/setup.sh                       # defaults: yes / detected / inside / dev
-#   ./script/box/setup.sh --tmux host           # tmux on the host, panes enter the box
+#   ./script/box/setup.sh                       # defaults: yes / detected / dev
+#   ./script/box/setup.sh --box work            # enter another box
 #   ./script/box/setup.sh --auto-enter no       # restore the host shell
 #   ./script/box/setup.sh --dry-run             # log everything, write nothing
 #   ./script/box/setup.sh --help                # usage
@@ -22,8 +22,15 @@
 #   auto-enter  yes|no        default yes
 #   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is on
 #                             PATH (or, secondary, a ghostty config dir exists)
-#   tmux        inside|host   default inside
 #   box         <name>        default dev
+#
+# There is no tmux decision (issue #179). The terminal enters the box and
+# gets the box's login shell; it starts no tmux. The old `-- tmux new -A -s
+# main` attached to a HOST tmux server whenever one was running (distrobox
+# shares /tmp with the host, and with it tmux's default socket), so the
+# user got a host shell that looked like the box. A `tmux` the user starts
+# in the box gets the box's own server (TMUX_TMPDIR, box/dev.ini), and
+# worktool never reads or writes the host's ~/.tmux.conf.
 #
 # When `terminal` comes from the default, the BASIS of that default is
 # logged too (`[INFO] terminal detected: <value> (<reason>)`): issue #175
@@ -42,31 +49,25 @@
 # REFUSED (exit 1, nothing written) instead of writing a command already
 # known to fail; `--distrobox <path>` names one explicitly.
 #
-# Both bodies are shell SOURCE (ghostty runs a `command` without a
-# `direct:` prefix through `/bin/sh -c`; tmux runs `default-command` the
-# same way), so `<distrobox>` is written as a QUOTED shell word: single
-# quotes in the ghostty body, and double quotes inside tmux's own
-# single-quoted value (issue #175 round 1).
+# The body is shell SOURCE (ghostty runs a `command` without a `direct:`
+# prefix through `/bin/sh -c`), so `<distrobox>` is written as a
+# single-QUOTED shell word (issue #175 round 1).
 #
-# Quoting alone is not enough, though: both files are LINE-BASED, so a path
+# Quoting alone is not enough, though: the file is LINE-BASED, so a path
 # holding a newline or a carriage return would split the managed body over
 # two lines and make the whole file unparseable (ghostty answers
 # `unknown field`). Such a path is REFUSED - whichever source it came from,
 # and before anything at all is written (issue #175 round 2).
 #
-# Managed blocks (begin/end marker lines, exactly one per file, replaced in
+# Managed block (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
-#   auto-enter yes, terminal ghostty, tmux inside:
-#     <config dir>/ghostty/config  command = '<distrobox>' enter <box> -- tmux new -A -s main
-#   auto-enter yes, terminal ghostty, tmux host:
-#     <config dir>/ghostty/config  command = tmux new -A -s main
-#     ~/.tmux.conf                 set -g default-command '"<distrobox>" enter <box>'
-#   auto-enter yes, terminal none: no terminal profile at all (whatever tmux
-#     says: the tmux.conf block only serves the ghostty+host pair), leftover
-#     blocks removed.
-#   auto-enter no: both blocks removed, each removal reported.
+#   auto-enter yes, terminal ghostty:
+#     <config dir>/ghostty/config  command = '<distrobox>' enter <box>
+#   auto-enter yes, terminal none: no terminal profile at all, a leftover
+#     block removed.
+#   auto-enter no: the block removed, the removal reported.
 #
-# Write order: the state file first, then the profiles. The stored values
+# Write order: the state file first, then the profile. The stored values
 # are validated before anything is written (a corrupt state file refuses the
 # whole run, exit 1, no file changed); a profile write that fails afterwards
 # leaves the state file already updated and exits 1 - `just box status` then
@@ -99,7 +100,6 @@ source "${LIB_DIR}/enter.sh"
 # --- Option state (set by _parse_args) ---------------------------------------
 OPT_AUTO_ENTER=""
 OPT_TERMINAL=""
-OPT_TMUX=""
 OPT_BOX=""
 OPT_DISTROBOX=""
 OPT_DRY_RUN=0
@@ -107,8 +107,8 @@ OPT_HELP=0
 
 # --- Resolved decisions (set by _resolve_all) --------------------------------
 CONFIG=""
-AUTO_ENTER="" TERMINAL="" TMUX="" BOX=""
-AUTO_ENTER_SRC="" TERMINAL_SRC="" TMUX_SRC="" BOX_SRC=""
+AUTO_ENTER="" TERMINAL="" BOX=""
+AUTO_ENTER_SRC="" TERMINAL_SRC="" BOX_SRC=""
 
 # The distrobox program the managed command names (set by _resolve_distrobox,
 # only on the paths that write one).
@@ -118,8 +118,7 @@ DISTROBOX=""
 _usage() {
     cat >&2 <<'EOF'
 Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
-                [--tmux inside|host] [--box <name>] [--distrobox <path>]
-                [--dry-run]
+                [--box <name>] [--distrobox <path>] [--dry-run]
 
 Choose how a new terminal enters the worktool dev box, store the choice in
 $XDG_CONFIG_HOME/worktool/config and write the terminal profile for it.
@@ -127,21 +126,17 @@ Every decision is logged as `[INFO] <key>: <value> (default|user)`; read it
 back any time with `just box status`.
 
   --auto-enter yes|no       Enter the box automatically (default: yes).
-                            `no` removes the managed blocks and restores the
+                            `no` removes the managed block and restores the
                             host shell, reporting what was removed.
   --terminal ghostty|none   Terminal profile to manage (default: ghostty when
                             the ghostty executable is on PATH, or when
                             $XDG_CONFIG_HOME/ghostty or ~/.config/ghostty
                             exists; else none). `none` writes no profile at
-                            all, not even ~/.tmux.conf; the decisions are
-                            still stored.
-  --tmux inside|host        Where tmux runs (default: inside): inside the box
-                            (ghostty: <distrobox> enter <box> -- tmux new -A
-                            -s main) or on the host (ghostty: tmux new -A -s
-                            main; ~/.tmux.conf: set -g default-command
-                            "<distrobox> enter <box>"). <distrobox> is the
-                            absolute path this run resolves, so a terminal
-                            started from the desktop can run it.
+                            all; the decisions are still stored. ghostty
+                            runs: <distrobox> enter <box> - the box's login
+                            shell, no tmux. <distrobox> is the absolute
+                            path this run resolves, so a terminal started
+                            from the desktop can run it.
   --box <name>              Box to enter (default: dev).
   --distrobox <path>        Absolute path of the distrobox executable to write
                             into the managed command (default: the one on
@@ -155,7 +150,8 @@ Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
   $XDG_CONFIG_HOME/worktool/config   the state file (key=value + key.source)
   $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
-  ~/.tmux.conf                       managed block (terminal ghostty + tmux host only)
+No tmux is started and no host tmux config is touched: a tmux started in
+the box gets the box's own server (TMUX_TMPDIR, set by box/dev.ini).
 
 The state file is validated before anything is written: a corrupt value in
 it (whatever its `.source`) is refused with `[ERROR] <file>: invalid value
@@ -173,8 +169,7 @@ _usage_error() {
 
 # --- Argument parsing --------------------------------------------------------
 
-# Store option $1 (--auto-enter / --terminal / --tmux / --box /
-# --distrobox) = value $2 after validating the value. Returns 2 on an
+# Store option $1 (--auto-enter / --terminal / --box / --distrobox) = value $2 after validating the value. Returns 2 on an
 # invalid value.
 #
 # --distrobox is not a stored decision, so it has its own rule rather than
@@ -197,7 +192,6 @@ _set_opt() {
     case "${_key}" in
         auto-enter) OPT_AUTO_ENTER="$2" ;;
         terminal)   OPT_TERMINAL="$2" ;;
-        tmux)       OPT_TMUX="$2" ;;
         box)        OPT_BOX="$2" ;;
     esac
 }
@@ -207,7 +201,7 @@ _set_opt() {
 _parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --auto-enter|--terminal|--tmux|--box|--distrobox)
+            --auto-enter|--terminal|--box|--distrobox)
                 if [[ $# -lt 2 ]]; then
                     _usage_error "$1 requires a value"
                     return 2
@@ -215,7 +209,7 @@ _parse_args() {
                 _set_opt "$1" "$2" || return 2
                 shift
                 ;;
-            --auto-enter=*|--terminal=*|--tmux=*|--box=*|--distrobox=*)
+            --auto-enter=*|--terminal=*|--box=*|--distrobox=*)
                 _set_opt "${1%%=*}" "${1#*=}" || return 2
                 ;;
             --dry-run) OPT_DRY_RUN=1 ;;
@@ -268,8 +262,6 @@ _resolve_all() {
     AUTO_ENTER="${_r% *}" AUTO_ENTER_SRC="${_r#* }"
     _r="$(_resolve terminal "${OPT_TERMINAL}")" || return 1
     TERMINAL="${_r% *}" TERMINAL_SRC="${_r#* }"
-    _r="$(_resolve tmux "${OPT_TMUX}")" || return 1
-    TMUX="${_r% *}" TMUX_SRC="${_r#* }"
     _r="$(_resolve box "${OPT_BOX}")" || return 1
     BOX="${_r% *}" BOX_SRC="${_r#* }"
     log_info "auto-enter: ${AUTO_ENTER} (${AUTO_ENTER_SRC})"
@@ -280,7 +272,6 @@ _resolve_all() {
         _detected="$(enter_terminal_detect)"
         log_info "terminal detected: ${_detected%% *} (${_detected#* })"
     fi
-    log_info "tmux: ${TMUX} (${TMUX_SRC})"
     log_info "box: ${BOX} (${BOX_SRC})"
     # Only the paths that WRITE a managed command need a distrobox, and
     # they need it before anything is written, so a refusal leaves the
@@ -293,10 +284,9 @@ _resolve_all() {
 # Resolve the distrobox the managed command will name into DISTROBOX and
 # log the basis. Returns 1 - and the caller refuses the whole run before
 # writing anything - when there is none, or when the resolved path cannot
-# be encoded into the blocks this run would write (a newline or carriage
-# return anywhere; a single quote when ~/.tmux.conf is also written). The
-# two encoding rules apply to BOTH sources of the path, the option and
-# PATH, because they are about what the managed FILES can hold.
+# be encoded into the block this run would write (a newline or carriage
+# return anywhere). The rule applies to BOTH sources of the path, the
+# option and PATH, because it is about what the managed FILE can hold.
 #
 # Issue #175 round 1: the first attempt wrote the bare name with a WARN
 # when nothing resolved. That handed the user exactly the configuration
@@ -314,21 +304,13 @@ _resolve_distrobox() {
         log_error "distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written"
         return 1
     fi
-    # Both managed files are line-based, so a path holding a newline or a
-    # carriage return cannot be written into either of them whatever the
-    # shell quoting says (issue #175 round 2). The diagnostic shows the
+    # The managed file is line-based, so a path holding a newline or a
+    # carriage return cannot be written into it whatever the shell quoting
+    # says (issue #175 round 2). The diagnostic shows the
     # control character rather than printing it, so the error stays one
     # line.
     if ! enter_path_single_line "${DISTROBOX}"; then
-        log_error "distrobox: $(enter_show_control "${DISTROBOX}") holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
-        return 1
-    fi
-    # The ~/.tmux.conf body nests a shell command inside a tmux
-    # single-quoted value, and tmux has NO escape inside single quotes, so
-    # a path holding one cannot be delivered through it. Refuse rather
-    # than write a file that would not parse the way it reads.
-    if [[ "${TMUX}" == "host" && "${DISTROBOX}" == *"'"* ]]; then
-        log_error "distrobox: ${DISTROBOX} holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
+        log_error "distrobox: $(enter_show_control "${DISTROBOX}") holds a newline or carriage return, which cannot be written into the line-based ghostty config (install distrobox at a path without one); nothing was written"
         return 1
     fi
 }
@@ -416,15 +398,14 @@ _config_render() {
     printf '%s=%s\n%s.source=%s\n' \
         auto-enter "${AUTO_ENTER}" auto-enter "${AUTO_ENTER_SRC}" \
         terminal "${TERMINAL}" terminal "${TERMINAL_SRC}" \
-        tmux "${TMUX}" tmux "${TMUX_SRC}" \
         box "${BOX}" box "${BOX_SRC}"
 }
 
 # --- Apply -------------------------------------------------------------------
 
-# auto-enter yes: the terminal profile (ghostty) and, for tmux host, the
-# tmux default-command; a block that the current decisions no longer need
-# (terminal none, tmux inside) is removed if an earlier run left it.
+# auto-enter yes: the terminal profile (ghostty); a block that the current
+# decisions no longer need (terminal none) is removed if an earlier run
+# left it.
 _apply_enable() {
     if [[ "${TERMINAL}" == "ghostty" ]]; then
         _apply_ghostty
@@ -433,51 +414,33 @@ _apply_enable() {
     fi
 }
 
-# terminal ghostty: the ghostty block for the tmux placement, plus the
-# tmux.conf block for tmux host (removed again for tmux inside).
+# terminal ghostty: the ghostty block enters the box and runs nothing after
+# it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
-    local _ghostty _tmux_conf _rc=0
-    _ghostty="$(enter_ghostty_config)"
-    _tmux_conf="$(enter_tmux_conf)"
     # DISTROBOX was resolved (and the run refused if it could not be) in
-    # _resolve_all, before any file was touched. Both bodies are shell
-    # source, so the path goes in as a quoted shell word.
-    if [[ "${TMUX}" == "inside" ]]; then
-        _block_write "${_ghostty}" \
-            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
-        _block_remove "${_tmux_conf}" || _rc=1
-    else
-        _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-        _block_write "${_tmux_conf}" \
-            "set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'" || _rc=1
-    fi
-    return "${_rc}"
+    # _resolve_all, before any file was touched. The body is shell source,
+    # so the path goes in as a quoted shell word.
+    _block_write "$(enter_ghostty_config)" \
+        "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
 }
 
-# terminal none: no terminal profile is written at all (doc/enter.md), so
-# the tmux.conf block - which only serves the ghostty+host pair - is not
-# written either; the tmux decision is still stored for `just box status`.
-# Blocks an earlier ghostty run left are removed.
+# terminal none: no terminal profile is written at all (doc/enter.md); the
+# decisions are still stored for `just box status`. A block an earlier
+# ghostty run left is removed.
 #
 # The hint below keeps the BARE name on purpose: nothing is being written
 # to a file here, it is a line for the user to type in their own
 # interactive shell, whose PATH does hold ~/.local/bin. The absolute path
 # of issue #175 is for the managed command, which a desktop session runs.
 _apply_no_terminal() {
-    local _rc=0
     log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
-    _block_remove "$(enter_ghostty_config)" || _rc=1
-    _block_remove "$(enter_tmux_conf)" || _rc=1
-    return "${_rc}"
+    _block_remove "$(enter_ghostty_config)"
 }
 
-# auto-enter no: restore the host shell by removing both managed blocks,
-# reporting each file either way.
+# auto-enter no: restore the host shell by removing the managed block,
+# reporting the file either way.
 _apply_disable() {
-    local _rc=0
-    _block_remove "$(enter_ghostty_config)" report || _rc=1
-    _block_remove "$(enter_tmux_conf)" report || _rc=1
-    return "${_rc}"
+    _block_remove "$(enter_ghostty_config)" report
 }
 
 # --- Main --------------------------------------------------------------------

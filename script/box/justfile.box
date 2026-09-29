@@ -39,7 +39,7 @@ assemble *args:
 bench *args:
     ./script/box/bench.sh "$@"
 
-# Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --tmux inside|host, --box <name>, --dry-run, --help).
+# Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --box <name>, --distrobox <path>, --dry-run, --help).
 setup *args:
     ./script/box/setup.sh "$@"
 

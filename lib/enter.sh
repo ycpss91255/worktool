@@ -10,16 +10,20 @@
 #   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config}
 #   enter_config_path      -> <config dir>/worktool/config   (the ONE state file)
 #   enter_ghostty_config   -> <config dir>/ghostty/config
-#   enter_tmux_conf        -> $HOME/.tmux.conf
+#
+# There is no tmux decision and no ~/.tmux.conf path (issue #179): the
+# terminal enters the box and gets its login shell; tmux is something the
+# user starts inside the box, where it gets the box's own server
+# (TMUX_TMPDIR, box/dev.ini). worktool never reads or writes the host's
+# tmux config.
 #
 # Decisions (the keys of the state file) and their defaults:
 #   auto-enter  yes|no        default yes
 #   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is
 #                             on PATH, or (secondary) a ghostty config dir
 #                             exists; else none
-#   tmux        inside|host   default inside
 #   box         <name>        default dev
-#   enter_keys                -> prints the four keys, one per line
+#   enter_keys                -> prints the three keys, one per line
 #   enter_default <key>       -> prints the default of one key
 #   enter_choices <key>       -> prints the allowed values (`a|b`), empty for box
 #   enter_expected <key>      -> the allowed values in human form (messages)
@@ -34,13 +38,11 @@
 #                                refuses the run; there is no bare-name
 #                                fallback - see the function comment)
 #
-# Shell quoting (issue #175 round 1). BOTH managed bodies are shell SOURCE,
-# not argv: ghostty runs a `command` without a `direct:` prefix through
-# `/bin/sh -c`, and tmux runs `default-command` the same way. An install
-# path holding a space or a shell metacharacter would otherwise be split
-# into words or change what the command means.
+# Shell quoting (issue #175 round 1). The managed body is shell SOURCE, not
+# argv: ghostty runs a `command` without a `direct:` prefix through
+# `/bin/sh -c`. An install path holding a space or a shell metacharacter
+# would otherwise be split into words or change what the command means.
 #   enter_sh_squote <s>       -> $s as a single-quoted POSIX shell word
-#   enter_sh_dquote <s>       -> $s as a double-quoted POSIX shell word
 #   enter_first_word <s>      -> the first shell word of $s, decoded
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
@@ -48,7 +50,9 @@
 #
 # State file: `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
-#                                      `<key>.source`
+#                                      `<key>.source` (a `tmux` line an
+#                                      earlier worktool stored is not: it
+#                                      is ignored, and dropped on rewrite)
 #   enter_config_get <file> <key>   -> prints the value (nothing when absent;
 #                                      first occurrence when repeated)
 #   enter_config_check <file>       -> 0 when EVERY LINE holding a known key
@@ -74,13 +78,12 @@ ENTER_BLOCK_BEGIN='# BEGIN worktool managed block (just box setup; do not edit)'
 ENTER_BLOCK_END='# END worktool managed block'
 
 # The decision keys, one per line, in report order.
-enter_keys() { printf '%s\n' auto-enter terminal tmux box; }
+enter_keys() { printf '%s\n' auto-enter terminal box; }
 
 # --- Paths -------------------------------------------------------------------
 enter_config_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
 enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
-enter_tmux_conf() { printf '%s/.tmux.conf\n' "${HOME}"; }
 
 # --- Executables the decisions depend on (issue #175) ------------------------
 
@@ -160,34 +163,15 @@ enter_sh_squote() {
     printf "'%s'\n" "${_s}"
 }
 
-# $1 as a POSIX shell word in DOUBLE quotes: inside "..." only \ ` $ " are
-# special, so exactly those four are backslash-escaped (the backslash
-# first, or the escapes would be escaped again).
-#
-# Used where an OUTER layer already owns the single quote: the ~/.tmux.conf
-# managed block is `set -g default-command '<shell command>'`, and a tmux
-# single-quoted value is fully literal - no escape, no expansion - which
-# makes it the one tmux form whose content needs no second encoding. The
-# price is that a path holding a single quote cannot be delivered through
-# it at all; setup.sh refuses that case rather than writing a broken file.
-enter_sh_dquote() {
-    local _s="$1"
-    _s="${_s//\\/\\\\}"
-    _s="${_s//\`/\\\`}"
-    _s="${_s//\$/\\\$}"
-    _s="${_s//\"/\\\"}"
-    printf '"%s"\n' "${_s}"
-}
-
 # 0 when $1 can be written into a managed block at all (issue #175 round
 # 2): no newline and no carriage return.
 #
-# Shell quoting makes a valid WORD out of any text, but both managed files
-# are LINE-BASED - ghostty reads its config line by line, and so does tmux.
-# A path holding a newline therefore splits the managed body across two
+# Shell quoting makes a valid WORD out of any text, but the managed file is
+# LINE-BASED - ghostty reads its config line by line. A path holding a
+# newline therefore splits the managed body across two
 # lines, and ghostty rejects the whole file with `unknown field` - after
 # setup had already written it and exited 0. There is no encoding that
-# fixes this on both sides, so such a path is refused instead.
+# fixes this, so such a path is refused instead.
 enter_path_single_line() {
     [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]]
 }
@@ -241,20 +225,17 @@ enter_first_word() {
     printf '%s\n' "${_out}"
 }
 
-# The distrobox program recorded in managed-block body $1, or nothing when
-# the body names none. setup.sh writes exactly two bodies that name one:
-#   command = '<distrobox>' enter <box> -- tmux new -A -s main
-#   set -g default-command '"<distrobox>" enter <box>'
-# (the tmux-on-host ghostty body, `command = tmux new -A -s main`, names
-# none). The unquoted / double-quoted-outer shapes an earlier worktool
-# wrote are still decoded, so a block a user already has keeps reporting.
-# status.sh reads this back to say whether that path still runs.
+# The distrobox program recorded in ghostty managed-block body $1, or
+# nothing when the body names none. setup.sh writes one body:
+#   command = '<distrobox>' enter <box>
+# The shapes an earlier worktool wrote (`... -- tmux new -A -s main`
+# after it, an unquoted path) are still decoded, so a block a user already
+# has keeps reporting. status.sh reads this back to say whether that path
+# still runs.
 enter_body_distrobox() {
     local _body="$1" _rest _prog
     case "${_body}" in
-        'command = '*)               _rest="${_body#command = }" ;;
-        "set -g default-command '"*) _rest="${_body#set -g default-command \'}" ;;
-        'set -g default-command "'*) _rest="${_body#set -g default-command \"}" ;;
+        'command = '*) _rest="${_body#command = }" ;;
         *) return 0 ;;
     esac
     _prog="$(enter_first_word "${_rest}")"
@@ -275,7 +256,6 @@ enter_default() {
     case "$1" in
         auto-enter) printf 'yes\n' ;;
         terminal)   _enter_default_terminal ;;
-        tmux)       printf 'inside\n' ;;
         box)        printf 'dev\n' ;;
         *)          return 1 ;;
     esac
@@ -286,7 +266,6 @@ enter_choices() {
     case "$1" in
         auto-enter) printf 'yes|no\n' ;;
         terminal)   printf 'ghostty|none\n' ;;
-        tmux)       printf 'inside|host\n' ;;
         box)        printf '\n' ;;
         *)          return 1 ;;
     esac

@@ -2,10 +2,11 @@
 # status.sh - show the auto-enter decisions in force and their sources (M3, #21).
 #
 # The read side of `just box setup`: prints the ONE state file's decisions
-# (auto-enter, terminal, tmux, box), each with its source (default | user),
-# whether the worktool managed block is present in each managed file (the
-# ghostty config and ~/.tmux.conf), and - since issue #175 - whether the
-# distrobox those blocks name can still be run. Read-only: it never writes.
+# (auto-enter, terminal, box), each with its source (default | user),
+# whether the worktool managed block is present in the ghostty config, and
+# - since issue #175 - whether the distrobox that block names can still be
+# run. Read-only: it never writes. Since issue #179 there is no tmux line:
+# worktool does not manage tmux, and never looks at ~/.tmux.conf.
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -51,8 +52,8 @@ Usage: status.sh
 
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), whether
-the worktool managed block is present in the ghostty config and in
-~/.tmux.conf, and whether the distrobox those blocks name can still be run.
+the worktool managed block is present in the ghostty config, and whether
+the distrobox that block names can still be run.
 Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
@@ -108,7 +109,6 @@ _report() {
         _report_key "${_key}" "${_config}"
     done < <(enter_keys)
     _report_block ghostty "$(enter_ghostty_config)"
-    _report_block tmux.conf "$(enter_tmux_conf)"
     _report_distrobox
 }
 
@@ -124,8 +124,6 @@ _report() {
 _report_distrobox() {
     local _recorded
     _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_config)")")"
-    [[ -n "${_recorded}" ]] \
-        || _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_tmux_conf)")")"
     if [[ -n "${_recorded}" ]]; then
         _report_recorded_distrobox "${_recorded}"
         return 0
