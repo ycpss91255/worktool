@@ -349,6 +349,51 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     done
 }
 
+@test "gh api --input with a command substitution is blocked, even when a '_' file exists" {
+    # A substitution decodes to '_': a benign '_' file must not stand in for
+    # the file the shell would really submit.
+    jq -n '{body: "looks good"}' >"${BATS_TEST_TMPDIR}/_"
+    jq -n --arg b "${PHRASE}" '{body: $b}' >"${BATS_TEST_TMPDIR}/evil.json"
+    local _c
+    for _c in "gh api repos/o/r/issues/7/comments --input \"\$(printf evil.json)\"" \
+        "gh api repos/o/r/issues/7/comments --input=\"\$(printf evil.json)\"" \
+        "gh api -X PATCH repos/o/r/issues/comments/9 --input \`printf evil.json\`"; do
+        run_hook enforce_milestone_gate_approval \
+            "$(jq -n --arg c "${_c}" --arg d "${BATS_TEST_TMPDIR}" \
+                '{tool_name:"Bash", cwd:$d, tool_input:{command:$c}}')"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+}
+
+@test "a gh api write to an endpoint built by a command substitution is blocked" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh api \"\$(printf repos/o/r/issues/7/comments)\" -f body=${PHRASE}" \
+        "gh api -X PUT \"\$(printf repos/o/r/pulls/7/merge)\"" \
+        "gh api --method PUT repos/o/r/pulls/\"\$(echo 7)\"/merge" \
+        "gh api \`printf repos/o/r/issues/7/comments\` --input body.json" \
+        "gh api --raw-field=body=x \"\$(printf repos/o/r/issues/7/comments)\"" \
+        "gh api repos/o/r/pulls/7 \$(echo -X PUT)"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "command substitution"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a gh api read of an endpoint built by a command substitution passes" {
+    local _c
+    for _c in "gh api \"\$(printf repos/o/r/pulls)\" --paginate" \
+        "gh api -X GET \"repos/\$(echo o/r)/issues/7/comments\" -f per_page=100" \
+        "gh api \"repos/\$(echo o/r)/pulls/7\" -q .title --jq \"\$(echo .state)\""; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+}
+
 @test "gh api to .../comments with a marked body, or a read, passes" {
     _check "gh api repos/o/r/issues/7/comments -f 'body=[claude] 等「${PHRASE}」'"
     assert_success
