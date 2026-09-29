@@ -20,6 +20,13 @@
 # status from `$?` exactly as it does in the entry. <pending-rc> is only
 # meaningful for `_cleanup`.
 #
+# Two optional knobs, applied after the stand-in is in place:
+#   DRIVER_STOP_TIMEOUT=<s>      overrides DOCKERD_STOP_TIMEOUT (default 20)
+#                                so the SIGKILL escalation is reached fast
+#   DRIVER_REFUSE_SIGNALS=<...>  space-separated signal names (TERM KILL)
+#                                that `kill` refuses (returns 1), as when
+#                                the daemon exited between probe and signal
+#
 # Sourcing the entry turns on its `set -euo pipefail` here too, so every
 # expected non-zero below is handled explicitly.
 
@@ -44,6 +51,19 @@ if [[ "${stand_in}" != "none" ]]; then
         # A SIGKILLed child reports 128 + 9: expected, anything else is not.
         wait "${DOCKERD_PID}" 2>/dev/null || [[ $? -eq 137 ]]
     fi
+fi
+
+if [[ -n "${DRIVER_STOP_TIMEOUT:-}" ]]; then
+    DOCKERD_STOP_TIMEOUT="${DRIVER_STOP_TIMEOUT}"
+fi
+if [[ -n "${DRIVER_REFUSE_SIGNALS:-}" ]]; then
+    kill() {
+        local _sig
+        for _sig in ${DRIVER_REFUSE_SIGNALS}; do
+            [[ "$1" != "-${_sig}" ]] || return 1
+        done
+        builtin kill "$@"
+    }
 fi
 
 if [[ "${fn}" == "_cleanup" ]]; then

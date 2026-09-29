@@ -70,12 +70,14 @@ _usage_error() {
     printf 'selfcheck.sh: %s (see --help)\n' "$1" >&2
 }
 
-# The EXIT trap: an `if`, not `[[ ... ]] && rm`, so nothing to remove still
-# returns 0 - a trap that fails under errexit would replace the run's exit
-# status with its own.
+# The EXIT trap. A command that fails in it under errexit would replace the
+# run's exit status with its own, so nothing here may fail: an `if`, not
+# `[[ ... ]] && rm`, for nothing to remove, and a removal that fails is said
+# on stderr, not returned - the run's status stays the run's.
 _cleanup() {
     if [[ -n "${SELFCHECK_TMP}" ]]; then
-        rm -rf -- "${SELFCHECK_TMP}"
+        rm -rf -- "${SELFCHECK_TMP}" \
+            || log_warn "selfcheck.sh: could not remove ${SELFCHECK_TMP}"
     fi
 }
 

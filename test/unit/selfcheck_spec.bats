@@ -109,3 +109,21 @@ _make_repo_copy() {
         _ "${SELFCHECK}"
     assert_success
 }
+
+# A cleanup that cannot remove its tmpdir is said on stderr, but it never
+# replaces the run's own status: under errexit a failing command in the
+# EXIT trap would (codex round 1 on PR #214). `rm` is shadowed by a
+# function that always fails.
+@test "the EXIT-trap cleanup keeps a failing run's status when the tmpdir cannot be removed" {
+    run bash -c 'set -euo pipefail; source "$1"; rm() { return 1; }; SELFCHECK_TMP="$2"; trap _cleanup EXIT; exit 3' \
+        _ "${SELFCHECK}" "${BATS_TEST_TMPDIR}/sc-tmp"
+    assert_failure 3
+    assert_output --partial "could not remove ${BATS_TEST_TMPDIR}/sc-tmp"
+}
+
+@test "the EXIT-trap cleanup keeps exit 0 when the tmpdir cannot be removed" {
+    run bash -c 'set -euo pipefail; source "$1"; rm() { return 1; }; SELFCHECK_TMP="$2"; trap _cleanup EXIT; exit 0' \
+        _ "${SELFCHECK}" "${BATS_TEST_TMPDIR}/sc-tmp"
+    assert_success
+    assert_output --partial "could not remove ${BATS_TEST_TMPDIR}/sc-tmp"
+}
