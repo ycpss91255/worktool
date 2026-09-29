@@ -129,8 +129,10 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
 - **驗證**(腳本負責):`--home` 必須是絕對路徑、不可含換行、不可是 `/`;結尾的 `/`
   會去掉(distrobox 也這麼做)。不合格是參數錯誤:
   `assemble.sh: --home needs an absolute path, got 'dev-box' (see --help)`、exit 2。
-  設定檔裡的 `home` 不是絕對路徑(或 `home.source` 不是 `default|user`)時 exit 1:
-  `[ERROR] <設定檔>: invalid value 'dev-box' for home (expected an absolute path)`。
+  設定檔裡的 `home` 套用同一組規則(絕對路徑、不可含 CR、不可是 `/`),`home.source`
+  必須是 `default|user`,且 `home` 與 `home.source` 必須成對出現;任一不符時 exit 1:
+  `[ERROR] <設定檔>: invalid value 'dev-box' for home (expected an absolute path)`、
+  `[ERROR] <設定檔>: home.source without home (the two are recorded together)`。
 - **交給 distrobox 的方式**:以環境變數 `DBX_CONTAINER_CUSTOM_HOME`(distrobox-create
   文件列出的變數,效果等同 `--home`)傳入,所以 dry-run 印出的指令行維持
   `distrobox assemble create --file <清單>` 不變;使用者環境裡原本的
@@ -143,10 +145,13 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
   這兩行);`just box status` 最後一行顯示它。dry-run 不寫。
 - **已存在的盒子換 HOME 一律拒絕**:真正執行前向 container manager 查詢同名盒子
   建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
-  依 `DBX_CONTAINER_MANAGER`,未設時照 distrobox 的順序 podman、podman-launcher、
-  docker;PATH 上都沒有就跳過,交給 distrobox 自己報錯;distrobox.conf 裡指定的
-  manager 不讀)。與解析結果不同時 exit 1、**什麼都不改**(不呼叫 distrobox、不寫
-  設定檔),印出刪盒重建的指令,**絕不自動重建**:
+  與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox
+  設定檔(`distrobox.conf`、`~/.distroboxrc` 等,依 distrobox 的讀取順序,取最後一個
+  `container_manager=`;只讀不 source),都沒有時照 distrobox 的順序 podman、
+  podman-launcher、docker、lilipod 自動偵測)。盒子是否存在看 `<manager> ps -a`
+  的容器名單。與解析結果不同時 exit 1、**什麼都不改**(不呼叫 distrobox、不寫
+  設定檔),印出刪盒重建的指令(有給 `--file` 時一併帶上清單的絕對路徑),
+  **絕不自動重建**:
 
 ```text
 [ERROR] box 'dev' already exists with HOME /home/me/dev-box; distrobox sets a box's HOME only when the box is created, so it cannot become /data/dev-box. Nothing was changed.
@@ -158,7 +163,10 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
 
   沒給 `--home`、而既有的盒子是舊的共用 HOME 盒(HOME 就是 host 的 `~`)時同樣
   被拒絕,重建指令是不帶 `--home` 的 `just box assemble`。HOME 相同時照常往下跑
-  (distrobox 自己回報 `dev already exists`,不重建)。dry-run 不查 manager。
+  (distrobox 自己回報 `dev already exists`,不重建)。manager 不在 PATH 上、或名單
+  查詢失敗時無法判斷盒子在不在,盒子存在但讀不到 HOME(inspect 失敗)時也無法比對,
+  兩者都 exit 1、什麼都不改(`[ERROR] cannot tell whether box 'dev' already exists:
+  ...`)。dry-run 不查 manager。
 
 ### 用法
 

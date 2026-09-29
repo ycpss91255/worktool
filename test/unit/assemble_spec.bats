@@ -273,6 +273,35 @@ _write_config() {
     assert_output "[ERROR] ${CONFIG}: invalid value 'guess' for home.source (expected default|user)"
 }
 
+@test "#198 r1: home and home.source must be recorded together; a lone one is refused (exit 1), nothing runs" {
+    _write_config 'home.source=user'
+    run "${ASSEMBLE}" --file "${VALID}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: home.source without home (the two are recorded together)"
+    assert [ ! -f "${MARKER}" ]
+    _write_config 'home=/srv/box'
+    run "${ASSEMBLE}" --file "${VALID}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: home without home.source (the two are recorded together)"
+    assert [ ! -f "${MARKER}" ]
+}
+
+@test "#198 r1: a stored home is held to the --home limits: root and carriage return are refused (exit 1)" {
+    _write_config 'home=/' 'home.source=user'
+    run "${ASSEMBLE}" --file "${VALID}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '/' for home (expected a path other than the root directory)"
+    _write_config 'home=//' 'home.source=user'
+    run "${ASSEMBLE}" --file "${VALID}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '//' for home (expected a path other than the root directory)"
+    _write_config $'home=/srv/box\r' 'home.source=user'
+    run "${ASSEMBLE}" --file "${VALID}"
+    assert_failure 1
+    assert_output "[ERROR] ${CONFIG}: invalid value '/srv/box\\r' for home (expected no carriage return)"
+    assert [ ! -f "${MARKER}" ]
+}
+
 @test "#198: a manifest that sets distrobox's own home= key is refused (exit 1): --home owns the box HOME" {
     printf '[dev]\nimage=ubuntu:26.04\n  home=/srv/elsewhere\n' >"${TMP}/home.ini"
     run "${ASSEMBLE}" --dry-run --file "${TMP}/home.ini"

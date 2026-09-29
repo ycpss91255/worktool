@@ -40,27 +40,40 @@ exit "${FAKE_DBX_RC:-0}"
 EOF
     chmod +x "${MOCKBIN}/distrobox"
 
-    # Issue #198: a fake container manager. `inspect` answers like docker:
-    # with FAKE_BOX_HOME set the box exists and its entrypoint args carry
-    # `--home <FAKE_BOX_HOME>`; unset, the box does not exist (exit 1).
+    # Issue #198: a fake container manager, installed as docker AND podman
+    # (which one is asked is part of the contract). `ps -a` lists the
+    # container names: `dev` among them only when FAKE_BOX_HOME is set;
+    # FAKE_PS_RC makes the listing fail. `inspect` answers like docker: the
+    # entrypoint args carry `--home <FAKE_BOX_HOME>`; FAKE_INSPECT_RC makes
+    # it fail. Each call is recorded with the name it was called by.
     export INSPECT_RECORD="${BATS_TEST_TMPDIR}/docker.inspect"
-    cat >"${MOCKBIN}/docker" <<'EOF'
+    export PS_RECORD="${BATS_TEST_TMPDIR}/manager.ps"
+    cat >"${MOCKBIN}/docker" <<'EOF2'
 #!/usr/bin/env bash
-[[ "$1" == inspect ]] || exit 2
-printf '%s\n' "$@" >"${INSPECT_RECORD}"
-if [[ -z "${FAKE_BOX_HOME:-}" ]]; then
-    echo "Error: No such container" >&2
-    exit 1
-fi
-printf '%s\n' -v --name root --home "${FAKE_BOX_HOME}" --init 0
-EOF
+case "$1" in
+    ps)
+        printf '%s %s\n' "${0##*/}" "$*" >>"${PS_RECORD}"
+        [[ "${FAKE_PS_RC:-0}" -eq 0 ]] || exit "${FAKE_PS_RC}"
+        printf '%s\n' devbox other
+        [[ -z "${FAKE_BOX_HOME:-}" ]] || printf '%s\n' dev
+        ;;
+    inspect)
+        printf '%s\n' "$@" >"${INSPECT_RECORD}"
+        [[ "${FAKE_INSPECT_RC:-0}" -eq 0 ]] || exit "${FAKE_INSPECT_RC}"
+        printf '%s\n' -v --name root --home "${FAKE_BOX_HOME}" --init 0
+        ;;
+    *) exit 2 ;;
+esac
+EOF2
     chmod +x "${MOCKBIN}/docker"
+    cp "${MOCKBIN}/docker" "${MOCKBIN}/podman"
     PATH="${MOCKBIN}:${PATH}"
 
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
     mkdir -p "${HOME}"
-    unset XDG_CONFIG_HOME DBX_CONTAINER_CUSTOM_HOME DBX_CONTAINER_HOME_PREFIX FAKE_BOX_HOME
+    unset XDG_CONFIG_HOME DBX_CONTAINER_CUSTOM_HOME DBX_CONTAINER_HOME_PREFIX FAKE_BOX_HOME \
+        FAKE_PS_RC FAKE_INSPECT_RC
     export DBX_CONTAINER_MANAGER=docker
     CONFIG="${HOME}/.config/worktool/config"
 }
@@ -234,12 +247,86 @@ EOF
     FAKE_BOX_HOME=/srv/old run "${ASSEMBLE}" --dry-run --home /srv/new
     assert_success
     assert [ ! -f "${INSPECT_RECORD}" ]
+    assert [ ! -f "${PS_RECORD}" ]
 }
 
-@test "#198: with no container manager on PATH the probe is skipped and distrobox decides" {
+@test "#198 r1: with no container manager to ask, the run is refused (exit 1): nothing runs, nothing recorded" {
     cd "${REPO_ROOT}"
+    DBX_CONTAINER_MANAGER=lilipod run "${ASSEMBLE}" --home /srv/new
+    assert_failure 1
+    assert_output --partial "[ERROR] cannot tell whether box 'dev' already exists: container manager 'lilipod' not found on PATH; nothing was changed"
+    assert [ ! -f "${RECORD}" ]
+    assert [ ! -e "${CONFIG}" ]
+}
+
+@test "#198 r1: a container listing that fails is refused (exit 1), never read as 'no such box'" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'home=/srv/old\nhome.source=user\n' >"${CONFIG}"
+    cd "${REPO_ROOT}"
+    FAKE_PS_RC=125 run "${ASSEMBLE}" --home /srv/new
+    assert_failure 1
+    assert_output --partial "[ERROR] cannot tell whether box 'dev' already exists: 'docker ps' failed; nothing was changed"
+    assert [ ! -f "${RECORD}" ]
+    run cat "${CONFIG}"
+    assert_output "$(printf 'home=/srv/old\nhome.source=user')"
+}
+
+@test "#198 r1: an existing box whose inspect fails is refused (exit 1): its HOME cannot be read" {
+    cd "${REPO_ROOT}"
+    FAKE_BOX_HOME=/srv/old FAKE_INSPECT_RC=125 run "${ASSEMBLE}" --home /srv/new
+    assert_failure 1
+    assert_output --partial "[ERROR] box 'dev' already exists, but its HOME cannot be read from the container manager; nothing was changed"
+    assert [ ! -f "${RECORD}" ]
+    assert [ ! -e "${CONFIG}" ]
+}
+
+@test "#198 r1: a missing box is told from the listing: no 'dev' in it, distrobox runs and the home is recorded" {
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --home /srv/new
+    assert_success
+    assert [ -f "${RECORD}" ]
+    assert [ ! -f "${INSPECT_RECORD}" ]
+    run cat "${CONFIG}"
+    assert_line "home=/srv/new"
+}
+
+@test "#198 r1: the manager chosen in distrobox.conf is the one asked (DBX_CONTAINER_MANAGER unset)" {
+    mkdir -p "${HOME}/.config/distrobox"
+    printf '# chosen by the user\ncontainer_manager="podman"\n' \
+        >"${HOME}/.config/distrobox/distrobox.conf"
+    cd "${REPO_ROOT}"
+    DBX_CONTAINER_MANAGER='' run "${ASSEMBLE}"
+    assert_success
+    run cat "${PS_RECORD}"
+    assert_output --regexp '^podman ps '
+}
+
+@test "#198 r1: ~/.distroboxrc overrides distrobox.conf, and DBX_CONTAINER_MANAGER overrides both" {
+    mkdir -p "${HOME}/.config/distrobox"
+    printf 'container_manager=podman\n' >"${HOME}/.config/distrobox/distrobox.conf"
+    printf "container_manager='docker'\n" >"${HOME}/.distroboxrc"
+    cd "${REPO_ROOT}"
+    DBX_CONTAINER_MANAGER='' run "${ASSEMBLE}"
+    assert_success
+    run cat "${PS_RECORD}"
+    assert_output --regexp '^docker ps '
+    rm -f "${PS_RECORD}"
     DBX_CONTAINER_MANAGER=podman run "${ASSEMBLE}"
     assert_success
-    assert [ ! -f "${INSPECT_RECORD}" ]
-    assert [ -f "${RECORD}" ]
+    run cat "${PS_RECORD}"
+    assert_output --regexp '^podman ps '
+}
+
+@test "#198 r1: the refusal keeps --file, so the rebuild hint assembles the same manifest" {
+    local _ini="${BATS_TEST_TMPDIR}/my box.ini"
+    printf '[dev]\nimage=ubuntu:26.04\n' >"${_ini}"
+    cd "${BATS_TEST_TMPDIR}"
+    FAKE_BOX_HOME=/srv/old run "${ASSEMBLE}" --file "my box.ini" --home /srv/new
+    assert_failure 1
+    # The hint names the manifest by its absolute path (the recipe runs
+    # from the repo root, not from where the user stood), shell-quoted.
+    local _abs
+    _abs="$(printf '%q' "$(cd -P -- "${BATS_TEST_TMPDIR}" && pwd)/my box.ini")"
+    assert_line "[ERROR]   just box assemble --file ${_abs} --home /srv/new"
+    assert_line "[ERROR] or keep the current HOME: just box assemble --file ${_abs} --home /srv/old"
 }
