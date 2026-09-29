@@ -31,9 +31,10 @@
 #     verifies each one's result is `success`, under `if: always()`;
 #   - `--privileged` is mentioned by the test-system-real job only;
 #   - the commit-email job (issue #234) checks out the full history,
-#     sources lib/commit_email.sh, picks the range with commit_email_range,
-#     feeds `git log` records to commit_email_evaluate, and ci-passed
-#     requires it like every other job.
+#     sources lib/commit_email.sh, picks the range with commit_email_range
+#     (event data plus the default branch ref; one revision per line, each
+#     a separate git log argument), feeds `git log` records to
+#     commit_email_evaluate, and ci-passed requires it like every other job.
 #
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
@@ -348,8 +349,12 @@ _sorted_set() {
     run _job_block commit-email
     assert_success
     assert_line --regexp '^ +source lib/commit_email\.sh$'
-    assert_line --partial "commit_email_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\""
-    assert_line --partial "git log --format=\"\$(commit_email_log_format)\" \"\${range}\""
+    assert_line --partial "commit_email_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\" \"\${DEFAULT_REF}\")\" || exit 1"
+    # One revision per line, each its own git log argument (a new ref is
+    # `<after>` plus `^<default ref>`, not a single string).
+    assert_line --regexp '^ +mapfile -t revs <<< "\$\{range\}"$'
+    assert_line --partial "git log --format=\"\$(commit_email_log_format)\" \"\${revs[@]}\" -- "
+    refute_output --partial "\"\${range}\" >"
     refute_output --partial '--date='
     refute_output --partial 'cutoff'
     assert_line --regexp '^ +commit_email_evaluate < '
@@ -364,4 +369,5 @@ _sorted_set() {
     assert_line "          PR_HEAD: \${{ github.event.pull_request.head.sha }}"
     assert_line "          PUSH_BEFORE: \${{ github.event.before }}"
     assert_line "          PUSH_AFTER: \${{ github.event.after }}"
+    assert_line "          DEFAULT_REF: refs/remotes/origin/\${{ github.event.repository.default_branch }}"
 }
