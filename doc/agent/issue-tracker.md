@@ -31,6 +31,14 @@
 
 **PRs as a request surface: no.** _（若本 repo 把外部 PR 當功能需求，改成 `yes`；`/triage` 會讀這個旗標。）_
 
+設為 `yes` 時，PR 走跟 issue 一樣的標籤與狀態，改用 `gh pr` 對應指令：
+
+- **讀 PR**：`gh pr view <number> -R ycpss91255/worktool --comments`，diff 用 `gh pr diff <number> -R ycpss91255/worktool`。
+- **列外部 PR 做 triage**：`gh pr list -R ycpss91255/worktool --state open --json number,title,body,labels,author,authorAssociation,comments`，只留 `authorAssociation` 為 `CONTRIBUTOR`、`FIRST_TIME_CONTRIBUTOR`、`NONE` 的（丟掉 `OWNER`／`MEMBER`／`COLLABORATOR`）。
+- **留言／標籤／關閉**：`gh pr comment`、`gh pr edit --add-label`／`--remove-label`、`gh pr close`，都帶 `-R`。
+
+GitHub 的 issue 與 PR 共用同一個編號空間，光看 `#42` 分不出是哪種：先 `gh pr view 42 -R ycpss91255/worktool`，失敗再 `gh issue view 42 -R ycpss91255/worktool`。
+
 ## 當 skill 說「publish to the issue tracker」
 
 建一個 GitHub issue（帶 `-R`）。
@@ -38,3 +46,14 @@
 ## 當 skill 說「fetch the relevant ticket」
 
 跑 `gh issue view <number> -R ycpss91255/worktool --comments`。
+
+## Wayfinding 操作
+
+給 `/wayfinder` 用。**map** 是一個 issue，**child** issue 是它底下的 ticket。
+
+- **Map**：一個貼 `wayfinder:map` 標籤的 issue，本文放 Notes／Decisions-so-far／Fog。`gh issue create -R ycpss91255/worktool --label wayfinder:map`。
+- **Child ticket**：以 GitHub sub-issue 連到 map 的 issue（用 `gh api` 打 sub-issues endpoint）。sub-issue 沒開的話，把 child 加進 map 本文的 task list，並在 child 本文最上面寫 `Part of #<map>`。標籤：`wayfinder:<type>`（`research`／`prototype`／`grilling`／`task`）。被認領後，ticket 指派給負責的開發者。
+- **Blocking**：用 GitHub **原生 issue dependencies**，這是正式、UI 看得到的表示法。加一條邊：`gh api --method POST repos/ycpss91255/worktool/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`，`<blocker-db-id>` 是 blocker 的數字 **database id**（`gh api repos/ycpss91255/worktool/issues/<n> --jq .id`，_不是_ `#number` 也不是 `node_id`）。GitHub 會回報 `issue_dependencies_summary.blocked_by`（只算還開著的 blocker，這就是即時閘門）。dependencies 不可用時，退回在 child 本文最上面寫一行 `Blocked by: #<n>, #<n>`。所有 blocker 都關閉，ticket 才算解除封鎖。
+- **Frontier query**：列 map 底下還開著的 child（`gh issue list -R ycpss91255/worktool --state open`，限定在 map 的 sub-issue／task list 範圍），剔除有開著的 blocker（`issue_dependencies_summary.blocked_by > 0`，或 `Blocked by` 那行有還開著的 issue）或已有 assignee 的；依 map 順序第一個勝出。
+- **Claim**：`gh issue edit <n> -R ycpss91255/worktool --add-assignee @me`，這是該 session 的第一次寫入。
+- **Resolve**：`gh issue comment <n> -R ycpss91255/worktool --body "<answer>"`，接著 `gh issue close <n> -R ycpss91255/worktool`，再把 context 指標（gist + 連結）補到 map 的 Decisions-so-far。
