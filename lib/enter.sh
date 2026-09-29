@@ -346,10 +346,10 @@ enter_config_check() {
 }
 
 # One entry of the state file (config_each: <lineno> <key> <has_value>
-# <value>): only `key=value` lines of a known key are judged.
+# <value>): every line of a known key is judged; a bare `<key>` line is that
+# key with an empty value (lib/config.sh's format) and is judged as such.
 _enter_check_entry() {
     local _key="$2" _value="$4"
-    [[ "$3" -eq 1 ]] || return 0
     enter_key_known "${_key}" || return 0
     enter_value_ok "${_key}" "${_value}" && return 0
     printf "invalid value '%s' for %s (expected %s)\n" \
