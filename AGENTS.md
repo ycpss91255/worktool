@@ -29,6 +29,6 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 - **`lib/` 底下的檔案是被 source 的，不下 `set`。** 它們不該改變呼叫者的 shell 選項；只提供函式。
 - **診斷走 stderr，stdout 留給資料。** 用 `lib/log.sh` 的 `log_info`／`log_warn`／`log_error`，呼叫者才能安全地把 stdout 接進管線或變數。
 - **參數錯誤一律 exit 2**，訊息格式 `<script>.sh: unknown option '<x>' (see --help)` 寫到 stderr；`--help` 自己 exit 0。功能性失敗用 exit 1，與參數錯誤分開。
-- **`--help` 與參數驗證由腳本負責**，`just` 只轉發：見 `doc/design.md`「決策」2026-09-16 的規則 4。
-- **不要新增 `shellcheck disable`。** 目前全 repo 是零；先查 <https://www.shellcheck.net/wiki/SC{code}> 找正解，真的沒有，要先取得維護者核准才能加。
-- **管線的第一段失敗不可以被吞掉。** 有 `pipefail` 就夠；沒有的情境用 `${PIPESTATUS[0]}`，或先存進變數檢查退出碼再往下走。
+- **`--help` 與參數驗證由腳本負責**，`just` 只轉發：見 `doc/design.md`「決策」2026-09-16「模型」的規則 4。
+- **不要新增 `shellcheck disable`。** 目前全 repo 是零；先查 <https://www.shellcheck.net/wiki/SC{code}> 找正解，真的沒有，要維護者在對話中明確核准（寫 `approve SC<code>`）才能加。
+- **管線的第一段失敗不可以被吞掉。** `pipefail` 只讓管線的退出碼反映失敗；因為不用 `-e`，管線之後一定要立即檢查退出碼（`if ! a | b; then ...`，或存下 `${PIPESTATUS[0]}`），不能讓腳本繼續往下走。
