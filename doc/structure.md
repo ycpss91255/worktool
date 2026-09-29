@@ -310,7 +310,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   `fetch-depth: 0`、`persist-credentials: false`)以 `commit_email_range` 取範圍
   (PR:base..head;push:before..after,新 ref 只查推上的那一個),用
   `git log` 取出 `<sha>\t<author>\t<email>\t<committer>\t<email>`
-  紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,列出每個違規 commit 與
+  紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,在 stderr 列出每個違規 commit 與
   修正指令後失敗。`ci-passed` 要求它 `success`。`test/unit/commit_email_spec.bats`
   測判斷規則,`test/unit/ci_yml_spec.bats` 釘住 job 接線。
 - **修正**:`git config user.email "<id>+<帳號>@users.noreply.github.com"` 後,
