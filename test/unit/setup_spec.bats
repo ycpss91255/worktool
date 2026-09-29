@@ -151,6 +151,18 @@ _block_count() {
     assert [ ! -e "${TMUX_CONF}" ]
 }
 
+@test "#198: setup keeps the box home lines assemble recorded in the state file" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux.source=user\nhome=/srv/my box\nhome.source=user\n' >"${CONFIG}"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    run cat "${CONFIG}"
+    assert_line "tmux=host"
+    assert_line "home=/srv/my box"
+    assert_line "home.source=user"
+    assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
+}
+
 @test "terminal none with auto-enter yes says no terminal profile is managed and names the manual command" {
     run "${SETUP}"
     assert_success

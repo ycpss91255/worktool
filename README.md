@@ -23,7 +23,9 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 
 host 只留驅動、docker、snapd、桌面 GUI install script 與 `just`;distrobox 在 host 的
 docker 上跑一個共用的 dev 盒(`ubuntu:26.04`),所有 CLI / TUI 工具(M5-M10)都在盒內;
-設定留在共用 HOME;終端 ghostty(host)-> tmux(盒內)-> fish。盒內目前的套件見
+盒子有自己的 HOME,user config 以 symlink 從 host 帶入(決策見
+[ADR 0002](doc/adr/0002-box-owns-its-home.md),尚未實作,將由 #198、#199 實作);
+終端 ghostty(host)-> tmux(盒內)-> fish。盒內目前的套件見
 [`box/dev.ini`](box/dev.ini):M2 的 ripgrep、fzf,加上 M3 為自動進盒先裝的 tmux、fish
 (設定留 M5)。
 
@@ -71,7 +73,7 @@ justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完�
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
 | `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`、`enter`) |
-| `just box assemble [--dry-run] [--file <manifest>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`) |
+| `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`);`--home` 是盒子自己的 HOME,預設 `~/<盒名>-box`(dev 盒 = `~/dev-box`),建盒後不可改 |
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--tmux inside\|host] [--box <名稱>] [--distrobox <路徑>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty **執行檔** / tmux 在盒內 / `dev`),每個決策印 `[INFO] <key>: <value> (default\|user)`(`terminal` 用預設時還會印偵測依據),寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊(裡面的 distrobox 是**已 quote 的絕對路徑**,桌面啟動的終端才找得到;解析不到就拒絕整次執行,或用 `--distrobox` 指定);`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box status` | 印出目前生效的進盒決策、來源(`default` / `user`)、受管區塊是否存在,以及受管 command 裡的 distrobox 現在還跑不跑得起來 |
 | `just box enter [--box <名稱>] [--distrobox <路徑>] [--timeout <秒>] [-- <指令>...]` | 進盒;盒子**第一次啟動**(distrobox-init 裝套件,可能要數分鐘)時先說明、給 `docker logs -f <盒>` 與 host log 路徑,之後每 10 秒印「階段 + 經過時間 + 最新一行輸出」,逾時(預設 15 分鐘)或失敗時印原因、log 最後 20 行與復原方式並 exit 1(不停、不刪盒);終端受管 command 跑的就是它(見 [`doc/enter.md`](doc/enter.md)) |

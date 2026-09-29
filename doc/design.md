@@ -7,7 +7,7 @@
 以 distrobox 為基礎的模型,取代 init_ubuntu「apt 直接裝到 host」的 module
 系統。開發用 CLI/TUI 工具全部住在一個共用的 distrobox「dev 盒」,使用者直接
 活在盒內(終端自動進盒);host 只保留驅動、docker、snapd、桌面 GUI app(以
-install script 形式)與容器框架。設定檔留在共用 HOME。
+install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/0002-box-owns-its-home.md`)。
 
 ## 治理規則
 
@@ -52,8 +52,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 2. 一個共用「dev」盒裝所有容器化 CLI/TUI 工具。
 3. 活在盒裡:終端自動進盒;fish/tmux/zoxide/fzf/thefuck + 所有編輯器/CLI/TUI/
    監控/AI 工具都在盒內。
-4. 設定留共用 HOME(distrobox 共用 HOME):`~/.config/*`、`~/.gitconfig`、
-   `~/.ssh`;工具在盒、設定共用,不需同步。
+4. ~~設定留共用 HOME~~ 已被取代:盒子使用獨立 HOME,見
+   `doc/adr/0002-box-owns-its-home.md`(#197)。
 5. host 保留:驅動(nvidia/kvm)、docker、snapd、桌面 GUI app、容器框架、終端
    自動進盒設定。
 6. 桌面 GUI app 改做 host install script(放 `tool/`),不進 module 系統。
@@ -74,7 +74,10 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
    `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
    --warmup 2 --max-ms 300`),shell 中位數(enter + shell 啟動,即使用者拿到提示
    字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
-   一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。CI 實測(docker 29.8.0 +
+   一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
+   pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
+   (未判定,不給通過也不給退化;CI 上一樣是紅),見
+   `doc/adr/0003-latency-gate-inconclusive.md`(issue #181)。CI 實測(docker 29.8.0 +
    預設 runc、warm 容器):amd64 enter 中位數約 88 ms、arm64 約 87 ms,離目標
    有 3 倍餘裕,故維持 docker + runc、不換 runtime;實機數字由人類清單收集
    (issue #22)。
@@ -281,8 +284,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 
 盒子工具(由最日常關鍵往下):
 
-- M5 shell 核心:fish + tmux(+ 共用 HOME 設定)。最重要,日常骨幹。套件本身已在
-  M3 裝進盒(#160);M5 做的是 dotfiles、主題、plugin 與共用 HOME 的設定。
+- M5 shell 核心:fish + tmux(+ 盒子 HOME 裡的 tool config)。最重要,日常骨幹。
+  套件本身已在 M3 裝進盒(#160);M5 做的是 tool config、主題、plugin(放在盒子
+  HOME,見 `doc/adr/0002-box-owns-its-home.md`)。
 - M6 導覽/檔案:ripgrep、fd、eza、bat、yazi、zoxide、fzf、tree、ncdu、lnav。
 - M7 編輯器 + git:neovim、lazygit、tig、git、git-lfs。
 - M8 runtime/pkg + AI CLI:python3、pipx、fnm、jq、curl、wget、gum、glow、
