@@ -347,20 +347,21 @@ enter_key_known() {
 # first occurrence; the check must not). On the first bad line, in file
 # order, prints `invalid value '<v>' for <key> (expected <...>)` on stdout
 # and returns 1, so the caller can prefix the path and refuse the run
-# before writing.
+# before writing. The file is read through lib/config.sh (config_each).
 enter_config_check() {
-    local _file="$1" _line _key _value
-    [[ -f "${_file}" ]] || return 0
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        [[ "${_line}" == *=* ]] || continue
-        _key="${_line%%=*}"
-        enter_key_known "${_key}" || continue
-        _value="${_line#*=}"
-        enter_value_ok "${_key}" "${_value}" && continue
-        printf "invalid value '%s' for %s (expected %s)\n" \
-            "${_value}" "${_key}" "$(enter_expected "${_key}")"
-        return 1
-    done <"${_file}"
+    config_each "$1" _enter_check_entry
+}
+
+# One entry of the state file (config_each: <lineno> <key> <has_value>
+# <value>): only `key=value` lines of a known key are judged.
+_enter_check_entry() {
+    local _key="$2" _value="$4"
+    [[ "$3" -eq 1 ]] || return 0
+    enter_key_known "${_key}" || return 0
+    enter_value_ok "${_key}" "${_value}" && return 0
+    printf "invalid value '%s' for %s (expected %s)\n" \
+        "${_value}" "${_key}" "$(enter_expected "${_key}")"
+    return 1
 }
 
 # --- Managed block -----------------------------------------------------------

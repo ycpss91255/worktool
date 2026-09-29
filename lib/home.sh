@@ -87,27 +87,31 @@ home_path_problem() {
 # meets the --home rules, every `home.source` is default|user, and the
 # two are present together (a lone home.source would resolve to an empty
 # box home). Prints ONE line saying why and returns 1 on the first fault.
+# The file is read through lib/config.sh (config_each), never directly.
 home_config_check() {
-    [[ -f "$1" ]] || return 0
-    local _line _has_home=0 _has_src=0
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        case "${_line}" in
-            home|home=*)
-                _has_home=1
-                _home_check_value "${_line#home}" || return 1
-                ;;
-            home.source|home.source=*)
-                _has_src=1
-                _home_check_source "${_line#home.source}" || return 1
-                ;;
-        esac
-    done <"$1"
+    local _has_home=0 _has_src=0
+    config_each "$1" _home_check_entry || return 1
     _home_check_pair "${_has_home}" "${_has_src}"
 }
 
-# $1 is what follows the key: `=<value>`, or nothing for a bare key.
+# One entry of the state file (config_each: <lineno> <key> <has_value>
+# <value>); sets home_config_check's _has_home / _has_src.
+_home_check_entry() {
+    case "$2" in
+        home)
+            _has_home=1
+            _home_check_value "$4"
+            ;;
+        home.source)
+            _has_src=1
+            _home_check_source "$4"
+            ;;
+    esac
+}
+
+# $1 is the value (empty for a bare key).
 _home_check_value() {
-    local _v="${1#=}" _rule=0 _want
+    local _v="$1" _rule=0 _want
     _home_path_rule "${_v}" || _rule=$?
     case "${_rule}" in
         0) return 0 ;;
@@ -121,7 +125,7 @@ _home_check_value() {
 }
 
 _home_check_source() {
-    local _v="${1#=}"
+    local _v="$1"
     [[ "${_v}" == default || "${_v}" == user ]] && return 0
     printf "invalid value '%s' for home.source (expected default|user)\n" \
         "$(enter_show_control "${_v}")"
