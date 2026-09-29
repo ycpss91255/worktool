@@ -15,12 +15,17 @@
 # --body-file / -F (read from disk; a relative path is resolved against the
 # tool call's cwd). A body file that cannot be read is left to gh, which
 # fails on it anyway. A body read from stdin (-F - / --body-file -) is read
-# only from a heredoc opened on the gh launch line itself (`gh issue create
-# ... -F - <<'EOF'`), found with quotes masked and a # comment cut off, so a
-# header spelled in a comment, a quoted <<, another command's heredoc or a
-# pipe cannot stand in for the real stdin. Any other stdin body (a printf or
-# cat pipe, 2<<, a later < file, two stdin launches) is not seen and a guard
-# issue sent that way is denied: use a heredoc or --body-file instead.
+# from one of two sources on the gh launch line itself, found with quotes
+# masked and a # comment cut off: a heredoc opened on it (`gh issue create
+# ... -F - <<'EOF'`), or one file piped into it by a plain cat (`cat
+# scoped.md | gh issue create ... -F -`). A header spelled in a comment, a
+# quoted <<, another command's heredoc or any other pipe cannot stand in
+# for the real stdin.
+# 已知限制 (known limit, fail closed): any other stdin body (a printf / echo
+# pipe, a cat of several files or through a filter, 2<<, a < file, two
+# stdin launches) is not seen, so a guard issue sent that way is denied
+# EVEN WHEN its body has "## 範圍": use a heredoc, `cat <one file> |` or
+# --body-file instead.
 # Everything else passes silently; quoted text that merely mentions
 # `gh issue create` is data (lib/subcommand.sh).
 #
@@ -112,10 +117,25 @@ _gh_heredoc() {
     [[ "${1:$2-1:1}" == [[:space:]] || "${1:$2-2:2}" =~ ^[[:space:]]0$ ]]
 }
 
-# _stdin_body <command> - the heredoc body fed to the one gh issue create
+# _cat_pipe_file <line> <mask> - the file a plain `cat <one file> |` pipes
+# into the gh issue create launch on the line, when nothing on the launch
+# redirects its stdin again; nothing otherwise (an expansion or a glob in
+# the file word is not resolved, so it yields nothing).
+_cat_pipe_file() {
+    local _re='(^|[;&(|])([[:space:]]*cat[[:space:]]+)([^[:space:];&|()<>]+)'
+    _re+='[[:space:]]*\|[[:space:]]*gh[[:space:]]+issue[[:space:]]+create(([[:space:]].*)?)$'
+    [[ "$2" =~ ${_re} && "${BASH_REMATCH[4]}" != *'<'* ]] || return 0
+    local _at=$((${#2} - ${#BASH_REMATCH[0]} + ${#BASH_REMATCH[1]} + ${#BASH_REMATCH[2]}))
+    local _word="${1:_at:${#BASH_REMATCH[3]}}"
+    [[ "${_word}" != *[\$\`\\*?~]* ]] || return 0
+    _word="${_word//\'/}"
+    printf '%s' "${_word//\"/}"
+}
+
+# _stdin_body <command> - the stdin body fed to the one gh issue create
 # launch of the command (see the header); nothing when it cannot be seen.
 _stdin_body() {
-    local _line _mask _op _term='' _dash='' _mine=0 _hits=0 _body=''
+    local _line _mask _op _term='' _dash='' _mine=0 _hits=0 _body='' _src=''
     local _gh='(^|[[:space:];&|(])gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         if [[ -n "${_term}" ]]; then
@@ -130,10 +150,13 @@ _stdin_body() {
         if [[ "${_mask}" =~ ${_gh} ]]; then
             _hits=$((_hits + 1))
             [[ -n "${_op}" ]] && _gh_heredoc "${_mask}" "${_op%% *}" && _mine=1
+            _src="$(_cat_pipe_file "${_line}" "${_mask}")"
         fi
         [[ -n "${_op}" ]] && read -r _ _dash _term <<<"${_op}"
     done <<<"${1//\\$'\n'/}"
-    [[ "${_hits}" -eq 1 ]] && printf '%s' "${_body}"
+    [[ "${_hits}" -eq 1 ]] || return 0
+    printf '%s' "${_body}"
+    [[ -n "${_src}" ]] && _read_body_file "${_src}"
     return 0
 }
 
@@ -161,7 +184,7 @@ _judge_launch() {
     _is_guard_issue "${_title}" "${_body}" || return 0
     _has_scope "${_body}" && return 0
     printf '%s' 'This issue asks for a guard (hook / gate / check / filter / block; 攔截 / 檢查 / 過濾) but its body has no "## 範圍" section. Add the threat model first: 擋 (what it blocks), 不擋 (what it deliberately lets through), 已知限制 (known limits). pr-loop hands that section to codex as the blocking scope (issue #238).'
-    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is read only from a heredoc opened on the gh issue create line itself; a pipe, a comment or another command cannot supply it, so use such a heredoc or --body-file.'
+    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is read only from a heredoc opened on the gh issue create line itself or from "cat <one file> |" piped straight into it; any other pipe, a < file, a comment or another command is not seen (known limit: denied even when it has ## 範圍), so use one of those forms or --body-file.'
     return 0
 }
 

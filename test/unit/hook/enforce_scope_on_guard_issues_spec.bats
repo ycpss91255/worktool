@@ -97,7 +97,7 @@ setup() {
     assert_output ""
 }
 
-@test "denies a printf-pipe stdin body even when it spells ## 範圍: only a heredoc on the gh line is read" {
+@test "known limit: a printf-pipe stdin body is denied even when it spells ## 範圍" {
     _check "printf '## 背景\\nx\\n## 範圍\\n- 擋:a\\n' | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
     run _decision
     assert_output "deny"
@@ -148,10 +148,47 @@ setup() {
     assert_output ""
 }
 
-@test "denies a stdin body the hook cannot see (piped from a file), even when the file has ## 範圍" {
+@test "reads a stdin body piped from one file by cat: allows it with ## 範圍, denies it without" {
     _check "cat ${WITH_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
+    assert_success
+    assert_output ""
+    _check_in "${BATS_TEST_TMPDIR}" "cat 'with_scope.md' | gh issue create -R ycpss91255/worktool --title 'hook y' --body-file -"
+    assert_success
+    assert_output ""
+    _check "cat ${NO_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -l bug -F -"
     run _decision
     assert_output "deny"
+}
+
+@test "a cat pipe that is not the one-file stdin of the gh launch is not the body" {
+    _check "cat ${NO_SCOPE} ${WITH_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -F -"
+    run _decision
+    assert_output "deny"
+    _check "echo cat ${WITH_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -F -"
+    run _decision
+    assert_output "deny"
+    _check "cat ${WITH_SCOPE} | gh issue create -R ycpss91255/worktool --title 'hook y' -F - < ${NO_SCOPE}"
+    run _decision
+    assert_output "deny"
+    _check "$(printf "cat %s | gh issue create -R ycpss91255/worktool --title 'hook y' -F - <<'EOF'\nno scope\nEOF" "${WITH_SCOPE}")"
+    run _decision
+    assert_output "deny"
+    _check "cat ${WITH_SCOPE} || gh issue create -R ycpss91255/worktool --title 'hook y' -F -"
+    run _decision
+    assert_output "deny"
+}
+
+@test "known limit: any other stdin body is denied even with ## 範圍, and the deny says which forms are read" {
+    _check "cat ${WITH_SCOPE} | tr a a | gh issue create -R ycpss91255/worktool --title 'hook y' -F -"
+    run _decision
+    assert_output "deny"
+    _check "gh issue create -R ycpss91255/worktool --title 'hook y' -F - < ${WITH_SCOPE}"
+    run _decision
+    assert_output "deny"
+    _check "gh issue create -R ycpss91255/worktool --title 'hook y' -F - < ${WITH_SCOPE}"
+    assert_output --partial 'cat <one file> |'
+    run grep -c '已知限制' "${HOOK_DIR}/enforce_scope_on_guard_issues.sh"
+    refute_output "0"
 }
 
 # --- allowed -----------------------------------------------------------------
