@@ -85,8 +85,7 @@ _parser_options() {
 # Comments and heredoc bodies are skipped; other functions get their own
 # arguments and are not looked at.
 _parser_violations() {
-    # (round 7: options were only the case labels; no structure check)
-    : "$1"
+    awk -f <(_parser_awk) "$1" "$1"
 }
 
 _parser_awk() {
