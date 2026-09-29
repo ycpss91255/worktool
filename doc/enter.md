@@ -44,7 +44,9 @@ grilling)的目標行為:
    變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(建盒時展開;在 #196 的盒子 HOME
    底下),盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
    都繼承它;`init_hooks` 在每次盒子啟動時以盒內使用者身分建立該目錄(mode
-   0700)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能省。不採用「規定使用
+   0700),並在之後明確 `chown` 成盒內使用者、`chmod 0700`(`mkdir -p -m` 不會改正
+   已存在目錄的權限與擁有者)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能
+   省。不採用「規定使用
    `tmux -L`」這種靠記憶的做法。依據:不變量「host 與盒子互不干擾」(#200);共用
    `/tmp` 的問題見 distrobox upstream issue #824。
    從 **host 的 tmux pane 裡**進盒也一樣。這個洩漏在**環境**,不在執行檔:
@@ -60,9 +62,17 @@ grilling)的目標行為:
      auto-enter / terminal 怎麼選)都在 distrobox 自己的使用者設定
      `$XDG_CONFIG_HOME/distrobox/distrobox.conf` 維護一個受管區塊。
      `distrobox-enter` 在讀參數、組 `exec` 請求**之前**就以 shell source 這個檔,
-     區塊裡的一行在這次要進的是該盒(位置參數或 `--name` / `-n`,掃到 `--`、
-     `-e`、`--exec` 為止;或 `DBX_CONTAINER_NAME`)時 `unset TMUX TMUX_PANE`,
-     被 unset 的變數就不會被轉成 `--env`。其他盒子維持上游行為。上游沒有可設定
+     區塊裡的一行在這次要進的是 **worktool 管理的那個盒**(`just box setup` 的
+     `box` 決策,預設 `dev`)時 `unset TMUX TMUX_PANE`,被 unset 的變數就不會被
+     轉成 `--env`;**其他任何盒子**都維持上游行為。「要進哪個盒」照
+     `distrobox-enter` 自己的選項文法判定(鎖定版 1.8.2.5),不是「某個參數剛好
+     等於盒名」(codex 第 4 輪):`-n` / `--name` 與 `-a` / `--additional-flags`
+     帶值,只有 `-n` / `--name` 的值是盒名;其餘選項都不帶值;每個位置參數都會
+     設定盒名,所以**最後一個**為準;`--`、`-e`、`--exec` 之後是命令;命令列完全
+     沒給盒名時才看 `DBX_CONTAINER_NAME`。該行不動 `distrobox-enter` 的
+     `"$@"`,用完的變數也 unset。每次寫入 / 未變都照其他受管檔案的格式記錄
+     (`[INFO] wrote: ...` / `[INFO] unchanged: ...`,`--dry-run` 印
+     `would write`),這個檔案不會被移除。上游沒有可設定
      的跳過清單、也沒有 `--unset`;`--additional-flags "--env TMUX="` 仍會帶進
      空的 `TMUX`;只在受管命令前面加 `env -u TMUX` 則只顧得到那一條命令——所以
      選 distrobox.conf。
@@ -121,9 +131,17 @@ exit 2。
 `~/.tmux.conf` 不在清單裡:worktool 不讀也不寫它(issue #179)。
 
 受管區塊以兩行標記包住,**一個檔案恰好一個**,重跑時**原地取代**(不會重複、
-使用者自己的行原封不動;檔案若不知怎地已有兩個以上區塊,重寫時會先全部移除、
-再在第一個區塊的位置寫回恰好一個),`--auto-enter no` 時整塊移除。改寫既有檔案
-時保留它原本的權限(mode):
+使用者自己的行原封不動),`--auto-enter no` 時整塊移除。改寫既有檔案時保留它原本的
+權限(mode)。**標記不完整時拒絕改寫**(issue #179,codex 第 4 輪):任何受管檔案
+(ghostty 設定、distrobox.conf)的標記只要不是「沒有標記」或「恰好一組完整的
+BEGIN ... END」——只有 BEGIN、只有 END、END 在 BEGIN 前、BEGIN 套 BEGIN、兩個
+以上區塊、標記行前後多了任何文字——`just box setup` 在**寫任何東西之前**(連設定檔
+都不寫、`--dry-run` 亦同)就以 exit 1 拒絕,訊息是
+`[ERROR] <檔案>: malformed worktool managed block markers: <問題與行號>; nothing
+was written (fix or remove the markers, then re-run: just box setup)`;
+`just box status` 那一行顯示 `MALFORMED - <問題與行號>`。原因:區塊的讀寫以標記為準,
+舊版遇到孤立的 BEGIN 會把它之後到檔尾的使用者內容一併吃掉。舊版(#161)對兩個以上
+區塊的處理是合併成一個,現在一律拒絕,由使用者自己決定留哪一個。正常的區塊長這樣:
 
 ```text
 # BEGIN worktool managed block (just box setup; do not edit)
@@ -387,11 +405,17 @@ host tmux server 的部分在 system-real):
   `~/.tmux.conf` 不論哪種決策都不被讀寫(內容與權限不變)、舊設定檔的 `tmux=` 行被
   忽略且重寫時消失;distrobox.conf 受管區塊每次都寫、`--terminal none` /
   `--auto-enter no` 保留且冪等、跟著 `--box` 改、`--dry-run` 不寫;
+  `test/unit/managed_block_spec.bats` —— 標記狀態(只有 BEGIN / 只有 END /
+  END 在前 / 巢狀 / 兩個區塊 / BEGIN 或 END 多了文字 / 縮排)× 操作(新寫 /
+  取代 / 未變 / 移除)× 受管檔案(ghostty 設定 / distrobox.conf)每格 exit 1、檔案
+  逐位元組不變、其他檔案(含設定檔)都沒寫,加上錯誤訊息的行號、`--dry-run`、
+  `status` 的 MALFORMED;
   `test/unit/box_tmux_env_spec.bats` —— 盒內沒有 tmux wrapper(沒有 guard、沒有
-  dpkg-divert)、distrobox.conf 那一行對 distrobox-enter 參數形狀的等價類表
-  (位置參數 / `--name` / `-n` / `--` 之後的命令 / `-e` / 其他盒 / 沒給名字 /
-  `DBX_CONTAINER_NAME`)只在進該盒時丟掉 `TMUX` 與 `TMUX_PANE`、不改呼叫端的
-  參數與選項、`set -u` 下安全;`box/tmux-env.sh` 對 `TMUX` × `TMUX_TMPDIR`
+  dpkg-divert)、`TMUX_TMPDIR` hook 明確設擁有者與 mode、distrobox.conf 那一行照
+  distrobox-enter 的選項文法判定目標盒(帶值選項 `-n` / `--name` / `-a` /
+  `--additional-flags` × 值等於盒名 × 是否進該盒、最後一個位置參數為準、
+  分隔符、`DBX_CONTAINER_NAME` 只在沒給盒名時生效)只在進該盒時丟掉 `TMUX` 與
+  `TMUX_PANE`、不改呼叫端的參數與選項、`set -u` 下安全;`box/tmux-env.sh` 對 `TMUX` × `TMUX_TMPDIR`
   等價類表的保留 / 丟棄規則(含 `TMUX_PANE`),以及兩個 snippet 與清單 blob
   逐位元組相同;
   `test/unit/status_spec.bats` —— 無設定檔的預設報告、
@@ -426,7 +450,9 @@ host tmux server 的部分在 system-real):
   host pane 的 `--env=TMUX=` / `--env=TMUX_PANE=`;交付的 setup.sh 寫出區塊後,
   每種進盒形狀(`enter dev`、`-- tmux ...`、`-- /usr/bin/tmux ...`、`-- sh -l`、
   `--name dev`、`-n dev -e ...`)的請求都沒有這兩個,呼叫端其他變數照常帶進;
-  其他盒維持上游行為;
+  其他盒維持上游行為;另以真的 distrobox-enter 當**判定目標盒的 oracle**:同一張
+  選項文法表逐列跑 `--dry-run`,請求裡的容器名是 `dev` 時不得帶 `TMUX` /
+  `TMUX_PANE`,是其他盒時必須帶;
   `test/system/real_engine_spec.bats`(system-real,真 engine + 真 ghostty)——
   ghostty 鏈的標記檔斷言回答的是盒內 fish、寫檔的程序在 dev 容器的 mount namespace
   (不是 runner 的)、不在 tmux 底下、節點名等於 `docker inspect dev`(runner 自己
@@ -444,7 +470,14 @@ host tmux server 的部分在 system-real):
   在 script(1) 給的終端上),每格都要:盒內看不到 `TMUX` / `TMUX_PANE`、盒子
   server 停著時 `tmux ls` 什麼都不列、四種呼叫都到同一個 server——socket 在盒子
   `TMUX_TMPDIR` 底下、行程在 dev 容器的 mount namespace 且根目錄有引擎的容器檔、
-  不是 host server 的 pid——且 host server 只列自己的 `main`。
+  不是 host server 的 pid——且 host server 只列自己的 `main`。每格另驗 issue 的
+  目標 1(進盒後、probe 自己的 tmux 之前,盒內 mount namespace 裡沒有任何 tmux
+  行程;h1 時 host server 沒有 client、h0 時沒有被啟動任何 host server)與目標 3
+  (host 端的 `~/.tmux.conf` sentinel 在 setup.sh 與每格之後逐位元組不變;盒內
+  server 以 `#{config_files}` 證明讀的是盒子自己的 `$HOME/.tmux.conf`——#198 給盒子
+  獨立 HOME 之前,盒子的 `$HOME` 就是 host HOME,所以同一個檔案;斷言綁的是盒子的
+  `$HOME`,#198 之後自動跟著換)。另一案把既有的 `TMUX_TMPDIR` 改成 mode 755、
+  擁有者 1:1,重啟盒子後斷言回到 700 與盒內使用者。
 - 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。

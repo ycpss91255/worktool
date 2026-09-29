@@ -27,7 +27,7 @@ worktool 的盒子清單**就是一個原生的 distrobox-assemble 檔案**(INI 
 image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
 additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
-init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}"
+init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"
 init_hooks=echo <box/tmux-env.sh 的 base64> | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh
 init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | base64 -d >/etc/fish/conf.d/worktool-tmux.fish && chmod 0644 /etc/fish/conf.d/worktool-tmux.fish
 ```
@@ -45,7 +45,7 @@ distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid
 盒子 HOME `~/dev-box` 底下),盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
 盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
 `--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
-—— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`。從 host 的 tmux pane
+—— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`;`mkdir -p -m 0700` 只管它**新建**的目錄,所以之後再明確 `chown` 成盒內使用者、`chmod 0700`,已存在但權限或擁有者不對的目錄在下次盒子啟動時會被改正(codex 第 1–4 輪的非阻擋項)。從 host 的 tmux pane
 進盒時,`distrobox enter` 會把呼叫端的 `TMUX`(指向 host server 的 socket)與
 `TMUX_PANE` 帶進盒內,而 tmux 先看 `TMUX`;這是**環境**的洩漏,包 tmux 執行檔擋不住
 (直接執行真執行檔就繞過,codex 第 1–4 輪,PR #232),所以盒內不包 tmux,改在環境
