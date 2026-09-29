@@ -19,9 +19,9 @@
 #                                    home.source together) or absent; else
 #                                    prints ONE line saying why, returns 1
 #   home_record <file> <path> <source>
-#                                 -> rewrite the state file atomically with
-#                                    exactly one home / home.source pair,
-#                                    every other line kept in order
+#                                 -> set home / home.source in the state
+#                                    file in place (lib/config.sh), every
+#                                    other line kept byte-for-byte
 #   home_manifest_sets_home <file>-> 0 when the manifest sets distrobox's own
 #                                    `home=` key (it would override --home)
 #   home_of_box <box>             -> prints the HOME the EXISTING box was
@@ -35,7 +35,8 @@
 #                                    read - prints why
 #
 # This is a library: it defines functions and must be sourced, not executed.
-# It sources lib/enter.sh (same dir) for the state-file reader.
+# It sources lib/enter.sh (same dir), which brings lib/config.sh, the state
+# file's one reader/writer.
 
 # shellcheck source-path=SCRIPTDIR
 _HOME_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -138,28 +139,12 @@ _home_check_pair() {
     return 1
 }
 
-# Rewrite state file $1 with home=$2 and home.source=$3: every earlier
-# home / home.source line goes, every other line stays where it was, and
-# the pair is appended. Written to a temp file in the same directory and
-# moved into place, so a reader never sees half a file.
+# Record home=$2 and home.source=$3 in state file $1 IN PLACE (lib/config.sh
+# config_set): the two lines are replaced where they are (a duplicate is
+# dropped), or appended; every line another writer owns stays as it was.
+# Atomic, keeps the file's mode.
 home_record() {
-    local _file="$1" _tmp
-    mkdir -p "$(dirname -- "${_file}")" || return 1
-    _tmp="$(mktemp "${_file}.XXXXXX")" || return 1
-    if _home_render "$@" >"${_tmp}" && mv -f "${_tmp}" "${_file}"; then
-        return 0
-    fi
-    rm -f "${_tmp}"
-    return 1
-}
-
-_home_render() {
-    if [[ -f "$1" ]]; then
-        awk -F= '$1 != "home" && $1 != "home.source"' "$1" || return 1
-    else
-        printf '# worktool state: box home written by "just box assemble", read by "just box status".\n'
-    fi
-    printf 'home=%s\nhome.source=%s\n' "$2" "$3"
+    config_set "$1" home "$2" home.source "$3"
 }
 
 # 0 when manifest $1 sets distrobox-assemble's own `home=` key (leading

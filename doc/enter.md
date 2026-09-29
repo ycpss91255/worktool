@@ -54,7 +54,7 @@ exit 2。
 
 | 檔案 | 內容 |
 |------|------|
-| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」),setup 重寫時原樣保留 |
+| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」)與使用者自己加的 `link=`(issue #199)。檔案有多個寫入者,讀寫一律經過 `lib/config.sh`:每個寫入者只**就地**改自己的 key(沒有就附加在最後),其他行(註解、空行、別人的 key、不認得的 key、重複行)逐字保留,原子寫入並保留檔案權限 |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<distrobox>' enter <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
 | `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<distrobox>" enter <盒>'` |
 

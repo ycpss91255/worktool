@@ -145,8 +145,9 @@ user config 的 symlink(見下兩節)。選項:
   只由 `--home` 決定。
 - **記錄**:distrobox 成功後,把 `home=<路徑>` 與 `home.source=default|user` 寫進
   `~/.config/worktool/config`(與 `just box setup` 同一份檔、同一種
-  `key=value` + `key.source` 格式;其他行原樣保留,`just box setup` 重寫時也保留
-  這兩行);`just box status` 最後一行顯示它。dry-run 不寫。
+  `key=value` + `key.source` 格式)。寫法經過 `lib/config.sh`:就地改這兩行(重複的
+  同名行一併收掉,沒有就附加),其他行逐字保留,`just box setup` 也只改它自己的 key;
+  `just box status` 最後一行顯示它。dry-run 不寫。
 - **已存在的盒子換 HOME 一律拒絕**:真正執行前向 container manager 查詢同名盒子
   建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
   與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox

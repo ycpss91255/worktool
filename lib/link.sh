@@ -38,7 +38,13 @@
 #   link_apply <box_home> <config> -> make the links; 1 when one could not be made
 #
 # This is a library: it defines functions and must be sourced, not executed.
-# The caller sources lib/log.sh (for log_info / log_warn / log_error).
+# The caller sources lib/log.sh (for log_info / log_warn / log_error); this
+# file sources lib/config.sh (same dir) to read the state file's link= lines.
+
+# shellcheck source-path=SCRIPTDIR
+_LINK_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./config.sh
+source "${_LINK_LIB_DIR}/config.sh"
 
 # The default user config, one HOME-relative path per line.
 link_defaults() { printf '%s\n' .ssh .gitconfig .gnupg .config/gh; }
@@ -61,13 +67,6 @@ link_normalize() {
     printf '%s\n' "${_e}"
 }
 
-# Every `<key>=` value of state file $1 for key $2, one per line, in file
-# order (nothing when the file is absent).
-_link_config_all() {
-    [[ -f "$1" ]] || return 0
-    awk -F= -v k="$2" '$1 == k { print substr($0, length(k) + 2) }' "$1"
-}
-
 # The entries to link: the defaults, then each valid `link=` line of state
 # file $1, each once, in that order. An invalid line is warned about.
 link_entries() {
@@ -81,7 +80,7 @@ link_entries() {
         [[ -z "${_seen[${_rel}]:-}" ]] || continue
         _seen[${_rel}]=1
         printf '%s\n' "${_rel}"
-    done < <(link_defaults; _link_config_all "$1" link)
+    done < <(link_defaults; config_get_all "$1" link)
 }
 
 # Return 0, printing it, when box HOME $2 itself or a parent directory of

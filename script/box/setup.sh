@@ -33,6 +33,9 @@
 # State file: $XDG_CONFIG_HOME/worktool/config (~/.config/worktool/config),
 # `<key>=<value>` plus `<key>.source=default|user` per key. A user choice
 # persists across runs until overridden; default keys are recomputed.
+# The file is shared (assemble records home=, the user adds link= lines):
+# setup sets only its own keys, in place, through lib/config.sh, and keeps
+# every other line byte-for-byte.
 #
 # `<distrobox>` below is the ABSOLUTE path of the distrobox this run
 # resolved (`[INFO] distrobox: ...`), never the bare name: a terminal the
@@ -335,28 +338,6 @@ _resolve_distrobox() {
 
 # --- File actions (every one logged; --dry-run only logs) --------------------
 
-# Replace a file atomically with the content on stdin: written next to the
-# target, then renamed, so a reader never sees a half-written file. An
-# existing target keeps its mode (mktemp creates 0600; a user's profile must
-# not end up more private than they made it).
-_write_atomic() {
-    local _target="$1" _tmp
-    mkdir -p "$(dirname -- "${_target}")" || return 1
-    _tmp="$(mktemp "${_target}.XXXXXX")" || return 1
-    if cat >"${_tmp}" && _copy_mode "${_target}" "${_tmp}" \
-        && mv -f "${_tmp}" "${_target}"; then
-        return 0
-    fi
-    rm -f "${_tmp}"
-    return 1
-}
-
-# Give file $2 the mode of file $1 when $1 exists (nothing to keep otherwise).
-_copy_mode() {
-    [[ -f "$1" ]] || return 0
-    chmod --reference="$1" "$2"
-}
-
 # Make file $1 hold exactly one managed block with body $2. Only ONE block
 # with that body counts as up to date; duplicates are collapsed on rewrite.
 _block_write() {
@@ -370,7 +351,7 @@ _block_write() {
         log_info "dry-run: would write ${_file} (managed block: ${_body})"
         return 0
     fi
-    if ! enter_block_compose "${_file}" "${_body}" | _write_atomic "${_file}"; then
+    if ! enter_block_compose "${_file}" "${_body}" | config_write_atomic "${_file}"; then
         log_error "failed to write ${_file}"
         return 1
     fi
@@ -391,44 +372,31 @@ _block_remove() {
         log_info "dry-run: would remove managed block from ${_file}"
         return 0
     fi
-    if ! enter_block_strip "${_file}" | _write_atomic "${_file}"; then
+    if ! enter_block_strip "${_file}" | config_write_atomic "${_file}"; then
         log_error "failed to write ${_file}"
         return 1
     fi
     log_info "removed: ${_file} (managed block: ${_body})"
 }
 
-# Write the state file from the resolved decisions.
+# Set the resolved decisions (and their sources) in the state file IN
+# PLACE (lib/config.sh config_set): the state file is shared - assemble
+# records home= there, the user adds link= lines - so only setup's own
+# keys change and every other line stays byte-for-byte.
 _config_write() {
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
         log_info "dry-run: would write ${CONFIG}"
         return 0
     fi
-    if ! _config_render | _write_atomic "${CONFIG}"; then
+    if ! config_set "${CONFIG}" \
+        auto-enter "${AUTO_ENTER}" auto-enter.source "${AUTO_ENTER_SRC}" \
+        terminal "${TERMINAL}" terminal.source "${TERMINAL_SRC}" \
+        tmux "${TMUX}" tmux.source "${TMUX_SRC}" \
+        box "${BOX}" box.source "${BOX_SRC}"; then
         log_error "failed to write ${CONFIG}"
         return 1
     fi
     log_info "wrote: ${CONFIG}"
-}
-
-_config_render() {
-    printf '# worktool auto-enter state: written by "just box setup", read by "just box status".\n'
-    printf '%s=%s\n%s.source=%s\n' \
-        auto-enter "${AUTO_ENTER}" auto-enter "${AUTO_ENTER_SRC}" \
-        terminal "${TERMINAL}" terminal "${TERMINAL_SRC}" \
-        tmux "${TMUX}" tmux "${TMUX_SRC}" \
-        box "${BOX}" box "${BOX_SRC}"
-    _config_render_home
-}
-
-# Keep the box home `just box assemble` recorded (issue #198): the state
-# file is shared, and this rewrite must not drop lines it does not own.
-_config_render_home() {
-    local _home
-    _home="$(enter_config_get "${CONFIG}" home)"
-    [[ -n "${_home}" ]] || return 0
-    printf 'home=%s\nhome.source=%s\n' \
-        "${_home}" "$(enter_config_get "${CONFIG}" home.source)"
 }
 
 # --- Apply -------------------------------------------------------------------

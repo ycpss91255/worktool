@@ -68,7 +68,14 @@
 #   enter_block_compose <file> <body>  -> content with exactly one block, stdout
 #
 # This is a library: it defines functions and must be sourced, not executed.
-# Sourcing has no side effects.
+# Sourcing has no side effects; it sources lib/config.sh (same dir), the
+# one reader/writer of the state file.
+
+# The state file's format is lib/config.sh's (its one reader/writer).
+# shellcheck source-path=SCRIPTDIR
+_ENTER_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./config.sh
+source "${_ENTER_LIB_DIR}/config.sh"
 
 ENTER_BLOCK_BEGIN='# BEGIN worktool managed block (just box setup; do not edit)'
 ENTER_BLOCK_END='# END worktool managed block'
@@ -322,11 +329,8 @@ enter_value_ok() {
 
 # Print the value of key $2 in state file $1 (first match; nothing when the
 # file or the key is absent). Exact key match on the text before the first
-# `=`, so `box` never matches `box.source`.
-enter_config_get() {
-    [[ -f "$1" ]] || return 0
-    awk -F= -v k="$2" '$1 == k { print substr($0, length(k) + 2); exit }' "$1"
-}
+# `=`, so `box` never matches `box.source`. lib/config.sh reads it.
+enter_config_get() { config_get "$@"; }
 
 # 0 when $1 is a key the state file may hold: a decision key or its
 # `<key>.source` companion.
