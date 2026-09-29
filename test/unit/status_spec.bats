@@ -304,3 +304,11 @@ _write_block() {
     assert_output "status.sh: unknown option '--bogus' (see --help)"
     refute_output --partial "Usage:"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "status.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${STATUS}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}

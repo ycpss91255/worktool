@@ -83,3 +83,29 @@ _make_repo_copy() {
     assert_output --partial "script/box/assemble.sh"
     refute_line "ALL PASS"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "selfcheck.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${SELFCHECK}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# A wrapper that cannot even start leaves no stderr file behind: that is a
+# FAIL line of the report, not the end of the self-check under errexit.
+@test "_check_reject records a FAIL, not an abort, when the wrapper never ran" {
+    run bash -c 'set -euo pipefail; source "$1"; SELFCHECK_ROOT="$2"; SELFCHECK_TMP="$3"; _check_reject "$3/x.ini" anything; printf "reached\n"' \
+        _ "${SELFCHECK}" "${BATS_TEST_TMPDIR}/no-such-root" "${BATS_TEST_TMPDIR}"
+    assert_success
+    assert_line --partial "FAIL reject x.ini: rc=1"
+    assert_line "reached"
+}
+
+# The EXIT trap must not turn a finished run's status into its own: with
+# nothing to remove it returns 0, so `exit 0` stays 0 under errexit.
+@test "the EXIT-trap cleanup keeps exit 0 when there is nothing to remove" {
+    run bash -c 'set -euo pipefail; source "$1"; SELFCHECK_TMP=""; trap _cleanup EXIT; exit 0' \
+        _ "${SELFCHECK}"
+    assert_success
+}

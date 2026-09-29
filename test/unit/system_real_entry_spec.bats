@@ -293,3 +293,32 @@ _with_entry() {
     run cat "${FAKE_LOG}"
     assert_output ""
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "system-real-entry.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${ENTRY}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# The leftover removals are best effort, but a failed one is said, not
+# swallowed with `|| true`; the pending status still wins.
+@test "_cleanup says when the leftover removals fail and still keeps the pending status" {
+    mv "${FAKEBIN}/docker" "${FAKEBIN}/docker.real"
+    cat >"${FAKEBIN}/docker" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "${1:-}" == rm ]]; then
+    printf 'docker %s\n' "$*" >>"${FAKE_LOG}"
+    exit 1
+fi
+exec "${0}.real" "$@"
+FAKE
+    printf '#!/usr/bin/env bash\nexit 1\n' >"${FAKEBIN}/distrobox"
+    chmod +x "${FAKEBIN}/docker" "${FAKEBIN}/distrobox"
+    FAKE_DEV=1 _with_entry _cleanup live 3
+    assert_failure 3
+    assert_output --partial "cleanup: distrobox rm -f dev failed or timed out"
+    assert_output --partial "cleanup: docker rm -f dev failed or timed out"
+    assert_output --partial "[system-real] stopping nested dockerd"
+}
