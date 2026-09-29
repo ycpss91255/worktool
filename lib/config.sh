@@ -11,13 +11,13 @@
 # keys, duplicates, CRLF line endings, trailing blank lines, a missing
 # final newline - stays where it was.
 #
-# Ownership is structural: ONLY this file knows where the state file is
+# Ownership: ONLY this file knows where the state file is
 # ($XDG_CONFIG_HOME/worktool/config, else ~/.config/worktool/config). Every
 # public function works on THE state file and takes no path; messages that
-# name it go through config_log / config_say / config_fill. Code elsewhere
-# cannot name the file, so it cannot open it (test/unit/config_spec.bats
-# checks that the location appears in no other file under lib/ script/
-# box/).
+# name it go through config_log / config_say / config_fill. That no other
+# module reaches the file is proven by behaviour, not by a text search
+# (test/unit/config_owner_spec.bats: the state file is moved with the
+# test-only WORKTOOL_CONFIG_FILE seam and the default location poisoned).
 #
 # Format: one `key=value` per line; the key is the text before the first
 # `=` (a line without `=` is a bare key with an empty value). Reads take
@@ -85,7 +85,17 @@
 
 config_xdg_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
 
-_config_file() { printf '%s/worktool/config\n' "$(config_xdg_dir)"; }
+# WORKTOOL_CONFIG_FILE is a TEST-ONLY seam, honoured here and nowhere else:
+# test/unit/config_owner_spec.bats points it at a random path and poisons
+# the default location, so a module that computed the path itself would
+# read or write the poison and fail there. Users never set it.
+_config_file() {
+    if [[ -n "${WORKTOOL_CONFIG_FILE:-}" ]]; then
+        printf '%s\n' "${WORKTOOL_CONFIG_FILE}"
+    else
+        printf '%s/worktool/config\n' "$(config_xdg_dir)"
+    fi
+}
 
 config_exists() { [[ -f "$(_config_file)" ]]; }
 
