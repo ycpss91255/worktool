@@ -7,7 +7,7 @@
 以 distrobox 為基礎的模型,取代 init_ubuntu「apt 直接裝到 host」的 module
 系統。開發用 CLI/TUI 工具全部住在一個共用的 distrobox「dev 盒」,使用者直接
 活在盒內(終端自動進盒);host 只保留驅動、docker、snapd、桌面 GUI app(以
-install script 形式)與容器框架。設定檔留在共用 HOME。
+install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/0002-box-owns-its-home.md`)。
 
 ## 治理規則
 
@@ -52,8 +52,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 2. 一個共用「dev」盒裝所有容器化 CLI/TUI 工具。
 3. 活在盒裡:終端自動進盒;fish/tmux/zoxide/fzf/thefuck + 所有編輯器/CLI/TUI/
    監控/AI 工具都在盒內。
-4. 設定留共用 HOME(distrobox 共用 HOME):`~/.config/*`、`~/.gitconfig`、
-   `~/.ssh`;工具在盒、設定共用,不需同步。
+4. ~~設定留共用 HOME~~ 已被取代:盒子使用獨立 HOME,見
+   `doc/adr/0002-box-owns-its-home.md`(#197)。
 5. host 保留:驅動(nvidia/kvm)、docker、snapd、桌面 GUI app、容器框架、終端
    自動進盒設定。
 6. 桌面 GUI app 改做 host install script(放 `tool/`),不進 module 系統。
@@ -281,8 +281,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 
 盒子工具(由最日常關鍵往下):
 
-- M5 shell 核心:fish + tmux(+ 共用 HOME 設定)。最重要,日常骨幹。套件本身已在
-  M3 裝進盒(#160);M5 做的是 dotfiles、主題、plugin 與共用 HOME 的設定。
+- M5 shell 核心:fish + tmux(+ 盒子 HOME 裡的 tool config)。最重要,日常骨幹。
+  套件本身已在 M3 裝進盒(#160);M5 做的是 tool config、主題、plugin(放在盒子
+  HOME,見 `doc/adr/0002-box-owns-its-home.md`)。
 - M6 導覽/檔案:ripgrep、fd、eza、bat、yazi、zoxide、fzf、tree、ncdu、lnav。
 - M7 編輯器 + git:neovim、lazygit、tig、git、git-lfs。
 - M8 runtime/pkg + AI CLI:python3、pipx、fnm、jq、curl、wget、gum、glow、
