@@ -13,8 +13,7 @@
 # Functions (each testable on its own; the file can be sourced, main runs
 # only when it is executed):
 #   read_latest_user_message <transcript_path>
-#       the latest user-typed text message (tool_result entries skipped);
-#       missing / unreadable file -> nothing
+#       from lib/transcript.sh (shared with enforce_codex_round_cap.sh)
 #   new_shellcheck_disables <new_content> <existing_file_path>
 #       each disable code in the new content that the existing file does not
 #       already have, one per line (multi-code directives split)
@@ -30,27 +29,9 @@
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
+# shellcheck source=transcript.sh
+source "${_HOOK_HERE}/lib/transcript.sh"
 hook_bootstrap "enforce-shellcheck-disable-approval"
-
-# read_latest_user_message <transcript_path> - scan the JSONL backwards for
-# the first user entry whose content is a string or holds a text block.
-read_latest_user_message() {
-    local _path="${1:-}" _line _text
-    [[ -n "${_path}" && -r "${_path}" ]] || return 0
-    while IFS= read -r _line; do
-        _text="$(printf '%s' "${_line}" | jq -r '
-            select(.type == "user") | select(.message.role == "user")
-            | .message.content
-            | if type == "string" then .
-              elif type == "array" then (map(select(.type == "text")) | .[0].text // empty)
-              else empty end' 2>/dev/null)"
-        if [[ -n "${_text}" ]]; then
-            printf '%s\n' "${_text}"
-            return 0
-        fi
-    done < <(tac "${_path}" 2>/dev/null)
-    return 0
-}
 
 # _extract_disable_codes <content> - each SC code of every disable
 # directive, one per line, sorted and unique.
