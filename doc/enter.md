@@ -17,7 +17,7 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 | 指令 | 做什麼 |
 |------|--------|
 | `just box setup [選項]` | 決定「要不要自動進盒、用哪個終端、tmux 放哪、進哪個盒」,寫進**單一設定檔**,並寫入(或移除)終端 profile 的**受管區塊** |
-| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、以及受管區塊在不在 |
+| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、受管區塊在不在,以及每一項 user config 連結的狀態(#199) |
 
 只動 HOME / `XDG_CONFIG_HOME` 底下的檔案;不裝任何東西、不動 host 的 shell rc、
 不需要 root。
@@ -317,6 +317,18 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 第二行是**舊版**留下來的形狀:現在的 setup 不會再寫裸名字(解析不到就拒絕),
 但使用者機器上可能還有先前寫入的區塊,所以報告仍然認得並指出它。
 
+報告最後是 user config 連結(issue #199,由 `just box assemble` 建立,見
+[`manifest.md`](manifest.md)「user config 連結」),每一項一行,四種狀態:
+
+```text
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (blocked by existing file)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (missing source)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (not linked yet; run: just box assemble)
+```
+
+盒子 HOME 取 `box` 決策的盒名(`~/<盒名>-box`,設定檔有 `home=` 時用它)。
+
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
 後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態與 `distrobox:` 那行,
@@ -350,10 +362,13 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   有設定檔的逐行輸出與順序、缺 key 回預設、`XDG_CONFIG_HOME`、只印 stdout、
   `--help` / 未知選項,以及 `distrobox:` 那行的四種狀態(runnable / NOT
   RUNNABLE / 裸名字 / PATH 上找不到)與三種記錄形狀的解碼(單引號、tmux 雙層
-  引用、以及舊版沒有 quote 的絕對路徑);
+  引用、以及舊版沒有 quote 的絕對路徑),以及 user config 連結的四種狀態(#199);
+  `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、盒子
+  HOME 的預設與 `home=`、建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 /
+  外來 symlink 不覆蓋且 warn、來源不存在不建連結、每項都有 log、重跑冪等;
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
-  拒絕。三個都是 `test.sh` 的**必要 spec**。
+  拒絕。四個都是 `test.sh` 的**必要 spec**。
 - 整合:`test/integration/setup_spec.bats` —— `setup` 之後 `status` 的來回:host
   變體兩個區塊都 present、切回 inside 後 tmux.conf 區塊消失、`--auto-enter no` 後兩個
   都 absent、`--dry-run` 後什麼都沒存、setup 的 log 與 status 的報告逐行一致;

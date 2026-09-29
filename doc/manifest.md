@@ -111,11 +111,39 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
      STDERR(沿用 `lib/log.sh`),讓 STDOUT 保持乾淨、機器可讀。輸出採**逐一參數的
      shell 跳脫**(`printf '%q'`),因此含有空白、`;` 或 `$()` 的路徑會被表示成
      單一安全參數,直接複製貼上即可忠實重跑,不會被再次拆分或解讀。
+5. **連結 user config 進盒子 HOME**(issue #199,[ADR 0002](adr/0002-box-owns-its-home.md)
+   決策 3):distrobox 建盒**成功之後**才做,試跑模式與建盒失敗時都不做。詳見下方
+   「user config 連結」。
 
-包裝器**絕不在 host 上安裝任何東西、也不需要 root**;唯一的副作用是呼叫
-distrobox,由 distrobox 自己管理容器。選項:`--dry-run`、`--file <manifest>`、
+包裝器**絕不在 host 上安裝任何東西、也不需要 root**;副作用只有呼叫 distrobox
+(由 distrobox 自己管理容器),以及第 5 步在盒子 HOME 裡建 symlink。選項:`--dry-run`、`--file <manifest>`、
 `--help`(`-h`,印 usage 後 exit 0);未知選項以
 `assemble.sh: unknown option '<x>' (see --help)` 拒絕、exit 2、什麼都不跑。
+
+### user config 連結(issue #199)
+
+盒子有自己的 HOME 之後,盒內的 git、gh、ssh 找不到 host 的 user config,所以
+`script/box/assemble.sh` 在建盒成功後,以 `lib/link.sh` 把 user config 用
+**symlink** 帶進盒子 HOME:
+
+- 每一項是 `<盒子 HOME>/<路徑> -> $HOME/<路徑>` 的**絕對路徑** symlink。distrobox
+  會把 host HOME 以原路徑掛進盒內,所以這條連結在盒內也解得開。**不複製、不修改**,
+  host 那份是唯一一份。
+- 預設清單:`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh`。
+  在 `~/.config/worktool/config`(`$XDG_CONFIG_HOME/worktool/config`)加
+  `link=<路徑>`(一行一項,可寫 `~/.aws` 或相對 HOME 的 `.aws`)可以擴充;HOME
+  以外的路徑、含 `..` 的路徑會 `[WARN]` 並略過。
+- 盒子 HOME 已有同名項目(檔案、目錄、別的 symlink,含失效的 symlink)→
+  **不覆蓋**,`[WARN]` 並略過。host 上沒有的來源 → 略過,不建失效連結。
+- 每一項都印 log(stderr):`[INFO] link: <盒子 HOME>/.ssh -> $HOME/.ssh`、
+  `(already linked)`、`not found on the host - skipped` 或上述 `[WARN]`。
+  有連結建不起來時 exit 1。
+- 盒子 HOME:設定檔的 `home=`(開頭 `~/` 會展開),沒有就是 `~/<盒名>-box`
+  (盒名取自清單區段,dev 盒 = `~/dev-box`)。建盒時帶 `--home` 由 #198 實作;
+  在那之前盒子仍是共用 HOME,連結照樣建在 `~/dev-box`,#198 上線後即成為盒內的
+  `~/.ssh` 等。
+- 專案目錄不連結:盒內以絕對路徑就讀得到。
+- 每一項的狀態由 `just box status` 報告(見 [`enter.md`](enter.md))。
 
 ### 用法
 
