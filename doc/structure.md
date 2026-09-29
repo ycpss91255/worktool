@@ -67,6 +67,7 @@ worktool/
 │   ├── enter.md         終端自動進盒:just box setup / status 的選項、設定檔、受管區塊、範例 log
 │   ├── structure.md     本文件
 │   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
+│   ├── agent/           給 agent skill 讀的設定:issue-tracker.md / triage-labels.md / domain.md
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
 │       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、共用 HOME、ghostty -> tmux -> fish
@@ -78,6 +79,7 @@ worktool/
 │       └── milestone-fanout.js
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
+├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
     └── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
