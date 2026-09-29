@@ -141,3 +141,17 @@ _adr_0011_check_guard() {
     assert_output --partial "distrobox"
     assert_output --partial "127"
 }
+
+@test "ADR 0011 keeps #209 open until doc/contract.md backfills the invariant index" {
+    # #209 also asks for the doc/contract.md index link; that file is not on
+    # main yet (it lands with #201), so the ADR must record the backfill as
+    # still owed and say #209 stays open (codex round 1 on PR #262).
+    run _adr_0011_section "目前由哪些機制或測試守住"
+    assert_success
+    run grep -F "doc/contract.md" <<<"${output}"
+    assert_success
+    assert_output --partial "#209"
+    assert_output --partial "#201"
+    assert_output --partial "不關閉"
+    assert_output --partial "待補"
+}
