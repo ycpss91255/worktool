@@ -23,7 +23,9 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 
 host 只留驅動、docker、snapd、桌面 GUI install script 與 `just`;distrobox 在 host 的
 docker 上跑一個共用的 dev 盒(`ubuntu:26.04`),所有 CLI / TUI 工具(M5-M10)都在盒內;
-設定留在共用 HOME;終端 ghostty(host)-> tmux(盒內)-> fish。盒內目前的套件見
+盒子有自己的 HOME,user config 以 symlink 從 host 帶入(決策見
+[ADR 0002](doc/adr/0002-box-owns-its-home.md),尚未實作,將由 #198、#199 實作);
+終端 ghostty(host)-> tmux(盒內)-> fish。盒內目前的套件見
 [`box/dev.ini`](box/dev.ini):M2 的 ripgrep、fzf,加上 M3 為自動進盒先裝的 tmux、fish
 (設定留 M5)。
 
