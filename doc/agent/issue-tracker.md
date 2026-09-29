@@ -35,7 +35,9 @@
 
 - **讀 PR**：`gh pr view <number> -R ycpss91255/worktool --comments`，diff 用 `gh pr diff <number> -R ycpss91255/worktool`。
 - **列外部 PR 做 triage**：`gh pr list -R ycpss91255/worktool --state open --json number,title,body,labels,author,authorAssociation,comments`，只留 `authorAssociation` 為 `CONTRIBUTOR`、`FIRST_TIME_CONTRIBUTOR`、`NONE` 的（丟掉 `OWNER`／`MEMBER`／`COLLABORATOR`）。
-- **留言／標籤／關閉**：`gh pr comment`、`gh pr edit --add-label`／`--remove-label`、`gh pr close`，都帶 `-R`。
+- **留言**：`gh pr comment <number> -R ycpss91255/worktool --body-file <檔>`
+- **加／移標籤**：`gh pr edit <number> -R ycpss91255/worktool --add-label "..."` ／ `--remove-label "..."`
+- **關閉**：`gh pr close <number> -R ycpss91255/worktool --comment "..."`
 
 GitHub 的 issue 與 PR 共用同一個編號空間，光看 `#42` 分不出是哪種：先 `gh pr view 42 -R ycpss91255/worktool`，失敗再 `gh issue view 42 -R ycpss91255/worktool`。
 
