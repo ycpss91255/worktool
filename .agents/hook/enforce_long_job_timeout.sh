@@ -9,13 +9,14 @@
 # and compose service runs. Each needs one of:
 #   1. run_in_background: true   (the harness notifies on completion)
 #   2. the Bash `timeout` param  (the OS reaps a hang at the deadline)
-#   3. a self-wrapped timeout(1) / gtimeout
+#   3. a self-wrapped timeout(1) / gtimeout leading that same launch
 # Otherwise the hook BLOCKS (exit 2) with that guidance; a PreToolUse hook
 # cannot rewrite the command, so "enforce" means block-with-guidance.
 #
 # Only real launches count: lib/subcommand.sh reduces the command to its
-# sub-commands (quoted spans and heredoc bodies are data), and a sub-command
-# led by a text carrier (git, gh, grep, echo, ...) is never a launch.
+# sub-commands (a quoted span is one opaque word, heredoc bodies are
+# dropped), and a sub-command led by a text carrier (git, gh, grep, echo,
+# ...) is never a launch. The timeout(1) bound is judged per sub-command.
 #
 # Exit codes: 0 = allow, 2 = block.
 
@@ -27,11 +28,13 @@ source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "long-job-timeout"
 
-# A `timeout`/`gtimeout <duration>` at a command position anywhere bounds
-# the launch (checked on the raw command: a multi-line quoted argument can
-# separate the wrapper from the launch it bounds).
+# _self_wrapped <sub-command> - 0 when THIS sub-command is led by a
+# `timeout`/`gtimeout [options] <duration>` wrapper. Judged per launch, so a
+# timeout elsewhere (`echo timeout 1; just test unit`, `timeout 5 true &&
+# ...`) bounds nothing. The lib keeps a multi-line quoted argument inside
+# its sub-command, so the wrapper and the launch it bounds stay together.
 _self_wrapped() {
-    [[ "$1" =~ (^|[[:space:]]|[\;\|\&\(]|\$\()[[:space:]]*g?timeout[[:space:]]+(-[A-Za-z][A-Za-z-]*[[:space:]]+|--[A-Za-z][A-Za-z-]*([[:space:]]+|=)[^[:space:]]+[[:space:]]+)*[0-9] ]]
+    [[ "$1" =~ ^g?timeout[[:space:]]+(-[A-Za-z][A-Za-z-]*[[:space:]]+|--[A-Za-z][A-Za-z-]*([[:space:]]+|=)[^[:space:]]+[[:space:]]+)*[0-9] ]]
 }
 
 # _just_is_long <words...> - a `just test` gate (not its help) or a real
@@ -78,8 +81,8 @@ main() {
     [[ -z "${_cmd}" ]] && hook_allow
     [[ "$(hook_field '.tool_input.run_in_background')" == true ]] && hook_allow
     [[ "$(hook_field '.tool_input.timeout')" =~ ^[1-9][0-9]*$ ]] && hook_allow
-    _self_wrapped "${_cmd}" && hook_allow
     while IFS= read -r _sub; do
+        _self_wrapped "${_sub}" && continue
         _is_long "${_sub}" || continue
         hook_block "long-running foreground command with no time bound." \
             "Command: ${_cmd}" \

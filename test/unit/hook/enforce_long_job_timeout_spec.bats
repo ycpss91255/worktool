@@ -65,6 +65,18 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     assert_failure 2
 }
 
+@test "an unrelated timeout text elsewhere does not bound a long launch" {
+    _check "echo timeout 1; just test unit"
+    assert_failure 2
+    _check "printf 'timeout 1'; docker build ."
+    assert_failure 2
+}
+
+@test "a timeout(1) on another sub-command does not bound the long one" {
+    _check "timeout 5 true && just test unit"
+    assert_failure 2
+}
+
 # --- allowed -----------------------------------------------------------------
 
 @test "allows 'just test unit' when the timeout param is set" {
@@ -79,6 +91,13 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
 
 @test "allows a self-wrapped timeout(1) command" {
     _check "timeout 600 just test unit"
+    assert_success
+}
+
+@test "allows a self-wrapped timeout(1) launch after a cd prefix or a wrapper" {
+    _check "cd /repo && timeout 600 just test unit"
+    assert_success
+    _check "sudo timeout --signal KILL 600 docker build ."
     assert_success
 }
 
