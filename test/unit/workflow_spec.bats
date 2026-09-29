@@ -422,6 +422,71 @@ _rv_with() {
     assert_output "record-failed"
 }
 
+# --- codex output: local paths rewritten before posting (#233) ----------------
+
+# Raw codex output citing the repo through every local prefix a run sees:
+# $1 = repoDir, $2 = the template's scratch dir, $3 = the worktree (or '').
+_codex_raw_with_paths() {
+    printf 'banner\ncodex\n'
+    printf -- '- %s/tree/lib/log.sh:12\n' "$2"
+    [[ -n "$3" ]] && printf -- '- %s/script/x.sh:3\n' "$3"
+    printf -- '- %s/doc/a.md:1\n' "$1"
+    printf -- '- %s/prompt.txt\n' "$2"
+    printf -- '- /elsewhere/scratchpad/tree/lib/y.sh:4\n'
+    printf '可合併\ntokens used\n5\n'
+}
+
+# The answer _codex_raw_with_paths should become: repo-relative paths.
+_codex_rel_answer() {
+    printf -- '- lib/log.sh:12\n'
+    [[ -n "$1" ]] && printf -- '- script/x.sh:3\n'
+    printf -- '- doc/a.md:1\n- <scratch>/prompt.txt\n- lib/y.sh:4\n可合併\n'
+}
+
+@test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
+    local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
+    local scratch="${dir}/.worktree/.scratch/n1" wt="${dir}/.worktree/n1"
+    local replies='{"locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
+        "codex:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t"}')" "${replies}"
+    assert_success
+    local prompt
+    prompt="$(jq -r '.calls[] | select(.label | startswith("codex:")) | .prompt' <<<"${output}")"
+    span="$(jq -rn --arg p "${prompt}" '$p | [match("`(cd [^`]*> answer-r1\\.md)`").captures[0].string][0]')"
+    assert [ -n "${span}" ]
+    mkdir -p "${scratch}"
+    _codex_raw_with_paths "${dir}" "${scratch}" "${wt}" > "${scratch}/out-r1.txt"
+    run bash -c "${span}"
+    assert_success
+    [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
+    run cat "${scratch}/answer-r1.md"
+    assert_output "$(_codex_rel_answer wt)"
+    # The comment posts that file, never the raw output.
+    run grep -c 'cat answer-r1.md' <<<"${prompt}"
+    assert_output "1"
+}
+
+@test "research-verify (node): codex.md has local paths rewritten repo-relative before it is posted" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir scratch
+    mkdir -p "${stub}"
+    dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
+    scratch="${dir}/.worktree/.scratch/research-7"
+    mkdir -p "${BATS_TEST_TMPDIR}/raw"
+    _codex_raw_with_paths "${dir}" "${scratch}" '' > "${BATS_TEST_TMPDIR}/raw/codex.txt"
+    printf '#!/bin/sh\necho "1. agy-claim"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\ncat "%s/raw/codex.txt"\n' "${BATS_TEST_TMPDIR}" > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
+    run cat "${scratch}/codex.md"
+    assert_output "$(_codex_rel_answer '')"
+    run grep -c -- "- lib/log.sh:12" "${scratch}/body.md"
+    assert_output "1"
+}
+
 @test "doc/workflow.md documents research-verify and its args" {
     run grep -c '^## research-verify' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"

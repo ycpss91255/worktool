@@ -54,6 +54,19 @@ const SCRATCH = `${REPO_DIR}/.worktree/.scratch/research-${A.issue}`   // .workt
 // POSIX single quoting: the only safe way a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
+// A literal path, escaped for a sed -E s#...#...# pattern.
+const ere = (s) => String(s).replace(/[\\^$.*+?()[\]{}|#]/g, '\\$&')
+// The repo is public (#233): codex cites files through the local directory
+// it ran in, so its answer passes this sed filter before it is posted. The
+// scratch checkout (<scratch>/tree/, or any absolute prefix up to a /tree/
+// checkout) and repoDir become repo-relative; the rest of the scratch dir
+// becomes <scratch>/.
+const RELPATHS = `sed -E ${sq([
+  `s#${ere(SCRATCH)}/tree/##g`,
+  's#(^|[^[:alnum:]_.~/-])/[^[:space:]]*/tree/#\\1#g',
+  `s#${ere(SCRATCH)}/#<scratch>/#g`,
+  `s#${ere(REPO_DIR)}/##g`,
+].join(';'))}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 
@@ -96,7 +109,7 @@ const CODEX_STEP = `Run ONE codex verification of agy's research (issue #${A.iss
 ===BEGIN===
 ${CODEX_PROMPT}
 ===END===
-2. Run in the foreground: \`${CD} && cat agy.md | timeout 600 codex exec --skip-git-repo-check "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract the answer = lines after the line that is exactly "codex", minus trailing "tokens used" lines: \`${CD} && awk '/^codex$/{f=1;next} f' codex-raw.txt | sed '/^tokens used/,$d' > codex.md\`.
+2. Run in the foreground: \`${CD} && cat agy.md | timeout 600 codex exec --skip-git-repo-check "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract the answer = lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative: \`${CD} && awk '/^codex$/{f=1;next} f' codex-raw.txt | sed '/^tokens used/,$d' | ${RELPATHS} > codex.md\`.
 3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".`
 
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${A.question}

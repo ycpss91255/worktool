@@ -47,6 +47,22 @@ const GATES = A.gates || 'just test lint, just test unit, just test integration,
 const PARENT = A.parent || ''
 const WT = `${REPO_DIR}/.worktree/${A.name}`
 const SCRATCH = `${REPO_DIR}/.worktree/.scratch/${A.name}`   // .worktree/ is gitignored
+// POSIX single quoting: how a value reaches a shell command.
+const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+// A literal path, escaped for a sed -E s#...#...# pattern.
+const ere = (s) => String(s).replace(/[\\^$.*+?()[\]{}|#]/g, '\\$&')
+// The repo is public (#233): codex cites files through the local directory
+// it ran in, so its answer passes this sed filter before it is posted. The
+// scratch checkout (<scratch>/tree/, or any absolute prefix up to a /tree/
+// checkout), the worktree and repoDir become repo-relative; the rest of the
+// scratch dir becomes <scratch>/.
+const RELPATHS = `sed -E ${sq([
+  `s#${ere(SCRATCH)}/tree/##g`,
+  's#(^|[^[:alnum:]_.~/-])/[^[:space:]]*/tree/#\\1#g',
+  `s#${ere(WT)}/##g`,
+  `s#${ere(SCRATCH)}/#<scratch>/#g`,
+  `s#${ere(REPO_DIR)}/##g`,
+].join(';'))}`
 
 const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, sha: { type: 'string' } }, required: ['pr', 'sha'] }
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
@@ -67,8 +83,8 @@ const CI = (pr) => `Watch CI for PR #${pr} of ${REPO}: run \`timeout 1800 gh pr 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`.
 2. Prompt file prompt-r${round}.txt (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。阻擋項列在「## 阻擋項」標題下、非阻擋項列在「## 非阻擋項」標題下,每項引用 diff 位置。最後一行只能是「可合併」或「不可合併:<原因>」。"
-3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\`; answer = lines after the line that is exactly "codex" (awk '/^codex$/{f=1;next} f'), minus trailing "tokens used" lines. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
-4. Post ONE PR comment: "[codex] 第 ${round} 輪複驗" + the verbatim answer, blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
+3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\`; then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
+4. Post ONE PR comment through a body file: "[codex] 第 ${round} 輪複驗" + the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
 5. Return: verdict = "mergeable" if the LAST line of the answer is exactly 可合併, "blocked" if it starts with 不可合併, otherwise "blocked" too (unparseable is not a pass); blocking = the items under 「## 阻擋項」 (one string each, short); nonBlocking = items under 「## 非阻擋項」; answer = the verbatim answer.`
 
 const FIX = (pr, round, blocking) => `${RULES}
