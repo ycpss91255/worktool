@@ -13,7 +13,7 @@
 # Entries (HOME-relative paths):
 #   default  .ssh .gitconfig .gnupg .config/gh
 #   extra    one `link=<path>` line each in the state file
-#            ($XDG_CONFIG_HOME/worktool/config); `~/` and an absolute path
+#            (lib/config.sh); `~/` and an absolute path
 #            under $HOME are accepted, anything outside HOME or holding a
 #            `..` component is warned about and skipped.
 #
@@ -33,9 +33,9 @@
 # Public API:
 #   link_defaults                  -> the default entries, one per line
 #   link_normalize <entry>         -> the HOME-relative path, or return 1
-#   link_entries <config>          -> defaults + `link=` entries, deduped
+#   link_entries                   -> defaults + `link=` entries, deduped
 #   link_state <rel> <box_home>    -> linked | missing-source | blocked | absent
-#   link_apply <box_home> <config> -> make the links; 1 when one could not be made
+#   link_apply <box_home>          -> make the links; 1 when one could not be made
 #
 # This is a library: it defines functions and must be sourced, not executed.
 # The caller sources lib/log.sh (for log_info / log_warn / log_error); this
@@ -67,20 +67,20 @@ link_normalize() {
     printf '%s\n' "${_e}"
 }
 
-# The entries to link: the defaults, then each valid `link=` line of state
-# file $1, each once, in that order. An invalid line is warned about.
+# The entries to link: the defaults, then each valid `link=` line of the
+# state file, each once, in that order. An invalid line is warned about.
 link_entries() {
     local _raw _rel
     local -A _seen=()
     while IFS= read -r _raw; do
         if ! _rel="$(link_normalize "${_raw}")"; then
-            log_warn "link: '${_raw}' in $1 is not a path under \$HOME - skipped"
+            config_log warn "link: '${_raw}' in " " is not a path under \$HOME - skipped"
             continue
         fi
         [[ -z "${_seen[${_rel}]:-}" ]] || continue
         _seen[${_rel}]=1
         printf '%s\n' "${_rel}"
-    done < <(link_defaults; config_get_all "$1" link)
+    done < <(link_defaults; config_get_all link)
 }
 
 # Return 0, printing it, when box HOME $2 itself or a parent directory of
@@ -151,12 +151,12 @@ _link_one() {
     esac
 }
 
-# Link every entry (state file $2) into box HOME $1. Every entry is tried
-# and logged; returns 1 when any link could not be made.
+# Link every entry into box HOME $1. Every entry is tried and logged;
+# returns 1 when any link could not be made.
 link_apply() {
-    local _box_home="$1" _config="$2" _rel _rc=0
+    local _box_home="$1" _rel _rc=0
     while IFS= read -r _rel; do
         _link_one "${_rel}" "${_box_home}" || _rc=1
-    done < <(link_entries "${_config}")
+    done < <(link_entries)
     return "${_rc}"
 }

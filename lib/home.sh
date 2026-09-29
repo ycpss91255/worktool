@@ -5,7 +5,7 @@
 # or the DBX_CONTAINER_CUSTOM_HOME variable distrobox-create documents);
 # afterwards the only way to change it is to remove the box and create it
 # again. `just box assemble --home <path>` picks it (default ~/<box>-box),
-# records it in the ONE state file (~/.config/worktool/config, the same
+# records it in the ONE state file (lib/config.sh, the same
 # `key=value` + `key.source=default|user` shape as `just box setup`), and
 # `just box status` shows it.
 #
@@ -14,11 +14,11 @@
 #   home_normalize <path>         -> <path> without trailing slashes
 #   home_path_problem <path>      -> 0 when <path> can be a box home; else
 #                                    prints why not (one line) and returns 1
-#   home_config_check <file>      -> 0 when the state file's home lines are
+#   home_config_check             -> 0 when the state file's home lines are
 #                                    valid (the --home rules; home and
 #                                    home.source together) or absent; else
 #                                    prints ONE line saying why, returns 1
-#   home_record <file> <path> <source>
+#   home_record <path> <source>
 #                                 -> set home / home.source in the state
 #                                    file in place (lib/config.sh), every
 #                                    other line kept byte-for-byte
@@ -90,7 +90,7 @@ home_path_problem() {
 # The file is read through lib/config.sh (config_each), never directly.
 home_config_check() {
     local _has_home=0 _has_src=0
-    config_each "$1" _home_check_entry || return 1
+    config_each _home_check_entry || return 1
     _home_check_pair "${_has_home}" "${_has_src}"
 }
 
@@ -148,7 +148,7 @@ _home_check_pair() {
 # dropped), or appended; every line another writer owns stays as it was.
 # Atomic, keeps the file's mode.
 home_record() {
-    config_set "$1" home "$2" home.source "$3"
+    config_set home "$1" home.source "$2"
 }
 
 # 0 when manifest $1 sets distrobox-assemble's own `home=` key (leading

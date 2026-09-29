@@ -52,10 +52,10 @@ source "${LIB_DIR}/link.sh"
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: status.sh
 
-Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
+Show the auto-enter decisions in force (from {state-file},
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
 ~/.tmux.conf, whether the distrobox those blocks name can still be run, the
@@ -74,12 +74,13 @@ _usage_error() {
 
 # --- Report ------------------------------------------------------------------
 
-# Print `<key>: <value> (<source>)` for key $1 from state file $2: the stored
-# value with its stored source, or the default when the key is absent.
+# Print `<key>: <value> (<source>)` for key $1 from the state file: the
+# stored value with its stored source, or the default when the key is
+# absent.
 _report_key() {
-    local _key="$1" _config="$2" _value _source
-    _value="$(enter_config_get "${_config}" "${_key}")"
-    _source="$(enter_config_get "${_config}" "${_key}.source")"
+    local _key="$1" _value _source
+    _value="$(config_get "${_key}")"
+    _source="$(config_get "${_key}.source")"
     if [[ -z "${_value}" ]]; then
         _value="$(enter_default "${_key}")"
         _source="default"
@@ -98,41 +99,39 @@ _report_block() {
 # message as setup.sh): exit 1 upstream.
 _config_check() {
     local _problem
-    if _problem="$(enter_config_check "$1")" \
-        && _problem="$(home_config_check "$1")"; then
+    if _problem="$(enter_config_check)" && _problem="$(home_config_check)"; then
         return 0
     fi
-    log_error "$1: ${_problem}"
+    config_log error "" ": ${_problem}"
     return 1
 }
 
 _report() {
-    local _config _key
-    _config="$(enter_config_path)"
-    _config_check "${_config}" || return 1
-    if [[ -f "${_config}" ]]; then
-        printf 'config: %s\n' "${_config}"
+    local _key
+    _config_check || return 1
+    if config_exists; then
+        config_say "config: "
     else
-        printf 'config: %s (not found - defaults shown; run: just box setup)\n' "${_config}"
+        config_say "config: " " (not found - defaults shown; run: just box setup)"
     fi
     while IFS= read -r _key; do
-        _report_key "${_key}" "${_config}"
+        _report_key "${_key}"
     done < <(enter_keys)
     _report_block ghostty "$(enter_ghostty_config)"
     _report_block tmux.conf "$(enter_tmux_conf)"
     _report_distrobox
-    _report_links "${_config}"
-    _report_home "${_config}"
+    _report_links
+    _report_home
 }
 
 # `link: <box home>/<path> -> $HOME/<path> (<state>)` per user-config entry
 # (issue #199), each state as lib/link.sh reads it. The box HOME is the one
-# `just box assemble` recorded in state file $1 (issue #198, the same value
-# _report_home prints); none recorded, or the host HOME itself: one line
-# says so.
+# `just box assemble` recorded in the state file (issue #198, the same
+# value _report_home prints); none recorded, or the host HOME itself: one
+# line says so.
 _report_links() {
-    local _config="$1" _box_home _rel _state
-    _box_home="$(enter_config_get "${_config}" home)"
+    local _box_home _rel _state
+    _box_home="$(config_get home)"
     if [[ -z "${_box_home}" ]]; then
         printf 'link: box HOME not recorded - user config not linked yet (run: just box assemble)\n'
         return 0
@@ -150,19 +149,19 @@ _report_links() {
             *)              _state="not linked yet; run: just box assemble" ;;
         esac
         printf 'link: %s/%s -> %s/%s (%s)\n' "${_box_home}" "${_rel}" "${HOME}" "${_rel}" "${_state}"
-    done < <(link_entries "${_config}")
+    done < <(link_entries)
 }
 
 # `home: <path> (<source>)` - the box HOME `just box assemble` recorded in
-# state file $1 (issue #198), or that none is recorded yet.
+# the state file (issue #198), or that none is recorded yet.
 _report_home() {
     local _home
-    _home="$(enter_config_get "$1" home)"
+    _home="$(config_get home)"
     if [[ -z "${_home}" ]]; then
         printf 'home: not recorded (run: just box assemble)\n'
         return 0
     fi
-    printf 'home: %s (%s)\n' "${_home}" "$(enter_config_get "$1" home.source)"
+    printf 'home: %s (%s)\n' "${_home}" "$(config_get home.source)"
 }
 
 # `distrobox: <path> (<state>)` - the readable answer to "will the managed

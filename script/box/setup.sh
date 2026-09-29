@@ -30,7 +30,7 @@
 # was a clean machine with /usr/bin/ghostty and no ~/.config/ghostty yet,
 # resolved to `none` with nothing in the log to say why.
 #
-# State file: $XDG_CONFIG_HOME/worktool/config (~/.config/worktool/config),
+# State file: lib/config.sh (it alone knows where the file is),
 # `<key>=<value>` plus `<key>.source=default|user` per key. A user choice
 # persists across runs until overridden; default keys are recomputed.
 # The file is shared (assemble records home=, the user adds link= lines):
@@ -109,7 +109,6 @@ OPT_DRY_RUN=0
 OPT_HELP=0
 
 # --- Resolved decisions (set by _resolve_all) --------------------------------
-CONFIG=""
 AUTO_ENTER="" TERMINAL="" TMUX="" BOX=""
 AUTO_ENTER_SRC="" TERMINAL_SRC="" TMUX_SRC="" BOX_SRC=""
 
@@ -119,13 +118,13 @@ DISTROBOX=""
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
                 [--tmux inside|host] [--box <name>] [--distrobox <path>]
                 [--dry-run]
 
 Choose how a new terminal enters the worktool dev box, store the choice in
-$XDG_CONFIG_HOME/worktool/config and write the terminal profile for it.
+{state-file} and write the terminal profile for it.
 Every decision is logged as `[INFO] <key>: <value> (default|user)`; read it
 back any time with `just box status`.
 
@@ -156,7 +155,7 @@ back any time with `just box status`.
 
 Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
-  $XDG_CONFIG_HOME/worktool/config   the state file (key=value + key.source)
+  {state-file}   the state file (key=value + key.source)
   $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
   ~/.tmux.conf                       managed block (terminal ghostty + tmux host only)
 
@@ -240,8 +239,8 @@ _parse_args() {
 # so a default-sourced line can be wrong too), and nothing is written.
 _config_check() {
     local _problem
-    _problem="$(enter_config_check "${CONFIG}")" && return 0
-    log_error "${CONFIG}: ${_problem}"
+    _problem="$(enter_config_check)" && return 0
+    config_log error "" ": ${_problem}"
     return 1
 }
 
@@ -254,8 +253,8 @@ _resolve() {
         printf '%s user\n' "${_opt}"
         return 0
     fi
-    _stored="$(enter_config_get "${CONFIG}" "${_key}")"
-    _stored_src="$(enter_config_get "${CONFIG}" "${_key}.source")"
+    _stored="$(config_get "${_key}")"
+    _stored_src="$(config_get "${_key}.source")"
     if [[ -n "${_stored}" && "${_stored_src}" == "user" ]]; then
         printf '%s user\n' "${_stored}"
         return 0
@@ -385,18 +384,18 @@ _block_remove() {
 # keys change and every other line stays byte-for-byte.
 _config_write() {
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
-        log_info "dry-run: would write ${CONFIG}"
+        config_log info "dry-run: would write "
         return 0
     fi
-    if ! config_set "${CONFIG}" \
+    if ! config_set \
         auto-enter "${AUTO_ENTER}" auto-enter.source "${AUTO_ENTER_SRC}" \
         terminal "${TERMINAL}" terminal.source "${TERMINAL_SRC}" \
         tmux "${TMUX}" tmux.source "${TMUX_SRC}" \
         box "${BOX}" box.source "${BOX_SRC}"; then
-        log_error "failed to write ${CONFIG}"
+        config_log error "failed to write "
         return 1
     fi
-    log_info "wrote: ${CONFIG}"
+    config_log info "wrote: "
 }
 
 # --- Apply -------------------------------------------------------------------
@@ -466,7 +465,6 @@ setup_run() {
         _usage
         return 0
     fi
-    CONFIG="$(enter_config_path)"
     _resolve_all || return 1
     _config_write || return 1
     if [[ "${AUTO_ENTER}" == "yes" ]]; then

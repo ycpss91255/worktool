@@ -300,6 +300,7 @@ _race() {
 
 @test "two concurrent config_set calls both land without flock (mkdir lock)" {
     _config_have_flock() { return 1; }
+    ! _config_have_flock || fail "the flock seam was not overridden"
     _bytes "${CONFIG}" '# shared\n'
     run _race home box
     assert_success
@@ -307,7 +308,6 @@ _race() {
 }
 
 @test "a stale mkdir lock whose PID is gone is broken; a live one is waited for, then refused" {
-    _config_have_flock() { return 1; }
     local _dead
     sh -c 'exit 0' &
     _dead=$!
@@ -315,6 +315,7 @@ _race() {
     _bytes "${CONFIG}" 'home=/old\n'
     mkdir "${CONFIG}.lock"
     printf '%s\n' "${_dead}" >"${CONFIG}.lock/pid"
+    _config_have_flock() { return 1; }
     run config_set home /new
     assert_success
     _bytes "${EXPECTED}" 'home=/new\n'

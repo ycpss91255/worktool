@@ -7,8 +7,8 @@
 #
 # Every path derives from HOME / XDG_CONFIG_HOME ONLY (tests point HOME at
 # a throwaway directory; the real home is never touched by a spec):
-#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config}
-#   enter_config_path      -> <config dir>/worktool/config   (the ONE state file)
+#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config} (lib/config.sh)
+#   (the ONE state file is lib/config.sh's; nothing here names it)
 #   enter_ghostty_config   -> <config dir>/ghostty/config
 #   enter_tmux_conf        -> $HOME/.tmux.conf
 #
@@ -46,12 +46,11 @@
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
 #   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
-# State file: `<key>=<value>` plus `<key>.source=default|user` per key.
+# State file (lib/config.sh owns it; read with config_get <key>):
+# `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
 #                                      `<key>.source`
-#   enter_config_get <file> <key>   -> prints the value (nothing when absent;
-#                                      first occurrence when repeated)
-#   enter_config_check <file>       -> 0 when EVERY LINE holding a known key
+#   enter_config_check              -> 0 when EVERY LINE holding a known key
 #                                      (repeats and empty values included)
 #                                      has a valid value or source (whatever
 #                                      the source says: the file is
@@ -84,8 +83,7 @@ ENTER_BLOCK_END='# END worktool managed block'
 enter_keys() { printf '%s\n' auto-enter terminal tmux box; }
 
 # --- Paths -------------------------------------------------------------------
-enter_config_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
-enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
+enter_config_dir() { config_xdg_dir; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
 enter_tmux_conf() { printf '%s/.tmux.conf\n' "${HOME}"; }
 
@@ -327,11 +325,6 @@ enter_value_ok() {
 
 # --- State file --------------------------------------------------------------
 
-# Print the value of key $2 in state file $1 (first match; nothing when the
-# file or the key is absent). Exact key match on the text before the first
-# `=`, so `box` never matches `box.source`. lib/config.sh reads it.
-enter_config_get() { config_get "$@"; }
-
 # 0 when $1 is a key the state file may hold: a decision key or its
 # `<key>.source` companion.
 enter_key_known() {
@@ -349,7 +342,7 @@ enter_key_known() {
 # and returns 1, so the caller can prefix the path and refuse the run
 # before writing. The file is read through lib/config.sh (config_each).
 enter_config_check() {
-    config_each "$1" _enter_check_entry
+    config_each _enter_check_entry
 }
 
 # One entry of the state file (config_each: <lineno> <key> <has_value>

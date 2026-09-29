@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lib/config.sh - the ONE reader/writer of the worktool state file
-# ($XDG_CONFIG_HOME/worktool/config, issue #199 rounds 3-4).
+# lib/config.sh - the ONE owner of the worktool state file (issue #199
+# rounds 3-5).
 #
 # The state file has several writers: `just box setup` (the four decisions
 # and their `.source`), `just box assemble` (home / home.source, issue
@@ -9,9 +9,15 @@
 # each one sets ITS keys in place with config_set, and every other byte -
 # comments, blank and whitespace-only lines, other writers' keys, unknown
 # keys, duplicates, CRLF line endings, trailing blank lines, a missing
-# final newline - stays where it was. Readers (the validators included)
-# go through config_get / config_get_all / config_each; nothing outside
-# this file opens the state file.
+# final newline - stays where it was.
+#
+# Ownership is structural: ONLY this file knows where the state file is
+# ($XDG_CONFIG_HOME/worktool/config, else ~/.config/worktool/config). Every
+# public function works on THE state file and takes no path; messages that
+# name it go through config_log / config_say / config_fill. Code elsewhere
+# cannot name the file, so it cannot open it (test/unit/config_spec.bats
+# checks that the location appears in no other file under lib/ script/
+# box/).
 #
 # Format: one `key=value` per line; the key is the text before the first
 # `=` (a line without `=` is a bare key with an empty value). Reads take
@@ -20,18 +26,20 @@
 # the known keys then refuse).
 #
 # Public API:
-#   config_get <file> <key>        -> the value of the first <key> line;
+#   config_xdg_dir                 -> ${XDG_CONFIG_HOME:-$HOME/.config}
+#                                     (the base other XDG files use too)
+#   config_exists                  -> 0 when the state file exists
+#   config_get <key>               -> the value of the first <key> line;
 #                                     nothing for an absent file or key
-#   config_get_all <file> <key>    -> the value of EVERY <key>= line, one
+#   config_get_all <key>           -> the value of EVERY <key>= line, one
 #                                     per line, in file order (keys that
 #                                     may repeat, e.g. link=)
-#   config_each <file> <fn> [args...]
-#                                  -> call `<fn> [args...] <lineno> <key>
+#   config_each <fn> [args...]     -> call `<fn> [args...] <lineno> <key>
 #                                     <has_value 0|1> <value>` for every
 #                                     line that is not a comment or blank,
 #                                     in file order; stop at and return the
 #                                     first non-zero status
-#   config_set <file> <key> <value> [<key> <value> ...]
+#   config_set <key> <value> [<key> <value> ...]
 #                                  -> set each key in place: its first line
 #                                     is replaced, later lines of the same
 #                                     key are dropped, a missing key is
@@ -43,20 +51,57 @@
 #                                     into a temp file and renamed (atomic),
 #                                     keeps the file's mode, serialised by
 #                                     a lock (flock on the file's
-#                                     directory; a `<file>.lock` directory
-#                                     where flock is missing). 1 on failure
-#                                     (an odd argument count writes nothing).
+#                                     directory; where flock is missing, a
+#                                     `<file>.lock` directory stamped with
+#                                     the holder's PID, broken when that
+#                                     PID is gone, waited for up to
+#                                     CONFIG_LOCK_TRIES x 50 ms, default
+#                                     200). 1 on failure (an odd argument
+#                                     count writes nothing).
+#   config_log <info|warn|error> <before> [<after>]
+#                                  -> log `<before><state file><after>`
+#                                     (lib/log.sh, which the caller sources)
+#   config_say <before> [<after>]  -> the same line on stdout
+#   config_fill                    -> copy stdin to stdout with every
+#                                     `{state-file}` replaced by the
+#                                     location as users read it
+#                                     ($XDG_CONFIG_HOME/worktool/config),
+#                                     for help texts
 #   config_write_atomic <file>     -> replace <file> with stdin atomically
 #                                     (temp file in the same directory, then
 #                                     rename), keeping an existing file's
-#                                     mode; used for every file worktool
-#                                     rewrites
+#                                     mode; for the OTHER files worktool
+#                                     rewrites (the terminal profiles)
 #
 # No file content ever passes through a command substitution here: `$(...)`
-# drops trailing newlines, which would change the bytes this file keeps.
+# drops trailing newlines, which would change the bytes this file keeps
+# (test/unit/config_mutation_spec.bats runs the specs against a copy that
+# does, and requires them to fail).
 #
 # This is a library: it defines functions and must be sourced, not
 # executed; it sets no shell options.
+
+# --- Location (the only place that knows it) ---------------------------------
+
+config_xdg_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
+
+_config_file() { printf '%s/worktool/config\n' "$(config_xdg_dir)"; }
+
+config_exists() { [[ -f "$(_config_file)" ]]; }
+
+config_log() {
+    local _level="$1"
+    "log_${_level}" "$2$(_config_file)${3:-}"
+}
+
+config_say() { printf '%s%s%s\n' "$1" "$(_config_file)" "${2:-}"; }
+
+config_fill() {
+    local _line _where="\$XDG_CONFIG_HOME/worktool/config"
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        printf '%s\n' "${_line//\{state-file\}/${_where}}"
+    done
+}
 
 # --- Reading -----------------------------------------------------------------
 
@@ -75,9 +120,7 @@ _config_lines() {
 }
 
 config_each() {
-    local _file="$1"
-    shift
-    _config_lines "${_file}" _config_each_line "$@"
+    _config_lines "$(_config_file)" _config_each_line "$@"
 }
 
 # $1.. the callback and its args, then <lineno> <line> (the last two).
@@ -94,7 +137,7 @@ _config_each_line() {
 
 config_get() {
     local _rc=0
-    _config_lines "$1" _config_get_line "$2" || _rc=$?
+    _config_lines "$(_config_file)" _config_get_line "$1" || _rc=$?
     # 10 is "found and printed": stop reading.
     [[ "${_rc}" -eq 0 || "${_rc}" -eq 10 ]]
 }
@@ -109,7 +152,7 @@ _config_get_line() {
 }
 
 config_get_all() {
-    _config_lines "$1" _config_get_all_line "$2"
+    _config_lines "$(_config_file)" _config_get_all_line "$1"
 }
 
 _config_get_all_line() {
@@ -147,11 +190,11 @@ _config_copy_mode() {
 }
 
 config_set() {
-    local _file="$1"
-    shift
+    local _file
     if (( $# == 0 || $# % 2 != 0 )); then
         return 1
     fi
+    _file="$(_config_file)"
     mkdir -p -- "$(dirname -- "${_file}")" || return 1
     _config_locked "${_file}" _config_replace "${_file}" _config_render "${_file}" "$@"
 }
@@ -165,9 +208,11 @@ _config_have_flock() {
 # interleave their read-modify-rename (the second one's rename would erase
 # the first one's keys). flock on the file's directory (the file itself is
 # replaced by the rename, so it cannot carry the lock); without flock, an
-# atomic mkdir of `<file>.lock`, retried for up to 10 s.
+# atomic mkdir of `<file>.lock` holding the owner's PID: a lock whose PID
+# no longer runs is stale (its writer died) and is broken; a live one is
+# waited for, CONFIG_LOCK_TRIES x 50 ms (default 200, i.e. 10 s).
 _config_locked() {
-    local _file="$1" _rc=0 _fd _i
+    local _file="$1" _rc=0 _fd
     shift
     if _config_have_flock; then
         exec {_fd}<"$(dirname -- "${_file}")" || return 1
@@ -179,14 +224,31 @@ _config_locked() {
         exec {_fd}<&-
         return "${_rc}"
     fi
-    for (( _i = 0; _i < 200; _i++ )); do
-        mkdir -- "${_file}.lock" 2>/dev/null && break
+    _config_mkdir_lock "${_file}.lock" || return 1
+    "$@" || _rc=$?
+    rm -rf -- "${_file}.lock"
+    return "${_rc}"
+}
+
+# Take the mkdir lock $1: create it and stamp it with this process's PID,
+# breaking a lock whose recorded PID is gone. 1 when a live holder keeps it
+# past the retry budget.
+_config_mkdir_lock() {
+    local _lock="$1" _i _pid
+    for (( _i = 0; _i < ${CONFIG_LOCK_TRIES:-200}; _i++ )); do
+        if mkdir -- "${_lock}" 2>/dev/null; then
+            printf '%s\n' "${BASHPID}" >"${_lock}/pid"
+            return 0
+        fi
+        _pid=""
+        [[ -f "${_lock}/pid" ]] && IFS= read -r _pid <"${_lock}/pid"
+        if [[ "${_pid}" =~ ^[0-9]+$ ]] && ! kill -0 "${_pid}" 2>/dev/null; then
+            rm -rf -- "${_lock}"
+            continue
+        fi
         sleep 0.05
     done
-    (( _i < 200 )) || return 1
-    "$@" || _rc=$?
-    rmdir -- "${_file}.lock"
-    return "${_rc}"
+    return 1
 }
 
 # Print file $1 with the key/value pairs $2.. set (see config_set), byte

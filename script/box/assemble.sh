@@ -36,7 +36,7 @@
 # `[INFO] box home: <path> (default|user)`, handed to distrobox as
 # DBX_CONTAINER_CUSTOM_HOME (distrobox-create's documented variable, so the
 # dry-run command line stays the same), and recorded in
-# ~/.config/worktool/config after a successful run. An EXISTING box whose
+# the state file (lib/config.sh) after a successful run. An EXISTING box whose
 # HOME differs is refused - exit 1, nothing changed, the remove-and-recreate
 # commands printed - because only a new box can take a new HOME; worktool
 # never removes a box by itself. When the container manager distrobox would
@@ -77,18 +77,18 @@ DEFAULT_MANIFEST="box/dev.ini"
 
 # --- Helpers -----------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
 
 Assemble the worktool dev box from its manifest with
 `distrobox assemble create --file <manifest>`. After a successful create,
 symlink the user config (~/.ssh ~/.gitconfig ~/.gnupg ~/.config/gh, plus
-`link=<path>` lines of ~/.config/worktool/config) into the box HOME (see
+`link=<path>` lines of {state-file}) into the box HOME (see
 --home); an existing entry is never overwritten.
 
   --file <manifest>  Box manifest to assemble (default: box/dev.ini).
   --home <path>      The box's own HOME, an absolute path (default: the
-                     choice recorded in $XDG_CONFIG_HOME/worktool/config,
+                     choice recorded in {state-file},
                      else ~/<box>-box, e.g. ~/dev-box). Fixed when the box
                      is created: an existing box with a different HOME is
                      refused (exit 1) - remove it and assemble again.
@@ -200,15 +200,15 @@ _check_home_option() {
 # same order as `just box setup`. A corrupt stored home refuses the run.
 _resolve_home() {
     local _problem
-    BOX_NAME="$1" CONFIG="$(enter_config_path)"
-    if ! _problem="$(home_config_check "${CONFIG}")"; then
-        log_error "${CONFIG}: ${_problem}"
+    BOX_NAME="$1"
+    if ! _problem="$(home_config_check)"; then
+        config_log error "" ": ${_problem}"
         return 1
     fi
     if [[ "${OPT_HOME_SET}" -eq 1 ]]; then
         BOX_HOME="${OPT_HOME}" BOX_HOME_SRC=user
-    elif [[ "$(enter_config_get "${CONFIG}" home.source)" == user ]]; then
-        BOX_HOME="$(home_normalize "$(enter_config_get "${CONFIG}" home)")"
+    elif [[ "$(config_get home.source)" == user ]]; then
+        BOX_HOME="$(home_normalize "$(config_get home)")"
         BOX_HOME_SRC=user
     else
         BOX_HOME="$(home_default "${BOX_NAME}")" BOX_HOME_SRC=default
@@ -290,11 +290,11 @@ _assemble_exec() {
     local _rc=0
     DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
-    if ! home_record "${CONFIG}" "${BOX_HOME}" "${BOX_HOME_SRC}"; then
-        log_error "failed to record the box home in ${CONFIG}"
+    if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then
+        config_log error "failed to record the box home in "
         return 1
     fi
-    log_info "recorded box home in ${CONFIG}"
+    config_log info "recorded box home in "
     _assemble_link
 }
 
@@ -309,7 +309,7 @@ _assemble_link() {
         return 0
     fi
     log_info "linking user config into the box HOME ${BOX_HOME}"
-    link_apply "${BOX_HOME}" "${CONFIG}"
+    link_apply "${BOX_HOME}"
 }
 
 # Guard: only run when executed directly, not when sourced (keeps the file
