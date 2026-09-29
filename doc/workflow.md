@@ -68,8 +68,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 
 | 參數 | 必要 | 說明 |
 |------|------|------|
-| `repo` | 是 | `owner/name`;gh 一律帶 `--repo` |
-| `repoDir` | 是 | 本機 checkout;prompt 與原始輸出放在 `<repoDir>/.worktree/.scratch/research-<issue>/`(gitignored) |
+| `repo` | 是 | `owner/name`(只允許英數、`.`、`_`、`-`);gh 一律帶 `--repo` |
+| `repoDir` | 是 | 本機 checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `<repoDir>/.worktree/.scratch/research-<issue>/`(gitignored) |
 | `issue` | 是 | 正整數;結論以**一則**留言貼到這個 issue |
 | `question` | 是 | 研究問題 |
 | `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
@@ -79,12 +79,20 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
-2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化);
+2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
    另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,原文存成 `codex.md`。
+   **兩路都必須有結果**:claude 沒回 claims(空值或空陣列)或 codex 無輸出(配額/認證)就回傳
+   `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
+   結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
-   agent 不自己寫 `[codex]` 行;codex 無輸出時改為 `[claude]` 註記)+ agy 原文放在 `<details>` 摺疊區塊。
-5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為 `recorded` / `agy-failed` / `record-failed`。
+   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
+5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
+   `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+
+shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
+metacharacter 只會是資料。`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本
+(`test/unit/fixture/workflow_run.mjs`,agent 以替身代打並真的跑每個 shell 步驟),驗證參數拒絕、quoting 與 fail-closed 流程。
 
 ## 對應的治理規則
 

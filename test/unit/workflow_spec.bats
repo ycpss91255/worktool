@@ -23,6 +23,11 @@
 #   - research-verify (issue #220: agy researches, claude and codex verify)
 #     keeps its four phases, validates its args, never substitutes another
 #     model's answer when agy fails, and never writes a [codex] line itself.
+#     Unlike the other two templates it is also EXECUTED: the test image
+#     carries node, and test/unit/fixture/workflow_run.mjs runs the template
+#     with stand-in agents, so arg rejection, shell quoting of repoDir /
+#     repo (every shell step is really run against a hostile path) and the
+#     fail-closed Verify / Synthesize / Record flow are proven, not grepped.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
 
@@ -194,6 +199,28 @@ _meta_skeleton() {
     assert_output "0"
 }
 
+# Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
+# args $1 and agent replies $2; $3 = exec plays each agent's shell steps.
+_rv_run() {
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${RESEARCH}" "$1" "$2" ${3:+"$3"}
+}
+
+# Agent replies of a run where every step succeeds.
+_rv_ok_replies() {
+    cat <<'JSON'
+{"agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
+ "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
+ "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
+ "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
+ "record:": {"url": "https://example.invalid/c/1"}}
+JSON
+}
+
+# $1 with the reply of label prefix $2 replaced by JSON $3.
+_rv_with() {
+    jq -c --arg k "$2" --argjson v "$3" '.[$k] = $v' <<<"$1"
+}
+
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
     [[ -f "${RESEARCH}" ]]
     run head -n1 "${RESEARCH}"
@@ -228,6 +255,22 @@ _meta_skeleton() {
     assert_output "1"
     run grep -c "!Array.isArray(A.sources)" "${RESEARCH}"
     assert_output "1"
+}
+
+@test "research-verify (node): rejects a repo that is not owner/name and a repoDir that is not a safe absolute path" {
+    local bad
+    for bad in '"o/r; touch x"' '"o r/x"' '"o/r/x"' '"-o/r"' '42' '"o/r\n"'; do
+        run _rv_run "{\"repo\":${bad},\"repoDir\":\"/w\",\"issue\":7,\"question\":\"q\"}" '{}'
+        assert_success
+        run jq -r '.error' <<<"${output}"
+        assert_output --partial "research-verify: args.repo"
+    done
+    for bad in '"rel/dir"' '"/w\nx"' '"/w\u0060x"' '123'; do
+        run _rv_run "{\"repo\":\"o/r\",\"repoDir\":${bad},\"issue\":7,\"question\":\"q\"}" '{}'
+        assert_success
+        run jq -r '.error' <<<"${output}"
+        assert_output --partial "research-verify: args.repoDir"
+    done
 }
 
 @test "research-verify runs agy headless with a hard timeout and retries once" {
@@ -271,13 +314,11 @@ _meta_skeleton() {
     assert_output "1"
 }
 
-@test "research-verify never writes a [codex] line itself: codex text is copied from its file, no-output is a [claude] note" {
+@test "research-verify never writes a [codex] line itself: codex text is copied from its file by the shell" {
     run grep -c 'Never write a "\[codex\]" line yourself' "${RESEARCH}"
     assert [ "${output}" -ge 2 ]
     run grep -c 'cat codex.md' "${RESEARCH}"
     assert [ "${output}" -ge 1 ]
-    run grep -c 'codex 無輸出(配額/認證)' "${RESEARCH}"
-    assert_output "1"
 }
 
 @test "research-verify synthesizes a structured conclusion and records ONE issue comment via --body-file" {
@@ -287,7 +328,7 @@ _meta_skeleton() {
         run grep -c "${k}: {" "${RESEARCH}"
         assert_output "1"
     done
-    run grep -cF "gh issue comment \${A.issue} --repo \${REPO} --body-file" "${RESEARCH}"
+    run grep -c 'gh issue comment ' "${RESEARCH}"
     assert_output "1"
     run grep -c '<details><summary>agy 原文</summary>' "${RESEARCH}"
     assert_output "1"
@@ -302,6 +343,83 @@ _meta_skeleton() {
     assert_output "1"
     run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push|--auto' "${RESEARCH}"
     assert_failure
+}
+
+@test "research-verify (node): a repoDir with spaces and shell metacharacters is quoted, never executed, and every step runs" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir scratch
+    mkdir -p "${stub}"
+    printf '#!/bin/sh\necho "1. agy-claim [官方文件 https://x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "banner\\ncodex\\ncodex-verdict-line\\ntokens used\\n5\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho https://example.invalid/c/1\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
+    chmod +x "${stub}"/*
+    dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
+    scratch="${dir}/.worktree/.scratch/research-7"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    local json="${output}"
+    run jq -r '.error, .result.status' <<<"${json}"
+    assert_output "$(printf '%s\n' null recorded)"
+    # mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
+    run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
+    assert_output "0 0 0 0 0 0"
+    [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
+    [[ -s "${scratch}/agy.md" ]]
+    run cat "${scratch}/codex.md"
+    assert_output "codex-verdict-line"
+    run grep -c '^\[codex\] 逐條驗證(原文)$' "${scratch}/body.md"
+    assert_output "1"
+    run cat "${BATS_TEST_TMPDIR}/gh.args"
+    assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file "${scratch}/body.md")"
+}
+
+@test "research-verify (node): the claude verifier's schema demands at least one claim" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("claude-verify:")) | .schema.properties.claims.minItems' <<<"${output}"
+    assert_output "1"
+}
+
+@test "research-verify (node): an agy failure stops before Verify with agy-failed" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"failed","attempts":2,"detail":"d"}')"
+    assert_success
+    run jq -r '.result.status, (.calls | length)' <<<"${output}"
+    assert_output "$(printf '%s\n' agy-failed 1)"
+}
+
+@test "research-verify (node): a missing or empty verification fails closed, nothing is synthesized or posted" {
+    local ok key val key_val
+    ok="$(_rv_ok_replies)"
+    for key_val in 'claude-verify:=null' 'claude-verify:={"claims":[]}' 'claude-verify:={}' \
+                   'codex-verify:=null' 'codex-verify:={"status":"no-output","detail":"quota"}'; do
+        key="${key_val%%=*}"
+        val="${key_val#*=}"
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" "${key}" "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("synthesize:") or startswith("record:"))] | length)' <<<"${output}"
+        assert_output "$(printf '%s\n' verify-failed '' 0)"
+    done
+}
+
+@test "research-verify (node): a failed or malformed synthesis fails closed, nothing is posted" {
+    local ok val
+    ok="$(_rv_ok_replies)"
+    for val in 'null' '{"verified":[],"refuted":[],"needsExperiment":[],"parameters":[]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"","parameters":[]}' \
+               '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'synthesize:' "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("record:"))] | length)' <<<"${output}"
+        assert_output "$(printf '%s\n' synthesize-failed '' 0)"
+    done
+}
+
+@test "research-verify (node): recorded only with a comment URL, record-failed otherwise" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    run jq -r '.result.status, .result.comment' <<<"${output}"
+    assert_output "$(printf '%s\n' recorded https://example.invalid/c/1)"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":""}')"
+    run jq -r '.result.status' <<<"${output}"
+    assert_output "record-failed"
 }
 
 @test "doc/workflow.md documents research-verify and its args" {
