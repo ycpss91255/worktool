@@ -136,6 +136,17 @@ _section() {
     assert_output --regexp '│   ├── contract\.md '
 }
 
+@test "doc/structure.md describes the invariant index as naming ADR issues, not linking ADRs" {
+    # The index names the issue that will write each ADR (#202-#211) until
+    # those ADRs merge; the tree entries must not say it links ADR files.
+    run grep -E '(contract\.md|contract_spec\.bats) ' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    [ "${#lines[@]}" -eq 2 ]
+    refute_output --regexp 'ADR 索引|連到指定 ADR'
+    assert_line --regexp '├── contract\.md .*#202-#211'
+    assert_line --regexp '├── contract_spec\.bats .*#202-#211'
+}
+
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
