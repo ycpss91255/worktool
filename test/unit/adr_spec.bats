@@ -118,3 +118,22 @@ _adr_0013_section() {
     # The section cites at least one case, so the loop above checked something.
     assert [ "${cited}" -gt 0 ]
 }
+
+@test "every repo path ADR 0013 names in backticks exists (the ADR is self-contained)" {
+    # codex round 1 on PR #252: the ADR cited doc/contract.md, which is not
+    # on main yet (#201 builds it). An ADR may only point at files that
+    # exist when it lands; a path that is not there yet is a dangling link.
+    local path named=0 bt=$'\x60'
+    while IFS= read -r path; do
+        named=$((named + 1))
+        assert [ -e "${REPO_ROOT}/${path}" ]
+    done < <(grep -oE "${bt}(doc|test|script|lib)/[^${bt} ]+${bt}" "$(_adr_0013)" | tr -d "${bt}" | sort -u)
+    assert [ "${named}" -gt 0 ]
+}
+
+@test "ADR 0013 states its scope inside the ADR instead of deferring to another document" {
+    run _adr_0013_section 性質
+    assert_success
+    assert_output --partial "適用範圍"
+    refute_output --partial "doc/contract.md"
+}
