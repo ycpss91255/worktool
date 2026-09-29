@@ -92,7 +92,7 @@ worktool 不會在沒有說出來的情況下替使用者做決定，也不會�
 
 ### 性質 3：退出碼是對外契約
 
-各指令的退出碼寫在 `doc/structure.md` 與 `doc/manifest.md`；腳本的 `--help` 裡只有 `bench.sh` 列出退出碼。以下案例把各個碼釘住：
+退出碼目前只記載了部分指令與部分路徑，而且分散在三份文件：`doc/manifest.md`（`assemble`、`bench`）、`doc/enter.md`（`setup`、`status`）、`doc/structure.md`（`just` 轉發與未知選項 exit 2）；腳本的 `--help` 裡只有 `bench.sh` 列出退出碼。以下案例只把下面列出的碼釘住，不代表每個指令的每條路徑都有文件或測試：
 
 - `test/unit/bench_spec.bats`「--max-ms above the shell median exits 0」（0）
 - `test/unit/bench_spec.bats`「a distrobox enter that exits non-zero aborts the measurement: exit 1, no metric line」（1）
@@ -106,4 +106,5 @@ worktool 不會在沒有說出來的情況下替使用者做決定，也不會�
 
 - **「每個」自動決策都印 log：** 上面的案例只檢查了被列出的決策。沒有全 repo 的檢查能發現一個新加的、沒印 log 的自動決策。
 - **「每個」失敗都印下一步：** 沒有通用的檢查；上面「只檢查了原因」的三類失敗（延遲超過 `--max-ms`、狀態檔的值損壞、manifest 缺欄位）目前只說原因、沒說下一步。
-- **退出碼契約的單一來源：** 退出碼分散記載在 `doc/structure.md`、`doc/manifest.md` 與 `bench.sh --help`（其他腳本的 `--help` 沒有列出），沒有一份彙整的表，也沒有檢查文件與實作一致的測試。對外契約的彙整留給 `doc/contract.md`（#200）；該檔尚未建立，建立後由它的不變量索引連回本 ADR。
+- **退出碼契約的單一來源：** 退出碼只記載了部分，分散在 `doc/structure.md`、`doc/manifest.md`、`doc/enter.md` 與 `bench.sh --help`（其他腳本的 `--help` 沒有列出），沒有一份彙整的表，也沒有檢查文件與實作一致的測試。對外契約的彙整留給 `doc/contract.md`（#200）。
+- **不變量索引回填：** #205 要求在 `doc/contract.md` 的不變量索引回填本 ADR 的連結；該檔尚未建立，所以本 ADR 落地時不關閉 #205，#205 保持開啟，直到建立 `doc/contract.md` 並回填連結。

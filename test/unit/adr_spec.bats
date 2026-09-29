@@ -19,6 +19,11 @@
 #   name a spec that exists and a case that spec defines, so the list cannot
 #   claim a guard that is not there (or drift when a case is renamed). The
 #   ADR also links the mechanism ADRs 0001 (errexit) and 0003 (exit 3).
+#   It must not over-claim where exit codes are documented (they are split
+#   over doc/structure.md, doc/manifest.md and doc/enter.md and cover only
+#   some commands), and since the doc/contract.md index backfill #205 asks
+#   for is not in this change, it must say #205 stays open (codex round 1
+#   on PR #254).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -109,6 +114,37 @@ _adr_0007_citations() {
 @test "ADR 0007 marks the parts nothing checks yet as 待補" {
     run grep -c "待補" "${ADR_0007}"
     assert_success
+}
+
+# Subsection "### $1" of ADR 0007, up to the next "### " heading.
+_adr_0007_section() {
+    sed -n "/^### $1\$/,/^### /p" "${ADR_0007}" | sed '1d;/^### /d'
+}
+
+@test "ADR 0007 names every doc holding exit codes, in both 性質 3 and 待補, without claiming all are written down" {
+    local _sec _doc
+    for _sec in "性質 3：退出碼是對外契約" "待補"; do
+        run _adr_0007_section "${_sec}"
+        assert_success
+        refute_output ""
+        for _doc in doc/structure.md doc/manifest.md doc/enter.md; do
+            assert_output --partial "${_doc}"
+        done
+    done
+    # Only some commands and exit paths are documented; the ADR must not
+    # read as if every command's codes were.
+    run _adr_0007_section "性質 3：退出碼是對外契約"
+    refute_output --partial "各指令的退出碼寫在"
+    assert_output --partial "只記載了部分"
+}
+
+@test "ADR 0007 keeps #205 open until doc/contract.md backfills the invariant index" {
+    run _adr_0007_section "待補"
+    assert_success
+    run grep -F "doc/contract.md" <<<"${output}"
+    assert_success
+    assert_output --partial "#205"
+    assert_output --partial "不關閉"
 }
 
 @test "this spec is a required unit spec of test.sh" {
