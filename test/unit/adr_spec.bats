@@ -62,3 +62,82 @@ _decision_item() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+# --- ADR 0011: invariant 8 (minimal host dependencies), issue #209 ----------
+#
+# The ADR lists the specs that guard the invariant today. Each guard line
+# names a spec file in backticks and one case in 「」; the file must exist and
+# hold a @test with exactly that name, so the ADR cannot claim a guard that
+# is not there (or survive a rename of it). Gaps are marked 待補.
+
+_adr_0011() {
+    printf '%s\n' "${REPO_ROOT}/doc/adr/0011-invariant-minimal-host-deps.md"
+}
+
+# The body of section "## $1" of ADR 0011 (up to the next "## ").
+_adr_0011_section() {
+    awk -v h="## $1" '$0 == h { on = 1; next } /^## / { on = 0 } on' "$(_adr_0011)"
+}
+
+# Check one guard line ($1): print "<file>: <case>" for a case that is
+# missing, return 1 on a malformed line.
+_adr_0011_check_guard() {
+    local _bt=$'\x60' _file _case
+    _file="$(sed -n "s/^[^${_bt}]*${_bt}\(test\/[^${_bt}]*\.bats\)${_bt}.*/\1/p" <<<"$1")"
+    # Plain substring cuts, not a bracket expression: under the C locale a
+    # [^「] class would work on single bytes of the multibyte characters.
+    [[ "$1" == *「*」* ]] || return 1
+    _case="${1#*「}"
+    _case="${_case%%」*}"
+    [[ -n "${_file}" && -n "${_case}" ]] || return 1
+    if ! grep -qxF "@test \"${_case}\" {" "${REPO_ROOT}/${_file}" 2>/dev/null; then
+        printf '%s: %s\n' "${_file}" "${_case}"
+    fi
+}
+
+@test "ADR 0011 exists with the invariant title and the four sections in order" {
+    run head -n 1 "$(_adr_0011)"
+    assert_success
+    assert_output "# 0011 不變量 8：host 依賴最小，除驅動與 GUI app 外，只需 docker 與 just"
+    run grep -E '^## ' "$(_adr_0011)"
+    assert_success
+    assert_line --index 0 "## 一句話"
+    assert_line --index 1 "## 性質"
+    assert_line --index 2 "## 為什麼固定"
+    assert_line --index 3 "## 目前由哪些機制或測試守住"
+    assert_equal "${#lines[@]}" 4
+}
+
+@test "ADR 0011 names its discussion issues (#209, parent #200)" {
+    run grep -E '^- 討論：' "$(_adr_0011)"
+    assert_success
+    assert_output --partial "#200"
+    assert_output --partial "#209"
+}
+
+@test "every spec case ADR 0011 cites as a guard exists under that exact name" {
+    local _bt=$'\x60' _line _missing="" _n=0
+    while IFS= read -r _line; do
+        _n=$((_n + 1))
+        run _adr_0011_check_guard "${_line}"
+        assert_success
+        _missing+="${output}"
+    done < <(_adr_0011_section "目前由哪些機制或測試守住" | grep -E "${_bt}test/[^${_bt}]*\.bats${_bt}")
+    assert [ "${_n}" -ge 3 ]
+    assert_equal "${_missing}" ""
+}
+
+@test "ADR 0011 marks the unguarded parts as 待補 instead of claiming them" {
+    run _adr_0011_section "目前由哪些機制或測試守住"
+    assert_success
+    assert_output --partial "待補"
+}
+
+@test "ADR 0011 does not hide that box actions still need distrobox on the host" {
+    # assemble.sh / bench.sh exit 127 without distrobox on PATH today; the
+    # guard section must say so rather than imply docker + just suffice.
+    run _adr_0011_section "目前由哪些機制或測試守住"
+    assert_success
+    assert_output --partial "distrobox"
+    assert_output --partial "127"
+}
