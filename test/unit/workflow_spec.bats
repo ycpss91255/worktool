@@ -212,7 +212,8 @@ _rv_ok_replies() {
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
  "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
- "record:": {"url": "https://example.invalid/c/1"}}
+ "record:": {"url": "https://example.invalid/c/1"},
+ "repo-check:": {"extra": []}}
 JSON
 }
 
@@ -354,14 +355,18 @@ _rv_with() {
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
     scratch="${dir}/.worktree/.scratch/research-7"
+    git init -q "${dir}"
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
     local json="${output}"
     run jq -r '.error, .result.status' <<<"${json}"
     assert_output "$(printf '%s\n' null recorded)"
-    # mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
+    # mkdir, repo status before, agy, codex run, codex extraction, body build,
+    # gh, repo status after: every one ran and passed
     run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
-    assert_output "0 0 0 0 0 0"
+    assert_output "0 0 0 0 0 0 0 0"
+    [[ -f "${scratch}/status-before.txt" ]]
+    [[ -f "${scratch}/repo-extra.txt" && ! -s "${scratch}/repo-extra.txt" ]]
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
     [[ -s "${scratch}/agy.md" ]]
     run cat "${scratch}/codex.md"
@@ -422,11 +427,75 @@ _rv_with() {
     assert_output "record-failed"
 }
 
+@test "research-verify: every phase prompt confines intermediate files to the run's scratch dir (#243)" {
+    run grep -c '^const SCRATCH_ONLY = ' "${RESEARCH}"
+    assert_output "1"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    run jq -r '[.calls[].label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
+    assert_output "agy: claude-verify: codex-verify: synthesize: record: repo-check:"
+    run jq -r '[.calls[] | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/.worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
+    assert_output "0"
+    run jq -r '[.calls[] | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
+    assert_output "0"
+}
+
+@test "research-verify: repo status is captured before Research and compared after Record (#243)" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    run jq -r '.calls[0].prompt' <<<"${json}"
+    assert_output --partial "git -C '/w' status --porcelain > status-before.txt"
+    run jq -r '.calls[-1].label, .calls[-1].prompt' <<<"${json}"
+    assert_output --partial "repo-check:#7"
+    assert_output --partial "git -C '/w' status --porcelain > status-after.txt"
+    run grep -c "schema: REPO_CHECK_SCHEMA" "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify (node): extra repo paths after Record fail the run with repo-dirty and list the paths (#243)" {
+    local ok
+    ok="$(_rv_ok_replies)"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'repo-check:' '{"extra":["?? doc/research/x.md"," M README.md"]}')"
+    assert_success
+    run jq -r '.result.status, .result.comment, .result.detail' <<<"${output}"
+    assert_output --partial "repo-dirty"
+    assert_output --partial "https://example.invalid/c/1"
+    assert_output --partial "?? doc/research/x.md"
+    assert_output --partial " M README.md"
+    for val in 'null' '{}' '{"extra":"x"}'; do
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'repo-check:' "${val}")"
+        run jq -r '.result.status' <<<"${output}"
+        assert_output "repo-dirty"
+    done
+}
+
+@test "research-verify (node): the repo-check shell step really lists a path a phase left in repoDir (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: leaves a note in the checkout (scratch is repoDir/.worktree/.scratch/research-7)
+    printf '#!/bin/sh\ntouch ../../../stray-note.md\necho "1. claim [x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ -e "${dir}/stray-note.md" ]]
+    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    assert_output "?? stray-note.md"
+}
+
 @test "doc/workflow.md documents research-verify and its args" {
     run grep -c '^## research-verify' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"
     run grep -c 'repo, repoDir, issue, question, context?, sources?, timeoutMin?' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"
+    run grep -c 'repo-dirty' "${REPO_ROOT}/doc/workflow.md"
+    assert [ "${output}" -ge 1 ]
+    run grep -c 'git -C <repoDir> status --porcelain' "${REPO_ROOT}/doc/workflow.md"
+    assert [ "${output}" -ge 1 ]
 }
 
 @test "this spec is a required unit spec of test.sh" {

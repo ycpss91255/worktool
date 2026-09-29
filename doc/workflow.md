@@ -87,8 +87,16 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
    agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
+   留言之後由 `repo-check` agent 再跑一次 `git -C <repoDir> status --porcelain`,與 Research 第一步(任何寫入之前)
+   存下的 `status-before.txt` 比對;多出任何一行(或 agent 沒回結果)就回傳 `status: 'repo-dirty'`,
+   `detail` 列出多出的路徑,且不替你清掉(留給維護者判斷)。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
-   `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+   `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed` / `repo-dirty`;
+   只有 `recorded` 代表留言已發出且 repo 未被動過(`repo-dirty` 時留言可能已發出,`comment` 仍帶網址)。
+
+不寫進 repo(#243):`repoDir` 是別的 session 正在用的工作目錄。每個階段的 prompt 都附同一條規定:中間檔
+(筆記、草稿、log)只能寫在 `<repoDir>/.worktree/.scratch/research-<issue>/`(或系統暫存),不得新增、修改、
+刪除 `repoDir` 底下其他任何追蹤或未追蹤路徑,結論寫在回覆裡而不是檔案裡。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
 metacharacter 只會是資料。`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本
