@@ -376,3 +376,25 @@ setup() {
     run hook_word_has_expansion "${w[2]}"
     assert_success
 }
+
+@test "a heredoc delimiter may be any shell word; the terminator is the exact line" {
+    run hook_subcommands "$(printf "cat <<'END-X'\nbats a\nEND-X\nls")"
+    assert_line --index 1 "ls"
+    refute_output --partial "bats"
+    run hook_subcommands "$(printf 'cat <<"a.b"\nbats a\na.b\nls')"
+    assert_line --index 1 "ls"
+    refute_output --partial "bats"
+    run hook_subcommands "$(printf 'cat <<EOF\n EOF\nbats a\nEOF\nls')"
+    assert_output "$(printf '%s\n' 'cat <<EOF' 'ls')"
+}
+
+@test "fish with valued options and busybox sh read their heredoc / -c script" {
+    run hook_subcommands "$(printf "fish -C true <<'EOF'\nbats t\nEOF")"
+    assert_output "bats t"
+    run hook_subcommands "$(printf "fish --init-command true <<'EOF'\nbats t\nEOF")"
+    assert_output "bats t"
+    run hook_subcommands "$(printf "busybox sh <<'EOF'\nbats t\nEOF")"
+    assert_output "bats t"
+    run hook_subcommands "busybox sh -c 'bats t'"
+    assert_output "bats t"
+}

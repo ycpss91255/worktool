@@ -54,6 +54,14 @@
 #        #187 still refuses an unapproved merge).
 #   4. --help / -h (as a flag of its own, not an option's value) only
 #      prints usage: such a launch passes without calling gh.
+#   5. raw-text tripwire (codex round 5), the backstop of the closed rule:
+#      a relevant gh call pattern (gh [root flags] pr merge|comment|review|
+#      create|new|close|reopen, issue comment|create|new|close|reopen, gh
+#      api) or the approval phrase found in the RAW command text (heredoc
+#      bodies and here-strings included) more often than in the launches
+#      the structured pass checked blocks: some occurrence escaped it. The
+#      accepted cost: text that merely mentions such a call or the phrase
+#      (a commit message) is blocked too; pass it with -F / --file.
 # The approval rule and phrase live only in lib/approval.sh; this hook
 # fetches data and never restates the rule. Only real launches count
 # (lib/subcommand.sh; a leading timeout(1) with its options, valued ones
@@ -96,6 +104,9 @@ _REST=()
 _REL=0
 _VALUE_OPTS=''
 _ATTACH=''
+# What the structured pass checked and let through (the tripwire compares).
+_CHECKED=0
+_CHECKED_TEXT=''
 
 # Flags taking a value, per command, so positionals and option values can
 # be told apart; _ATTACH (per command, in _classify) lists the short flags
@@ -661,14 +672,56 @@ _check_launch() {
     _normalize
     _check_closed
     # --help only prints usage: it never merges or writes.
-    _asks_help && return 0
-    case "$(_sub)" in
-        "pr merge") _check_pr_merge ;;
-        "pr close"|"pr reopen"|"issue close"|"issue reopen") _check_close_comment ;;
-        api) _check_api ;;
-        *) _check_gh_body ;;
-    esac
+    if ! _asks_help; then
+        case "$(_sub)" in
+            "pr merge") _check_pr_merge ;;
+            "pr close"|"pr reopen"|"issue close"|"issue reopen") _check_close_comment ;;
+            api) _check_api ;;
+            *) _check_gh_body ;;
+        esac
+    fi
+    _mark_checked
     return 0
+}
+
+# _mark_checked - record a relevant launch the structured pass let through.
+_mark_checked() {
+    local IFS=' '
+    _CHECKED=$((_CHECKED + 1))
+    _CHECKED_TEXT+="${_W[*]}"$'\n'
+}
+
+# _count <needle> <text> - how many times <needle> occurs in <text>.
+_count() {
+    local _t="$2" _n=0
+    while [[ "${_t}" == *"$1"* ]]; do
+        _t="${_t#*"$1"}"
+        _n=$((_n + 1))
+    done
+    printf '%s' "${_n}"
+}
+
+# _tripwire <command> - the backstop of the closed rule, on the RAW command
+# text (heredoc bodies and here-strings included, before any parsing): a
+# relevant gh call (gh [root flags] pr merge|comment|review|create|new|
+# close|reopen, gh issue comment|create|new|close|reopen, gh api) or the
+# approval phrase that occurs more often than in the launches the
+# structured pass checked means some of them escaped it (a parser gap, an
+# unknown interpreter, plain text): block. Plain text that merely mentions
+# such a call (a commit message, an echo) is blocked too.
+_tripwire() {
+    local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase
+    local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+    local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
+    _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
+    _phrase="$(approval_phrase)"
+    if [[ "${_raw}" -le "${_CHECKED}" ]] \
+        && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]]; then
+        return 0
+    fi
+    hook_block "cannot verify this gh call statically: the command text holds a merge / comment gh call or the approval phrase that the hook could not check as a literal gh launch (fail closed)." \
+        "Run the gh command on its own with literal arguments; put long text in a file and use --body-file <file>." \
+        "Plain text that merely mentions such a gh call or the phrase (a commit message, an echo) is blocked too: use -F / --file (git commit -F <file>)."
 }
 
 main() {
@@ -680,6 +733,7 @@ main() {
     while IFS= read -r _sub; do
         _check_launch "${_sub}"
     done < <(hook_subcommands_raw "${_cmd}")
+    _tripwire "${_cmd}"
     hook_allow
 }
 
