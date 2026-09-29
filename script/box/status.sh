@@ -5,7 +5,8 @@
 # (auto-enter, terminal, box), each with its source (default | user),
 # whether the worktool managed block is present in the ghostty config, and
 # - since issue #175 - whether the distrobox that block names can still be
-# run. Read-only: it never writes. Since issue #179 there is no tmux line:
+# run, and - since issue #179 - whether distrobox.conf holds the block that
+# keeps a host tmux pane's TMUX out of the box. Read-only: it never writes. Since issue #179 there is no tmux line:
 # worktool does not manage tmux, and never looks at ~/.tmux.conf.
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
@@ -52,8 +53,9 @@ Usage: status.sh
 
 Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
 written by `just box setup`), the source of each (default | user), whether
-the worktool managed block is present in the ghostty config, and whether
-the distrobox that block names can still be run.
+the worktool managed block is present in the ghostty config and in
+distrobox.conf (the block that keeps a host tmux pane's TMUX out of the
+box), and whether the distrobox the ghostty block names can still be run.
 Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
@@ -109,6 +111,7 @@ _report() {
         _report_key "${_key}" "${_config}"
     done < <(enter_keys)
     _report_block ghostty "$(enter_ghostty_config)"
+    _report_block distrobox.conf "$(enter_distrobox_conf)"
     _report_distrobox
 }
 

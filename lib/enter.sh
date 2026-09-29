@@ -10,12 +10,20 @@
 #   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config}
 #   enter_config_path      -> <config dir>/worktool/config   (the ONE state file)
 #   enter_ghostty_config   -> <config dir>/ghostty/config
+#   enter_distrobox_conf   -> <config dir>/distrobox/distrobox.conf
 #
 # There is no tmux decision and no ~/.tmux.conf path (issue #179): the
 # terminal enters the box and gets its login shell; tmux is something the
 # user starts inside the box, where it gets the box's own server
 # (TMUX_TMPDIR, box/dev.ini). worktool never reads or writes the host's
 # tmux config.
+#
+# The box's tmux environment (issue #179, codex round 4 on PR #232):
+#   enter_distrobox_conf_body <box> -> the ONE line setup.sh keeps in the
+#                             managed block of distrobox's own user config,
+#                             so no `distrobox enter <box>` ever hands the
+#                             box the caller's TMUX / TMUX_PANE (see the
+#                             function comment).
 #
 # Decisions (the keys of the state file) and their defaults:
 #   auto-enter  yes|no        default yes
@@ -84,6 +92,10 @@ enter_keys() { printf '%s\n' auto-enter terminal box; }
 enter_config_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
 enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
+# distrobox reads this file itself, on every run, from the same
+# ${XDG_CONFIG_HOME:-$HOME/.config} (pinned distrobox 1.8.2.5, the
+# config_files list of distrobox-enter).
+enter_distrobox_conf() { printf '%s/distrobox/distrobox.conf\n' "$(enter_config_dir)"; }
 
 # --- Executables the decisions depend on (issue #175) ------------------------
 
@@ -241,6 +253,46 @@ enter_body_distrobox() {
     _prog="$(enter_first_word "${_rest}")"
     [[ "${_prog##*/}" == "distrobox" ]] || return 0
     printf '%s\n' "${_prog}"
+}
+
+# --- The box's tmux environment (issue #179) ---------------------------------
+
+# The managed body of distrobox.conf for box $1: ONE line of POSIX sh that
+# drops TMUX and TMUX_PANE when the distrobox run it is sourced into
+# targets box $1.
+#
+# WHY THE ENVIRONMENT, NOT THE BINARY (codex rounds 1-4 on PR #232): the
+# leak is not a tmux binary. `distrobox enter` copies the caller's whole
+# environment into the box (distrobox-enter's generate_enter_command turns
+# `printenv` into one `--env` per variable; only a fixed list - HOME, PATH,
+# PWD, ... - is skipped, and TMUX is not on it). Entered from a HOST tmux
+# pane, the box therefore inherits TMUX, which names the host server's
+# socket on the /tmp distrobox shares with the host, and tmux prefers the
+# socket in $TMUX over TMUX_TMPDIR. Any wrapper around the tmux binary is
+# bypassed by running the real binary (`distrobox enter dev -- <real
+# tmux>`, where no box shell ever runs). The only place every entry passes
+# through is distrobox-enter itself, before it builds the `exec` request.
+#
+# WHY distrobox.conf: distrobox-enter SOURCES its config files as shell,
+# before it reads its own arguments and before that `printenv`; there is
+# no skip-list option and no `--unset` flag (an `--additional-flags "--env
+# TMUX="` would still pass an empty TMUX, and a managed terminal command
+# prefixed with `env -u TMUX` covers that one command only). An `unset`
+# there is simply never copied. Sourced, the file sees distrobox-enter's
+# own arguments as "$@", so the line applies to box $1 only: it scans the
+# arguments up to the command separator (`--`, `-e`, `--exec`) for the box
+# name - the positional `<box>` and `--name <box>` / `-n <box>` alike - and
+# honours DBX_CONTAINER_NAME. Other boxes keep the upstream behaviour.
+#
+# $1 is a validated box name (enter_value_ok), written single-quoted.
+enter_distrobox_conf_body() {
+    local _box _line
+    _box="$(enter_sh_squote "$1")"
+    _line="$(cat <<'EOF'
+for _worktool_a in "$@"; do case "${_worktool_a}" in --|-e|--exec) break ;; @BOX@) unset TMUX TMUX_PANE; break ;; esac; done; [ "${DBX_CONTAINER_NAME:-}" != @BOX@ ] || unset TMUX TMUX_PANE; unset _worktool_a
+EOF
+)"
+    printf '%s\n' "${_line//@BOX@/${_box}}"
 }
 
 # --- Defaults and choices ----------------------------------------------------

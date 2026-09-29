@@ -59,6 +59,17 @@
 # `unknown field`). Such a path is REFUSED - whichever source it came from,
 # and before anything at all is written (issue #175 round 2).
 #
+# The box's tmux environment (issue #179, codex round 4 on PR #232): on
+# EVERY run, whatever the auto-enter and terminal decisions, one managed
+# block goes into distrobox's own user config:
+#     <config dir>/distrobox/distrobox.conf  (enter_distrobox_conf_body <box>)
+# distrobox-enter sources that file before it copies the caller's
+# environment into the box, and the line drops TMUX / TMUX_PANE when the
+# run targets <box>: a `distrobox enter <box>` from a HOST tmux pane - the
+# terminal's managed command, a shell, `-- <cmd>`, even `-- <real tmux>` -
+# never hands the box the host server's socket. It is the box's isolation,
+# not a terminal choice, so auto-enter no keeps it (lib/enter.sh has WHY).
+#
 # Managed block (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty:
@@ -67,12 +78,12 @@
 #     block removed.
 #   auto-enter no: the block removed, the removal reported.
 #
-# Write order: the state file first, then the profile. The stored values
-# are validated before anything is written (a corrupt state file refuses the
-# whole run, exit 1, no file changed); a profile write that fails afterwards
-# leaves the state file already updated and exits 1 - `just box status` then
-# shows the block as absent, and re-running `just box setup` (idempotent)
-# completes the profiles.
+# Write order: the state file first, then distrobox.conf, then the profile.
+# The stored values are validated before anything is written (a corrupt
+# state file refuses the whole run, exit 1, no file changed); a profile
+# write that fails afterwards leaves the state file already updated and
+# exits 1 - `just box status` then shows the block as absent, and re-running
+# `just box setup` (idempotent) completes the profiles.
 #
 # This script owns its option validation: an unknown option or an invalid
 # value is refused with `setup.sh: ... (see --help)` on stderr, exit 2,
@@ -150,6 +161,11 @@ Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
   $XDG_CONFIG_HOME/worktool/config   the state file (key=value + key.source)
   $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
+  $XDG_CONFIG_HOME/distrobox/distrobox.conf
+                                     managed block, on every run: drops
+                                     TMUX / TMUX_PANE from `distrobox enter
+                                     <box>`, so a host tmux pane's socket
+                                     never reaches the box
 No tmux is started and no host tmux config is touched: a tmux started in
 the box gets the box's own server (TMUX_TMPDIR, set by box/dev.ini).
 
@@ -443,6 +459,13 @@ _apply_disable() {
     _block_remove "$(enter_ghostty_config)" report
 }
 
+# Every run: the distrobox.conf block that keeps a caller's TMUX / TMUX_PANE
+# out of box BOX (lib/enter.sh enter_distrobox_conf_body has WHY). It is the
+# box's tmux isolation, not a terminal choice, so auto-enter no keeps it.
+_apply_box_env() {
+    _block_write "$(enter_distrobox_conf)" "$(enter_distrobox_conf_body "${BOX}")"
+}
+
 # --- Main --------------------------------------------------------------------
 setup_run() {
     _parse_args "$@" || return 2
@@ -453,6 +476,7 @@ setup_run() {
     CONFIG="$(enter_config_path)"
     _resolve_all || return 1
     _config_write || return 1
+    _apply_box_env || return 1
     if [[ "${AUTO_ENTER}" == "yes" ]]; then
         _apply_enable
     else
