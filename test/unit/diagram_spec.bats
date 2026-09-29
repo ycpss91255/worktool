@@ -77,8 +77,11 @@ HOME_LINE_1="盒子 HOME(--home)"
 HOME_LINE_2="預設 ~/dev-box"
 HOME_LINE_3="tool config:fish tmux nvim"
 HOME_LINE_4="user config 連結自 host"
-HOME_LINE_5="host 設定不受影響"
+HOME_LINE_5="host tool config 不受影響"
 OLD_HOME_WORDING="共用 HOME"
+# Round-1 wording of line 5: wrong, because user config is symlinked from the
+# host (ADR 0002), so editing it in the box does change the host's copy.
+OLD_HOME_LINE_5="host 設定不受影響"
 
 setup() {
     README="${REPO_ROOT}/README.md"
@@ -475,6 +478,20 @@ _write_fixture_wording_moved() {
 @test "the box-HOME guard rejects a HOME cell that still carries the shared-HOME label" {
     local _f="${BATS_TEST_TMPDIR}/shared_home.svg"
     _write_fixture_flow "${_f}" "${OLD_HOME_WORDING}"$'\n'"~/.config/*" "x"
+    sed -i 's/f_test/home/g' "${_f}"
+    run _home_cell_ok "${_f}"
+    assert_failure
+}
+
+@test "architecture diagram no longer claims all host config is unaffected" {
+    run grep -c "${OLD_HOME_LINE_5}" "$(_svg architecture)"
+    assert_failure
+    assert_output "0"
+}
+
+@test "the box-HOME guard rejects a HOME cell whose last line says all host config is unaffected" {
+    local _f="${BATS_TEST_TMPDIR}/host_config_home.svg"
+    _write_fixture_flow "${_f}" "$(_home_expected_lines | sed '$d')"$'\n'"${OLD_HOME_LINE_5}" "x"
     sed -i 's/f_test/home/g' "${_f}"
     run _home_cell_ok "${_f}"
     assert_failure
