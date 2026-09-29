@@ -52,8 +52,8 @@
   - 驗證：`test/unit/justfile_spec.bats`（根 justfile 只有命名空間、每個 recipe 原封轉發給腳本）；人類驗收見 `doc/acceptance.md` M2 第 0 項。「發布後語意不改」：待驗（尚未發布）。
 - **冪等。** 同一個指令重跑，結果相同：不重複寫入、不累積副作用；已是最新狀態時明確說明 unchanged（不變量 6）。
   - 驗證：`test/unit/setup_spec.bats`（受管區塊只寫一次，重跑回報 unchanged）；`test/system/real_engine_spec.bats`（第二次 assemble 以結束碼 0 結束且不重複建盒）。
-- **對外承諾黑箱可驗，開發與正式使用走同一個入口。** 本節每條承諾都有從公開入口（`just`）執行的自動或人類驗收，測試不走後門；CI 跑的就是使用者打的 `just test <tier>`（不變量 7）。
-  - 驗證：`test/unit/justfile_spec.bats`（ci.yml 的每個 gate 都以 `just test <tier>` 執行）；`test/acceptance/m2_selfcheck_spec.bats`（直接執行交付的公開入口 `script/test/selfcheck.sh`，即 `just test selfcheck` 轉發的腳本）；本文件的「驗證：」行由 `test/unit/contract_spec.bats` 檢查存在且引用的測試檔存在。
+- **對外承諾黑箱可驗，開發與正式使用走同一個入口。** 目標是讓本節所有承諾都能從公開入口（`just`）以自動或人類驗收檢查，測試不走後門；CI 跑的就是使用者打的 `just test <tier>`（不變量 7）。目前尚未兌現：上面標「待驗」的承諾還沒有檢查。
+  - 驗證：`test/unit/justfile_spec.bats`（ci.yml 的每個 gate 都以 `just test <tier>` 執行）；本文件的「驗證：」行由 `test/unit/contract_spec.bats` 檢查存在且引用的測試檔存在。「每條承諾都從 `just` 驗」：待驗（見上方各條的「待驗」）；`test/acceptance/m2_selfcheck_spec.bats` 直接執行 `script/test/selfcheck.sh`、不經 `just`，所以不算這條的檢查。
 - **host 依賴最小。** 除了驅動與 GUI app，host 只需要 `docker` 與 `just`；其餘一切在盒內（不變量 8）。
   - 驗證：人類驗收見 `doc/acceptance.md` M2「通用指令」前提（只檢查 `just` 與 `docker`）。自動檢查：待驗。
 - **正確性不綁單一平台。** 同一版 repo 在每個支援平台（amd64、arm64；Ubuntu 26.04，之後追加 24.04）得到等價結果（不變量 9）。
@@ -66,17 +66,17 @@
 
 ## 6. 不變量索引
 
-十條不變量必須永遠成立；每條的性質、理由與守住它的機制見各自的 ADR。
+十條不變量必須永遠成立；每條的性質、理由與守住它的機制由各自的 ADR 定義。這些 ADR 尚未寫，每條後面列的是負責寫它的 issue；ADR 合併後再改成連結。
 
-1. 使用者寫的內容歸使用者：可以新建、要改先問、永不刪、永不覆蓋（[ADR 0004](adr/0004-invariant-user-content.md)）
-2. 一個來源：盒子定義只有一份、tool config 只有一份（[ADR 0005](adr/0005-invariant-single-source.md)）
-3. host 與盒子互不干擾（[ADR 0006](adr/0006-invariant-host-box-separation.md)）
-4. 永不靜默失敗（[ADR 0007](adr/0007-invariant-no-silent-failure.md)）
-5. 使用者介面極少：just 是唯一入口，recipe 語意固定（[ADR 0008](adr/0008-invariant-minimal-interface.md)）
-6. 冪等：同一個指令重跑，結果相同（[ADR 0009](adr/0009-invariant-idempotent.md)）
-7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（[ADR 0010](adr/0010-invariant-black-box-verifiable.md)）
-8. host 依賴最小：除驅動與 GUI app 外，只需 docker 與 just（[ADR 0011](adr/0011-invariant-minimal-host-deps.md)）
-9. 正確性不綁單一平台（[ADR 0012](adr/0012-invariant-platform-neutral.md)）
-10. 相容性：同一個大版號內不破壞原本的用法（[ADR 0013](adr/0013-invariant-compatibility.md)）
+1. 使用者寫的內容歸使用者：可以新建、要改先問、永不刪、永不覆蓋（ADR 待寫：#202）
+2. 一個來源：盒子定義只有一份、tool config 只有一份（ADR 待寫：#203）
+3. host 與盒子互不干擾（ADR 待寫：#204）
+4. 永不靜默失敗（ADR 待寫：#205）
+5. 使用者介面極少：just 是唯一入口，recipe 語意固定（ADR 待寫：#206）
+6. 冪等：同一個指令重跑，結果相同（ADR 待寫：#207）
+7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（ADR 待寫：#208）
+8. host 依賴最小：除驅動與 GUI app 外，只需 docker 與 just（ADR 待寫：#209）
+9. 正確性不綁單一平台（ADR 待寫：#210）
+10. 相容性：同一個大版號內不破壞原本的用法（ADR 待寫：#211）
 
 #200 定案時，第 11 條「進盒 < 300 ms」待 #181 定案，本索引不列入；是否補列另行決定。

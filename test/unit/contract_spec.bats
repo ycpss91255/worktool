@@ -10,8 +10,12 @@
 #       (invariant 7: a promise must be black-box verifiable);
 #     - every test file a 驗證 line cites exists (no promise leans on a
 #       spec that is not there);
-#     - the invariant index lists the ten invariants in order, each linked
-#       to its pre-assigned ADR file;
+#     - the invariant index lists the ten invariants in order, each naming
+#       the issue that will write its ADR (#202-#211), and every relative
+#       link in the page resolves to a file that exists;
+#     - the page does not over-claim: it does not say every promise is
+#       verified while some are 待驗, and it does not present the selfcheck
+#       acceptance spec (which runs the script directly) as going through just;
 #     - the later decisions are reflected: the box owns its HOME (ADR 0002),
 #       the latency verdict exit 3 (ADR 0003), tool config vs user config;
 #     - doc/structure.md lists the file in its tree.
@@ -77,26 +81,42 @@ _section() {
     [ "${found}" -ge 1 ]
 }
 
-@test "the invariant index links the ten invariants to their ADR files, in order" {
-    local -a adr=(
-        0004-invariant-user-content.md
-        0005-invariant-single-source.md
-        0006-invariant-host-box-separation.md
-        0007-invariant-no-silent-failure.md
-        0008-invariant-minimal-interface.md
-        0009-invariant-idempotent.md
-        0010-invariant-black-box-verifiable.md
-        0011-invariant-minimal-host-deps.md
-        0012-invariant-platform-neutral.md
-        0013-invariant-compatibility.md
-    )
+@test "the invariant index lists the ten invariants, in order, each naming its ADR issue" {
+    local -a issue=(202 203 204 205 206 207 208 209 210 211)
     run bash -c "$(declare -f _section); CONTRACT=\"\$1\" _section 6 | grep -E '^[0-9]+\. '" _ "${CONTRACT}"
     assert_success
     [ "${#lines[@]}" -eq 10 ]
     local i
-    for i in "${!adr[@]}"; do
-        assert_line --index "${i}" --regexp "^$((i + 1))\. .*\(adr/${adr[i]}\)"
+    for i in "${!issue[@]}"; do
+        assert_line --index "${i}" --regexp "^$((i + 1))\. .*#${issue[i]}"
     done
+}
+
+@test "every relative link in doc/contract.md resolves to an existing file" {
+    local target found=0
+    while IFS= read -r target; do
+        found=$((found + 1))
+        echo "link: ${target}"
+        [ -e "${REPO_ROOT}/doc/${target%%#*}" ]
+    done < <(grep -oE '\]\([^)]+\)' "${CONTRACT}" \
+                 | sed -E 's/^\]\((.*)\)$/\1/' | grep -vE '^[a-z]+:' | sort -u)
+    [ "${found}" -ge 1 ]
+}
+
+@test "the contract does not claim every promise is verified while some are 待驗" {
+    run grep -cE '^  - 驗證：.*待驗' "${CONTRACT}"
+    assert_success
+    [ "${output}" -ge 1 ]
+    run grep -E '每條承諾都有' "${CONTRACT}"
+    assert_failure
+}
+
+@test "the selfcheck acceptance spec is not cited as going through just" {
+    # m2_selfcheck_spec.bats runs script/test/selfcheck.sh directly, so the
+    # contract must not present it as a check through the public entry.
+    run grep -E '^  - 驗證：.*m2_selfcheck_spec\.bats' "${CONTRACT}"
+    assert_success
+    refute_output --regexp 'm2_selfcheck_spec\.bats[^；。]*(公開入口|just test selfcheck)'
 }
 
 @test "the contract reflects the box HOME (ADR 0002), exit 3 (ADR 0003) and tool config vs user config" {
