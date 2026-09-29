@@ -129,7 +129,7 @@ FNR == 1 {
     if (fn == "") {
         if (line ~ /^if \[\[ "\$\{BASH_SOURCE\[0\]:-\}"/) { hd = heredoc_start($0); next }
         if (line ~ ("^[[:space:]]+" entry " \"\\$@\"$")) next
-        if (line ~ /\$[1-9#*@]|\$\{[1-9#*@]/) print FILENAME ":" FNR ": positional parameter at the top level: " line
+        if (line ~ /\$[1-9#*@]|\$\{([1-9]|#\}|[*@])/) print FILENAME ":" FNR ": positional parameter at the top level: " line
     } else if (fn in parser) {
         if (line ~ /while \[\[ \$# -gt 0 \]\]/) {
             loops++; inloop = 1; ind = line; sub(/[^ ].*/, "", ind)
@@ -142,7 +142,7 @@ FNR == 1 {
                 print FILENAME ":" FNR ": case on $1 outside the argument loop: " line
             if (!inloop) {
                 l = line; gsub(/"\$@"/, "", l)
-                if (l ~ /\$[1-9#*@]|\$\{[1-9#*@]/ || l ~ /(^|[^A-Za-z_])shift([^A-Za-z_]|$)/)
+                if (l ~ /\$[1-9#*@]|\$\{([1-9]|#\}|[*@])/ || l ~ /(^|[^A-Za-z_])shift([^A-Za-z_]|$)/)
                     print FILENAME ":" FNR ": positional parameter outside the argument loop: " line
             }
         }
