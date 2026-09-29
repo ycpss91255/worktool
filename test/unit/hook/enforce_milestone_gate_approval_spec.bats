@@ -3,29 +3,10 @@
 # test/unit/hook/enforce_milestone_gate_approval_spec.bats -
 # .agents/hook/enforce_milestone_gate_approval.sh (issue #190)
 #
-# The agent-side half of the milestone-gate approval (#187), per the
-# "## 範圍" and "## 範圍修訂" sections of issue #190:
-#   1. merge gate: `gh pr merge <n>` (any flags, --auto included) and a gh api
-#      WRITE to .../pulls/<n>/merge are BLOCKED (exit 2, reason on stderr)
-#      when the PR carries `milestone-gate` and no comment is a human
-#      approval by lib/approval.sh; any lookup failure blocks (fail closed)
-#   2. tag rule: every comment-like body an agent sends (gh pr|issue
-#      comment, gh pr review with a body, close|reopen --comment, gh api
-#      writes to comments / reviews endpoints, from --body / -b / --body-file
-#      / -F / a literal heredoc / body= / message= / --input) must start,
-#      after leading whitespace, with [claude] or [codex] - phrase or not.
-#      PR / issue create bodies are no comments. An unreadable body, and a
-#      GraphQL comment / review mutation, block
-#   3. method-aware writes: a direct API call (curl, wget, httpie, gh api)
-#      counts only when it writes - ANY data flag, or a method other than an
-#      implicit GET / HEAD; a GraphQL body is a write when it is a mutation
-#      or cannot be read. API URLs are normalised before matching (scheme,
-#      host case, userinfo, port, trailing dot, path spelling)
-#   4. the closed rule: a relevant gh command with a word the shell expands,
-#      a sub-command the hook cannot tell, an unknown root flag, combined
-#      short options, or gh run through eval / bash -c "$X" / xargs blocks;
-#      the raw-text and inline-code tripwires catch what the parser missed
-#   5. everything else passes silently and never calls gh
+# The agent-side half of the milestone-gate approval (#187). The rules it
+# pins are specified in ONE place, doc/structure.md, section "milestone
+# 驗收 PR 的核准 gate" (from the "## 範圍" sections of issue #190); this
+# header does not restate them.
 #
 # The matrices below generate every variant as a product of explicit
 # dimensions (operation x spelling x wrapper; method x data flag x tool x
@@ -1153,7 +1134,7 @@ _want_rw() {
     run hook_http_data_flags wget
     assert_line "--post-file 1"
     run hook_http_data_flags gh-api
-    assert_line "--input 1"
+    assert_line "--input 1 input"
     # The spec generates its data dimension from the table, never a list.
     run declare -f _data_flags
     assert_success
@@ -1396,7 +1377,7 @@ _endpoints() {
     assert_output ""
 }
 
-# --- round 12: no in-band sentinel ------------------------------------------------
+# --- round 12: no in-band sentinel, one source for the data flags --------------
 
 @test "matrix: a control byte in a gh command classifies like the same command without it" {
     local _b _c _t _cmd _base _want _got _MISS=''
@@ -1418,6 +1399,44 @@ _endpoints() {
         done
     done
     _report
+}
+
+# _copy_hook_with_extra_flags - a copy of the hook tree whose ONLY change is
+# synthetic data flags added to the table of lib/subcommand.sh (gh-api -Z /
+# --zz-data, curl --zz-curl); print the copy's hook path.
+_copy_hook_with_extra_flags() {
+    local _root="${BATS_TEST_TMPDIR}/copy"
+    mkdir -p "${_root}/.agents" "${_root}/lib"
+    cp -R "${REPO_ROOT}/.agents/hook" "${_root}/.agents/"
+    cp "${REPO_ROOT}/lib/approval.sh" "${_root}/lib/"
+    sed -i -e "s/^\\(        gh-api) printf '%s\\\\n' \\)/\\1\"-Z 1 typed\" \"--zz-data 1 raw\" /" \
+        -e "s/^\\(        curl) printf '%s\\\\n' \\)/\\1\"--zz-curl 1\" /" "${_root}/.agents/hook/lib/subcommand.sh"
+    grep -q -- '--zz-data' "${_root}/.agents/hook/lib/subcommand.sh" || return 1
+    grep -q -- '--zz-curl' "${_root}/.agents/hook/lib/subcommand.sh" || return 1
+    printf '%s' "${_root}/.agents/hook/enforce_milestone_gate_approval.sh"
+}
+
+@test "single source: a flag added only to the data-flag table drives endpoint parsing and write classification" {
+    _labels milestone-gate
+    local _hook _c
+    _hook="$(_copy_hook_with_extra_flags)"
+    # Endpoint positional parsing: the synthetic flag takes a value, so the
+    # endpoint is the merge path (gated), not the value.
+    for _c in "gh api -Z v -X PUT repos/o/r/pulls/7/merge" "gh api --zz-data v -X PUT repos/o/r/pulls/7/merge" \
+        "gh api -X PUT repos/o/r/pulls/7/merge -Zv"; do
+        run bash -c 'printf "%s" "$1" | "$2"' _ "$(hook_json "${_c}")" "${_hook}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
+    # Write classification: the synthetic flag is a data flag (a write even
+    # with -X GET), and its body= value is judged by the tag rule.
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        "$(hook_json "gh api -X GET repos/o/r/issues/7/comments --zz-data body=untagged")" "${_hook}"
+    assert_failure 2
+    assert_output --partial "must start with [claude] or [codex]"
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        "$(hook_json "curl --zz-curl x https://api.github.com/repos/o/r/issues/7/comments")" "${_hook}"
+    assert_failure 2
 }
 
 # --- everything else is untouched ----------------------------------------------
