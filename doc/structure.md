@@ -13,6 +13,7 @@ worktool/
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
 │   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
 │   ├── approval.sh      milestone-gate 核准判斷(純函式,不呼叫 GitHub API):approval_evaluate / approval_is_human_approval(#187)
+│   ├── commit_email.sh  commit email 判斷(純函式):截止時間後的 author / committer 必須是 GitHub noreply(commit_email_evaluate / commit_email_range,#234)
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
@@ -44,6 +45,7 @@ worktool/
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
+│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、截止前放行、GitHub 產生的 commit 放行、日期格式錯誤即失敗、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
@@ -105,7 +107,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + commit-email + ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -273,7 +275,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
@@ -295,6 +297,24 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
+
+### commit email 必須是 GitHub noreply(`commit-email`,#234)
+
+- **規則**:repo 已公開,committer 日期在 `2026-09-30T00:00:00Z`(含)之後的 commit,
+  author 與 committer email 都必須以 `@users.noreply.github.com` 結尾。截止之前的
+  commit 放行(main 歷史不改寫、不 force push);GitHub 產生的 commit(committer
+  `noreply@github.com`,即 web-flow:合併按鈕、網頁編輯)放行;日期讀不出 UTC 時間
+  一律判失敗。
+- **機制**:`ci.yml` 的 `commit-email` job(單一 `ubuntu-latest`,不需 token,
+  `fetch-depth: 0`、`persist-credentials: false`)以 `commit_email_range` 取範圍
+  (PR:base..head;push:before..after,新 ref 只查推上的那一個),用
+  `TZ=UTC git log` 取出 `<sha>\t<日期>\t<author>\t<email>\t<committer>\t<email>`
+  紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,列出每個違規 commit 與
+  修正指令後失敗。`ci-passed` 要求它 `success`。`test/unit/commit_email_spec.bats`
+  測判斷規則,`test/unit/ci_yml_spec.bats` 釘住 job 接線。
+- **修正**:`git config user.email "<id>+<帳號>@users.noreply.github.com"` 後,
+  `git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main`
+  改寫 PR 分支,再 `git push --force-with-lease`。
 
 ### milestone 驗收 PR 的核准 gate(`milestone-gate-approval`,#187)
 
