@@ -655,12 +655,16 @@ _assert_pure() {
 # violation: an ID claimed twice, an ID with two rows, an ID claimed but
 # not in the table or the other way round. One row per @prop line.
 _drift_violations() {
-    # (round 7: compared the de-duplicated ID sets)
     local _claimed _covered
-    _claimed="$(sed -n 's/^#[[:space:]]*@prop[[:space:]]\{1,\}\([a-z-]\{1,\}\).*/\1/p' "$1" | sort -u)"
-    _covered="$(_rows | cut -d'|' -f1 | sort -u)"
+    _claimed="$(sed -n 's/^#[[:space:]]*@prop[[:space:]]\{1,\}\([a-z-]\{1,\}\).*/\1/p' "$1")"
+    _covered="$(_rows | cut -d'|' -f1)"
     [[ -n "${_claimed}" ]] || echo "no @prop line in $1"
-    comm -3 <(printf '%s\n' "${_claimed}") <(printf '%s\n' "${_covered}")
+    sort <<<"${_claimed}" | uniq -d | sed 's/^/claimed twice: /'
+    sort <<<"${_covered}" | uniq -d | sed 's/^/two table rows: /'
+    comm -23 <(sort <<<"${_claimed}") <(sort <<<"${_covered}") | sed 's/^/claimed, no row: /'
+    comm -13 <(sort <<<"${_claimed}") <(sort <<<"${_covered}") | sed 's/^/row, not claimed: /'
+    [[ "$(wc -l <<<"${_claimed}")" -eq "$(wc -l <<<"${_covered}")" ]] \
+        || echo "$(wc -l <<<"${_claimed}") @prop lines, $(wc -l <<<"${_covered}") rows"
 }
 
 # The owner rows' drift in tree $1: every module of the source graph of
