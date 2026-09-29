@@ -6,9 +6,15 @@
 #   The workflow that turns lib/approval.sh into the `milestone-gate-approval`
 #   commit status is wired as issue #187 specifies:
 #
-#   - it triggers on pull_request (opened, synchronize, reopened, labeled,
-#     unlabeled) and on issue_comment (created, edited, deleted), and the
-#     job runs for an issue_comment only when the issue is a PR;
+#   - it triggers on pull_request_target (opened, synchronize, reopened,
+#     labeled, unlabeled) and on issue_comment (created, edited, deleted),
+#     never on pull_request, and the job runs for an issue_comment only when
+#     the issue is a PR;
+#   - it runs only trusted code: both triggers execute the workflow file of
+#     the default branch, and the checkout is pinned to the default branch
+#     without persisted credentials, so a PR's own lib/approval.sh (or any
+#     other file it changes) never runs while the token holds statuses:
+#     write; PR data (head SHA, labels, comments) is read through gh api;
 #   - permissions are exactly statuses: write, pull-requests: read,
 #     issues: read, plus contents: read (checkout of this private repo);
 #   - it sources lib/approval.sh and calls approval_evaluate (the rule is
@@ -67,9 +73,32 @@ _permissions() {
     assert [ -f "${GATE_YML}" ]
 }
 
-@test "pull_request triggers are exactly opened, synchronize, reopened, labeled, unlabeled" {
-    run _types pull_request
+@test "pull_request_target triggers are exactly opened, synchronize, reopened, labeled, unlabeled" {
+    run _types pull_request_target
     assert_output "$(printf '%s\n' labeled opened reopened synchronize unlabeled)"
+}
+
+@test "there is no pull_request trigger (it would run the PR's own code)" {
+    run _body
+    refute_line --regexp '^  pull_request:'
+}
+
+@test "the job runs for pull_request_target events" {
+    run _body
+    assert_line --regexp "^    if: .*github\.event_name == 'pull_request_target'"
+}
+
+@test "the checkout is pinned to the default branch without persisted credentials" {
+    run _body
+    assert_line --regexp '^          ref: \$\{\{ github\.event\.repository\.default_branch \}\}$'
+    assert_line --regexp '^          persist-credentials: false$'
+}
+
+@test "nothing checks out or fetches the PR head" {
+    run _body
+    refute_line --regexp 'ref: .*pull_request\.head'
+    refute_line --partial 'refs/pull/'
+    refute_line --regexp 'git (fetch|checkout|switch)'
 }
 
 @test "issue_comment triggers are exactly created, edited, deleted" {

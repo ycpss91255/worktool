@@ -44,7 +44,7 @@ worktool/
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
-│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、status context 名稱(文字層級)
+│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
@@ -281,7 +281,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   該 PR 上留下核准紀錄;沒貼標籤的 PR 不受影響。
 - **核准格式**:一則留言,作者 `author_association` 為 `OWNER`,本文(忽略開頭空白)不以
   `[claude]` 或 `[codex]` 開頭,內容含「允許合併」。
-- **機制**:`.github/workflows/milestone-gate.yml` 觸發於 `pull_request`(opened、
+- **機制**:`.github/workflows/milestone-gate.yml` 觸發於 `pull_request_target`(opened、
   synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
   deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
   `<author_association>\t<body>` 的 NUL 分隔紀錄交給 `lib/approval.sh` 的
@@ -299,8 +299,14 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
   「允許合併」一律拒絕;對貼了 `milestone-gate` 的 PR 執行 `gh pr merge` 時沒有核准
   留言也拒絕。
-- **pull_request 事件跑的是 PR 內的 `lib/approval.sh`**(`issue_comment` 事件跑 main
-  上的版本):改動判斷規則的 PR 本身就是被審的對象,不在驗收 PR 裡改它。
+- **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
+  程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
+  一樣跑預設分支上的 workflow 檔;checkout 釘在預設分支(`ref` 為 default branch、
+  `persist-credentials: false`),不 checkout 也不執行 PR head,所以 source 的
+  `lib/approval.sh` 永遠是 main 的版本。PR 只當 API 資料讀:head SHA、標籤、留言都走
+  `gh api`。因此改動判斷規則或 workflow 本身的 PR,合併後才生效;
+  `milestone_gate_yml_spec.bats` 釘住「沒有 `pull_request` 觸發、checkout 釘在預設分支、
+  不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
 tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
