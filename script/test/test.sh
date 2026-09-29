@@ -138,6 +138,7 @@ _required_specs() {
                 unit/link_spec.bats \
                 unit/config_spec.bats \
                 unit/config_mutation_spec.bats \
+                unit/config_owner_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
                 unit/milestone_gate_yml_spec.bats \

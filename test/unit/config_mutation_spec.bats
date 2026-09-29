@@ -114,3 +114,47 @@ _assert_mutant_caught() {
 @test "mutant 'unknown' (drop keys worktool does not know) is caught by every foreign-line case" {
     _assert_mutant_caught unknown
 }
+
+# --- purity: a mutant breaks exactly one property (round 6) -----------------
+# A mutant that also changes bytes it does not claim to change "kills" cases
+# for the wrong reason (a false kill). Each mutant runs config_set on a
+# fixture that holds everything EXCEPT the element its property is about;
+# the result must be byte-identical to the unmutated library's.
+
+# The neutral fixture of mutant $1 (printf %b): comments, blank and
+# whitespace-only lines, a CRLF line, duplicated known foreign lines and a
+# last line without a newline - minus the element the mutant targets.
+_neutral() {
+    case "$1" in
+        newline) printf '%s' '# c\n\n  \nlink=.a\nlink=.a\nbox=dev\r\nfuture=x\nhome=/old\nlink=.z\n' ;;
+        unknown) printf '%s' '# c\n\n  \nlink=.a\nlink=.a\nbox=dev\r\nhome=/old\nlink=.z' ;;
+    esac
+}
+
+# config_set home /new on the neutral fixture of $2, with the library of
+# copy $1; prints the path of the resulting file.
+_render_in() {
+    local _home
+    _home="${BATS_TEST_TMPDIR}/pure.${1##*/}.$2"
+    mkdir -p "${_home}/.config/worktool"
+    printf '%b' "$(_neutral "$2")" >"${_home}/.config/worktool/config"
+    HOME="${_home}" XDG_CONFIG_HOME="" bash -c \
+        'source "$1/lib/log.sh"; source "$1/lib/config.sh"; config_set home /new' _ "$1" \
+        || return 1
+    printf '%s\n' "${_home}/.config/worktool/config"
+}
+
+@test "every mutant is pure: on a fixture without its element it renders like the real library" {
+    local _m _real _mut
+    local _clean="${BATS_TEST_TMPDIR}/clean"
+    cp -R "${COPY}" "${_clean}"
+    for _m in newline unknown; do
+        rm -rf "${COPY}"
+        cp -R "${_clean}" "${COPY}"
+        _mutate "${_m}"
+        _real="$(_render_in "${_clean}" "${_m}")"
+        _mut="$(_render_in "${COPY}" "${_m}")"
+        cmp -s -- "${_real}" "${_mut}" \
+            || fail "mutant ${_m} is not pure: it changes bytes outside its property"
+    done
+}

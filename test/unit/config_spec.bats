@@ -5,9 +5,10 @@
 #
 # Contract under test:
 #   - Only lib/config.sh knows where the state file is
-#     ($XDG_CONFIG_HOME/worktool/config). No other module handles the path:
-#     every public function works on THE state file and takes no path, and
-#     messages naming it go through config_log / config_say / config_fill.
+#     ($XDG_CONFIG_HOME/worktool/config). Every public function works on THE
+#     state file and takes no path, and messages naming it go through
+#     config_log / config_say / config_fill. test/unit/config_owner_spec
+#     proves by behaviour that no other module reaches the file.
 #   - config_get <key>: the value of the FIRST `<key>=` line (a bare `<key>`
 #     line reads as empty); nothing for an absent file or key.
 #   - config_get_all <key>: every `<key>=` value, in file order.
@@ -23,9 +24,10 @@
 #     of later versions, their duplicates, CRLF line endings, trailing
 #     blank lines and a missing final newline (a newline is only added
 #     before an appended key, to separate it). A new file starts with one
-#     comment header. Atomic (temp file + rename), keeps the file's mode,
-#     serialised by a lock (flock, else a PID-stamped mkdir lock whose
-#     stale holder is broken), so two concurrent calls both land.
+#     comment header. Atomic (temp file + rename: a reader holding the old
+#     file keeps the old bytes), keeps the file's mode, serialised by
+#     flock(1), so two concurrent calls both land; without flock it
+#     refuses (fails closed) rather than write unserialised.
 #   - config_write_atomic <file>: replace <file> with stdin atomically,
 #     keeping an existing file's mode (for the other files worktool writes).
 #
@@ -94,32 +96,6 @@ _assert_bytes() {
     assert_output "state: \$XDG_CONFIG_HOME/worktool/config and \$XDG_CONFIG_HOME/worktool/config"
 }
 
-# The only place that may name the state file: lib/config.sh. Structural
-# proof: the path fragment and the internal path function appear in no
-# other file under lib/, script/ or box/ - code that cannot name the file
-# cannot open it. $1 is the tree to check; prints the offending files.
-_foreign_owners() {
-    grep -rlE 'worktool/config|_config_file' "$1/lib" "$1/script" "$1/box" \
-        | grep -vxF "$1/lib/config.sh"
-}
-
-@test "only lib/config.sh can name the state file (lib/ script/ box/)" {
-    run _foreign_owners "${REPO_ROOT}"
-    assert_output ""
-}
-
-@test "the ownership check catches a module that names the state file" {
-    local _tree="${BATS_TEST_TMPDIR}/tree"
-    mkdir -p "${_tree}/lib" "${_tree}/script" "${_tree}/box"
-    printf '%s\n' '_config_file() { :; }' >"${_tree}/lib/config.sh"
-    printf '%s\n' "cat \"\$HOME/.config/worktool/config\"" >"${_tree}/script/rogue.sh"
-    printf '%s\n' "x=\$(_config_file)" >"${_tree}/lib/sneaky.sh"
-    run _foreign_owners "${_tree}"
-    assert_line "${_tree}/script/rogue.sh"
-    assert_line "${_tree}/lib/sneaky.sh"
-    refute_line "${_tree}/lib/config.sh"
-}
-
 # --- reading -----------------------------------------------------------------
 
 @test "config_get reads the first occurrence; absent file or key reads as nothing" {
@@ -167,8 +143,8 @@ _stop_at_home() { [[ "$2" != home ]] || { echo "stop at $1"; return 3; }; }
 # --- writing: in place, byte-exact -------------------------------------------
 
 @test "config_set replaces its keys in place, drops their duplicates, appends new keys, keeps every other line" {
-    _bytes "${CONFIG}" '# notes\n\nlink=~/.aws\ntmux=host\nfuture=x = y\nlink=~/.aws\ntmux=inside\nhome\n  \n# end\n'
-    _bytes "${EXPECTED}" '# notes\n\nlink=~/.aws\ntmux=inside\nfuture=x = y\nlink=~/.aws\nhome=/srv/box\n  \n# end\nhome.source=user\n'
+    _bytes "${CONFIG}" '# notes\n\nlink=~/.aws\ntmux=host\nfuture=x = y\nlink=~/.aws\nbox=dev\r\nlink=.b\ntmux=inside\nhome\n  \n# end\n'
+    _bytes "${EXPECTED}" '# notes\n\nlink=~/.aws\ntmux=inside\nfuture=x = y\nlink=~/.aws\nbox=dev\r\nlink=.b\nhome=/srv/box\n  \n# end\nhome.source=user\n'
     run config_set tmux inside home /srv/box home.source user
     assert_success
     _assert_bytes
@@ -252,6 +228,20 @@ _framings() {
     assert_output "config"
 }
 
+@test "config_set replaces the file by rename: a reader holding the old file still reads the old bytes" {
+    _bytes "${CONFIG}" '# old\ntmux=host\n'
+    cp "${CONFIG}" "${EXPECTED}"
+    local _fd _held
+    exec {_fd}<"${CONFIG}"
+    run config_set tmux inside
+    assert_success
+    _held="${BATS_TEST_TMPDIR}/held"
+    cat <&"${_fd}" >"${_held}"
+    exec {_fd}<&-
+    run cmp -- "${EXPECTED}" "${_held}"
+    assert_success
+}
+
 @test "config_set with an odd number of arguments is refused and writes nothing" {
     _bytes "${CONFIG}" 'tmux=host'
     cp "${CONFIG}" "${EXPECTED}"
@@ -298,36 +288,15 @@ _race() {
     assert_success
 }
 
-@test "two concurrent config_set calls both land without flock (mkdir lock)" {
+@test "without flock(1) config_set refuses (exit 1, a clear error) and writes nothing" {
     _config_have_flock() { return 1; }
     ! _config_have_flock || fail "the flock seam was not overridden"
-    _bytes "${CONFIG}" '# shared\n'
-    run _race home box
-    assert_success
-    assert [ ! -e "${CONFIG}.lock" ]
-}
-
-@test "a stale mkdir lock whose PID is gone is broken; a live one is waited for, then refused" {
-    local _dead
-    sh -c 'exit 0' &
-    _dead=$!
-    wait "${_dead}"
     _bytes "${CONFIG}" 'home=/old\n'
-    mkdir "${CONFIG}.lock"
-    printf '%s\n' "${_dead}" >"${CONFIG}.lock/pid"
-    _config_have_flock() { return 1; }
-    run config_set home /new
-    assert_success
-    _bytes "${EXPECTED}" 'home=/new\n'
-    _assert_bytes
-    assert [ ! -e "${CONFIG}.lock" ]
-    # A lock held by a live process is not broken: the writer waits, then
-    # gives up (bounded), writing nothing.
-    mkdir "${CONFIG}.lock"
-    printf '%s\n' "$$" >"${CONFIG}.lock/pid"
-    CONFIG_LOCK_TRIES=5 run config_set home /other
+    cp "${CONFIG}" "${EXPECTED}"
+    run --separate-stderr config_set home /new
     assert_failure 1
+    assert_equal "${stderr:-}" "[ERROR] flock (util-linux) not found: cannot lock ${CONFIG} for writing"
     _assert_bytes
-    assert [ -d "${CONFIG}.lock" ]
-    rm -rf "${CONFIG}.lock"
+    run ls -A "$(dirname -- "${CONFIG}")"
+    assert_output "config"
 }
