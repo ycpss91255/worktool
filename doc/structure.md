@@ -13,6 +13,7 @@ worktool/
 │   ├── log.sh           日誌 helper:log_info / log_warn / log_error(寫入 stderr)
 │   ├── manifest.sh      盒子清單 helper:manifest_name / manifest_image / manifest_validate
 │   ├── approval.sh      milestone-gate 核准判斷(純函式,不呼叫 GitHub API):approval_evaluate / approval_is_human_approval(#187)
+│   ├── commit_email.sh  commit email 判斷(純函式):author 必須是 GitHub noreply,committer 為 noreply 或 noreply@github.com(commit_email_evaluate / commit_email_range,#234)
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
@@ -44,7 +45,9 @@ worktool/
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
-│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱(文字層級)
+│   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
+│   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
+│   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
 │   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
@@ -70,6 +73,7 @@ worktool/
 │   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + jq + 鎖定版 distrobox)
 │   └── Dockerfile.system-real  DinD runner 映像(docker:29.8.0-dind + bash + bats 1.14.0 + 同一鎖定版 distrobox)
 ├── doc/
+│   ├── contract.md      對外契約:痛點、做與不做的事、對使用者與相容性的承諾(各附驗證方式)、十條不變量索引(各列負責寫 ADR 的 issue #202-#211,ADR 合併後改連結)(#201)
 │   ├── design.md        整體設計、治理、milestone 計畫
 │   ├── manifest.md      盒子清單格式、assemble 流程、測試對應、人工驗證
 │   ├── workflow.md      Workflow 範本說明:pr-loop(一個 sub-issue -> 一個 PR 的實作/CI/codex/修正迴圈)與 milestone-fanout
@@ -84,7 +88,7 @@ worktool/
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
-│   │   │                remind_main_sync、enforce_gh_body_file、enforce_shellcheck_disable_approval、worktree_create、
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、worktree_create、
 │   │   │                remind_workflow_tdd、remind_no_emoji)
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
@@ -105,7 +109,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時以 `just test <tier>` 跑全部 gate + commit-email + ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -273,7 +277,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`contract_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
@@ -296,6 +300,30 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
 
+### commit email 必須是 GitHub noreply(`commit-email`,#234)
+
+- **規則**:repo 已公開,檢查範圍內每個 commit 的 author email 都必須以
+  `@users.noreply.github.com` 結尾;committer email 也必須是 noreply,或正好是
+  `noreply@github.com`(GitHub 自己的 committer:合併按鈕、網頁編輯)。這個
+  committer 例外不洩漏個資,但本機一樣設得出來,所以絕不豁免 author。
+  **不以任何日期豁免**:commit 日期由提交者自訂(`GIT_COMMITTER_DATE`),以日期
+  放行等於留後門;規則之前的歷史靠檢查範圍排除(main 歷史不改寫、不 force push)。
+- **機制**:`ci.yml` 的 `commit-email` job(單一 `ubuntu-latest`,不需 token,
+  `fetch-depth: 0`、`persist-credentials: false`)以 `commit_email_range` 取範圍
+  (PR:base..head;push:before..after;只有 `before` 為 40 個 0 才算新 ref,查 `after`
+  可達、但不在預設分支上的每一個 commit,不只最頂端那個)。只驗證該事件用到的輸入:
+  pull_request 驗 base、head 與預設分支 ref,**忽略** before、after(不論值為何);push 驗
+  before、after 與預設分支 ref,**忽略** base、head。事件只接受這兩種;sha 必須是 40 位小寫
+  hex(GitHub repo 為 SHA-1);預設分支 ref 以 `git check-ref-format` 驗證。用到的輸入缺值、
+  空值或格式不對一律失敗,不退回任何預設範圍;通過後
+  再用 `git log` 取出 `<sha>\t<author>\t<email>\t<committer>\t<email>`
+  紀錄交給 `lib/commit_email.sh` 的 `commit_email_evaluate`,在 stderr 列出每個違規 commit 與
+  修正指令後失敗。`ci-passed` 要求它 `success`。`test/unit/commit_email_spec.bats`
+  測判斷規則,`test/unit/ci_yml_spec.bats` 釘住 job 接線。
+- **修正**:`git config user.email "<id>+<帳號>@users.noreply.github.com"` 後,
+  `git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main`
+  改寫 PR 分支,再 `git push --force-with-lease`。
+
 ### milestone 驗收 PR 的核准 gate(`milestone-gate-approval`,#187)
 
 - **規則**:貼了 `milestone-gate` 標籤的 PR(milestone 驗收 PR)合併前,必須有維護者在
@@ -315,6 +343,10 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   `ci-passed` 並列),避免合併前就擋住所有 PR。`test/unit/approval_spec.bats`
   測判斷規則,`test/unit/milestone_gate_yml_spec.bats` 以文字層級釘住觸發事件、
   權限與 context 名稱。
+- **job 不與必要檢查同名**(#258):job id 為 `evaluate`、名稱為 `evaluate-approval`,
+  不得等於 `milestone-gate-approval`,讓必要檢查只對應 workflow 設定的 commit status;
+  否則同名 check run 被 `concurrency` 取消時,會被 branch protection 當成必要檢查的結果,
+  擋住已核准的 PR。`ci.yml` 的 `ci-passed` 則是刻意以 job 本身當必要檢查,不受此限。
 - **已知限制**:agent 用維護者的 token 發留言,GitHub 上無法區分維護者本人與 agent
   代發;這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫「允許合併」。後者由
   agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
