@@ -671,13 +671,19 @@ _drift_violations() {
 # every script under script/ that names the config API needs an owner row,
 # and every owner row names such a module. One line per violation.
 _owner_module_violations() {
-    # (round 7: the modules a box script sources directly, by fixed name)
-    local _tree="$1" _mods
-    _mods="$( { printf '%s\n' script/box/setup.sh script/box/assemble.sh script/box/status.sh
-        grep -ohE 'source "\$\{LIB_DIR\}/(enter|home|link)\.sh"' "${_tree}"/script/box/*.sh \
-            | sed 's/.*}\/\(.*\)"/lib\/\1/'; } | sort -u)"
-    comm -23 <(printf '%s\n' "${_mods}") <(_owner_rows | cut -d'|' -f1 | sort -u) \
+    local _tree="$1" _s _m _mods=""
+    for _s in "${_tree}"/script/*/*.sh; do
+        _s="${_s#"${_tree}"/}"
+        _m="$(graph_modules "${_tree}" "${_s}")" || { echo "unresolved source graph of ${_s}"; continue; }
+        _mods+="${_m}"$'\n'
+    done
+    _mods="$(sort -u <<<"${_mods}" | while IFS= read -r _m; do
+        [[ -n "${_m}" ]] && graph_touches_config "${_tree}" "${_m}" && printf '%s\n' "${_m}"
+    done)"
+    comm -23 <(printf '%s\n' "${_mods}" | sort -u) <(_owner_rows | cut -d'|' -f1 | sort -u) \
         | sed 's/^/module names the config API but has no owner row: /'
+    comm -13 <(printf '%s\n' "${_mods}" | sort -u) <(_owner_rows | cut -d'|' -f1 | sort -u) \
+        | sed 's/^/owner row for a module outside the graph: /'
 }
 
 # Generated tests: every row is caught; renderer rows are also pure; the
