@@ -628,3 +628,28 @@ _manifest_gate_paragraph() {
     refute_output --partial "兩行指標"
     refute_output --partial "兩行 指標"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "bench.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${BENCH}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# A run that exits non-zero must be REPORTED by _run_metric (the documented
+# `exited <rc> on run <n> - measurement aborted` line, return 1), not kill
+# the shell at the runner under errexit with the command's own status.
+@test "a failing host-clocked run is reported and returns 1 with errexit on in the caller" {
+    run bash -c 'set -euo pipefail; source "$1"; OPT_WARMUP=0; OPT_RUNS=1; s=(); _run_metric enter s _time_cmd bash -c "exit 3"' \
+        _ "${BENCH}"
+    assert_failure 1
+    assert_output --partial "enter: 'bash -c exit 3' exited 3 on run 1 - measurement aborted"
+}
+
+@test "a failing in-box run is reported and returns 1 with errexit on in the caller" {
+    run bash -c 'set -euo pipefail; source "$1"; OPT_WARMUP=0; OPT_RUNS=1; s=(); _run_metric inbox s _inbox_cmd bash -c "exit 4"' \
+        _ "${BENCH}"
+    assert_failure 1
+    assert_output --partial "inbox: 'bash -c exit 4' exited 4 on run 1 - measurement aborted"
+}

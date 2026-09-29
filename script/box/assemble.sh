@@ -23,14 +23,17 @@
 # Dry-run prints the command to STDOUT (clean, machine-readable); all
 # diagnostics go to STDERR via lib/log.sh. This is what the unit tests assert.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`);
-# failures are surfaced explicitly so a non-zero exit is always intentional.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # `source=` directives below resolve against lib/ (SCRIPTDIR/../../lib: the
 # repo root is two levels up from script/box/). This file-wide directive
 # must precede the first command (set) to take effect.
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

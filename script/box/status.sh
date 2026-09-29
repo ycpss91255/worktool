@@ -25,10 +25,14 @@
 # This script owns its option validation: an unknown option is refused with
 # `status.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`).
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
