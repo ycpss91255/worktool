@@ -157,6 +157,81 @@ _block_count() {
     assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
 }
 
+# --- #199 r3: setup owns only its own keys in the shared state file --------
+# The state file has several writers (setup: the four decisions; assemble:
+# home / home.source; the user: link= lines). setup must update its own
+# keys in place and keep every other line byte-for-byte: comments, blank
+# lines, link= entries (duplicates too), the box home, keys a later
+# version may add.
+
+# The foreign lines of state file $1: every line that is not one of
+# setup's own keys (<decision>, <decision>.source, bare or with a value).
+_foreign() {
+    grep -vE '^(auto-enter|terminal|tmux|box)(\.source)?(=|$)' "$1" || true
+}
+
+# A state file mixing setup's own keys (interleaved, one duplicated) with
+# every kind of foreign line.
+_write_mixed_config() {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf '%s\n' \
+        '# my own notes about worktool' \
+        '' \
+        'link=~/.aws' \
+        'tmux=host' \
+        'tmux.source=user' \
+        'link=.config/foo' \
+        'link=~/.aws' \
+        'future-key=some value = with = inside' \
+        'future-key.source=user' \
+        'box=dev' \
+        'box=dev' \
+        'home=/srv/my box' \
+        'home.source=user' \
+        '   ' \
+        '# trailing comment' >"${CONFIG}"
+}
+
+@test "#199 r3: every setup run keeps every foreign line byte-for-byte and updates its own keys once" {
+    local _args _before
+    local -a _opts
+    for _args in '' '--terminal none --tmux inside --box work' '--auto-enter no'; do
+        read -r -a _opts <<<"${_args}"
+        _write_mixed_config
+        _before="$(_foreign "${CONFIG}")"
+        run "${SETUP}" "${_opts[@]}"
+        assert_success
+        assert_equal "$(_foreign "${CONFIG}")" "${_before}"
+        run grep -cE '^(auto-enter|terminal|tmux|box)(\.source)?=' "${CONFIG}"
+        assert_output "8"
+    done
+    # The last run (--auto-enter no) stored its choice; tmux and box kept
+    # their stored values.
+    run cat "${CONFIG}"
+    assert_line "auto-enter=no"
+    assert_line "auto-enter.source=user"
+    assert_line "tmux=host"
+    assert_line "box=dev"
+    assert_line "link=~/.aws"
+}
+
+@test "#199 r3: a user link= line survives just box setup (the lost-entry regression)" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    run grep -x 'link=~/.aws' "${CONFIG}"
+    assert_success
+}
+
+@test "#199 r3: setup keeps the state file's mode" {
+    _write_mixed_config
+    chmod 0640 "${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    assert_equal "$(stat -c %a "${CONFIG}")" "640"
+}
+
 @test "terminal none with auto-enter yes says no terminal profile is managed and names the manual command" {
     run "${SETUP}"
     assert_success
