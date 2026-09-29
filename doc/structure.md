@@ -355,10 +355,24 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
       `bash -c`/`eval` 腳本後仍算展開。
     - 經其他指令啟動的 gh(`nice gh`、`xargs gh`)是相關子命令就擋,要直接執行 gh。
     - 不相關的指令(`gh pr view $N`、`echo $X`、`git commit -m "$MSG"`)不受影響。
+  - **`--help`/`-h`**(codex 第 4 輪):相關指令帶自己的 `-h`/`--help`(不是某個帶值旗標的值、
+    也不在 `--` 之後,如 `gh pr merge --help`、`gh -h pr merge 7`、`gh api --help`)只印用法、
+    不會合併或寫入,直接放行且不呼叫 gh。
+  - **shell 讀的 heredoc/here-string**(codex 第 4 輪):shell 直譯器(bash、sh、dash、zsh、
+    ksh、fish,含 `env <shell>`、`-s`;沒有 `-c`、沒有腳本檔)從 stdin 讀的 heredoc
+    (`sh <<'EOF' ... EOF`)或 here-string(`bash <<< '...'`)是看得見的腳本,內文照一般
+    指令逐段判斷。分隔字未加引號時外層 shell 會先展開內文,所以其中的 `$`、反引號都算展開;
+    加引號(`'EOF'`、`"EOF"`、`\EOF`)則為字面。餵給非直譯器(`cat`、`tee`、
+    `gh --body-file -`)的 heredoc 仍只是資料。
+  - **已知限制:不讀腳本檔**(維護者定案):直譯器執行的腳本**檔**(`bash script/x.sh`、
+    `python x.py`、`node x.js`、`just ...`)不檢查。理由:未核准的合併不論從哪裡發出,都會被
+    伺服器端擋下(`milestone-gate-approval` 是 main 的 required status check,#187),剩下的
+    缺口只有「刻意預先寫好一支腳本檔去發冒名核准留言」;若為此擋下所有腳本執行,會擋掉
+    `just test` 等日常工作。
   - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
-    複合指令逐段判斷;commit 訊息、echo、
-    heredoc 內文提到 gh 都只是資料。其餘指令放行且不呼叫 gh。
+    複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文提到 gh
+    都只是資料。其餘指令放行且不呼叫 gh。
     `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
     不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的

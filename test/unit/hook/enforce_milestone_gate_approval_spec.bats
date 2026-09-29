@@ -643,6 +643,88 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_output ""
 }
 
+# --- heredoc / here-string scripts, --help --------------------------------------
+
+@test "a heredoc a shell reads as its script is judged: a merge in it is gated" {
+    _labels milestone-gate
+    local _c
+    for _c in "$(printf "sh <<'EOF'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
+        "$(printf "env bash -s <<EOF\necho start\ngh pr merge 7 -R ycpss91255/worktool --merge\nEOF\necho after")" \
+        "bash <<< 'gh pr merge 7 -R ycpss91255/worktool'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
+}
+
+@test "a forged approval comment in a heredoc fed to bash is blocked" {
+    local _c
+    for _c in "$(printf "bash <<'EOF'\ngh pr comment 7 -R ycpss91255/worktool --body '%s'\nEOF" "${PHRASE}")" \
+        "$(printf "zsh <<-END\n\tgh issue comment 7 -b '%s'\n\tEND" "${PHRASE}")"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "[claude]"
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "an unquoted heredoc delimiter expands the body; a quoted one keeps it literal" {
+    _check "$(printf "bash <<EOF\ngh pr comment 7 --body '\$B'\nEOF")"
+    assert_failure 2
+    assert_output --partial "literal"
+    _check "$(printf "bash <<EOF\ngh pr comment 7 --body \"\\\\\$B\"\nEOF")"
+    assert_failure 2
+    _check "$(printf "bash <<'EOF'\ngh pr comment 7 --body '\$B'\nEOF")"
+    assert_success
+    assert_output ""
+    run _calls
+    assert_output ""
+}
+
+@test "a heredoc fed to a non-shell is still data, and a script file is not read" {
+    local _c
+    for _c in "$(printf "cat <<EOF\ngh pr merge 7\n%s\nEOF" "${PHRASE}")" \
+        "$(printf "tee notes.md <<'EOF' >/dev/null\ngh pr comment 7 --body '%s'\nEOF" "${PHRASE}")" \
+        "bash script/x.sh" \
+        "bash script/x.sh <<< 'gh pr merge 7'" \
+        "$(printf "bash -c 'cat' <<EOF\ngh pr merge 7\nEOF")"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "--help / -h on a relevant gh command passes without calling gh" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh pr merge --help" \
+        "gh -h pr merge 7" \
+        "gh api --help" \
+        "gh pr merge 7 -R ycpss91255/worktool --help" \
+        "gh pr comment 7 --body x -h" \
+        "gh --help pr comment"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+    run _calls
+    assert_output ""
+}
+
+@test "a -h / --help that is an option's value or follows -- does not pass a merge" {
+    _labels milestone-gate
+    local _c
+    for _c in "gh pr merge 7 -R ycpss91255/worktool --subject --help" \
+        "gh pr merge 7 -R ycpss91255/worktool -t -h"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "milestone-gate"
+    done
+}
+
 # --- everything else is untouched ----------------------------------------------
 
 @test "unrelated commands pass silently and never call gh" {

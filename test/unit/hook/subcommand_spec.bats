@@ -344,3 +344,35 @@ setup() {
     run hook_subcommands_raw "bash -c 'gh pr view \"${d}(printf 7)\"'"
     assert_line --index 0 --partial "gh pr view"
 }
+
+@test "a heredoc a shell reads as its script is launched; one fed to a non-shell stays data" {
+    run hook_subcommands "$(printf "sh <<'EOF'\ngh pr merge 7\nEOF\ngit status")"
+    assert_success
+    assert_output "$(printf '%s\n' 'gh pr merge 7' 'git status')"
+    run hook_subcommands "$(printf "env bash -s <<-END\n\tbats t\n\tEND")"
+    assert_output "bats t"
+    run hook_subcommands "$(printf "bash <<< 'bats t'")"
+    assert_output "bats t"
+    run hook_subcommands "$(printf "cat <<EOF\nbats t\nEOF")"
+    assert_output "cat <<EOF"
+    run hook_subcommands "$(printf "bash x.sh <<EOF\nbats t\nEOF")"
+    assert_output "bash x.sh <<EOF"
+}
+
+@test "an unquoted heredoc delimiter marks the body's expansions; a quoted one does not" {
+    local d='$' w
+    run hook_subcommands_raw "$(printf "bash <<EOF\ngh x '%sB'\nEOF" "${d}")"
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_expansion "${w[2]}"
+    assert_success
+    run hook_word "${w[2]}"
+    assert_output "${d}B"
+    run hook_subcommands_raw "$(printf "bash <<'EOF'\ngh x '%sB'\nEOF" "${d}")"
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_expansion "${w[2]}"
+    assert_failure
+    run hook_subcommands_raw "$(printf 'bash <<EOF\ngh x \\%sB\nEOF' "${d}")"
+    read -r -a w <<<"${lines[0]}"
+    run hook_word_has_expansion "${w[2]}"
+    assert_success
+}
