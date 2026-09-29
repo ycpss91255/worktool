@@ -33,10 +33,12 @@ main() {
     local _name _root _dir _branch
     _name="$(hook_field '.name')"
     [[ -n "${_name}" ]] || _fail "missing .name in payload"
-    # The name becomes a directory and a branch component: no path trickery.
-    case "${_name}" in
-        */*|*..*) _fail "unsafe name $(printf '%q' "${_name}")" ;;
-    esac
+    # The name becomes a directory and a branch component: a plain word that
+    # starts with a letter or digit (so never '.', '..', a path or an option
+    # git would parse) and holds no '..'.
+    if [[ ! "${_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "${_name}" == *..* ]]; then
+        _fail "unsafe name $(printf '%q' "${_name}")"
+    fi
 
     _root="${CLAUDE_PROJECT_DIR:-}"
     [[ -n "${_root}" ]] || _root="$(git rev-parse --show-toplevel 2>/dev/null)"
@@ -47,8 +49,11 @@ main() {
     _branch="worktree-${_name}"
     mkdir -p "${_root}/.worktree" || _fail "mkdir ${_root}/.worktree failed"
 
-    # Already present (idempotent): hand the path back.
-    if [[ ! -d "${_dir}" ]]; then
+    # Already present (idempotent): hand the path back - but only when it
+    # really is a worktree (.git file), never a plain directory.
+    if [[ -e "${_dir}" ]]; then
+        [[ -f "${_dir}/.git" ]] || _fail "${_dir} exists but is not a git worktree"
+    else
         # A fresh worktree-<name> branch (Claude Code's default name), else an
         # existing branch of that name, else a detached worktree.
         git -C "${_root}" worktree add "${_dir}" -b "${_branch}" >&2 2>&1 \
