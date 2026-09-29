@@ -31,7 +31,8 @@ export const meta = {
 // before Synthesize (both verifiers are required); a missing or malformed
 // synthesis stops before Record. Nothing is posted unless all of them held.
 // No repo writes (#243): every prompt confines intermediate files to SCRATCH;
-// Research captures `git status --porcelain` of repoDir first, and after
+// Research captures `git status --porcelain --untracked-files=all` of repoDir
+// before any write (into a shell variable, saved after the mkdir), and after
 // Record a repo-check compares it again in both directions: a line that
 // appeared or vanished, a git/grep error, or no answer is 'repo-dirty' with
 // the lines in detail, even if the comment went out.
@@ -63,11 +64,14 @@ const CD = `cd ${sq(SCRATCH)}`
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 // Appended to every phase prompt: the checkout is someone's working tree (#243).
 const SCRATCH_ONLY = `\nFile rule: Intermediate files (notes, drafts, logs) go ONLY under ${JSON.stringify(`${SCRATCH}/`)} (or the system temp dir); never create, edit or delete any other path under ${JSON.stringify(REPO_DIR)}, tracked or untracked. Report findings in your answer, not in files.`
-const GIT_STATUS = (f) => `git -C ${sq(REPO_DIR)} status --porcelain > ${f}`
+// Every untracked file, not a collapsed `?? dir/` (a change inside an untracked
+// dir must show); the run's own scratch dir is excluded (it is only ignored
+// where repoDir's .gitignore lists .worktree/).
+const GIT_STATUS = `git -C ${sq(REPO_DIR)} status --porcelain --untracked-files=all -- . ${sq(`:(exclude).worktree/.scratch/research-${A.issue}`)}`
 // Both directions (a line that appeared AND one that vanished), and grep's
 // exit 2 (an unreadable capture) is a failure, never "no difference".
 const GREP_DIFF = (a, b, f) => `{ grep -vxF -f ${a} ${b} > ${f}; [ $? -le 1 ]; }`
-const REPO_DIFF = `${GIT_STATUS('status-after.txt')} && ${GREP_DIFF('status-before.txt', 'status-after.txt', 'repo-added.txt')} && ${GREP_DIFF('status-after.txt', 'status-before.txt', 'repo-removed.txt')} && { sed 's/^/+ /' repo-added.txt; sed 's/^/- /' repo-removed.txt; } > repo-extra.txt || { echo 'repo-check failed: git status or grep error' > repo-extra.txt; false; }`
+const REPO_DIFF = `${GIT_STATUS} > status-after.txt && ${GREP_DIFF('status-before.txt', 'status-after.txt', 'repo-added.txt')} && ${GREP_DIFF('status-after.txt', 'status-before.txt', 'repo-removed.txt')} && { sed 's/^/+ /' repo-added.txt; sed 's/^/- /' repo-removed.txt; } > repo-extra.txt || { echo 'repo-check failed: git status or grep error' > repo-extra.txt; false; }`
 
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
@@ -87,7 +91,7 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
 const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt\`, then capture the checkout state BEFORE anything else: \`${CD} && ${GIT_STATUS('status-before.txt')}\`.
+1. Run, as ONE command: \`cd ${sq(REPO_DIR)} && before=$(${GIT_STATUS}) && mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt && { [ -z "$before" ] || printf '%s\\n' "$before"; } > status-before.txt\`. It captures the checkout state BEFORE any write (mkdir, rm, a file) and only then saves it.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ===BEGIN===
 ${AGY_PROMPT}

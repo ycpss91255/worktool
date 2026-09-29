@@ -87,8 +87,9 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
    agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
-   留言之後由 `repo-check` agent 再跑一次 `git -C <repoDir> status --porcelain`,與 Research 第一步(任何寫入之前)
-   存下的 `status-before.txt` 雙向比對:多出的行記為 `+ <行>`、消失的行(例如既有未追蹤檔被刪)記為 `- <行>`;
+   留言之後由 `repo-check` agent 再跑一次 `git -C <repoDir> status --porcelain --untracked-files=all`
+   (逐檔列出未追蹤檔,不折疊成 `?? dir/`,既有未追蹤目錄裡的新增或刪除也看得到;本次 run 的 scratch 目錄以 pathspec 排除),
+   與 Research 第一步存下的 `status-before.txt` 雙向比對(基準先存進 shell 變數,之後才 `mkdir`/`rm`/寫檔,確保擷取在任何寫入之前):多出的行記為 `+ <行>`、消失的行(例如既有未追蹤檔被刪)記為 `- <行>`;
    任何一行差異、`git`/`grep` 出錯(`grep` exit 2,例如基準檔不可讀)或 agent 沒回結果,都回傳 `status: 'repo-dirty'`,
    `detail` 列出這些行,且不替你清掉(留給維護者判斷)。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為

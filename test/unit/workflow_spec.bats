@@ -361,10 +361,10 @@ _rv_with() {
     local json="${output}"
     run jq -r '.error, .result.status' <<<"${json}"
     assert_output "$(printf '%s\n' null recorded)"
-    # mkdir, repo status before, agy, codex run, codex extraction, body build,
-    # gh, repo status after: every one ran and passed
+    # repo status before + mkdir (one step), agy, codex run, codex extraction,
+    # body build, gh, repo status after: every one ran and passed
     run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
-    assert_output "0 0 0 0 0 0 0 0"
+    assert_output "0 0 0 0 0 0 0"
     [[ -f "${scratch}/status-before.txt" ]]
     [[ -f "${scratch}/repo-extra.txt" && ! -s "${scratch}/repo-extra.txt" ]]
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
@@ -445,11 +445,14 @@ _rv_with() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     local json="${output}"
-    run jq -r '.calls[0].prompt' <<<"${json}"
-    assert_output --partial "git -C '/w' status --porcelain > status-before.txt"
+    # The first shell step captures the status BEFORE any write (mkdir, rm,
+    # redirect): nothing but a cd precedes the git status call.
+    run jq -r '.calls[0].prompt | [match("`([^`]*)`"; "g").captures[0].string][0]' <<<"${json}"
+    assert_output --regexp "^cd '/w' && before=\\\$\\(git -C '/w' status --porcelain --untracked-files=all -- \\. ':\\(exclude\\)\\.worktree/\\.scratch/research-7'\\) && mkdir -p "
+    assert_output --partial '> status-before.txt'
     run jq -r '.calls[-1].label, .calls[-1].prompt' <<<"${json}"
     assert_output --partial "repo-check:#7"
-    assert_output --partial "git -C '/w' status --porcelain > status-after.txt"
+    assert_output --partial "git -C '/w' status --porcelain --untracked-files=all -- . ':(exclude).worktree/.scratch/research-7' > status-after.txt"
     run grep -c "schema: REPO_CHECK_SCHEMA" "${RESEARCH}"
     assert_output "1"
 }
@@ -502,6 +505,26 @@ _rv_with() {
     [[ ! -e "${dir}/old-note.md" ]]
     run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
     assert_output "- ?? old-note.md"
+}
+
+@test "research-verify (node): the repo-check shell step sees a file added inside a pre-existing untracked dir (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: adds a file next to an untracked one in an untracked dir
+    printf '#!/bin/sh\ntouch ../../../notes/new.md\necho "1. claim [x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    mkdir -p "${dir}/notes"
+    touch "${dir}/notes/old.md"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ -e "${dir}/notes/new.md" ]]
+    run cat "${dir}/.worktree/.scratch/research-7/status-before.txt"
+    assert_output "?? notes/old.md"
+    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    assert_output "+ ?? notes/new.md"
 }
 
 @test "research-verify (node): the repo-check shell step fails closed when grep errors, e.g. an unreadable status-before.txt (#243)" {
