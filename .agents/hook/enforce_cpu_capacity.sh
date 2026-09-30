@@ -73,11 +73,12 @@ _test_containers() {
     local _out
     command -v docker >/dev/null 2>&1 || return 1
     if command -v timeout >/dev/null 2>&1; then
-        _out="$(timeout "${CPU_GATE_DOCKER_TIMEOUT}" docker ps --format '{{.Image}}' 2>/dev/null)" || return 1
+        _out="$(timeout "${CPU_GATE_DOCKER_TIMEOUT}" docker ps --format '{{.Image}}|{{.State}}' 2>/dev/null)" || return 1
     else
-        _out="$(docker ps --format '{{.Image}}' 2>/dev/null)" || return 1
+        _out="$(docker ps --format '{{.Image}}|{{.State}}' 2>/dev/null)" || return 1
     fi
-    printf '%s\n' "${_out}" | awk -v re="${CPU_GATE_TEST_IMAGES_RE}" '$1 ~ re { n++ } END { print n + 0 }'
+    printf '%s\n' "${_out}" \
+        | awk -F '|' -v re="${CPU_GATE_TEST_IMAGES_RE}" '$1 ~ re && $2 == "running" { n++ } END { print n + 0 }'
 }
 
 # _gated - 0 when this tool call starts new parallel work.
