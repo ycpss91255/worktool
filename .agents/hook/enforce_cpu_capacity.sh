@@ -32,9 +32,8 @@ hook_bootstrap "cpu-capacity"
 # --- Limits (the one place to tune them) --------------------------------------
 # Block when PSI some avg60 is ABOVE this percentage.
 readonly CPU_GATE_PSI_LIMIT=50
-# Block when the test containers are ABOVE nproc * NUM / DEN (2 per 4 CPUs).
-readonly CPU_GATE_CONTAINERS_NUM=2
-readonly CPU_GATE_CONTAINERS_DEN=4
+# Block when the running test containers are ABOVE this count.
+readonly CPU_GATE_CONTAINERS_LIMIT=2
 # Image repositories script/test/test.sh runs its gates in.
 readonly CPU_GATE_TEST_IMAGES_RE='^worktool-(test|system-real|ghostty)(:|$)'
 # Seconds `docker ps` may take before it counts as failed.
@@ -74,11 +73,12 @@ _test_containers() {
     local _out
     command -v docker >/dev/null 2>&1 || return 1
     if command -v timeout >/dev/null 2>&1; then
-        _out="$(timeout "${CPU_GATE_DOCKER_TIMEOUT}" docker ps --format '{{.Image}}' 2>/dev/null)" || return 1
+        _out="$(timeout "${CPU_GATE_DOCKER_TIMEOUT}" docker ps --format '{{.Image}}|{{.State}}' 2>/dev/null)" || return 1
     else
-        _out="$(docker ps --format '{{.Image}}' 2>/dev/null)" || return 1
+        _out="$(docker ps --format '{{.Image}}|{{.State}}' 2>/dev/null)" || return 1
     fi
-    printf '%s\n' "${_out}" | awk -v re="${CPU_GATE_TEST_IMAGES_RE}" '$1 ~ re { n++ } END { print n + 0 }'
+    printf '%s\n' "${_out}" \
+        | awk -F '|' -v re="${CPU_GATE_TEST_IMAGES_RE}" '$1 ~ re && $2 == "running" { n++ } END { print n + 0 }'
 }
 
 # _gated - 0 when this tool call starts new parallel work.
@@ -93,9 +93,8 @@ _gated() {
 main() {
     hook_read_input
     _gated || hook_allow
-    local _psi _cnt _nproc _climit _over=0 _psi_txt _cnt_txt
+    local _psi _cnt _nproc _over=0 _psi_txt _cnt_txt
     _nproc="$(_nproc)"
-    _climit=$((_nproc * CPU_GATE_CONTAINERS_NUM / CPU_GATE_CONTAINERS_DEN))
     if _psi="$(_psi_some_avg60)"; then
         _psi_txt="PSI some avg60 ${_psi} (limit ${CPU_GATE_PSI_LIMIT})"
         awk -v v="${_psi}" -v l="${CPU_GATE_PSI_LIMIT}" 'BEGIN { exit !(v > l) }' && _over=1
@@ -103,15 +102,15 @@ main() {
         _psi_txt="PSI unavailable (judged on test containers only)"
     fi
     if _cnt="$(_test_containers)"; then
-        _cnt_txt="test containers ${_cnt} (limit ${_climit})"
-        ((_cnt > _climit)) && _over=1
+        _cnt_txt="test containers ${_cnt} (limit ${CPU_GATE_CONTAINERS_LIMIT})"
+        ((_cnt > CPU_GATE_CONTAINERS_LIMIT)) && _over=1
     else
         _cnt_txt="test containers unknown (docker ps failed; judged on PSI only)"
     fi
     ((_over)) || hook_allow
     hook_block "the CPU is saturated; starting more parallel work now slows everything down." \
         "${_psi_txt}; loadavg $(_loadavg); nproc ${_nproc}; ${_cnt_txt}" \
-        "Wait for the running work to finish before starting another, or merge the items into one fanout."
+        "Run at most 2 tests at a time; wait for the running work to finish before starting another, or merge the items into one fanout."
 }
 
 main "$@"
