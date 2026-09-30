@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Adapt Codex apply_patch input to the Claude-style file-edit hook interface.
 
+# shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
