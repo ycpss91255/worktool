@@ -290,9 +290,21 @@ _pl_blocked_run() {
 
 @test "pr-loop keeps shared TDD wording in one source constant" {
     run grep -c '^const TDD_' "${PR_LOOP}"
-    assert_output "1"
+    assert_output "2"
     run grep -c 'each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit' "${PR_LOOP}"
     assert_output "1"
+    run grep -c 'Structure- or implementation-detail tests are blocking' "${PR_LOOP}"
+    assert_output "1"
+}
+
+@test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -cr '.calls[] | select(.label | startswith("review:")) | .prompt | [contains("commit history is vertical slices"), contains("tests verify behaviour through the public interface"), contains("Structure- or implementation-detail tests are blocking")]' <<<"${output}"
+        assert_output '[true,true,true]'
+    done
 }
 
 @test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
