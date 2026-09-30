@@ -26,6 +26,31 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+_invariant_section() {
+    awk -v heading="## $2" '
+        $0 == heading { found = 1; next }
+        /^## / { if (found) exit }
+        found { print }
+        END { if (!found) exit 1 }
+    ' "$1"
+}
+
+_invariant_adr_files() {
+    find "${REPO_ROOT}/doc/adr" "${BATS_TEST_DIRNAME}/fixture/adr" \
+        -maxdepth 1 -type f -name '*-invariant-*.md' -print | sort
+}
+
+@test "every invariant ADR has four non-empty sections" {
+    local _adr _heading
+    while IFS= read -r _adr; do
+        for _heading in 一句話 性質 為什麼固定 目前由哪些機制或測試守住; do
+            run _invariant_section "${_adr}" "${_heading}"
+            assert_success
+            assert_output --regexp '[^[:space:]]'
+        done
+    done < <(_invariant_adr_files)
+}
+
 setup() {
     ADR_0002="${REPO_ROOT}/doc/adr/0002-box-owns-its-home.md"
     ADR_0005="${REPO_ROOT}/doc/adr/0005-invariant-single-source.md"
