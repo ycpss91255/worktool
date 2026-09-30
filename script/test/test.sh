@@ -154,6 +154,7 @@ _required_specs() {
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/enforce_codex_round_cap_spec.bats \
+                unit/hook/enforce_cpu_capacity_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \

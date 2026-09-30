@@ -78,6 +78,7 @@ _registered() {
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
         "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
+        "PreToolUse|Workflow|Agent|${_p}/enforce_cpu_capacity.sh" \
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
         "UserPromptSubmit||${_p}/remind_no_emoji.sh")"
