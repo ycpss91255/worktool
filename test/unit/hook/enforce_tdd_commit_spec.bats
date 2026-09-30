@@ -147,3 +147,41 @@ _check() {
         assert_failure 2
     done
 }
+
+# _scenario <name> - rebuild REPO in the state the named case commits from.
+_scenario() {
+    rm -rf "${REPO}"
+    setup
+    case "$1" in
+        product+test) _put lib/x.sh 'x() { :; }'; _put test/unit/x_spec.bats '@test "x" { run x; }' ;;
+        product-after-red) _put test/unit/x_spec.bats '@test "x" { run x; }'; _commit red; _put lib/x.sh 'x() { :; }' ;;
+        product-after-green) _put lib/w.sh 'w() { :; }'; _put test/unit/w_spec.bats '@test "w" { run w; }'
+            _commit green; _put lib/x.sh 'x() { :; }' ;;
+        one-test) _put test/unit/x_spec.bats '@test "a" { :; }' ;;
+        two-tests) _put test/unit/x_spec.bats "$(printf '@test "a" { :; }\n@test "b" { :; }')" ;;
+        docs) _put doc/x.md 'x' ;;
+        merge) git -C "${REPO}" checkout -q -b feat; _put lib/x.sh 'x() { :; }'; _commit f
+            git -C "${REPO}" checkout -q main; _put doc/y.md 'y'; _commit d
+            git -C "${REPO}" merge -q --no-ff --no-commit feat ;;
+    esac
+}
+
+@test "the acceptance matrix holds for a direct launch, bash -c and eval" {
+    local _case _want _form
+    while read -r _case _want; do
+        for _form in "git commit -m x" "bash -c 'git commit -m x'" "eval git commit -m x"; do
+            _scenario "${_case}"
+            _check "${_form}"
+            [[ "${status}" -eq "${_want}" ]] \
+                || fail "${_case} via [${_form}]: want exit ${_want}, got ${status}: ${output}"
+        done
+    done <<'CASES'
+product+test 0
+product-after-red 0
+product-after-green 2
+one-test 0
+two-tests 2
+docs 0
+merge 0
+CASES
+}
