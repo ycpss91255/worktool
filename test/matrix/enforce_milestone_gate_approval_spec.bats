@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
-# test/unit/hook/enforce_milestone_gate_approval_spec.bats -
+# test/matrix/enforce_milestone_gate_approval_spec.bats -
 # .agents/hook/enforce_milestone_gate_approval.sh (issue #190)
 #
 # The agent-side half of the milestone-gate approval (#187). The rules it
@@ -17,13 +17,13 @@
 # gh is a PATH stub fed from files in BATS_TEST_TMPDIR: nothing touches
 # the network. The stub logs each call to ${GH_STUB_DIR}/calls.
 
-load "${BATS_TEST_DIRNAME}/../../helper/common"
-load "${BATS_TEST_DIRNAME}/../../helper/hook"
+load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/hook"
 
 setup() {
     # The single tables and classifiers the matrices read (hook_http_data_flags,
     # hook_http_is_write, hook_api_endpoint_urls).
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    # shellcheck source=../../.agents/hook/lib/subcommand.sh
     source "${HOOK_DIR}/lib/subcommand.sh"
     GH_STUB_DIR="${BATS_TEST_TMPDIR}/gh"
     mkdir -p "${GH_STUB_DIR}/bin"
@@ -73,10 +73,10 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
 
 # --- required spec / registration ---------------------------------------------
 
-@test "this spec is a required unit spec of test.sh" {
-    run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
+@test "this spec is a required matrix spec of test.sh" {
+    run bash -c 'source "$1" && _required_specs matrix' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
-    assert_line "unit/hook/$(basename -- "${BATS_TEST_FILENAME}")"
+    assert_line "matrix/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
 @test "the hook sets set -uo pipefail itself, as issue #190 requires" {

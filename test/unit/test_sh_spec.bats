@@ -68,7 +68,7 @@ _dispatched() {
 # group in the test image, then - after a `docker build` of the ubuntu
 # ghostty image - the ghostty group.
 EVERYTHING_IN_ORDER="$(printf '%s\n' \
-    --ci-lint --ci-unit \
+    --ci-lint --ci-unit --ci-matrix \
     --ci-integration build --ci-integration-ghostty \
     --ci-system --ci-acceptance \
     build system-real-entry.sh)"
@@ -79,7 +79,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --help
     assert_success
     local _flag
-    for _flag in --build --lint --unit --integration --system --system-real \
+    for _flag in --build --lint --unit --matrix --integration --system --system-real \
         --acceptance --help; do
         assert_output --partial "${_flag}"
     done
@@ -139,7 +139,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 # --- no flag: everything, in order, stop at the first failure --------------
 
-@test "test.sh with no flag runs lint, unit, integration, system, acceptance, system-real in that order" {
+@test "test.sh with no flag runs lint, unit, matrix, integration, system, acceptance, system-real in that order" {
     run "${TEST_SH}"
     assert_success
     assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
@@ -149,7 +149,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
     assert_failure
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit \
+        --ci-lint --ci-unit --ci-matrix \
         --ci-integration build --ci-integration-ghostty \
         --ci-system)"
 }
@@ -164,7 +164,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 @test "test.sh --<tier> routes exactly that in-container gate and nothing else" {
     local _tier
-    for _tier in lint unit system acceptance; do
+    for _tier in lint unit matrix system acceptance; do
         rm -f "${FAKE_DOCKER_CALLS}"
         run "${TEST_SH}" "--${_tier}"
         assert_success
@@ -201,6 +201,18 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
 }
 
+@test "every bats runner image installs GNU parallel" {
+    local _dockerfile
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^[[:space:]]*parallel([[:space:]]*\\)?$' \
+            "${REPO_ROOT}/${_dockerfile}"
+        assert_success "${_dockerfile} must install GNU parallel for bats --jobs"
+    done
+}
+
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
@@ -226,7 +238,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 # --- errexit (issue #195) ----------------------------------------------------

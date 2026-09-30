@@ -50,13 +50,15 @@ worktool/
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
-│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
-│   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
+│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
+│   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同)
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
+│   ├── matrix/          完整乘積矩陣(bats):CI 必跑、不納入本機推送前 unit gate
+│   │   └── enforce_milestone_gate_approval_spec.bats
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
@@ -90,11 +92,11 @@ worktool/
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
-│   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
+│   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
 │   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
-│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji)
+│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、codex_apply_patch(Codex 編輯轉接層,#282))
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
@@ -109,6 +111,8 @@ worktool/
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
+├── .codex/
+│   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
@@ -121,6 +125,25 @@ worktool/
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
+
+## Codex hook
+
+`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
+PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
+worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
+`CLAUDE_PROJECT_DIR`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
+所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+
+Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
+`.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
+Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現有
+Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
+`enforce_shellcheck_disable_approval.sh` 等 hook 的判定。
+
+本次對齊仍有事件差異：Claude 的 `UserPromptSubmit` 與 `WorktreeCreate` 在此 Codex
+接線沒有對應事件，因此不註冊。自動化呼叫 Codex 時帶
+`--dangerously-bypass-hook-trust`；這表示呼叫端明確信任 repo hook，而 hook 來源與
+變更由 PR review 把關。
 
 ## 使用者介面:`just`(base 模型)
 
@@ -147,10 +170,11 @@ worktool/
 | 指令 | 實際執行 |
 |------|----------|
 | `just` | `just --list`(列出命名空間) |
-| `just test` | `./script/test/test.sh`(全部:lint、unit、integration、system、acceptance、system-real,依序、遇錯即停) |
+| `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
 | `just test unit [args]` | `./script/test/test.sh --unit [args]` |
+| `just test matrix [args]` | `./script/test/test.sh --matrix [args]` |
 | `just test integration [args]` | `./script/test/test.sh --integration [args]` |
 | `just test system [args]` | `./script/test/test.sh --system [args]` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real [args]` |
@@ -194,6 +218,8 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
   守住 README 三張 draw.io 圖的單一事實來源(`doc/diagram/*.drawio.svg` 存在、是
   SVG、不含 `<foreignObject>`、內嵌 `mxfile`、README 以連到 app.diagrams.net 的圖
   嵌入、`.vscode/extensions.json` 推薦 `hediet.vscode-drawio`)。
+- 矩陣(matrix):`test/matrix/*.bats` —— CI 必跑的完整乘積覆蓋;
+  unit 只保留每個維度的代表路徑,避免本機每次推送前重複承擔完整矩陣成本。
 - 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明 Docker
   harness 能跑;`assemble_spec.bats` 以 mock `distrobox` 證明 assemble 端到端接線
   (`distrobox assemble create --file box/dev.ini`)。
@@ -227,7 +253,7 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
 所有測試都在 Docker 容器內執行,host 不安裝任何套件。前置需求:host 需有
 `docker` 與 `just`(`just` 是使用者的通用介面,見 design.md「決策」);沒有 `just`
 的機器上可直接呼叫底層實作 `./script/test/test.sh --lint` / `--unit` /
-`--integration` / `--system` / `--acceptance` / `--system-real`(或不帶旗標跑全部)
+`--matrix` / `--integration` / `--system` / `--acceptance` / `--system-real`(或不帶旗標跑全部)
 效果完全相同;`./script/test/test.sh --help` 列出全部選項。
 
 ```bash
@@ -236,6 +262,9 @@ just test lint
 
 # 單元測試(test/unit/*.bats)
 just test unit
+
+# 完整乘積矩陣(test/matrix/*.bats;CI 必跑,本機推送前不必跑)
+just test matrix
 
 # 整合測試(test/integration/*.bats)
 just test integration
@@ -250,7 +279,7 @@ just test acceptance
 # --privileged,慢;唯一需要 --privileged 的 tier)
 just test system-real
 
-# 全部(lint、unit、integration、system、acceptance、system-real,依序,遇到第一個
+# 全部(lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個
 # 失敗就停):與 CI 完全相同
 just test
 
@@ -264,8 +293,8 @@ just test selfcheck
 `worktool-system-real:local`(`dockerfile/Dockerfile.system-real`)。
 
 底層由 `script/test/test.sh` 驅動(`just test` 只是它的介面):host 端旗標
-(`--lint` / `--unit` / `--integration` / `--system` / `--acceptance`)會把對應的
-容器內旗標(`--ci-lint` / `--ci-unit` / `--ci-integration` / `--ci-system` /
+(`--lint` / `--unit` / `--matrix` / `--integration` / `--system` / `--acceptance`)會把對應的
+容器內旗標(`--ci-lint` / `--ci-unit` / `--ci-matrix` / `--ci-integration` / `--ci-system` /
 `--ci-acceptance`)丟進掛載 `/source` 的一次性容器執行;`--system-real`
 則以 `docker run --rm --privileged` 啟動 DinD runner,由 runner 入口
 `script/test/system-real-entry.sh` 起巢狀 dockerd、等 `docker info` 就緒後再呼叫
@@ -284,18 +313,21 @@ just test selfcheck
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
 `setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`contract_spec`、`hook/` 與 `script/` 底下每一支
-agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+agent spec;matrix:`enforce_milestone_gate_approval_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
 `skip`:必要 spec 被刪、被清空、被 `skip` 都不會因為同層還有別的 spec 而被當成
-綠燈;非必要的額外 spec 照常一起跑。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
+綠燈;非必要的額外 spec 照常一起跑。各 bats tier 預設以
+`WORKTOOL_TEST_JOBS=4` 跨 spec 並行、同一 spec 內序列執行;可在 `just` 前設定正整數
+覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
+exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 刪檔/空檔負向案例證明這條規則。
 
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-跑 lint、test-unit、test-integration、test-system、test-acceptance(共用測試
+跑 lint、test-unit、test-matrix、test-integration、test-system、test-acceptance(共用測試
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
 分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
@@ -447,7 +479,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
       inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API
       (網址先正規化:大小寫、結尾點、連接埠、帳密前綴、scheme、路徑寫法)。`gh api` 不接受
       `-R`/`--repo`,帶了就擋(hook 無法判斷 endpoint)。
-    - **測法**:`test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
+    - **測法**:`test/matrix/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
       測,每個格子是各維度各取一值的完整乘積,失敗時列出變體(新的繞過類別＝在某維度加一個值):
       - 操作 × gh 寫法 × 包裝:範圍內所有操作(pr merge/comment/review/close/reopen、issue
         comment/close/reopen、gh api merge、comments 集合與成員、graphql merge 與 comment
@@ -494,7 +526,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文在結構化解析中
     都只是資料(但仍受上述 tripwire 檢查)。其餘指令放行且不呼叫 gh。
-    `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
+    `test/matrix/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
     不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
   程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
@@ -506,9 +538,9 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
-tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
+tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、`test-matrix` -> `just test matrix`、
 `test-integration` -> `just test integration`、`test-system` -> `just test system`、
 `test-acceptance` -> `just test acceptance`;`test-system-real` ->
 `just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
-branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這六個 gate
+branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
