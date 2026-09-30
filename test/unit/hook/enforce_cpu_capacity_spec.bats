@@ -59,18 +59,27 @@ _launch() {
 
 # --- allowed -----------------------------------------------------------------
 
-@test "low load: a Workflow starts" {
-    _containers 1
-    _launch Workflow
-    assert_success
-    refute_output --partial "BLOCKED"
+@test "fewer than two running test containers allow a Workflow" {
+    local _count
+    for _count in 0 1; do
+        : >"${DOCKER_STUB_DIR}/ps"
+        _containers "${_count}"
+        _launch Workflow
+        assert_success
+        refute_output --partial "BLOCKED"
+    done
 }
 
-@test "one running test container still passes when test containers are paused" {
-    _containers 1
-    _containers 2 worktool-test:local paused
-    _launch Workflow
-    assert_success
+@test "fewer than two running test containers allow a Workflow when test containers are paused" {
+    local _count
+    for _count in 0 1; do
+        : >"${DOCKER_STUB_DIR}/ps"
+        _containers "${_count}"
+        _containers 2 worktool-test:local paused
+        _launch Workflow
+        assert_success
+        refute_output --partial "BLOCKED"
+    done
 }
 
 # --- blocked -----------------------------------------------------------------
@@ -93,35 +102,30 @@ _launch() {
     assert_success
 }
 
-@test "three running test containers block a Workflow even at low PSI" {
-    _containers 3
-    _launch Workflow
-    assert_failure 2
-    assert_output --partial "BLOCKED"
-    assert_output --partial "at most 2 tests at a time"
-    assert_output --partial "test containers 3 (limit 2)"
-    assert_output --partial "PSI some avg60 10.00 (limit 50)"
+@test "two or more running test containers block a Workflow even at low PSI" {
+    local _count
+    for _count in 2 3; do
+        : >"${DOCKER_STUB_DIR}/ps"
+        _containers "${_count}"
+        _launch Workflow
+        assert_failure 2
+        assert_output --partial "BLOCKED"
+        assert_output --partial "at most 2 tests at a time"
+        assert_output --partial "test containers ${_count} (limit 2)"
+        assert_output --partial "PSI some avg60 10.00 (limit 50)"
+    done
 }
 
-@test "test containers exactly at the limit still pass" {
-    _containers 2
-    _launch Workflow
-    assert_success
-}
-
-@test "two running test containers still pass when test containers are paused" {
-    _containers 2
-    _containers 2 worktool-test:local paused
-    _launch Workflow
-    assert_success
-}
-
-@test "three running test containers still block when test containers are paused" {
-    _containers 3
-    _containers 2 worktool-test:local paused
-    _launch Workflow
-    assert_failure 2
-    assert_output --partial "test containers 3 (limit 2)"
+@test "two or more running test containers block when test containers are paused" {
+    local _count
+    for _count in 2 3; do
+        : >"${DOCKER_STUB_DIR}/ps"
+        _containers "${_count}"
+        _containers 2 worktool-test:local paused
+        _launch Workflow
+        assert_failure 2
+        assert_output --partial "test containers ${_count} (limit 2)"
+    done
 }
 
 @test "the container limit stays fixed when nproc changes" {
