@@ -34,6 +34,10 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_main_checkout_readonly.sh"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_codex_round_cap.sh"
           },
           {
@@ -52,6 +56,15 @@
           {
             "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_shellcheck_disable_approval.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_main_checkout_readonly.sh"
           }
         ]
       },
