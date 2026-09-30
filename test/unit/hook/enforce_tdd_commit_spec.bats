@@ -64,3 +64,12 @@ _check() {
     assert_output --partial "@test"
     assert_output --partial ".agents/skills/tdd/SKILL.md"
 }
+
+@test "allows a tests-only commit that moves existing @test cases to another file" {
+    _put test/unit/x_spec.bats "$(printf '@test "a" { :; }\n@test "b" { :; }')"
+    _commit 'test: a and b'
+    git -C "${REPO}" mv test/unit/x_spec.bats test/unit/y_spec.bats
+    _check "git commit -m 'test: move a and b'"
+    assert_success
+    assert_output ""
+}
