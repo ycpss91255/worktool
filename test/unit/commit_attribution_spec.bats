@@ -46,6 +46,7 @@ _check_range() {
     assert_failure 1
     assert_output --partial "${_bad}"
     assert_output --partial "${_bad_line}"
+    assert_line --regexp "^\\[ERROR\\] ${_bad} ${_bad_line}$"
 }
 
 @test "an attribution line in a pull request body fails with the line and fix" {
@@ -81,16 +82,18 @@ _check_range() {
     assert_success
 }
 
-@test "a merge range checks merged commits" {
+@test "an attribution line in a merge commit is detected" {
     _commit "${REPO}" 'base'
     local _base _bad
     _base="$(git -C "${REPO}" rev-parse HEAD)"
     git -C "${REPO}" switch -q -c topic
-    _commit "${REPO}" $'topic\n\nGenerated with Claude Code'
-    _bad="$(git -C "${REPO}" rev-parse HEAD)"
+    _commit "${REPO}" 'topic work'
     git -C "${REPO}" switch -q master
     _commit "${REPO}" 'main work'
-    git -C "${REPO}" merge -q --no-ff topic -m 'Merge topic'
+    local _message_file="${BATS_TEST_TMPDIR}/merge-message"
+    printf '%s\n' $'Merge topic\n\nGenerated with Claude Code' > "${_message_file}"
+    git -C "${REPO}" merge -q --no-ff topic -F "${_message_file}"
+    _bad="$(git -C "${REPO}" rev-parse HEAD)"
 
     _check_range "${_base}..HEAD"
 

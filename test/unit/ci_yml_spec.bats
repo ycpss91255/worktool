@@ -391,10 +391,10 @@ _sorted_set() {
     run _job_block commit-attribution
     assert_success
     assert_line --regexp '^ +source lib/commit_attribution\.sh$'
-    assert_line --partial 'commit_attribution_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}")" || exit 1'
+    assert_line --partial "commit_attribution_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\" \"\${DEFAULT_REF}\")\" || exit 1"
     assert_line --regexp '^ +mapfile -t revs <<< "\$\{range\}"$'
     assert_line --regexp '^ +commit_attribution_check_commits '
-    assert_line '          PR_BODY: ${{ github.event.pull_request.body }}'
+    assert_line "          PR_BODY: \${{ github.event.pull_request.body }}"
     assert_line --regexp '^ +commit_attribution_check_pr_body "\$\{EVENT\}" "\$\{PR_BODY\}"$'
     refute_output --partial 'Co-Authored-By:'
     refute_output --partial 'Claude-Session:'

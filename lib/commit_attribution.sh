@@ -15,6 +15,7 @@
 # This is a library: source it. It sets no shell options and prints nothing
 # at source time.
 
+# shellcheck source-path=SCRIPTDIR
 _COMMIT_ATTRIBUTION_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./attribution.sh
 source "${_COMMIT_ATTRIBUTION_LIB_DIR}/attribution.sh"
@@ -84,7 +85,7 @@ commit_attribution_check_commits() {
     local _repo="$1" _tmp _sha _message _found _line _bad=0 _n=0
     shift
     _tmp="$(mktemp)" || return 1
-    if ! git -C "${_repo}" log --format='%H%x00%B%x00' "$@" -- > "${_tmp}"; then
+    if ! git -C "${_repo}" log -z --format='%H%x00%B' "$@" -- > "${_tmp}"; then
         rm -f -- "${_tmp}"
         return 1
     fi

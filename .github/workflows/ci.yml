@@ -3,8 +3,8 @@ name: CI
 # worktool CI: lint + unit + matrix + integration + system (shim group) + acceptance
 # in the shared test image, plus system-real (real-engine group) in its own
 # docker-in-docker runner. All inside Docker. Runs on push and pull_request
-# to main. The commit-email job (issue #234) checks that new commits carry a
-# GitHub noreply author and committer email.
+# to main. Dedicated jobs check new-commit email addresses (issue #234) and
+# attribution lines in commit messages and pull request bodies (issue #271).
 #
 # Every leg-carrying job runs on BOTH architectures (issue #149, decision B
 # of #148): the `runner` matrix dimension is ubuntu-latest (amd64) and
@@ -199,8 +199,40 @@ jobs:
           git log --format="$(commit_email_log_format)" "${revs[@]}" -- > "${records}" || exit 1
           commit_email_evaluate < "${records}"
 
+  # Commit attribution (issue #271): use the same fail-closed revision range
+  # as commit-email, then apply the shared detector from lib/attribution.sh to
+  # every selected commit message and, on pull_request events, the PR body.
+  commit-attribution:
+    name: commit-attribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check commit messages and pull request body
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+          DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+        run: |
+          set -uo pipefail
+          source lib/commit_attribution.sh
+          range="$(commit_attribution_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}")" || exit 1
+          mapfile -t revs <<< "${range}"
+          commit_attribution_check_commits . "${revs[@]}" || exit 1
+          commit_attribution_check_pr_body "${EVENT}" "${PR_BODY}"
+
   # Single required status: green only if every build-image leg AND every
-  # matrix gate leg AND every real-engine leg AND commit-email succeeded. `needs` on a matrix
+  # matrix gate leg AND every real-engine leg AND both commit policy jobs
+  # succeeded. `needs` on a matrix
   # job covers all of its legs, and its `result` is `success` only when
   # every leg is. `if: always()` makes it run even when a leg failed or was
   # skipped, so that state is reported as a failure rather than as "no
@@ -208,7 +240,7 @@ jobs:
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [build-image, gate, test-system-real, commit-email]
+    needs: [build-image, gate, test-system-real, commit-email, commit-attribution]
     if: always()
     steps:
       - name: Verify every leg succeeded
@@ -217,12 +249,15 @@ jobs:
           GATE_RESULT: ${{ needs.gate.result }}
           SYSTEM_REAL_RESULT: ${{ needs.test-system-real.result }}
           EMAIL_RESULT: ${{ needs.commit-email.result }}
+          ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
         run: |
           echo "build-image (both runners): ${BUILD_RESULT}"
           echo "gate (6 gates x both runners): ${GATE_RESULT}"
           echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
           echo "commit-email (noreply author and committer): ${EMAIL_RESULT}"
+          echo "commit-attribution (commit messages and PR body): ${ATTRIBUTION_RESULT}"
           [ "${BUILD_RESULT}" = "success" ] || exit 1
           [ "${GATE_RESULT}" = "success" ] || exit 1
           [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
+          [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
