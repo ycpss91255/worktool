@@ -268,6 +268,18 @@ _pl_blocked_run() {
     assert_output 'pr-loop: args.implementer must be "codex" or "claude", got "other"'
 }
 
+@test "pr-loop (node): codex quota off rejects codex implementation and does not gate Claude review" {
+    run _pl_run '{"implementer":"codex","codex":"off"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.codex "off" cannot use implementer "codex"; use implementer: "claude"'
+
+    run _pl_run '{"implementer":"codex","codex":"on"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Review PR #7") and (contains("Run ONE codex re-verification") | not)), ([.calls[] | select(.label | startswith("nocodex:"))] | length)]' <<<"${output}"
+    assert_output '[null,true,0]'
+}
+
 @test "pr-loop (node): the scope step cuts the issue's ## 範圍 section out verbatim (issue #238)" {
     printf '## 背景\n\nx\n\n## 範圍\n\n- 擋:a\n- 不擋:b\n\n## Acceptance criteria\n\n- z\n' > "${BATS_TEST_TMPDIR}/body.md"
     run _pl_codex_round
