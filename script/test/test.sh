@@ -154,6 +154,7 @@ _required_specs() {
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
+                unit/hook/enforce_main_checkout_readonly_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_no_attribution_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
@@ -172,6 +173,7 @@ _required_specs() {
         matrix)
             printf '%s\n' \
                 matrix/enforce_milestone_gate_approval_spec.bats \
+                matrix/enforce_main_checkout_readonly_spec.bats \
                 matrix/enforce_no_attribution_spec.bats
             ;;
         integration)
