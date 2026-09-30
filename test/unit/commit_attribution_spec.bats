@@ -40,3 +40,13 @@ _check_range() {
     assert_output --partial "${_bad}"
     assert_output --partial "${_bad_line}"
 }
+
+@test "an attribution line in a pull request body fails with the line and fix" {
+    local _bad_line='Claude-Session: fixture-session'
+
+    run commit_attribution_check_pr_body pull_request $'Summary\n'"${_bad_line}"
+
+    assert_failure 1
+    assert_output --partial "${_bad_line}"
+    assert_output --partial 'edit the PR body'
+}
