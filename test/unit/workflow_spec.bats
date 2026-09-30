@@ -200,7 +200,8 @@ SH
 _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc] | first' <<<"$1"; }
 
 _pl_run() {
-    local extra="${1:-{}}"
+    local extra="${1:-}"
+    [[ -n "${extra}" ]] || extra='{}'
     local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
@@ -211,6 +212,13 @@ _pl_run() {
     run _pl_run
     assert_success
     run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n -o /work/.worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/.worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
