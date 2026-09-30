@@ -302,6 +302,12 @@ D='$'
     assert_output --partial "/home/alice/"
 }
 
+@test "reads a locale quoted terminator (<<\$\"END\") after quote removal" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<${D}\"END\"" "${D}END" /home/alice/x END)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"
