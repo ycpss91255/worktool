@@ -39,7 +39,7 @@
 # the arguments here verbatim); the managed terminal command calls it by
 # its absolute path, with an absolute --distrobox (issue #175):
 #
-#   ./script/box/enter.sh                          # enter dev
+#   ./script/box/enter.sh                          # enter the default box
 #   ./script/box/enter.sh --box work -- fish       # enter work, run fish
 #   ./script/box/enter.sh --timeout 1800           # allow 30 min for a first launch
 #   ./script/box/enter.sh --help                   # usage
@@ -74,7 +74,9 @@ ENTER_LATEST_MAX=60         # characters of the latest output line shown
 ENTER_ZERO_STARTED='0001-01-01T00:00:00'
 
 # --- Option state (set by _parse_args / _resolve_settings) -------------------
-OPT_BOX="dev"
+# The default box is NOT written here: it is `enter_default box` from
+# lib/enter.sh, the one source setup.sh uses as well (ADR 0005, invariant 2).
+OPT_BOX=""
 OPT_DISTROBOX=""
 OPT_TIMEOUT=""
 OPT_HELP=0
@@ -89,7 +91,9 @@ PROGRESS_OPEN=0
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    local _box
+    _box="$(enter_default box)"
+    sed "s/@DEFAULT_BOX@/${_box}/" >&2 <<'EOF'
 Usage: enter.sh [--box <name>] [--distrobox <path>] [--timeout <seconds>]
                 [-- <command>...]
 
@@ -106,7 +110,7 @@ going on instead of two static lines:
     and the recovery (distrobox rm -f <box>, then open a new terminal),
     exit 1. The box is never stopped or removed.
 
-  --box <name>          Box to enter (default: dev); a container name:
+  --box <name>          Box to enter (default: @DEFAULT_BOX@); a container name:
                         [A-Za-z0-9][A-Za-z0-9_.-]*.
   --distrobox <path>    Absolute path of the distrobox to run (default: the
                         one on PATH).
@@ -421,6 +425,7 @@ _first_init() {
 enter_run() {
     local _rc=0 _argv
     _parse_args "$@" || return 2
+    [[ -n "${OPT_BOX}" ]] || OPT_BOX="$(enter_default box)"
     if [[ "${OPT_HELP}" -eq 1 ]]; then
         _usage
         return 0

@@ -178,6 +178,29 @@ _enter() {
     assert_line "FAKE-DISTROBOX enter dev"
 }
 
+# ADR 0005 (invariant 2, single source): the default box name is not a
+# second copy in enter.sh. It comes from `enter_default box` in lib/enter.sh,
+# the source setup.sh uses too, so a fixture repo whose lib says `work` makes
+# both the hand-over and --help follow it.
+@test "the default box comes from lib/enter.sh enter_default, not a second copy in enter.sh (ADR 0005)" {
+    local _fixture="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_fixture}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_fixture}/lib"
+    cp "${ENTER}" "${_fixture}/script/box/enter.sh"
+    sed -i "s|box)        printf 'dev\\\\n' ;;|box)        printf 'work\\\\n' ;;|" \
+        "${_fixture}/lib/enter.sh"
+    run bash -c 'source "$1" && enter_default box' _ "${_fixture}/lib/enter.sh"
+    assert_output "work"
+    FAKE_STARTED_AT="2026-09-29T09:13:42.123456789Z" WORKTOOL_INIT_INTERVAL=1 \
+        run "${_fixture}/script/box/enter.sh" --distrobox "${DISTROBOX}"
+    assert_success
+    assert_line "FAKE-DISTROBOX enter work"
+    run "${_fixture}/script/box/enter.sh" --help
+    assert_success
+    assert_output --partial "(default: work)"
+    refute_output --partial "(default: dev)"
+}
+
 # --- first launch: notice, progress, log, hand-over -----------------------------
 
 @test "first launch: a long initialisation keeps printing progress lines (stage + elapsed + latest line), then enters" {
