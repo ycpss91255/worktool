@@ -98,27 +98,38 @@ _assert_bytes() {
 
 # --- reading -----------------------------------------------------------------
 
-@test "config_get reads the first occurrence; absent file or key reads as nothing" {
-    run config_get tmux
+# config_get / config_get_all / config_each output of "$@" into a file, then
+# cmp against the bytes printf %b $1 gives: a trailing newline counts
+# (bats' $output and $(...) would drop it).
+_expect() {
+    local _want="$1"
+    shift
+    printf '%b' "${_want}" >"${EXPECTED}"
+    "$@" >"${BATS_TEST_TMPDIR}/got" || fail "$* failed"
+    cmp -- "${EXPECTED}" "${BATS_TEST_TMPDIR}/got" \
+        || fail "$*: got $(od -c "${BATS_TEST_TMPDIR}/got" | head -3)"
+}
+
+@test "config_get reads the first occurrence as value + LF (a bare key: LF, like key=); absent file or key prints nothing" {
+    _expect '' config_get tmux
+    _bytes "${CONFIG}" '# c\ntmux=host\ntmux=inside\nhome\npath=/a=b\nhome=/late\nempty=\nlast'
+    _expect 'host\n' config_get tmux
+    _expect '/a=b\n' config_get path
+    _expect '\n' config_get home
+    _expect '\n' config_get empty
+    _expect '\n' config_get last
+    _expect '' config_get box
+    # bare and `key=` print the same bytes
+    config_get home >"${BATS_TEST_TMPDIR}/bare"
+    config_get empty >"${BATS_TEST_TMPDIR}/empty"
+    run cmp -- "${BATS_TEST_TMPDIR}/bare" "${BATS_TEST_TMPDIR}/empty"
     assert_success
-    assert_output ""
-    _bytes "${CONFIG}" '# c\ntmux=host\ntmux=inside\nhome\npath=/a=b\nhome=/late'
-    run config_get tmux
-    assert_output "host"
-    run config_get path
-    assert_output "/a=b"
-    run config_get home
-    assert_output ""
-    run config_get box
-    assert_output ""
 }
 
 @test "config_get_all reads every occurrence in file order (a bare key as empty), the last line without a newline too" {
     _bytes "${CONFIG}" 'link=~/.aws\n# link=no\nlinks=no\nlink\nlink=.b\nlink=.c'
     local _t='~'
-    run config_get_all link
-    assert_success
-    assert_output "$(printf '%s\n' "${_t}/.aws" '' .b .c)"
+    _expect "${_t}/.aws\\n\\n.b\\n.c\\n" config_get_all link
 }
 
 # Records every config_each call, one line each.
@@ -126,9 +137,7 @@ _record() { printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4"; }
 
 @test "config_each passes line number, key, has-value and value of every entry; comments and blanks skipped" {
     _bytes "${CONFIG}" '# c\n\ntmux=host\n   \nhome\n  # indented\nfuture=a = b\nlast=x'
-    run config_each _record
-    assert_success
-    assert_output "$(printf '%s\n' '3|tmux|1|host' '5|home|0|' '7|future|1|a = b' '8|last|1|x')"
+    _expect '3|tmux|1|host\n5|home|0|\n7|future|1|a = b\n8|last|1|x\n' config_each _record
 }
 
 _stop_at_home() { [[ "$2" != home ]] || { echo "stop at $1"; return 3; }; }

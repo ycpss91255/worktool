@@ -50,6 +50,7 @@ _rows() {
     printf '%s\n' \
         "get-first|behave|get_first|=|=|${_cs}config_get reads the first occurrence" \
         "get-bare|behave|get_bare|=|=|${_cs}config_get reads the first occurrence" \
+        "get-lf|behave|get_lf|=|=|${_cs}config_get reads the first occurrence" \
         "get-all|behave|get_all|=|=|${_cs}config_get_all reads every occurrence" \
         "get-all-bare|behave|get_all_bare|=|=|${_cs}config_get_all reads every occurrence;unit/config_validate_spec.bats@bare key = empty value: link" \
         "bare-validate|behave|bare_validate|=|=|unit/config_validate_spec.bats@bare key = empty value: every validated key" \
@@ -173,6 +174,14 @@ _mut_get_bare() {
     cat <<'EOF'
 # A bare `<key>` line does not count as an occurrence.
 _config_get_line() { [[ "$3" == "$1="* ]] || return 0; printf '%s\n' "${3#"$1="}"; return 10; }
+EOF
+}
+# A bare key prints nothing (key= prints LF): one byte differs.
+_mut_get_lf() {
+    printf '#> lib/config.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _config_get_line | sed '1s/^_config_get_line /_mut_cgl_real /')"
+_config_get_line() { [[ "$3" != "$1" ]] || return 10; _mut_cgl_real "$@"; }
 EOF
 }
 _mut_get_all() {
