@@ -1,7 +1,7 @@
 # Workflow 範本(`.claude/workflows/`)
 
-worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> codex 複驗 -> 修正 -> 再複驗**,
-CI 綠且 codex「可合併」才由主迴圈合併(一次一個 PR、merge commit、保留各 agent 的 commit)。
+worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一方複驗 -> 修正 -> 再複驗**。
+預設 codex 實作、Claude 審查；也可切成 Claude 實作、codex 審查。CI 綠且審查方判定可合併後，才由主迴圈合併(一次一個 PR、merge commit、保留各 agent 的 commit)。
 這條迴圈寫成兩個可重用的 Claude Code Workflow 腳本,不再每次臨時寫;查資料另有 `research-verify.js`。
 
 | 檔案 | 用途 | 何時用 |
@@ -22,13 +22,12 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
   branch: "m3/150-bench",
   name: "bench",
   parent: "#5",
+  implementer: "codex",
   codex: "on",
   maxRounds: 3,
   task: "<要做什麼、驗收標準、檔案、測試;越具體越好>"
 } })
 ```
-
-`milestone-fanout.js` 的 `args` = `{ repo, repoDir, parent, codex, maxRounds, sessionUrl?, items: [ { issue, branch, name, task, gates? }, ... ] }`;每個 item 一結束就 `log` 一行結果(誰先好誰先看到)。
 
 ## pr-loop 的 args
 
@@ -40,11 +39,11 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `name` | 是 | worktree 名稱(`.worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
 | `gates` | 否 | 預設六道 `just test ...`;純文件可縮成 `just test lint, just test unit` |
+| `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 checkout 路徑(不預設,換機器就換值);worktree 在 `<repoDir>/.worktree/<name>`、暫存檔在 `<repoDir>/.worktree/.scratch/<name>`(皆 gitignored) |
-| `sessionUrl` | 否 | 要寫進 commit 的 `Claude-Session:` trailer;不給就不寫 |
 
 ## 迴圈內容
 
@@ -65,6 +64,36 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge**:合併順序、rebase 衝突由主迴圈處理。
 
+## milestone-fanout
+
+用途：讓多個彼此獨立的 sub-issue 各跑一遍 `pr-loop`。每批最多兩個 workflow 並行，因此主機上同時最多兩個測試；一批結束才開始下一批。每個結果完成後都會寫入 log，workflow 本身不 merge。
+
+| 參數 | 必要 | 說明 |
+|------|------|------|
+| `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
+| `repoDir` | 是 | 本機 checkout 的絕對路徑 |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`，可另給 `gates` |
+| `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
+| `parent` | 否 | 每個 PR 的 `Part of` 參照 |
+| `codex` | 否 | `on`(預設)或 `off` |
+| `maxRounds` | 否 | 每個 PR 的 Fix 輪數上限，預設 3 |
+
+args 範例：
+
+```json
+{
+  "repo": "ycpss91255/worktool",
+  "repoDir": "/path/to/worktool",
+  "parent": "#280",
+  "implementer": "codex",
+  "maxRounds": 3,
+  "items": [
+    { "issue": 281, "branch": "feat/281-a", "name": "impl281", "task": "完成 issue #281。" },
+    { "issue": 282, "branch": "feat/282-b", "name": "impl282", "task": "完成 issue #282。" }
+  ]
+}
+```
+
 ## research-verify
 
 維護者規則:找資料一律用 agy(gemini)查,由 claude 與 codex 做驗證(#220)。`args` = `{ repo, repoDir, issue, question, context?, sources?, timeoutMin? }`:
@@ -78,6 +107,20 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
 | `sources` | 否 | 本機一手資料路徑陣列(例如鎖定版原始碼),給 claude 與 codex 驗證時直接讀 |
 | `timeoutMin` | 否 | agy `--print-timeout` 分鐘數(正整數,預設 15);外層再包 `timeout` 硬上限 |
+
+args 範例：
+
+```json
+{
+  "repo": "ycpss91255/worktool",
+  "repoDir": "/path/to/worktool",
+  "issue": 220,
+  "question": "這個設計選項的一手資料與限制是什麼？",
+  "context": "只採用官方文件與鎖定版原始碼。",
+  "sources": ["/path/to/worktool/doc/design.md"],
+  "timeoutMin": 15
+}
+```
 
 1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
