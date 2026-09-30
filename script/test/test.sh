@@ -151,7 +151,7 @@ _required_specs() {
                 unit/hook/check_main_fresh_before_worktree_spec.bats \
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
-                unit/hook/enforce_milestone_gate_approval_spec.bats \
+                unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/enforce_codex_round_cap_spec.bats \
@@ -165,6 +165,7 @@ _required_specs() {
                 unit/script/wait_pr_ci_spec.bats \
                 unit/script/watch_user_replies_spec.bats
             ;;
+        matrix) printf '%s\n' matrix/enforce_milestone_gate_approval_spec.bats ;;
         integration)
             printf '%s\n' \
                 integration/smoke_spec.bats \
@@ -394,6 +395,7 @@ _run_bats_tier() {
 }
 
 _run_unit()        { _run_bats_tier unit; }
+_run_matrix()      { _run_bats_tier matrix; }
 _run_acceptance()  { _run_bats_tier acceptance; }
 
 # Integration tier, default group: every test/integration/*.bats except
@@ -444,13 +446,14 @@ Run the worktool self-test. Everything runs inside Docker; the host only
 needs docker. With no option, every step below runs in this order and the
 run stops at the first failure:
 
-  lint, unit, integration, system, acceptance, system-real
+  lint, unit, matrix, integration, system, acceptance, system-real
 
 Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
   --unit          Unit bats (test/unit/).
+  --matrix        Full-product matrix bats (test/matrix/); slow, CI-required.
   --integration   Integration bats (test/integration/), BOTH groups: the
                   default one in the test image, then the ghostty one
                   (test/integration/ghostty_config_spec.bats) in the ubuntu
@@ -464,7 +467,7 @@ given):
   -h, --help      Show this help and exit.
 
 Internal (what the steps above run inside the container; not for hosts):
-  --ci-lint --ci-unit --ci-integration --ci-integration-ghostty --ci-system
+  --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system
   --ci-system-real --ci-acceptance
 
 Environment:
@@ -486,13 +489,14 @@ _usage_error() {
 
 # The host-side steps a bare `test.sh` runs, in this order (system-real
 # last: it is the slow, privileged one).
-HOST_STEPS=(lint unit integration system acceptance system-real)
+HOST_STEPS=(lint unit matrix integration system acceptance system-real)
 
 # Run the in-container gate selected by internal flag $1.
 _run_ci_gate() {
     case "$1" in
         --ci-lint)         _run_shellcheck ;;
         --ci-unit)         _run_unit ;;
+        --ci-matrix)       _run_matrix ;;
         --ci-integration)  _run_integration ;;
         --ci-integration-ghostty) _run_integration_ghostty ;;
         --ci-system)       _run_system ;;
@@ -508,6 +512,7 @@ _run_host_step() {
         build)       _ensure_image ;;
         lint)        _run_in_container --ci-lint ;;
         unit)        _run_in_container --ci-unit ;;
+        matrix)      _run_in_container --ci-matrix ;;
         # Both groups, default first; the ghostty one only runs when the
         # default one passed, so a plain integration break is reported
         # before the slower image build.
@@ -531,9 +536,9 @@ main() {
             # Recorded, not served: the rest of the line is still validated
             # (`--help --bogus` is a usage error, not help).
             -h|--help) _help=1 ;;
-            --ci-lint|--ci-unit|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
+            --ci-lint|--ci-unit|--ci-matrix|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
-            --build|--lint|--unit|--integration|--system|--system-real|--acceptance)
+            --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
             *) _usage_error "unknown option '$1'" ;;
         esac

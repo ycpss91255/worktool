@@ -24,7 +24,7 @@ set working-directory := '../..'
 # not re-split by the shell.
 set positional-arguments
 
-# Everything CI runs: lint, unit, integration, system, acceptance, system-real, in order, stop at the first failure.
+# Everything CI runs: lint, unit, matrix, integration, system, acceptance, system-real, in order, stop at the first failure.
 default:
     ./script/test/test.sh
 
@@ -39,6 +39,10 @@ lint *args:
 # Unit bats (test/unit/).
 unit *args:
     ./script/test/test.sh --unit "$@"
+
+# Full-product matrix bats (test/matrix/); slow and required by CI.
+matrix *args:
+    ./script/test/test.sh --matrix "$@"
 
 # Integration bats (test/integration/), both groups: the default one, then the ghostty one (real ghostty, Ubuntu 26.04 image, no display).
 integration *args:
