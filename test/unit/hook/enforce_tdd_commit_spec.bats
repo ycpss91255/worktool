@@ -73,3 +73,13 @@ _check() {
     assert_success
     assert_output ""
 }
+
+@test "allows a docs-only commit, even a Markdown file under a product directory" {
+    _put doc/x.md 'x'
+    _put .agents/skills/x/SKILL.md 'x'
+    _put .agents/memory/x.md 'x'
+    _put script/box/README.md 'x'
+    _check "git commit -m 'docs: x'"
+    assert_success
+    assert_output ""
+}
