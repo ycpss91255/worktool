@@ -152,11 +152,16 @@ _link_one() {
 }
 
 # Link every entry into box HOME $1. Every entry is tried and logged;
-# returns 1 when any link could not be made.
+# returns 1 when any link could not be made. The entry list is read in full
+# first, so its warnings (an invalid `link=`) come before the link log lines
+# in one fixed order: a process substitution would run link_entries
+# alongside the loop and interleave the two on stderr.
 link_apply() {
-    local _box_home="$1" _rel _rc=0
+    local _box_home="$1" _rel _rc=0 _entries
+    _entries="$(link_entries)"
     while IFS= read -r _rel; do
+        [[ -n "${_rel}" ]] || continue
         _link_one "${_rel}" "${_box_home}" || _rc=1
-    done < <(link_entries)
+    done <<<"${_entries}"
     return "${_rc}"
 }
