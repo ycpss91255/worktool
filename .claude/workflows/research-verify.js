@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
     { title: 'Verify', detail: 'parallel: claude agent claim by claim (structured) + codex exec with the agy text on stdin (verbatim file)' },
     { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
-    { title: 'Record', detail: 'agent: ONE issue comment via --body-file: [claude] conclusion, verbatim [codex], agy original folded' },
+    { title: 'Record', detail: 'agent: ONE issue comment via --body-file: [claude] conclusion, verbatim [codex], agy original folded; then repo-check: git status equals the pre-run capture' },
   ],
 }
 
@@ -25,7 +25,7 @@ export const meta = {
 //
 // Result: { issue, status, codex, claims, comment, synthesis }.
 // status: 'recorded' | 'setup-failed' | 'sources-invalid' | 'agy-failed' |
-// 'verify-failed' | 'synthesize-failed' | 'record-failed'. Every failure stops
+// 'verify-failed' | 'synthesize-failed' | 'record-failed' | 'repo-dirty'. Every failure stops
 // the run where it happens (fail closed): no valid run nonce stops before agy
 // runs; a source that is not readable stops before agy runs;
 // agy failing twice stops before Verify (no other model's answer is dressed up
@@ -35,6 +35,12 @@ export const meta = {
 // Every shell step's exit status carries its success (agy exit 0 with a
 // non-empty agy.md; a non-empty codex.md), so a failing tool fails the step.
 // status 'recorded' needs the comment URL gh printed for this issue.
+// No repo writes (#243): every prompt confines intermediate files to SCRATCH;
+// Research captures `git status --porcelain --untracked-files=all` of repoDir
+// before any write (into a shell variable, saved after the mkdir), and after
+// Record a repo-check compares it again in both directions: a line that
+// appeared or vanished, a git/grep error, or no answer is 'repo-dirty' with
+// the lines in detail, even if the comment went out.
 //
 // Shell safety: repo must be owner/name; repoDir must be an absolute path
 // without control characters or backticks. Every path or value that reaches a
@@ -80,8 +86,30 @@ const SCRATCH = `${REPO_DIR}/.worktree/.scratch/research-${A.issue}`   // .workt
 // POSIX single quoting: the only safe way a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
+// A literal path, escaped for a sed -E s#...#...# pattern.
+const ere = (s) => String(s).replace(/[\\^$.*+?()[\]{}|#]/g, '\\$&')
+// The repo is public (#233): codex cites files through the local directory
+// it ran in, so its answer passes this sed filter before it is posted. The
+// scratch checkout (<scratch>/tree/, or any absolute prefix up to a /tree/
+// checkout) and repoDir become repo-relative; the rest of the scratch dir
+// becomes <scratch>/.
+const RELPATHS = `sed -E ${sq([
+  `s#${ere(SCRATCH)}/tree/##g`,
+  's#(^|[^[:alnum:]_.~/-])/[^[:space:]]*/tree/#\\1#g',
+  `s#${ere(SCRATCH)}/#<scratch>/#g`,
+  `s#${ere(REPO_DIR)}/##g`,
+].join(';'))}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
+// Appended to every phase prompt: the checkout is someone's working tree (#243).
+const SCRATCH_ONLY = `\nFile rule: Intermediate files (notes, drafts, logs) go ONLY under ${JSON.stringify(`${SCRATCH}/`)} (or the system temp dir); never create, edit or delete any other path under ${JSON.stringify(REPO_DIR)}, tracked or untracked. Report findings in your answer, not in files.`
+// Every untracked file, not a collapsed `?? dir/` (a change inside an untracked
+// dir must show); the run's own scratch dir is excluded.
+const GIT_STATUS = `git -C ${sq(REPO_DIR)} status --porcelain --untracked-files=all -- . ${sq(`:(exclude).worktree/.scratch/research-${A.issue}`)}`
+// Both directions (a line that appeared AND one that vanished), and grep's
+// exit 2 (an unreadable capture) is a failure, never "no difference".
+const GREP_DIFF = (a, b, f) => `{ grep -vxF -f ${a} ${b} > ${f}; [ $? -le 1 ]; }`
+const REPO_DIFF = `${GIT_STATUS} > status-after.txt && ${GREP_DIFF('status-before.txt', 'status-after.txt', 'repo-added.txt')} && ${GREP_DIFF('status-after.txt', 'status-before.txt', 'repo-removed.txt')} && { sed 's/^/+ /' repo-added.txt; sed 's/^/- /' repo-removed.txt; } > repo-extra.txt || { echo 'repo-check failed: git status or grep error' > repo-extra.txt; false; }`
 // Fence body verbatim with markers that occur neither in it nor in REPO_DIR.
 // RUN (the run nonce) keeps markers apart across runs; n only grows during a
 // run, so no two blocks of one run share a marker.
@@ -131,6 +159,7 @@ const SYNTH_SCHEMA = { type: 'object', properties: {
   recommendation: { type: 'string' }, parameters: { ...LIST },
 }, required: ['verified', 'refuted', 'needsExperiment', 'recommendation', 'parameters'] }
 const RECORD_SCHEMA = { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
+const REPO_CHECK_SCHEMA = { type: 'object', properties: { extra: { ...LIST } }, required: ['extra'] }
 
 const SRC_NOTE = SOURCES.length ? `本機一手資料(可直接讀取,優先於記憶):\n${SOURCES.map(s => `- ${s}`).join('\n')}` : '沒有提供本機一手資料。'
 
@@ -144,16 +173,16 @@ ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
 const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md\`.
+${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run, as ONE command: \`cd ${sq(REPO_DIR)} && before=$(${GIT_STATUS}) && mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt && { [ -z "$before" ] || printf '%s\\n' "$before"; } > status-before.txt\`. It captures the checkout state BEFORE any write (mkdir, rm, a file) and only then saves it.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ${fence(AGY_PROMPT)}
 3. Run in the foreground (blocking): \`${CD} && timeout ${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p "$(cat agy-prompt.txt)" --print-timeout ${TMIN}m > agy.md 2> agy.err; rc=$?; echo "exit=$rc"; [ "$rc" -eq 0 ] && [ -s agy.md ]\` (it exits non-zero unless agy succeeded).
 4. Success = exit 0 and agy.md is non-empty (\`[ -s agy.md ]\`). On an empty file, exit 124 (timeout) or any other failure: retry ONCE (same command, overwrite agy.md). Still failing -> return status "failed" with attempts = 2 and detail = the exit codes plus the last 20 lines of agy.err. Do not write anything into agy.md yourself.
-5. Return status "ok", attempts (1 or 2), detail = "agy.md <N> bytes".`
+5. Return status "ok", attempts (1 or 2), detail = "agy.md <N> bytes".${SCRATCH_ONLY}`
 
 const CLAIM_CHECK = `Verify, claim by claim, the research answer agy wrote to ${SCRATCH}/agy.md (read that file; do not edit it). Question: ${QUESTION}
 ${CONTEXT ? `Context: ${CONTEXT}\n` : ''}${SRC_NOTE}
-For EVERY numbered claim (UNVERIFIED ones included) check it yourself against primary material: the local sources above first, then official docs / source code / release notes on the web. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.`
+For EVERY numbered claim (UNVERIFIED ones included) check it yourself against primary material: the local sources above first, then official docs / source code / release notes on the web. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.${SCRATCH_ONLY}`
 
 const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條驗證 agy 的每一個主張:成立 / 不成立 / 無法確認,每條附依據(檔案:行號、URL、指令輸出)。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
 問題:${QUESTION}
@@ -162,13 +191,13 @@ ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 const CODEX_STEP = () => `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
 1. Write the text between the markers, byte for byte, ${TO('codex-prompt.txt')}.
 ${fence(CODEX_PROMPT)}
-2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) with exactly: \`${CD} && rm -f body.md && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } > codex.md && [ -s codex.md ]\`.
-3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".`
+2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) and rewrite local working-directory paths repo-relative with exactly: \`${CD} && rm -f body.md && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } | ${RELPATHS} > codex.md && [ -s codex.md ]\`.
+3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".${SCRATCH_ONLY}`
 
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
 Inputs: agy's answer in ${SCRATCH}/agy.md; codex's claim-by-claim verification in ${SCRATCH}/codex.md; the claude verifier's verdicts (JSON):
 ${JSON.stringify(claims)}
-Rules: a claim is "verified" only when no verifier refutes it and at least one cites primary evidence; a claim any verifier refutes goes to "refuted" (say who refuted it and why); disagreement or "unverifiable" from both -> "needsExperiment" (say what to run). Each item is one zh-TW line with its evidence. recommendation = the approach you recommend in zh-TW; parameters = the values the maintainer must decide (one per line, with the options). Do not invent evidence; do not write a "[codex]" line.`
+Rules: a claim is "verified" only when no verifier refutes it and at least one cites primary evidence; a claim any verifier refutes goes to "refuted" (say who refuted it and why); disagreement or "unverifiable" from both -> "needsExperiment" (say what to run). Each item is one zh-TW line with its evidence. recommendation = the approach you recommend in zh-TW; parameters = the values the maintainer must decide (one per line, with the options). Do not invent evidence; do not write a "[codex]" line.${SCRATCH_ONLY}`
 
 const bullets = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`).join('\n') : '- (無)')
 const VERDICT_ZH = { supported: '成立', refuted: '不成立', unverifiable: '無法確認' }
@@ -200,8 +229,12 @@ agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在
 const RECORD = (claudeText) => `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.
 2. Build the body in the foreground: \`${CD} && rm -f body.md body-raw.md body-tmp.md && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md && printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n' && cat codex.md && printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n' && cat agy.md && printf '\\n\\n</details>\\n'; } > body-raw.md && ${SCRUB} < body-raw.md > body-tmp.md && [ -s body-tmp.md ] && tail -n 1 body-tmp.md | grep -qx '</details>' && mv body-tmp.md body.md\` (the filter rewrites local absolute paths; do not drop it; any body.md of an earlier build is removed first, and the new one is renamed into place only once every step succeeded and the filtered body is non-empty and whole). If it fails (claude.md, agy.md or codex.md missing, empty or unreadable, or the filter failed or printed an empty or cut-off body), post nothing and return url = "".
-3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).
+3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).${SCRATCH_ONLY}
 ${fence(claudeText)}`
+
+const REPO_CHECK = `Check that the research run on issue #${A.issue} left the checkout ${JSON.stringify(REPO_DIR)} as it found it. Change nothing; only run and report.
+1. Run in the foreground: \`${CD} && ${REPO_DIFF}\`. repo-extra.txt gets "+ <line>" for each status line that appeared and "- <line>" for each that vanished (e.g. a deleted untracked file); if git or grep failed it holds a "repo-check failed" line instead.
+2. Return extra = the lines of repo-extra.txt, verbatim, one array item per line (empty array only when the command succeeded and the file is empty). If the command failed, return extra = ["repo-check failed: <error>"]. Do not clean up or delete any path you find.${SCRATCH_ONLY}`
 
 const agyOk = (r) => !!r && r.status === 'ok' && [1, 2].includes(r.attempts)
 const claimOk = (c) => !!c && typeof c.claim === 'string' && ['supported', 'refuted', 'unverifiable'].includes(c.verdict) && typeof c.basis === 'string'
@@ -239,8 +272,11 @@ if (!synthOk(s)) return stop('synthesize-failed', 'ok', claims.length, 'synthesi
 phase('Record')
 const rec = await agent(RECORD(renderClaude(s, claims, res.attempts)), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
 const url = rec ? rec.url : undefined
-if (!checkCommentUrl(url)) return stop('record-failed', 'ok', claims.length, `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`, s)
-return { issue: A.issue, status: 'recorded', codex: 'ok', claims: claims.length, comment: url, synthesis: s }
+// Fail closed (#243): no answer counts as dirty; the extra lines are the detail.
+const chk = await agent(REPO_CHECK, { label: `repo-check:#${A.issue}`, phase: 'Record', schema: REPO_CHECK_SCHEMA, agentType: 'general-purpose' })
+const extra = (chk && isList(chk.extra)) ? chk.extra : ['repo-check returned no list']
+const status = extra.length ? 'repo-dirty' : (checkCommentUrl(url) ? 'recorded' : 'record-failed')
+return { issue: A.issue, status, codex: 'ok', claims: claims.length, comment: checkCommentUrl(url) ? url : '', synthesis: s, detail: extra.length ? `repoDir changed during the run: ${extra.join(' | ')}` : (checkCommentUrl(url) ? '' : `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`) }
 
 // args 範例（可直接貼進 Workflow 的 args）
 // {

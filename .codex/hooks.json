@@ -26,6 +26,10 @@
           },
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_no_local_paths.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_milestone_gate_approval.sh\""
           },
           {

@@ -149,8 +149,18 @@ args 範例：
    UNC 路徑 `\\server\share\...` 等),只保留 `scheme://host` 形式的 URL、單獨的 `/` 與 HTML 結束標籤(如 `</details>`)。
    只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
    gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
+   留言之後由 `repo-check` agent 再跑一次 `git -C <repoDir> status --porcelain --untracked-files=all`
+   (逐檔列出未追蹤檔,不折疊成 `?? dir/`,既有未追蹤目錄裡的新增或刪除也看得到;本次 run 的 scratch 目錄以 pathspec 排除),
+   與 Research 第一步存下的 `status-before.txt` 雙向比對(基準先存進 shell 變數,之後才 `mkdir`/`rm`/寫檔,確保擷取在任何寫入之前):多出的行記為 `+ <行>`、消失的行(例如既有未追蹤檔被刪)記為 `- <行>`;
+   任何一行差異、`git`/`grep` 出錯(`grep` exit 2,例如基準檔不可讀)或 agent 沒回結果,都回傳 `status: 'repo-dirty'`,
+   `detail` 列出這些行,且不替你清掉(留給維護者判斷)。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
-   `recorded` / `setup-failed` / `sources-invalid` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+   `recorded` / `setup-failed` / `sources-invalid` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed` / `repo-dirty`;
+   只有 `recorded` 代表留言已發出且 repo 未被動過(`repo-dirty` 時留言可能已發出,`comment` 仍帶網址)。
+
+不寫進 repo(#243):`repoDir` 是別的 session 正在用的工作目錄。每個階段的 prompt 都附同一條規定:中間檔
+(筆記、草稿、log)只能寫在 `<repoDir>/.worktree/.scratch/research-<issue>/`(或系統暫存),不得新增、修改、
+刪除 `repoDir` 底下其他任何追蹤或未追蹤路徑,結論寫在回覆裡而不是檔案裡。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
 metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<run>-<n>===` / `===END-<run>-<n>===` 包住:`<run>` 是上述 nonce,
