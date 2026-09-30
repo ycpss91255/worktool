@@ -38,6 +38,7 @@ for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
 }
 const codexArg = A.codex === undefined ? 'on' : A.codex
 if (codexArg !== 'on' && codexArg !== 'off') throw new Error(`pr-loop: args.codex must be "on" or "off", got ${JSON.stringify(A.codex)}`)
+const IMPLEMENTER = A.implementer === undefined ? 'codex' : A.implementer
 const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
 if (!Number.isInteger(MAX) || MAX < 0) throw new Error(`pr-loop: args.maxRounds must be a non-negative integer, got ${JSON.stringify(A.maxRounds)}`)
 const REPO = A.repo
@@ -47,18 +48,31 @@ const GATES = A.gates || 'just test lint, just test unit, just test integration,
 const PARENT = A.parent || ''
 const WT = `${REPO_DIR}/.worktree/${A.name}`
 const SCRATCH = `${REPO_DIR}/.worktree/.scratch/${A.name}`   // .worktree/ is gitignored
+const IMPLEMENT_OUT = `${SCRATCH}/implement.md`
 
 const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, sha: { type: 'string' } }, required: ['pr', 'sha'] }
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
-const RULES = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+const GUARDRAILS = `
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+const RULES = GUARDRAILS
 
 const IMPLEMENT = `${RULES}
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
 TASK (issue #${A.issue}): ${A.task}
 When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+
+const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
+
+${GUARDRAILS}
+
+Create ${SCRATCH}, write the brief below verbatim to a scratch file, then run this exact command shape in the foreground (replace <暫存檔> with that file):
+codex exec --skip-git-repo-check -C ${WT} -o ${IMPLEMENT_OUT} "$(cat <暫存檔>)" < /dev/null
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution trailers beyond the task's explicit requirements, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
+
+brief:
+${IMPLEMENT}`
 
 const LOCATE = `Resolve the open PR for branch ${A.branch} in ${REPO}: run \`gh pr list --repo ${REPO} --head ${A.branch} --state open --json number,headRefOid --jq '.[0]'\`. Return pr (integer) and sha (the headRefOid). If there is no such PR, return pr 0 and sha "".`
 
@@ -71,6 +85,10 @@ const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #$
 4. Post ONE PR comment: "[codex] 第 ${round} 輪複驗" + the verbatim answer, blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
 5. Return: verdict = "mergeable" if the LAST line of the answer is exactly 可合併, "blocked" if it starts with 不可合併, otherwise "blocked" too (unparseable is not a pass); blocking = the items under 「## 阻擋項」 (one string each, short); nonBlocking = items under 「## 非阻擋項」; answer = the verbatim answer.`
 
+const CLAUDE_REVIEW = (pr, round, prior) => `${GUARDRAILS}
+Review PR #${pr} (${REPO}, issue #${A.issue}), round ${round} directly as Claude. This is read-only: inspect the PR description, issue scope, complete diff, RED/GREEN evidence, and gate evidence. Only concrete in-scope failures may be blocking. Check one-issue scope, correctness, robustness, shell quoting, tests, and documentation. ${prior ? `Re-check every item from the prior verdict:\n${prior}` : ''}
+Return the structured verdict without editing files, pushing, commenting, or merging.`
+
 const FIX = (pr, round, blocking) => `${RULES}
 Fix codex round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
@@ -81,7 +99,7 @@ const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "
 const result = (extra) => ({ issue: A.issue, ...extra })
 
 phase('Implement')
-await agent(IMPLEMENT, { label: `implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
+await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
 
 phase('Locate')
 const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
@@ -102,7 +120,8 @@ if (!CODEX) {
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
-  const c = await agent(CODEX_STEP(pr, fixes + 1, prior), { label: `codex:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+  const reviewByClaude = IMPLEMENTER === 'codex'
+  const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
   verdict = c.verdict
   blocking = c.blocking || []
