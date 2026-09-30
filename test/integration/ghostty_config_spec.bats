@@ -12,8 +12,10 @@
 #       the delivered managed block (marker lines included - they are `#`
 #       comments to ghostty) parses.
 #     - `ghostty +show-config` under XDG_CONFIG_HOME reports
-#       `command = <distrobox> enter dev -- tmux new -A -s main` - the
-#       EFFECTIVE value ghostty would run, not merely the text on disk.
+#       `command = '<enter.sh>' --distrobox '<distrobox>' --box dev -- tmux
+#       new -A -s main` (issue #180: the entry wrapper, which hands over to
+#       `<distrobox> enter dev ...`) - the EFFECTIVE value ghostty would
+#       run, not merely the text on disk.
 #       Since issue #175 `<distrobox>` is the ABSOLUTE path setup.sh
 #       resolved, not the bare name: a terminal the desktop starts
 #       inherits the systemd user manager's PATH, which does not hold
@@ -77,7 +79,10 @@ setup() {
     # box. The path is a single-quoted shell word (issue #175 round 1):
     # ghostty runs a `command` without a `direct:` prefix through
     # `/bin/sh -c`, so the value is shell source.
-    EXPECTED_COMMAND="'${DISTROBOX}' enter dev -- tmux new -A -s main"
+    # Since issue #180 the command runs this checkout's entry wrapper,
+    # which hands over to that distrobox once the box is initialised.
+    WRAPPER="${REPO_ROOT}/script/box/enter.sh"
+    EXPECTED_COMMAND="'${WRAPPER}' --distrobox '${DISTROBOX}' --box dev -- tmux new -A -s main"
 }
 
 # Every ghostty call goes through here: a hard bound so a wedged ghostty
@@ -134,7 +139,7 @@ _log_lines() {
     run _ghostty +show-config
     assert_success
     assert_line 'command = tmux new -A -s main'
-    refute_line --partial 'distrobox enter'
+    refute_line --partial 'enter.sh'
 }
 
 @test "+show-config follows setup.sh --box work (the box name reaches ghostty)" {
@@ -142,7 +147,7 @@ _log_lines() {
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${DISTROBOX}' enter work -- tmux new -A -s main"
+    assert_line "command = '${WRAPPER}' --distrobox '${DISTROBOX}' --box work -- tmux new -A -s main"
 }
 
 # --- #175: the command ghostty resolves names an ABSOLUTE distrobox ---------
@@ -155,7 +160,7 @@ _log_lines() {
     assert_line "command = ${EXPECTED_COMMAND}"
     # The shape the real machine failed on: a desktop-launched terminal
     # inherits a PATH without ~/.local/bin and dies with `not found`.
-    refute_line 'command = distrobox enter dev -- tmux new -A -s main'
+    refute_line --partial "--distrobox distrobox"
     _log_lines effective "${EXPECTED_COMMAND}"
 }
 
@@ -196,7 +201,8 @@ _log_lines() {
     # The check bites: this is the file setup would have written, and a
     # real ghostty refuses it - the managed body is split across two
     # lines, so the second one is not a key it knows.
-    printf "command = '%s' enter dev -- tmux new -A -s main\n" "${_dbx}" >"${GHOSTTY_CONFIG}"
+    printf "command = '%s' --distrobox '%s' --box dev -- tmux new -A -s main\n" \
+        "${WRAPPER}" "${_dbx}" >"${GHOSTTY_CONFIG}"
     run _ghostty +validate-config --config-file="${GHOSTTY_CONFIG}"
     assert_failure
     assert_output --partial 'unknown field'
@@ -222,7 +228,7 @@ EOF
     # The EFFECTIVE value, read back from a real ghostty ...
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${_dbx}' enter dev -- tmux new -A -s main"
+    assert_line "command = '${WRAPPER}' --distrobox '${_dbx}' --box dev -- tmux new -A -s main"
     _cmd="$(printf '%s\n' "${lines[@]}" | sed -n 's/^command = //p')"
     _log_lines effective "${_cmd}"
 
@@ -246,7 +252,7 @@ EOF
     run _ghostty +show-config
     assert_success
     refute_line "command = ${EXPECTED_COMMAND}"
-    refute_line --partial 'distrobox enter'
+    refute_line --partial 'enter.sh'
 }
 
 @test "+validate-config refuses a config ghostty cannot parse (the check bites)" {
