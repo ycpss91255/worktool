@@ -25,11 +25,11 @@
 #   Every case runs `just` against an independent COPY of the checkout
 #   (justfile + script/ + lib/ + box/) under BATS_TEST_TMPDIR, never the
 #   real tree, and never Docker. Forwarding is proven by replacing the
-#   copy's six scripts (script/test/test.sh, script/test/selfcheck.sh,
+#   copy's seven scripts (script/test/test.sh, script/test/selfcheck.sh,
 #   script/box/assemble.sh, script/box/bench.sh, script/box/setup.sh,
-#   script/box/status.sh) with STUBS that record their argv - one %q per
-#   argument plus the argument COUNT - so a split or merged argument shows
-#   up in the record. A fake `docker` that fails loudly and records every
+#   script/box/status.sh, script/box/enter.sh) with STUBS that record their
+#   argv - one %q per argument plus the argument COUNT - so a split or
+#   merged argument shows up in the record. A fake `docker` that fails loudly and records every
 #   call sits first on PATH for the whole spec, so a regression that lets
 #   something reach the REAL test.sh shows up as a recorded docker call
 #   instead of a real build. The dry-run cases run the REAL assemble.sh
@@ -68,13 +68,14 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's six forwarding targets with recording stubs. Each
+# Replace the copy's seven forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
     local _s
     for _s in script/test/test.sh script/test/selfcheck.sh \
-        script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh; do
+        script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh \
+        script/box/enter.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -189,10 +190,10 @@ _listed_names() {
     assert_output "${_expected}"
 }
 
-@test "just box lists assemble, bench, default, help (alias h), setup and status only" {
+@test "just box lists assemble, bench, default, enter, help (alias h), setup and status only" {
     _just box
     assert_success
-    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default help setup status "
+    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default enter help setup status "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     refute_output --partial "test.sh"
     assert_equal "$(_stub_calls)" ""
@@ -303,23 +304,23 @@ _listed_names() {
     _stub_scripts
     _just box help
     assert_success
-    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help\nenter.sh --help')"
 
     : >"${STUB_CALLS}"
     _just box h
     assert_success
-    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help\nenter.sh --help')"
     assert_equal "$(_last_argc)" "1"
 }
 
-# #161 (4): the docs describe the same four scripts the recipe runs.
-@test "README.md and doc/structure.md list all four scripts behind just box help, in order" {
+# #161 (4): the docs describe the same five scripts the recipe runs.
+@test "README.md and doc/structure.md list all five scripts behind just box help, in order" {
     local _doc
     for _doc in README.md doc/structure.md; do
-        run grep -E 'just box help.*assemble\.sh.*bench\.sh.*setup\.sh.*status\.sh' "${REPO_ROOT}/${_doc}"
+        run grep -E 'just box help.*assemble\.sh.*bench\.sh.*setup\.sh.*status\.sh.*enter\.sh' "${REPO_ROOT}/${_doc}"
         assert_success
     done
-    run grep -E 'just box.*assemble.*bench.*setup.*status' "${REPO_ROOT}/README.md"
+    run grep -E 'just box.*assemble.*bench.*setup.*status.*enter' "${REPO_ROOT}/README.md"
     assert_success
 }
 
@@ -351,6 +352,26 @@ _listed_names() {
     assert_success
     assert_equal "$(_stub_calls)" "status.sh --help"
     assert_equal "$(_last_argc)" "1"
+}
+
+@test "just box enter forwards to enter.sh verbatim, the in-box command after -- included (#180)" {
+    _stub_scripts
+    _just box enter
+    assert_success
+    assert_equal "$(_stub_calls)" "enter.sh"
+    assert_equal "$(_last_argc)" "0"
+
+    : >"${STUB_CALLS}"
+    _just box enter --box "my box" -- tmux new -A -s main
+    assert_success
+    assert_equal "$(_stub_calls)" "enter.sh --box my\\ box -- tmux new -A -s main"
+    assert_equal "$(_last_argc)" "8"
+}
+
+@test "just box enter --bogus is refused by enter.sh itself (exit 2)" {
+    _just box enter --bogus
+    assert_failure 2
+    assert_line "enter.sh: unknown option '--bogus' (see --help)"
 }
 
 # --- real assemble.sh, dry-run: the wiring end to end (no distrobox) ---------
