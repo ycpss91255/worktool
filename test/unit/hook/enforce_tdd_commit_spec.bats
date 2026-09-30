@@ -47,3 +47,12 @@ _check() {
     assert_output --partial "BLOCKED"
     assert_output --partial ".agents/skills/tdd/SKILL.md"
 }
+
+@test "allows a product-only GREEN commit right after a RED commit that touched only tests" {
+    _put test/unit/x_spec.bats '@test "x" { run x; }'
+    _commit 'test: x (RED)'
+    _put lib/x.sh 'x() { :; }'
+    _check "git commit -m 'feat: x (GREEN)'"
+    assert_success
+    assert_output ""
+}
