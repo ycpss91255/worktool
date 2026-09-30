@@ -56,3 +56,11 @@ _check() {
     assert_success
     assert_output ""
 }
+
+@test "blocks a tests-only commit that adds more than one @test" {
+    _put test/unit/x_spec.bats "$(printf '@test "a" { :; }\n@test "b" { :; }')"
+    _check "git commit -m 'test: a and b'"
+    assert_failure 2
+    assert_output --partial "@test"
+    assert_output --partial ".agents/skills/tdd/SKILL.md"
+}

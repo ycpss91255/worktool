@@ -11,6 +11,9 @@
 #   BLOCK  product code (lib/ script/ .agents/hook/ .agents/script/
 #          .claude/workflows/ dockerfile/ justfile*) without any test (test/),
 #          unless HEAD is a RED commit (it touches tests and no product code)
+#   BLOCK  tests only, adding more than one @test (one behaviour at a time;
+#          a data-driven matrix inside one @test counts as one; an @test
+#          line the same commit removes verbatim is a move, not new)
 #
 # Output contract: allow = exit 0, silent; block = exit 2, reason on stderr.
 
@@ -51,10 +54,31 @@ _is_red() {
     [[ "${_k}" == *" test "* && "${_k}" != *" product "* ]]
 }
 
+# _new_tests <diff> - print how many @test lines the diff adds, not
+# counting an added line that the diff also removes verbatim (a move). A
+# data-driven matrix inside one @test is one.
+_new_tests() {
+    awk '
+        /^\+\+\+ |^--- / { next }
+        /^\+[[:space:]]*@test[[:space:]]/ { add[substr($0, 2)]++ }
+        /^-[[:space:]]*@test[[:space:]]/ { del[substr($0, 2)]++ }
+        END {
+            n = 0
+            for (l in add) if (add[l] > del[l]) n += add[l] - del[l]
+            print n
+        }'
+}
+
 # _judge <root> - print the block reason for committing the index, or nothing.
 _judge() {
-    local _root="$1" _k
+    local _root="$1" _k _n
     _k="$(git -C "${_root}" diff --cached --no-renames --name-only | _kinds)"
+    if [[ "${_k}" == *" test "* && "${_k}" != *" product "* ]]; then
+        _n="$(git -C "${_root}" diff --cached --no-renames -- test/ | _new_tests)"
+        [[ "${_n}" -le 1 ]] && return 0
+        printf 'this tests-only commit adds %s @test cases; add one behaviour at a time (vertical slices).' "${_n}"
+        return 0
+    fi
     [[ "${_k}" == *" product "* && "${_k}" != *" test "* ]] || return 0
     _is_red "${_root}" HEAD && return 0
     printf '%s' 'this commit touches product code but no test, and HEAD is not a RED commit.'
