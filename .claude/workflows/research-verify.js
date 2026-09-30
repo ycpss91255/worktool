@@ -24,9 +24,10 @@ export const meta = {
 //   } })
 //
 // Result: { issue, status, codex, claims, comment, synthesis }.
-// status: 'recorded' | 'setup-failed' | 'agy-failed' | 'verify-failed' |
-// 'synthesize-failed' | 'record-failed'. Every failure stops the run where it
-// happens (fail closed): no valid run nonce stops before agy runs;
+// status: 'recorded' | 'setup-failed' | 'sources-invalid' | 'agy-failed' |
+// 'verify-failed' | 'synthesize-failed' | 'record-failed'. Every failure stops
+// the run where it happens (fail closed): no valid run nonce stops before agy
+// runs; a source that is not readable stops before agy runs;
 // agy failing twice stops before Verify (no other model's answer is dressed up
 // as agy's); a claude verifier without claims or a codex without output stops
 // before Synthesize (both verifiers are required); a missing or malformed
@@ -56,11 +57,25 @@ const TMIN = A.timeoutMin === undefined ? 15 : A.timeoutMin
 if (!Number.isInteger(TMIN) || TMIN <= 0) throw new Error(`research-verify: args.timeoutMin must be a positive integer, got ${JSON.stringify(A.timeoutMin)}`)
 if (typeof A.repo !== 'string' || !/^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(A.repo)) throw new Error(`research-verify: args.repo must be owner/name, got ${JSON.stringify(A.repo)}`)
 if (typeof A.repoDir !== 'string' || !A.repoDir.startsWith('/') || /[\u0000-\u001f\u007f`]/.test(A.repoDir)) throw new Error(`research-verify: args.repoDir must be an absolute path without control characters or backticks, got ${JSON.stringify(A.repoDir)}`)
-if (A.sources !== undefined && (!Array.isArray(A.sources) || A.sources.some(s => typeof s !== 'string' || !s))) throw new Error('research-verify: args.sources must be an array of non-empty path strings')
+// One fail-closed validator per free-form input; each error names its arg.
+const bad = (k, why, v) => { throw new Error(`research-verify: args.${k} ${why}, got ${JSON.stringify(v)}`) }
+const isText = (v) => typeof v === 'string' && v.trim() !== ''
+const checkQuestion = (v) => (isText(v) ? v : bad('question', 'must be a non-blank string', v))
+const checkContext = (v) => (v === undefined ? '' : isText(v) ? v : bad('context', 'must be a non-blank string when given', v))
+// Paths are pure-checked here (no filesystem in a workflow); existence and
+// readability are checked by the Research step's shell before agy runs.
+const isAbsPath = (v) => typeof v === 'string' && v.startsWith('/') && !/[\u0000-\u001f\u007f`]/.test(v)
+const checkSources = (v) => {
+  if (v === undefined) return []
+  if (!Array.isArray(v)) bad('sources', 'must be an array of absolute paths', v)
+  v.forEach((p, i) => { if (!isAbsPath(p)) bad(`sources[${i}]`, 'must be an absolute path without control characters or backticks', p) })
+  return v
+}
+const QUESTION = checkQuestion(A.question)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
-const SOURCES = A.sources || []
-const CONTEXT = A.context || ''
+const SOURCES = checkSources(A.sources)
+const CONTEXT = checkContext(A.context)
 const SCRATCH = `${REPO_DIR}/.worktree/.scratch/research-${A.issue}`   // .worktree/ is gitignored
 // POSIX single quoting: the only safe way a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
@@ -81,7 +96,7 @@ const fence = (body) => {
 
 const NONCE_RE = /^[0-9a-f]{16}$/
 const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
-const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
+const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed', 'bad-source'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
 const LIST = { type: 'array', items: { type: 'string' } }
@@ -93,26 +108,29 @@ const RECORD_SCHEMA = { type: 'object', properties: { url: { type: 'string' } },
 
 const SRC_NOTE = SOURCES.length ? `本機一手資料(可直接讀取,優先於記憶):\n${SOURCES.map(s => `- ${s}`).join('\n')}` : '沒有提供本機一手資料。'
 
+// Every source must exist and be readable; the first one that is not fails the run.
+const SRC_CHECK = SOURCES.length ? `cd / && for f in ${SOURCES.map(sq).join(' ')}; do [ -r "$f" ] || { echo "research-verify: args.sources: not readable: $f"; exit 3; }; done` : ''
+
 const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
-問題:${A.question}
+問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
 const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md\`.
+${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ${fence(AGY_PROMPT)}
 3. Run in the foreground (blocking): \`${CD} && timeout ${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p "$(cat agy-prompt.txt)" --print-timeout ${TMIN}m > agy.md 2> agy.err; rc=$?; echo "exit=$rc"; [ "$rc" -eq 0 ] && [ -s agy.md ]\` (it exits non-zero unless agy succeeded).
 4. Success = exit 0 and agy.md is non-empty (\`[ -s agy.md ]\`). On an empty file, exit 124 (timeout) or any other failure: retry ONCE (same command, overwrite agy.md). Still failing -> return status "failed" with attempts = 2 and detail = the exit codes plus the last 20 lines of agy.err. Do not write anything into agy.md yourself.
 5. Return status "ok", attempts (1 or 2), detail = "agy.md <N> bytes".`
 
-const CLAIM_CHECK = `Verify, claim by claim, the research answer agy wrote to ${SCRATCH}/agy.md (read that file; do not edit it). Question: ${A.question}
+const CLAIM_CHECK = `Verify, claim by claim, the research answer agy wrote to ${SCRATCH}/agy.md (read that file; do not edit it). Question: ${QUESTION}
 ${CONTEXT ? `Context: ${CONTEXT}\n` : ''}${SRC_NOTE}
 For EVERY numbered claim (UNVERIFIED ones included) check it yourself against primary material: the local sources above first, then official docs / source code / release notes on the web. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.`
 
 const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條驗證 agy 的每一個主張:成立 / 不成立 / 無法確認,每條附依據(檔案:行號、URL、指令輸出)。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
-問題:${A.question}
+問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 
 const CODEX_STEP = () => `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
@@ -121,7 +139,7 @@ ${fence(CODEX_PROMPT)}
 2. Run in the foreground: \`${CD} && cat agy.md | timeout 600 codex exec --skip-git-repo-check "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract the answer = lines after the line that is exactly "codex", minus trailing "tokens used" lines: \`${CD} && awk '/^codex$/{f=1;next} f' codex-raw.txt | sed '/^tokens used/,$d' > codex.md && [ -s codex.md ]\`.
 3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".`
 
-const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${A.question}
+const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
 Inputs: agy's answer in ${SCRATCH}/agy.md; codex's claim-by-claim verification in ${SCRATCH}/codex.md; the claude verifier's verdicts (JSON):
 ${JSON.stringify(claims)}
 Rules: a claim is "verified" only when no verifier refutes it and at least one cites primary evidence; a claim any verifier refutes goes to "refuted" (say who refuted it and why); disagreement or "unverifiable" from both -> "needsExperiment" (say what to run). Each item is one zh-TW line with its evidence. recommendation = the approach you recommend in zh-TW; parameters = the values the maintainer must decide (one per line, with the options). Do not invent evidence; do not write a "[codex]" line.`
@@ -131,7 +149,7 @@ const VERDICT_ZH = { supported: '成立', refuted: '不成立', unverifiable: '�
 
 const renderClaude = (s, claims, attempts) => `[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)
 
-**問題**:${A.question}
+**問題**:${QUESTION}
 
 ### 驗證後成立的事實
 ${bullets(s.verified)}
@@ -161,10 +179,11 @@ ${fence(claudeText)}`
 
 const agyOk = (r) => !!r && r.status === 'ok' && [1, 2].includes(r.attempts)
 const claimOk = (c) => !!c && typeof c.claim === 'string' && ['supported', 'refuted', 'unverifiable'].includes(c.verdict) && typeof c.basis === 'string'
-const COMMENT_URL = `https://github.com/${REPO}/issues/${A.issue}#issuecomment-`.toLowerCase()
-const urlOk = (u) => typeof u === 'string' && u.toLowerCase().startsWith(COMMENT_URL) && /#issuecomment-\d+$/.test(u)
 const isList = (x) => Array.isArray(x) && x.every(i => typeof i === 'string')
 const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
+// The Record step succeeded only if it returned a comment URL on THIS issue.
+const COMMENT_URL = new RegExp(`^https://github\\.com/${REPO.replace(/\./g, '\\.')}/issues/${A.issue}#issuecomment-[0-9]+$`, 'i')
+const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
 const stop = (status, codex, claims, detail, synthesis = null) => ({ issue: A.issue, status, codex, claims, comment: '', synthesis, detail })
 
 phase('Research')
@@ -172,6 +191,7 @@ const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research'
 if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
 RUN = nonce.nonce
 const res = await agent(RESEARCH(), { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
+if (res && res.status === 'bad-source') return stop('sources-invalid', 'skipped', 0, res.detail)
 if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }
 log(`#${A.issue}: agy ok after ${res.attempts} attempt(s): ${res.detail}`)
 
@@ -192,5 +212,6 @@ if (!synthOk(s)) return stop('synthesize-failed', 'ok', claims.length, 'synthesi
 
 phase('Record')
 const rec = await agent(RECORD(renderClaude(s, claims, res.attempts)), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
-const url = (rec && urlOk(rec.url)) ? rec.url : ''
-return { issue: A.issue, status: url ? 'recorded' : 'record-failed', codex: 'ok', claims: claims.length, comment: url, synthesis: s }
+const url = rec ? rec.url : undefined
+if (!checkCommentUrl(url)) return stop('record-failed', 'ok', claims.length, `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`, s)
+return { issue: A.issue, status: 'recorded', codex: 'ok', claims: claims.length, comment: url, synthesis: s }

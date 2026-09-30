@@ -80,7 +80,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `timeoutMin` | 否 | agy `--print-timeout` 分鐘數(正整數,預設 15);外層再包 `timeout` 硬上限 |
 
 1. **Research**:先由一個 agent 以 `od -An -N8 -tx1 /dev/urandom` 取得本次執行的 nonce(16 位小寫十六進位),
-   沒有或格式不對就回傳 `status: 'setup-failed'` 並停在這裡,agy 不會被呼叫;接著 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
+   沒有或格式不對就回傳 `status: 'setup-failed'` 並停在這裡,agy 不會被呼叫;有 `sources` 時先檢查每個路徑都可讀,
+   有一個不可讀就回傳 `status: 'sources-invalid'` 並停在這裡,agy 同樣不會被呼叫;接著 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
    指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
@@ -97,7 +98,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
    gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
-   `recorded` / `setup-failed` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+   `recorded` / `setup-failed` / `sources-invalid` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
 metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<run>-<n>===` / `===END-<run>-<n>===` 包住:`<run>` 是上述 nonce,
