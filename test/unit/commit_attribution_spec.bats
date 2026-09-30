@@ -26,6 +26,13 @@ _check_range() {
     run commit_attribution_check_commits "${REPO}" "$1"
 }
 
+@test "commit_attribution.sh can be sourced without output or shell option changes" {
+    run bash -c 'before="$(set -o; shopt)"; source "$1"; after="$(set -o; shopt)"; [[ "${before}" == "${after}" ]]' \
+        _ "${LIB_DIR}/commit_attribution.sh"
+    assert_success
+    assert_output ''
+}
+
 @test "an attribution line in a commit fails with its sha and line" {
     _commit "${REPO}" 'base'
     local _base _bad_line _bad
@@ -49,4 +56,79 @@ _check_range() {
     assert_failure 1
     assert_output --partial "${_bad_line}"
     assert_output --partial 'edit the PR body'
+}
+
+@test "all three attribution forms fail while clean and normal Claude prose pass" {
+    _commit "${REPO}" 'base'
+    local _base _line
+    _base="$(git -C "${REPO}" rev-parse HEAD)"
+    for _line in \
+        'Co-Authored-By: Claude <noreply@anthropic.com>' \
+        'Claude-Session: fixture-session' \
+        'Generated with Claude Code'; do
+        _commit "${REPO}" $'subject\n\n'"${_line}"
+    done
+    _check_range "${_base}..HEAD"
+    assert_failure 1
+    for _line in 'Co-Authored-By:' 'Claude-Session:' 'Generated with Claude Code'; do
+        assert_output --partial "${_line}"
+    done
+
+    git -C "${REPO}" reset -q --hard "${_base}"
+    _commit "${REPO}" 'Document how Claude is mentioned in normal prose'
+    _commit "${REPO}" 'A clean message'
+    _check_range "${_base}..HEAD"
+    assert_success
+}
+
+@test "a merge range checks merged commits" {
+    _commit "${REPO}" 'base'
+    local _base _bad
+    _base="$(git -C "${REPO}" rev-parse HEAD)"
+    git -C "${REPO}" switch -q -c topic
+    _commit "${REPO}" $'topic\n\nGenerated with Claude Code'
+    _bad="$(git -C "${REPO}" rev-parse HEAD)"
+    git -C "${REPO}" switch -q master
+    _commit "${REPO}" 'main work'
+    git -C "${REPO}" merge -q --no-ff topic -m 'Merge topic'
+
+    _check_range "${_base}..HEAD"
+
+    assert_failure 1
+    assert_output --partial "${_bad}"
+}
+
+@test "an old attribution commit outside the range is ignored" {
+    _commit "${REPO}" $'old\n\nClaude-Session: old-fixture'
+    _commit "${REPO}" 'range base'
+    local _base
+    _base="$(git -C "${REPO}" rev-parse HEAD)"
+    _commit "${REPO}" 'new clean work'
+
+    _check_range "${_base}..HEAD"
+
+    assert_success
+}
+
+@test "push ignores a pull request body" {
+    run commit_attribution_check_pr_body push $'Summary\nClaude-Session: fixture-session'
+    assert_success
+}
+
+@test "range mirrors commit-email for pull requests and pushes" {
+    local _a='1111111111111111111111111111111111111111'
+    local _b='2222222222222222222222222222222222222222'
+    local _zero='0000000000000000000000000000000000000000'
+    local _default='refs/remotes/origin/main'
+
+    run commit_attribution_range pull_request "${_a}" "${_b}" ignored ignored "${_default}"
+    assert_success
+    assert_output "${_a}..${_b}"
+    run commit_attribution_range push ignored ignored "${_a}" "${_b}" "${_default}"
+    assert_success
+    assert_output "${_a}..${_b}"
+    run commit_attribution_range push ignored ignored "${_zero}" "${_b}" "${_default}"
+    assert_success
+    assert_line "${_b}"
+    assert_line "^${_default}"
 }
