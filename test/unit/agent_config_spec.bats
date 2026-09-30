@@ -77,6 +77,7 @@ _registered() {
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
+        "PreToolUse|Bash|${_p}/enforce_issue_milestone.sh" \
         "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
@@ -202,15 +203,17 @@ _registered() {
 }
 
 @test "issue-tracker docs list only gh commands the hooks accept, each with -R" {
-    local _f _cmd _bad='' _bt=$'\x60'
+    local _f _cmd _h _bad='' _bt=$'\x60'
     for _f in "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md" \
         "${REPO_ROOT}/doc/agent/issue-tracker.md"; do
         while IFS= read -r _cmd; do
             [[ "${_cmd}" =~ ^gh\ (issue|pr)\  ]] || continue
             [[ "${_cmd}" == *"-R ycpss91255/worktool"* ]] || _bad+="no -R: ${_cmd}"$'\n'
-            run bash -c 'jq -n --arg c "$1" "{tool_name:\"Bash\",tool_input:{command:\$c}}" | "$2"' \
-                _ "${_cmd}" "${REPO_ROOT}/.agents/hook/enforce_gh_body_file.sh"
-            [[ -z "${output}" ]] || _bad+="denied: ${_cmd}"$'\n'
+            for _h in enforce_gh_body_file enforce_issue_milestone; do
+                run bash -c 'jq -n --arg c "$1" "{tool_name:\"Bash\",tool_input:{command:\$c}}" | "$2"' \
+                    _ "${_cmd}" "${REPO_ROOT}/.agents/hook/${_h}.sh"
+                [[ "${status}" -eq 0 && -z "${output}" ]] || _bad+="${_h} denied: ${_cmd}"$'\n'
+            done
         done < <(grep -E '^- ' "${_f}" | grep -oE "${_bt}gh [^${_bt}]+${_bt}" | tr -d "${_bt}")
     done
     assert_equal "${_bad}" ""
