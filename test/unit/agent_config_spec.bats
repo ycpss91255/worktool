@@ -23,12 +23,21 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     SETTINGS="${REPO_ROOT}/.claude/settings.json"
+    CODEX_HOOKS="${REPO_ROOT}/.codex/hooks.json"
 }
 
 # Print "<event>|<matcher>|<command>" for every registered hook command.
 _registered() {
     jq -r '.hooks | to_entries[] | .key as $e | .value[]
         | (.matcher // "") as $m | .hooks[] | "\($e)|\($m)|\(.command)"' "${SETTINGS}"
+}
+
+# Print the hook script basename for one matcher in one registration file.
+_registered_names() {
+    local _settings="$1" _matcher="$2"
+    jq -r --arg matcher "${_matcher}" '
+        .hooks.PreToolUse[] | select(.matcher == $matcher) | .hooks[].command
+        | capture("/(?<name>[^/]+[.]sh)(?:[\\\"]*)$").name' "${_settings}"
 }
 
 # --- layout ------------------------------------------------------------------
@@ -84,12 +93,42 @@ _registered() {
         "UserPromptSubmit||${_p}/remind_no_emoji.sh")"
 }
 
+@test "codex registers every Claude PreToolUse Bash hook" {
+    run diff -u \
+        <(_registered_names "${SETTINGS}" Bash) \
+        <(_registered_names "${CODEX_HOOKS}" Bash)
+    assert_success
+}
+
+@test "every Codex Bash hook resolves from the repo root and accepts the measured payload" {
+    local _command _payload _repo
+    _payload='{"session_id":"s","turn_id":"t","transcript_path":"/tmp/x.jsonl","cwd":"<dir>","hook_event_name":"PreToolUse","model":"m","permission_mode":"bypassPermissions","tool_name":"Bash","tool_input":{"command":"echo hi"},"tool_use_id":"exec-1"}'
+    _repo="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_repo}/test/unit"
+    cp -R "${REPO_ROOT}/.agents" "${_repo}/.agents"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    git init -q "${_repo}"
+
+    while IFS= read -r _command; do
+        run bash -c 'cd "$1" && printf "%s" "$2" | bash -c "$3"' _ \
+            "${_repo}/test/unit" "${_payload}" "${_command}"
+        assert_success "Codex hook command failed: ${_command}"
+        assert_output ""
+    done < <(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "${CODEX_HOOKS}")
+}
+
 @test "every hook in .agents/hook is registered (no orphan hook)" {
-    local _f _name
+    local _f _name _count
     for _f in "${REPO_ROOT}"/.agents/hook/*.sh; do
         _name="$(basename -- "${_f}")"
-        run grep -c "/.claude/hook/${_name}\"" "${SETTINGS}"
-        assert_output "1"
+        _count=0
+        if grep -Fq "/.claude/hook/${_name}" "${SETTINGS}"; then
+            _count=$((_count + 1))
+        fi
+        if grep -Fq "/.agents/hook/${_name}" "${CODEX_HOOKS}"; then
+            _count=$((_count + 1))
+        fi
+        assert [ "${_count}" -gt 0 ]
     done
 }
 
