@@ -50,8 +50,8 @@ worktool/
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
-│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189):.claude/* symlink、settings.json 只註冊帶進來的 hook 且都從
-│   │   │                           ${CLAUDE_PROJECT_DIR} 路徑跑得起來、不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
+│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
+│   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同)
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
@@ -92,11 +92,11 @@ worktool/
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
-│   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
+│   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
 │   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
-│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji)
+│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、codex_apply_patch(Codex 編輯轉接層,#282))
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
@@ -111,6 +111,8 @@ worktool/
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
+├── .codex/
+│   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
@@ -123,6 +125,25 @@ worktool/
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
+
+## Codex hook
+
+`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
+PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
+worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
+`CLAUDE_PROJECT_DIR`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
+所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+
+Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
+`.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
+Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現有
+Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
+`enforce_shellcheck_disable_approval.sh` 等 hook 的判定。
+
+本次對齊仍有事件差異：Claude 的 `UserPromptSubmit` 與 `WorktreeCreate` 在此 Codex
+接線沒有對應事件，因此不註冊。自動化呼叫 Codex 時帶
+`--dangerously-bypass-hook-trust`；這表示呼叫端明確信任 repo hook，而 hook 來源與
+變更由 PR review 把關。
 
 ## 使用者介面:`just`(base 模型)
 
