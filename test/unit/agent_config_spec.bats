@@ -79,6 +79,14 @@ _registered_names() {
     assert_output '{"commit":"","pr":""}'
 }
 
+@test "AGENTS.md forbids attribution lines in commits, PR bodies and comments" {
+    run grep -F 'commit 訊息、PR 說明與留言一律不加署名' "${REPO_ROOT}/AGENTS.md"
+    assert_success
+    assert_output --partial 'Co-Authored-By'
+    assert_output --partial 'Claude-Session'
+    assert_output --partial 'Generated with'
+}
+
 @test "settings.json registers exactly the carried hooks per event and matcher" {
     run _registered
     assert_success
