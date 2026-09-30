@@ -55,8 +55,10 @@ const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, s
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
-const GUARDRAILS = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+const COMMON_GUARDRAILS = `
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+const GUARDRAILS = `${COMMON_GUARDRAILS} Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself.`
+const CODEX_RULES = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
 const IMPLEMENT_TASK = `TASK (issue #${A.issue}): ${A.task}
@@ -66,16 +68,16 @@ const IMPLEMENT = `${RULES}
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
 ${IMPLEMENT_TASK}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
-const CODEX_IMPLEMENT_BRIEF = `${RULES}
-${IMPLEMENT_TASK}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+const CODEX_IMPLEMENT_BRIEF = `${CODEX_RULES}
+${IMPLEMENT_TASK}. The PR body starts with "[codex]" and has no attribution footer. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
-${GUARDRAILS}
+${CODEX_RULES}
 
 First run: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main. Then create ${SCRATCH}, write the brief below verbatim to a scratch file, and run this exact command shape in the foreground (replace <暫存檔> with that file):
 codex exec --skip-git-repo-check -C ${WT} -o ${IMPLEMENT_OUT} "$(cat <暫存檔>)" < /dev/null
-Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution trailers beyond the task's explicit requirements, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
 brief:
 ${CODEX_IMPLEMENT_BRIEF}`
@@ -100,16 +102,21 @@ Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktr
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
 Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})" + trailers); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
 
+const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
+Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
+${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (review round ${round})", with no trailer lines); push. Post a PR comment starting with "[codex] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
+
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
-${GUARDRAILS}
+${CODEX_RULES}
 
 Create ${SCRATCH}, write the brief below verbatim to a scratch file, then run this exact command shape in the foreground (replace <暫存檔> with that file):
 codex exec --skip-git-repo-check -C ${WT} -o ${SCRATCH}/fix-r${round}.md "$(cat <暫存檔>)" < /dev/null
-Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution trailers beyond the task's explicit requirements, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
 
 brief:
-${FIX(pr, round, blocking)}`
+${CODEX_FIX_BRIEF(pr, round, blocking)}`
 
 const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "[claude] codex 暫停中(配額),待配額恢復後補複驗。" Then return "noted".`
 

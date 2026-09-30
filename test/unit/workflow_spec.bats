@@ -249,6 +249,18 @@ _pl_blocked_run() {
     assert_output 'false'
 }
 
+@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+}
+
 @test "pr-loop (node): an invalid implementer value throws a clear error" {
     run _pl_run '{"implementer":"other"}'
     assert_success
