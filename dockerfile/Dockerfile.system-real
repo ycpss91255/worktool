@@ -126,6 +126,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # e2fsprogs xz-utils pigz - what the dind image carried for the engine
 # ncurses-bin   - `tput`-style terminal queries stay sane under a non-tty
 #                 harness
+# parallel      - bats --jobs uses GNU parallel to schedule spec files
 # ghostty       - issue #172 layer 2: the real terminal under test
 # xvfb xauth    - the headless X server `xvfb-run` starts for it
 # dbus-x11      - `dbus-run-session`, for the single-instance fixture
@@ -142,6 +143,7 @@ RUN apt-get update && \
         git \
         iproute2 iptables kmod \
         ncurses-bin \
+        parallel \
         pigz \
         procps \
         util-linux \

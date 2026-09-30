@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "TRANSCRIPT_PATH",
+  "cwd": "/workspace",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "```bash\nprintf 'This code block contains only English identifiers and commands'\njust test unit\n```"
+}

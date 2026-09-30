@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "TRANSCRIPT_PATH",
+  "cwd": "/workspace",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "已完成 API endpoint 與 JSON parser 更新。請執行 `just test unit --filter reply`，並查看 https://example.com/a/very/long/english/reference 及 /workspace/project/output/build-report.txt；所有測試現在都通過。"
+}

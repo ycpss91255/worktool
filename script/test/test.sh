@@ -72,6 +72,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 # Image tag for the test container. Overridable for CI (prebuilt + loaded).
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
+WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -138,7 +139,9 @@ _required_specs() {
                 unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/commit_attribution_spec.bats \
                 unit/commit_email_spec.bats \
+                unit/attribution_spec.bats \
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
                 unit/adr_spec.bats \
@@ -151,19 +154,29 @@ _required_specs() {
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_no_local_paths_spec.bats \
-                unit/hook/enforce_milestone_gate_approval_spec.bats \
+                unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
+                unit/hook/enforce_issue_milestone_spec.bats \
+                unit/hook/enforce_no_attribution_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/enforce_codex_round_cap_spec.bats \
                 unit/hook/enforce_cpu_capacity_spec.bats \
+                unit/hook/enforce_tdd_commit_representative_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \
                 unit/hook/worktree_create_spec.bats \
                 unit/hook/remind_workflow_tdd_spec.bats \
                 unit/hook/remind_no_emoji_spec.bats \
+                unit/hook/enforce_reply_language_spec.bats \
                 unit/script/wait_pr_ci_spec.bats \
                 unit/script/watch_user_replies_spec.bats
+            ;;
+        matrix)
+            printf '%s\n' \
+                matrix/enforce_milestone_gate_approval_spec.bats \
+                matrix/enforce_no_attribution_spec.bats \
+                matrix/enforce_tdd_commit_spec.bats
             ;;
         integration)
             printf '%s\n' \
@@ -230,7 +243,7 @@ _run_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
-    docker run --rm \
+    docker run --rm -e WORKTOOL_TEST_JOBS \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -381,7 +394,8 @@ _run_bats_tier() {
 
     local _tap
     _tap="$(mktemp)" || _die "mktemp failed"
-    if ! bats --formatter tap -r "${_paths[@]}" | tee "${_tap}"; then
+    if ! bats --formatter tap --jobs "${WORKTOOL_TEST_JOBS}" \
+        --no-parallelize-within-files -r "${_paths[@]}" | tee "${_tap}"; then
         rm -f "${_tap}"
         _die "${_tier} bats failed"
     fi
@@ -393,6 +407,7 @@ _run_bats_tier() {
 }
 
 _run_unit()        { _run_bats_tier unit; }
+_run_matrix()      { _run_bats_tier matrix; }
 _run_acceptance()  { _run_bats_tier acceptance; }
 
 # Integration tier, default group: every test/integration/*.bats except
@@ -443,13 +458,14 @@ Run the worktool self-test. Everything runs inside Docker; the host only
 needs docker. With no option, every step below runs in this order and the
 run stops at the first failure:
 
-  lint, unit, integration, system, acceptance, system-real
+  lint, unit, matrix, integration, system, acceptance, system-real
 
 Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
   --unit          Unit bats (test/unit/).
+  --matrix        Full-product matrix bats (test/matrix/); slow, CI-required.
   --integration   Integration bats (test/integration/), BOTH groups: the
                   default one in the test image, then the ghostty one
                   (test/integration/ghostty_config_spec.bats) in the ubuntu
@@ -463,12 +479,13 @@ given):
   -h, --help      Show this help and exit.
 
 Internal (what the steps above run inside the container; not for hosts):
-  --ci-lint --ci-unit --ci-integration --ci-integration-ghostty --ci-system
+  --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system
   --ci-system-real --ci-acceptance
 
 Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
+  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
@@ -484,13 +501,14 @@ _usage_error() {
 
 # The host-side steps a bare `test.sh` runs, in this order (system-real
 # last: it is the slow, privileged one).
-HOST_STEPS=(lint unit integration system acceptance system-real)
+HOST_STEPS=(lint unit matrix integration system acceptance system-real)
 
 # Run the in-container gate selected by internal flag $1.
 _run_ci_gate() {
     case "$1" in
         --ci-lint)         _run_shellcheck ;;
         --ci-unit)         _run_unit ;;
+        --ci-matrix)       _run_matrix ;;
         --ci-integration)  _run_integration ;;
         --ci-integration-ghostty) _run_integration_ghostty ;;
         --ci-system)       _run_system ;;
@@ -506,6 +524,7 @@ _run_host_step() {
         build)       _ensure_image ;;
         lint)        _run_in_container --ci-lint ;;
         unit)        _run_in_container --ci-unit ;;
+        matrix)      _run_in_container --ci-matrix ;;
         # Both groups, default first; the ghostty one only runs when the
         # default one passed, so a plain integration break is reported
         # before the slower image build.
@@ -522,14 +541,16 @@ _run_host_step() {
 # container gate instead and stands alone.
 main() {
     local _steps=() _ci="" _step _help=0
+    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
+        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             # Recorded, not served: the rest of the line is still validated
             # (`--help --bogus` is a usage error, not help).
             -h|--help) _help=1 ;;
-            --ci-lint|--ci-unit|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
+            --ci-lint|--ci-unit|--ci-matrix|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
-            --build|--lint|--unit|--integration|--system|--system-real|--acceptance)
+            --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
             *) _usage_error "unknown option '$1'" ;;
         esac
