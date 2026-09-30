@@ -99,6 +99,11 @@
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
+#   hook_scripts <command>   the command line itself, then every command
+#     line it runs (header step 7: bash -c, a script heredoc / here-string,
+#     eval; recursively, behind any wrapper or timeout(1)), each ended by a
+#     NUL byte and printed as its shell reads it, heredocs kept, so a hook
+#     can read the stdin a nested launch is fed. A substitution shows as '_'
 #
 # Deliberately simple (no full shell parser): $'...' escapes are not
 # expanded, a `#` comment is not recognised, and a script FILE run by name
@@ -721,4 +726,19 @@ _hook_subcommands_enc() {
 hook_subcommands_raw() {
     local _HOOK_RAW=1
     hook_subcommands "$1"
+}
+
+# hook_scripts <command> - see the header. Every \001 of the input is
+# escaped first (as hook_subcommands does); _hook_decode restores it.
+hook_scripts() {
+    local _sub _lead _script _text
+    printf '%s\0' "$1"
+    _text="$(_hook_split "$(_hook_strip_heredocs "${1//$'\001'/$'\001'z}" | _hook_unquote)")"
+    while IFS= read -r _sub; do
+        _sub="$(_hook_strip_wrappers "${_sub}")"
+        _lead="$(hook_timeout_lead "${_sub}")"
+        _script="$(_hook_inner_script "$(_hook_strip_wrappers "${_sub#"${_lead}"}")")" || continue
+        hook_scripts "$(_hook_decode "${_script}")"
+    done <<<"${_text}"
+    return 0
 }
