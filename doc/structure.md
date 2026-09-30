@@ -98,7 +98,7 @@ worktool/
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
-│   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
 │   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、

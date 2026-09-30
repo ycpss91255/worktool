@@ -97,6 +97,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/check_main_fresh_before_worktree.sh" \
         "PreToolUse|Bash|${_p}/remind_main_sync.sh" \
         "PreToolUse|Bash|${_p}/enforce_gh_body_file.sh" \
+        "PreToolUse|Bash|${_p}/enforce_no_local_paths.sh" \
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \

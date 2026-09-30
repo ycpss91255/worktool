@@ -153,6 +153,7 @@ _required_specs() {
                 unit/hook/check_main_fresh_before_worktree_spec.bats \
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
+                unit/hook/enforce_no_local_paths_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_issue_milestone_spec.bats \
