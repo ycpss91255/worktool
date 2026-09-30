@@ -6,6 +6,8 @@
 #       -> checks every commit selected by the revisions, listing each
 #          offending SHA and attribution line on stderr. Returns 1 when any
 #          line is found, otherwise 0.
+#   commit_attribution_check_pr_body <event> <body>
+#       -> checks <body> on pull_request events and ignores it on push.
 #
 # This is a library: source it. It sets no shell options and prints nothing
 # at source time.
@@ -46,4 +48,18 @@ commit_attribution_check_commits() {
         return 1
     fi
     log_info "${_n} commits checked: no attribution line."
+}
+
+commit_attribution_check_pr_body() {
+    local _event="$1" _body="$2" _found _line
+    [[ "${_event}" == pull_request ]] || return 0
+    _found="$(attribution_find "${_body}")" || {
+        log_info 'PR body checked: no attribution line.'
+        return 0
+    }
+    while IFS= read -r _line; do
+        log_error "PR body: ${_line}"
+    done <<< "${_found}"
+    log_info 'Fix: edit the PR body to remove the attribution line.'
+    return 1
 }
