@@ -13,7 +13,7 @@
 
 # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
 mod? test 'script/test/justfile.test'
-# Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status  (M3 adds enter / rm)
+# Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status | enter [--box N] [-- CMD]  (M3 adds rm)
 mod? box 'script/box/justfile.box'
 
 # Default: list the namespaces.

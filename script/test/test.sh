@@ -135,6 +135,7 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
+                unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
                 unit/commit_email_spec.bats \
@@ -154,6 +155,7 @@ _required_specs() {
                 unit/hook/enforce_issue_milestone_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/enforce_codex_round_cap_spec.bats \
+                unit/hook/enforce_cpu_capacity_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \
@@ -167,7 +169,8 @@ _required_specs() {
             printf '%s\n' \
                 integration/smoke_spec.bats \
                 integration/assemble_spec.bats \
-                integration/setup_spec.bats
+                integration/setup_spec.bats \
+                integration/enter_spec.bats
             ;;
         integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;
