@@ -6,6 +6,10 @@ Every entry is a real file in this repo (.agents/memory/, reached as
 ## worktool
 - [Codex+claude collab gate](feedback-codex-claude-collab.md) — worktool: before closing issue / merging PR, claude discusses with codex; record zh-TW discussion tagged [claude]/[codex]; only proceed if codex confirms
 - [Codex round stop rule](feedback-codex-round-stop-rule.md) — open a new codex round only for false-green / functional bug / flaky; wording findings become doc debt; decide it myself, never ask
+- [Decide when an invariant settles it](feedback-decide-when-invariant-settles-it.md) — a settled invariant/principle already picks the answer: decide and record it, do not ask the maintainer A or B
+- [No approval asks for rounds](feedback-dont-ask-round-approval.md) — never ask the maintainer to approve extra codex rounds or process gates; find the root cause, fix the class, continue
+- [Do repo admin myself, reply zh-TW](feedback-do-repo-admin-myself.md) — authorised repo admin ops (rename, protection, approved rewrite) I finish myself; only browser OAuth goes to maintainer; always reply zh-TW
+- [Guardrails before milestone work](feedback-guardrails-before-milestone.md) — non-milestone process work (hooks, CI checks, templates, ADRs) goes first; hook PRs sharing registration files run one at a time
 - [Per-agent independent commit](feedback-per-agent-independent-commit.md) — worktool: each agent = its own commit, never mixed; fan-out collects distinct commits onto the milestone branch, merge non-squash
 - [worktool redesign](project-worktool-distrobox-redesign.md) — distrobox-based dev-env, successor to init_ubuntu; own repo ycpss91255/worktool; milestone-gated M1-M17
 
