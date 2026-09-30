@@ -135,6 +135,7 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
+                unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
                 unit/commit_email_spec.bats \
@@ -166,7 +167,8 @@ _required_specs() {
             printf '%s\n' \
                 integration/smoke_spec.bats \
                 integration/assemble_spec.bats \
-                integration/setup_spec.bats
+                integration/setup_spec.bats \
+                integration/enter_spec.bats
             ;;
         integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;
