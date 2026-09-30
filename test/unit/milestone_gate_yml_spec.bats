@@ -21,7 +21,14 @@
 #     not re-implemented in YAML);
 #   - it posts a commit status with context `milestone-gate-approval` on
 #     the PR head SHA, success or failure;
-#   - ci.yml is untouched by it: ci.yml does not mention the context.
+#   - ci.yml is untouched by it: ci.yml does not mention the context;
+#   - no job id or job `name:` equals the status context (issue #258): a job
+#     named `milestone-gate-approval` creates a check run of that name, and
+#     when concurrency cancels an older run the cancelled check run is taken
+#     as the required check's result and blocks an approved PR. The required
+#     check must map only to the commit status this workflow sets. (ci.yml's
+#     `ci-passed` is the opposite on purpose: there the job itself IS the
+#     required check, so its job name equals the check name.)
 #
 # HOW
 #   Textual assertions on the checked-in YAML (the test image has no YAML
@@ -52,6 +59,17 @@ _types() {
         | tr ',' '\n' \
         | sed -E 's/^ +//; s/ +$//' \
         | sort
+}
+
+# Print every job id and every job-level `name:` value under `jobs:`,
+# one per line.
+_job_ids_and_names() {
+    _body | awk '
+        /^jobs:$/ { on = 1; next }
+        on && /^[^ ]/ { exit }
+        on && /^  [A-Za-z0-9_-]+:$/ { id = $0; sub(/^  /, "", id); sub(/:$/, "", id); print id; next }
+        on && /^    name: / { n = $0; sub(/^    name: /, "", n); print n }
+    '
 }
 
 # Print the top-level `permissions:` block entries, sorted.
@@ -140,4 +158,18 @@ _permissions() {
 @test "ci.yml does not carry the milestone-gate-approval context" {
     run grep -c 'milestone-gate-approval' "${CI_YML}"
     assert_output 0
+}
+
+@test "the workflow has at least one job id and one job name" {
+    run _job_ids_and_names
+    assert_success
+    assert [ "${#lines[@]}" -ge 2 ]
+}
+
+@test "no job id or job name equals the status context milestone-gate-approval" {
+    run _job_ids_and_names
+    assert_success
+    refute_line 'milestone-gate-approval'
+    refute_line "'milestone-gate-approval'"
+    refute_line '"milestone-gate-approval"'
 }

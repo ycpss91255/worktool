@@ -30,7 +30,7 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     assert_output --partial "timeout"
 }
 
-@test "blocks a bare 'just test' (all six tiers)" {
+@test "blocks a bare 'just test' (all seven gates)" {
     _check "just test"
     assert_failure 2
 }
