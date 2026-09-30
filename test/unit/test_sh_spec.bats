@@ -201,6 +201,18 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
 }
 
+@test "every bats runner image installs GNU parallel" {
+    local _dockerfile
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^[[:space:]]*parallel([[:space:]]*\\)?$' \
+            "${REPO_ROOT}/${_dockerfile}"
+        assert_success "${_dockerfile} must install GNU parallel for bats --jobs"
+    done
+}
+
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
