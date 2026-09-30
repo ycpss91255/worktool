@@ -70,6 +70,32 @@ const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
+// Shell that prints codex's final answer, never its transcript (issue #223):
+// the file codex writes itself with -o (--output-last-message); when it wrote
+// none, the LAST "codex" block of the transcript, and only when a line that
+// is exactly "tokens used" closes that block directly (codex prints it once
+// the turn has completed; prose such as "tokens used by ..." is answer text,
+// never the boundary). A run that stopped after commentary, inside a tool
+// call or on an error has no such boundary, so it prints nothing and the
+// Record fails closed on the empty codex.md. Commentary, tool logs and the
+// answer echoed after "tokens used" all stay out.
+const CODEX_ANSWER = (last, raw) => `if [ -s ${last} ]; then cat ${last}; else awk '/^codex$/{a="";b="";f=1;next} /^tokens used$/{if(f)a=b;f=0;next} /^(exec|thinking|user)$/{f=0} f{b=b $0 "\\n"} END{printf "%s", a}' ${raw}; fi`
+// Shell filter that keeps local absolute paths out of the issue (issue #223):
+// each source becomes its basename and repoDir becomes ".", longest first and
+// only at path boundaries; then $HOME and any /home/<user> or /Users/<user>
+// become "~" and a Claude session dir under /tmp becomes <tmp>. Last, deny
+// by default: every other absolute path (/usr, /etc, /root, /workspace,
+// /private/tmp, /var/folders, /mnt/c/Users, the path of a file:/// URI, one
+// after a bare "word:" such as location:/root or host:/srv, C:\Users\...,
+// a \\server\share UNC path) becomes <path>. Only "scheme://host" URLs, a
+// lone "/" and HTML closing tags (</details>) stay. No quote or backtick in
+// the program: it sits in one '...' span.
+const PFX = [...SOURCES.map(s => s.replace(/\/+$/, '')).map(s => [s, s.split('/').pop()]), [REPO_DIR.replace(/\/+$/, ''), '.']]
+  .filter(([p, r]) => p && r).sort((a, b) => b[0].length - a[0].length)
+const SCRUB_LIT = String.raw`function lit(s, a, r,  o, k, p, c) { o = ""; while (a != "" && (k = index(s, a)) > 0) { o = o substr(s, 1, k - 1); p = substr(o, length(o), 1); c = substr(s, k + length(a), 1); o = o (((p !~ "[A-Za-z0-9._/-]" || (length(o) > 2 && substr(o, length(o) - 2) == "://")) && c !~ "[A-Za-z0-9._-]") ? r : a); s = substr(s, k + length(a)) } return o s }`
+const SCRUB_MASK = String.raw`function keep(o, t, s,  p) { p = substr(o, length(o), 1); return p ~ "[A-Za-z0-9._~/-]" || t == "/" || (p == "<" && t ~ "^/[A-Za-z][A-Za-z0-9]*$" && substr(s, 1, 1) == ">") } function url(o, t) { return substr(o, length(o), 1) == ":" && match(o, "[A-Za-z][A-Za-z0-9+.-]*:$") && substr(t, 1, 2) == "//" } function mask(s,  o, t, q) { o = ""; while (match(s, "/" PC "*")) { o = o substr(s, 1, RSTART - 1); t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH); q = ""; if (keep(o, t, s)) { o = o t; continue } if (url(o, t)) { if (substr(t, 1, 3) != "///") { o = o t; continue } q = "//"; t = substr(t, 3) } o = o q "<path>" } return o s }`
+const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("\\\\\\\\[A-Za-z0-9._$?-]" PC "*", "<path>"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
+const SCRUB = `${PFX.map(([p, r], i) => `RV_P${i}=${sq(p)} RV_R${i}=${sq(r)} `).join('')}RV_N=${PFX.length} awk '${SCRUB_LIT} ${SCRUB_MASK} ${SCRUB_MAIN}'`
 
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed', 'bad-source'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
@@ -91,7 +117,7 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
 const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-raw.txt body.md claude.md\`.
+${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ===BEGIN===
 ${AGY_PROMPT}
@@ -113,7 +139,7 @@ const CODEX_STEP = `Run ONE codex verification of agy's research (issue #${A.iss
 ===BEGIN===
 ${CODEX_PROMPT}
 ===END===
-2. Run in the foreground: \`${CD} && cat agy.md | timeout 600 codex exec --skip-git-repo-check "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract the answer = lines after the line that is exactly "codex", minus trailing "tokens used" lines: \`${CD} && awk '/^codex$/{f=1;next} f' codex-raw.txt | sed '/^tokens used/,$d' > codex.md\`.
+2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) with exactly: \`${CD} && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } > codex.md\`.
 3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".`
 
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
@@ -150,7 +176,7 @@ agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在
 
 const RECORD = `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.
-2. Build the body in the foreground: \`${CD} && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md; printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n'; cat codex.md; printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n'; cat agy.md; printf '\\n\\n</details>\\n'; } > body.md\`. If it fails (agy.md or codex.md missing or empty), post nothing and return url = "".
+2. Build the body in the foreground: \`${CD} && rm -f body.md body-raw.md body-tmp.md && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md && printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n' && cat codex.md && printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n' && cat agy.md && printf '\\n\\n</details>\\n'; } > body-raw.md && ${SCRUB} < body-raw.md > body-tmp.md && [ -s body-tmp.md ] && tail -n 1 body-tmp.md | grep -qx '</details>' && mv body-tmp.md body.md\` (the filter rewrites local absolute paths; do not drop it; any body.md of an earlier build is removed first, and the new one is renamed into place only once every step succeeded and the filtered body is non-empty and whole). If it fails (claude.md, agy.md or codex.md missing, empty or unreadable, or the filter failed or printed an empty or cut-off body), post nothing and return url = "".
 3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).
 ===BEGIN===
 `

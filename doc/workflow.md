@@ -126,13 +126,22 @@ args 範例：
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
 2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
-   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,原文存成 `codex.md`。
+   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,`codex.md` 只存 codex 的**最終回答**:
+   優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊,
+   且該區塊必須緊接內容恰為 `tokens used` 的一行(回合完成的邊界;`tokens used by ...` 之類的文字只是回答內容,不算邊界),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
+   沒有這個邊界(停在 commentary、工具呼叫中或錯誤)就視為沒有最終回答,`codex.md` 為空,Record 不發(fail closed)。
    **兩路都必須有結果**:claude 沒回 claims(空值或空陣列)或 codex 無輸出(配額/認證)就回傳
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
-   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`agy.md` 或 `codex.md` 為空就不發。
+   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`claude.md`、`agy.md` 或 `codex.md` 為空就不發。
+   留言本文先組成暫存檔、過濾後才改名成 `body.md`,任一步(讀檔或過濾)失敗都不會留下 `body.md`,不發出空白或不完整的留言(fail closed)。
+   整則留言發出前經過路徑過濾(#223):`sources` 改寫成其目錄名、`repoDir` 改寫成 `.`(只在路徑邊界),
+   `$HOME` 與任何 `/home/<user>`、`/Users/<user>` 改成 `~`,Claude session 的 `/tmp` 暫存路徑改成 `<tmp>`;
+   其餘絕對路徑一律遮成 `<path>`(預設拒絕,不留例外:`/usr`、`/etc`、`/root`、`/workspace`、`/private/tmp`、`/var/folders`、
+   `/mnt/c/Users`、`file:///...` 的路徑、緊跟在非 URL 冒號後的路徑如 `location:/root`、`host:/srv`、`C:\Users\...`、
+   UNC 路徑 `\\server\share\...` 等),只保留 `scheme://host` 形式的 URL、單獨的 `/` 與 HTML 結束標籤(如 `</details>`)。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
    `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
