@@ -5,8 +5,9 @@
 # Issue #268: every implementation follows the tdd skill
 # (.agents/skills/tdd/SKILL.md). A hook cannot see whether the skill was
 # loaded, but its core rules land in what each `git commit` records, so a
-# real `git commit` launch (also inside bash -c / eval; lib/subcommand.sh)
-# is judged by the files the commit would record:
+# real `git commit` launch (also inside bash -c / eval; lib/subcommand.sh),
+# in the repo it runs in (the tool call's cwd, moved by a `cd <dir>` before
+# it and by `git -C <dir>`), is judged by the files the commit would record:
 #
 #   BLOCK  product code (lib/ script/ .agents/hook/ .agents/script/
 #          .claude/workflows/ dockerfile/ justfile*) without any test (test/),
@@ -159,27 +160,44 @@ _index() {
     GIT_INDEX_FILE="$2" git -C "$1" add -u 2>/dev/null
 }
 
-# _words <encoded launch> - print the launch's words after `commit`, decoded,
-# one per line.
-_words() {
+# _resolve <base> <dir> - <dir>, taken relative to <base> unless absolute.
+_resolve() {
+    if [[ "$2" == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi
+}
+
+# _commit_launch <encoded launch> <dir> - when the launch is a git commit,
+# print the directory it runs in (<dir> moved by each -C), then its words
+# after `commit`, decoded, one per line; fail otherwise. Other git global
+# options are skipped (-c takes a value).
+_commit_launch() {
     local -a _w
-    local _i
+    local _i=1 _dir="$2"
     read -r -a _w <<<"$1"
-    for ((_i = 2; _i < ${#_w[@]}; _i++)); do
+    [[ "${_w[0]:-}" == git ]] || return 1
+    while [[ "${_w[_i]:-}" == -* ]]; do
+        case "${_w[_i]}" in
+            -C) _dir="$(_resolve "${_dir}" "$(hook_word "${_w[_i + 1]:-}")")"; _i=$((_i + 1)) ;;
+            -c) _i=$((_i + 1)) ;;
+        esac
+        _i=$((_i + 1))
+    done
+    [[ "${_w[_i]:-}" == commit ]] || return 1
+    printf '%s\n' "${_dir}"
+    for ((_i = _i + 1; _i < ${#_w[@]}; _i++)); do
         hook_word "${_w[_i]}"
         printf '\n'
     done
 }
 
-# _check_launch <encoded launch> <cwd> - print the block reason, or nothing.
-_check_launch() {
-    local _root _idx _reason='' _line
-    local -a _args=()
-    while IFS= read -r _line; do _args+=("${_line}"); done < <(_words "$1")
-    _parse "${_args[@]}"
-    _root="$(git -C "$2" rev-parse --show-toplevel 2>/dev/null)" || return 0
+# _check_commit <dir> <words...> - print the block reason for a git commit
+# run in <dir> with <words> after `commit`, or nothing.
+_check_commit() {
+    local _dir="$1" _root _idx _reason=''
+    shift
+    _parse "$@"
+    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)" || return 0
     _idx="$(mktemp)" || return 0
-    if _index "$2" "${_idx}"; then
+    if _index "${_dir}" "${_idx}"; then
         _reason="$(GIT_INDEX_FILE="${_idx}" _judge "${_root}" "${_AMEND}")"
     fi
     rm -f -- "${_idx}"
@@ -188,13 +206,20 @@ _check_launch() {
 
 main() {
     hook_read_input
-    local _cmd _cwd _sub _reason
+    local _cmd _dir _sub _reason _line
+    local -a _launch
     _cmd="$(hook_command)"
-    _cwd="$(hook_field '.cwd')"
-    [[ -n "${_cwd}" ]] || _cwd="${PWD}"
+    _dir="$(hook_field '.cwd')"
+    [[ -n "${_dir}" ]] || _dir="${PWD}"
     while IFS= read -r _sub; do
-        [[ "${_sub}" =~ ^git[[:space:]]+commit([[:space:]]|$) ]] || continue
-        _reason="$(_check_launch "${_sub}" "${_cwd}")"
+        if [[ "${_sub}" =~ ^cd[[:space:]]+([^[:space:]]+)$ ]]; then
+            _dir="$(_resolve "${_dir}" "$(hook_word "${BASH_REMATCH[1]}")")"
+            continue
+        fi
+        _launch=()
+        while IFS= read -r _line; do _launch+=("${_line}"); done < <(_commit_launch "${_sub}" "${_dir}")
+        [[ "${#_launch[@]}" -gt 0 ]] || continue
+        _reason="$(_check_commit "${_launch[@]}")"
         [[ -n "${_reason}" ]] && hook_block "${_reason}" \
             "Follow .agents/skills/tdd/SKILL.md: put the test and its implementation in one commit, or commit the failing test alone (RED) and the implementation right after it (GREEN)."
     done < <(hook_subcommands_raw "${_cmd}")

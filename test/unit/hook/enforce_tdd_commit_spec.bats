@@ -135,3 +135,15 @@ _check() {
     _check "git commit -i -m 'feat: y' lib/x.sh"
     assert_success
 }
+
+@test "judges the repo the launch runs in: git -C <dir>, git -c k=v, a cd before it" {
+    _put lib/x.sh 'x() { :; }'
+    local _away="${BATS_TEST_TMPDIR}/away" _c
+    mkdir -p "${_away}"
+    for _c in "git -C ${REPO} commit -m x" "git -c core.quotepath=off -C ${REPO} commit -m x" \
+        "git -C ${BATS_TEST_TMPDIR} -C repo commit -m x" "cd ${REPO} && git commit -m x"; do
+        run_hook enforce_tdd_commit \
+            "$(jq -n --arg c "${_c}" --arg d "${_away}" '{tool_name:"Bash", cwd:$d, tool_input:{command:$c}}')"
+        assert_failure 2
+    done
+}
