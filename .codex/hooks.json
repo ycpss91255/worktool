@@ -37,6 +37,15 @@
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_scope_on_guard_issues.sh\""
           }
         ]
+      },
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/codex_apply_patch.sh\""
+          }
+        ]
       }
     ]
   }

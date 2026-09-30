@@ -118,11 +118,17 @@ _registered_names() {
 }
 
 @test "every hook in .agents/hook is registered (no orphan hook)" {
-    local _f _name
+    local _f _name _count
     for _f in "${REPO_ROOT}"/.agents/hook/*.sh; do
         _name="$(basename -- "${_f}")"
-        run grep -c "/.claude/hook/${_name}\"" "${SETTINGS}"
-        assert_output "1"
+        _count=0
+        if grep -Fq "/.claude/hook/${_name}" "${SETTINGS}"; then
+            _count=$((_count + 1))
+        fi
+        if grep -Fq "/.agents/hook/${_name}" "${CODEX_HOOKS}"; then
+            _count=$((_count + 1))
+        fi
+        assert [ "${_count}" -gt 0 ]
     done
 }
 
