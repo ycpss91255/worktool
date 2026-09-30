@@ -185,3 +185,17 @@ docs 0
 merge 0
 CASES
 }
+
+@test "ignores text that only mentions git commit, other git launches and a cwd outside any repo" {
+    _put lib/x.sh 'x() { :; }'
+    local _c
+    for _c in "echo 'git commit -m x'" "git log --grep='git commit'" "git status" \
+        "gh pr create --title 'x' --body 'run git commit -m x'" "$(printf 'cat <<EOF\ngit commit -m x\nEOF')"; do
+        _check "${_c}"
+        assert_success
+        assert_output ""
+    done
+    run_hook enforce_tdd_commit \
+        "$(jq -n --arg d "${BATS_TEST_TMPDIR}" '{tool_name:"Bash", cwd:$d, tool_input:{command:"git commit -m x"}}')"
+    assert_success
+}
