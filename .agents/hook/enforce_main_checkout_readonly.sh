@@ -49,22 +49,29 @@ _block_edit_if_main() {
 }
 
 _git_context() {
-    local _cwd="$1" _word _next=0
+    local _cwd="$1" _word _next='' _seen=0
     shift
     GIT_ARGS=()
     for _word in "$@"; do
-        if (( _next == 1 )); then
+        if [[ "${_next}" == cwd ]]; then
             [[ "${_word}" == /* ]] || _word="${_cwd}/${_word}"
-            _cwd="$(realpath -m -- "${_word}")"
-            _next=0
+            _cwd="$(realpath -m -- "${_word}")" _next=''
+        elif [[ -n "${_next}" ]]; then
+            _next=''
+        elif (( _seen == 1 )); then
+            GIT_ARGS+=("${_word}")
         elif [[ "${_word}" == -C ]]; then
-            _next=1
+            _next=cwd
         elif [[ "${_word}" == -C?* ]]; then
             _word="${_word#-C}"
             [[ "${_word}" == /* ]] || _word="${_cwd}/${_word}"
             _cwd="$(realpath -m -- "${_word}")"
+        elif [[ "${_word}" =~ ^(-c|--config-env|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix)$ ]]; then
+            _next=value
+        elif [[ "${_word}" == -* ]]; then
+            continue
         else
-            GIT_ARGS+=("${_word}")
+            GIT_ARGS+=("${_word}") _seen=1
         fi
     done
     GIT_CWD="${_cwd}"

@@ -63,7 +63,7 @@ _wrapped() {
 @test "matrix: mutating git command x main worktree git-C x direct bash-c eval" {
     local _operation _place _wrapper _cwd _command
     local -a _operations=(
-        commit merge rebase reset cherry-pick revert am apply
+        commit 'commit -C HEAD' merge rebase reset cherry-pick revert am apply
         'stash pop' 'stash apply' 'checkout topic' 'checkout -- tracked.txt'
         'switch topic' restore clean
     )
