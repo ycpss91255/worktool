@@ -266,6 +266,38 @@ _pl_blocked_run() {
     assert_output 'false'
 }
 
+@test "pr-loop (node): each implementer loads its TDD instructions for Implement and Fix" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run claude
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+}
+
+@test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -cr '.calls[] | select(.label | startswith("review:")) | .prompt | [contains("commit history is vertical slices"), contains("tests verify behaviour through the public interface"), contains("Structure- or implementation-detail tests are blocking")]' <<<"${output}"
+        assert_output '[true,true,true]'
+    done
+}
+
 @test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
     run _pl_run
     assert_success
