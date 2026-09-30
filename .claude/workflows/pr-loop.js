@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pr-loop',
-  description: 'One sub-issue -> one PR: implement (TDD, own worktree), wait for CI, codex re-verify, fix and re-verify up to maxRounds; never merges',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, gates?, codex?, maxRounds?, parent?, sessionUrl?}.',
+  description: 'One sub-issue -> one PR: selected implementer (codex by default) uses TDD in its own worktree, waits for CI, the other side reviews, then fixes and re-reviews up to maxRounds; never merges',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, implementer?, gates?, codex?, maxRounds?, parent?, sessionUrl?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Locate', detail: 'agent: resolve the PR number and head SHA from the branch (structured)' },
@@ -151,3 +151,16 @@ for (;;) {
   sha = ci.sha || sha
 }
 return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
+
+// args 範例（可直接貼進 Workflow 的 args）
+// {
+//   "repo": "ycpss91255/worktool",
+//   "repoDir": "/path/to/worktool",
+//   "issue": 283,
+//   "branch": "chore/283-implementer",
+//   "name": "impl283",
+//   "task": "依 issue #283 的範圍與驗收實作。",
+//   "implementer": "codex",
+//   "gates": "just test lint, just test unit",
+//   "maxRounds": 3
+// }

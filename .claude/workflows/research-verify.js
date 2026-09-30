@@ -188,3 +188,14 @@ const rec = await agent(`${RECORD}${renderClaude(s, claims, res.attempts)}\n===E
 const url = rec ? rec.url : undefined
 if (!checkCommentUrl(url)) return stop('record-failed', 'ok', claims.length, `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`, s)
 return { issue: A.issue, status: 'recorded', codex: 'ok', claims: claims.length, comment: url, synthesis: s }
+
+// args 範例（可直接貼進 Workflow 的 args）
+// {
+//   "repo": "ycpss91255/worktool",
+//   "repoDir": "/path/to/worktool",
+//   "issue": 220,
+//   "question": "這個設計選項的一手資料與限制是什麼？",
+//   "context": "只採用官方文件與鎖定版原始碼。",
+//   "sources": ["/path/to/worktool/doc/design.md"],
+//   "timeoutMin": 15
+// }
