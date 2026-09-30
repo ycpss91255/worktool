@@ -147,15 +147,18 @@ EOF
     assert_line "unit/script/watch_user_replies_spec.bats"
 }
 
-@test "test.sh declares the heavy hook spec in matrix instead of unit" {
+@test "test.sh declares the heavy hook specs in matrix instead of unit" {
     run _declared matrix
     assert_success
-    assert_output "matrix/enforce_milestone_gate_approval_spec.bats"
+    assert_output "$(printf '%s\n' \
+        'matrix/enforce_milestone_gate_approval_spec.bats' \
+        'matrix/enforce_no_attribution_spec.bats')"
 
     run _declared unit
     assert_success
     refute_line "unit/hook/enforce_milestone_gate_approval_spec.bats"
     assert_line "unit/hook/enforce_milestone_gate_approval_representative_spec.bats"
+    assert_line "unit/hook/enforce_no_attribution_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of the integration tier" {

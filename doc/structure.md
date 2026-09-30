@@ -60,7 +60,8 @@ worktool/
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   ├── matrix/          完整乘積矩陣(bats):CI 必跑、不納入本機推送前 unit gate
-│   │   └── enforce_milestone_gate_approval_spec.bats
+│   │   ├── enforce_milestone_gate_approval_spec.bats
+│   │   └── enforce_no_attribution_spec.bats  no-attribution hook 的完整署名×位置×來源×包裝矩陣(#270)
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
@@ -316,7 +317,7 @@ just test selfcheck
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
 `setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`contract_spec`、`hook/` 與 `script/` 底下每一支
-agent spec;matrix:`enforce_milestone_gate_approval_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+agent spec;matrix:`enforce_milestone_gate_approval_spec`、`enforce_no_attribution_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無

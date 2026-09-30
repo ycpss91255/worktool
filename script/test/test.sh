@@ -167,7 +167,11 @@ _required_specs() {
                 unit/script/wait_pr_ci_spec.bats \
                 unit/script/watch_user_replies_spec.bats
             ;;
-        matrix) printf '%s\n' matrix/enforce_milestone_gate_approval_spec.bats ;;
+        matrix)
+            printf '%s\n' \
+                matrix/enforce_milestone_gate_approval_spec.bats \
+                matrix/enforce_no_attribution_spec.bats
+            ;;
         integration)
             printf '%s\n' \
                 integration/smoke_spec.bats \

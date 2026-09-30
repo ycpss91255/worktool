@@ -77,24 +77,20 @@ _wrap() {
     esac
 }
 
-# --- the matrix ------------------------------------------------------------
+# --- representative matrix cases -------------------------------------------
 
-@test "blocks every attribution line, place, source and wrapper" {
-    local _a _p _f _w _cmd
-    for _a in "${_ATTR[@]}"; do
-        for _p in "${_PLACES[@]}"; do
-            for _f in commit-m commit-F gh-body gh-body-file; do
-                for _w in direct bash-c eval; do
-                    _cmd="$(_wrap "${_w}" "$(_launch "${_f}" "$(_message "${_a}" "${_p}")")")"
-                    _check "${_cmd}"
-                    if [[ "${status}" -ne 2 ]]; then
-                        printf 'not blocked (%s): %s\n' "${status}" "${_cmd}" >&3
-                        return 1
-                    fi
-                    [[ "${output}" == *'attribution'* ]] || return 1
-                done
-            done
-        done
+@test "blocks representative attribution lines across every place, source and wrapper" {
+    local _case _a _p _f _w _cmd
+    for _case in \
+        '0 first commit-m direct' \
+        '1 middle commit-F bash-c' \
+        '2 last gh-body eval' \
+        '0 padded gh-body-file direct'; do
+        read -r _a _p _f _w <<<"${_case}"
+        _cmd="$(_wrap "${_w}" "$(_launch "${_f}" "$(_message "${_ATTR[_a]}" "${_p}")")")"
+        _check "${_cmd}"
+        assert_equal "${status}" 2
+        [[ "${output}" == *'attribution'* ]]
     done
 }
 
