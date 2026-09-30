@@ -42,7 +42,9 @@
 #   enter_sh_squote <s>       -> $s as a single-quoted POSIX shell word
 #   enter_sh_dquote <s>       -> $s as a double-quoted POSIX shell word
 #   enter_first_word <s>      -> the first shell word of $s, decoded
+#   enter_after_first_word <s>-> $s minus its first (setup-encoded) word
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
+#                                (through the enter.sh wrapper, issue #180)
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
 #   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
@@ -246,14 +248,32 @@ enter_first_word() {
     printf '%s\n' "${_out}"
 }
 
+# $1 with its FIRST shell word removed (and the one space after it), or
+# nothing (return 1) when that word is not encoded the way setup.sh encodes
+# one: the decoded word is re-encoded in the same quoting style and must be
+# exactly the prefix of $1.
+enter_after_first_word() {
+    local _s="$1" _word _enc
+    _word="$(enter_first_word "${_s}")"
+    case "${_s}" in
+        "'"*) _enc="$(enter_sh_squote "${_word}")" ;;
+        '"'*) _enc="$(enter_sh_dquote "${_word}")" ;;
+        *)    _enc="${_word}" ;;
+    esac
+    [[ "${_s}" == "${_enc} "* ]] || return 1
+    printf '%s\n' "${_s#"${_enc} "}"
+}
+
 # The distrobox program recorded in managed-block body $1, or nothing when
-# the body names none. setup.sh writes exactly two bodies that name one:
-#   command = '<distrobox>' enter <box> -- tmux new -A -s main
-#   set -g default-command '"<distrobox>" enter <box>'
+# the body names none. setup.sh writes exactly two bodies that name one,
+# both through the in-box entry wrapper (issue #180):
+#   command = '<enter.sh>' --distrobox '<distrobox>' --box <box> -- tmux new -A -s main
+#   set -g default-command '"<enter.sh>" --distrobox "<distrobox>" --box <box>'
 # (the tmux-on-host ghostty body, `command = tmux new -A -s main`, names
-# none). The unquoted / double-quoted-outer shapes an earlier worktool
-# wrote are still decoded, so a block a user already has keeps reporting.
-# status.sh reads this back to say whether that path still runs.
+# none). The shapes an earlier worktool wrote - distrobox as the first
+# word, quoted or not - are still decoded, so a block a user already has
+# keeps reporting. status.sh reads this back to say whether that path
+# still runs.
 enter_body_distrobox() {
     local _body="$1" _rest _prog
     case "${_body}" in
@@ -263,6 +283,11 @@ enter_body_distrobox() {
         *) return 0 ;;
     esac
     _prog="$(enter_first_word "${_rest}")"
+    if [[ "${_prog##*/}" == "enter.sh" ]]; then
+        _rest="$(enter_after_first_word "${_rest}")" || return 0
+        [[ "${_rest}" == "--distrobox "* ]] || return 0
+        _prog="$(enter_first_word "${_rest#--distrobox }")"
+    fi
     [[ "${_prog##*/}" == "distrobox" ]] || return 0
     printf '%s\n' "${_prog}"
 }

@@ -140,11 +140,14 @@ _required_specs() {
                 unit/config_mutation_spec.bats \
                 unit/config_owner_spec.bats \
                 unit/config_validate_spec.bats \
+                unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/commit_email_spec.bats \
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
                 unit/adr_spec.bats \
+                unit/contract_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -152,7 +155,10 @@ _required_specs() {
                 unit/hook/check_main_fresh_before_worktree_spec.bats \
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
+                unit/hook/enforce_milestone_gate_approval_spec.bats \
+                unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
+                unit/hook/enforce_codex_round_cap_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \
@@ -166,7 +172,8 @@ _required_specs() {
             printf '%s\n' \
                 integration/smoke_spec.bats \
                 integration/assemble_spec.bats \
-                integration/setup_spec.bats
+                integration/setup_spec.bats \
+                integration/enter_spec.bats
             ;;
         integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;

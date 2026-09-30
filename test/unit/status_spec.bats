@@ -187,6 +187,35 @@ _write_block() {
     assert_line "distrobox: /nowhere/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
 }
 
+# --- #180: the managed command runs the entry wrapper -------------------------
+#
+# Since issue #180 setup.sh writes `'<enter.sh>' --distrobox '<distrobox>'
+# --box <box> ...`: the distrobox is the value of --distrobox, not the first
+# word, and must still be found and judged.
+
+@test "#180: the distrobox recorded behind the enter.sh wrapper in the ghostty block is reported" {
+    _write_block "command = '/repo/script/box/enter.sh' --distrobox '${DISTROBOX}' --box dev -- tmux new -A -s main" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: runnable)"
+}
+
+@test "#180: the wrapper form in ~/.tmux.conf is decoded through both quoting layers" {
+    local _d='$' _path
+    _path="/nowhere/my ${_d}dir/distrobox"
+    _write_block "set -g default-command '\"/my repo/script/box/enter.sh\" --distrobox \"/nowhere/my \\${_d}dir/distrobox\" --box dev'" "${TMUX_CONF}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${_path} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+}
+
+@test "#180: a wrapper body without --distrobox records no distrobox (the PATH one is reported)" {
+    _write_block "command = '/repo/script/box/enter.sh' --box dev" "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "distrobox: ${DISTROBOX} (on PATH; no managed block records one)"
+}
+
 # --- #175 round 1: the recorded path is a QUOTED shell word ------------------
 #
 # The literal dollar below is built from a variable so the metacharacter is
