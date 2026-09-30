@@ -27,10 +27,8 @@ _payload() {
 
     run_hook codex_apply_patch "$(_payload "${_patch}")"
 
-    assert_success
+    assert_failure 2
     assert_output --partial 'SC1091'
-    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
-    assert_output 'deny'
 }
 
 @test "an Update File introducing an unapproved ShellCheck disable is denied by the existing policy" {
@@ -47,10 +45,8 @@ _payload() {
 
     run_hook codex_apply_patch "$(_payload "${_patch}")"
 
-    assert_success
+    assert_failure 2
     assert_output --partial 'SC2317'
-    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
-    assert_output 'deny'
 }
 
 @test "one patch delegates move, delete, and add as per-file Claude payloads" {

@@ -8,7 +8,7 @@ source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 hook_bootstrap "codex-apply-patch"
 
 _run_edit_hooks() {
-    local _tool="$1" _file="$2" _content="$3" _payload _command _hook _result _rc
+    local _tool="$1" _file="$2" _content="$3" _payload _command _hook _result _reason _rc
     _payload="$(printf '%s' "${HOOK_INPUT}" | jq -c \
         --arg tool "${_tool}" --arg file "${_file}" --arg content "${_content}" '
         .tool_name = $tool
@@ -23,6 +23,15 @@ _run_edit_hooks() {
         _result="$(printf '%s' "${_payload}" | "${_hook}")" || _rc=$?
         if (( _rc != 0 )); then
             return "${_rc}"
+        fi
+        if [[ -n "${_result}" ]] \
+            && jq -e '.hookSpecificOutput.permissionDecision == "deny"' \
+                <<<"${_result}" >/dev/null 2>&1; then
+            _reason="$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' \
+                <<<"${_result}")"
+            [[ -n "${_reason}" ]] || _reason="${_result}"
+            printf '%s\n' "${_reason}" >&2
+            return 2
         fi
         if [[ -n "${_result}" ]]; then
             printf '%s\n' "${_result}"
