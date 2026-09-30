@@ -54,6 +54,8 @@ _payload() {
     assert_success
     run_hook enforce_main_checkout_readonly "$(_payload Bash 'git worktree list' "${MAIN_REPO}")"
     assert_success
+    run_hook enforce_main_checkout_readonly "$(_payload Bash 'git switch -q main' "${MAIN_REPO}")"
+    assert_success
     run_hook enforce_main_checkout_readonly "$(_payload Bash 'gh issue view 276 --repo ycpss91255/worktool' "${MAIN_REPO}")"
     assert_success
 }

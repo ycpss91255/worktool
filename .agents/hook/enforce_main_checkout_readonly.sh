@@ -78,14 +78,20 @@ _git_context() {
 }
 
 _checkout_mutates() {
-    local _arg
+    local _arg _target=''
     shift
     (( $# > 0 )) || return 1
     for _arg in "$@"; do
-        [[ "${_arg}" != -- ]] || return 0
-        [[ "${_arg}" != -* ]] || return 0
+        case "${_arg}" in
+            -q|--quiet|--guess|--no-guess|--progress|--no-progress) ;;
+            main)
+                [[ -z "${_target}" ]] || return 0
+                _target=main ;;
+            *) return 0 ;;
+        esac
     done
-    [[ "$1" != main || $# -ne 1 ]]
+    [[ -n "${_target}" ]] || return 1
+    return 1
 }
 
 _git_mutates() {

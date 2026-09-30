@@ -92,7 +92,8 @@ _wrapped() {
     local _operation _place _wrapper _cwd _command
     local -a _operations=(
         fetch 'pull --ff-only' 'worktree add /tmp/new' 'worktree remove /tmp/old'
-        'worktree prune' 'worktree list' status log diff show
+        'worktree prune' 'worktree list' status log diff show 'checkout main'
+        'checkout -q main' 'switch main' 'switch --no-guess main'
     )
     for _operation in "${_operations[@]}"; do
         for _place in main worktree git-C; do
