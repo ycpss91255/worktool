@@ -192,12 +192,105 @@ SH
     chmod +x "${stub}/gh"
     local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t"}')" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
 }
 
 # rc of the played step that writes scope-r1.md.
 _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc] | first' <<<"$1"; }
+
+_pl_run() {
+    local extra="${1:-}"
+    [[ -n "${extra}" ]] || extra='{}'
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
+        "${replies}"
+}
+
+_pl_blocked_run() {
+    local implementer="$1"
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
+        "${replies}"
+}
+
+@test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
+    run _pl_run
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n -o /work/.worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/.worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
+    run _pl_run
+    assert_success
+    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/.worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/.worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    assert_output 'true'
+}
+
+@test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
+    assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): Fix rounds return to the selected implementer" {
+    run _pl_blocked_run codex
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n")' <<<"${output}"
+    assert_output 'true'
+
+    run _pl_blocked_run claude
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C")' <<<"${output}"
+    assert_output 'false'
+}
+
+@test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+}
+
+@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+}
+
+@test "pr-loop (node): an invalid implementer value throws a clear error" {
+    run _pl_run '{"implementer":"other"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.implementer must be "codex" or "claude", got "other"'
+}
+
+@test "pr-loop (node): codex quota off rejects codex implementation and does not gate Claude review" {
+    run _pl_run '{"implementer":"codex","codex":"off"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.codex "off" cannot use implementer "codex"; use implementer: "claude"'
+
+    run _pl_run '{"implementer":"codex","codex":"on"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Review PR #7") and (contains("Run ONE codex re-verification") | not)), ([.calls[] | select(.label | startswith("nocodex:"))] | length)]' <<<"${output}"
+    assert_output '[null,true,0]'
+}
 
 @test "pr-loop (node): the scope step cuts the issue's ## 範圍 section out verbatim (issue #238)" {
     printf '## 背景\n\nx\n\n## 範圍\n\n- 擋:a\n- 不擋:b\n\n## Acceptance criteria\n\n- z\n' > "${BATS_TEST_TMPDIR}/body.md"
@@ -225,7 +318,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
     refute [ "$(_pl_scope_rc "${output}")" = "0" ]
     refute [ -s "${WORK}/scope-r1.md" ]
     # the prompt tells the agent to stop the round instead of reviewing without the scope
-    run jq -r '.calls[] | select(.label | startswith("codex:")) | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}"
     assert_output --partial "讀取 issue #238 失敗,本輪未完成"
 }
 
@@ -255,7 +348,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
     assert [ "${output}" -ge 1 ]
 }
 
-@test "milestone-fanout requires repoDir, validates every item, delegates through pipeline to pr-loop, and logs in the per-item stage" {
+@test "milestone-fanout requires repoDir, validates every item, delegates to pr-loop, and logs each result" {
     run grep -c "!A.repo || !A.repoDir" "${FANOUT}"
     assert_output "1"
     run grep -c "for (const k of \['issue', 'branch', 'name', 'task'\])" "${FANOUT}"
@@ -264,12 +357,17 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
     assert_output "1"
     run grep -c 'REPO_DIR}/.claude/workflows/pr-loop.js' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await pipeline(A.items' "${FANOUT}"
-    assert_output "1"
     run grep -c 'item.issue} done:' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await parallel(' "${FANOUT}"
-    assert_output "0"
+}
+
+@test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
+    run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'await parallel(batch.map' "${FANOUT}"
+    assert_output "1"
 }
 
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
