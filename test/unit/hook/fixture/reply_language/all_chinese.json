@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "TRANSCRIPT_PATH",
+  "cwd": "/workspace",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "實作已經完成，所有指定的檢查都已通過。我也同步更新設定與文件，方便後續維護者理解這項行為。"
+}
