@@ -44,7 +44,6 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 checkout 路徑(不預設,換機器就換值);worktree 在 `<repoDir>/.worktree/<name>`、暫存檔在 `<repoDir>/.worktree/.scratch/<name>`(皆 gitignored) |
-| `sessionUrl` | 否 | 要寫進 commit 的 `Claude-Session:` trailer;不給就不寫 |
 
 ## 迴圈內容
 
@@ -78,7 +77,6 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
 | `codex` | 否 | `on`(預設)或 `off` |
 | `maxRounds` | 否 | 每個 PR 的 Fix 輪數上限，預設 3 |
-| `sessionUrl` | 否 | 轉傳給每個 `pr-loop` 的 session URL |
 
 args 範例：
 
