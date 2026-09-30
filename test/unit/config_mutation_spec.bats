@@ -53,7 +53,7 @@ _rows() {
         "get-lf|behave|get_lf|=|=|${_cs}config_get reads the first occurrence" \
         "get-all|behave|get_all|=|=|${_cs}config_get_all reads every occurrence" \
         "get-all-bare|behave|get_all_bare|=|=|${_cs}config_get_all reads every occurrence;unit/config_validate_spec.bats@bare key = empty value: link" \
-        "bare-validate|behave|bare_validate|=|=|unit/config_validate_spec.bats@bare key = empty value: every validated key" \
+        "bare-validate|behave|bare_validate|=|=|unit/config_validate_spec.bats@bare key = empty value: every judged key" \
         "each-args|behave|each_args|=|=|${_cs}config_each passes line number" \
         "each-skip|behave|each_skip|=|=|${_cs}config_each passes line number" \
         "each-stop|behave|each_stop|=|=|${_cs}config_each stops at the first failing callback" \

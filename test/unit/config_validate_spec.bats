@@ -1,45 +1,73 @@
 #!/usr/bin/env bats
 # test/unit/config_validate_spec.bats - a bare key is that key with an empty
-# value, for every reader and validator of the state file (issue #199
-# round 10).
+# value, for every judge of the state file (issue #199 rounds 10-11).
 #
 # lib/config.sh's format: a line without `=` is a bare key with an empty
-# value. So every known key gets the same verdict for a bare `<key>` line as
-# for `<key>=`. The matrix is every known key x {bare, `key=`, whitespace-only
-# value, a valid value}, judged by every script that validates the key:
-#   - the decisions and their `.source` (lib/enter.sh): setup and status;
-#   - home / home.source (lib/home.sh): status and assemble (--dry-run);
-#   - link (lib/link.sh, read by status once a box HOME is recorded).
-# A verdict is the exit status plus stderr (the refusal or warning), so
-# "identical" means the same outcome AND the same message. Bare, empty and
-# whitespace-only are refused (link: warned about and skipped); the valid
-# value is accepted.
+# value. So every judged key gets the same verdict for a bare `<key>` line
+# as for `<key>=`. What is checked, and nothing more:
+#   - the matrix: every judged key x {bare, `key=`, whitespace-only value, a
+#     valid value};
+#   - the judges of a key: the scripts that read it - setup and status for
+#     the decisions and their `.source` (enter_config_check), status and
+#     assemble for home / home.source (home_config_check), status and
+#     assemble for link (link_entries; assemble through link_apply);
+#   - a verdict is the exit status, stdout and stderr; bare and `key=` must
+#     give byte-identical stdout and stderr files (cmp) and the same status;
+#     bare, empty and blank are refused (link: warned about and skipped), a
+#     valid value is accepted (link: linked).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
-    unset XDG_CONFIG_HOME
+    unset XDG_CONFIG_HOME FAKE_BOX_HOME
     mkdir -p "${HOME}"
     CONFIG="${HOME}/.config/worktool/config"
-    # setup resolves distrobox before it writes anything: give it one.
-    mkdir -p "${BATS_TEST_TMPDIR}/bin"
-    printf '#!/bin/sh\nexit 0\n' >"${BATS_TEST_TMPDIR}/bin/distrobox"
-    chmod +x "${BATS_TEST_TMPDIR}/bin/distrobox"
-    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
-    export PATH
+    BOX="${BATS_TEST_TMPDIR}/box"
+    # distrobox and a container manager with no box: setup resolves
+    # distrobox, assemble runs for real.
+    MOCKBIN="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${MOCKBIN}"
+    printf '#!/bin/sh\nexit 0\n' >"${MOCKBIN}/distrobox"
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/bin/sh
+[ "$1" = ps ] && exit 0
+exit 2
+EOF
+    chmod +x "${MOCKBIN}/distrobox" "${MOCKBIN}/docker"
+    PATH="${MOCKBIN}:${PATH}"
+    export PATH DBX_CONTAINER_MANAGER=docker
 }
 
-# The known keys: `key|valid value|companion line` (the companion keeps the
-# key's pair rule satisfied, so the verdict is about the key itself).
+# The judged keys: `key|reader|valid value|companion line` (the companion
+# keeps the key's pair rule satisfied, so the verdict is about the key).
 _keys() {
     printf '%s\n' \
-        'auto-enter|yes|' 'auto-enter.source|user|' \
-        'terminal|none|' 'terminal.source|user|' \
-        'tmux|inside|' 'tmux.source|user|' \
-        'box|dev|' 'box.source|user|' \
-        'home|/srv/box|home.source=user' 'home.source|user|home=/srv/box'
+        'auto-enter|enter_config_check|yes|' 'auto-enter.source|enter_config_check|user|' \
+        'terminal|enter_config_check|none|' 'terminal.source|enter_config_check|user|' \
+        'tmux|enter_config_check|inside|' 'tmux.source|enter_config_check|user|' \
+        'box|enter_config_check|dev|' 'box.source|enter_config_check|user|' \
+        "home|home_config_check|${BATS_TEST_TMPDIR}/box|home.source=user" \
+        "home.source|home_config_check|user|home=${BATS_TEST_TMPDIR}/box"
+}
+
+# The judges of reader function $1: the scripts that call it.
+_judges() {
+    case "$1" in
+        enter_config_check) printf '%s\n' script/box/setup.sh script/box/status.sh ;;
+        home_config_check) printf '%s\n' script/box/status.sh script/box/assemble.sh ;;
+        link_entries) printf '%s\n' script/box/status.sh script/box/assemble.sh ;;
+    esac
+}
+
+# The command a judge script runs as: status and assemble as a user would
+# (assemble for real, against the fake manager); setup with --dry-run.
+_command() {
+    case "$1" in
+        script/box/setup.sh) printf '%s\n' "${REPO_ROOT}/$1 --dry-run" ;;
+        *) printf '%s\n' "${REPO_ROOT}/$1" ;;
+    esac
 }
 
 # The line of form $2 for key $1 (valid value $3).
@@ -52,24 +80,24 @@ _line() {
     esac
 }
 
-# The verdict of script $1 (args $2..) on the state file: `rc=<n>` and its
-# stderr, one string.
-_verdict() {
-    local _err="${BATS_TEST_TMPDIR}/err" _rc=0
-    (cd "${REPO_ROOT}" && "$@" >/dev/null 2>"${_err}") || _rc=$?
-    printf 'rc=%s %s' "${_rc}" "$(cat "${_err}")"
+# Run judge command $2.. on the state file; stdout, stderr and the status
+# go to files prefixed $1 (.out .err .rc).
+_judge() {
+    local _p="$1" _rc=0
+    shift
+    local -a _cmd
+    read -r -a _cmd <<<"$*"
+    (cd "${REPO_ROOT}" && "${_cmd[@]}" >"${_p}.out" 2>"${_p}.err") || _rc=$?
+    printf '%s\n' "${_rc}" >"${_p}.rc"
 }
 
-# The scripts that validate key $1, one command per line.
-_judges() {
-    case "$1" in
-        home|home.source)
-            printf '%s\n' "${REPO_ROOT}/script/box/status.sh" \
-                "${REPO_ROOT}/script/box/assemble.sh --dry-run" ;;
-        *)
-            printf '%s\n' "${REPO_ROOT}/script/box/status.sh" \
-                "${REPO_ROOT}/script/box/setup.sh --dry-run" ;;
-    esac
+# Fail unless forms bare and empty (prefix $1.) gave byte-identical files.
+_assert_same() {
+    local _x
+    for _x in rc out err; do
+        cmp -s -- "$1.bare.${_x}" "$1.empty.${_x}" \
+            || fail "$2: bare and \`key=\` differ in ${_x}: $(diff "$1.bare.${_x}" "$1.empty.${_x}")"
+    done
 }
 
 @test "this spec is a required unit spec of test.sh" {
@@ -78,45 +106,46 @@ _judges() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "bare key = empty value: every validated key, every judge, same verdict; bare, empty and blank refused, valid accepted" {
-    local _k _v _c _j _form
-    local -a _cmd
-    local -A _got
+@test "bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted" {
+    local _k _r _v _c _s _form _p
     mkdir -p "$(dirname -- "${CONFIG}")"
-    while IFS='|' read -r _k _v _c; do
-        while IFS= read -r _j; do
-            read -r -a _cmd <<<"${_j}"
+    while IFS='|' read -r _k _r _v _c; do
+        while IFS= read -r _s; do
+            _p="${BATS_TEST_TMPDIR}/v.${_k}.${_s##*/}"
             for _form in bare empty ws valid; do
+                rm -rf "${BOX}"
                 { _line "${_k}" "${_form}" "${_v}"; [[ -z "${_c}" ]] || printf '%s\n' "${_c}"; } >"${CONFIG}"
-                _got[${_form}]="$(_verdict "${_cmd[@]}")"
+                _judge "${_p}.${_form}" "$(_command "${_s}")"
             done
-            [[ "${_got[bare]}" == "${_got[empty]}" ]] \
-                || fail "${_k} via ${_j##*/}: bare got '${_got[bare]}', empty got '${_got[empty]}'"
-            [[ "${_got[empty]}" == "rc=1 [ERROR] ${CONFIG}: invalid value '' for ${_k}"* ]] \
-                || fail "${_k} via ${_j##*/}: empty not refused: ${_got[empty]}"
-            [[ "${_got[ws]}" == "rc=1 [ERROR] ${CONFIG}: invalid value '  ' for ${_k}"* ]] \
-                || fail "${_k} via ${_j##*/}: whitespace not refused: ${_got[ws]}"
-            [[ "${_got[valid]}" == "rc=0 "* ]] \
-                || fail "${_k} via ${_j##*/}: valid value refused: ${_got[valid]}"
-        done < <(_judges "${_k}")
+            _assert_same "${_p}" "${_k} via ${_s}"
+            [[ "$(cat "${_p}.empty.rc")" == 1 ]] \
+                && grep -qF "[ERROR] ${CONFIG}: invalid value '' for ${_k}" "${_p}.empty.err" \
+                || fail "${_k} via ${_s}: empty not refused: $(cat "${_p}.empty.err")"
+            [[ "$(cat "${_p}.ws.rc")" == 1 ]] \
+                && grep -qF "[ERROR] ${CONFIG}: invalid value '  ' for ${_k}" "${_p}.ws.err" \
+                || fail "${_k} via ${_s}: whitespace not refused: $(cat "${_p}.ws.err")"
+            [[ "$(cat "${_p}.valid.rc")" == 0 ]] \
+                || fail "${_k} via ${_s}: valid value refused: $(cat "${_p}.valid.err")"
+        done < <(_judges "${_r}")
     done < <(_keys)
 }
 
-@test "bare key = empty value: link (bare, empty and blank are warned about and skipped; a path is linked)" {
-    local _form _t='~'
-    local -A _got _out
-    mkdir -p "$(dirname -- "${CONFIG}")"
-    for _form in bare empty ws valid; do
-        { printf 'home=/srv/box\nhome.source=user\n'; _line link "${_form}" "${_t}/.aws"; } >"${CONFIG}"
-        _got[${_form}]="$(_verdict "${REPO_ROOT}/script/box/status.sh")"
-        _out[${_form}]="$(cd "${REPO_ROOT}" && "${REPO_ROOT}/script/box/status.sh" 2>/dev/null | grep -c '^link: ')"
-    done
-    [[ "${_got[bare]}" == "${_got[empty]}" && "${_out[bare]}" == "${_out[empty]}" ]] \
-        || fail "link: bare got '${_got[bare]}' (${_out[bare]} lines), empty got '${_got[empty]}' (${_out[empty]} lines)"
-    [[ "${_got[empty]}" == "rc=0 [WARN] link: '' in ${CONFIG} is not a path under \$HOME - skipped" ]] \
-        || fail "link: empty not warned about: ${_got[empty]}"
-    [[ "${_got[ws]}" == "rc=0 [WARN] link: '  ' in ${CONFIG} is not a path under \$HOME - skipped" ]] \
-        || fail "link: whitespace not warned about: ${_got[ws]}"
-    [[ "${_got[valid]}" == "rc=0 " && "${_out[valid]}" -eq $(( _out[empty] + 1 )) ]] \
-        || fail "link: the path was not linked: ${_got[valid]} (${_out[valid]} lines)"
+@test "bare key = empty value: link, every judge (bare, empty and blank warned about and skipped; a path linked)" {
+    local _s _form _p _t='~'
+    mkdir -p "$(dirname -- "${CONFIG}")" "${HOME}/.aws"
+    while IFS= read -r _s; do
+        _p="${BATS_TEST_TMPDIR}/l.${_s##*/}"
+        for _form in bare empty ws valid; do
+            rm -rf "${BOX}"
+            { printf 'home=%s\nhome.source=user\n' "${BOX}"; _line link "${_form}" "${_t}/.aws"; } >"${CONFIG}"
+            _judge "${_p}.${_form}" "$(_command "${_s}")"
+        done
+        _assert_same "${_p}" "link via ${_s}"
+        grep -qF "[WARN] link: '' in ${CONFIG} is not a path under \$HOME - skipped" "${_p}.empty.err" \
+            || fail "link via ${_s}: empty not warned about: $(cat "${_p}.empty.err")"
+        grep -qF "[WARN] link: '  ' in ${CONFIG} is not a path under \$HOME - skipped" "${_p}.ws.err" \
+            || fail "link via ${_s}: whitespace not warned about: $(cat "${_p}.ws.err")"
+        cat "${_p}.valid.out" "${_p}.valid.err" | grep -qF "${BOX}/.aws -> ${HOME}/.aws" \
+            || fail "link via ${_s}: the path was not linked: $(cat "${_p}.valid.out" "${_p}.valid.err")"
+    done < <(_judges link_entries)
 }
