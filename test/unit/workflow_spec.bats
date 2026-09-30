@@ -249,6 +249,18 @@ _pl_blocked_run() {
     assert_output 'false'
 }
 
+@test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+}
+
 @test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
     run _pl_run
     assert_success
