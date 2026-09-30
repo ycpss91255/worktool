@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# enter.sh - enter the worktool dev box, with observable first-launch
+# enter.sh - enter the worktool box, with observable first-launch
 # progress (M3, issue #180).
 #
 # `distrobox enter <box>` on a box that was never started runs
@@ -97,7 +97,7 @@ _usage() {
 Usage: enter.sh [--box <name>] [--distrobox <path>] [--timeout <seconds>]
                 [-- <command>...]
 
-Enter the worktool dev box: `<distrobox> enter <box> [-- <command>...]`.
+Enter the worktool box: `<distrobox> enter <box> [-- <command>...]`.
 On the box's FIRST launch (never started: docker inspect State.StartedAt
 is 0001-01-01), distrobox-init installs packages first; this prints what is
 going on instead of two static lines:

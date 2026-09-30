@@ -198,7 +198,8 @@ _enter() {
     run "${_fixture}/script/box/enter.sh" --help
     assert_success
     assert_output --partial "(default: work)"
-    refute_output --partial "(default: dev)"
+    # No other copy anywhere in the help: not the word `dev` at all.
+    refute_output --regexp '(^|[^[:alnum:]_])dev([^[:alnum:]_]|$)'
 }
 
 # --- first launch: notice, progress, log, hand-over -----------------------------
