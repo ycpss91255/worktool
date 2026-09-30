@@ -47,6 +47,10 @@ _payload() {
     assert_failure 2
     run_hook enforce_main_checkout_readonly "$(_payload Bash 'git commit' "${LINKED_REPO}")"
     assert_success
+    run_hook enforce_main_checkout_readonly \
+        "$(_payload Bash "cd ${LINKED_REPO} & git commit -m x" "${MAIN_REPO}")"
+    assert_failure 2
+    assert_output --partial "split the call or use git -C"
 }
 
 @test "representative allowed git and gh commands pass in main" {

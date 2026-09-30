@@ -167,6 +167,23 @@ _directory_wrapped() {
     done
 }
 
+@test "non-top-level directory changes fail closed before a mutating git command" {
+    local _command
+    local -a _commands=(
+        "cd ${LINKED_REPO} & git commit -m x"
+        "cd ${LINKED_REPO} & wait; git commit -m x"
+        "{ cd ${LINKED_REPO}; } | true; git commit -m x"
+        "echo \"(\"; { cd ${LINKED_REPO}; } | cat; git commit -m x"
+        "env cd ${LINKED_REPO}; git commit -m x"
+    )
+    for _command in "${_commands[@]}"; do
+        run_hook enforce_main_checkout_readonly \
+            "$(_bash_payload "${_command}" "${MAIN_REPO}")"
+        assert_failure 2
+        assert_output --partial "split the call or use git -C"
+    done
+}
+
 @test "builtin cd changes the directory for a later git command" {
     run_hook enforce_main_checkout_readonly \
         "$(_bash_payload "builtin cd ${MAIN_REPO} && git commit -m x" "${LINKED_REPO}")"
