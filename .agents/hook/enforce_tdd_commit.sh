@@ -16,13 +16,15 @@
 #          line the same commit removes verbatim is a move, not new)
 #
 #   What the commit records is read from a scratch copy of the index, with
-#   every tracked change added for -a / --all (the real index is never
-#   touched).
+#   every tracked change added for -a / --all, or for a pathspec commit
+#   HEAD's tree (the index too with -i / --include) plus the named paths
+#   from the work tree (the real index is never touched).
 #   An --amend is judged as the whole amended commit (its changes since
 #   HEAD's parent, which is then the commit that must be RED).
 #
-#   ALLOW  an --amend with nothing staged (a reword); concluding a merge (MERGE_HEAD exists); docs only (doc/ *.md
-#          .agents/memory/ .agents/skills/); anything else
+#   ALLOW  an --amend with nothing staged (a reword); concluding a merge
+#          (MERGE_HEAD exists); docs only (doc/ *.md .agents/memory/
+#          .agents/skills/); anything else
 #
 # Output contract: allow = exit 0, silent; block = exit 2, reason on stderr.
 
@@ -109,37 +111,50 @@ _judge() {
     printf '%s' 'this commit touches product code but no test, and its parent is not a RED commit.'
 }
 
-# _parse <words...> - read the words after `commit`; set _AMEND and _ALL
-# (0 / 1). Options that take a value skip it (-m <msg>, -am <msg>, --author
-# <x>; --file=<f> carries its own).
+# _parse <words...> - read the words after `commit`; set _AMEND, _ALL and
+# _INCLUDE (0 / 1) and the pathspec array _PATHS. Options that take a value
+# skip it (-m <msg>, -am <msg>, --author <x>; --file=<f> carries its own).
 _parse() {
-    local _w _k _skip=0
-    _AMEND=0 _ALL=0
+    local _w _k _skip=0 _rest=0
+    _AMEND=0 _ALL=0 _INCLUDE=0 _PATHS=()
     for _w in "$@"; do
+        if [[ "${_rest}" -eq 1 ]]; then _PATHS+=("${_w}"); continue; fi
         if [[ "${_skip}" -eq 1 ]]; then _skip=0; continue; fi
         case "${_w}" in
-            --) break ;;
+            --) _rest=1 ;;
             --amend) _AMEND=1 ;;
             --all) _ALL=1 ;;
+            --include) _INCLUDE=1 ;;
             --message|--file|--reuse-message|--reedit-message|--author|--date|--template|--fixup|--squash|--trailer|--cleanup|--pathspec-from-file) _skip=1 ;;
             --*) ;;
             -?*)
                 for ((_k = 1; _k < ${#_w}; _k++)); do
                     case "${_w:_k:1}" in
                         a) _ALL=1 ;;
+                        i) _INCLUDE=1 ;;
                         [mFCct]) [[ "${_k}" -eq $((${#_w} - 1)) ]] && _skip=1; break ;;
                     esac
                 done ;;
+            *) _PATHS+=("${_w}") ;;
         esac
     done
 }
 
 # _index <dir> <index file> - fill <index file> with the index the commit
-# would record: a copy of the real one, plus every tracked change for -a.
+# would record: a copy of the real one, plus every tracked change for -a;
+# with a pathspec, HEAD's tree (the real index for -i) plus the named paths
+# as they are in the work tree.
 _index() {
     local _real
     _real="$(git -C "$1" rev-parse --path-format=absolute --git-path index 2>/dev/null)" || return 1
     cp -- "${_real}" "$2" 2>/dev/null || return 1
+    if [[ "${#_PATHS[@]}" -gt 0 ]]; then
+        if [[ "${_INCLUDE}" -eq 0 ]] && git -C "$1" rev-parse --quiet --verify HEAD >/dev/null 2>&1; then
+            GIT_INDEX_FILE="$2" git -C "$1" read-tree HEAD 2>/dev/null || return 1
+        fi
+        GIT_INDEX_FILE="$2" git -C "$1" add -- "${_PATHS[@]}" 2>/dev/null
+        return 0
+    fi
     [[ "${_ALL}" -eq 1 ]] || return 0
     GIT_INDEX_FILE="$2" git -C "$1" add -u 2>/dev/null
 }

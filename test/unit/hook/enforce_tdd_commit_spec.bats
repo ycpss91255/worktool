@@ -120,3 +120,18 @@ _check() {
         assert_output --partial "no test"
     done
 }
+
+@test "counts what a pathspec commit records: the named paths (--only) and, with -i, the index too" {
+    _put lib/x.sh 'x() { :; }'
+    _put test/unit/x_spec.bats '@test "x" { run x; }'
+    _commit 'feat: x'
+    printf 'y() { :; }\n' >> "${REPO}/lib/x.sh"
+    printf '# y\n' >> "${REPO}/test/unit/x_spec.bats"
+    git -C "${REPO}" add test/unit/x_spec.bats
+    _check "git commit -m 'feat: y' lib/x.sh"
+    assert_failure 2
+    _check "git commit -m 'feat: y' --only -- lib/x.sh"
+    assert_failure 2
+    _check "git commit -i -m 'feat: y' lib/x.sh"
+    assert_success
+}
