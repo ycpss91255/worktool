@@ -139,6 +139,7 @@ _required_specs() {
                 unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/commit_attribution_spec.bats \
                 unit/commit_email_spec.bats \
                 unit/attribution_spec.bats \
                 unit/milestone_gate_yml_spec.bats \
