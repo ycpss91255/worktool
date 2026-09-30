@@ -89,66 +89,6 @@ _decision_item() {
     assert_success
 }
 
-# --- ADR 0006: invariant 3, host and box never interfere (issue #204) --------
-
-ADR_0006_NAME="0006-invariant-host-box-separation.md"
-
-# Section "## $1" of ADR 0006, heading excluded, up to the next "## ".
-_adr_0006_section() {
-    sed -n "/^## $1\$/,/^## /p" "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}" | sed '1d;/^## /d'
-}
-
-@test "#204: ADR 0006 has the four invariant sections, each non-empty" {
-    local _s
-    assert [ -f "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}" ]
-    for _s in 一句話 性質 為什麼固定 目前由哪些機制或測試守住; do
-        run _adr_0006_section "${_s}"
-        assert_success
-        assert_output --regexp '[^[:space:]]'
-    done
-}
-
-@test "#204: ADR 0006 names ADR 0002 as the mechanism and #179 for tmux isolation" {
-    run _adr_0006_section 目前由哪些機制或測試守住
-    assert_success
-    assert_output --partial "0002-box-owns-its-home.md"
-    assert_output --partial "#179"
-}
-
-@test "#204: every spec file ADR 0006 cites as a guard exists in the repo" {
-    local _f
-    run grep -oE 'test/(unit|integration|system|acceptance)/[a-z0-9_]+_spec\.bats' \
-        "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}"
-    assert_success
-    for _f in "${lines[@]}"; do
-        assert [ -f "${REPO_ROOT}/${_f}" ]
-    done
-}
-
-@test "#204: ADR 0006 marks what no test guards yet as 待補" {
-    run _adr_0006_section 目前由哪些機制或測試守住
-    assert_success
-    assert_output --partial "待補"
-}
-
-@test "#204: ADR 0006 status says property 3 is not yet in effect for --tmux host (#179)" {
-    # `just box setup --tmux host` writes the host ~/.tmux.conf today, which
-    # breaks property 3; the ADR must not claim the invariant already holds
-    # (codex round 1 on PR #259).
-    run grep -E '^- 狀態：' "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}"
-    assert_success
-    assert_output --partial "尚未生效"
-    assert_output --partial "--tmux host"
-    assert_output --partial "#179"
-}
-
-@test "#204: ADR 0006 properties do not claim to hold unconditionally" {
-    run _adr_0006_section 性質
-    assert_success
-    refute_line "以下三點必須永遠成立："
-    assert_output --partial "尚未生效"
-    assert_output --partial "--tmux host"
-    assert_output --partial "#179"
 @test "ADR 0005 exists with the ADR header (title, status, discussion)" {
     assert [ -f "${ADR_0005}" ]
     run head -n 1 "${ADR_0005}"
@@ -304,4 +244,66 @@ _adr_0010_check_guard() {
     assert_output --partial "測試 gate"
     assert_output --partial "build-image"
     assert_output --partial "docker build"
+}
+
+# --- ADR 0006: invariant 3, host and box never interfere (issue #204) --------
+
+ADR_0006_NAME="0006-invariant-host-box-separation.md"
+
+# Section "## $1" of ADR 0006, heading excluded, up to the next "## ".
+_adr_0006_section() {
+    sed -n "/^## $1\$/,/^## /p" "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}" | sed '1d;/^## /d'
+}
+
+@test "#204: ADR 0006 has the four invariant sections, each non-empty" {
+    local _s
+    assert [ -f "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}" ]
+    for _s in 一句話 性質 為什麼固定 目前由哪些機制或測試守住; do
+        run _adr_0006_section "${_s}"
+        assert_success
+        assert_output --regexp '[^[:space:]]'
+    done
+}
+
+@test "#204: ADR 0006 names ADR 0002 as the mechanism and #179 for tmux isolation" {
+    run _adr_0006_section 目前由哪些機制或測試守住
+    assert_success
+    assert_output --partial "0002-box-owns-its-home.md"
+    assert_output --partial "#179"
+}
+
+@test "#204: every spec file ADR 0006 cites as a guard exists in the repo" {
+    local _f
+    run grep -oE 'test/(unit|integration|system|acceptance)/[a-z0-9_]+_spec\.bats' \
+        "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}"
+    assert_success
+    for _f in "${lines[@]}"; do
+        assert [ -f "${REPO_ROOT}/${_f}" ]
+    done
+}
+
+@test "#204: ADR 0006 marks what no test guards yet as 待補" {
+    run _adr_0006_section 目前由哪些機制或測試守住
+    assert_success
+    assert_output --partial "待補"
+}
+
+@test "#204: ADR 0006 status says property 3 is not yet in effect for --tmux host (#179)" {
+    # `just box setup --tmux host` writes the host ~/.tmux.conf today, which
+    # breaks property 3; the ADR must not claim the invariant already holds
+    # (codex round 1 on PR #259).
+    run grep -E '^- 狀態：' "${REPO_ROOT}/doc/adr/${ADR_0006_NAME}"
+    assert_success
+    assert_output --partial "尚未生效"
+    assert_output --partial "--tmux host"
+    assert_output --partial "#179"
+}
+
+@test "#204: ADR 0006 properties do not claim to hold unconditionally" {
+    run _adr_0006_section 性質
+    assert_success
+    refute_line "以下三點必須永遠成立："
+    assert_output --partial "尚未生效"
+    assert_output --partial "--tmux host"
+    assert_output --partial "#179"
 }
