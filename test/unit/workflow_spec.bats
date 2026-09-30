@@ -208,6 +208,14 @@ _pl_run() {
         "${replies}"
 }
 
+_pl_blocked_run() {
+    local implementer="$1"
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
+        "${replies}"
+}
+
 @test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
     run _pl_run
     assert_success
@@ -220,6 +228,18 @@ _pl_run() {
     assert_success
     run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
     assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): Fix rounds return to the selected implementer" {
+    run _pl_blocked_run codex
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n")' <<<"${output}"
+    assert_output 'true'
+
+    run _pl_blocked_run claude
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C")' <<<"${output}"
+    assert_output 'false'
 }
 
 @test "pr-loop (node): an invalid implementer value throws a clear error" {

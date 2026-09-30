@@ -91,9 +91,20 @@ Review PR #${pr} (${REPO}, issue #${A.issue}), round ${round} directly as Claude
 Return the structured verdict without editing files, pushing, commenting, or merging.`
 
 const FIX = (pr, round, blocking) => `${RULES}
-Fix codex round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
+Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
 Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})" + trailers); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
+
+const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
+
+${GUARDRAILS}
+
+Create ${SCRATCH}, write the brief below verbatim to a scratch file, then run this exact command shape in the foreground (replace <暫存檔> with that file):
+codex exec --skip-git-repo-check -C ${WT} -o ${SCRATCH}/fix-r${round}.md "$(cat <暫存檔>)" < /dev/null
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution trailers beyond the task's explicit requirements, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
+
+brief:
+${FIX(pr, round, blocking)}`
 
 const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "[claude] codex 暫停中(配額),待配額恢復後補複驗。" Then return "noted".`
 
@@ -131,7 +142,10 @@ for (;;) {
   if (fixes >= MAX) break
   fixes += 1
   prior = c.answer
-  await agent(FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above']), { label: `fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  const fixBrief = IMPLEMENTER === 'codex'
+    ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
+    : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
+  await agent(fixBrief, { label: `fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
   ci = await agent(CI(pr), { label: `ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
