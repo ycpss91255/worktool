@@ -100,12 +100,12 @@ worktool/
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
 │   │   │                enforce_main_checkout_readonly、
-│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_no_attribution、
+│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
 │   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、enforce_reply_language(Claude Stop 回覆語言,#281)、
 │   │   │                codex_apply_patch(Codex 編輯轉接層,#282))
-│   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
+│   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh、issue_body.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
 │   ├── skills/          agent skill 的實體檔:i-have-adhd(#191)+ 工程類 skill(tdd、triage、wait-pr-ci ...,#189)

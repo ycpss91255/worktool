@@ -42,6 +42,10 @@
           },
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_issue_milestone.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_no_attribution.sh\""
           }
         ]

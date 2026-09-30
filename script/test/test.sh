@@ -156,6 +156,7 @@ _required_specs() {
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
                 unit/hook/enforce_main_checkout_readonly_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
+                unit/hook/enforce_issue_milestone_spec.bats \
                 unit/hook/enforce_no_attribution_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
                 unit/hook/enforce_codex_round_cap_spec.bats \
