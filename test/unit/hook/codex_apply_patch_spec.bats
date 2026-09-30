@@ -49,6 +49,42 @@ _payload() {
     assert_output --partial 'SC2317'
 }
 
+@test "non-denying output for one file does not skip a later file denial" {
+    local _repo _patch
+    _repo="${BATS_TEST_TMPDIR}/adapter-repo"
+    mkdir -p "${_repo}/.agents/hook/lib" "${_repo}/.claude"
+    cp "${HOOK_DIR}/codex_apply_patch.sh" "${_repo}/.agents/hook/"
+    cp "${HOOK_DIR}/lib/hook_bootstrap.sh" "${_repo}/.agents/hook/lib/"
+    cat >"${_repo}/.agents/hook/check.sh" <<'HOOK'
+#!/usr/bin/env bash
+case "$(jq -r '.tool_input.file_path')" in
+    first.sh)
+        jq -n '{hookSpecificOutput:{additionalContext:"checked first file"}}'
+        ;;
+    second.sh)
+        jq -n '{hookSpecificOutput:{permissionDecision:"deny",permissionDecisionReason:"SC1091 is not approved"}}'
+        ;;
+esac
+HOOK
+    chmod +x "${_repo}/.agents/hook/"*.sh
+    cat >"${_repo}/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit","hooks":[{"type":"command","command":"${CLAUDE_PROJECT_DIR}/.claude/hook/check.sh"}]}]}}
+JSON
+    _patch="$(printf '%s\n' \
+        '*** Begin Patch' \
+        '*** Add File: first.sh' \
+        '+echo first' \
+        '*** Add File: second.sh' \
+        "+$(disable_line SC1091)" \
+        '*** End Patch')"
+
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        "$(_payload "${_patch}")" "${_repo}/.agents/hook/codex_apply_patch.sh"
+
+    assert_failure 2
+    assert_output --partial 'SC1091'
+}
+
 @test "one patch delegates move, delete, and add as per-file Claude payloads" {
     local _repo _log _patch
     _repo="${BATS_TEST_TMPDIR}/adapter-repo"

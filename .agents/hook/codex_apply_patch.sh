@@ -33,10 +33,6 @@ _run_edit_hooks() {
             printf '%s\n' "${_reason}" >&2
             return 2
         fi
-        if [[ -n "${_result}" ]]; then
-            printf '%s\n' "${_result}"
-            return 10
-        fi
     done < <(jq -r '.hooks.PreToolUse[] | .matcher as $matcher
         | select(("Edit" | test($matcher)) or ("Write" | test($matcher)))
         | .hooks[].command' "${HOOK_REPO_ROOT}/.claude/settings.json")
@@ -46,11 +42,7 @@ _run_edit_hooks() {
 _dispatch_file() {
     local _tool="$1" _file="$2" _content="$3" _rc=0
     _run_edit_hooks "${_tool}" "${_file}" "${_content}" || _rc=$?
-    case "${_rc}" in
-        0) return 0 ;;
-        10) hook_allow ;;
-        *) exit "${_rc}" ;;
-    esac
+    (( _rc == 0 )) || exit "${_rc}"
 }
 
 _dispatch_section() {
