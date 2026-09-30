@@ -3,7 +3,7 @@ export const meta = {
   description: 'Research one question with agy (gemini), verify every claim with a claude agent and codex in parallel, synthesize, and record ONE zh-TW comment on the issue; never substitutes another model when agy fails',
   whenToUse: 'Any fact-finding the maintainer wants researched (agy finds, claude and codex verify). Pass args {repo, repoDir, issue, question, context?, sources?, timeoutMin?}.',
   phases: [
-    { title: 'Research', detail: 'agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
+    { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
     { title: 'Verify', detail: 'parallel: claude agent claim by claim (structured) + codex exec with the agy text on stdin (verbatim file)' },
     { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
     { title: 'Record', detail: 'agent: ONE issue comment via --body-file: [claude] conclusion, verbatim [codex], agy original folded' },
@@ -24,17 +24,29 @@ export const meta = {
 //   } })
 //
 // Result: { issue, status, codex, claims, comment, synthesis }.
-// status: 'recorded' | 'sources-invalid' | 'agy-failed' | 'verify-failed' |
-// 'synthesize-failed' | 'record-failed'. Every failure stops the run where it happens (fail closed):
+// status: 'recorded' | 'setup-failed' | 'sources-invalid' | 'agy-failed' |
+// 'verify-failed' | 'synthesize-failed' | 'record-failed'. Every failure stops
+// the run where it happens (fail closed): no valid run nonce stops before agy
+// runs; a source that is not readable stops before agy runs;
 // agy failing twice stops before Verify (no other model's answer is dressed up
 // as agy's); a claude verifier without claims or a codex without output stops
 // before Synthesize (both verifiers are required); a missing or malformed
 // synthesis stops before Record. Nothing is posted unless all of them held.
+// Every shell step's exit status carries its success (agy exit 0 with a
+// non-empty agy.md; a non-empty codex.md), so a failing tool fails the step.
+// status 'recorded' needs the comment URL gh printed for this issue.
 //
 // Shell safety: repo must be owner/name; repoDir must be an absolute path
 // without control characters or backticks. Every path or value that reaches a
 // shell command is single-quoted with sq(), so spaces and metacharacters in
-// repoDir are data, never syntax.
+// repoDir are data, never syntax. A verbatim block is fenced by
+// ===BEGIN-<run>-<n>=== / ===END-<run>-<n>===: <run> is a 16-hex nonce the
+// first agent reads from /dev/urandom, so markers are unique per run (issue
+// #225); n is distinct for every block of the run and chosen so neither
+// marker occurs in the block or in repoDir: no content can close the block
+// early. A Workflow may not call Math.random (it would break resume), but a
+// resumed run replays the nonce agent's cached result, so it keeps its own
+// markers while a new run with the same args draws new ones.
 
 const A = args || {}
 for (const k of ['repo', 'repoDir', 'issue', 'question']) {
@@ -70,6 +82,17 @@ const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
 // Where an agent writes a verbatim block with the Write tool (JSON-quoted path).
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
+// Fence body verbatim with markers that occur neither in it nor in REPO_DIR.
+// RUN (the run nonce) keeps markers apart across runs; n only grows during a
+// run, so no two blocks of one run share a marker.
+let RUN = ''
+let lastFence = 0
+const fence = (body) => {
+  let n = lastFence + 1
+  while ([body, REPO_DIR].some(t => t.includes(`===BEGIN-${RUN}-${n}===`) || t.includes(`===END-${RUN}-${n}===`))) n += 1
+  lastFence = n
+  return `===BEGIN-${RUN}-${n}===\n${body}\n===END-${RUN}-${n}===`
+}
 // Shell that prints codex's final answer, never its transcript (issue #223):
 // the file codex writes itself with -o (--output-last-message); when it wrote
 // none, the LAST "codex" block of the transcript, and only when a line that
@@ -97,6 +120,8 @@ const SCRUB_MASK = String.raw`function keep(o, t, s,  p) { p = substr(o, length(
 const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("\\\\\\\\[A-Za-z0-9._$?-]" PC "*", "<path>"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
 const SCRUB = `${PFX.map(([p, r], i) => `RV_P${i}=${sq(p)} RV_R${i}=${sq(r)} `).join('')}RV_N=${PFX.length} awk '${SCRUB_LIT} ${SCRUB_MASK} ${SCRUB_MAIN}'`
 
+const NONCE_RE = /^[0-9a-f]{16}$/
+const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed', 'bad-source'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
@@ -116,13 +141,13 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
 
-const RESEARCH = `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
+const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
+
+const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
 ${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run \`mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md\`.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
-===BEGIN===
-${AGY_PROMPT}
-===END===
-3. Run in the foreground (blocking): \`${CD} && timeout ${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p "$(cat agy-prompt.txt)" --print-timeout ${TMIN}m > agy.md 2> agy.err; echo "exit=$?"\`.
+${fence(AGY_PROMPT)}
+3. Run in the foreground (blocking): \`${CD} && timeout ${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p "$(cat agy-prompt.txt)" --print-timeout ${TMIN}m > agy.md 2> agy.err; rc=$?; echo "exit=$rc"; [ "$rc" -eq 0 ] && [ -s agy.md ]\` (it exits non-zero unless agy succeeded).
 4. Success = exit 0 and agy.md is non-empty (\`[ -s agy.md ]\`). On an empty file, exit 124 (timeout) or any other failure: retry ONCE (same command, overwrite agy.md). Still failing -> return status "failed" with attempts = 2 and detail = the exit codes plus the last 20 lines of agy.err. Do not write anything into agy.md yourself.
 5. Return status "ok", attempts (1 or 2), detail = "agy.md <N> bytes".`
 
@@ -134,12 +159,10 @@ const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的�
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 
-const CODEX_STEP = `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
+const CODEX_STEP = () => `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
 1. Write the text between the markers, byte for byte, ${TO('codex-prompt.txt')}.
-===BEGIN===
-${CODEX_PROMPT}
-===END===
-2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) with exactly: \`${CD} && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } > codex.md\`.
+${fence(CODEX_PROMPT)}
+2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) with exactly: \`${CD} && rm -f body.md && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } > codex.md && [ -s codex.md ]\`.
 3. codex.md empty, or an auth/quota error -> retry once after 60 s. Still empty -> return status "no-output" with detail = the last 20 lines of codex-raw.txt. Otherwise return status "ok", detail = "codex.md <N> bytes".`
 
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
@@ -174,13 +197,14 @@ ${bullets(claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —�
 
 agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`.worktree/.scratch/research-${A.issue}/\`)。`
 
-const RECORD = `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
+const RECORD = (claudeText) => `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.
 2. Build the body in the foreground: \`${CD} && rm -f body.md body-raw.md body-tmp.md && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md && printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n' && cat codex.md && printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n' && cat agy.md && printf '\\n\\n</details>\\n'; } > body-raw.md && ${SCRUB} < body-raw.md > body-tmp.md && [ -s body-tmp.md ] && tail -n 1 body-tmp.md | grep -qx '</details>' && mv body-tmp.md body.md\` (the filter rewrites local absolute paths; do not drop it; any body.md of an earlier build is removed first, and the new one is renamed into place only once every step succeeded and the filtered body is non-empty and whole). If it fails (claude.md, agy.md or codex.md missing, empty or unreadable, or the filter failed or printed an empty or cut-off body), post nothing and return url = "".
 3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).
-===BEGIN===
-`
+${fence(claudeText)}`
 
+const agyOk = (r) => !!r && r.status === 'ok' && [1, 2].includes(r.attempts)
+const claimOk = (c) => !!c && typeof c.claim === 'string' && ['supported', 'refuted', 'unverifiable'].includes(c.verdict) && typeof c.basis === 'string'
 const isList = (x) => Array.isArray(x) && x.every(i => typeof i === 'string')
 const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
 // The Record step succeeded only if it returned a comment URL on THIS issue.
@@ -189,18 +213,21 @@ const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
 const stop = (status, codex, claims, detail, synthesis = null) => ({ issue: A.issue, status, codex, claims, comment: '', synthesis, detail })
 
 phase('Research')
-const res = await agent(RESEARCH, { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
+const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
+if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
+RUN = nonce.nonce
+const res = await agent(RESEARCH(), { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
 if (res && res.status === 'bad-source') return stop('sources-invalid', 'skipped', 0, res.detail)
-if (!res || res.status !== 'ok') return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }
+if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }
 log(`#${A.issue}: agy ok after ${res.attempts} attempt(s): ${res.detail}`)
 
 phase('Verify')
 const [claude, codex] = await parallel([
   () => agent(CLAIM_CHECK, { label: `claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' }),
-  () => agent(CODEX_STEP, { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' }),
+  () => agent(CODEX_STEP(), { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' }),
 ])
 // Fail closed: both verifiers must have checked the claims, or nothing is concluded.
-const claims = (claude && Array.isArray(claude.claims)) ? claude.claims : []
+const claims = (claude && Array.isArray(claude.claims) && claude.claims.every(claimOk)) ? claude.claims : []
 const codexState = (codex && codex.status) || 'no-output'
 log(`#${A.issue}: claude checked ${claims.length} claim(s); codex ${codexState}`)
 if (!claims.length || codexState !== 'ok') return stop('verify-failed', codexState, claims.length, `claude claims: ${claims.length}; codex: ${codexState}${codex && codex.detail ? ` (${codex.detail})` : ''}`)
@@ -210,7 +237,7 @@ const s = await agent(SYNTH(claims), { label: `synthesize:#${A.issue}`, phase: '
 if (!synthOk(s)) return stop('synthesize-failed', 'ok', claims.length, 'synthesis missing or malformed', s || null)
 
 phase('Record')
-const rec = await agent(`${RECORD}${renderClaude(s, claims, res.attempts)}\n===END===`, { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
+const rec = await agent(RECORD(renderClaude(s, claims, res.attempts)), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
 const url = rec ? rec.url : undefined
 if (!checkCommentUrl(url)) return stop('record-failed', 'ok', claims.length, `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`, s)
 return { issue: A.issue, status: 'recorded', codex: 'ok', claims: claims.length, comment: url, synthesis: s }
