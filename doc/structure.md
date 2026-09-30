@@ -26,9 +26,10 @@ worktool/
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
 │   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh(M3 再加 enter / rm)
+│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh(M3 再加 rm)
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
 │       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊(distrobox 寫已 quote 的絕對路徑;見 enter.md)
+│       ├── enter.sh             進盒包裝層(受管 command 跑它):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
 │       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
@@ -36,6 +37,7 @@ worktool/
 │   │   ├── manifest_spec.bats    清單驗證與欄位擷取
 │   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)+ CLI(--help / 未知選項 exit 2)
 │   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、tmux host 變體、--auto-enter no 移除並回報、--dry-run 不寫、CLI、ghostty 執行檔偵測與 distrobox 絕對路徑(#175)(暫時 HOME)
+│   │   ├── enter_spec.bats       enter.sh:首次啟動偵測、進度行持續產生、host log、逾時 / 失敗 exit 1 並印 log 最後 20 行與復原方式、成功 / 失敗 / SIGINT / SIGTERM 後沒有遺留背景行程、TTY 原地覆寫、CLI(假 docker / distrobox,#180)
 │   │   ├── status_spec.bats      status.sh:設定檔與來源、受管區塊 present / absent、distrobox 是否還跑得起來(#175)、無設定檔時的預設報告、CLI(暫時 HOME)
 │   │   ├── test_sh_spec.bats     test.sh host 端 CLI:--help、未知選項、無旗標的執行順序與遇錯即停(假 docker 記錄呼叫)
 │   │   ├── selfcheck_spec.bats   selfcheck.sh CLI 與新版面下的路徑解析(script/box/assemble.sh)
@@ -58,7 +60,8 @@ worktool/
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
-│   │   └── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致、受管 command 在桌面式縮減 PATH 下可執行(#175)
+│   │   ├── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致、受管 command 在桌面式縮減 PATH 下可執行(#175)
+│   │   └── enter_spec.bats       首次進盒端到端:just box enter 與 setup 寫出的 ghostty command 都經過 enter.sh,顯示進度後才交給 distrobox(假 docker / distrobox,#180)
 │   ├── system/          系統測試(bats):真實 distrobox 端到端,分兩組
 │   │   ├── real_assemble_spec.bats  shim 組:真實 distrobox 1.8.2.5 + 假容器管理器(不需 DinD)
 │   │   ├── real_engine_spec.bats    real-engine 組:真實 docker 引擎(DinD)建出可用 dev 盒
@@ -88,8 +91,10 @@ worktool/
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            Claude Code hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
-│   │   │                remind_main_sync、enforce_gh_body_file、enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、worktree_create、
-│   │   │                remind_workflow_tdd、remind_no_emoji)
+│   │   │                remind_main_sync、enforce_gh_body_file、enforce_milestone_gate_approval、
+│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_shellcheck_disable_approval、
+│   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
+│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji)
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
@@ -156,7 +161,8 @@ worktool/
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--help`) |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
-| `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help` |
+| `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
+| `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help`、`./script/box/enter.sh --help` |
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
@@ -334,7 +340,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
   deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
   `<author_association>\t<body>` 的 NUL 分隔紀錄交給 `lib/approval.sh` 的
-  `approval_evaluate`(純函式,不呼叫 GitHub API,之後 agent 端 hook #190 共用),
+  `approval_evaluate`(純函式,不呼叫 GitHub API,與 agent 端 hook #190 共用),
   再於 PR head SHA 設 commit status `milestone-gate-approval`:未貼標籤或已核准為
   success,否則 failure,description 為「需要維護者留言:允許合併」。權限只有
   `statuses: write`、`pull-requests: read`、`issues: read`,加上 checkout 私有 repo
@@ -349,9 +355,147 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   擋住已核准的 PR。`ci.yml` 的 `ci-passed` 則是刻意以 job 本身當必要檢查,不受此限。
 - **已知限制**:agent 用維護者的 token 發留言,GitHub 上無法區分維護者本人與 agent
   代發;這道檢查擋的是「忘了等核准」,擋不住 agent 冒名寫「允許合併」。後者由
-  agent 端的 Claude Code PreToolUse hook 擋(#190):agent 發的留言/issue/PR 內文含
-  「允許合併」一律拒絕;對貼了 `milestone-gate` 的 PR 執行 `gh pr merge` 時沒有核准
-  留言也拒絕。
+  agent 端的 Claude Code PreToolUse(Bash)hook `.agents/hook/enforce_milestone_gate_approval.sh`
+  擋(#190,與 `enforce_gh_body_file` 並列註冊在 `.claude/settings.json`,exit 2 = 擋下、
+  原因寫 stderr),規則一律 source `lib/approval.sh`,不另寫一份:
+  - **合併閘門**:`gh pr merge <n>`(任何旗標,含 `--auto`)與 `gh api .../pulls/<n>/merge`
+    (完整 URL、query string 也算)。repo 取自 `-R`/`--repo`、PR URL 或 api 路徑,都沒有就用
+    當下目錄的 `gh repo view`;分支或省略的 PR 以 `gh pr view` 解析。以 `gh api` 取標籤與留言交給
+    `approval_evaluate`,不過就擋並說明缺什麼;任何查詢失敗都擋(fail closed)。
+    `gh api graphql` 的合併 mutation(`mergePullRequest`、`enablePullRequestAutoMerge`、
+    `mergeBranch`)一律擋。
+  - **留言一律帶 agent 標記**(#190「範圍修訂」,取代原本「未標記且含核准字樣才擋」):agent
+    送出的每一則留言類內文,開頭(去掉前導空白後)不是 `[claude]` 或 `[codex]` 就擋,不論是否
+    含「允許合併」;依據是 CI(#187)把開頭沒有標記的 OWNER 留言認定為維護者本人。適用
+    `gh pr comment`、`gh issue comment`、有內文的 `gh pr review`、`gh pr|issue close|reopen`
+    的 `--comment`/`-c`,以及 `gh api` 對 comments/reviews 端點的**寫入**(`issues/<n>/comments`、
+    `issues/comments/<id>`、`pulls/<n>/comments`、`pulls/comments/<id>`、`pulls/<n>/reviews[...]`;
+    `-f`/`-F`/`--raw-field`/`--field` 的 `body=`/`message=`、`body=@檔案`、`--input` JSON 裡每個
+    `body`/`message`)。內文來源:`--body`、`-b`、`--body-file`/`-F` 的檔案內容,以及 `-` 配字面
+    heredoc/here-string。重複的旗標每一個值都檢查,各種寫法都算(`-b x`、`-bx`、`-b=x`、
+    `--body=x`)。讀不到的內文(展開、不存在的檔案、非字面的 stdin、留言指令沒給內文、
+    `--editor`、`--web`)一律擋。PR/issue 的 create 內文不是留言,不在此規則內。GraphQL 的
+    留言/review mutation(`addComment`、`updateIssueComment`、`addPullRequestReview`、
+    `addPullRequestReviewComment`、`submitPullRequestReview` 等)一律擋。擋下訊息:agent 的留言
+    必須以 `[claude]` 或 `[codex]` 開頭,未標記的留言視為維護者本人(見 #187)。
+  - **HTTP 方法(讀或寫)**(codex 第 9、10、11 輪):只有**寫入**才算。**任何資料旗標都算寫入**,
+    不論方法(即使配 `-G`、`-X GET` 或 GET/HEAD;fail closed);**讀取只有「沒有資料旗標且方法為
+    未指定/GET/HEAD」**。各工具的資料旗標(curl、wget、httpie、gh api)只定義在一個地方:
+    `lib/subcommand.sh` 的 `hook_http_data_flags` 表(每行「旗標 值的個數」;httpie 的 request
+    item 分隔字也在表內)。分類器 `hook_http_is_write`、hook 的 `_api_is_read`(gh api)與 spec 的
+    矩陣產生器都讀這張表,文件不另列清單。帶值的旗標以工具接受的每種寫法辨識:分開
+    (`--raw BODY`、`-d BODY`)、`=`(`--raw=BODY`)、短旗標黏著(`-dBODY`)。curl 藏了 `-X` 或短
+    資料旗標的合併短旗標一律當寫入。對 merge endpoint 的讀取不走閘門;`gh api` 對
+    comments/reviews 端點的寫入沒有可檢查的 `body`/`message` 也擋。GraphQL:內文是 `mutation`
+    或無法判斷(讀檔、stdin、`\u` 跳脫)算寫入,字面的 `query { ... }` 是讀取。不認得的工具、或
+    指令字含展開,一律當寫入(fail closed)。
+  - **封閉規則**(codex 第 3 輪後定案:靜態解析追不完所有 shell 寫法,改成只判斷看得懂的、
+    其餘 fail closed):
+    - 相關指令(任何 `gh api`,以及上述 pr/issue 子命令)只要有**任何一個字**含 shell 會先
+      展開的東西(`$VAR`、`${...}`、`$'...'`、`$(...)`、反引號、`<(...)`、glob、brace
+      expansion;判斷在 `lib/subcommand.sh` 的 `hook_word_has_expansion`,單引號與跳脫的
+      字面文字不算)就擋,要 agent 以字面參數重跑(值先在另一步算好;內文先寫檔,
+      `--body-file <字面路徑>`)。含 body-file 的路徑。
+    - 看不出是哪個子命令的 gh(子命令之前或本身含展開,如 `gh $SUB`、`gh pr "$(echo merge)"`,
+      或子命令前出現 `--`)一律擋;不是 gh 內建指令的第一個字(alias 或 extension,可能執行
+      任何東西)也擋。
+    - 子命令前的 gh root 旗標:`-R`/`--repo`/`--repo=` 與 `-h`/`--help` 照常解析(視同寫在
+      子命令後,`gh -R o/r pr merge 7` 照樣判斷);其他旗標出現在相關子命令前一律擋。
+    - 相關指令裡合併的短旗標(`-eb x`)擋;只有 hook 會讀值的旗標(`-Rx`、`-bx`、`-Fx`、
+      `-fx`、`-Xx` 等)可以黏著值。
+    - 指令名稱本身是展開(`$GH pr merge`、`eval "$CMD"`、`bash -c "$CMD"`)一律擋,除非
+      最後一段路徑是 gh 以外的字面名稱(`$HOME/bin/tool`);外層 shell 的展開帶進
+      `bash -c`/`eval` 腳本後仍算展開。
+    - 經其他指令啟動的 gh(`nice gh`、`xargs gh`)是相關子命令就擋,要直接執行 gh。
+    - 不相關的指令(`gh pr view $N`、`echo $X`、`git commit -m "$MSG"`)不受影響。
+  - **`--help`/`-h`**(codex 第 4 輪):相關指令帶自己的 `-h`/`--help`(不是某個帶值旗標的值、
+    也不在 `--` 之後,如 `gh pr merge --help`、`gh -h pr merge 7`、`gh api --help`)只印用法、
+    不會合併或寫入,直接放行且不呼叫 gh。
+  - **shell 讀的 heredoc/here-string**(codex 第 4 輪):shell 直譯器(bash、sh、dash、zsh、
+    ksh、fish,含 `env <shell>`、`-s`;沒有 `-c`、沒有腳本檔)從 stdin 讀的 heredoc
+    (`sh <<'EOF' ... EOF`)或 here-string(`bash <<< '...'`)是看得見的腳本,內文照一般
+    指令逐段判斷。分隔字未加引號時外層 shell 會先展開內文,所以其中的 `$`、反引號都算展開;
+    加引號(`'EOF'`、`"EOF"`、`\EOF`)則為字面。餵給非直譯器(`cat`、`tee`、
+    `gh --body-file -` 除外:其 heredoc 內文當作留言內文檢查)的 heredoc 仍只是資料。
+  - **raw-text tripwire**(codex 第 5 輪定案:不再逐一追 parser 邊角,改加封閉規則的後盾):
+    在任何解析之前,對**整段原始指令文字**(含 heredoc 內文與 here-string)找以空白連接的相關
+    gh 呼叫(`gh [root 旗標] pr merge|comment|review|create|new|close|reopen`、
+    `gh issue comment|create|new|close|reopen`、`gh api`)、核准片語,以及 GitHub API 的
+    merge/comments/graphql 字面 URL(`api.github.com` 或 GHES `/api/v3` 的
+    `.../pulls/<n>/merge`、`.../comments`、`/graphql`,即 `curl`/`wget`/`http` 的直接呼叫);
+    URL 由 `lib/subcommand.sh` 的 `hook_api_endpoint_urls` **先正規化再比對**(codex 第 8 輪:
+    不再逐一補寫法):scheme 可有可無(`http`、`https`、無、`//`),host 轉小寫並去掉帳密前綴
+    `user[:pw]@`、`:port` 與結尾的點,路徑轉小寫、解 percent-encoding、去掉 query/fragment、
+    處理空段、`.` 與 `..`;
+
+    出現次數多於結構化解析實際檢查並放行的字面 gh 啟動,就表示有一處沒被檢查到,一律擋,
+    訊息要 agent 把 gh 指令單獨、以字面參數執行,長文字寫檔用 `--body-file`。已檢查放行的
+    呼叫(含以完整 URL 寫的 `gh api`)不會被重複擋。**接受的代價**:只是「提到」這些東西的
+    純文字(commit 訊息、echo、非直譯器的 heredoc)也會被擋,改用 `-F`/`--file`
+    (如 `git commit -F <檔案>`)。heredoc 分隔字接受 shell 允許的任何字(`END-X`、`"a.b"`、
+    `\EOF` 等),結束行必須與分隔字完全相同(`<<-` 先去掉開頭的 tab);`fish -C <指令>` 等帶值
+    選項與 `busybox sh` 也認得為讀 stdin 腳本的直譯器。
+  - **inline-code tripwire**(codex 第 6 輪):非 shell 直譯器(`hook_is_interpreter`:python、
+    perl、ruby、node、php、awk、lua 等,含 `env`/`busybox` 形式)的指令字(`-c`/`-e`/`-r` 的
+    inline 程式、awk 程式、餵給它的 heredoc/here-string 內文)只要同時含 `gh` 這個字與任一
+    子命令字(pr、issue、api、merge、comment、review、graphql),或含 `api.github.com`、
+    核准片語,就擋(`os.execlp("gh","gh","pr","merge","7")` 這類以 argv 陣列呼叫 gh 的寫法)。
+    只是便宜的後盾。
+  - **涵蓋範圍與已知限制**(codex 第 6 輪定案,最終範圍):
+    - **有檢查**:字面的 gh 啟動(含子命令前的 root 旗標、`timeout`/`sudo`/`env` 等包裝);
+      shell 的 `-c`、`eval`、heredoc 與 here-string 腳本;上述 raw-text tripwire 與
+      inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API
+      (網址先正規化:大小寫、結尾點、連接埠、帳密前綴、scheme、路徑寫法)。`gh api` 不接受
+      `-R`/`--repo`,帶了就擋(hook 無法判斷 endpoint)。
+    - **測法**:`test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
+      測,每個格子是各維度各取一值的完整乘積,失敗時列出變體(新的繞過類別＝在某維度加一個值):
+      - 操作 × gh 寫法 × 包裝:範圍內所有操作(pr merge/comment/review/close/reopen、issue
+        comment/close/reopen、gh api merge、comments 集合與成員、graphql merge 與 comment
+        mutation)× 寫法(一般、`-R`/`--repo=` 在子命令前、`--repo` 在群組與子命令之間、`-R` 在後)×
+        包裝(無、`bash -c`、`sh -c`、`eval`、`env`、`timeout`、`busybox sh -c`、heredoc 餵 `sh`、
+        here-string 餵 `bash`、`python3 -c` argv、`perl -e`、`node -e`),全部要擋;已核准/已標記的
+        字面呼叫與讀取在所有 shell 包裝與寫法下都放行。
+      - 方法 × 資料旗標 × 寫法 × 工具 × 端點:資料旗標維度由 `hook_http_data_flags` 表產生(spec 不另列
+        清單,並以測試確認產生器裡沒有寫死的旗標)。程序內跑分類器 `hook_http_is_write` 的完整乘積:
+        方法(未指定、GET、HEAD、POST、PUT、PATCH、DELETE)× 表內每個資料旗標(含「無」)× 寫法(分開、
+        `=`、短旗標黏著)× curl 的 `-G` 有無 × 工具(curl、wget、httpie)。端到端經整個 hook:工具(再加
+        gh api)× 方法 × 資料旗標(curl/wget/httpie 取分開寫法;gh api 在 hook 內判斷,取全部寫法)×
+        端點類別(merge、comment、reply、review)。讀取＝無資料旗標且方法為未指定/GET/HEAD,放行;
+        其餘擋。每個類別的所有路徑((issues|pulls) × (集合|成員) 的 comments、replies、所有 reviews
+        路徑)× 兩種 host 由端點辨識矩陣證明屬於同一類別。
+      - GraphQL 內文 × 工具 × host:內文(無、query、merge mutation、comment mutation、讀檔)×
+        curl/wget/http/gh api × api.github.com/GHES;query 讀取放行,其餘擋。
+      - 標記 × 操作 × 內文來源:標記(`[claude]`、`[codex]`、前導空白加標記、未標記、標記不在開頭、
+        空內文)× 每個留言寫入操作 × 它適用的每種內文來源(`--body`、`-b`、`--body=`、`--body-file`、
+        `-F`、here-string、heredoc;`--comment`/`-c`/`--comment=`;`-f`、`--raw-field`、`-F body=@`、
+        `--field body=@`、`--input`);未標記擋、有標記放行。GraphQL 的留言/review mutation(9 種)×
+        標記 × 內文來源(`-f query=`、`-F query=@檔案`、`--input`、`--raw-field`)全部擋(這些
+        mutation 一律擋)。
+      - 單一來源的行為守門:複製一份 hook 樹,只在 `hook_http_data_flags` 表裡加一個虛構旗標
+        (gh api 的 `-Z`/`--zz-data`、curl 的 `--zz-curl`),不改其他任何地方,驗證 endpoint 的
+        positional 解析、短旗標黏著與讀寫判斷都跟著生效。gh api 的帶值選項、可黏著的短旗標字母與
+        raw/typed/input 欄位集合都由這張表推出,hook 內不另寫一份。
+      - 控制字元 × 引號情境:0x01–0x1f 與 0x7f 的每個位元組,在單引號、雙引號與無引號(0x09、0x0a
+        在無引號時是 shell 語法,除外)中,`hook_word` 還原後與原文完全相同、不被當成展開;hook 的
+        判斷與去掉該位元組的同一指令相同。解析不使用任何 in-band 哨兵位元組:輸入裡的每個 `\001`
+        先轉成跳脫序列 `\001z`,所有標記都是 `\001` 加字母的跳脫序列,heredoc 運算子的欄位走陣列
+        (out of band),所以沒有輸入位元組能冒充標記。
+      - host × 路徑的網址寫法:端點 × host 寫法(一般、大寫、結尾點、`:443`、結尾點加 `:443`、帳密前綴、
+        `http`、無 scheme)× 路徑寫法(一般、`/./`、`/x/../`、`//`、percent、結尾斜線、query、大寫),
+        由 `hook_api_endpoint_urls` 全部辨識。
+    - **不檢查**:直譯器執行的腳本**檔**(`bash script/x.sh`、`python x.py`、`node x.js`、
+      `just ...`,檔案內容不在指令文字裡);混淆過的 inline 程式(字串拼接、編碼);執行時才組出
+      呼叫的程式;以 IP 位址、DNS 別名或轉址連到 API(網址裡沒有可辨識的 API host)。這一類沒有邊界(任何語言、任何組字方式),agent 端 hook 只做到上述後盾;
+      並非「不認得的直譯器都擋得住」。
+    - **合併仍由伺服器端保證**:未核准的合併不論從哪裡發出,都會被 main 的 required status
+      check `milestone-gate-approval`(#187)擋下;hook 剩下的缺口只有「刻意以上述不檢查的
+      方式發冒名核准留言」。若為此擋下所有腳本執行,會擋掉 `just test` 等日常工作。
+  - 只看真正啟動的 gh(`lib/subcommand.sh`),前置的 `timeout`/`gtimeout` 連同選項
+    (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
+    複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文在結構化解析中
+    都只是資料(但仍受上述 tripwire 檢查)。其餘指令放行且不呼叫 gh。
+    `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
+    不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
   程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
   一樣跑預設分支上的 workflow 檔;checkout 釘在預設分支(`ref` 為 default branch、
