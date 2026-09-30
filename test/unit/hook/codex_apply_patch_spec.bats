@@ -32,3 +32,23 @@ _payload() {
     run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
     assert_output 'deny'
 }
+
+@test "an Update File introducing an unapproved ShellCheck disable is denied by the existing policy" {
+    local _target _patch
+    _target="${BATS_TEST_TMPDIR}/existing.sh"
+    printf '#!/usr/bin/env bash\necho old\n' >"${_target}"
+    _patch="$(printf '%s\n' \
+        '*** Begin Patch' \
+        "*** Update File: ${_target}" \
+        '@@' \
+        ' echo old' \
+        "+$(disable_line SC2317)" \
+        '*** End Patch')"
+
+    run_hook codex_apply_patch "$(_payload "${_patch}")"
+
+    assert_success
+    assert_output --partial 'SC2317'
+    run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
+    assert_output 'deny'
+}
