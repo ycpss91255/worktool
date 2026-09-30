@@ -285,7 +285,7 @@ _rv_ok_replies() {
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
  "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
- "record:": {"url": "https://example.invalid/c/1"}}
+ "record:": {"url": "https://github.com/o/r/issues/7#issuecomment-1"}}
 JSON
 }
 
@@ -326,8 +326,117 @@ _rv_with() {
     assert_output "1"
     run grep -c "Number.isInteger(TMIN) || TMIN <= 0" "${RESEARCH}"
     assert_output "1"
-    run grep -c "!Array.isArray(A.sources)" "${RESEARCH}"
-    assert_output "1"
+    # one fail-closed validator per free-form input
+    local fn
+    for fn in checkQuestion checkContext checkSources checkCommentUrl; do
+        run grep -c "^const ${fn} = " "${RESEARCH}"
+        assert_output "1"
+    done
+}
+
+# Run research-verify with the base args plus jq assignment $1; print .error.
+_rv_err() {
+    _rv_run "$(jq -cn "{repo:\"o/r\",repoDir:\"/w\",issue:7,question:\"q\"} | ${1}")" "$(_rv_ok_replies)" | jq -r '.error'
+}
+
+@test "research-verify (node): question must be a non-blank string (missing, object, array, number, empty, whitespace)" {
+    local set
+    for set in 'del(.question)' '.question = ""'; do
+        run _rv_err "${set}"
+        assert_output "research-verify: args.question is required"
+    done
+    for set in '.question = {"a":1}' '.question = ["q"]' '.question = 5' '.question = " \t\n"'; do
+        run _rv_err "${set}"
+        assert_output --partial "research-verify: args.question must be a non-blank string"
+    done
+    run _rv_err '.question = "why?"'
+    assert_output "null"
+}
+
+@test "research-verify (node): context, when given, must be a non-blank string" {
+    local set
+    for set in '.context = {"a":1}' '.context = ["c"]' '.context = 5' '.context = ""' '.context = "  "' '.context = null'; do
+        run _rv_err "${set}"
+        assert_output --partial "research-verify: args.context must be a non-blank string when given"
+    done
+    run _rv_err '.'
+    assert_output "null"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","context":"ctx-9"}' "$(_rv_ok_replies)"
+    run jq -r '.error, (.calls[0].prompt | contains("背景:ctx-9"))' <<<"${output}"
+    assert_output "$(printf '%s\n' null true)"
+}
+
+@test "research-verify (node): sources must be an array of safe absolute paths (type, empty, relative, control chars)" {
+    local set
+    for set in '.sources = "/a"' '.sources = {"a":1}' '.sources = 5' '.sources = null'; do
+        run _rv_err "${set}"
+        assert_output --partial "research-verify: args.sources must be an array of absolute paths"
+    done
+    for set in '.sources = [5]' '.sources = [""]' '.sources = ["  "]' '.sources = ["rel/x"]' \
+               '.sources = ["/ok", "./x"]' '.sources = ["/a\nb"]' '.sources = ["/a`b"]'; do
+        run _rv_err "${set}"
+        assert_output --partial "must be an absolute path without control characters or backticks"
+    done
+    run _rv_err '.sources = ["/ok", "./x"]'
+    assert_output --partial "research-verify: args.sources[1] "
+    run _rv_err '.sources = []'
+    assert_output "null"
+    run _rv_err '.sources = ["/abs/path with space"]'
+    assert_output "null"
+}
+
+# The source check command the Research prompt tells the agent to run first.
+_rv_src_check() {
+    _rv_run "$(jq -cn --args '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:$ARGS.positional}' "$@")" "$(_rv_ok_replies)" \
+        | jq -r '.calls[0].prompt' | grep -o 'cd / && for f in [^`]*'
+}
+
+@test "research-verify (node): Research checks every source exists and is readable before agy, and says bad-source" {
+    local d="${BATS_TEST_TMPDIR}/src" cmd
+    mkdir -p "${d}/a dir"
+    printf 'x\n' > "${d}/f 1"
+    cmd="$(_rv_src_check "${d}/f 1" "${d}/a dir")"
+    run bash -c "${cmd}"
+    assert_success
+    cmd="$(_rv_src_check "${d}/f 1" "${d}/missing")"
+    run bash -c "${cmd}"
+    assert_failure 3
+    assert_output "research-verify: args.sources: not readable: ${d}/missing"
+    run _rv_run "$(jq -cn --arg s "${d}/f 1" '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:[$s]}')" "$(_rv_ok_replies)"
+    run jq -r '.calls[0].prompt' <<<"${output}"
+    assert_output --partial 'return status "bad-source"'
+    # no sources: no check step
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    run jq -r '.calls[0].prompt | contains("cd / && for f in")' <<<"${output}"
+    assert_output "false"
+}
+
+@test "research-verify (node): an unreadable source fails the source check (checked as an unprivileged user)" {
+    local d cmd
+    d="$(mktemp -d /tmp/rv-src.XXXXXX)"
+    chmod 755 "${d}"
+    printf 'x\n' > "${d}/ok"
+    printf 'x\n' > "${d}/locked"
+    chmod 644 "${d}/ok"
+    chmod 000 "${d}/locked"
+    local -a as_user=(bash -c)
+    if [[ "$(id -u)" -eq 0 ]]; then as_user=(su nobody -s /bin/bash -c); fi
+    cmd="$(_rv_src_check "${d}/ok")"
+    run "${as_user[@]}" "${cmd}"
+    assert_success
+    cmd="$(_rv_src_check "${d}/ok" "${d}/locked")"
+    run "${as_user[@]}" "${cmd}"
+    rm -rf "${d}"
+    assert_failure 3
+    assert_output --partial "not readable: ${d}/locked"
+}
+
+@test "research-verify (node): a bad-source reply stops before agy output is used, with sources-invalid" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","sources":["/x"]}' \
+        "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"bad-source","attempts":0,"detail":"not readable: /x"}')"
+    assert_success
+    run jq -r '.result.status, .result.detail, (.calls | length)' <<<"${output}"
+    assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 1)"
 }
 
 @test "research-verify (node): rejects a repo that is not owner/name and a repoDir that is not a safe absolute path" {
@@ -360,7 +469,7 @@ _rv_with() {
 @test "research-verify: an agy failure returns a structured failure before Verify and never substitutes another answer" {
     run grep -c "schema: AGY_SCHEMA" "${RESEARCH}"
     assert_output "1"
-    run grep -c "enum: \['ok', 'failed'\]" "${RESEARCH}"
+    run grep -c "enum: \['ok', 'failed', 'bad-source'\]" "${RESEARCH}"
     assert_output "1"
     run grep -c "if (!res || res.status !== 'ok') return" "${RESEARCH}"
     assert_output "1"
@@ -489,10 +598,31 @@ _rv_with() {
 @test "research-verify (node): recorded only with a comment URL, record-failed otherwise" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     run jq -r '.result.status, .result.comment' <<<"${output}"
-    assert_output "$(printf '%s\n' recorded https://example.invalid/c/1)"
+    assert_output "$(printf '%s\n' recorded https://github.com/o/r/issues/7#issuecomment-1)"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":""}')"
     run jq -r '.result.status' <<<"${output}"
     assert_output "record-failed"
+}
+
+@test "research-verify (node): only a comment URL on THIS repo's issue counts as recorded" {
+    local val
+    for val in 'null' '{}' '{"url":5}' '{"url":""}' '{"url":"not a url"}' \
+               '{"url":"https://example.invalid/c/1"}' \
+               '{"url":"https://github.com/o/x/issues/7#issuecomment-1"}' \
+               '{"url":"https://github.com/o/r/issues/8#issuecomment-1"}' \
+               '{"url":"https://github.com/o/r/issues/7"}' \
+               '{"url":"https://github.com/o/r/issues/7#issuecomment-"}' \
+               '{"url":"https://github.com/o/r/issues/7#issuecomment-1 extra"}' \
+               '{"url":"https://github.com/oxr/issues/7#issuecomment-1"}' \
+               '{"url":"https://github.com/o/r/issues/71#issuecomment-1"}'; do
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'record:' "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, (.result.detail | test("record URL is not a comment on o/r#7"))' <<<"${output}"
+        assert_output "$(printf '%s\n' record-failed '' true)"
+    done
+    run _rv_run '{"repo":"O/R","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    run jq -r '.result.status' <<<"${output}"
+    assert_output "recorded"
 }
 
 @test "doc/workflow.md documents research-verify and its args" {
