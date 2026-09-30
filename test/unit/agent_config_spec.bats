@@ -100,6 +100,23 @@ _registered_names() {
     assert_success
 }
 
+@test "every Codex Bash hook resolves from the repo root and accepts the measured payload" {
+    local _command _payload _repo
+    _payload='{"session_id":"s","turn_id":"t","transcript_path":"/tmp/x.jsonl","cwd":"<dir>","hook_event_name":"PreToolUse","model":"m","permission_mode":"bypassPermissions","tool_name":"Bash","tool_input":{"command":"echo hi"},"tool_use_id":"exec-1"}'
+    _repo="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_repo}/test/unit"
+    cp -R "${REPO_ROOT}/.agents" "${_repo}/.agents"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    git init -q "${_repo}"
+
+    while IFS= read -r _command; do
+        run bash -c 'cd "$1" && printf "%s" "$2" | bash -c "$3"' _ \
+            "${_repo}/test/unit" "${_payload}" "${_command}"
+        assert_success "Codex hook command failed: ${_command}"
+        assert_output ""
+    done < <(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "${CODEX_HOOKS}")
+}
+
 @test "every hook in .agents/hook is registered (no orphan hook)" {
     local _f _name
     for _f in "${REPO_ROOT}"/.agents/hook/*.sh; do
