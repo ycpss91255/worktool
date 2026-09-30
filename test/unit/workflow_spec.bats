@@ -995,12 +995,12 @@ _codex_rel_answer() {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/.worktree/.scratch/n1" wt="${dir}/.worktree/n1"
     local replies='{"locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
-        "codex:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
+        "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
     assert_success
     local prompt
-    prompt="$(jq -r '.calls[] | select(.label | startswith("codex:")) | .prompt' <<<"${output}")"
+    prompt="$(jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}")"
     span="$(jq -rn --arg p "${prompt}" '$p | [match("`(cd [^`]*> answer-r1\\.md)`").captures[0].string][0]')"
     assert [ -n "${span}" ]
     mkdir -p "${scratch}"
