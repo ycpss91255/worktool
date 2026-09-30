@@ -1142,6 +1142,30 @@ _rv_assert_fails_closed() {
     assert_output "1"
 }
 
+@test "research-verify (node, exec): an over-limit research records bounded comments in conclusion, claims, codex, agy order" {
+    local dir="${BATS_TEST_TMPDIR}/long-record" replies json comments
+    comments="${BATS_TEST_TMPDIR}/comments"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    _rv_stub gh "mkdir -p '${comments}'; n=\$(find '${comments}' -type f | wc -l); cp \"\$7\" '${comments}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 1))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    json="${output}"
+    run jq -r '.error, .result.status' <<<"${json}"
+    assert_output "$(printf '%s\n' null recorded)"
+    run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
+    assert_output "4"
+    run bash -c 'for f in "$1"/*; do [ "$(wc -c < "$f")" -lt 65536 ] || exit 1; done' _ "${comments}"
+    assert_success
+    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '### claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+}
+
 @test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
     _rv_assert_fails_closed research agy-failed
 }
