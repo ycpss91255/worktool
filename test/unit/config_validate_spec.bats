@@ -7,16 +7,18 @@
 # as for `<key>=`. What is checked, and nothing more:
 #   - the matrix: every judged key x {bare, `key=`, whitespace-only value, a
 #     valid value};
-#   - the judges of a key: the scripts that read it - setup and status for
-#     the decisions and their `.source` (enter_config_check), status and
-#     assemble for home / home.source (home_config_check), status and
-#     assemble for link (link_entries; assemble through link_apply);
+#   - the judges of a key are derived, not listed: every script under
+#     script/ that calls the key's reader - enter_config_check for the
+#     decisions and their `.source`, home_config_check for home /
+#     home.source, link_entries for link - directly or through functions of
+#     the modules in its source graph (test/helper/graph.bash graph_judges);
 #   - a verdict is the exit status, stdout and stderr; bare and `key=` must
 #     give byte-identical stdout and stderr files (cmp) and the same status;
 #     bare, empty and blank are refused (link: warned about and skipped), a
 #     valid value is accepted (link: linked).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/graph"
 
 setup() {
     HOME="${BATS_TEST_TMPDIR}/home"
@@ -52,13 +54,14 @@ _keys() {
         "home.source|home_config_check|user|home=${BATS_TEST_TMPDIR}/box"
 }
 
-# The judges of reader function $1: the scripts that call it.
+# The judges of reader function $1: every script that calls it, derived
+# from the source graph. An empty set fails the case instead of passing it
+# vacuously.
 _judges() {
-    case "$1" in
-        enter_config_check) printf '%s\n' script/box/setup.sh script/box/status.sh ;;
-        home_config_check) printf '%s\n' script/box/status.sh script/box/assemble.sh ;;
-        link_entries) printf '%s\n' script/box/status.sh script/box/assemble.sh ;;
-    esac
+    local _j
+    _j="$(graph_judges "${REPO_ROOT}" "$1")" || fail "cannot derive the judges of $1"
+    [[ -n "${_j}" ]] || fail "no script calls $1"
+    printf '%s\n' "${_j}"
 }
 
 # The command a judge script runs as: status and assemble as a user would
@@ -108,6 +111,9 @@ _assert_same() {
 
 @test "bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted" {
     local _k _r _v _c _s _form _p
+    # Derived here, in this shell, so an empty or failed derivation fails
+    # the case rather than running no judge.
+    for _r in enter_config_check home_config_check; do _judges "${_r}" >/dev/null; done
     mkdir -p "$(dirname -- "${CONFIG}")"
     while IFS='|' read -r _k _r _v _c; do
         while IFS= read -r _s; do
@@ -132,6 +138,10 @@ _assert_same() {
 
 @test "bare key = empty value: link, every judge (bare, empty and blank warned about and skipped; a path linked)" {
     local _s _form _p _t='~'
+    # assemble reaches link_entries only through link_apply: the derivation
+    # must follow that chain.
+    _judges link_entries | grep -qx script/box/assemble.sh \
+        || fail "assemble is not derived as a judge of link"
     mkdir -p "$(dirname -- "${CONFIG}")" "${HOME}/.aws"
     while IFS= read -r _s; do
         _p="${BATS_TEST_TMPDIR}/l.${_s##*/}"
