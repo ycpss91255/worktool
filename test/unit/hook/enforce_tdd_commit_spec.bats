@@ -83,3 +83,16 @@ _check() {
     assert_success
     assert_output ""
 }
+
+@test "allows concluding a merge (MERGE_HEAD exists) that brings in product code only" {
+    git -C "${REPO}" checkout -q -b feat
+    _put lib/x.sh 'x() { :; }'
+    _commit 'feat: x'
+    git -C "${REPO}" checkout -q main
+    _put doc/y.md 'y'
+    _commit 'docs: y'
+    git -C "${REPO}" merge -q --no-ff --no-commit feat
+    _check "git commit -m 'Merge branch feat'"
+    assert_success
+    assert_output ""
+}

@@ -15,6 +15,9 @@
 #          a data-driven matrix inside one @test counts as one; an @test
 #          line the same commit removes verbatim is a move, not new)
 #
+#   ALLOW  concluding a merge (MERGE_HEAD exists); docs only (doc/ *.md
+#          .agents/memory/ .agents/skills/); anything else
+#
 # Output contract: allow = exit 0, silent; block = exit 2, reason on stderr.
 
 # shellcheck source-path=SCRIPTDIR/lib
@@ -72,6 +75,8 @@ _new_tests() {
 # _judge <root> - print the block reason for committing the index, or nothing.
 _judge() {
     local _root="$1" _k _n
+    # Concluding a merge records work already judged on its own branch.
+    git -C "${_root}" rev-parse --quiet --verify MERGE_HEAD >/dev/null && return 0
     _k="$(git -C "${_root}" diff --cached --no-renames --name-only | _kinds)"
     if [[ "${_k}" == *" test "* && "${_k}" != *" product "* ]]; then
         _n="$(git -C "${_root}" diff --cached --no-renames -- test/ | _new_tests)"
