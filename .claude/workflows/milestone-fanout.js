@@ -1,8 +1,8 @@
 export const meta = {
   name: 'milestone-fanout',
-  description: 'Fan out independent sub-issues, each through the pr-loop workflow (implement, CI, codex, fix); reports each PR as it finishes; never merges',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, codex?, maxRounds?, sessionUrl?, items:[{issue,branch,name,task,gates?}]}.',
-  phases: [{ title: 'Fan-out', detail: 'one pr-loop per item, in parallel; each result logged the moment it lands' }],
+  description: 'Fan out independent sub-issues, each through pr-loop, with at most two child workflows and test runs active; reports each PR as it finishes; never merges',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, implementer?, codex?, maxRounds?, items:[{issue,branch,name,task,gates?}]}.',
+  phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches of at most two; each result is logged when its child workflow finishes' }],
 }
 
 // milestone-fanout: run pr-loop for several INDEPENDENT sub-issues at once.
@@ -27,6 +27,8 @@ export const meta = {
 
 const A = args || {}
 if (!A.repo || !A.repoDir || !Array.isArray(A.items) || A.items.length === 0) throw new Error('milestone-fanout: args.repo, args.repoDir and a non-empty args.items are required')
+const IMPLEMENTER = A.implementer === undefined ? 'codex' : A.implementer
+if (IMPLEMENTER !== 'codex' && IMPLEMENTER !== 'claude') throw new Error(`milestone-fanout: args.implementer must be "codex" or "claude", got ${JSON.stringify(A.implementer)}`)
 for (const it of A.items) {
   for (const k of ['issue', 'branch', 'name', 'task']) {
     if (!it[k]) throw new Error(`milestone-fanout: item ${JSON.stringify(it.issue || it)} lacks ${k}`)
@@ -37,21 +39,38 @@ const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
 phase('Fan-out')
 log(`${A.items.length} sub-issue(s): ${A.items.map(i => '#' + i.issue).join(', ')}`)
-const results = await pipeline(A.items,
-  async (item) => {
+const runItem = async (item) => {
+    let result
     try {
-      return await workflow({ scriptPath: SCRIPT }, {
-        repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', sessionUrl: A.sessionUrl, codex: A.codex === undefined ? 'on' : A.codex,
-        maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
+      result = await workflow({ scriptPath: SCRIPT }, {
+        repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
+        implementer: IMPLEMENTER, maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
         issue: item.issue, branch: item.branch, name: item.name, task: item.task, gates: item.gates,
       })
     } catch (e) {
-      return { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: [String((e && e.message) || e)] }
+      result = { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: [String((e && e.message) || e)] }
     }
-  },
-  (r, item) => {
-    const summary = r ? `PR #${r.pr} ci=${r.ciState} codex=${r.codexVerdict} rounds=${r.rounds}${r.blockingLeft && r.blockingLeft.length ? ' blocking=' + r.blockingLeft.length : ''}` : 'no result'
+    const summary = result ? `PR #${result.pr} ci=${result.ciState} codex=${result.codexVerdict} rounds=${result.rounds}${result.blockingLeft && result.blockingLeft.length ? ' blocking=' + result.blockingLeft.length : ''}` : 'no result'
     log(`#${item.issue} done: ${summary}`)
-    return r || { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: ['pr-loop returned nothing'] }
-  })
+    return result || { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: ['pr-loop returned nothing'] }
+}
+const results = []
+for (let i = 0; i < A.items.length; i += 2) {
+  const batch = A.items.slice(i, i + 2)
+  const completed = await parallel(batch.map(item => () => runItem(item)))
+  results.push(...completed)
+}
 return results.filter(Boolean)
+
+// args 範例（可直接貼進 Workflow 的 args）
+// {
+//   "repo": "ycpss91255/worktool",
+//   "repoDir": "/path/to/worktool",
+//   "parent": "#280",
+//   "implementer": "codex",
+//   "maxRounds": 3,
+//   "items": [
+//     { "issue": 281, "branch": "feat/281-a", "name": "impl281", "task": "完成 issue #281。" },
+//     { "issue": 282, "branch": "feat/282-b", "name": "impl282", "task": "完成 issue #282。" }
+//   ]
+// }
