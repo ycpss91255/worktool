@@ -117,23 +117,57 @@ _main_checkout() {
 }
 
 _check_git_launch() {
-    local _launch="$1" _cwd="$2" _encoded _word
+    local _launch="$1" _cwd="$2" _cwd_unknown="$3" _encoded _word
     local -a _words=()
     read -r -a _encoded <<<"${_launch}"
     for _word in "${_encoded[@]}"; do _words+=("$(hook_word "${_word}")"); done
     [[ "${_words[0]:-}" == git || "${_words[0]:-}" == */git ]] || return 0
     _git_context "${_cwd}" "${_words[@]:1}"
     _git_mutates "${GIT_ARGS[@]}" || return 0
+    if [[ -n "${_cwd_unknown}" ]]; then
+        hook_block "git ${GIT_ARGS[0]} may modify the main checkout: working directory is dynamic" \
+            "Use a literal cd or pushd target before mutating git commands."
+    fi
     _main_checkout "${GIT_CWD}" || return 0
     hook_block "git ${GIT_ARGS[0]} would modify the main checkout: ${GIT_CWD}" \
         "Run mutating git commands in a linked worktree."
 }
 
+_track_directory_launch() {
+    local _launch="$1" _encoded _word _command _target=''
+    local -a _words=()
+    read -r -a _words <<<"${_launch}"
+    _command="$(hook_word "${_words[0]:-}")"
+    [[ "${_command}" == cd || "${_command}" == pushd ]] || return 1
+    for _encoded in "${_words[@]:1}"; do
+        _word="$(hook_word "${_encoded}")"
+        [[ "${_word}" == -- && -z "${_target}" ]] && continue
+        [[ "${_word}" == -* && -z "${_target}" ]] && continue
+        _target="${_encoded}"
+        break
+    done
+    if [[ -z "${_target}" ]] || hook_word_has_expansion "${_target}"; then
+        SHELL_CWD_UNKNOWN=1
+        return 0
+    fi
+    _target="$(hook_word "${_target}")"
+    if [[ "${_target}" == '~'* || "${_target}" =~ ^[+-][0-9]+$ ]]; then
+        SHELL_CWD_UNKNOWN=1
+    elif [[ "${_target}" == /* ]]; then
+        SHELL_CWD="$(realpath -m -- "${_target}")" SHELL_CWD_UNKNOWN=''
+    elif [[ -z "${SHELL_CWD_UNKNOWN}" ]]; then
+        SHELL_CWD="$(realpath -m -- "${SHELL_CWD}/${_target}")"
+    fi
+    return 0
+}
+
 _check_bash() {
     local _command="$1" _cwd="$2" _launch
+    SHELL_CWD="${_cwd}" SHELL_CWD_UNKNOWN=''
     while IFS= read -r _launch; do
         [[ -n "${_launch}" ]] || continue
-        _check_git_launch "${_launch}" "${_cwd}"
+        _track_directory_launch "${_launch}" && continue
+        _check_git_launch "${_launch}" "${SHELL_CWD}" "${SHELL_CWD_UNKNOWN}"
     done < <(hook_subcommands_raw "${_command}")
 }
 

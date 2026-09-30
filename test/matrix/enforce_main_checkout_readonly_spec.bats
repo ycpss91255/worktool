@@ -39,6 +39,16 @@ _wrapped() {
     esac
 }
 
+_directory_wrapped() {
+    local _change="cd $2" _git='git commit'
+    case "$1" in
+        direct) printf '%s && %s\n' "${_change}" "${_git}" ;;
+        bash-c) printf "bash -c %q\n" "${_change} && ${_git}" ;;
+        eval) printf "eval %q\n" "${_change} && ${_git}" ;;
+        subshell) printf '(%s; %s)\n' "${_change}" "${_git}" ;;
+    esac
+}
+
 @test "matrix: file location x Edit Write MultiEdit" {
     local _tool _kind _path _expected
     for _tool in Edit Write MultiEdit; do
@@ -109,6 +119,49 @@ _wrapped() {
             done
         done
     done
+}
+
+@test "matrix: directory change x main worktree x direct bash-c eval subshell" {
+    local _destination _wrapper _cwd _target
+    for _destination in worktree main; do
+        for _wrapper in direct bash-c eval subshell; do
+            case "${_destination}" in
+                worktree) _cwd="${MAIN_REPO}"; _target="${LINKED_REPO}" ;;
+                main) _cwd="${LINKED_REPO}"; _target="${MAIN_REPO}" ;;
+            esac
+            run_hook enforce_main_checkout_readonly \
+                "$(_bash_payload "$(_directory_wrapped "${_wrapper}" "${_target}")" "${_cwd}")"
+            if [[ "${_destination}" == worktree ]]; then
+                assert_success
+            else
+                assert_failure 2
+                assert_output --partial "main checkout"
+            fi
+        done
+    done
+}
+
+@test "pushd uses its literal destination for a mutating git command" {
+    run_hook enforce_main_checkout_readonly \
+        "$(_bash_payload "pushd ${LINKED_REPO}; git commit" "${MAIN_REPO}")"
+    assert_success
+
+    run_hook enforce_main_checkout_readonly \
+        "$(_bash_payload "pushd ${MAIN_REPO}; git commit" "${LINKED_REPO}")"
+    assert_failure 2
+    assert_output --partial "main checkout"
+}
+
+@test "a dynamic directory fails closed only for a mutating git command" {
+    local _d='$'
+    run_hook enforce_main_checkout_readonly \
+        "$(_bash_payload "cd \"${_d}TARGET\"; git status" "${LINKED_REPO}")"
+    assert_success
+
+    run_hook enforce_main_checkout_readonly \
+        "$(_bash_payload "cd \"${_d}TARGET\"; git commit" "${LINKED_REPO}")"
+    assert_failure 2
+    assert_output --partial "working directory is dynamic"
 }
 
 @test "gh is allowed from the main checkout" {
