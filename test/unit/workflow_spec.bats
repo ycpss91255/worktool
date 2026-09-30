@@ -285,7 +285,7 @@ _pl_run() {
     assert [ "${output}" -ge 1 ]
 }
 
-@test "milestone-fanout requires repoDir, validates every item, delegates through pipeline to pr-loop, and logs in the per-item stage" {
+@test "milestone-fanout requires repoDir, validates every item, delegates to pr-loop, and logs each result" {
     run grep -c "!A.repo || !A.repoDir" "${FANOUT}"
     assert_output "1"
     run grep -c "for (const k of \['issue', 'branch', 'name', 'task'\])" "${FANOUT}"
@@ -294,12 +294,17 @@ _pl_run() {
     assert_output "1"
     run grep -c 'REPO_DIR}/.claude/workflows/pr-loop.js' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await pipeline(A.items' "${FANOUT}"
-    assert_output "1"
     run grep -c 'item.issue} done:' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await parallel(' "${FANOUT}"
-    assert_output "0"
+}
+
+@test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
+    run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'await parallel(batch.map' "${FANOUT}"
+    assert_output "1"
 }
 
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
