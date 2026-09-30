@@ -96,3 +96,15 @@ _check() {
     assert_success
     assert_output ""
 }
+
+@test "judges --amend by the whole amended commit: a second @test amended in is blocked, a reword is not" {
+    _put test/unit/x_spec.bats '@test "a" { :; }'
+    _commit 'test: a'
+    _check "git commit --amend -m 'test: a, reworded'"
+    assert_success
+    printf '@test "b" { :; }\n' >> "${REPO}/test/unit/x_spec.bats"
+    git -C "${REPO}" add test/unit/x_spec.bats
+    _check "git commit --amend --no-edit"
+    assert_failure 2
+    assert_output --partial "adds 2 @test"
+}
