@@ -28,6 +28,10 @@
 #     with stand-in agents, so arg rejection, shell quoting of repoDir /
 #     repo (every shell step is really run against a hostile path) and the
 #     fail-closed Verify / Synthesize / Record flow are proven, not grepped.
+#     The stand-in agent fails closed (a failing shell step returns null,
+#     never the canned reply), and a matrix of failing stages x failure
+#     kinds (non-zero exit, empty, malformed) proves nothing is recorded
+#     (issue #225).
 #     Issue #223: the Record carries only codex's final answer (a matrix of
 #     real transcript shapes) and no local absolute path in any form.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
@@ -406,7 +410,8 @@ _rv_run() {
 # Agent replies of a run where every step succeeds.
 _rv_ok_replies() {
     cat <<'JSON'
-{"agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
+{"nonce:": {"nonce": "0123456789abcdef"},
+ "agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
  "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
@@ -487,7 +492,7 @@ _rv_err() {
     run _rv_err '.'
     assert_output "null"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","context":"ctx-9"}' "$(_rv_ok_replies)"
-    run jq -r '.error, (.calls[0].prompt | contains("背景:ctx-9"))' <<<"${output}"
+    run jq -r '.error, ((.calls[] | select(.label | startswith("agy:")) | .prompt) | contains("背景:ctx-9"))' <<<"${output}"
     assert_output "$(printf '%s\n' null true)"
 }
 
@@ -513,7 +518,7 @@ _rv_err() {
 # The source check command the Research prompt tells the agent to run first.
 _rv_src_check() {
     _rv_run "$(jq -cn --args '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:$ARGS.positional}' "$@")" "$(_rv_ok_replies)" \
-        | jq -r '.calls[0].prompt' | grep -o 'cd / && for f in [^`]*'
+        | jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' | grep -o 'cd / && for f in [^`]*'
 }
 
 @test "research-verify (node): Research checks every source exists and is readable before agy, and says bad-source" {
@@ -528,11 +533,11 @@ _rv_src_check() {
     assert_failure 3
     assert_output "research-verify: args.sources: not readable: ${d}/missing"
     run _rv_run "$(jq -cn --arg s "${d}/f 1" '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:[$s]}')" "$(_rv_ok_replies)"
-    run jq -r '.calls[0].prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
     assert_output --partial 'return status "bad-source"'
     # no sources: no check step
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
-    run jq -r '.calls[0].prompt | contains("cd / && for f in")' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt | contains("cd / && for f in")' <<<"${output}"
     assert_output "false"
 }
 
@@ -561,7 +566,7 @@ _rv_src_check() {
         "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"bad-source","attempts":0,"detail":"not readable: /x"}')"
     assert_success
     run jq -r '.result.status, .result.detail, (.calls | length)' <<<"${output}"
-    assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 1)"
+    assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 2)"
 }
 
 @test "research-verify (node): rejects a repo that is not owner/name and a repoDir that is not a safe absolute path" {
@@ -596,14 +601,14 @@ _rv_src_check() {
     assert_output "1"
     run grep -c "enum: \['ok', 'failed', 'bad-source'\]" "${RESEARCH}"
     assert_output "1"
-    run grep -c "if (!res || res.status !== 'ok') return" "${RESEARCH}"
+    run grep -c "if (!agyOk(res)) return" "${RESEARCH}"
     assert_output "1"
     run grep -c "status: 'agy-failed'" "${RESEARCH}"
     assert_output "1"
     run grep -c 'Never answer the question yourself' "${RESEARCH}"
     assert_output "1"
     # the failure return comes before the first Verify agent
-    fail_line="$(grep -n "if (!res || res.status !== 'ok') return" "${RESEARCH}" | cut -d: -f1)"
+    fail_line="$(grep -n "if (!agyOk(res)) return" "${RESEARCH}" | cut -d: -f1)"
     verify_line="$(grep -n "^phase('Verify')" "${RESEARCH}" | cut -d: -f1)"
     assert [ "${fail_line}" -lt "${verify_line}" ]
 }
@@ -657,7 +662,7 @@ _rv_src_check() {
     mkdir -p "${stub}"
     printf '#!/bin/sh\necho "1. agy-claim [官方文件 https://x]"\n' > "${stub}/agy"
     printf '#!/bin/sh\ncat >/dev/null\nprintf "banner\\ncodex\\ncodex-verdict-line\\ntokens used\\n5\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho https://example.invalid/c/1\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho "https://github.com/o/r/issues/7#issuecomment-1"\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
     scratch="${dir}/.worktree/.scratch/research-7"
@@ -666,9 +671,9 @@ _rv_src_check() {
     local json="${output}"
     run jq -r '.error, .result.status' <<<"${json}"
     assert_output "$(printf '%s\n' null recorded)"
-    # mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
+    # nonce, mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
     run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
-    assert_output "0 0 0 0 0 0"
+    assert_output "0 0 0 0 0 0 0"
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
     [[ -s "${scratch}/agy.md" ]]
     run cat "${scratch}/codex.md"
@@ -829,8 +834,9 @@ SH
         else
             [[ ! -s "${scratch}/codex.md" ]]
         fi
-        # the body build (5th shell step) reports the failure ...
-        run jq -r '.ran[4].rc' <<<"${output}"
+        # the body build is the last shell step because the fail-closed
+        # stand-in stops before gh; the nonce adds an earlier shell step.
+        run jq -r '.ran[-1].rc' <<<"${output}"
         refute_output 0
         # ... leaves no body.md, stale or partial, for gh to post ...
         [[ ! -e "${scratch}/body.md" ]]
@@ -852,7 +858,7 @@ EOF
     local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
-    mkdir -p "${SHAPE}" "${dir}"
+    mkdir -p "${SHAPE}" "${dir}" "${src}" "${ref}"
     printf 'codex\nignored\ntokens used\n1\n' > "${SHAPE}/raw"
     {
         printf 'repo file %s/script/x.sh:3\n' "${dir}"
@@ -920,7 +926,7 @@ EOF
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"failed","attempts":2,"detail":"d"}')"
     assert_success
     run jq -r '.result.status, (.calls | length)' <<<"${output}"
-    assert_output "$(printf '%s\n' agy-failed 1)"
+    assert_output "$(printf '%s\n' agy-failed 2)"
 }
 
 @test "research-verify (node): a missing or empty verification fails closed, nothing is synthesized or posted" {
@@ -953,10 +959,143 @@ EOF
 @test "research-verify (node): recorded only with a comment URL, record-failed otherwise" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     run jq -r '.result.status, .result.comment' <<<"${output}"
-    assert_output "$(printf '%s\n' recorded https://github.com/o/r/issues/7#issuecomment-1)"
+    assert_output "$(printf '%s\n' recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":""}')"
     run jq -r '.result.status' <<<"${output}"
     assert_output "record-failed"
+}
+
+# Write stand-in $1 into the stub bin with shell body $2.
+_rv_stub() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf '#!/bin/sh\n%s\n' "$2" > "${BATS_TEST_TMPDIR}/bin/$1"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/$1"
+}
+
+# Stand-in agy / codex / gh that succeed; gh logs its args to gh.args and
+# appends one line per call to gh.calls, so a repeated call is visible.
+_rv_stubs() {
+    _rv_stub agy 'echo "1. agy-claim [官方文件 https://x]"'
+    _rv_stub codex 'cat >/dev/null; printf "banner\ncodex\ncodex-verdict-line\ntokens used\n5\n"'
+    _rv_stub gh "printf '%s\n' \"\$*\" >> '${BATS_TEST_TMPDIR}/gh.calls'; printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+}
+
+# Run research-verify (exec, stub tools) with args question $3 (default q),
+# where stage $1 fails as kind $2: nonzero = its tool exits non-zero (a
+# stage without a tool: the agent itself fails), empty = no output,
+# malformed = output of the wrong shape. The record agent returns what gh
+# printed. Every other stage succeeds.
+_rv_fail_case() {
+    local replies
+    _rv_stubs
+    rm -f "${BATS_TEST_TMPDIR}/gh.args" "${BATS_TEST_TMPDIR}/gh.calls"
+    replies="$(_rv_with "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')" 'nonce:' '{"nonce":"<stdout>"}')"
+    case "$1:$2" in
+        research:nonzero) _rv_stub agy 'echo "1. c"; exit 3' ;;
+        research:empty) _rv_stub agy 'true' ;;
+        research:malformed) replies="$(_rv_with "${replies}" 'agy:' '{"status":"ok"}')" ;;
+        claude-verify:nonzero) replies="$(_rv_with "${replies}" 'claude-verify:' 'null')" ;;
+        claude-verify:empty) replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[]}')" ;;
+        claude-verify:malformed) replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[{"claim":"c1"}]}')" ;;
+        codex-verify:nonzero) _rv_stub codex 'cat >/dev/null; printf "codex\nv\n"; exit 1' ;;
+        codex-verify:empty) _rv_stub codex 'cat >/dev/null' ;;
+        codex-verify:malformed) _rv_stub codex 'cat >/dev/null; echo "no answer marker"' ;;
+        synthesize:nonzero) replies="$(_rv_with "${replies}" 'synthesize:' 'null')" ;;
+        synthesize:empty) replies="$(_rv_with "${replies}" 'synthesize:' '{}')" ;;
+        synthesize:malformed) replies="$(_rv_with "${replies}" 'synthesize:' '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}')" ;;
+        record:nonzero) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'; exit 1" ;;
+        record:empty) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'" ;;
+        record:malformed) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'; echo 'unexpected output'" ;;
+        ok:ok) ;;
+        *) return 99 ;;
+    esac
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _rv_run "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/$1-$2" --arg q "${3:-q}" '{repo:"o/r",repoDir:$d,issue:7,question:$q}')" "${replies}" exec
+}
+
+# Stage $1 failing as each kind ends in status $2 with nothing recorded:
+# no comment, and gh never runs before the Record stage.
+_rv_assert_fails_closed() {
+    local kind json
+    for kind in nonzero empty malformed; do
+        echo "case: $1/${kind}"
+        json="$(_rv_fail_case "$1" "${kind}")"
+        run jq -r '.error, .result.status, .result.comment' <<<"${json}"
+        assert_output "$(printf '%s\n' null "$2" '')"
+        if [[ "$1" != record ]]; then
+            assert [ ! -e "${BATS_TEST_TMPDIR}/gh.args" ]
+        fi
+    done
+}
+
+@test "research-verify (node, exec): the stub-tool baseline records exactly one comment" {
+    run _rv_fail_case ok ok
+    assert_success
+    run jq -r '.error, .result.status, .result.comment' <<<"${output}"
+    assert_output "$(printf '%s\n' null recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
+    run grep -c '^issue comment 7 ' "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+    run wc -l < "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+}
+
+@test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed research agy-failed
+}
+
+@test "research-verify (node, exec): a failing claude verifier records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed claude-verify verify-failed
+}
+
+@test "research-verify (node, exec): a failing codex verifier records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed codex-verify verify-failed
+}
+
+@test "research-verify (node, exec): a failing Synthesize records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed synthesize synthesize-failed
+}
+
+@test "research-verify (node, exec): a failing Record is record-failed, never recorded (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed record record-failed
+}
+
+@test "research-verify (node, exec): block markers never collide with the text they fence" {
+    local q scratch="${BATS_TEST_TMPDIR}/ok-ok/.worktree/.scratch/research-7"
+    q='q ===END=== ===BEGIN-1=== ===END-1=== ===END-2=== end'
+    run _rv_fail_case ok ok "${q}"
+    assert_success
+    run jq -r '.error, .result.status' <<<"${output}"
+    assert_output "$(printf '%s\n' null recorded)"
+    run grep -cF "${q}" "${scratch}/agy-prompt.txt" "${scratch}/codex-prompt.txt" "${scratch}/claude.md"
+    assert_output "$(printf '%s\n' "${scratch}/agy-prompt.txt:1" "${scratch}/codex-prompt.txt:1" "${scratch}/claude.md:1")"
+}
+
+@test "research-verify (node, exec): every fenced block in a run gets its own marker" {
+    run _rv_fail_case ok ok
+    assert_success
+    run jq -r '[.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]] | (length | tostring) + " " + (unique | length | tostring)' <<<"${output}"
+    assert_output "3 3"
+}
+
+@test "research-verify (node, exec): two runs with the same args never share a block marker (issue #225)" {
+    local first second
+    first="$(_rv_fail_case ok ok)"
+    second="$(_rv_fail_case ok ok)"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" \
+        '[$a, $b] | map([.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]]) | "\(.[0] | length) \(.[1] | length) \(add | unique | length)"'
+    assert_output "3 3 6"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" '$a.result.status, $b.result.status'
+    assert_output "$(printf '%s\n' recorded recorded)"
+}
+
+@test "research-verify (node): a missing or malformed run nonce stops before Research with setup-failed" {
+    local val
+    for val in null '{}' '{"nonce":""}' '{"nonce":"12"}' '{"nonce":"0123456789abcdeg"}' '{"nonce":"===END-1==="}'; do
+        echo "nonce reply: ${val}"
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'nonce:' "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, (.calls | length)' <<<"${output}"
+        assert_output "$(printf '%s\n' setup-failed '' 1)"
+    done
 }
 
 @test "research-verify (node): only a comment URL on THIS repo's issue counts as recorded" {

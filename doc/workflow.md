@@ -122,15 +122,20 @@ args 範例：
 }
 ```
 
-1. **Research**:agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
+1. **Research**:先由一個 agent 以 `od -An -N8 -tx1 /dev/urandom` 取得本次執行的 nonce(16 位小寫十六進位),
+   沒有或格式不對就回傳 `status: 'setup-failed'` 並停在這裡,agy 不會被呼叫;有 `sources` 時先檢查每個路徑都可讀,
+   有一個不可讀就回傳 `status: 'sources-invalid'` 並停在這裡,agy 同樣不會被呼叫;接著 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
-   無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**。
+   指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
+   無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
+   agent 回報的 `attempts` 不是 1 或 2 也算失敗。
 2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
    另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,`codex.md` 只存 codex 的**最終回答**:
    優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊,
    且該區塊必須緊接內容恰為 `tokens used` 的一行(回合完成的邊界;`tokens used by ...` 之類的文字只是回答內容,不算邊界),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
    沒有這個邊界(停在 commentary、工具呼叫中或錯誤)就視為沒有最終回答,`codex.md` 為空,Record 不發(fail closed)。
-   **兩路都必須有結果**:claude 沒回 claims(空值或空陣列)或 codex 無輸出(配額/認證)就回傳
+   codex 非零結束、無輸出或最終回答抽取失敗都以非零結束。
+   **兩路都必須有結果**:claude 沒回 claims(空值、空陣列,或任一條缺 claim / verdict / basis)或 codex 無輸出(配額/認證)就回傳
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
@@ -142,12 +147,25 @@ args 範例：
    其餘絕對路徑一律遮成 `<path>`(預設拒絕,不留例外:`/usr`、`/etc`、`/root`、`/workspace`、`/private/tmp`、`/var/folders`、
    `/mnt/c/Users`、`file:///...` 的路徑、緊跟在非 URL 冒號後的路徑如 `location:/root`、`host:/srv`、`C:\Users\...`、
    UNC 路徑 `\\server\share\...` 等),只保留 `scheme://host` 形式的 URL、單獨的 `/` 與 HTML 結束標籤(如 `</details>`)。
+   只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
+   gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
-   `recorded` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
+   `recorded` / `setup-failed` / `sources-invalid` / `agy-failed` / `verify-failed` / `synthesize-failed` / `record-failed`;只有 `recorded` 代表留言已發出。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
-metacharacter 只會是資料。`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本
-(`test/unit/fixture/workflow_run.mjs`,agent 以替身代打並真的跑每個 shell 步驟),驗證參數拒絕、quoting 與 fail-closed 流程。
+metacharacter 只會是資料。逐字寫檔的區塊以 `===BEGIN-<run>-<n>===` / `===END-<run>-<n>===` 包住:`<run>` 是上述 nonce,
+所以 marker 每次執行都不同(#225),同一組 args 的兩次執行也不會共用;`n` 在同一次執行內只增不減,
+每個區塊各用一個不同的 `n`,並跳過會出現在區塊內容或 `repoDir` 中的值,問題或結論裡的任何文字都不會提早結束區塊。
+Workflow 不能用 `Math.random`(否則無法 resume),所以 nonce 由 agent 從 `/dev/urandom` 讀;
+resume 時會重播這個 agent 的快取結果,續跑的執行沿用自己的 marker,resume 的決定性不受影響。
+
+`test/unit/workflow_spec.bats` 在測試映像內以 node 實際執行這個範本(`test/unit/fixture/workflow_run.mjs`,
+agent 以替身代打並真的跑每個 shell 步驟,agy / codex / gh 以 stub 代替),驗證參數拒絕、quoting 與 fail-closed 流程。
+替身 fail closed:任一 shell 步驟非零結束(或有寫檔目標卻沒有完整區塊)就停下並回傳 null,如同失敗的 agent,
+不會回傳預設結果;因此「shell 失敗 → 不進 Record」是實際執行證明,不是文字比對。
+測試矩陣涵蓋 Research、claude 驗證、codex 驗證、Synthesize、Record 五個階段 × 非零結束、無輸出、格式錯誤三種失敗
+(沒有外部工具的 claude 驗證與 Synthesize,「非零結束」即 agent 本身失敗),每一格都斷言沒有留言被記錄、
+Record 之前的失敗 gh 完全沒被呼叫。
 
 ## 對應的治理規則
 
