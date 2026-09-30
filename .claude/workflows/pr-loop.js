@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pr-loop',
   description: 'One sub-issue -> one PR: selected implementer (codex by default) uses TDD in its own worktree, waits for CI, the other side reviews, then fixes and re-reviews up to maxRounds; never merges',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, implementer?, gates?, codex?, maxRounds?, parent?, sessionUrl?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Locate', detail: 'agent: resolve the PR number and head SHA from the branch (structured)' },
@@ -25,7 +25,6 @@ export const meta = {
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
 //     maxRounds: 3,                    // optional: number of Fix rounds allowed (0 = review once, never fix)
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
-//     sessionUrl: "<session url>",     // optional: Claude-Session commit trailer
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }.
@@ -60,7 +59,7 @@ const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', 
 
 const COMMON_GUARDRAILS = `
 Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
-const GUARDRAILS = `${COMMON_GUARDRAILS} Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself.`
+const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. Never write a "[codex]" line yourself.`
 const CODEX_RULES = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
@@ -69,7 +68,7 @@ When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr cre
 
 const IMPLEMENT = `${RULES}
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
-${IMPLEMENT_TASK}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+${IMPLEMENT_TASK}. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const CODEX_IMPLEMENT_BRIEF = `${CODEX_RULES}
 ${IMPLEMENT_TASK}. The PR body starts with "[codex]" and has no attribution footer. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
@@ -109,7 +108,7 @@ Return the structured verdict without editing files, pushing, commenting, or mer
 const FIX = (pr, round, blocking) => `${RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})" + trailers); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):

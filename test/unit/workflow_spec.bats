@@ -216,6 +216,17 @@ _pl_blocked_run() {
         "${replies}"
 }
 
+@test "pr-loop (node): neither implementer path produces attribution instructions" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\",\"sessionUrl\":\"https://example.invalid/session\"}"
+        assert_success
+        run jq -e '[.calls[].prompt | test("Co-Authored-By|Claude-Session|Generated with")] | any | not' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
     run _pl_run
     assert_success
@@ -344,8 +355,22 @@ _pl_blocked_run() {
     run grep -c "const REPO_DIR = A.repoDir$" "${PR_LOOP}" "${FANOUT}"
     assert_output --partial "pr-loop.js:1"
     assert_output --partial "milestone-fanout.js:1"
-    run grep -c "A.sessionUrl" "${PR_LOOP}"
-    assert [ "${output}" -ge 1 ]
+    run grep -n 'sessionUrl' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
+    assert_failure 1
+    assert_output ""
+}
+
+@test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
+    local implementer replies
+    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    for implementer in codex claude; do
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+            "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
+        assert_success
+        run jq -e '.error == null and (.workflowCalls | length == 1) and (.workflowCalls[0].args | has("sessionUrl") | not) and ([.calls[].prompt | test("Co-Authored-By|Claude-Session|Generated with")] | any | not)' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
 }
 
 @test "milestone-fanout requires repoDir, validates every item, delegates to pr-loop, and logs each result" {
