@@ -32,7 +32,7 @@ hook_bootstrap "cpu-capacity"
 # --- Limits (the one place to tune them) --------------------------------------
 # Block when PSI some avg60 is ABOVE this percentage.
 readonly CPU_GATE_PSI_LIMIT=50
-# Block when the running test containers are ABOVE this count.
+# Block when the running test containers reach this count.
 readonly CPU_GATE_CONTAINERS_LIMIT=2
 # Image repositories script/test/test.sh runs its gates in.
 readonly CPU_GATE_TEST_IMAGES_RE='^worktool-(test|system-real|ghostty)(:|$)'
@@ -103,7 +103,7 @@ main() {
     fi
     if _cnt="$(_test_containers)"; then
         _cnt_txt="test containers ${_cnt} (limit ${CPU_GATE_CONTAINERS_LIMIT})"
-        ((_cnt > CPU_GATE_CONTAINERS_LIMIT)) && _over=1
+        ((_cnt >= CPU_GATE_CONTAINERS_LIMIT)) && _over=1
     else
         _cnt_txt="test containers unknown (docker ps failed; judged on PSI only)"
     fi
