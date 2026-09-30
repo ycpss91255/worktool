@@ -223,6 +223,13 @@ _pl_blocked_run() {
     assert_output '[null,true,true,true]'
 }
 
+@test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
+    run _pl_run
+    assert_success
+    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/.worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/.worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    assert_output 'true'
+}
+
 @test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
     run _pl_run '{"implementer":"claude"}'
     assert_success

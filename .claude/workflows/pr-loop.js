@@ -59,21 +59,26 @@ const GUARDRAILS = `
 Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Commit trailer lines: "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"${A.sessionUrl ? ` and "Claude-Session: ${A.sessionUrl}"` : ''}. Never write a "[codex]" line yourself. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
 const RULES = GUARDRAILS
 
+const IMPLEMENT_TASK = `TASK (issue #${A.issue}): ${A.task}
+When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
+
 const IMPLEMENT = `${RULES}
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
-TASK (issue #${A.issue}): ${A.task}
-When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+${IMPLEMENT_TASK}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+
+const CODEX_IMPLEMENT_BRIEF = `${RULES}
+${IMPLEMENT_TASK}, and ends with "Generated with [Claude Code](https://claude.com/claude-code)". Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
 ${GUARDRAILS}
 
-Create ${SCRATCH}, write the brief below verbatim to a scratch file, then run this exact command shape in the foreground (replace <暫存檔> with that file):
+First run: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main. Then create ${SCRATCH}, write the brief below verbatim to a scratch file, and run this exact command shape in the foreground (replace <暫存檔> with that file):
 codex exec --skip-git-repo-check -C ${WT} -o ${IMPLEMENT_OUT} "$(cat <暫存檔>)" < /dev/null
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution trailers beyond the task's explicit requirements, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
 brief:
-${IMPLEMENT}`
+${CODEX_IMPLEMENT_BRIEF}`
 
 const LOCATE = `Resolve the open PR for branch ${A.branch} in ${REPO}: run \`gh pr list --repo ${REPO} --head ${A.branch} --state open --json number,headRefOid --jq '.[0]'\`. Return pr (integer) and sha (the headRefOid). If there is no such PR, return pr 0 and sha "".`
 
