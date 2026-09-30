@@ -73,6 +73,12 @@ _registered_names() {
 
 # --- settings.json -----------------------------------------------------------
 
+@test "settings.json disables Claude Code attribution for commits and PRs" {
+    run jq -c '.attribution' "${SETTINGS}"
+    assert_success
+    assert_output '{"commit":"","pr":""}'
+}
+
 @test "settings.json registers exactly the carried hooks per event and matcher" {
     run _registered
     assert_success
