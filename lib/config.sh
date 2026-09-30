@@ -44,6 +44,9 @@
 #   @prop exists        config_exists succeeds only when the state file exists
 #   @prop get-first     config_get prints the value of the FIRST line of the key
 #   @prop get-bare      a bare `<key>` line counts as that key with an empty value
+#   @prop get-lf        config_get prints the value and one LF when the key is
+#                       present (a bare key: just LF, like `<key>=`), nothing
+#                       when it is absent
 #   @prop get-all       config_get_all prints every value of the key, in file order
 #   @prop get-all-bare  config_get_all prints a bare `<key>` line as an empty value
 #   @prop bare-validate the validators (lib/enter.sh, lib/home.sh) judge a bare
@@ -161,6 +164,7 @@ config_get() {
 
 _config_get_line() {
     if [[ "$3" == "$1" ]]; then
+        printf '\n'
         return 10
     elif [[ "$3" == "$1="* ]]; then
         printf '%s\n' "${3#"$1="}"
