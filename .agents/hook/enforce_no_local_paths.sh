@@ -237,13 +237,17 @@ _line_feeds_gh() {
 # with quote removal. Sets _HD_WORD, _HD_RAW (1 when any part was quoted, so
 # the body is literal) and _HD_LEN (characters consumed).
 _heredoc_delim() {
-    local _t="$1" _i=0 _c _q='' _meta=$' \t;&|<>()'
+    local _t="$1" _i=0 _c _q='' _ansi=0 _meta=$' \t;&|<>()'
     _HD_WORD=''; _HD_RAW=0
     while [[ "${_t:_i:1}" == [[:blank:]] ]]; do _i=$((_i + 1)); done
     for ((; _i < ${#_t}; _i++)); do
         _c="${_t:_i:1}"
         if [[ -n "${_q}" ]]; then
             [[ "${_c}" == "${_q}" ]] && { _q=''; continue; }
+            if [[ "${_ansi}" -eq 1 && "${_c}" == "\\" ]]; then
+                _HD_WORD=''; _HD_LEN="${#_t}"
+                return 0
+            fi
             if [[ "${_q}" == '"' && "${_c}" == "\\" && "${_t:_i+1:1}" == [\"\\\$\`] ]]; then
                 _i=$((_i + 1)); _c="${_t:_i:1}"
             fi
@@ -255,6 +259,7 @@ _heredoc_delim() {
             '$')
                 if [[ "${_t:_i+1:1}" == "'" || "${_t:_i+1:1}" == '"' ]]; then
                     _q="${_t:_i+1:1}"; _HD_RAW=1; _i=$((_i + 1))
+                    [[ "${_q}" == "'" ]] && _ansi=1
                 else
                     _HD_WORD+="${_c}"
                 fi ;;
@@ -271,17 +276,22 @@ _heredoc_delim() {
 # <raw> is 1 for a quoted delimiter (a literal body), <strip> 1 for <<-.
 # An opener without a delimiter word prints an empty <delimiter>.
 _heredoc_openers() {
-    local _l="$1" _i=0 _c _q='' _strip
+    local _l="$1" _i=0 _c _q='' _ansi=0 _strip
     while ((_i < ${#_l})); do
         _c="${_l:_i:1}"
         if [[ -n "${_q}" ]]; then
-            [[ "${_q}" == '"' && "${_c}" == "\\" ]] && _i=$((_i + 1))
-            [[ "${_c}" == "${_q}" ]] && _q=''
+            [[ ( "${_q}" == '"' || "${_ansi}" -eq 1 ) && "${_c}" == "\\" ]] \
+                && { _i=$((_i + 2)); continue; }
+            [[ "${_c}" == "${_q}" ]] && { _q=''; _ansi=0; }
             _i=$((_i + 1))
             continue
         fi
         case "${_c}" in
             \\) _i=$((_i + 2)); continue ;;
+            '$')
+                if [[ "${_l:_i+1:1}" == "'" ]]; then
+                    _q="'"; _ansi=1; _i=$((_i + 2)); continue
+                fi ;;
             \'|\") _q="${_c}"; _i=$((_i + 1)); continue ;;
         esac
         if [[ "${_l:_i:3}" == '<<<' ]]; then _i=$((_i + 3)); continue; fi

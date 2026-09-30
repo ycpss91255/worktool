@@ -308,6 +308,24 @@ D='$'
     assert_output --partial "/home/alice/"
 }
 
+@test "blocks a gh heredoc whose ANSI-C quoted terminator holds an escape" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<${D}'A\\x41'" lib/x AA)"
+    _blocked
+    assert_output --partial "fail closed"
+}
+
+@test "allows a clean gh heredoc with an ANSI-C quoted terminator" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<${D}'END-MARK'" "lib/x ${D}5" END-MARK)"
+    assert_success
+    assert_output ""
+}
+
+@test "an escaped quote in an ANSI-C string does not open a false heredoc" {
+    _check "$(printf '%s\n' "echo ${D}'it\\'s <<'; gh pr comment 3 --body-file - <<'B'" lib/x B "echo /home/alice/x")"
+    assert_success
+    assert_output ""
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"
