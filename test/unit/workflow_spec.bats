@@ -28,6 +28,8 @@
 #     with stand-in agents, so arg rejection, shell quoting of repoDir /
 #     repo (every shell step is really run against a hostile path) and the
 #     fail-closed Verify / Synthesize / Record flow are proven, not grepped.
+#     Issue #223: the Record carries only codex's final answer (a matrix of
+#     real transcript shapes) and no local absolute path in any form.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
 
@@ -675,6 +677,236 @@ _rv_src_check() {
     assert_output "1"
     run cat "${BATS_TEST_TMPDIR}/gh.args"
     assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file "${scratch}/body.md")"
+}
+
+# The [codex] section of the Record body $1: the lines between the
+# "[codex] ..." header and the "<details>" fold, blank edges dropped.
+_rv_codex_section() {
+    awk '/^\[codex\] /{f=1;next} /^<details>/{f=0} f' "$1" | sed '/./,$!d'
+}
+
+# Run research-verify with every step played (exec) under repoDir $1 and
+# args $2 (merged into the base args); codex is a stub that prints
+# ${SHAPE}/raw (stdout + stderr of a real run) and, when ${SHAPE}/last
+# exists, writes it to the -o (--output-last-message) file. A dir in
+# ${RV_OVERRIDE} comes before these stubs in PATH. Leaves the scratch dir
+# of issue 7 under $1.
+_rv_run_shape() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${stub}"
+    printf '#!/bin/sh\necho "1. agy-claim [原始碼 %s/agy-src]"\n' "$1" > "${stub}/agy"
+    cat > "${stub}/codex" <<'SH'
+#!/bin/sh
+cat >/dev/null
+o=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && o=$2; shift; done
+[ -f "${SHAPE}/last" ] && [ -n "${o}" ] && cp "${SHAPE}/last" "${o}"
+cat "${SHAPE}/raw"
+SH
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    PATH="${RV_OVERRIDE:+${RV_OVERRIDE}:}${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
+}
+
+@test "research-verify (node): the Record keeps only codex's final answer, whatever shape codex printed" {
+    local dir="${BATS_TEST_TMPDIR}/w" name expected
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    # name | raw output (printf format) | -o file ('-' = codex wrote none) | expected answer
+    while IFS='|' read -r name raw last expected; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${dir}/.worktree/.scratch/research-7"
+        # a stale -o file of an earlier run must never be reused
+        echo STALE > "${dir}/.worktree/.scratch/research-7/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        [[ "${last}" == - ]] || printf '%b' "${last}" > "${SHAPE}/last"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        run jq -r '.result.status' <<<"${output}"
+        assert_output recorded
+        run _rv_codex_section "${dir}/.worktree/.scratch/research-7/body.md"
+        assert_output "$(printf '%b' "${expected}")"
+    done <<'EOF'
+single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
+duplicated|codex\nA1\nA2\ntokens used\n5\nA1\nA2\n|-|A1\nA2
+transcript|OpenAI Codex v0\nuser\nthe prompt\ncodex\ncommentary line\nexec\n/usr/bin/bash -lc pwd in /x\n succeeded in 0ms:\n/x\n\ncodex\nA1\nA2\ntokens used\n1,716\nA1\nA2\n|-|A1\nA2
+answer first|A1\nReading additional input from stdin...\nuser\np\ncodex\nA1\ntokens used\n9\n|-|A1
+tool logs|thinking\nplan\ncodex\nnote\nexec\nls in /x\n succeeded in 0ms:\nf\nexec\ncat f in /x\n exited 1 in 1ms:\nerr\ncodex\nA1\ntokens used\n9\n|-|A1
+last message file|codex\njunk\nexec\nls\ncodex\nnot this\ntokens used\n9\nnot this\n|L1\nL2\n|L1\nL2
+prose about tokens|codex\nA1\ntokens used by the build\nA2\ntokens used\n9\n|-|A1\ntokens used by the build\nA2
+EOF
+}
+
+@test "research-verify (node): a codex run with no final answer records nothing (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" name raw scratch
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/.worktree/.scratch/research-7"
+    # name | raw output (printf format); codex writes no -o file in any row
+    while IFS='|' read -r name raw; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${scratch}"
+        echo STALE > "${scratch}/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # codex.md stays empty, so the body is never built
+        [[ -e "${scratch}/codex.md" && ! -s "${scratch}/codex.md" ]]
+        [[ ! -e "${scratch}/body.md" ]]
+    done <<'EOF'
+commentary at EOF|user\np\ncodex\nI will read the files first\n
+aborted in a tool call|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\n
+aborted with an error|codex\nnote\nERROR: stream disconnected before completion\n
+boundary after a tool log|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\ntokens used\n9\n
+answer then aborted commentary|codex\nA1\ntokens used\n9\ncodex\nmore commentary\n
+fake boundary in commentary|codex\nnote\ntokens used by the build are listed below\n
+fake boundary with a count|codex\nnote\ntokens used: see below\nmore\n
+EOF
+}
+
+@test "research-verify (node): a failing Record producer or filter leaves no body to post (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" fail="${BATS_TEST_TMPDIR}/fail" name scratch
+    local cat_fail scrub_mode raw inputs posted="${BATS_TEST_TMPDIR}/posted"
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/.worktree/.scratch/research-7"
+    mkdir -p "${fail}"
+    # cat fails on the file named by FAIL_CAT; awk run as the path filter
+    # (RV_N set) then misbehaves per SCRUB_MODE: fail = full output, exit 1;
+    # empty = no output, exit 0; truncate = first line only, exit 0
+    REAL_CAT="$(command -v cat)" REAL_AWK="$(command -v awk)" REAL_HEAD="$(command -v head)"
+    export REAL_CAT REAL_AWK REAL_HEAD
+    cat > "${fail}/cat" <<'SH'
+#!/bin/sh
+for a; do [ "$a" = "${FAIL_CAT}" ] && exit 1; done
+exec "${REAL_CAT}" "$@"
+SH
+    cat > "${fail}/awk" <<'SH'
+#!/bin/sh
+[ -n "${RV_N}" ] || exec "${REAL_AWK}" "$@"
+case "${SCRUB_MODE}" in
+    fail) "${REAL_AWK}" "$@"; exit 1 ;;
+    empty) "${REAL_CAT}" >/dev/null; exit 0 ;;
+    truncate) "${REAL_AWK}" "$@" | "${REAL_HEAD}" -n 1; exit 0 ;;
+esac
+exec "${REAL_AWK}" "$@"
+SH
+    # codex runs in the scratch dir after the Research reset: it leaves the
+    # body.md of an earlier successful build there, as a Record retry in the
+    # same scratch dir would find it, then plays the recorded shape
+    cat > "${fail}/codex" <<SH
+#!/bin/sh
+echo STALE-BODY > body.md
+touch "${BATS_TEST_TMPDIR}/stale-placed"
+exec "${BATS_TEST_TMPDIR}/bin/codex" "\$@"
+SH
+    # gh posts (records) the --body-file only when that file exists
+    cat > "${fail}/gh" <<SH
+#!/bin/sh
+f=
+while [ \$# -gt 0 ]; do [ "\$1" = --body-file ] && f=\$2; shift; done
+[ -f "\${f}" ] || exit 1
+"${REAL_CAT}" "\${f}" > "${posted}"
+echo https://example.invalid/c/1
+SH
+    chmod +x "${fail}"/*
+    # name | FAIL_CAT | SCRUB_MODE | codex raw output (printf format) | inputs all there
+    while IFS='|' read -r name cat_fail scrub_mode raw inputs; do
+        echo "failure: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}" "${posted}" "${BATS_TEST_TMPDIR}/stale-placed"
+        mkdir -p "${SHAPE}" "${scratch}"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        FAIL_CAT="${cat_fail}" SCRUB_MODE="${scrub_mode}" RV_OVERRIDE="${fail}" run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # the stale body really was there before the Record
+        [[ -e "${BATS_TEST_TMPDIR}/stale-placed" ]]
+        # either every input was there (only the producer or the filter
+        # failed) or codex left no final answer
+        if [[ "${inputs}" == y ]]; then
+            [[ -s "${scratch}/agy.md" && -s "${scratch}/codex.md" && -s "${scratch}/claude.md" ]]
+        else
+            [[ ! -s "${scratch}/codex.md" ]]
+        fi
+        # the body build (5th shell step) reports the failure ...
+        run jq -r '.ran[4].rc' <<<"${output}"
+        refute_output 0
+        # ... leaves no body.md, stale or partial, for gh to post ...
+        [[ ! -e "${scratch}/body.md" ]]
+        # ... and gh posts nothing
+        [[ ! -e "${posted}" ]]
+    done <<'EOF'
+claude.md unreadable (non-zero exit)|claude.md||codex\nA1\ntokens used\n9\n|y
+codex.md unreadable (non-zero exit)|codex.md||codex\nA1\ntokens used\n9\n|y
+agy.md unreadable (non-zero exit)|agy.md||codex\nA1\ntokens used\n9\n|y
+path filter fails (non-zero exit)|-|fail|codex\nA1\ntokens used\n9\n|y
+path filter prints nothing (empty output)|-|empty|codex\nA1\ntokens used\n9\n|y
+codex printed nothing (empty output)|-||\n|n
+path filter truncates the body (malformed output)|-|truncate|codex\nA1\ntokens used\n9\n|y
+codex stopped before its answer (malformed output)|-||codex\nI will read the files first\n|n
+EOF
+}
+
+@test "research-verify (node): no local absolute path reaches the Record, in any form" {
+    local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    mkdir -p "${SHAPE}" "${dir}"
+    printf 'codex\nignored\ntokens used\n1\n' > "${SHAPE}/raw"
+    {
+        printf 'repo file %s/script/x.sh:3\n' "${dir}"
+        printf 'repo root %s\n' "${dir}"
+        printf 'not the repo %s2/k\n' "${dir}"
+        printf 'source %s/lib/a.c:10\n' "${src}"
+        printf 'slash-ended source %sb.md\n' "${ref}"
+        printf 'home /home/alice/.config/x\n'
+        printf 'other home /home/bob/proj/y and /Users/carol/z\n'
+        printf 'uri file:///home/dave/w\n'
+        printf 'session /tmp/claude-1000/-home-eve-ws/scratchpad/q.txt end\n'
+        printf 'system /usr/bin/distrobox and /etc/passwd and /dev/null\n'
+        printf 'no scheme location:/root/private and host:/srv/x and C:/Temp/y\n'
+        printf 'unc \\\\server\\share\\c.txt and \\\\?\\D:\\e\n'
+        printf 'mac /private/tmp/x and /var/folders/ab/T/y\n'
+        printf 'root /root/.codex/log and ws /workspace/proj\n'
+        printf 'wsl /mnt/c/Users/frank/a.txt\n'
+        printf 'win C:\\Users\\gina\\b.txt\n'
+        printf 'opt [原始碼 /opt/tool/x.c] and uri file:///srv/h\n'
+        printf 'kept https://example.com/a/b and a/b and ./c and 1/2 and /\n'
+    } > "${SHAPE}/last"
+    HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
+    assert_success
+    body="${dir}/.worktree/.scratch/research-7/body.md"
+    run _rv_codex_section "${body}"
+    assert_output "$(printf '%s\n' \
+        'repo file ./script/x.sh:3' \
+        'repo root .' \
+        'not the repo <path>' \
+        'source distrobox-1.8/lib/a.c:10' \
+        'slash-ended source ref/b.md' \
+        'home ~/.config/x' \
+        'other home ~/proj/y and ~/z' \
+        'uri file://~/w' \
+        'session <tmp> end' \
+        'system <path> and <path> and <path>' \
+        'no scheme location:<path> and host:<path> and C:<path>' \
+        'unc <path> and <path>' \
+        'mac <path> and <path>' \
+        'root <path> and ws <path>' \
+        'wsl <path>' \
+        'win <path>' \
+        'opt [原始碼 <path>] and uri file://<path>' \
+        'kept https://example.com/a/b and a/b and ./c and 1/2 and /')"
+    # agy's original is scrubbed the same way
+    run grep -c '^1\. agy-claim \[原始碼 \./agy-src\]$' "${body}"
+    assert_output "1"
+    run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|/usr/|/etc/|/dev/|server|\\\\Users|${src}|${ref}" "${body}"
+    assert_output "0"
+    # the fold's own HTML closing tags are not paths
+    run tail -n 1 "${body}"
+    assert_output '</details>'
+    run grep -c '^<details><summary>agy 原文</summary>$' "${body}"
+    assert_output "1"
 }
 
 @test "research-verify (node): the claude verifier's schema demands at least one claim" {
