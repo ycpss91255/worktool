@@ -54,9 +54,9 @@ setup() {
     CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
     LEG_JOBS=(build-image gate test-system-real)
-    GATES=(lint test-unit test-integration test-system test-acceptance)
+    GATES=(lint test-unit test-matrix test-integration test-system test-acceptance)
     # gate=tier: the `just test <tier>` each gate runs (the include map).
-    TIERS=(lint=lint test-unit=unit test-integration=integration
+    TIERS=(lint=lint test-unit=unit test-matrix=matrix test-integration=integration
         test-system=system test-acceptance=acceptance)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
@@ -210,7 +210,7 @@ _sorted_set() {
     done
 }
 
-@test "gate runs every one of the five gates on the runner dimension" {
+@test "gate runs every one of the six gates on the runner dimension" {
     local _gate
     run _job_block gate
     assert_success
@@ -221,7 +221,7 @@ _sorted_set() {
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
 }
 
-@test "the gate dimension is EXACTLY the five gates (a sixth turns red)" {
+@test "the gate dimension is EXACTLY the six gates (a seventh turns red)" {
     # The flow list, as a sorted set: nothing extra, nothing missing.
     run _flow_items gate '        ' gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -232,7 +232,7 @@ _sorted_set() {
     assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
 }
 
-@test "gate's matrix include maps EXACTLY the five gates to a tier and adds no runner" {
+@test "gate's matrix include maps EXACTLY the six gates to a tier and adds no runner" {
     # One `- gate: <name>` include entry per gate, no more, no less.
     run _include_values gate gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -246,7 +246,7 @@ _sorted_set() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "the include is EXACTLY five entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+@test "the include is EXACTLY six entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
     local _pair _entries=()
     for _pair in "${TIERS[@]}"; do
         _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")

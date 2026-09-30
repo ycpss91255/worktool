@@ -57,6 +57,8 @@ worktool/
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
+│   ├── matrix/          完整乘積矩陣(bats):CI 必跑、不納入本機推送前 unit gate
+│   │   └── enforce_milestone_gate_approval_spec.bats
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
@@ -147,10 +149,11 @@ worktool/
 | 指令 | 實際執行 |
 |------|----------|
 | `just` | `just --list`(列出命名空間) |
-| `just test` | `./script/test/test.sh`(全部:lint、unit、integration、system、acceptance、system-real,依序、遇錯即停) |
+| `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
 | `just test unit [args]` | `./script/test/test.sh --unit [args]` |
+| `just test matrix [args]` | `./script/test/test.sh --matrix [args]` |
 | `just test integration [args]` | `./script/test/test.sh --integration [args]` |
 | `just test system [args]` | `./script/test/test.sh --system [args]` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real [args]` |
@@ -194,6 +197,8 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
   守住 README 三張 draw.io 圖的單一事實來源(`doc/diagram/*.drawio.svg` 存在、是
   SVG、不含 `<foreignObject>`、內嵌 `mxfile`、README 以連到 app.diagrams.net 的圖
   嵌入、`.vscode/extensions.json` 推薦 `hediet.vscode-drawio`)。
+- 矩陣(matrix):`test/matrix/*.bats` —— CI 必跑的完整乘積覆蓋;
+  unit 只保留每個維度的代表路徑,避免本機每次推送前重複承擔完整矩陣成本。
 - 整合(integration):`test/integration/*.bats` —— `smoke_spec.bats` 證明 Docker
   harness 能跑;`assemble_spec.bats` 以 mock `distrobox` 證明 assemble 端到端接線
   (`distrobox assemble create --file box/dev.ini`)。
@@ -227,7 +232,7 @@ exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
 所有測試都在 Docker 容器內執行,host 不安裝任何套件。前置需求:host 需有
 `docker` 與 `just`(`just` 是使用者的通用介面,見 design.md「決策」);沒有 `just`
 的機器上可直接呼叫底層實作 `./script/test/test.sh --lint` / `--unit` /
-`--integration` / `--system` / `--acceptance` / `--system-real`(或不帶旗標跑全部)
+`--matrix` / `--integration` / `--system` / `--acceptance` / `--system-real`(或不帶旗標跑全部)
 效果完全相同;`./script/test/test.sh --help` 列出全部選項。
 
 ```bash
@@ -236,6 +241,9 @@ just test lint
 
 # 單元測試(test/unit/*.bats)
 just test unit
+
+# 完整乘積矩陣(test/matrix/*.bats;CI 必跑,本機推送前不必跑)
+just test matrix
 
 # 整合測試(test/integration/*.bats)
 just test integration
@@ -250,7 +258,7 @@ just test acceptance
 # --privileged,慢;唯一需要 --privileged 的 tier)
 just test system-real
 
-# 全部(lint、unit、integration、system、acceptance、system-real,依序,遇到第一個
+# 全部(lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個
 # 失敗就停):與 CI 完全相同
 just test
 
@@ -264,8 +272,8 @@ just test selfcheck
 `worktool-system-real:local`(`dockerfile/Dockerfile.system-real`)。
 
 底層由 `script/test/test.sh` 驅動(`just test` 只是它的介面):host 端旗標
-(`--lint` / `--unit` / `--integration` / `--system` / `--acceptance`)會把對應的
-容器內旗標(`--ci-lint` / `--ci-unit` / `--ci-integration` / `--ci-system` /
+(`--lint` / `--unit` / `--matrix` / `--integration` / `--system` / `--acceptance`)會把對應的
+容器內旗標(`--ci-lint` / `--ci-unit` / `--ci-matrix` / `--ci-integration` / `--ci-system` /
 `--ci-acceptance`)丟進掛載 `/source` 的一次性容器執行;`--system-real`
 則以 `docker run --rm --privileged` 啟動 DinD runner,由 runner 入口
 `script/test/system-real-entry.sh` 起巢狀 dockerd、等 `docker info` 就緒後再呼叫
@@ -284,18 +292,21 @@ just test selfcheck
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
 `setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`contract_spec`、`hook/` 與 `script/` 底下每一支
-agent spec;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
+agent spec;matrix:`enforce_milestone_gate_approval_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
 `skip`:必要 spec 被刪、被清空、被 `skip` 都不會因為同層還有別的 spec 而被當成
-綠燈;非必要的額外 spec 照常一起跑。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
+綠燈;非必要的額外 spec 照常一起跑。各 bats tier 預設以
+`WORKTOOL_TEST_JOBS=4` 跨 spec 並行、同一 spec 內序列執行;可在 `just` 前設定正整數
+覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
+exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 刪檔/空檔負向案例證明這條規則。
 
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-跑 lint、test-unit、test-integration、test-system、test-acceptance(共用測試
+跑 lint、test-unit、test-matrix、test-integration、test-system、test-acceptance(共用測試
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
 分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
@@ -447,7 +458,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
       inline-code tripwire;`curl`/`wget`/`http` 等以字面 URL 直接打 merge/comments/graphql API
       (網址先正規化:大小寫、結尾點、連接埠、帳密前綴、scheme、路徑寫法)。`gh api` 不接受
       `-R`/`--repo`,帶了就擋(hook 無法判斷 endpoint)。
-    - **測法**:`test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
+    - **測法**:`test/matrix/enforce_milestone_gate_approval_spec.bats` 以等價類別矩陣
       測,每個格子是各維度各取一值的完整乘積,失敗時列出變體(新的繞過類別＝在某維度加一個值):
       - 操作 × gh 寫法 × 包裝:範圍內所有操作(pr merge/comment/review/close/reopen、issue
         comment/close/reopen、gh api merge、comments 集合與成員、graphql merge 與 comment
@@ -494,7 +505,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
     (含帶值的 `-k 5`、`--signal TERM`)與時限一併略過(`hook_timeout_lead`),
     複合指令逐段判斷;commit 訊息、echo,以及餵給非直譯器的 heredoc 內文在結構化解析中
     都只是資料(但仍受上述 tripwire 檢查)。其餘指令放行且不呼叫 gh。
-    `test/unit/hook/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
+    `test/matrix/enforce_milestone_gate_approval_spec.bats` 以 PATH 上的 gh stub 測,
     不連網。
 - **只跑 main 上的可信程式碼**(codex 第 1 輪):workflow 持有 `statuses: write`,PR 能改的
   程式碼一律不執行。觸發用 `pull_request_target` 而非 `pull_request`,與 `issue_comment`
@@ -506,9 +517,9 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
   不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
-tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、
+tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、`test-matrix` -> `just test matrix`、
 `test-integration` -> `just test integration`、`test-system` -> `just test system`、
 `test-acceptance` -> `just test acceptance`;`test-system-real` ->
 `just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
-branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這六個 gate
+branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
