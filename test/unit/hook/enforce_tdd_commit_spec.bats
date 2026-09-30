@@ -108,3 +108,15 @@ _check() {
     assert_failure 2
     assert_output --partial "adds 2 @test"
 }
+
+@test "counts the tracked changes that -a / --all / -am would commit, staged or not" {
+    _put lib/x.sh 'x() { :; }'
+    _commit 'feat: x'
+    printf 'y() { :; }\n' >> "${REPO}/lib/x.sh"
+    local _c
+    for _c in "git commit -a -m 'feat: y'" "git commit --all -m 'feat: y'" "git commit -am 'feat: y'"; do
+        _check "${_c}"
+        assert_failure 2
+        assert_output --partial "no test"
+    done
+}

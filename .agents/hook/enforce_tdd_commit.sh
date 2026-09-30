@@ -15,6 +15,9 @@
 #          a data-driven matrix inside one @test counts as one; an @test
 #          line the same commit removes verbatim is a move, not new)
 #
+#   What the commit records is read from a scratch copy of the index, with
+#   every tracked change added for -a / --all (the real index is never
+#   touched).
 #   An --amend is judged as the whole amended commit (its changes since
 #   HEAD's parent, which is then the commit that must be RED).
 #
@@ -106,31 +109,80 @@ _judge() {
     printf '%s' 'this commit touches product code but no test, and its parent is not a RED commit.'
 }
 
-# _amends <sub-command> - 0 when the commit launch carries --amend.
-_amends() {
-    [[ " $1 " == *" --amend "* ]]
+# _parse <words...> - read the words after `commit`; set _AMEND and _ALL
+# (0 / 1). Options that take a value skip it (-m <msg>, -am <msg>, --author
+# <x>; --file=<f> carries its own).
+_parse() {
+    local _w _k _skip=0
+    _AMEND=0 _ALL=0
+    for _w in "$@"; do
+        if [[ "${_skip}" -eq 1 ]]; then _skip=0; continue; fi
+        case "${_w}" in
+            --) break ;;
+            --amend) _AMEND=1 ;;
+            --all) _ALL=1 ;;
+            --message|--file|--reuse-message|--reedit-message|--author|--date|--template|--fixup|--squash|--trailer|--cleanup|--pathspec-from-file) _skip=1 ;;
+            --*) ;;
+            -?*)
+                for ((_k = 1; _k < ${#_w}; _k++)); do
+                    case "${_w:_k:1}" in
+                        a) _ALL=1 ;;
+                        [mFCct]) [[ "${_k}" -eq $((${#_w} - 1)) ]] && _skip=1; break ;;
+                    esac
+                done ;;
+        esac
+    done
 }
 
-# _is_commit <sub-command> - 0 when the launch is `git [-C <dir>] commit`.
-_is_commit() {
-    [[ "$1" =~ ^git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+commit([[:space:]]|$) ]]
+# _index <dir> <index file> - fill <index file> with the index the commit
+# would record: a copy of the real one, plus every tracked change for -a.
+_index() {
+    local _real
+    _real="$(git -C "$1" rev-parse --path-format=absolute --git-path index 2>/dev/null)" || return 1
+    cp -- "${_real}" "$2" 2>/dev/null || return 1
+    [[ "${_ALL}" -eq 1 ]] || return 0
+    GIT_INDEX_FILE="$2" git -C "$1" add -u 2>/dev/null
+}
+
+# _words <encoded launch> - print the launch's words after `commit`, decoded,
+# one per line.
+_words() {
+    local -a _w
+    local _i
+    read -r -a _w <<<"$1"
+    for ((_i = 2; _i < ${#_w[@]}; _i++)); do
+        hook_word "${_w[_i]}"
+        printf '\n'
+    done
+}
+
+# _check_launch <encoded launch> <cwd> - print the block reason, or nothing.
+_check_launch() {
+    local _root _idx _reason='' _line
+    local -a _args=()
+    while IFS= read -r _line; do _args+=("${_line}"); done < <(_words "$1")
+    _parse "${_args[@]}"
+    _root="$(git -C "$2" rev-parse --show-toplevel 2>/dev/null)" || return 0
+    _idx="$(mktemp)" || return 0
+    if _index "$2" "${_idx}"; then
+        _reason="$(GIT_INDEX_FILE="${_idx}" _judge "${_root}" "${_AMEND}")"
+    fi
+    rm -f -- "${_idx}"
+    printf '%s' "${_reason}"
 }
 
 main() {
     hook_read_input
-    local _cmd _cwd _sub _root _reason _amend
+    local _cmd _cwd _sub _reason
     _cmd="$(hook_command)"
     _cwd="$(hook_field '.cwd')"
     [[ -n "${_cwd}" ]] || _cwd="${PWD}"
     while IFS= read -r _sub; do
-        _is_commit "${_sub}" || continue
-        _root="$(git -C "${_cwd}" rev-parse --show-toplevel 2>/dev/null)" || continue
-        _amend=0
-        _amends "${_sub}" && _amend=1
-        _reason="$(_judge "${_root}" "${_amend}")"
+        [[ "${_sub}" =~ ^git[[:space:]]+commit([[:space:]]|$) ]] || continue
+        _reason="$(_check_launch "${_sub}" "${_cwd}")"
         [[ -n "${_reason}" ]] && hook_block "${_reason}" \
             "Follow .agents/skills/tdd/SKILL.md: put the test and its implementation in one commit, or commit the failing test alone (RED) and the implementation right after it (GREEN)."
-    done < <(hook_subcommands "${_cmd}")
+    done < <(hook_subcommands_raw "${_cmd}")
     return 0
 }
 
