@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agents/hook/test-must-use-docker.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/enforce_long_job_timeout.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/check_main_fresh_before_worktree.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/remind_main_sync.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/enforce_gh_body_file.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/enforce_milestone_gate_approval.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/enforce_codex_round_cap.sh"
+          },
+          {
+            "type": "command",
+            "command": ".agents/hook/enforce_scope_on_guard_issues.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

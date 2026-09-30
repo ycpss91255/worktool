@@ -23,12 +23,21 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     SETTINGS="${REPO_ROOT}/.claude/settings.json"
+    CODEX_HOOKS="${REPO_ROOT}/.codex/hooks.json"
 }
 
 # Print "<event>|<matcher>|<command>" for every registered hook command.
 _registered() {
     jq -r '.hooks | to_entries[] | .key as $e | .value[]
         | (.matcher // "") as $m | .hooks[] | "\($e)|\($m)|\(.command)"' "${SETTINGS}"
+}
+
+# Print the hook script basename for one matcher in one registration file.
+_registered_names() {
+    local _settings="$1" _matcher="$2"
+    jq -r --arg matcher "${_matcher}" '
+        .hooks.PreToolUse[] | select(.matcher == $matcher) | .hooks[].command
+        | capture("/(?<name>[^/]+[.]sh)(?:[\\\"]*)$").name' "${_settings}"
 }
 
 # --- layout ------------------------------------------------------------------
@@ -82,6 +91,13 @@ _registered() {
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
         "UserPromptSubmit||${_p}/remind_no_emoji.sh")"
+}
+
+@test "codex registers every Claude PreToolUse Bash hook" {
+    run diff -u \
+        <(_registered_names "${SETTINGS}" Bash) \
+        <(_registered_names "${CODEX_HOOKS}" Bash)
+    assert_success
 }
 
 @test "every hook in .agents/hook is registered (no orphan hook)" {
