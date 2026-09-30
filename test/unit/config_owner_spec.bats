@@ -58,7 +58,13 @@ _runs() {
         'status||' \
         'status|ghostty-host|' \
         'status||-h' \
-        'status||--help'
+        'status||--help' \
+        'enter||' \
+        'enter||--box dev --distrobox @DBX@ --timeout 30 -- true' \
+        'enter||--box=dev --distrobox=@DBX@ --timeout=30' \
+        'enter|ghostty-inside|' \
+        'enter||-h' \
+        'enter||--help'
 }
 
 # The verbs of script/box/justfile.box, one per line.
@@ -364,6 +370,10 @@ EOF
 
 @test "owner: every status row reads and writes only the state file lib/config.sh names" {
     _owner_runs status
+}
+
+@test "owner: every enter row reads and writes only the state file lib/config.sh names" {
+    _owner_runs enter
 }
 
 @test "owner: setup, assemble and status act on the named state file (effects)" {
