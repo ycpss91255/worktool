@@ -87,6 +87,42 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
 }
 
+@test "a bats tier passes the configured parallel job count to bats" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/bats" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${BATS_TEST_TMPDIR}/bats.calls"
+if [[ "$1" == "--count" ]]; then
+    printf '1\n'
+else
+    printf '1..4\n'
+    printf 'ok 1 one\nok 2 two\nok 3 three\nok 4 four\n'
+fi
+EOF
+    chmod +x "${_bin}/bats"
+
+    export WORKTOOL_TEST_JOBS=3
+    PATH="${_bin}:${PATH}" _run_copy_gate --ci-integration
+    assert_success
+    run grep -F -- "--formatter tap --jobs 3 --no-parallelize-within-files -r" \
+        "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_success
+}
+
+@test "an invalid parallel job count is an argument error before bats runs" {
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\ntouch "%s/bats-ran"\n' "${BATS_TEST_TMPDIR}" >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    WORKTOOL_TEST_JOBS=0 PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+    assert_failure 2
+    assert_output "test.sh: invalid WORKTOOL_TEST_JOBS '0' (see --help)"
+    assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
+}
+
 # --- the declared required lists ---------------------------------------------
 
 @test "test.sh declares the M2 required specs of the unit tier" {
@@ -109,6 +145,21 @@ EOF
     assert_line "unit/hook/test_must_use_docker_spec.bats"
     assert_line "unit/script/wait_pr_ci_spec.bats"
     assert_line "unit/script/watch_user_replies_spec.bats"
+}
+
+@test "test.sh declares the heavy hook specs in matrix instead of unit" {
+    run _declared matrix
+    assert_success
+    assert_output "$(printf '%s\n' \
+        'matrix/enforce_milestone_gate_approval_spec.bats' \
+        'matrix/enforce_no_attribution_spec.bats' \
+        'matrix/enforce_tdd_commit_spec.bats')"
+
+    run _declared unit
+    assert_success
+    refute_line "unit/hook/enforce_milestone_gate_approval_spec.bats"
+    assert_line "unit/hook/enforce_milestone_gate_approval_representative_spec.bats"
+    assert_line "unit/hook/enforce_no_attribution_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of the integration tier" {

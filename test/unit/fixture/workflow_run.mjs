@@ -23,6 +23,7 @@ const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 const replies = JSON.parse(repliesJson)
 const calls = []
 const ran = []
+const workflowCalls = []
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
@@ -55,14 +56,21 @@ const agent = async (prompt, opts = {}) => {
   return reply(label)
 }
 const parallel = async (fns) => Promise.all(fns.map(f => f()))
+const workflow = async (options, workflowArgs) => {
+  workflowCalls.push({ options, args: workflowArgs })
+  return runWorkflow(options.scriptPath, workflowArgs)
+}
 
-const src = readFileSync(script, 'utf8').replace(/^export const meta/m, 'const meta')
 const AsyncFunction = (async () => {}).constructor
-const body = new AsyncFunction('args', 'agent', 'parallel', 'phase', 'log', src)
+const runWorkflow = async (path, workflowArgs) => {
+  const src = readFileSync(path, 'utf8').replace(/^export const meta/m, 'const meta')
+  const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', src)
+  return body(workflowArgs, agent, parallel, workflow, () => {}, () => {})
+}
 
-const out = { result: null, error: null, calls, ran }
+const out = { result: null, error: null, calls, workflowCalls, ran }
 try {
-  out.result = await body(JSON.parse(argsJson), agent, parallel, () => {}, () => {})
+  out.result = await runWorkflow(script, JSON.parse(argsJson))
 } catch (e) {
   out.error = e.message
 }

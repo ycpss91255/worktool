@@ -13,8 +13,8 @@
 # Each case builds a real throwaway git repo and passes it as the tool
 # call's cwd.
 
-load "${BATS_TEST_DIRNAME}/../../helper/common"
-load "${BATS_TEST_DIRNAME}/../../helper/hook"
+load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/hook"
 
 setup() {
     REPO="${BATS_TEST_TMPDIR}/repo"
@@ -23,6 +23,12 @@ setup() {
     git -C "${REPO}" config user.name tester
     _put README.md 'readme'
     _commit init
+}
+
+@test "this spec is a required matrix spec of test.sh" {
+    run bash -c 'source "$1" && _required_specs matrix' _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    assert_line "matrix/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
 # _put <path> <content> - write a file in the repo and stage it.
@@ -170,6 +176,12 @@ _scenario() {
     local _case _want _form
     while read -r _case _want; do
         for _form in "git commit -m x" "bash -c 'git commit -m x'" "eval git commit -m x"; do
+            if [[ -n "${TDD_MATRIX_CASE:-}" && "${_case}" != "${TDD_MATRIX_CASE}" ]]; then
+                continue
+            fi
+            if [[ -n "${TDD_MATRIX_FORM:-}" && "${_form}" != "${TDD_MATRIX_FORM}" ]]; then
+                continue
+            fi
             _scenario "${_case}"
             _check "${_form}"
             [[ "${status}" -eq "${_want}" ]] \
