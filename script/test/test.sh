@@ -72,6 +72,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 # Image tag for the test container. Overridable for CI (prebuilt + loaded).
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
+WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -229,7 +230,7 @@ _run_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
-    docker run --rm \
+    docker run --rm -e WORKTOOL_TEST_JOBS \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -380,7 +381,8 @@ _run_bats_tier() {
 
     local _tap
     _tap="$(mktemp)" || _die "mktemp failed"
-    if ! bats --formatter tap -r "${_paths[@]}" | tee "${_tap}"; then
+    if ! bats --formatter tap --jobs "${WORKTOOL_TEST_JOBS}" \
+        --no-parallelize-within-files -r "${_paths[@]}" | tee "${_tap}"; then
         rm -f "${_tap}"
         _die "${_tier} bats failed"
     fi
@@ -468,6 +470,7 @@ Internal (what the steps above run inside the container; not for hosts):
 Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
+  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
@@ -521,6 +524,8 @@ _run_host_step() {
 # container gate instead and stands alone.
 main() {
     local _steps=() _ci="" _step _help=0
+    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
+        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             # Recorded, not served: the rest of the line is still validated

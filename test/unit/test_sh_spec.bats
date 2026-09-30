@@ -226,7 +226,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 # --- errexit (issue #195) ----------------------------------------------------
