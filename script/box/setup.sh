@@ -54,13 +54,19 @@
 # `unknown field`). Such a path is REFUSED - whichever source it came from,
 # and before anything at all is written (issue #175 round 2).
 #
+# Every managed command runs the in-box entry wrapper `<enter.sh>` - the
+# ABSOLUTE path of script/box/enter.sh in this checkout (issue #180) - which
+# shows progress, a log and a timeout on the box's first launch and then
+# hands over to `<distrobox> enter <box> [-- <cmd>...]`. The wrapper path is
+# quoted and checked like the distrobox path.
+#
 # Managed blocks (begin/end marker lines, exactly one per file, replaced in
 # place, user content and file mode preserved):
 #   auto-enter yes, terminal ghostty, tmux inside:
-#     <config dir>/ghostty/config  command = '<distrobox>' enter <box> -- tmux new -A -s main
+#     <config dir>/ghostty/config  command = '<enter.sh>' --distrobox '<distrobox>' --box <box> -- tmux new -A -s main
 #   auto-enter yes, terminal ghostty, tmux host:
 #     <config dir>/ghostty/config  command = tmux new -A -s main
-#     ~/.tmux.conf                 set -g default-command '"<distrobox>" enter <box>'
+#     ~/.tmux.conf                 set -g default-command '"<enter.sh>" --distrobox "<distrobox>" --box <box>'
 #   auto-enter yes, terminal none: no terminal profile at all (whatever tmux
 #     says: the tmux.conf block only serves the ghostty+host pair), leftover
 #     blocks removed.
@@ -114,6 +120,11 @@ AUTO_ENTER_SRC="" TERMINAL_SRC="" TMUX_SRC="" BOX_SRC=""
 # only on the paths that write one).
 DISTROBOX=""
 
+# The in-box entry wrapper every managed command runs (issue #180): this
+# checkout's enter.sh, by absolute path, so a desktop-launched terminal
+# needs neither `just` nor the repo on its PATH.
+ENTER_WRAPPER="${SCRIPT_DIR}/enter.sh"
+
 # --- Usage -------------------------------------------------------------------
 _usage() {
     cat >&2 <<'EOF'
@@ -136,12 +147,15 @@ back any time with `just box status`.
                             all, not even ~/.tmux.conf; the decisions are
                             still stored.
   --tmux inside|host        Where tmux runs (default: inside): inside the box
-                            (ghostty: <distrobox> enter <box> -- tmux new -A
-                            -s main) or on the host (ghostty: tmux new -A -s
-                            main; ~/.tmux.conf: set -g default-command
-                            "<distrobox> enter <box>"). <distrobox> is the
-                            absolute path this run resolves, so a terminal
-                            started from the desktop can run it.
+                            (ghostty: <enter.sh> --distrobox <distrobox> --box
+                            <box> -- tmux new -A -s main) or on the host
+                            (ghostty: tmux new -A -s main; ~/.tmux.conf: set
+                            -g default-command "<enter.sh> --distrobox
+                            <distrobox> --box <box>"). <enter.sh> is this
+                            checkout's entry wrapper (first-launch progress,
+                            log and timeout) and <distrobox> the absolute path
+                            this run resolves, so a terminal started from the
+                            desktop can run both.
   --box <name>              Box to enter (default: dev).
   --distrobox <path>        Absolute path of the distrobox executable to write
                             into the managed command (default: the one on
@@ -314,21 +328,27 @@ _resolve_distrobox() {
         log_error "distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written"
         return 1
     fi
-    # Both managed files are line-based, so a path holding a newline or a
-    # carriage return cannot be written into either of them whatever the
-    # shell quoting says (issue #175 round 2). The diagnostic shows the
-    # control character rather than printing it, so the error stays one
-    # line.
-    if ! enter_path_single_line "${DISTROBOX}"; then
-        log_error "distrobox: $(enter_show_control "${DISTROBOX}") holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
+    _check_encodable distrobox "${DISTROBOX}" || return 1
+    _check_encodable "entry wrapper" "${ENTER_WRAPPER}" || return 1
+}
+
+# Refuse path $2 (named $1 in the diagnostic) when it cannot be encoded
+# into the blocks this run would write. Returns 1 after logging why.
+#
+# Both managed files are line-based, so a path holding a newline or a
+# carriage return cannot be written into either of them whatever the shell
+# quoting says (issue #175 round 2); the diagnostic shows the control
+# character rather than printing it, so the error stays one line. The
+# ~/.tmux.conf body nests a shell command inside a tmux single-quoted
+# value, and tmux has NO escape inside single quotes, so a path holding one
+# cannot be delivered through it either.
+_check_encodable() {
+    if ! enter_path_single_line "$2"; then
+        log_error "$1: $(enter_show_control "$2") holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
         return 1
     fi
-    # The ~/.tmux.conf body nests a shell command inside a tmux
-    # single-quoted value, and tmux has NO escape inside single quotes, so
-    # a path holding one cannot be delivered through it. Refuse rather
-    # than write a file that would not parse the way it reads.
-    if [[ "${TMUX}" == "host" && "${DISTROBOX}" == *"'"* ]]; then
-        log_error "distrobox: ${DISTROBOX} holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
+    if [[ "${TMUX}" == "host" && "$2" == *"'"* ]]; then
+        log_error "$1: $2 holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
         return 1
     fi
 }
@@ -418,6 +438,17 @@ _config_render() {
         terminal "${TERMINAL}" terminal "${TERMINAL_SRC}" \
         tmux "${TMUX}" tmux "${TMUX_SRC}" \
         box "${BOX}" box "${BOX_SRC}"
+    _config_render_home
+}
+
+# Keep the box home `just box assemble` recorded (issue #198): the state
+# file is shared, and this rewrite must not drop lines it does not own.
+_config_render_home() {
+    local _home
+    _home="$(enter_config_get "${CONFIG}" home)"
+    [[ -n "${_home}" ]] || return 0
+    printf 'home=%s\nhome.source=%s\n' \
+        "${_home}" "$(enter_config_get "${CONFIG}" home.source)"
 }
 
 # --- Apply -------------------------------------------------------------------
@@ -442,14 +473,16 @@ _apply_ghostty() {
     # DISTROBOX was resolved (and the run refused if it could not be) in
     # _resolve_all, before any file was touched. Both bodies are shell
     # source, so the path goes in as a quoted shell word.
+    # Both commands run the entry wrapper (issue #180), which hands over
+    # to `<distrobox> enter <box>` once the box is initialised.
     if [[ "${TMUX}" == "inside" ]]; then
         _block_write "${_ghostty}" \
-            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
+            "command = $(enter_sh_squote "${ENTER_WRAPPER}") --distrobox $(enter_sh_squote "${DISTROBOX}") --box ${BOX} -- tmux new -A -s main" || _rc=1
         _block_remove "${_tmux_conf}" || _rc=1
     else
         _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
         _block_write "${_tmux_conf}" \
-            "set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'" || _rc=1
+            "set -g default-command '$(enter_sh_dquote "${ENTER_WRAPPER}") --distrobox $(enter_sh_dquote "${DISTROBOX}") --box ${BOX}'" || _rc=1
     fi
     return "${_rc}"
 }

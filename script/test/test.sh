@@ -135,11 +135,14 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
+                unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/commit_email_spec.bats \
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
                 unit/adr_spec.bats \
+                unit/contract_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -148,7 +151,11 @@ _required_specs() {
                 unit/hook/remind_main_sync_spec.bats \
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_no_local_paths_spec.bats \
+                unit/hook/enforce_milestone_gate_approval_spec.bats \
+                unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_shellcheck_disable_approval_spec.bats \
+                unit/hook/enforce_codex_round_cap_spec.bats \
+                unit/hook/enforce_cpu_capacity_spec.bats \
                 unit/hook/approval_check_spec.bats \
                 unit/hook/disable_diff_spec.bats \
                 unit/hook/transcript_reader_spec.bats \
@@ -162,7 +169,8 @@ _required_specs() {
             printf '%s\n' \
                 integration/smoke_spec.bats \
                 integration/assemble_spec.bats \
-                integration/setup_spec.bats
+                integration/setup_spec.bats \
+                integration/enter_spec.bats
             ;;
         integration-ghostty) printf '%s\n' "${INTEGRATION_GHOSTTY_SPEC_REL}" ;;
         system)      printf '%s\n' system/real_assemble_spec.bats ;;
@@ -266,12 +274,14 @@ _ensure_system_real_image() {
 # container / image / volume the test creates lives in that nested daemon
 # and is destroyed with the runner (--rm also drops the dind image's
 # anonymous /var/lib/docker volume). The host daemon never sees the box.
+# `-e CI` passes the host's CI through (only when it is set): bench.sh's
+# quiet-host wait is 120 s instead of 60 s on CI (issue #181).
 _run_system_real_in_runner() {
     command -v docker >/dev/null 2>&1 \
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged \
+    docker run --rm --privileged -e CI \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
