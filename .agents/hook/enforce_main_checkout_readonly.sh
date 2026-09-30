@@ -161,14 +161,54 @@ _track_directory_launch() {
     return 0
 }
 
-_check_bash() {
+_outer_scope_text() {
+    local _text="$1" _out='' _part='' _c _next _depth=0 _pipeline=''
+    local _i
+    for ((_i = 0; _i < ${#_text}; _i++)); do
+        _c="${_text:_i:1}" _next="${_text:_i+1:1}"
+        if [[ "${_c}" == '(' ]]; then
+            _depth=$((_depth + 1))
+        elif [[ "${_c}" == ')' && "${_depth}" -gt 0 ]]; then
+            _depth=$((_depth - 1))
+        elif [[ "${_depth}" -eq 0 && "${_c}" == '|' && "${_next}" != '|' ]]; then
+            _pipeline=1 _part+=' '
+        elif [[ "${_depth}" -eq 0 && ("${_c}" == ';' || "${_c}" == $'\n' \
+            || "${_c}" == '&' && "${_next}" != '&') ]]; then
+            [[ -n "${_pipeline}" ]] || _out+="${_part};"
+            _part='' _pipeline=''
+        elif [[ "${_depth}" -eq 0 ]]; then
+            _part+="${_c}"
+        fi
+    done
+    [[ -n "${_pipeline}" ]] || _out+="${_part}"
+    printf '%s' "${_out}"
+}
+
+_outer_scope_launches() {
+    local _text _sub
+    _text="$(_hook_strip_heredocs "$1" | _hook_unquote)"
+    _text="$(_outer_scope_text "${_text}")"
+    while IFS= read -r _sub || [[ -n "${_sub}" ]]; do
+        _sub="$(_hook_strip_wrappers "${_sub}")"
+        [[ -n "${_sub}" ]] || continue
+        printf '%s\n' "${_sub}"
+    done < <(_hook_split "${_text}")
+}
+
+_check_launches() {
     local _command="$1" _cwd="$2" _launch
     SHELL_CWD="${_cwd}" SHELL_CWD_UNKNOWN=''
     while IFS= read -r _launch; do
         [[ -n "${_launch}" ]] || continue
         _track_directory_launch "${_launch}" && continue
         _check_git_launch "${_launch}" "${SHELL_CWD}" "${SHELL_CWD_UNKNOWN}"
-    done < <(hook_subcommands_raw "${_command}")
+    done <<<"${_command}"
+}
+
+_check_bash() {
+    local _command="$1" _cwd="$2"
+    _check_launches "$(hook_subcommands_raw "${_command}")" "${_cwd}"
+    _check_launches "$(_outer_scope_launches "${_command}")" "${_cwd}"
 }
 
 main() {

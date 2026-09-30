@@ -152,6 +152,28 @@ _directory_wrapped() {
     assert_output --partial "main checkout"
 }
 
+@test "a child-scope directory change does not affect a later outer git command" {
+    local _command
+    local -a _commands=(
+        "(cd ${LINKED_REPO}; git status); git commit -m x"
+        "cd ${LINKED_REPO} | true; git commit -m x"
+        "bash -c 'cd ${LINKED_REPO}'; git commit -m x"
+    )
+    for _command in "${_commands[@]}"; do
+        run_hook enforce_main_checkout_readonly \
+            "$(_bash_payload "${_command}" "${MAIN_REPO}")"
+        assert_failure 2
+        assert_output --partial "main checkout"
+    done
+}
+
+@test "builtin cd changes the directory for a later git command" {
+    run_hook enforce_main_checkout_readonly \
+        "$(_bash_payload "builtin cd ${MAIN_REPO} && git commit -m x" "${LINKED_REPO}")"
+    assert_failure 2
+    assert_output --partial "main checkout"
+}
+
 @test "a dynamic directory fails closed only for a mutating git command" {
     local _d='$'
     run_hook enforce_main_checkout_readonly \
