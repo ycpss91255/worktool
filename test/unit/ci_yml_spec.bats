@@ -155,12 +155,25 @@ _sorted_set() {
     printf '%s\n' "$@" | sort
 }
 
+# Print the pull_request trigger types, one per line, sorted.
+_pull_request_types() {
+    sed -nE '/^  pull_request:$/,/^permissions:$/ s/^    types: \[(.*)\]$/\1/p' "${CI_YML}" \
+        | tr ',' '\n' \
+        | sed -E 's/^ +//; s/ +$//' \
+        | sort
+}
+
 # --- required spec -----------------------------------------------------------
 
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "pull_request reruns CI when the PR body is edited" {
+    run _pull_request_types
+    assert_output "$(_sorted_set opened synchronize reopened edited)"
 }
 
 # --- every leg-carrying job runs on both runners -----------------------------
