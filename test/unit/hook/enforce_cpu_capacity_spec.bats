@@ -76,7 +76,7 @@ _launch() {
     assert_output --partial "PSI some avg60 50.01 (limit 50)"
     assert_output --partial "loadavg 3.10 2.50 2.00"
     assert_output --partial "nproc 8"
-    assert_output --partial "test containers 0 (limit 4)"
+    assert_output --partial "test containers 0 (limit 2)"
     assert_output --partial "fanout"
 }
 
@@ -86,22 +86,23 @@ _launch() {
     assert_success
 }
 
-@test "test containers over 2 x nproc / 4 block a Workflow even at low PSI" {
-    _containers 5
+@test "three running test containers block a Workflow even at low PSI" {
+    _containers 3
     _launch Workflow
     assert_failure 2
     assert_output --partial "BLOCKED"
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "at most 2 tests at a time"
+    assert_output --partial "test containers 3 (limit 2)"
     assert_output --partial "PSI some avg60 10.00 (limit 50)"
 }
 
 @test "test containers exactly at the limit still pass" {
-    _containers 4
+    _containers 2
     _launch Workflow
     assert_success
 }
 
-@test "the container limit follows nproc (4 CPUs -> limit 2)" {
+@test "the container limit stays fixed when nproc changes" {
     CPU_GATE_NPROC=4
     _containers 3
     _launch Workflow
@@ -118,7 +119,7 @@ _launch() {
     _containers 9 worktool-dev:latest
     _launch Workflow
     assert_failure 2
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "test containers 5 (limit 2)"
 }
 
 # --- PSI or docker unreadable ------------------------------------------------
@@ -129,7 +130,7 @@ _launch() {
     _launch Workflow
     assert_failure 2
     assert_output --partial "PSI unavailable (judged on test containers only)"
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "test containers 5 (limit 2)"
 }
 
 @test "PSI unreadable with few test containers: a Workflow starts" {
