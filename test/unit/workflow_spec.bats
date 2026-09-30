@@ -222,6 +222,13 @@ _pl_run() {
     assert_output '[null,true,true,true]'
 }
 
+@test "pr-loop (node): an invalid implementer value throws a clear error" {
+    run _pl_run '{"implementer":"other"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.implementer must be "codex" or "claude", got "other"'
+}
+
 @test "pr-loop (node): the scope step cuts the issue's ## 範圍 section out verbatim (issue #238)" {
     printf '## 背景\n\nx\n\n## 範圍\n\n- 擋:a\n- 不擋:b\n\n## Acceptance criteria\n\n- z\n' > "${BATS_TEST_TMPDIR}/body.md"
     run _pl_codex_round
