@@ -35,6 +35,12 @@ _payload() {
     assert_output ""
 }
 
+@test "allows a Chinese reply with several English technical terms" {
+    run_hook enforce_reply_language "$(_payload chinese_with_many_english_terms)"
+    assert_success
+    assert_output ""
+}
+
 @test "allows a reply containing only a fenced code block" {
     run_hook enforce_reply_language "$(_payload code_block_only)"
     assert_success
