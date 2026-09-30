@@ -52,3 +52,38 @@ _payload() {
     run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
     assert_output 'deny'
 }
+
+@test "one patch delegates move, delete, and add as per-file Claude payloads" {
+    local _repo _log _patch
+    _repo="${BATS_TEST_TMPDIR}/adapter-repo"
+    _log="${BATS_TEST_TMPDIR}/hook.log"
+    mkdir -p "${_repo}/.agents/hook/lib" "${_repo}/.claude"
+    cp "${HOOK_DIR}/codex_apply_patch.sh" "${_repo}/.agents/hook/"
+    cp "${HOOK_DIR}/lib/hook_bootstrap.sh" "${_repo}/.agents/hook/lib/"
+    cat >"${_repo}/.agents/hook/capture.sh" <<'HOOK'
+#!/usr/bin/env bash
+jq -c '{tool_name, tool_input}' >>"${CODEX_APPLY_PATCH_HOOK_LOG}"
+HOOK
+    chmod +x "${_repo}/.agents/hook/"*.sh
+    cat >"${_repo}/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit","hooks":[{"type":"command","command":"${CLAUDE_PROJECT_DIR}/.claude/hook/capture.sh"}]}]}}
+JSON
+    _patch="$(printf '%s\n' \
+        '*** Begin Patch' \
+        '*** Update File: old.sh' \
+        '*** Move to: moved.sh' \
+        '@@' \
+        '+echo moved' \
+        '*** Delete File: gone.sh' \
+        '*** Add File: fresh.sh' \
+        '+echo fresh' \
+        '*** End Patch')"
+
+    run bash -c 'printf "%s" "$1" | CODEX_APPLY_PATCH_HOOK_LOG="$2" "$3"' _ \
+        "$(_payload "${_patch}")" "${_log}" "${_repo}/.agents/hook/codex_apply_patch.sh"
+
+    assert_success
+    assert_output ''
+    run jq -s -c '.' "${_log}"
+    assert_output '[{"tool_name":"Edit","tool_input":{"file_path":"old.sh","new_string":""}},{"tool_name":"Write","tool_input":{"file_path":"moved.sh","content":"echo moved\n"}},{"tool_name":"Edit","tool_input":{"file_path":"gone.sh","new_string":""}},{"tool_name":"Write","tool_input":{"file_path":"fresh.sh","content":"echo fresh\n"}}]'
+}
