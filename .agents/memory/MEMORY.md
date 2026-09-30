@@ -9,7 +9,7 @@ Every entry is a real file in this repo (.agents/memory/, reached as
 - [Decide when an invariant settles it](feedback-decide-when-invariant-settles-it.md) — a settled invariant/principle already picks the answer: decide and record it, do not ask the maintainer A or B
 - [No approval asks for rounds](feedback-dont-ask-round-approval.md) — never ask the maintainer to approve extra codex rounds or process gates; find the root cause, fix the class, continue
 - [Do repo admin myself, reply zh-TW](feedback-do-repo-admin-myself.md) — authorised repo admin ops (rename, protection, approved rewrite) I finish myself; only browser OAuth goes to maintainer; always reply zh-TW
-- [Guardrails before milestone work](feedback-guardrails-before-milestone.md) — non-milestone process work (hooks, CI checks, templates, ADRs) goes first; hook PRs sharing registration files run one at a time
+- [Guardrails before milestone work](feedback-guardrails-before-milestone.md) — non-milestone process work (hooks, CI checks, templates, ADRs) goes first; lanes by shared files in parallel, serial only on real logic overlap
 - [Per-agent independent commit](feedback-per-agent-independent-commit.md) — worktool: each agent = its own commit, never mixed; fan-out collects distinct commits onto the milestone branch, merge non-squash
 - [worktool redesign](project-worktool-distrobox-redesign.md) — distrobox-based dev-env, successor to init_ubuntu; own repo ycpss91255/worktool; milestone-gated M1-M17
 
