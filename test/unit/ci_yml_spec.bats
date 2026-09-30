@@ -35,6 +35,9 @@
 #     (event data plus the default branch ref; one revision per line, each
 #     a separate git log argument), feeds `git log` records to
 #     commit_email_evaluate, and ci-passed requires it like every other job.
+#   - commit-attribution uses the same event range, checks commit messages
+#     and pull request bodies through lib/commit_attribution.sh, and joins
+#     ci-passed.
 #
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
@@ -169,8 +172,9 @@ _sorted_set() {
     assert_line "gate"
     assert_line "test-system-real"
     assert_line "commit-email"
+    assert_line "commit-attribution"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 5
+    assert_equal "${#lines[@]}" 6
 }
 
 @test "build-image, gate and test-system-real run on the matrix runner" {
@@ -326,7 +330,7 @@ _sorted_set() {
 
 @test "--privileged is named by the test-system-real job only" {
     local _job
-    for _job in build-image gate commit-email ci-passed; do
+    for _job in build-image gate commit-email commit-attribution ci-passed; do
         run _job_block "${_job}"
         refute_output --partial '--privileged'
     done
@@ -370,4 +374,28 @@ _sorted_set() {
     assert_line "          PUSH_BEFORE: \${{ github.event.before }}"
     assert_line "          PUSH_AFTER: \${{ github.event.after }}"
     assert_line "          DEFAULT_REF: refs/remotes/origin/\${{ github.event.repository.default_branch }}"
+}
+
+# --- commit-attribution: commit messages and PR body (#271) -----------------
+
+@test "commit-attribution checks full history without persisted credentials" {
+    run _job_block commit-attribution
+    assert_success
+    assert_line '    name: commit-attribution'
+    assert_line --partial 'uses: actions/checkout@'
+    assert_line '          fetch-depth: 0'
+    assert_line '          persist-credentials: false'
+}
+
+@test "commit-attribution delegates range, commit, and PR body checks to its library" {
+    run _job_block commit-attribution
+    assert_success
+    assert_line --regexp '^ +source lib/commit_attribution\.sh$'
+    assert_line --partial 'commit_attribution_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}")" || exit 1'
+    assert_line --regexp '^ +mapfile -t revs <<< "\$\{range\}"$'
+    assert_line --regexp '^ +commit_attribution_check_commits '
+    assert_line '          PR_BODY: ${{ github.event.pull_request.body }}'
+    assert_line --regexp '^ +commit_attribution_check_pr_body "\$\{EVENT\}" "\$\{PR_BODY\}"$'
+    refute_output --partial 'Co-Authored-By:'
+    refute_output --partial 'Claude-Session:'
 }
