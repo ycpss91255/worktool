@@ -55,7 +55,7 @@ worktool/
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
 │   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
-│   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同)
+│   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同；含 Stop 回覆語言檢查 #281)
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
 │   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
@@ -100,7 +100,8 @@ worktool/
 │   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
-│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、codex_apply_patch(Codex 編輯轉接層,#282))
+│   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、enforce_reply_language(Claude Stop 回覆語言,#281)、
+│   │   │                codex_apply_patch(Codex 編輯轉接層,#282))
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
@@ -144,8 +145,9 @@ Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現
 Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
 `enforce_shellcheck_disable_approval.sh` 等 hook 的判定。
 
-本次對齊仍有事件差異：Claude 的 `UserPromptSubmit` 與 `WorktreeCreate` 在此 Codex
-接線沒有對應事件，因此不註冊。自動化呼叫 Codex 時帶
+本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`
+在此 Codex 接線沒有對應事件，因此不註冊；`enforce_reply_language.sh` 只接 Claude
+的 `Stop`，不是 PreToolUse Bash hook。自動化呼叫 Codex 時帶
 `--dangerously-bypass-hook-trust`；這表示呼叫端明確信任 repo hook，而 hook 來源與
 變更由 PR review 把關。
 
