@@ -446,7 +446,10 @@ setup() {
 # _scripts <command> - hook_scripts output, NUL ends turned into "<END>"
 # lines so bats can compare it.
 _scripts() {
-    hook_scripts "$1" | sed -z 's/$/<END>/' | tr -d '\0'
+    local _script
+    while IFS= read -r -d '' _script; do
+        printf '%s<END>' "${_script}"
+    done < <(hook_scripts "$1")
 }
 
 @test "hook_scripts prints the command itself when it runs no nested script" {
