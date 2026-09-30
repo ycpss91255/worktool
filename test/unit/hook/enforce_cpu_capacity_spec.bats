@@ -8,7 +8,7 @@
 # limit it blocks (exit 2) with the current values, the limits and what to
 # do instead. Every input is injected: the PSI and loadavg files and nproc
 # through CPU_GATE_* variables, `docker ps` through a PATH stub that prints
-# ${DOCKER_STUB_DIR}/ps (one image per line, as `--format '{{.Image}}'`).
+# ${DOCKER_STUB_DIR}/ps (one image and state per line).
 
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
@@ -41,12 +41,12 @@ _psi() {
         "$1" >"${CPU_GATE_PSI_FILE}"
 }
 
-# _containers <n> [image] - n running containers of <image> (default the
-# test image tag script/test/test.sh builds).
+# _containers <n> [image] [state] - n containers of <image> (default the
+# test image tag script/test/test.sh builds) in <state> (default running).
 _containers() {
     local _i
     for ((_i = 0; _i < $1; _i++)); do
-        printf '%s\n' "${2:-worktool-test:local}" >>"${DOCKER_STUB_DIR}/ps"
+        printf '%s|%s\n' "${2:-worktool-test:local}" "${3:-running}" >>"${DOCKER_STUB_DIR}/ps"
     done
 }
 
@@ -66,6 +66,13 @@ _launch() {
     refute_output --partial "BLOCKED"
 }
 
+@test "one running test container still passes when test containers are paused" {
+    _containers 1
+    _containers 2 worktool-test:local paused
+    _launch Workflow
+    assert_success
+}
+
 # --- blocked -----------------------------------------------------------------
 
 @test "PSI some avg60 over the limit blocks a Workflow, listing values, limits and advice" {
@@ -76,7 +83,7 @@ _launch() {
     assert_output --partial "PSI some avg60 50.01 (limit 50)"
     assert_output --partial "loadavg 3.10 2.50 2.00"
     assert_output --partial "nproc 8"
-    assert_output --partial "test containers 0 (limit 4)"
+    assert_output --partial "test containers 0 (limit 2)"
     assert_output --partial "fanout"
 }
 
@@ -86,22 +93,38 @@ _launch() {
     assert_success
 }
 
-@test "test containers over 2 x nproc / 4 block a Workflow even at low PSI" {
-    _containers 5
+@test "three running test containers block a Workflow even at low PSI" {
+    _containers 3
     _launch Workflow
     assert_failure 2
     assert_output --partial "BLOCKED"
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "at most 2 tests at a time"
+    assert_output --partial "test containers 3 (limit 2)"
     assert_output --partial "PSI some avg60 10.00 (limit 50)"
 }
 
 @test "test containers exactly at the limit still pass" {
-    _containers 4
+    _containers 2
     _launch Workflow
     assert_success
 }
 
-@test "the container limit follows nproc (4 CPUs -> limit 2)" {
+@test "two running test containers still pass when test containers are paused" {
+    _containers 2
+    _containers 2 worktool-test:local paused
+    _launch Workflow
+    assert_success
+}
+
+@test "three running test containers still block when test containers are paused" {
+    _containers 3
+    _containers 2 worktool-test:local paused
+    _launch Workflow
+    assert_failure 2
+    assert_output --partial "test containers 3 (limit 2)"
+}
+
+@test "the container limit stays fixed when nproc changes" {
     CPU_GATE_NPROC=4
     _containers 3
     _launch Workflow
@@ -118,7 +141,7 @@ _launch() {
     _containers 9 worktool-dev:latest
     _launch Workflow
     assert_failure 2
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "test containers 5 (limit 2)"
 }
 
 # --- PSI or docker unreadable ------------------------------------------------
@@ -129,7 +152,7 @@ _launch() {
     _launch Workflow
     assert_failure 2
     assert_output --partial "PSI unavailable (judged on test containers only)"
-    assert_output --partial "test containers 5 (limit 4)"
+    assert_output --partial "test containers 5 (limit 2)"
 }
 
 @test "PSI unreadable with few test containers: a Workflow starts" {
