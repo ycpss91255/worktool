@@ -197,13 +197,14 @@ _check_gh() {
     _check_files "gh ${_grp} ${_sub} body" --body-file -F
 }
 
-# _heredoc_word <encoded word>... - 0 when a word opens a heredoc (<<WORD,
-# <<-WORD or a bare <<; a here-string <<< is not one).
+# _heredoc_word <encoded word>... - 0 when a word carries heredoc input. The
+# shared subcommand parser represents a heredoc body as a literal here-string,
+# so both its original << form and that normalized <<< form count here.
 _heredoc_word() {
     local _w
     for _w in "$@"; do
         _w="$(hook_word "${_w}")"
-        [[ "${_w}" == '<<'* && "${_w}" != '<<<'* ]] && return 0
+        [[ "${_w}" == '<<'* ]] && return 0
     done
     return 1
 }
@@ -251,6 +252,12 @@ _heredoc_delim() {
         fi
         [[ "${_meta}" == *"${_c}"* ]] && break
         case "${_c}" in
+            '$')
+                if [[ "${_t:_i+1:1}" == "'" || "${_t:_i+1:1}" == '"' ]]; then
+                    _q="${_t:_i+1:1}"; _HD_RAW=1; _i=$((_i + 1))
+                else
+                    _HD_WORD+="${_c}"
+                fi ;;
             \'|\") _q="${_c}"; _HD_RAW=1 ;;
             \\) _HD_RAW=1; _i=$((_i + 1)); _HD_WORD+="${_t:_i:1}" ;;
             *) _HD_WORD+="${_c}" ;;

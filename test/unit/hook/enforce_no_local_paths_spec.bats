@@ -296,6 +296,12 @@ D='$'
     assert_output ""
 }
 
+@test "reads an ANSI-C quoted terminator (<<\$'END-MARK') after quote removal" {
+    _check "$(printf '%s\n' "gh pr comment 3 --body-file - <<${D}'END-MARK'" "${D}END-MARK" /home/alice/x END-MARK)"
+    _blocked
+    assert_output --partial "/home/alice/"
+}
+
 @test "the local path patterns are defined in one place" {
     run grep -c 'tmp/claude-' "${HOOK_DIR}/enforce_no_local_paths.sh"
     assert_output "1"
