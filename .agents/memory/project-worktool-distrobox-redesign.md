@@ -116,8 +116,9 @@ next milestone's parent+subs after each human gate.
 Related: [[feedback-codex-claude-collab]], [[feedback-per-agent-independent-commit]],
 [[feedback-autonomous-issue-pr-merge]], [[feedback-codex-round-stop-rule]].
 
-**Workspace layout (2026-09-29):** one workspace directory holds `src/`
-(the checkout) and `note/` (non-git: ACCEPTANCE-REQUIREMENTS.md, M3
-handoffs). Worktrees live inside the checkout under the gitignored
-`.worktree/<name>` (the pr-loop workflow and the WorktreeCreate hook both use
-it). Machine paths are not recorded here; they differ per host.
+**Workspace layout (updated 2026-10-01):** one workspace directory holds `src/`
+(the main-only checkout), `worktree/<name>` (the pr-loop workflow and the
+WorktreeCreate hook both use it), and `note/` (non-git:
+ACCEPTANCE-REQUIREMENTS.md, M3 handoffs). Agent scratch lives under
+`worktree/.scratch/<name>`. Machine paths are not recorded here; they differ per
+host.

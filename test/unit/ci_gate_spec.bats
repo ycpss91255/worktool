@@ -123,6 +123,67 @@ EOF
     assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
 }
 
+@test "a partial run skips required-spec and plan-minimum checks and warns" {
+    _make_repo_copy
+    rm "${COPY}/test/integration/assemble_spec.bats"
+
+    run "${COPY}/script/test/test.sh" --ci-integration \
+        test/integration/smoke_spec.bats
+
+    assert_success
+    assert_output --partial '[ci] partial integration run; this does not stand for the whole tier'
+    refute_output --partial 'required spec missing'
+    refute_output --partial 'below the required specs'
+}
+
+@test "a partial filter that matches no cases fails the tier" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] unit bats OK'
+}
+
+# Newer bats exits non-zero on an empty filtered suite ("Found no tests")
+# after printing the plan 1..0; the gate must still name the zero-case miss.
+@test "a filter bats rejects as an empty suite still reports zero cases" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nprintf "1..0\\n"\nexit 1\n' >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    PATH="${_bin}:${PATH}" run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure 1
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] ERROR: unit bats failed'
+}
+
+@test "an integration filter narrows the default group without running ghostty" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-integration --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: integration bats ran zero cases'
+    refute_output --partial 'a real ghostty is on PATH'
+}
+
+@test "a system filter narrows the shim group without running the real engine" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-system --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: system bats ran zero cases'
+    refute_output --partial 'a real docker engine is live'
+}
+
 # --- the declared required lists ---------------------------------------------
 
 @test "test.sh declares the M2 required specs of the unit tier" {
@@ -362,6 +423,8 @@ EOF
     _run_copy_gate --ci-integration
     assert_success
     assert_line "1..${_n}"
+    assert_output --partial '[ci]   required specs OK'
+    refute_output --partial '[ci] partial integration run'
     assert_line --partial "[ci] integration bats OK"
 }
 

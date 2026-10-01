@@ -53,6 +53,8 @@ worktool/
 │   │   ├── commit_attribution_spec.bats  lib/commit_attribution.sh:三種署名、正常訊息、merge commit、範圍外舊 commit 與 PR 說明(#271)
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
+│   │   ├── adr_spec.bats         所有 invariant ADR 的資料驅動格式守門:四節非空、引用 spec 存在、待補揭露
+│   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔)
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
 │   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
@@ -135,6 +137,10 @@ worktool/
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
 
+workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 main 的最新
+commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
+`<workspace>/worktree/.scratch/<name>`。repo checkout 內不建立 worktree 或 scratch。
+
 ## Codex hook
 
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
@@ -191,12 +197,13 @@ Codex 的 `apply_patch` 不得寫入其中（`.agents/memory/`、`.worktree/` �
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
-| `just test unit [args]` | `./script/test/test.sh --unit [args]` |
-| `just test matrix [args]` | `./script/test/test.sh --matrix [args]` |
-| `just test integration [args]` | `./script/test/test.sh --integration [args]` |
-| `just test system [args]` | `./script/test/test.sh --system [args]` |
+| `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，再依已提交、未提交與未追蹤改動選 spec；無法判定時整層執行） |
+| `just test unit [spec...] [--filter REGEX]` | `./script/test/test.sh --unit [spec...] [--filter REGEX]` |
+| `just test matrix [spec...] [--filter REGEX]` | `./script/test/test.sh --matrix [spec...] [--filter REGEX]` |
+| `just test integration [spec...] [--filter REGEX]` | `./script/test/test.sh --integration [spec...] [--filter REGEX]` |
+| `just test system [spec...] [--filter REGEX]` | `./script/test/test.sh --system [spec...] [--filter REGEX]` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real [args]` |
-| `just test acceptance [args]` | `./script/test/test.sh --acceptance [args]` |
+| `just test acceptance [spec...] [--filter REGEX]` | `./script/test/test.sh --acceptance [spec...] [--filter REGEX]` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh [args]`(`--root X` 直接透傳) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
@@ -330,7 +337,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`contract_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`adr_spec`、`adr/` 底下每份 ADR spec、`contract_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;matrix:`enforce_milestone_gate_approval_spec`、`enforce_no_attribution_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**

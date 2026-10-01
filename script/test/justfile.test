@@ -36,6 +36,10 @@ build *args:
 lint *args:
     ./script/test/test.sh --lint "$@"
 
+# Lint plus specs selected from changes since origin/main (override with --base <ref>); unknown impact fails open.
+changed *args:
+    ./script/test/test.sh --changed "$@"
+
 # Unit bats (test/unit/).
 unit *args:
     ./script/test/test.sh --unit "$@"

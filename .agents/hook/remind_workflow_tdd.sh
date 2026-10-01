@@ -23,7 +23,7 @@ hook_bootstrap "remind-workflow-tdd"
 main() {
     hook_read_input
     hook_context \
-        "Standing worktool directive (maintainer, do not re-ask): deliver each sub-issue through the pr-loop workflow (.claude/workflows/pr-loop.js; independent sub-issues together through milestone-fanout) in its own .worktree/<name>, TDD first (show RED, then GREEN), every gate run through 'just test <tier>' in Docker, never on the host. One issue = one PR = one thing; one commit per unit. Merge only after CI is green and codex confirmed, with a merge commit (no squash, no auto-merge); the milestone acceptance PR is a human gate. Issues/PRs/docs in zh-TW, commits and code in English. Solo (no workflow) only for trivial or conversational turns." \
+        "Standing worktool directive (maintainer, do not re-ask): deliver each sub-issue through the pr-loop workflow (.claude/workflows/pr-loop.js; independent sub-issues together through milestone-fanout) in its own ../worktree/<name>, TDD first (show RED, then GREEN), every gate run through 'just test <tier>' in Docker, never on the host. One issue = one PR = one thing; one commit per unit. Merge only after CI is green and codex confirmed, with a merge commit (no squash, no auto-merge); the milestone acceptance PR is a human gate. Issues/PRs/docs in zh-TW, commits and code in English. Solo (no workflow) only for trivial or conversational turns." \
         "UserPromptSubmit"
 }
 

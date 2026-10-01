@@ -28,7 +28,7 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 - **commit 訊息、PR 說明與留言一律不加署名（#269）。** 不寫 `Co-Authored-By`、`Claude-Session`、`Generated with` 署名行。
 - **一個 commit = 一個最小單元或一次完整修復。** 不要把不相干的東西包成一個 commit。
 - 語言：issue、PR、設計文件、ADR 用繁體中文；commit message、程式碼與註解用英文。不用 emoji。
-- 測試只在 Docker 內跑（`just test ...`）；不在 host 上跑 bats、不在 host 上裝套件。
+- 測試只在 Docker 內跑（`just test ...`）；不在 host 上跑 bats、不在 host 上裝套件。TDD 迴圈只跑該切片的 spec（`just test <tier> <spec...> [--filter REGEX]`）；推送前跑 `just test lint` 與 `just test changed`，本機不跑整個 tier。全部 tier 由 CI 執行。
 
 ## shell 慣例
 
