@@ -145,7 +145,14 @@ args 範例：
 
 1. **Research**:先由一個 agent 以 `od -An -N8 -tx1 /dev/urandom` 取得本次執行的 nonce(16 位小寫十六進位),
    沒有或格式不對就回傳 `status: 'setup-failed'` 並停在這裡,agy 不會被呼叫;有 `sources` 時先檢查每個路徑都可讀,
-   有一個不可讀就回傳 `status: 'sources-invalid'` 並停在這裡,agy 同樣不會被呼叫;接著 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m`,
+   有一個不可讀就回傳 `status: 'sources-invalid'` 並停在這裡,agy 同樣不會被呼叫;接著每次研究呼叫（含重試）前，agent 以字面路徑呼叫
+   `.agents/script/research/agy-model.sh`，執行 `agy models` 並解析版本號最高的 Gemini flash-high。
+   版本以數字比較（例如 3.10 > 3.9），只接受模型 ID `gemini-<數字版本>-flash-high`；解析規則集中在此共用腳本，
+   後續使用 agy 的 workflow 也遵守同一規則。指令失敗或沒有匹配模型時立即回報 `status: 'agy-failed'`，
+   不執行該次研究呼叫、不重試解析、不退回舊版或其他模型。使用者可透過薄轉發介面
+   `just --justfile .agents/script/research/justfile.research model [--help]` 取得模型 ID；stdout 只輸出 ID，診斷與 help 走 stderr。
+   解析成功後 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m --model <解析結果>`，
+   留言會記錄每次研究呼叫實際使用的模型名稱。
    prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
    指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
