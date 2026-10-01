@@ -20,7 +20,8 @@
 #     container manager in both states (no box / an existing box). Guards
 #     fail when a verb or a label is missing from the table.
 #   - labels are the whole option surface because every script under
-#     script/ reads its arguments in ONE `while [[ $# -gt 0 ]]; do case "$1"`
+#     script/ whose source graph reaches lib/config.sh reads its arguments
+#     in ONE `while [[ $# -gt 0 ]]; do case "$1"`
 #     loop: a guard fails on a positional parameter used outside that loop
 #     by the entry function (or the parser it hands "$@" to), on a test of
 #     $1 other than the case, and on positional use at the top level.
@@ -322,9 +323,12 @@ _owner_runs() {
     assert_line -- "-h"
 }
 
-@test "structure guard: every script under script/ reads its arguments only in its one argument loop" {
-    local _f _out=""
+@test "structure guard: every script reaching config reads its arguments only in its one argument loop" {
+    local _f _mods _out=""
     for _f in "${REPO_ROOT}"/script/*/*.sh; do
+        _mods="$(graph_modules "${REPO_ROOT}" "${_f#"${REPO_ROOT}"/}")" \
+            || fail "unresolved source graph of ${_f}"
+        grep -qx 'lib/config.sh' <<<"${_mods}" || continue
         _out+="$(_parser_violations "${_f}")"
     done
     [[ -z "${_out}" ]] || fail "argument use outside the argument loop: ${_out}"
@@ -358,6 +362,21 @@ EOF
     assert_line --partial "rogue.sh:4: \$1 tested outside the case"
     assert_line --partial "rogue.sh:11: \$1 tested outside the case"
     assert_line --partial "2 argument loops (one is allowed)"
+}
+
+@test "parser guard ignores unrelated scripts and rejects a reachable rogue parser" {
+    local _tree="${BATS_TEST_TMPDIR}/repo" _filter='^structure guard: every script'
+    mkdir -p "${_tree}"
+    cp -R "${REPO_ROOT}/lib" "${REPO_ROOT}/script" "${REPO_ROOT}/test" "${_tree}/"
+    printf '%s\n' 'echo "$1"' >"${_tree}/script/test/unrelated.sh"
+    run bats --filter "${_filter}" "${_tree}/test/unit/config_owner_spec.bats"
+    assert_success
+
+    printf '%s\n' 'source "${LIB_DIR}/config.sh"' 'echo "$1"' \
+        >"${_tree}/script/test/unrelated.sh"
+    run bats --filter "${_filter}" "${_tree}/test/unit/config_owner_spec.bats"
+    assert_failure
+    assert_output --partial 'unrelated.sh:2: positional parameter at the top level'
 }
 
 @test "owner: every setup row reads and writes only the state file lib/config.sh names" {
