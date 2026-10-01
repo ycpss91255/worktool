@@ -610,7 +610,13 @@ _run_ci_gate() {
     local _flag="$1"
     shift
     case "${_flag}" in
-        --ci-lint)         _run_shellcheck ;;
+        --ci-lint)
+            _run_shellcheck
+            _info "Checking script layout and process artifacts"
+            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+                || _die "Script layout check failed"
+            _info "Script layout OK"
+            ;;
         --ci-unit)         _run_unit "$@" ;;
         --ci-matrix)       _run_matrix "$@" ;;
         --ci-integration)  _run_integration "$@" ;;

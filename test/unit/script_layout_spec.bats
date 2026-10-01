@@ -47,3 +47,14 @@ setup() {
     assert_failure 1
     assert_output --partial 'not a Git repository'
 }
+@test "lint rejects artifacts through the existing in-container gate" {
+    mkdir -p "${ROOT}/script/test" "${ROOT}/lib" "${ROOT}/bin"
+    cp "${REPO_ROOT}/script/test/test.sh" "${REPO_ROOT}/script/test/check-script-layout.sh" "${ROOT}/script/test/"
+    cp "${REPO_ROOT}/lib/log.sh" "${ROOT}/lib/"
+    printf '#!/bin/sh\nexit 0\n' > "${ROOT}/bin/shellcheck"
+    chmod +x "${ROOT}/bin/shellcheck"
+    touch "${ROOT}/failed.bak"
+    run env PATH="${ROOT}/bin:${PATH}" bash "${ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'failed.bak'
+}

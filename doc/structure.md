@@ -113,7 +113,7 @@ worktool/
 │   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、enforce_reply_language(Claude Stop 回覆語言,#281)、
 │   │   │                codex_apply_patch(Codex 編輯轉接層,#282))
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh、issue_body.sh);hook 以自身位置 source,不碰 repo 的 lib/
-│   ├── script/          agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
+│   ├── script/monitor/  agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
 │   ├── skills/          agent skill 的實體檔:i-have-adhd(#191)+ 工程類 skill(tdd、triage、wait-pr-ci ...,#189)
 │   └── memory/          agent memory 的實體檔 + MEMORY.md 索引
@@ -140,6 +140,16 @@ worktool/
 命名採全單數(沿用 init_ubuntu 慣例):`test/`、`script/`、`doc/`、`lib/`、
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
+`script/` 與 `.agents/script/` 的可執行腳本必須放在類型子目錄內，
+不得直接放在頂層；agent 的 Monitor 腳本放在 `.agents/script/monitor/`。
+`just test lint` 在 Docker 內檢查此規則，違反時列出檔名並失敗；
+`just test script-layout [--root <repo>]` 可指定檢查目錄，參數驗證與 help 由腳本負責。
+
+版本產物不得包含 `*.bak`、`*.orig`、`*.rej`、`*.log` 或任一層的
+`_backup/`、`review_log/` 目錄。清單只定義於
+`script/test/check-script-layout.sh` 的 `ARTIFACT_PATTERNS`，lint 檢查已追蹤
+及未被 ignore 的未追蹤路徑；已追蹤檔案即使符合 ignore 規則仍會檢查。
+本機已被 ignore 的未追蹤狀態檔不納入版本產物檢查。
 
 workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 main 的最新
 commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
