@@ -37,7 +37,7 @@ _registered_names() {
     local _settings="$1" _matcher="$2"
     jq -r --arg matcher "${_matcher}" '
         .hooks.PreToolUse[] | select(.matcher == $matcher) | .hooks[].command
-        | capture("/(?<name>[^/]+[.]sh)(?:[\\\"]*)$").name' "${_settings}"
+        | capture("/(?<name>[^/]+[.]sh)(?:[\\\"]*)(?: codex)?$").name' "${_settings}"
 }
 
 # --- layout ------------------------------------------------------------------

@@ -30,7 +30,7 @@
           },
           {
             "type": "command",
-            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_milestone_gate_approval.sh\""
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_milestone_gate_approval.sh\" codex"
           },
           {
             "type": "command",
