@@ -171,3 +171,16 @@ EOF
     run jq -r '.hookSpecificOutput | .hookEventName + "|" + .additionalContext' <<<"${output}"
     assert_output "UserPromptSubmit|remember to sync"
 }
+
+@test "malformed input leaves hook_field empty and allows the decider" {
+    _write_hook <<'EOF'
+hook_bootstrap fieldtest
+HOOK_INPUT='invalid json'
+value="$(hook_field .cwd)"
+[[ -z "${value}" ]] || hook_block "unexpected value"
+hook_allow
+EOF
+    _run "anything"
+    assert_success
+    assert_output ""
+}

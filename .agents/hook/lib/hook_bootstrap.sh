@@ -75,7 +75,9 @@ hook_read_input() {
 hook_field() {
     local _filter="${1:?hook_field needs <jq-filter>}"
     command -v jq >/dev/null 2>&1 || return 0
-    printf '%s' "${HOOK_INPUT}" | jq -r "${_filter} // empty" 2>/dev/null
+    if ! printf '%s' "${HOOK_INPUT}" | jq -r "${_filter} // empty" 2>/dev/null; then
+        return 0
+    fi
 }
 
 # hook_command - shorthand for the Bash tool's command string.
