@@ -371,7 +371,8 @@ EOF
     _fake_gh fail
     cat > "${STUB_DIR}/rm" <<'STUB'
 #!/usr/bin/env bash
-exit 9
+if [[ "${2:-}" == /tmp/tmp.* ]]; then exit 9; fi
+exec /bin/rm "$@"
 STUB
     chmod +x "${STUB_DIR}/rm"
     run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
