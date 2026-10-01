@@ -1922,6 +1922,26 @@ _discuss_replies() {
     assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1",[["repair:compare:r1:1",true,true,true]]]'
 }
 
+@test "discuss: stops after one failed repair and reports the remaining original entries (#342)" {
+    local replies
+    replies="$(_discuss_replies | jq '{"repair:claude:": ."claude:"} + . |
+        ."claude:".reasons=["Initial unsupported judgment"] |
+        ."repair:claude:".reasons=["Still unsupported judgment"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.failed_reasons,
+        ([.calls[] | select(.label | startswith("repair:"))] | length),
+        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+    assert_output '["answer-failed",[{"agent":"claude","reason_index":1,"reason":"Still unsupported judgment"}],1,0]'
+    replies="$(_discuss_replies | jq '{"repair:compare:": ."compare:"} + . |
+        ."compare:".basis=["Initial unsupported basis"] |
+        ."repair:compare:".basis=["doc/contract.md:1", "Still unsupported basis"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.failed_basis,
+        ([.calls[] | select(.label | startswith("repair:"))] | length),
+        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '["compare-failed",[{"basis_index":2,"basis":"Still unsupported basis"}],1,0]'
+}
+
 @test "discuss: real dev box notes need no citations and both answer prompts separate them (#340)" {
     local replies json
     replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |

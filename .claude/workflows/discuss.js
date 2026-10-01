@@ -67,6 +67,8 @@ const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(cited) && Array.isArray(x.notes) && Array.isArray(x.risks)
 const failedReasons = (agent, x) => Array.isArray(x?.reasons)
   ? x.reasons.flatMap((reason, i) => cited(reason) ? [] : [{ agent, reason_index: i + 1, reason }]) : []
+const failedBasis = x => Array.isArray(x?.basis)
+  ? x.basis.flatMap((basis, i) => cited(basis) ? [] : [{ basis_index: i + 1, basis }]) : []
 const repairFormat = async (value, valid, failures, retry) => {
   for (let attempt = 1; !valid(value) && attempt <= FORMAT_REPAIR_LIMIT; attempt++) {
     const correction = `\nFormat validation failed. Only correct the format; preserve the judgments and do not invent evidence. Resubmit the complete object.\nFailed entries (original text): ${JSON.stringify(failures(value))}\nOriginal submission: ${JSON.stringify(value)}\nAcceptable evidence: issue URL, #N, repo-relative file:line, or grep:<pattern> in <path> -> N 筆 (whitespace and parentheses allowed; N is a non-negative integer). Follow the required schema.`
@@ -91,9 +93,8 @@ for (let n = 1; n <= 3; n++) {
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
   const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `repair:compare:r${n}:${attempt}` : `compare:r${n}`, phase: 'Compare', schema: VERDICT })
-  const verdict = await repairFormat(await compare(), validVerdict, x =>
-    Array.isArray(x?.basis) ? x.basis.filter(b => !cited(b)) : [], compare)
-  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
+  const verdict = await repairFormat(await compare(), validVerdict, failedBasis, compare)
+  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict) }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
   prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
