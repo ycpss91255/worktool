@@ -394,3 +394,12 @@ STUB
     assert_failure 1
     [[ ! -s "${STATE}" ]]
 }
+
+@test "reply filtering propagates state write failures in conditional callers" {
+    _row 5 901 maintainer hello
+    mkdir "${BATS_TEST_TMPDIR}/directory"
+    run bash -c 'source "$1"; rc=0; watch_replies_filter maintainer "$2" "$3" || rc=$?; exit "$rc"' _ \
+        "${SCRIPT}" "${BATS_TEST_TMPDIR}/directory" "${TSV}"
+    assert_failure 1
+    refute_output --partial "USER REPLY"
+}

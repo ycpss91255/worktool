@@ -64,13 +64,15 @@ watch_reply_is_user() {
 watch_replies_filter() {
     local _login="$1" _state="$2" _tsv="$3"
     local _num _id _author _b64 _body _preview
-    [[ -f "${_state}" ]] || : > "${_state}"
+    if [[ ! -f "${_state}" ]]; then
+        : > "${_state}" || return 1
+    fi
     while IFS=$'\t' read -r _num _id _author _b64; do
         [[ -n "${_id}" ]] || continue
         _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)" || return 1
         watch_reply_is_user "${_login}" "${_author}" "${_body}" || continue
         grep -qxF "${_id}" "${_state}" && continue
-        printf '%s\n' "${_id}" >> "${_state}"
+        printf '%s\n' "${_id}" >> "${_state}" || return 1
         _preview="$(printf '%s' "${_body}" | tr '\n\r\t' '   ' | cut -c1-200)"
         printf 'USER REPLY on #%s : %s\n' "${_num}" "${_preview}"
     done < "${_tsv}"
