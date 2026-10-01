@@ -286,3 +286,11 @@ _registered_names() {
     assert_failure 1
     assert_output ""
 }
+
+@test "agent docs identify the contract as the sole skill layout exception with its review rationale" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E 'contract\.md.*唯一.*例外.*同一個 PR.*悄悄脫鉤' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}

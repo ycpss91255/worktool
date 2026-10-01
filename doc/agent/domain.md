@@ -4,6 +4,7 @@
 
 ## 動手之前先讀這些
 
+- **[doc/contract.md](../contract.md)**：對外契約；這是文件結構偏離 skill 慣例的唯一例外：契約要與程式在同一個 PR 審查，避免悄悄脫鉤。
 - **`doc/design.md`**：願景、治理規則、已定共識、milestone 計畫。
 - **`doc/structure.md`**：目錄結構與對外介面（`just` 指令表、錯誤來源與結束碼）。
 - **`doc/enter.md`**、**`doc/manifest.md`**：終端自動進盒與盒子清單兩塊的行為與格式。
@@ -26,6 +27,7 @@
     ├── agent/
     ├── diagram/
     ├── design.md
+    ├── contract.md
     ├── structure.md
     ├── enter.md
     ├── manifest.md

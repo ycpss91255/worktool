@@ -7,6 +7,8 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 五個標準狀態 = 同名標籤；另有 `needs-decision`（等維護者拍板）。見 `doc/agent/triage-labels.md`。
 
 ### Domain docs
+
+對外契約見 [doc/contract.md](doc/contract.md)；這是文件結構偏離 skill 慣例的唯一例外：契約要與程式在同一個 PR 審查，避免悄悄脫鉤。
 單一語境：整體設計與治理見 `doc/design.md`、對外介面見 `doc/structure.md`（`just` 指令表）與 `doc/enter.md`、`doc/manifest.md`、驗收見 `doc/acceptance.md`；名詞見根目錄 [CONTEXT.md](CONTEXT.md)、ADR 見 `doc/adr/`。見 `doc/agent/domain.md`。
 
 ### Agent 設定版面
