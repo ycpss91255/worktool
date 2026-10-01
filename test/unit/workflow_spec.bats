@@ -1630,6 +1630,36 @@ _discuss_replies() {
     refute_output --partial 'Co-Authored-By:'
 }
 
+@test "discuss: Record builds before a separate hook checked publication and removes stale bodies" {
+    local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted" json replies
+    scratch="${dir}/../worktree/.scratch/discuss-309"
+    mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
+    printf 'Unique codex text\ndoc/contract.md:9\n' > "${scratch}/codex-r1.md"
+    printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    DISCUSS_ARGS="$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:309,question:"q"}')"
+    replies="$(_discuss_replies | jq '."record:".url="<stdout>"')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "${replies}" exec-hooks
+    json="${output}"
+    run jq -cr '[.result.status,.result.comment]' <<<"${json}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
+    run jq -cr --arg body "${scratch}/body.md" '[
+        (.ran | length == 2), (.ran[0].rc == 0), (.ran[1].rc == 0),
+        (.ran[0].cmd | contains("gh issue comment") | not),
+        (.ran[1].cmd == ("gh issue comment 309 --repo '\''o/r'\'' --body-file '\''" + $body + "'\''"))
+    ]' <<<"${json}"
+    assert_output '[true,true,true,true,true]'
+    run cat "${posted}"
+    assert_output --partial '> Unique codex text'
+    # A failed rebuild must delete the old body and never attempt publication.
+    rm "${scratch}/codex-r1.md" "${posted}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "${replies}" exec-hooks
+    run jq -cr '[.result.status, (.ran | length), (.ran[0].rc != 0)]' <<<"${output}"
+    assert_output '["record-failed",1,true]'
+    [ ! -e "${scratch}/body.md" ]
+    [ ! -e "${posted}" ]
+}
+
 @test "discuss: deriving a decision requires cited evidence and records no maintainer question" {
     local replies
     replies="$(_discuss_replies | jq '."compare:".status="derived"')"
