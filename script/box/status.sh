@@ -125,7 +125,7 @@ _report() {
     while IFS= read -r _key; do
         _report_key "${_key}"
     done < <(enter_keys)
-    _report_block ghostty "$(enter_ghostty_config)"
+    _report_block ghostty "$(enter_ghostty_target)"
     _report_block distrobox.conf "$(enter_distrobox_conf)"
     _report_distrobox
     _report_links
@@ -183,7 +183,7 @@ _report_home() {
 # line is never absent.
 _report_distrobox() {
     local _recorded
-    _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_config)")")"
+    _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_target)")")"
     if [[ -n "${_recorded}" ]]; then
         _report_recorded_distrobox "${_recorded}"
         return 0

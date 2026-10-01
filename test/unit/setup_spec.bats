@@ -1057,3 +1057,25 @@ _assert_control_char_refused() {
         _ "${LIB_DIR}" "${BATS_TEST_TMPDIR}/cfg" "${_bin}"
     assert_failure 2
 }
+
+@test "#173: selection prefers an existing config.ghostty and otherwise uses legacy without creating the new name" {
+    local _new="${GHOSTTY}.ghostty" _mode _target
+    for _mode in neither legacy new both; do
+        rm -rf "${HOME}/.config"
+        mkdir -p "$(dirname -- "${GHOSTTY}")"
+        case "${_mode}" in legacy|both) printf 'theme = dark\n' >"${GHOSTTY}" ;; esac
+        case "${_mode}" in new|both) printf 'font-size = 14\n' >"${_new}" ;; esac
+        _target="${GHOSTTY}"
+        case "${_mode}" in new|both) _target="${_new}" ;; esac
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        assert_line --partial "[INFO] ghostty config: ${_target} (config.ghostty"
+        run cat "${_target}"
+        assert_line "${CMD_ENTER}"
+        case "${_mode}" in
+            neither|legacy) assert [ ! -e "${_new}" ] ;;
+            new) assert [ ! -e "${GHOSTTY}" ] ;;
+            both) assert_equal "$(cat "${GHOSTTY}")" 'theme = dark' ;;
+        esac
+    done
+}

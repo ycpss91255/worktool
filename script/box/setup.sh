@@ -282,7 +282,7 @@ _resolve() {
 # whole run untouched.
 _blocks_check() {
     local _file _problem _rc=0
-    for _file in "$(enter_distrobox_conf)" "$(enter_ghostty_config)"; do
+    for _file in "$(enter_distrobox_conf)" "$(enter_ghostty_target)"; do
         _problem="$(enter_block_check "${_file}")" && continue
         log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
         _rc=1
@@ -310,6 +310,12 @@ _resolve_all() {
         log_info "terminal detected: ${_detected%% *} (${_detected#* })"
     fi
     log_info "box: ${BOX} (${BOX_SRC})"
+    GHOSTTY_TARGET="$(enter_ghostty_target)"
+    if [[ "${GHOSTTY_TARGET}" == *.ghostty ]]; then
+        log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty exists)"
+    else
+        log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty absent; legacy fallback)"
+    fi
     # Only the paths that WRITE a managed command need a distrobox, and
     # they need it before anything is written, so a refusal leaves the
     # whole run untouched.
@@ -434,7 +440,7 @@ _apply_ghostty() {
     # DISTROBOX was resolved (and the run refused if it could not be) in
     # _resolve_all, before any file was touched. The body is shell source,
     # so the path goes in as a quoted shell word.
-    _block_write "$(enter_ghostty_config)" \
+    _block_write "$(enter_ghostty_target)" \
         "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
 }
 
@@ -448,13 +454,13 @@ _apply_ghostty() {
 # of issue #175 is for the managed command, which a desktop session runs.
 _apply_no_terminal() {
     log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
-    _block_remove "$(enter_ghostty_config)"
+    _block_remove "$(enter_ghostty_target)"
 }
 
 # auto-enter no: restore the host shell by removing the managed block,
 # reporting the file either way.
 _apply_disable() {
-    _block_remove "$(enter_ghostty_config)" report
+    _block_remove "$(enter_ghostty_target)" report
 }
 
 # Every run: the distrobox.conf block that keeps a caller's TMUX / TMUX_PANE
