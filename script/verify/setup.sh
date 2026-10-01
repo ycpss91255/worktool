@@ -954,11 +954,9 @@ _item_3_3() {
         '[INFO] auto-enter: no (user)' \
         '[INFO] terminal: ghostty (default)' \
         '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
-        '[INFO] tmux: inside (default)' \
         '[INFO] box: dev (default)' \
         '[INFO] wrote: <H>/.config/worktool/config' \
         "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
-        '[INFO] nothing to remove: <H>/.tmux.conf (no managed block)' \
         || _bad=1
     # Removing needs no distrobox, so the document shows no `distrobox:`
     # decision line here. An implementation that resolved one anyway would
@@ -968,6 +966,11 @@ _item_3_3() {
 
     _blocks="$(_count_matching 'BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
     printf 'blocks=%s\n' "${_blocks}"
+    _run_norm "${_env[@]}" just box status || return 1
+    _expect_lines 3.3 \
+        'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)' \
+        'ghostty: <H>/.config/ghostty/config (managed block: absent)' || _bad=1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     # `blocks=0` is equally true of a config the removal emptied, so the
     # user's own lines are counted again on the far side of the removal.
     _expect_user_content 3.3 after-removal || _bad=1

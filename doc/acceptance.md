@@ -748,32 +748,13 @@ rc=0
       just verify setup 3.2; echo rc=$?
       ```
       預期 `rc=0`。狀態檔全文逐行比對；受管區塊必須放進使用者設定，既有內容必須完整保留。`~/.tmux.conf` 僅作為不得被改動的使用者檔案。
-  - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);移除前確實有一個受管區塊,移除後只剩零個
-    - 預期看到資訊(第一次 setup 的輸出略,從它留下的受管區塊數起)
-      ```text
-      user-content after-write: ghostty=intact tmux.conf=intact
-      blocks-before=1
-      ./script/box/setup.sh "$@"
-      [INFO] auto-enter: no (user)
-      [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable <G>)
-      [INFO] tmux: inside (default)
-      [INFO] box: dev (default)
-      [INFO] wrote: <H>/.config/worktool/config
-      [INFO] removed: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
-      [INFO] nothing to remove: <H>/.tmux.conf (no managed block)
-      rc=0
-      blocks=0
-      user-content after-removal: ghostty=intact tmux.conf=intact
-      rc=0
-      ```
-      (`--auto-enter no` 只移除,不需要解析 distrobox,所以沒有 `[INFO] distrobox:` 那行 —— 這個「沒有」也在判準內。`blocks=0` 只在檔案讀得到時才印得出來:`grep -c` 的 1 是「零個相符」、2 才是「檔案讀不到」,腳本把兩者分開。
-      `blocks-before=1` 是判準的另一半:對一個**從來就沒有受管區塊**的設定檔來說,「區塊被移除了」是恆真的,所以先量第一次 setup 到底有沒有寫出區塊,再去判它有沒有被移掉;`blocks-before=0` 直接紅。中間八行的內容同樣逐行比對、各只能出現一次。
-      `blocks=0` 同樣是「把整份設定清空」也會成立的話 —— 移除是最容易寫成覆寫、也最傷的一步 —— 所以使用者內容在移除的**兩側**各查一次:`after-write` 先把寫入那一步洗清,`after-removal` 才能把帳算到移除頭上)
+  - [ ] 3.3 `--auto-enter no` 移除 Ghostty 受管 command，保留 distrobox.conf 的 TMUX／TMUX_PANE 隔離區塊（PR #232）
+    - 預期看到資訊：`blocks-before=1`、`blocks=0`、`ghostty: <H>/.config/ghostty/config (managed block: absent)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`。`user-content after-write` 與 `after-removal` 都是 `ghostty=intact tmux.conf=intact`；沒有 tmux 決策或 tmux.conf 移除訊息。
     - 驗收方式
       ```bash
       just verify setup 3.3; echo rc=$?
       ```
+      預期 `rc=0`；先量區塊確實存在，再判斷移除，並比對使用者內容。
   - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
     - 預期看到資訊
       ```text

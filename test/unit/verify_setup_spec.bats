@@ -1243,3 +1243,11 @@ EOF
     assert_line "home: not recorded (run: just box assemble)"
     refute_output --partial "tmux: inside"
 }
+
+@test "3.3: disabling auto-entry preserves distrobox isolation" {
+    run "${VERIFY}" 3.3
+    assert_success
+    assert_line "blocks-before=1"
+    assert_line "blocks=0"
+    refute_output --partial "tmux: inside"
+}
