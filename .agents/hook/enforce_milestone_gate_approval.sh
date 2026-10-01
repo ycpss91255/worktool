@@ -832,10 +832,11 @@ _check_http() {
 # unknown interpreter, plain text): block. Plain text that merely mentions
 # such a call (a commit message, an echo) is blocked too.
 _tripwire() {
-    local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase
+    local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase _rc=0
     local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
     local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
-    _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
+    _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)" || _rc=$?
+    [[ "${_rc}" -le 1 ]] || _fail_closed "cannot count raw gh launches"
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
         && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]] \

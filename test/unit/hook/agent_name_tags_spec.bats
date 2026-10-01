@@ -65,3 +65,11 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
     assert_success
     assert_output ""
 }
+
+@test "approval tripwire allows text with no relevant gh launch" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"pwd"}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}
