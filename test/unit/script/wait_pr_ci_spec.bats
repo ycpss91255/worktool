@@ -183,3 +183,9 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     assert_failure 1
     refute_output --partial "UNREACHABLE"
 }
+
+@test "wait CI serves help after capturing its non-zero parse result" {
+    run "${SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage: wait-pr-ci.sh"
+}

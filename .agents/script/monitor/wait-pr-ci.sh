@@ -210,8 +210,9 @@ _poll_all() {
 }
 
 main() {
-    _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    local _parse_rc=0
+    _parse_args "$@" || _parse_rc=$?
+    if [[ "${_parse_rc}" -eq 3 ]]; then
         _usage
         return 0
     fi
