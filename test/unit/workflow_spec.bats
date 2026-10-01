@@ -333,13 +333,14 @@ _pl_blocked_run() {
     done
 }
 
-@test "pr-loop (node): Implement and Fix preserve pushed history and merge main" {
+@test "pr-loop (node): Implement and Fix preserve pushed history except for the commit-email remedy" {
     local implementer
     for implementer in codex claude; do
         run _pl_run "{\"implementer\":\"${implementer}\"}"
         assert_success
         run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
             contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
             contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
         assert_success
         assert_output "true"
@@ -348,6 +349,7 @@ _pl_blocked_run() {
         assert_success
         run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
             contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
             contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
         assert_success
         assert_output "true"
