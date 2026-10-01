@@ -48,7 +48,7 @@ worktool/
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
-│   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
+│   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、agent 標記開頭、正確核准(#187)
 │   │   ├── attribution_spec.bats  lib/attribution.sh:三種署名行在任何位置、大小寫都抓到並原樣列出,只提到 claude 的一般文字不算(#270)
 │   │   ├── commit_attribution_spec.bats  lib/commit_attribution.sh:三種署名、正常訊息、merge commit、範圍外舊 commit 與 PR 說明(#271)
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
@@ -436,7 +436,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 - **規則**:貼了 `milestone-gate` 標籤的 PR(milestone 驗收 PR)合併前,必須有維護者在
   該 PR 上留下核准紀錄;沒貼標籤的 PR 不受影響。
 - **核准格式**:一則留言,作者 `author_association` 為 `OWNER`,本文(忽略開頭空白)不以
-  `[claude]` 或 `[codex]` 開頭,內容含「允許合併」。
+  任一 agent 名稱標記(`[claude]`、`[codex]`、`[agy]`、`[gemini]`)開頭,內容含「允許合併」。
 - **機制**:`.github/workflows/milestone-gate.yml` 觸發於 `pull_request_target`(opened、
   synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
   deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
@@ -466,7 +466,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
     `gh api graphql` 的合併 mutation(`mergePullRequest`、`enablePullRequestAutoMerge`、
     `mergeBranch`)一律擋。
   - **留言一律帶 agent 標記**(#190「範圍修訂」,取代原本「未標記且含核准字樣才擋」):agent
-    送出的每一則留言類內文,開頭(去掉前導空白後)不是 `[claude]` 或 `[codex]` 就擋,不論是否
+    送出的每一則留言類內文,開頭(去掉前導空白後)不是自己的名稱標記就擋(#242),不論是否
     含「允許合併」;依據是 CI(#187)把開頭沒有標記的 OWNER 留言認定為維護者本人。適用
     `gh pr comment`、`gh issue comment`、有內文的 `gh pr review`、`gh pr|issue close|reopen`
     的 `--comment`/`-c`,以及 `gh api` 對 comments/reviews 端點的**寫入**(`issues/<n>/comments`、
@@ -478,7 +478,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
     `--editor`、`--web`)一律擋。PR/issue 的 create 內文不是留言,不在此規則內。GraphQL 的
     留言/review mutation(`addComment`、`updateIssueComment`、`addPullRequestReview`、
     `addPullRequestReviewComment`、`submitPullRequestReview` 等)一律擋。擋下訊息:agent 的留言
-    必須以 `[claude]` 或 `[codex]` 開頭,未標記的留言視為維護者本人(見 #187)。
+    必須以自己的名稱標記開頭,未標記的留言視為維護者本人(見 #187)。
   - **HTTP 方法(讀或寫)**(codex 第 9、10、11 輪):只有**寫入**才算。**任何資料旗標都算寫入**,
     不論方法(即使配 `-G`、`-X GET` 或 GET/HEAD;fail closed);**讀取只有「沒有資料旗標且方法為
     未指定/GET/HEAD」**。各工具的資料旗標(curl、wget、httpie、gh api)只定義在一個地方:
@@ -569,7 +569,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
       - 標記 × 操作 × 內文來源:標記(`[claude]`、`[codex]`、前導空白加標記、未標記、標記不在開頭、
         空內文)× 每個留言寫入操作 × 它適用的每種內文來源(`--body`、`-b`、`--body=`、`--body-file`、
         `-F`、here-string、heredoc;`--comment`/`-c`/`--comment=`;`-f`、`--raw-field`、`-F body=@`、
-        `--field body=@`、`--input`);未標記擋、有標記放行。GraphQL 的留言/review mutation(9 種)×
+        `--field body=@`、`--input`);未標記與外家標記擋、自己的標記放行。GraphQL 的留言/review mutation(9 種)×
         標記 × 內文來源(`-f query=`、`-F query=@檔案`、`--input`、`--raw-field`)全部擋(這些
         mutation 一律擋)。
       - 單一來源的行為守門:複製一份 hook 樹,只在 `hook_http_data_flags` 表裡加一個虛構旗標
