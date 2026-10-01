@@ -563,15 +563,12 @@ _check_api_merge() {
 
 # _judge_body <body> <source> - the tag rule (issue #190 scope revision):
 # every comment an agent posts starts, after leading whitespace, with
-# [claude] or [codex]; an untagged (or empty) one blocks, phrase or not.
+# its own agent marker; an untagged (or empty) one blocks, phrase or not.
 # CI (#187) takes an untagged OWNER comment as the maintainer's own.
 _judge_body() {
-    local _b="${1#"${1%%[![:space:]]*}"}"
-    case "${_b}" in
-        '[claude]'*|'[codex]'*) return 0 ;;
-    esac
-    hook_block "$2: comments posted by an agent must start with [claude] or [codex]; untagged comments count as the maintainer's own (see #187)." \
-        "Start the body with [claude] (or [codex]) and retry; never write the maintainer's approval."
+    approval_has_agent_marker "${_AGENT}" "$1" && return 0
+    hook_block "$2: comments posted by this agent must start with [${_AGENT}]; untagged comments count as the maintainer's own (see #187)." \
+        "Start the body with [${_AGENT}] and retry; never write the maintainer's approval."
 }
 
 # _read_body <file> <source> - print a body file, blocking when unreadable.
@@ -865,4 +862,6 @@ main() {
     hook_allow
 }
 
-main "$@"
+_AGENT="${1:-claude}"
+case "${_AGENT}" in claude|codex|agy|gemini) ;; *) hook_block "unknown agent '${_AGENT}'" ;; esac
+main
