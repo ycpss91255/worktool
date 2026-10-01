@@ -256,11 +256,26 @@ _run_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
-    docker run --rm -e WORKTOOL_TEST_JOBS \
+    local _layout_paths="" _rc=0
+    local _layout_env=()
+    if [[ "${_flag}" == --ci-lint ]]; then
+        mkdir -p "${REPO_ROOT}/.agents/state"
+        _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
+        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
+            rm -f "${_layout_paths}"
+            _die "could not enumerate repository paths for lint"
+        fi
+        _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    fi
+    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
-        ./script/test/test.sh "${_flag}" "$@"
+        ./script/test/test.sh "${_flag}" "$@" || _rc=$?
+    if [[ -n "${_layout_paths}" ]]; then
+        rm -f "${_layout_paths}"
+    fi
+    return "${_rc}"
 }
 
 # Build the ubuntu image that carries a real ghostty (always built here:
@@ -610,7 +625,13 @@ _run_ci_gate() {
     local _flag="$1"
     shift
     case "${_flag}" in
-        --ci-lint)         _run_shellcheck ;;
+        --ci-lint)
+            _run_shellcheck
+            _info "Checking script layout and process artifacts"
+            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+                || _die "Script layout check failed"
+            _info "Script layout OK"
+            ;;
         --ci-unit)         _run_unit "$@" ;;
         --ci-matrix)       _run_matrix "$@" ;;
         --ci-integration)  _run_integration "$@" ;;
@@ -716,8 +737,8 @@ _changed_hook_path_map() {
 .agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
 .agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats
 .agents/hook/lib/subcommand.sh|test/unit/hook/subcommand_spec.bats
-.agents/script/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
-.agents/script/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
+.agents/script/monitor/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
+.agents/script/monitor/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP
 }
 

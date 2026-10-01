@@ -60,9 +60,9 @@ _registered_names() {
 @test "the agent scripts are executable real files" {
     local _s
     for _s in watch-user-replies.sh wait-pr-ci.sh; do
-        assert [ -f "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ ! -L "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ -x "${REPO_ROOT}/.agents/script/${_s}" ]
+        assert [ -f "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ ! -L "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ -x "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
     done
 }
 
@@ -222,7 +222,7 @@ _registered_names() {
 @test "the wait-pr-ci skill names only scripts this repo carries" {
     run grep -nE 'wait-pr-ci-batch|wait-tag-ci|rebase-pr' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     assert_failure 1
-    run grep -c '.claude/script/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
+    run grep -c '.claude/script/monitor/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     refute_output "0"
 }
 
