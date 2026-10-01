@@ -266,3 +266,7 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 回傳 `{ issue, status, rounds, conclusion, basis, disagreements, ask_maintainer, claude, codex, comment }`。
 成功的 `status` 是 `agreed`／`derived`／`diverged`；nonce、作答、比對或留言失敗分別為
 `setup-failed`／`answer-failed`／`compare-failed`／`record-failed`，失敗不冒充定案。
+`answer-failed` 另帶 `failed_reasons`，每項為 `{ agent, reason_index, reason }`：
+`agent` 是 `claude` 或 `codex`，`reason_index` 從 1 起算，`reason` 保留未通過依據檢查的理由原文。
+雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
+而沒有可列出的未通過理由，`failed_reasons` 為空陣列。

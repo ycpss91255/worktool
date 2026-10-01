@@ -63,6 +63,8 @@ const VERDICT = { type: 'object', properties: {
 }, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
 const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|#[1-9][0-9]*\b|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*:[1-9][0-9]*/.test(b)
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(cited) && Array.isArray(x.risks)
+const failedReasons = (agent, x) => Array.isArray(x?.reasons)
+  ? x.reasons.flatMap((reason, i) => cited(reason) ? [] : [{ agent, reason_index: i + 1, reason }]) : []
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
 const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: 'nonce:', phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
 if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
@@ -70,7 +72,10 @@ let prior = null
 let result
 for (let n = 1; n <= 3; n++) {
   const [claude, codex] = await parallel([() => ask('claude', n, prior), () => ask('codex', n, prior)])
-  if (!validAnswer(claude) || !validAnswer(codex)) return { issue: A.issue, status: 'answer-failed', rounds: n }
+  if (!validAnswer(claude) || !validAnswer(codex)) return {
+    issue: A.issue, status: 'answer-failed', rounds: n,
+    failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
+  }
   const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(claude)}\nCodex: ${JSON.stringify(codex)}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N or file:line). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
   if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
