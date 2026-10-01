@@ -146,7 +146,7 @@ _checks_state() {
                 and (\$c | all((.completedAt | fromdateiso8601) > (\$ws - \$sw)))
              then \"pending\" else \"all-pass\" end)
           elif (\$c | any(.conclusion != null and .conclusion != \"SUCCESS\")) then \"FAIL\"
-          else \"pending\" end" <<<"$1" 2>/dev/null)"
+          else \"pending\" end" <<<"$1" 2>/dev/null)" || _state=pending
     printf '%s' "${_state:-pending}"
 }
 

@@ -197,3 +197,9 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     assert_output --partial "checks=pending"
     assert_output --partial "max-iterations (2) reached"
 }
+
+@test "invalid check filters remain pending under errexit" {
+    run bash -c 'source "$1"; CHECK_FILTER="["; _checks_state "{}" 0' _ "${SCRIPT}"
+    assert_success
+    assert_output "pending"
+}
