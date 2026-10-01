@@ -1235,8 +1235,10 @@ _rv_assert_fails_closed() {
     assert_output "4"
     run bash -c 'for f in "$1"/*; do [ "$(wc -c < "$f")" -lt 65536 ] || exit 1; done' _ "${comments}"
     assert_success
+    run bash -c 'for f in "$1"/*; do case "$(head -n 1 "$f")" in "[claude]"*) ;; *) exit 1 ;; esac; done' _ "${comments}"
+    assert_success
     run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
-    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '### claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
     assert_success
     run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
