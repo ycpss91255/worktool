@@ -48,7 +48,7 @@ worktool/
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
 │   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
-│   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、[claude]/[codex] 開頭、正確核准(#187)
+│   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、agent 標記開頭、正確核准(#187)
 │   │   ├── attribution_spec.bats  lib/attribution.sh:三種署名行在任何位置、大小寫都抓到並原樣列出,只提到 claude 的一般文字不算(#270)
 │   │   ├── commit_attribution_spec.bats  lib/commit_attribution.sh:三種署名、正常訊息、merge commit、範圍外舊 commit 與 PR 說明(#271)
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
@@ -126,12 +126,14 @@ worktool/
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
+├── .gemini/
+│   └── settings.json    Gemini BeforeTool 留言 hook 註冊
 ├── .codex/
 │   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
-├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
+├── justfile             使用者介面入口:三行 `mod?`(test / box / agent)+ `default`(= just --list)
 └── .github/workflows/
     ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
@@ -158,13 +160,39 @@ workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 ma
 commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
 `<workspace>/worktree/.scratch/<name>`。repo checkout 內不建立 worktree 或 scratch。
 
-## Codex hook
+## Agent hook
 
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
 PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
 worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
-`CLAUDE_PROJECT_DIR`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
+`CLAUDE_PROJECT_DIR`。留言 guard 在 Codex command 末尾傳入 `codex`，
+Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
 所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+
+`.agents/hooks.json` 在 agy 的 `PreToolUse`／`run_command` 註冊
+`.agents/hook/agy_comment.sh`，把實測的 `toolCall.args.CommandLine`、`Cwd`
+轉成 Bash payload。`.gemini/settings.json` 在 `BeforeTool`／`run_shell_command`
+註冊 `.agents/hook/gemini_comment.sh`，沿用 `tool_input.command`。
+兩者分別傳入 `agy`、`gemini`。agy 將共用 hook 的拒絕與 stderr 理由轉成
+stdout 的 `{"decision":"deny","reason":"..."}`，以 exit 0 交給 CLI 解析；
+通過時維持靜默，保留既有權限檢查。Gemini 沿用 exit 2、stderr 拒絕工具。
+agy 出口契約見[官方文件](https://antigravity.google/docs/hooks)。
+四家共用 `enforce_milestone_gate_approval.sh` 的留言內容與 shell 解析，
+以及 `lib/approval.sh` 的自身標記判定；去掉前導空白後，只放行自己的
+`[claude]`、`[codex]`、`[agy]` 或 `[gemini]`，外家標記仍拒絕。
+
+2026-10-01 的 headless 實測及環境限制記在
+[#242 實測留言](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928231226)
+與 [agy 拒絕格式更正及實機驗證](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928827779)。
+Codex 在 worktree 子路徑下，即使加 bypass 與 `--no-daemon`，仍未證明本
+worktree 的新版留言 hook 被載入；不能只憑 PreToolUse 事件存在判定安全。
+因此 headless 啟動使用 `just agent codex -- <Codex 參數...>`：清掉四種
+GitHub token，使用 `.agents/state/` 下的空 HOME、GH_CONFIG_DIR 與
+XDG_CONFIG_HOME，退出刪除暫存目錄。CODEX_HOME 保留供 Codex 自己登入，
+沒有建立使用者層級設定。這隔離預設 gh 認證，仍保留網路；不是阻止同一使用者
+刻意指定原始憑證絕對路徑的 sandbox，沿用 #242／#190 的已知限制。
+原始 Codex read-only sandbox 在此主機遭 bubblewrap 拒絕，agy sandbox
+也拒絕探測命令，因此不能宣稱其 sandbox 內的憑證或網路可達性已驗證。
 
 Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
 `.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
@@ -212,6 +240,8 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | 指令 | 實際執行 |
 |------|----------|
 | `just` | `just --list`(列出命名空間) |
+| `just agent` | 列出 agent 啟動動作 |
+| `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
@@ -410,7 +440,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 - **規則**:貼了 `milestone-gate` 標籤的 PR(milestone 驗收 PR)合併前,必須有維護者在
   該 PR 上留下核准紀錄;沒貼標籤的 PR 不受影響。
 - **核准格式**:一則留言,作者 `author_association` 為 `OWNER`,本文(忽略開頭空白)不以
-  `[claude]` 或 `[codex]` 開頭,內容含「允許合併」。
+  任一 agent 名稱標記(`[claude]`、`[codex]`、`[agy]`、`[gemini]`)開頭,內容含「允許合併」。
 - **機制**:`.github/workflows/milestone-gate.yml` 觸發於 `pull_request_target`(opened、
   synchronize、reopened、labeled、unlabeled)與 `issue_comment`(created、edited、
   deleted;只處理 PR 的留言),以 `gh api` 取標籤與留言,把留言轉成
@@ -440,7 +470,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
     `gh api graphql` 的合併 mutation(`mergePullRequest`、`enablePullRequestAutoMerge`、
     `mergeBranch`)一律擋。
   - **留言一律帶 agent 標記**(#190「範圍修訂」,取代原本「未標記且含核准字樣才擋」):agent
-    送出的每一則留言類內文,開頭(去掉前導空白後)不是 `[claude]` 或 `[codex]` 就擋,不論是否
+    送出的每一則留言類內文,開頭(去掉前導空白後)不是自己的名稱標記就擋(#242),不論是否
     含「允許合併」;依據是 CI(#187)把開頭沒有標記的 OWNER 留言認定為維護者本人。適用
     `gh pr comment`、`gh issue comment`、有內文的 `gh pr review`、`gh pr|issue close|reopen`
     的 `--comment`/`-c`,以及 `gh api` 對 comments/reviews 端點的**寫入**(`issues/<n>/comments`、
@@ -452,7 +482,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
     `--editor`、`--web`)一律擋。PR/issue 的 create 內文不是留言,不在此規則內。GraphQL 的
     留言/review mutation(`addComment`、`updateIssueComment`、`addPullRequestReview`、
     `addPullRequestReviewComment`、`submitPullRequestReview` 等)一律擋。擋下訊息:agent 的留言
-    必須以 `[claude]` 或 `[codex]` 開頭,未標記的留言視為維護者本人(見 #187)。
+    必須以自己的名稱標記開頭,未標記的留言視為維護者本人(見 #187)。
   - **HTTP 方法(讀或寫)**(codex 第 9、10、11 輪):只有**寫入**才算。**任何資料旗標都算寫入**,
     不論方法(即使配 `-G`、`-X GET` 或 GET/HEAD;fail closed);**讀取只有「沒有資料旗標且方法為
     未指定/GET/HEAD」**。各工具的資料旗標(curl、wget、httpie、gh api)只定義在一個地方:
@@ -543,7 +573,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
       - 標記 × 操作 × 內文來源:標記(`[claude]`、`[codex]`、前導空白加標記、未標記、標記不在開頭、
         空內文)× 每個留言寫入操作 × 它適用的每種內文來源(`--body`、`-b`、`--body=`、`--body-file`、
         `-F`、here-string、heredoc;`--comment`/`-c`/`--comment=`;`-f`、`--raw-field`、`-F body=@`、
-        `--field body=@`、`--input`);未標記擋、有標記放行。GraphQL 的留言/review mutation(9 種)×
+        `--field body=@`、`--input`);未標記與外家標記擋、自己的標記放行。GraphQL 的留言/review mutation(9 種)×
         標記 × 內文來源(`-f query=`、`-F query=@檔案`、`--input`、`--raw-field`)全部擋(這些
         mutation 一律擋)。
       - 單一來源的行為守門:複製一份 hook 樹,只在 `hook_http_data_flags` 表裡加一個虛構旗標
