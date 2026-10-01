@@ -169,6 +169,35 @@ const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "
 
 const result = (extra) => ({ issue: A.issue, ...extra })
 
+// Read fresh remote state rather than trusting an implementer's completion prose.
+const checkStage = async (pr, stage, before = '') => {
+  const script = `cd ${sq(WT)} && {
+errors=''
+status=$(git status --porcelain) || errors='git status failed; '
+local_head=$(git rev-parse HEAD) || errors="$errors local HEAD lookup failed; "
+remote_head=$(git ls-remote --exit-code origin ${sq(`refs/heads/${A.branch}`)}) || errors="$errors remote HEAD lookup failed; "
+remote_head=$(printf '%s' "$remote_head" | cut -f1)
+pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid) || errors="$errors PR head lookup failed; "
+jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'
+}`
+  const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
+Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
+    label: `stage-check:${stage}:#${pr}`,
+    schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+    agentType: 'general-purpose',
+  })
+  let state
+  try {
+    state = JSON.parse(checked.evidence)
+    if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('invalid evidence')
+  } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
+  const valid = ['status', 'localHead', 'remoteHead', 'prHead', 'errors'].every(k => typeof state[k] === 'string')
+  const ok = valid && !state.errors && !state.status && !!state.localHead &&
+    state.localHead === state.remoteHead && state.localHead === state.prHead &&
+    (!before || state.prHead !== before)
+  return { ok, sha: state.prHead, detail: `${stage} check failed: ${state.errors || ''}git status: ${state.status || '(clean)'}; local HEAD: ${state.localHead}; remote HEAD: ${state.remoteHead}; PR head: ${state.prHead}; before: ${before || '(Implement)'}` }
+}
+
 // Light finishes editing and independent diff review before publishing.
 if (MODE === 'light') {
   phase('Implement')
@@ -178,8 +207,8 @@ ${TDD_IMPLEMENT_RULES}
 Act directly as Claude; do not invoke codex or delegate implementation.
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}.
 TASK (issue #${A.issue}): ${A.task}
-For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed.`, { label: `implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] } }, required: ['status'] }, agentType: 'general-purpose' })
-  if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['light editing did not complete'] })
+For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
+  if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
   phase('Review')
   const reviewed = await agent(`${GUARDRAILS}
 ${SKILL_LOAD.claude}
@@ -192,6 +221,8 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
   phase('Locate')
   const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
+  const checked = await checkStage(loc.pr, 'Implement')
+  if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
   const ci = await agent(CI(loc.pr), { label: `ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
@@ -205,6 +236,9 @@ const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', 
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
+const implemented = await checkStage(pr, 'Implement')
+if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
+sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
@@ -233,6 +267,8 @@ for (;;) {
     ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
   await agent(fixBrief, { label: `fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  const checked = await checkStage(pr, 'Fix', sha)
+  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
   ci = await agent(CI(pr), { label: `ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
