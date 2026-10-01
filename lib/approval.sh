@@ -5,7 +5,7 @@
 # merged only after the maintainer records an approval on the PR itself.
 # An approval is a comment whose author_association is OWNER, whose body
 # (leading whitespace ignored) does not start with an agent marker
-# (`[claude]` or `[codex]`), and whose body contains the phrase 允許合併.
+# (`[claude]`, `[codex]`, `[agy]` or `[gemini]`), and whose body contains the phrase 允許合併.
 # A PR without the label is not an acceptance PR and always passes.
 #
 # The predicate is pure: it takes plain data and makes no GitHub API call,
@@ -14,6 +14,8 @@
 # caller's job.
 #
 # Public API:
+#   approval_has_agent_marker <agent> <body>
+#       -> 0 for the calling agent's own marker, 1 otherwise.
 #   approval_phrase
 #       -> prints the approval phrase (no newline), for a caller that must
 #          find it in text without restating it.
@@ -54,7 +56,7 @@ approval_is_human_approval() {
     # Ignore leading whitespace so ` [claude]` cannot pass as human.
     _body="${_body#"${_body%%[![:space:]]*}"}"
     case "${_body}" in
-        '[claude]'* | '[codex]'*) return 1 ;;
+        '[claude]'* | '[codex]'* | '[agy]'* | '[gemini]'*) return 1 ;;
     esac
     [[ "${_body}" == *"$(_approval_phrase)"* ]]
 }
@@ -74,4 +76,12 @@ approval_evaluate() {
     done
     printf '%s\n' "需要維護者留言:$(_approval_phrase)"
     return 1
+}
+
+# approval_has_agent_marker <agent> <body> - exact own marker after whitespace.
+approval_has_agent_marker() {
+    local _agent="$1" _body="$2"
+    case "${_agent}" in claude|codex|agy|gemini) ;; *) return 1 ;; esac
+    _body="${_body#"${_body%%[![:space:]]*}"}"
+    [[ "${_body}" == "[${_agent}]"* ]]
 }
