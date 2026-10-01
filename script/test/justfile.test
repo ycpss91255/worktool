@@ -76,4 +76,4 @@ help:
 
 # Check script directory layout and repository artifacts.
 script-layout *args:
-    ./script/test/check-script-layout.sh "$@"
+    @./script/test/check-script-layout.sh "$@"

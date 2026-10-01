@@ -17,3 +17,13 @@ setup() {
     assert_output --partial 'script/bad'
     assert_output --partial '.agents/script/bad'
 }
+@test "allows categorized scripts and ignores local state artifacts" {
+    mkdir -p "${ROOT}/script/repo" "${ROOT}/.agents/script/monitor" "${ROOT}/.agents/state"
+    touch "${ROOT}/script/repo/check" "${ROOT}/.agents/script/monitor/watch"
+    chmod +x "${ROOT}/script/repo/check" "${ROOT}/.agents/script/monitor/watch"
+    printf '.agents/state/\n' > "${ROOT}/.gitignore"
+    touch "${ROOT}/.agents/state/local.log"
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_success
+    assert_output ''
+}
