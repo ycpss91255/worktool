@@ -150,6 +150,9 @@ worktool/
 `script/test/check-script-layout.sh` 的 `ARTIFACT_PATTERNS`，lint 檢查已追蹤
 及未被 ignore 的未追蹤路徑；已追蹤檔案即使符合 ignore 規則仍會檢查。
 本機已被 ignore 的未追蹤狀態檔不納入版本產物檢查。
+為支援 linked worktree，host 執行器先以 Git 產生 NUL 分隔的路徑清單，
+暫存於 `.agents/state/`，容器用此清單檢查產物，結束後移除；
+不需掛載其他 checkout 的 Git metadata。
 
 workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 main 的最新
 commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在

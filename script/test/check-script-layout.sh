@@ -27,7 +27,7 @@ if [[ ! -d "${ROOT}" ]]; then
     log_error "repository not found: ${ROOT}"
     exit 1
 fi
-if ! git -C "${ROOT}" rev-parse --show-toplevel >/dev/null 2>&1; then
+if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]] && ! git -C "${ROOT}" rev-parse --show-toplevel >/dev/null 2>&1; then
     log_error "not a Git repository: ${ROOT}"
     exit 1
 fi
@@ -55,10 +55,18 @@ check_artifact() {
         done
     done
 }
-PATH_LIST="$(mktemp)"
-trap 'rm -f "${PATH_LIST}"' EXIT
-if ! git -C "${ROOT}" ls-files --cached --others --exclude-standard -z > "${PATH_LIST}"; then
-    log_error "could not enumerate repository paths: ${ROOT}"
+# Host lint supplies a snapshot because linked-worktree Git metadata is
+# outside /source. Direct callers enumerate their selected repository.
+PATH_LIST="${WORKTOOL_LAYOUT_PATHS:-}"
+if [[ -z "${PATH_LIST}" ]]; then
+    PATH_LIST="$(mktemp)"
+    trap 'rm -f "${PATH_LIST}"' EXIT
+    if ! git -C "${ROOT}" ls-files --cached --others --exclude-standard -z > "${PATH_LIST}"; then
+        log_error "could not enumerate repository paths: ${ROOT}"
+        exit 1
+    fi
+elif [[ ! -f "${PATH_LIST}" || ! -r "${PATH_LIST}" ]]; then
+    log_error "repository path list unreadable: ${PATH_LIST}"
     exit 1
 fi
 while IFS= read -r -d '' FILE; do

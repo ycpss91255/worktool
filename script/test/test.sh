@@ -256,11 +256,26 @@ _run_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
-    docker run --rm -e WORKTOOL_TEST_JOBS \
+    local _layout_paths="" _rc=0
+    local _layout_env=()
+    if [[ "${_flag}" == --ci-lint ]]; then
+        mkdir -p "${REPO_ROOT}/.agents/state"
+        _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
+        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
+            rm -f "${_layout_paths}"
+            _die "could not enumerate repository paths for lint"
+        fi
+        _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    fi
+    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
-        ./script/test/test.sh "${_flag}" "$@"
+        ./script/test/test.sh "${_flag}" "$@" || _rc=$?
+    if [[ -n "${_layout_paths}" ]]; then
+        rm -f "${_layout_paths}"
+    fi
+    return "${_rc}"
 }
 
 # Build the ubuntu image that carries a real ghostty (always built here:

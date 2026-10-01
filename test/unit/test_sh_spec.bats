@@ -47,7 +47,17 @@ if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; th
 fi
 exit 0
 EOF
-    chmod +x "${FAKE_BIN}/docker"
+    # The host dispatch test runs inside Docker: /source's worktree Git
+    # metadata is intentionally unavailable. Stub only that host listing.
+    cat >"${FAKE_BIN}/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -C && "$2" == "${REPO_ROOT}" && "$3" == ls-files ]]; then
+    printf 'script/test/test.sh\0'
+else
+    exec /usr/bin/git "$@"
+fi
+EOF
+    chmod +x "${FAKE_BIN}/docker" "${FAKE_BIN}/git"
     export PATH="${FAKE_BIN}:${PATH}"
     export TEST_IMAGE_PREBUILT=1
 }
@@ -302,4 +312,15 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run grep -E '^set -[a-z]+( pipefail)?$' "${TEST_SH}"
     assert_success
     assert_output 'set -euo pipefail'
+}
+
+@test "host lint supplies Git paths to Docker without another checkout mount" {
+    local root="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${root}/script/test"
+    cp "${TEST_SH}" "${root}/script/test/test.sh"
+    git -C "${root}" init -q
+    run bash "${root}/script/test/test.sh" --lint
+    assert_success
+    run grep -F 'WORKTOOL_LAYOUT_PATHS=/source/.agents/state/' "${FAKE_DOCKER_CALLS}"
+    assert_success
 }
