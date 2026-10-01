@@ -46,7 +46,7 @@ re-reads the cited code, especially when a finding contradicts a known-fixed
 state or sits near a function boundary.
 
 **Workflows accumulate worktrees.** Between batches, `git worktree remove
---force` every finished `.worktree/<name>` and `git worktree prune`; stale
+--force` every finished `../worktree/<name>` and `git worktree prune`; stale
 worktrees keep branches checked out and block a later `git switch`.
 
 Related: [[project-workflow-concurrency-ram-cap]].
