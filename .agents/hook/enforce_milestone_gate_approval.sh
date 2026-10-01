@@ -641,8 +641,8 @@ _check_api_fields() {
     local _typed="$1" _v _body _rc
     shift
     while IFS= read -r -d '' _v; do
-        _body="$(_api_field_body "${_v}" "${_typed}")"
-        _rc=$?
+        _rc=0
+        _body="$(_api_field_body "${_v}" "${_typed}")" || _rc=$?
         [[ "${_rc}" -eq 2 ]] && exit 2
         [[ "${_rc}" -eq 0 ]] && _judge_body "${_body}" "gh api comment body"
     done < <(_opt_values "$@")

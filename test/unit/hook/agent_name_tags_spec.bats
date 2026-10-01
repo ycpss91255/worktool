@@ -73,3 +73,11 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
     assert_success
     assert_output ""
 }
+
+@test "API comment fields skip metadata before judging the marked body" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"gh api repos/o/r/issues/1/comments -f title=metadata -f \"body=[claude]\""}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}
