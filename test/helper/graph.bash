@@ -15,6 +15,7 @@
 #                                 every script under script/ that calls
 #                                 <function>, directly or through functions
 #                                 of the modules in its source graph
+#                                 no partial list on an unresolved graph
 #   graph_touches_config <tree> <file>
 #                                 0 when <file> (not lib/config.sh itself)
 #                                 names a public lib/config.sh function (every
@@ -89,7 +90,7 @@ _graph_functions() {
 # defined in the modules of their source graph: a script is listed when a
 # function it defines is in that call closure.
 graph_judges() {
-    local _tree="$1" _s _m _mods _defs _name _body _changed _f
+    local _tree="$1" _s _m _mods _defs _name _body _changed _f _judges=""
     local -A _in=()
     for _s in "${_tree}"/script/*/*.sh; do
         _s="${_s#"${_tree}"/}"
@@ -112,9 +113,11 @@ graph_judges() {
         done
         while IFS=$'\t' read -r _name _body; do
             if [[ -n "${_in[${_name}]:-}" ]]; then
-                printf '%s\n' "${_s}"
+                _judges+="${_s}"$'\n'
                 break
             fi
         done < <(_graph_functions "${_tree}" "${_s}")
     done
+    [[ -z "${_judges}" ]] || printf '%s' "${_judges}"
+    return 0
 }
