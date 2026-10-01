@@ -21,7 +21,7 @@ export const meta = {
 //     branch: "m3/150-bench",          // required: branch off origin/main
 //     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
-//     gates: "just test lint, ...",    // optional: default = the six tiers
+//     gates: "just test lint, ...",    // optional extra gates; default = lint + changed
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
 //     maxRounds: 3,                    // optional: number of Fix rounds allowed (0 = review once, never fix)
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
@@ -46,7 +46,7 @@ const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
-const GATES = A.gates || 'just test lint, just test unit, just test integration, just test system, just test acceptance, just test system-real'
+const GATES = A.gates || 'just test lint, just test changed'
 const PARENT = A.parent || ''
 const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
@@ -74,8 +74,9 @@ const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, s
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
+const LOCAL_TEST_RULES = `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and just test changed. Never run a whole tier locally; CI runs every tier.`
 const COMMON_GUARDRAILS = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
 const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
@@ -212,6 +213,6 @@ return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes,
 //   "name": "impl283",
 //   "task": "依 issue #283 的範圍與驗收實作。",
 //   "implementer": "codex",
-//   "gates": "just test lint, just test unit",
+//   "gates": "just test lint, just test changed",
 //   "maxRounds": 3
 // }
