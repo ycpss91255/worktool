@@ -173,7 +173,10 @@ Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 直接比較�
 `.agents/hook/agy_comment.sh`，把實測的 `toolCall.args.CommandLine`、`Cwd`
 轉成 Bash payload。`.gemini/settings.json` 在 `BeforeTool`／`run_shell_command`
 註冊 `.agents/hook/gemini_comment.sh`，沿用 `tool_input.command`。
-兩者均以 exit 2、stderr 拒絕工具，分別傳入 `agy`、`gemini`。
+兩者分別傳入 `agy`、`gemini`。agy 將共用 hook 的拒絕與 stderr 理由轉成
+stdout 的 `{"decision":"deny","reason":"..."}`，以 exit 0 交給 CLI 解析；
+通過時維持靜默，保留既有權限檢查。Gemini 沿用 exit 2、stderr 拒絕工具。
+agy 出口契約見[官方文件](https://antigravity.google/docs/hooks)。
 四家共用 `enforce_milestone_gate_approval.sh` 的留言內容與 shell 解析，
 以及 `lib/approval.sh` 的自身標記判定；去掉前導空白後，只放行自己的
 `[claude]`、`[codex]`、`[agy]` 或 `[gemini]`，外家標記仍拒絕。

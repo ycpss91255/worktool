@@ -30,13 +30,20 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 }
 
 @test "agy adapter rejects absent and foreign markers and accepts its own marker" {
-    local _body _expected
+    local _body _expected _result
     for _body in plain '[claude] text' '[codex] text' '[gemini] text' '  [agy] text'; do
-        _expected=2
-        [[ "${_body}" == *'[agy]'* ]] && _expected=0
+        _expected=deny
+        [[ "${_body}" == *'[agy]'* ]] && _expected=pass
         run bash -c 'jq -n --arg c "gh issue comment 242 --repo ycpss91255/worktool --body '\''$1'\''" '\''{toolCall:{name:"run_command",args:{CommandLine:$c,Cwd:"/tmp"}},workspacePaths:["/tmp"]}'\'' | "$2"' _ \
             "${_body}" "${REPO_ROOT}/.agents/hook/agy_comment.sh"
-        assert_equal "${status}" "${_expected}"
+        assert_success
+        if [[ "${_expected}" == pass ]]; then
+            assert_output ""
+        else
+            _result="${output}"
+            run jq -e '.decision == "deny" and (.reason | type == "string" and length > 0)' <<<"${_result}"
+            assert_success
+        fi
     done
 }
 
