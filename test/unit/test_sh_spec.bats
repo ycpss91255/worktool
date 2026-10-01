@@ -271,6 +271,13 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh rejects a missing spec path" {
+    run "${TEST_SH}" --unit test/unit/missing_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit/missing_spec.bats' does not exist (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
