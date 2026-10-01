@@ -1028,7 +1028,7 @@ EOF
     assert_output "1"
     run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|/usr/|/etc/|/dev/|server|\\\\Users|${src}|${ref}" "${body}"
     assert_output "0"
-    run grep -c '^<!-- research-verify:0123456789abcdef:comment:1/1 -->$' "${body}"
+    run grep -c 'comment:1/1 -->$' "${body}"
     assert_output "1"
     run grep -c '^\[claude\] agy 原文$' "${body}"
     assert_output "1"
@@ -1213,7 +1213,8 @@ _rv_assert_fails_closed() {
     done
 }
 
-@test "research-verify (node, exec): the stub-tool baseline records exactly one comment" {
+@test "research-verify (node, exec): a small research records exactly one unnumbered comment" {
+    local body="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7/body-1.md"
     run _rv_fail_case ok ok
     assert_success
     run jq -r '.error, .result.status, .result.comment' <<<"${output}"
@@ -1221,6 +1222,10 @@ _rv_assert_fails_closed() {
     run grep -c '^issue comment 7 ' "${BATS_TEST_TMPDIR}/gh.calls"
     assert_output "1"
     run wc -l < "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+    run grep -c '^第 [0-9].*則$' "${body}"
+    assert_output "0"
+    run grep -c 'comment:1/1 -->$' "${body}"
     assert_output "1"
 }
 
