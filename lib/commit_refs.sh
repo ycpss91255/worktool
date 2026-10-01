@@ -22,15 +22,16 @@ _commit_refs_has_footer() {
 }
 
 commit_refs_check_commits() {
-    local _repo="$1" _tmp _sha _message _bad=0 _n=0
+    local _repo="$1" _tmp _sha _committer _message _bad=0 _n=0
     shift
     _tmp="$(mktemp)" || return 1
-    if ! git -C "${_repo}" log --no-merges -z --format='%H%x00%B' "$@" -- > "${_tmp}"; then
+    if ! git -C "${_repo}" log --no-merges -z --format='%H%x00%ce%x00%B' "$@" -- > "${_tmp}"; then
         rm -f -- "${_tmp}"
         return 1
     fi
-    while IFS= read -r -d '' _sha && IFS= read -r -d '' _message; do
+    while IFS= read -r -d '' _sha && IFS= read -r -d '' _committer && IFS= read -r -d '' _message; do
         _n=$((_n + 1))
+        [[ "${_committer}" == 'noreply@github.com' ]] && continue
         _commit_refs_has_footer "${_message}" && continue
         log_error "${_sha} missing Refs: #<number> in the final paragraph."
         _bad=$((_bad + 1))

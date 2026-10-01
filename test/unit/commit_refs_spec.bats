@@ -44,3 +44,12 @@ _commit_refs() {
     run commit_refs_check_commits "${REPO}" HEAD
     assert_success
 }
+
+@test "GitHub web commits are exempt but normal noreply commits still need footers" {
+    GIT_COMMITTER_NAME='GitHub' GIT_COMMITTER_EMAIL='noreply@github.com' _commit_refs 'web edit'
+    run commit_refs_check_commits "${REPO}" HEAD
+    assert_success
+    GIT_COMMITTER_NAME='GitHub' GIT_COMMITTER_EMAIL='12345+test@users.noreply.github.com' _commit_refs 'local edit'
+    run commit_refs_check_commits "${REPO}" HEAD
+    assert_failure 1
+}
