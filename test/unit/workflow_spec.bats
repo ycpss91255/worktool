@@ -693,7 +693,7 @@ _rv_ok_replies() {
  "agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
- "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
+ "synthesize:": {"verified": ["v1"], "refuted": [], "disagreements": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
  "record:": {"url": "https://github.com/o/r/issues/7#issuecomment-1"},
  "repo-check:": {"extra": []}}
 JSON
@@ -702,6 +702,66 @@ JSON
 # $1 with the reply of label prefix $2 replaced by JSON $3.
 _rv_with() {
     jq -c --arg k "$2" --argjson v "$3" '.[$k] = $v' <<<"$1"
+}
+
+@test "research-verify #311: agy brief prioritizes Ubuntu Canonical and ROS precedents" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
+    assert_output --partial '前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充'
+}
+
+@test "research-verify #311: codex opens every source and preserves its verification verbatim" {
+    local dir="${BATS_TEST_TMPDIR}/repo" scratch json
+    scratch="${dir}/../worktree/.scratch/research-7"
+    _rv_stubs
+    _rv_stub codex 'cat > codex-input.txt; printf "codex\n[codex] 1. 來源支持主張 [官方文件 https://example.org/one]\n2. 來源不可讀，無法確認 [原始碼 https://example.org/two]\ntokens used\n5\n"'
+    git init -q "${dir}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    json="${output}"
+    run jq -r '.result.status' <<<"${json}"
+    assert_output recorded
+    run cat "${scratch}/codex-prompt.txt"
+    assert_output --partial '逐條開啟每個主張所引用的一手來源'
+    assert_output --partial '每條記錄來源是否支持主張'
+    assert_output --partial '來源不可讀或無法判定時標「無法確認」'
+    run _rv_codex_section "${scratch}/body-1.md"
+    assert_output "$(printf '%s\n' '[codex] 1. 來源支持主張 [官方文件 https://example.org/one]' '2. 來源不可讀，無法確認 [原始碼 https://example.org/two]')"
+}
+
+@test "research-verify #311: claude samples sources after codex verification" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    run jq -r '[.calls[].label | select(startswith("codex-verify:") or startswith("claude-verify:"))] | .[]' <<<"${json}"
+    assert_output "$(printf '%s\n' 'codex-verify:#7' 'claude-verify:#7')"
+    run jq -r '.calls[] | select(.label | startswith("claude-verify:")) | .prompt' <<<"${json}"
+    assert_output --partial 'Read codex'
+    assert_output --partial 'Sample a subset of cited primary sources'
+    assert_output --partial 'at least one'
+    refute_output --partial 'For EVERY numbered claim'
+}
+
+@test "research-verify #311: unresolved disagreements record both bases without choosing a side" {
+    local dir="${BATS_TEST_TMPDIR}/repo" replies json
+    _rv_stubs
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'synthesize:' '{"verified":[],"refuted":[],"disagreements":[{"claim":"c1 無法由來源判定","codexBasis":"codex: 官方文件未說明 https://example.org/one","claudeBasis":"claude: 原始碼不足以判定 https://example.org/two"}],"needsExperiment":[],"recommendation":"保留分歧，等待可判定的一手來源","parameters":[]}')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    json="${output}"
+    run jq -r '.result.status' <<<"${json}"
+    assert_output recorded
+    run jq -r '.calls[] | select(.label | startswith("synthesize:")) | .prompt' <<<"${json}"
+    assert_output --partial 'disagreements'
+    assert_output --partial 'Never choose a side'
+    refute_output --partial 'a claim any verifier refutes goes to'
+    run cat "${dir}/../worktree/.scratch/research-7/body-1.md"
+    assert_output --partial '### 分歧（不選邊）'
+    assert_output --partial 'c1 無法由來源判定'
+    assert_output --partial 'codex: 官方文件未說明 https://example.org/one'
+    assert_output --partial 'claude: 原始碼不足以判定 https://example.org/two'
 }
 
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
@@ -893,9 +953,7 @@ _rv_src_check() {
     assert [ "${fail_line}" -lt "${verify_line}" ]
 }
 
-@test "research-verify verifies with a claude agent and codex exec in parallel, codex fed the agy text on stdin" {
-    run grep -c 'await parallel(\[' "${RESEARCH}"
-    assert_output "1"
+@test "research-verify verifies with claude samples and codex exec, codex fed the agy text on stdin" {
     run grep -c "schema: CLAIMS_SCHEMA" "${RESEARCH}"
     assert_output "1"
     run grep -c "enum: \['supported', 'refuted', 'unverifiable'\]" "${RESEARCH}"
@@ -1233,9 +1291,16 @@ EOF
 @test "research-verify (node): a failed or malformed synthesis fails closed, nothing is posted" {
     local ok val
     ok="$(_rv_ok_replies)"
-    for val in 'null' '{"verified":[],"refuted":[],"needsExperiment":[],"parameters":[]}' \
+    for val in '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b","claudeBasis":"b","extra":"x"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b","claudeBasis":" "}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","claudeBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"","claudeBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":{}}' \
+               'null' '{"verified":[],"refuted":[],"needsExperiment":[],"parameters":[]}' \
                '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"","parameters":[]}' \
-               '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
+               '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
         run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'synthesize:' "${val}")"
         assert_success
         run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("record:"))] | length)' <<<"${output}"
@@ -1419,8 +1484,8 @@ _rv_assert_fails_closed() {
     assert_success
     run bash -c 'for f in "$1"/*; do case "$(head -n 1 "$f")" in "[claude]"*) ;; *) exit 1 ;; esac; done' _ "${comments}"
     assert_success
-    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
-    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 來源抽查" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 來源抽查' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
     assert_success
     run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
@@ -1475,7 +1540,7 @@ _rv_assert_fails_closed() {
     _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-1'"
     git init -q "${dir}"
     replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
-    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
+    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],disagreements:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
 
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
     assert_success
@@ -1571,7 +1636,7 @@ _rv_assert_fails_closed() {
     assert_success
     local json="${output}"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
-    assert_output "agy: claude-verify: codex-verify: synthesize: record: repo-check:"
+    assert_output "agy: codex-verify: claude-verify: synthesize: record: repo-check:"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
