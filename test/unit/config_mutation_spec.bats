@@ -778,9 +778,10 @@ done < <(_rows)
     run _owner_module_violations "${_tree}"
     assert_output ""
 
-    printf '%s\n' 'source "${LIB_DIR}/config.sh"' \
-        'audit_path() { printf "%s/worktool/config\n" "${XDG_CONFIG_HOME}"; }' \
-        >"${_tree}/script/test/isolated.sh"
+    cat >"${_tree}/script/test/isolated.sh" <<'EOF'
+source "${LIB_DIR}/config.sh"
+audit_path() { printf "%s/worktool/config\n" "${XDG_CONFIG_HOME}"; }
+EOF
     run _owner_module_violations "${_tree}"
     assert_line 'module names the config API but has no owner row: script/test/isolated.sh'
 }

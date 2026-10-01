@@ -368,12 +368,16 @@ EOF
     local _tree="${BATS_TEST_TMPDIR}/repo" _filter='^structure guard: every script'
     mkdir -p "${_tree}"
     cp -R "${REPO_ROOT}/lib" "${REPO_ROOT}/script" "${REPO_ROOT}/test" "${_tree}/"
-    printf '%s\n' 'echo "$1"' >"${_tree}/script/test/unrelated.sh"
+    cat >"${_tree}/script/test/unrelated.sh" <<'EOF'
+echo "$1"
+EOF
     run bats --filter "${_filter}" "${_tree}/test/unit/config_owner_spec.bats"
     assert_success
 
-    printf '%s\n' 'source "${LIB_DIR}/config.sh"' 'echo "$1"' \
-        >"${_tree}/script/test/unrelated.sh"
+    cat >"${_tree}/script/test/unrelated.sh" <<'EOF'
+source "${LIB_DIR}/config.sh"
+echo "$1"
+EOF
     run bats --filter "${_filter}" "${_tree}/test/unit/config_owner_spec.bats"
     assert_failure
     assert_output --partial 'unrelated.sh:2: positional parameter at the top level'
