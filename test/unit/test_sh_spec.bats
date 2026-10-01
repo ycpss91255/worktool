@@ -278,6 +278,13 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh rejects a path that is not a bats spec" {
+    run "${TEST_SH}" --unit test/unit
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit' must end in .bats (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
