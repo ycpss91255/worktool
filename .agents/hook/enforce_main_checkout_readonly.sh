@@ -117,16 +117,16 @@ _main_checkout() {
 }
 
 _check_git_launch() {
-    local _launch="$1" _cwd="$2" _cwd_unknown="$3" _encoded _word
+    local _launch="$1" _cwd="$2" _cwd_untrusted="$3" _encoded _word
     local -a _words=()
     read -r -a _encoded <<<"${_launch}"
     for _word in "${_encoded[@]}"; do _words+=("$(hook_word "${_word}")"); done
     [[ "${_words[0]:-}" == git || "${_words[0]:-}" == */git ]] || return 0
     _git_context "${_cwd}" "${_words[@]:1}"
     _git_mutates "${GIT_ARGS[@]}" || return 0
-    if [[ -n "${_cwd_unknown}" ]]; then
-        hook_block "git ${GIT_ARGS[0]} may modify the main checkout: working directory is dynamic" \
-            "Use a literal cd or pushd target before mutating git commands."
+    if [[ -n "${_cwd_untrusted}" ]]; then
+        hook_block "git ${GIT_ARGS[0]} follows an untrusted cd or pushd" \
+            "For a mutating git command, split the call or use git -C <dir>."
     fi
     _main_checkout "${GIT_CWD}" || return 0
     hook_block "git ${GIT_ARGS[0]} would modify the main checkout: ${GIT_CWD}" \
@@ -134,81 +134,72 @@ _check_git_launch() {
 }
 
 _track_directory_launch() {
-    local _launch="$1" _encoded _word _command _target=''
+    local _launch="$1" _command _target
     local -a _words=()
     read -r -a _words <<<"${_launch}"
     _command="$(hook_word "${_words[0]:-}")"
     [[ "${_command}" == cd || "${_command}" == pushd ]] || return 1
-    for _encoded in "${_words[@]:1}"; do
-        _word="$(hook_word "${_encoded}")"
-        [[ "${_word}" == -- && -z "${_target}" ]] && continue
-        [[ "${_word}" == -* && -z "${_target}" ]] && continue
-        _target="${_encoded}"
-        break
-    done
-    if [[ -z "${_target}" ]] || hook_word_has_expansion "${_target}"; then
-        SHELL_CWD_UNKNOWN=1
-        return 0
-    fi
+    [[ "${#_words[@]}" -eq 2 ]] || return 1
+    _target="${_words[1]}"
+    hook_word_has_expansion "${_target}" && return 1
     _target="$(hook_word "${_target}")"
     if [[ "${_target}" == '~'* || "${_target}" =~ ^[+-][0-9]+$ ]]; then
-        SHELL_CWD_UNKNOWN=1
+        return 1
     elif [[ "${_target}" == /* ]]; then
-        SHELL_CWD="$(realpath -m -- "${_target}")" SHELL_CWD_UNKNOWN=''
-    elif [[ -z "${SHELL_CWD_UNKNOWN}" ]]; then
+        SHELL_CWD="$(realpath -m -- "${_target}")"
+    else
         SHELL_CWD="$(realpath -m -- "${SHELL_CWD}/${_target}")"
     fi
     return 0
 }
 
-_outer_scope_text() {
-    local _text="$1" _out='' _part='' _c _next _depth=0 _pipeline=''
-    local _i
-    for ((_i = 0; _i < ${#_text}; _i++)); do
-        _c="${_text:_i:1}" _next="${_text:_i+1:1}"
-        if [[ "${_c}" == '(' ]]; then
-            _depth=$((_depth + 1))
-        elif [[ "${_c}" == ')' && "${_depth}" -gt 0 ]]; then
-            _depth=$((_depth - 1))
-        elif [[ "${_depth}" -eq 0 && "${_c}" == '|' && "${_next}" != '|' ]]; then
-            _pipeline=1 _part+=' '
-        elif [[ "${_depth}" -eq 0 && ("${_c}" == ';' || "${_c}" == $'\n' \
-            || "${_c}" == '&' && "${_next}" != '&') ]]; then
-            [[ -n "${_pipeline}" ]] || _out+="${_part};"
-            _part='' _pipeline=''
-        elif [[ "${_depth}" -eq 0 ]]; then
-            _part+="${_c}"
-        fi
-    done
-    [[ -n "${_pipeline}" ]] || _out+="${_part}"
-    printf '%s' "${_out}"
+_directory_launch() {
+    local _launch="$1" _command
+    local -a _words=()
+    read -r -a _words <<<"${_launch}"
+    _command="$(hook_word "${_words[0]:-}")"
+    [[ "${_command}" == cd || "${_command}" == pushd ]]
 }
 
-_outer_scope_launches() {
-    local _text _sub
+_top_level_parts() {
+    local _text
     _text="$(_hook_strip_heredocs "$1" | _hook_unquote)"
-    _text="$(_outer_scope_text "${_text}")"
-    while IFS= read -r _sub || [[ -n "${_sub}" ]]; do
-        _sub="$(_hook_strip_wrappers "${_sub}")"
-        [[ -n "${_sub}" ]] || continue
-        printf '%s\n' "${_sub}"
-    done < <(_hook_split "${_text}")
+    _text="${_text//&&/$'\n'}"
+    _text="${_text//||/$'\n'}"
+    printf '%s' "${_text//;/$'\n'}"
 }
 
-_check_launches() {
-    local _command="$1" _cwd="$2" _launch
-    SHELL_CWD="${_cwd}" SHELL_CWD_UNKNOWN=''
+_part_launches() {
+    local _part="$1" _launch
+    while IFS= read -r _launch || [[ -n "${_launch}" ]]; do
+        _launch="$(_hook_strip_wrappers "${_launch}")"
+        [[ -n "${_launch}" ]] || continue
+        _HOOK_RAW=1 _hook_emit "${_launch}"
+    done < <(_hook_split "${_part}")
+}
+
+_check_part() {
+    local _part="$1" _launch
+    if _track_directory_launch "${_part}"; then
+        return 0
+    fi
     while IFS= read -r _launch; do
         [[ -n "${_launch}" ]] || continue
-        _track_directory_launch "${_launch}" && continue
-        _check_git_launch "${_launch}" "${SHELL_CWD}" "${SHELL_CWD_UNKNOWN}"
-    done <<<"${_command}"
+        if _directory_launch "${_launch}"; then
+            SHELL_CWD_UNTRUSTED=1
+            continue
+        fi
+        _check_git_launch "${_launch}" "${SHELL_CWD}" "${SHELL_CWD_UNTRUSTED}"
+    done < <(_part_launches "${_part}")
 }
 
 _check_bash() {
-    local _command="$1" _cwd="$2"
-    _check_launches "$(hook_subcommands_raw "${_command}")" "${_cwd}"
-    _check_launches "$(_outer_scope_launches "${_command}")" "${_cwd}"
+    local _command="$1" _cwd="$2" _part
+    SHELL_CWD="${_cwd}" SHELL_CWD_UNTRUSTED=''
+    while IFS= read -r _part || [[ -n "${_part}" ]]; do
+        [[ -n "${_part}" ]] || continue
+        _check_part "${_part}"
+    done < <(_top_level_parts "${_command}")
 }
 
 main() {
