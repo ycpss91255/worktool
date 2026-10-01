@@ -26,3 +26,10 @@ _commit_refs() {
     assert_output --partial "${_sha}"
     assert_output --partial 'Refs: #<number>'
 }
+
+@test "numeric Refs lines in the final paragraph pass, including multiple issues" {
+    _commit_refs $'subject\n\nRefs: #312\nRefs: #42'
+    run commit_refs_check_commits "${REPO}" HEAD
+    assert_success
+    assert_output --partial '1 commits checked: issue footers ok.'
+}

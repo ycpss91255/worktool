@@ -9,6 +9,18 @@ _COMMIT_REFS_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./log.sh
 source "${_COMMIT_REFS_LIB_DIR}/log.sh"
 
+_commit_refs_has_footer() {
+    local _message="$1" _line
+    while [[ "${_message}" == *$'\n' ]]; do
+        _message="${_message%$'\n'}"
+    done
+    _message="${_message##*$'\n\n'}"
+    while IFS= read -r _line; do
+        [[ "${_line}" =~ ^Refs:\ #[0-9]+$ ]] && return 0
+    done <<< "${_message}"
+    return 1
+}
+
 commit_refs_check_commits() {
     local _repo="$1" _tmp _sha _message _bad=0 _n=0
     shift
@@ -19,6 +31,7 @@ commit_refs_check_commits() {
     fi
     while IFS= read -r -d '' _sha && IFS= read -r -d '' _message; do
         _n=$((_n + 1))
+        _commit_refs_has_footer "${_message}" && continue
         log_error "${_sha} missing Refs: #<number> in the final paragraph."
         _bad=$((_bad + 1))
     done < "${_tmp}"
