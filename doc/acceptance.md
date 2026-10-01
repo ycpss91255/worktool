@@ -764,11 +764,11 @@ rc=0
       rc=2
       files=0
       ./script/box/status.sh "$@"
-      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for tmux (expected inside|host)
+      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for terminal (expected ghostty|none)
       error: recipe `status` failed on line 48 with exit code 1
       rc=1
       ./script/box/status.sh "$@"
-      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for tmux (expected inside|host)
+      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for terminal (expected ghostty|none)
       error: recipe `status` failed on line 48 with exit code 1
       rc=1
       rc=0

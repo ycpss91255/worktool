@@ -1251,3 +1251,9 @@ EOF
     assert_line "blocks=0"
     refute_output --partial "tmux: inside"
 }
+
+@test "3.4: corrupted current decision is refused for both sources" {
+    run "${VERIFY}" 3.4
+    assert_success
+    assert_output --partial "invalid value 'sideways' for terminal"
+}

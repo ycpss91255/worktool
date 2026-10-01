@@ -1006,7 +1006,7 @@ _item_3_4() {
         return 1
     }
     for _src in default user; do
-        printf 'tmux=sideways\ntmux.source=%s\n' "${_src}" \
+        printf 'terminal=sideways\nterminal.source=%s\n' "${_src}" \
             >"${ITEM_H}/.config/worktool/config" || {
             _fail "3.4: cannot write the corrupt ${_src}-sourced state file"
             return 1
