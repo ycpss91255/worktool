@@ -115,7 +115,8 @@ _check_subcmd() {
 # _check_launch <encoded gh launch> - print the deny reason for this gh
 # launch, or nothing.
 _check_launch() {
-    local _launch="${1//$'\001'?/_}" _body
+    local _launch="${1//$'\001'v/}" _body
+    _launch="${_launch//$'\001'?/_}"
     _body="$(_body_word "$1")"
     if hook_word_has_subst "${_body}"; then
         printf '%s' "gh --body \"\$(cat ...)\" (a command substitution in an inline body) trips Claude Code's bash parser. Write the body to a file, then pass --body-file <file>."
