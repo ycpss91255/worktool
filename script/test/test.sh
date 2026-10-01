@@ -159,6 +159,7 @@ _required_specs() {
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
+                unit/hook/enforce_local_test_scope_spec.bats \
                 unit/hook/enforce_long_job_timeout_spec.bats \
                 unit/hook/check_main_fresh_before_worktree_spec.bats \
                 unit/hook/remind_main_sync_spec.bats \
@@ -188,7 +189,8 @@ _required_specs() {
                 matrix/enforce_milestone_gate_approval_spec.bats \
                 matrix/enforce_main_checkout_readonly_spec.bats \
                 matrix/enforce_no_attribution_spec.bats \
-                matrix/enforce_tdd_commit_spec.bats
+                matrix/enforce_tdd_commit_spec.bats \
+                matrix/enforce_local_test_scope_spec.bats
             ;;
         integration)
             printf '%s\n' \
@@ -733,6 +735,8 @@ _changed_hook_path_map() {
 .agents/hook/remind_main_sync.sh|test/unit/hook/remind_main_sync_spec.bats
 .agents/hook/remind_no_emoji.sh|test/unit/hook/remind_no_emoji_spec.bats
 .agents/hook/remind_workflow_tdd.sh|test/unit/hook/remind_workflow_tdd_spec.bats
+.agents/hook/enforce_local_test_scope.sh|test/unit/hook/enforce_local_test_scope_spec.bats
+.agents/hook/enforce_local_test_scope.sh|test/matrix/enforce_local_test_scope_spec.bats
 .agents/hook/test-must-use-docker.sh|test/unit/hook/test_must_use_docker_spec.bats
 .agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
 .agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats

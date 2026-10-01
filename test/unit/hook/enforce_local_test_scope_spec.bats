@@ -44,3 +44,9 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     _check "printf '%s' 'just test matrix'"
     assert_success
 }
+
+@test "CI requires the full local test scope product matrix" {
+    run bash -c 'source "$1"; _required_specs matrix' _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    assert_line 'matrix/enforce_local_test_scope_spec.bats'
+}
