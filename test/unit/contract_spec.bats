@@ -108,6 +108,13 @@ _checks_per_promise() {
     done
 }
 
+@test "invariant 2 links to its merged ADR 0005" {
+    run grep -E '^2\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0005](adr/0005-invariant-single-source.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0005-invariant-single-source.md" ]
+}
+
 @test "every relative link in doc/contract.md resolves to an existing file" {
     local target found=0
     while IFS= read -r target; do

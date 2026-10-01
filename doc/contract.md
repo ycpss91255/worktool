@@ -69,7 +69,7 @@
 十條不變量必須永遠成立；每條的性質、理由與守住它的機制由各自的 ADR 定義。已寫好的 ADR 直接連結；尚未寫的，後面列的是負責寫它的 issue，ADR 合併時同一個 PR 改成連結。每條都保留負責的 issue 編號。
 
 1. 使用者寫的內容歸使用者：可以新建、要改先問、永不刪、永不覆蓋（[ADR 0004](adr/0004-invariant-user-content.md)，#202）
-2. 一個來源：盒子定義只有一份、tool config 只有一份（ADR 待寫：#203）
+2. 一個來源：盒子定義只有一份、tool config 只有一份（[ADR 0005](adr/0005-invariant-single-source.md)，#203）
 3. host 與盒子互不干擾（ADR 待寫：#204）
 4. 永不靜默失敗（[ADR 0007](adr/0007-invariant-no-silent-failure.md)，#205）
 5. 使用者介面極少：just 是唯一入口，recipe 語意固定（ADR 待寫：#206）
