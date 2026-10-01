@@ -2103,7 +2103,7 @@ _discuss_replies() {
 
 @test "discuss: records conclusion and cited basis with shell copied codex text" {
     local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted"
-    scratch="${dir}/../worktree/.scratch/discuss-309"
+    scratch="${dir}/../worktree/.scratch/discuss-309-0123456789abcdef"
     mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
     printf 'Unique codex text\ndoc/contract.md:9\n/home/private/secret\nCo-Authored-By: Claude\n' > "${scratch}/codex-r1.md"
     printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
@@ -2125,7 +2125,7 @@ _discuss_replies() {
 
 @test "discuss: Record builds before a separate hook checked publication and removes stale bodies" {
     local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted" json replies
-    scratch="${dir}/../worktree/.scratch/discuss-309"
+    scratch="${dir}/../worktree/.scratch/discuss-309-0123456789abcdef"
     mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
     printf 'Unique codex text\ndoc/contract.md:9\n' > "${scratch}/codex-r1.md"
     printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
@@ -2170,4 +2170,56 @@ _discuss_replies() {
     run jq -r '.calls[] | select(.label == "ci:#7") | .prompt' <<<"${output}"
     assert_output --partial 'Locally run only just test lint and changed unit specs'
     assert_output --partial 'Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally'
+}
+
+
+# Start two workflow fixtures together, with separate nonce replies and model files.
+_scratch_parallel_run() {
+    local template="$1" issue="$2" replies="$3" dir="${BATS_TEST_TMPDIR}/repo"
+    local nonce scratch args pid first_pid
+    mkdir -p "${dir}" "${BATS_TEST_TMPDIR}/bin"
+    cat > "${BATS_TEST_TMPDIR}/bin/gh" <<'SH'
+#!/bin/sh
+if [ "$1 $2" = 'issue view' ]; then echo '{"comments":[]}'; exit 0; fi
+cp "$7" "$(dirname "$7")/posted.md"
+printf 'https://github.com/o/r/issues/%s#issuecomment-1\n' "$3"
+SH
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    for nonce in 0123456789abcdef fedcba9876543210; do
+        scratch="${dir}/../worktree/.scratch/${template}-${issue}-${nonce}"
+        mkdir -p "${scratch}"
+        printf 'Only model output %s\n' "${nonce}" > "${scratch}/codex-r1.md"
+        cp "${scratch}/codex-r1.md" "${scratch}/codex.md"
+        printf 'Only research output %s\n' "${nonce}" > "${scratch}/agy.md"
+        echo gemini-test > "${scratch}/agy-models.txt"
+        args="$(jq -cn --arg d "${dir}" --argjson i "${issue}" '{repo:"o/r",repoDir:$d,issue:$i,question:"q"}')"
+        PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs"             "${WF_DIR}/${template}.js" "${args}"             "$(jq --arg n "${nonce}" '."nonce:".nonce=$n | ."record:".url="<stdout>"' <<<"${replies}")"             exec-record > "${BATS_TEST_TMPDIR}/${nonce}.json" &
+        pid=$!
+        if [ -z "${first_pid:-}" ]; then first_pid="${pid}"; fi
+    done
+    wait "${first_pid}"
+    wait "${pid}"
+}
+
+_scratch_assert_isolated() {
+    local template="$1" issue="$2" expected_status="$3" nonce other scratch
+    for nonce in 0123456789abcdef fedcba9876543210; do
+        other=0123456789abcdef
+        if [ "${nonce}" = "${other}" ]; then other=fedcba9876543210; fi
+        scratch="${BATS_TEST_TMPDIR}/repo/../worktree/.scratch/${template}-${issue}-${nonce}"
+        run jq -cr --arg s "${scratch}" --arg other "${other}" '[.error,.result.status,
+            ([.calls[] | select(.label | startswith("nonce:") | not) |
+                (.prompt | contains($s)) and (.prompt | contains($other) | not)] | all)]'             "${BATS_TEST_TMPDIR}/${nonce}.json"
+        assert_output "[null,\"${expected_status}\",true]"
+        run cat "${scratch}/posted.md"
+        assert_success
+        assert_output --partial "Only model output ${nonce}"
+        refute_output --partial "${other}"
+    done
+}
+
+@test "discuss: concurrent same-issue runs read and publish only their own scratch files (#345)" {
+    run _scratch_parallel_run discuss 309 "$(_discuss_replies)"
+    assert_success
+    _scratch_assert_isolated discuss 309 agreed
 }

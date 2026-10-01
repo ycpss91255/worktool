@@ -228,12 +228,14 @@ Record 之前的失敗 gh 完全沒被呼叫。
 
 ## discuss
 
+每次執行沿用經驗證的 16 位十六進位 nonce 建立獨立暫存目錄；resume 重用本次 nonce。同一 issue 可並行討論多題，各次輸出、rc、log、比對與留言只使用本次目錄。
+
 問維護者之前，先讓 Claude 與 codex 各自獨立回答一題。`args` = `{ repo, repoDir, issue, question, context?, premises?, references? }`：
 
 | 參數 | 必要 | 說明 |
 |------|------|------|
 | `repo` | 是 | `owner/name`；所有留言指令帶 `--repo` |
-| `repoDir` | 是 | 供只讀調查的 checkout 絕對路徑；中間檔放在同層 `worktree/.scratch/discuss-<issue>/` |
+| `repoDir` | 是 | 供只讀調查的 checkout 絕對路徑；中間檔放在同層 `worktree/.scratch/discuss-<issue>-<nonce>/` |
 | `issue` | 是 | 正整數；結論留言記錄到此 issue |
 | `question` | 是 | 單一待決題目 |
 | `context` | 否 | 背景與現況 |
