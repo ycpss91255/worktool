@@ -1,28 +1,32 @@
 ---
 name: feedback-phase-agent-run-all-ci-gates
-description: Implementation sub-agents must run all six Docker gates (just test lint / unit / integration / system / acceptance / system-real) before reporting green — not a subset
+description: Local tests cover only what the change touches (lint + touched specs); every full tier runs in GitHub CI (ci-passed). Superseded the old "run all six gates locally" rule on 2026-10-01
 metadata: 
   node_type: memory
   type: feedback
   originSessionId: 15320221-f6f9-442e-9faa-924d66c5db63
+  modified: 2026-10-01T00:13:18.857Z
 ---
 
-When delegating an implementation to a worktree sub-agent, the agent's
-"green" report MUST come from running every gate CI runs, in Docker, through
-the user interface: `just test lint`, `just test unit`,
-`just test integration`, `just test system`, `just test acceptance` and
-`just test system-real` (bare `just test` runs all six in that order). A
-subset is not enough; a docs-only change may narrow to lint + unit only when
-the task says so (doc/workflow.md, `gates`).
+Local test runs cover only what the change touches: `just test lint` plus the
+specs the change adds or edits (`just test <tier> <spec...> [--filter REGEX]`,
+#298), and before pushing `just test changed` (#299). Every full tier (unit,
+matrix, integration, system, acceptance, system-real) runs in GitHub CI, where
+`ci-passed` is required. Never run a whole tier locally per TDD slice.
 
-**Why:** in init_ubuntu (worktool's predecessor) an agent ran only two of
-its gates and reported green, but its change broke a smoke test that only
-the skipped integration gate exercised; CI caught it, costing a red PR and a
-fix round-trip. The tiers exercise different surfaces; passing one says
-nothing about another.
+**Why:** maintainer decision 2026-10-01 ("local 針對修改的地方做 test 就好,
+其他都丟到 ci 上面做測試"). Two codex jobs each running the full unit tier
+(about 1000 cases, bats --jobs 4) per RED and GREEN drove an 8-core host to a
+load of 36. The architecture copies ycpss91255-docker/base (`--bats-path`,
+`--filter`) and keeps vendor_kit ADR-0011/0013 (same entry locally and in CI,
+no env-var mode switch). The old rule (run all six gates locally) came from
+init_ubuntu, where a skipped tier hid a break; CI's required `ci-passed`
+covers that now.
 
-**How to apply:** put "run all six `just test <tier>` gates, blocking in the
-foreground, all green, before reporting" explicitly in every implementation
-prompt. On a red CI job, check `gh pr checks <n> --repo ycpss91255/worktool`
-first to see WHICH job (and which runner leg) failed. Relates to
+**How to apply:** implementation prompts say "TDD loop: run only the slice's
+spec; before push: lint + `just test changed`; everything else is CI". Until
+#298/#299/#300 merge, run `just test lint` and `just test unit` with
+`WORKTOOL_TEST_JOBS=2` at most once per slice, one codex job at a time. On a
+red CI job, check `gh pr checks <n> -R ycpss91255/worktool` first to see
+WHICH job (and runner leg) failed. Relates to
 [[feedback-autonomous-test-gap-remediation]] and [[project-ci-lint-covers-bats]].

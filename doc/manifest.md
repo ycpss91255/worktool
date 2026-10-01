@@ -656,7 +656,7 @@ issue #129),不再延後到 M5。
     `./script/test/test.sh --acceptance`)。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);裸 `just test`(底層
-`./script/test/test.sh` 不帶旗標)依序跑 lint 與五個 tier(lint、unit、integration、
+`./script/test/test.sh` 不帶旗標)依序跑 lint 與六個 tier(lint、unit、matrix、integration、
 system、acceptance、system-real),遇到第一個失敗即停,等同 CI;子 recipe
 `just test <tier>` 只收窄到一層。執行方式見 [`structure.md`](structure.md)。
 

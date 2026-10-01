@@ -28,6 +28,12 @@
 #     with stand-in agents, so arg rejection, shell quoting of repoDir /
 #     repo (every shell step is really run against a hostile path) and the
 #     fail-closed Verify / Synthesize / Record flow are proven, not grepped.
+#     The stand-in agent fails closed (a failing shell step returns null,
+#     never the canned reply), and a matrix of failing stages x failure
+#     kinds (non-zero exit, empty, malformed) proves nothing is recorded
+#     (issue #225).
+#     Issue #223: the Record carries only codex's final answer (a matrix of
+#     real transcript shapes) and no local absolute path in any form.
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
 
@@ -39,6 +45,26 @@ setup() {
     FANOUT="${WF_DIR}/milestone-fanout.js"
     RESEARCH="${WF_DIR}/research-verify.js"
     WORK="${BATS_TEST_TMPDIR}/work"
+}
+
+@test "workflows keep worktrees and scratch outside the repo checkout" {
+    run _pl_run
+    assert_success
+    run jq -cr '[
+        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/n")),
+        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/.scratch/n"))
+    ]' <<<"${output}"
+    assert_output '[true,true]'
+
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    run jq -cr '[
+        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7")),
+        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("[ -z \"$before\" ] && mkdir -p")),
+        (.calls[-1].prompt | contains("git -C '\''/w'\'' status --porcelain --untracked-files=all -- .")),
+        (.calls[-1].prompt | contains(":(exclude)") | not)
+    ]' <<<"${output}"
+    assert_output '[true,true,true,true]'
 }
 
 # The meta block of $1: from the first line to its closing "}" line.
@@ -192,12 +218,196 @@ SH
     chmod +x "${stub}/gh"
     local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t"}')" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
 }
 
 # rc of the played step that writes scope-r1.md.
 _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc] | first' <<<"$1"; }
+
+_pl_run() {
+    local extra="${1:-}"
+    [[ -n "${extra}" ]] || extra='{}'
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
+        "${replies}"
+}
+
+_pl_blocked_run() {
+    local implementer="$1"
+    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
+        "${replies}"
+}
+
+@test "pr-loop (node): neither implementer path produces attribution instructions" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\",\"sessionUrl\":\"https://example.invalid/session\"}"
+        assert_success
+        run jq -e '[.calls[].prompt | test("Co-Authored-By|Claude-Session|Generated with")] | any | not' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
+    run _pl_run
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n -o /work/../worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
+    run _pl_run
+    assert_success
+    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/../worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    assert_output 'true'
+}
+
+@test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
+    assert_output '[null,true,true,true]'
+}
+
+@test "pr-loop (node): Fix rounds return to the selected implementer" {
+    run _pl_blocked_run codex
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n")' <<<"${output}"
+    assert_output 'true'
+
+    run _pl_blocked_run claude
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C")' <<<"${output}"
+    assert_output 'false'
+}
+
+@test "pr-loop (node): each implementer loads its TDD instructions for Implement and Fix" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run claude
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+}
+
+@test "pr-loop (node): Implement and Fix run only slice specs locally, then lint and changed before push" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "pr-loop (node): Implement and Fix preserve pushed history except for the commit-email remedy" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -cr '.calls[] | select(.label | startswith("review:")) | .prompt | [contains("commit history is vertical slices"), contains("tests verify behaviour through the public interface"), contains("Structure- or implementation-detail tests are blocking")]' <<<"${output}"
+        assert_output '[true,true,true]'
+    done
+}
+
+@test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true]'
+}
+
+@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+    run _pl_run
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+
+    run _pl_blocked_run codex
+    assert_success
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
+    assert_output '[true,true,true,true,true]'
+}
+
+@test "pr-loop (node): an invalid implementer value throws a clear error" {
+    run _pl_run '{"implementer":"other"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.implementer must be "codex" or "claude", got "other"'
+}
+
+@test "pr-loop (node): codex quota off rejects codex implementation and does not gate Claude review" {
+    run _pl_run '{"implementer":"codex","codex":"off"}'
+    assert_success
+    run jq -r '.error' <<<"${output}"
+    assert_output 'pr-loop: args.codex "off" cannot use implementer "codex"; use implementer: "claude"'
+
+    run _pl_run '{"implementer":"codex","codex":"on"}'
+    assert_success
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Review PR #7") and (contains("Run ONE codex re-verification") | not)), ([.calls[] | select(.label | startswith("nocodex:"))] | length)]' <<<"${output}"
+    assert_output '[null,true,0]'
+}
 
 @test "pr-loop (node): the scope step cuts the issue's ## 範圍 section out verbatim (issue #238)" {
     printf '## 背景\n\nx\n\n## 範圍\n\n- 擋:a\n- 不擋:b\n\n## Acceptance criteria\n\n- z\n' > "${BATS_TEST_TMPDIR}/body.md"
@@ -225,7 +435,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
     refute [ "$(_pl_scope_rc "${output}")" = "0" ]
     refute [ -s "${WORK}/scope-r1.md" ]
     # the prompt tells the agent to stop the round instead of reviewing without the scope
-    run jq -r '.calls[] | select(.label | startswith("codex:")) | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}"
     assert_output --partial "讀取 issue #238 失敗,本輪未完成"
 }
 
@@ -246,16 +456,30 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 @test "no template hardcodes a machine path, a session scratchpad or a session URL; repoDir is required" {
     run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
     assert_failure
-    run grep -c 'REPO_DIR}/.worktree/.scratch/' "${PR_LOOP}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${PR_LOOP}"
     assert_output "1"
     run grep -c "const REPO_DIR = A.repoDir$" "${PR_LOOP}" "${FANOUT}"
     assert_output --partial "pr-loop.js:1"
     assert_output --partial "milestone-fanout.js:1"
-    run grep -c "A.sessionUrl" "${PR_LOOP}"
-    assert [ "${output}" -ge 1 ]
+    run grep -n 'sessionUrl' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
+    assert_failure 1
+    assert_output ""
 }
 
-@test "milestone-fanout requires repoDir, validates every item, delegates through pipeline to pr-loop, and logs in the per-item stage" {
+@test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
+    local implementer replies
+    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    for implementer in codex claude; do
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+            "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
+        assert_success
+        run jq -e '.error == null and (.workflowCalls | length == 1) and (.workflowCalls[0].args | has("sessionUrl") | not) and ([.calls[].prompt | test("Co-Authored-By|Claude-Session|Generated with")] | any | not)' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "milestone-fanout requires repoDir, validates every item, delegates to pr-loop, and logs each result" {
     run grep -c "!A.repo || !A.repoDir" "${FANOUT}"
     assert_output "1"
     run grep -c "for (const k of \['issue', 'branch', 'name', 'task'\])" "${FANOUT}"
@@ -264,12 +488,28 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
     assert_output "1"
     run grep -c 'REPO_DIR}/.claude/workflows/pr-loop.js' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await pipeline(A.items' "${FANOUT}"
-    assert_output "1"
     run grep -c 'item.issue} done:' "${FANOUT}"
     assert_output "1"
-    run grep -c 'await parallel(' "${FANOUT}"
-    assert_output "0"
+}
+
+@test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
+    run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
+    assert_output "1"
+    run grep -c 'await parallel(batch.map' "${FANOUT}"
+    assert_output "1"
+}
+
+@test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
+    local replies
+    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
+    assert_success
+    run jq -e '.error == null and (.workflowCalls | length == 2) and .workflowCalls[0].args.gates == "just test lint" and (.workflowCalls[1].args | has("gates") | not)' <<<"${output}"
+    assert_success
+    assert_output "true"
 }
 
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
@@ -281,11 +521,13 @@ _rv_run() {
 # Agent replies of a run where every step succeeds.
 _rv_ok_replies() {
     cat <<'JSON'
-{"agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
+{"nonce:": {"nonce": "0123456789abcdef"},
+ "agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
  "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
- "record:": {"url": "https://github.com/o/r/issues/7#issuecomment-1"}}
+ "record:": {"url": "https://github.com/o/r/issues/7#issuecomment-1"},
+ "repo-check:": {"extra": []}}
 JSON
 }
 
@@ -362,7 +604,7 @@ _rv_err() {
     run _rv_err '.'
     assert_output "null"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","context":"ctx-9"}' "$(_rv_ok_replies)"
-    run jq -r '.error, (.calls[0].prompt | contains("背景:ctx-9"))' <<<"${output}"
+    run jq -r '.error, ((.calls[] | select(.label | startswith("agy:")) | .prompt) | contains("背景:ctx-9"))' <<<"${output}"
     assert_output "$(printf '%s\n' null true)"
 }
 
@@ -388,7 +630,7 @@ _rv_err() {
 # The source check command the Research prompt tells the agent to run first.
 _rv_src_check() {
     _rv_run "$(jq -cn --args '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:$ARGS.positional}' "$@")" "$(_rv_ok_replies)" \
-        | jq -r '.calls[0].prompt' | grep -o 'cd / && for f in [^`]*'
+        | jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' | grep -o 'cd / && for f in [^`]*'
 }
 
 @test "research-verify (node): Research checks every source exists and is readable before agy, and says bad-source" {
@@ -403,11 +645,11 @@ _rv_src_check() {
     assert_failure 3
     assert_output "research-verify: args.sources: not readable: ${d}/missing"
     run _rv_run "$(jq -cn --arg s "${d}/f 1" '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:[$s]}')" "$(_rv_ok_replies)"
-    run jq -r '.calls[0].prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
     assert_output --partial 'return status "bad-source"'
     # no sources: no check step
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
-    run jq -r '.calls[0].prompt | contains("cd / && for f in")' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt | contains("cd / && for f in")' <<<"${output}"
     assert_output "false"
 }
 
@@ -436,7 +678,7 @@ _rv_src_check() {
         "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"bad-source","attempts":0,"detail":"not readable: /x"}')"
     assert_success
     run jq -r '.result.status, .result.detail, (.calls | length)' <<<"${output}"
-    assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 1)"
+    assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 2)"
 }
 
 @test "research-verify (node): rejects a repo that is not owner/name and a repoDir that is not a safe absolute path" {
@@ -471,14 +713,14 @@ _rv_src_check() {
     assert_output "1"
     run grep -c "enum: \['ok', 'failed', 'bad-source'\]" "${RESEARCH}"
     assert_output "1"
-    run grep -c "if (!res || res.status !== 'ok') return" "${RESEARCH}"
+    run grep -c "if (!agyOk(res)) return" "${RESEARCH}"
     assert_output "1"
     run grep -c "status: 'agy-failed'" "${RESEARCH}"
     assert_output "1"
     run grep -c 'Never answer the question yourself' "${RESEARCH}"
     assert_output "1"
     # the failure return comes before the first Verify agent
-    fail_line="$(grep -n "if (!res || res.status !== 'ok') return" "${RESEARCH}" | cut -d: -f1)"
+    fail_line="$(grep -n "if (!agyOk(res)) return" "${RESEARCH}" | cut -d: -f1)"
     verify_line="$(grep -n "^phase('Verify')" "${RESEARCH}" | cut -d: -f1)"
     assert [ "${fail_line}" -lt "${verify_line}" ]
 }
@@ -499,11 +741,9 @@ _rv_src_check() {
 @test "research-verify never writes a [codex] line itself: codex text is copied from its file by the shell" {
     run grep -c 'Never write a "\[codex\]" line yourself' "${RESEARCH}"
     assert [ "${output}" -ge 2 ]
-    run grep -c 'cat codex.md' "${RESEARCH}"
-    assert [ "${output}" -ge 1 ]
 }
 
-@test "research-verify synthesizes a structured conclusion and records ONE issue comment via --body-file" {
+@test "research-verify synthesizes a structured conclusion and records comments via --body-file" {
     run grep -c "schema: SYNTH_SCHEMA" "${RESEARCH}"
     assert_output "1"
     for k in verified refuted needsExperiment recommendation parameters; do
@@ -511,17 +751,17 @@ _rv_src_check() {
         assert_output "1"
     done
     run grep -c 'gh issue comment ' "${RESEARCH}"
-    assert_output "1"
-    run grep -c '<details><summary>agy 原文</summary>' "${RESEARCH}"
+    assert [ "${output}" -ge 1 ]
+    run grep -c 'COMMENT_LIMIT = 60000' "${RESEARCH}"
     assert_output "1"
 }
 
-@test "research-verify keeps its files under repoDir scratch, hardcodes no machine path, and never merges or pushes" {
+@test "research-verify keeps its files outside repoDir, hardcodes no machine path, and never merges or pushes" {
     run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${RESEARCH}"
     assert_failure
     run grep -c "const REPO_DIR = A.repoDir$" "${RESEARCH}"
     assert_output "1"
-    run grep -c 'REPO_DIR}/.worktree/.scratch/research-' "${RESEARCH}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${RESEARCH}"
     assert_output "1"
     run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push|--auto' "${RESEARCH}"
     assert_failure
@@ -532,26 +772,266 @@ _rv_src_check() {
     mkdir -p "${stub}"
     printf '#!/bin/sh\necho "1. agy-claim [官方文件 https://x]"\n' > "${stub}/agy"
     printf '#!/bin/sh\ncat >/dev/null\nprintf "banner\\ncodex\\ncodex-verdict-line\\ntokens used\\n5\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho https://example.invalid/c/1\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+printf '%s\n' "$@" > "${BATS_TEST_TMPDIR}/gh.args"
+echo "https://github.com/o/r/issues/7#issuecomment-1"
+SH
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
-    scratch="${dir}/.worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7"
+    git init -q "${dir}"
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
     local json="${output}"
     run jq -r '.error, .result.status' <<<"${json}"
     assert_output "$(printf '%s\n' null recorded)"
-    # mkdir, agy, codex run, codex extraction, body build, gh: every one ran and passed
+    # repo status before + mkdir (one step), agy, codex run, codex extraction,
+    # body build, gh, repo status after: every one ran and passed
     run jq -r '[.ran[].rc] | map(tostring) | join(" ")' <<<"${json}"
-    assert_output "0 0 0 0 0 0"
+    assert_output "0 0 0 0 0 0 0 0"
+    [[ -f "${scratch}/status-before.txt" ]]
+    [[ -f "${scratch}/repo-extra.txt" && ! -s "${scratch}/repo-extra.txt" ]]
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
     [[ -s "${scratch}/agy.md" ]]
     run cat "${scratch}/codex.md"
     assert_output "codex-verdict-line"
-    run grep -c '^\[codex\] 逐條驗證(原文)$' "${scratch}/body.md"
+    run grep -c '^\[claude\] codex 逐條驗證(原文)$' "${scratch}/body-1.md"
     assert_output "1"
     run cat "${BATS_TEST_TMPDIR}/gh.args"
-    assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file "${scratch}/body.md")"
+    assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file body-1.md)"
+}
+
+# The [codex] section of the Record body $1: the lines between the
+# codex header and the agy header, blank edges dropped.
+_rv_codex_section() {
+    awk '/^\[claude\] codex /{f=1;next} /^\[claude\] agy /{f=0} f' "$1" | sed '/./,$!d; s/^> //'
+}
+
+# Run research-verify with every step played (exec) under repoDir $1 and
+# args $2 (merged into the base args); codex is a stub that prints
+# ${SHAPE}/raw (stdout + stderr of a real run) and, when ${SHAPE}/last
+# exists, writes it to the -o (--output-last-message) file. A dir in
+# ${RV_OVERRIDE} comes before these stubs in PATH. Leaves the scratch dir
+# of issue 7 under $1.
+_rv_run_shape() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    git init -q "$1"
+    mkdir -p "${stub}"
+    printf '#!/bin/sh\necho "1. agy-claim [原始碼 %s/agy-src]"\n' "$1" > "${stub}/agy"
+    cat > "${stub}/codex" <<'SH'
+#!/bin/sh
+cat >/dev/null
+o=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && o=$2; shift; done
+[ -f "${SHAPE}/last" ] && [ -n "${o}" ] && cp "${SHAPE}/last" "${o}"
+cat "${SHAPE}/raw"
+SH
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+echo https://github.com/o/r/issues/7#issuecomment-1
+SH
+    chmod +x "${stub}"/*
+    PATH="${RV_OVERRIDE:+${RV_OVERRIDE}:}${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
+}
+
+@test "research-verify (node): the Record keeps only codex's final answer, whatever shape codex printed" {
+    local dir="${BATS_TEST_TMPDIR}/w" name expected
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    # name | raw output (printf format) | -o file ('-' = codex wrote none) | expected answer
+    while IFS='|' read -r name raw last expected; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${dir}/../worktree/.scratch/research-7"
+        # a stale -o file of an earlier run must never be reused
+        echo STALE > "${dir}/../worktree/.scratch/research-7/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        [[ "${last}" == - ]] || printf '%b' "${last}" > "${SHAPE}/last"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        run jq -r '.result.status' <<<"${output}"
+        assert_output recorded
+        run _rv_codex_section "${dir}/../worktree/.scratch/research-7/body-1.md"
+        assert_output "$(printf '%b' "${expected}")"
+    done <<'EOF'
+single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
+duplicated|codex\nA1\nA2\ntokens used\n5\nA1\nA2\n|-|A1\nA2
+transcript|OpenAI Codex v0\nuser\nthe prompt\ncodex\ncommentary line\nexec\n/usr/bin/bash -lc pwd in /x\n succeeded in 0ms:\n/x\n\ncodex\nA1\nA2\ntokens used\n1,716\nA1\nA2\n|-|A1\nA2
+answer first|A1\nReading additional input from stdin...\nuser\np\ncodex\nA1\ntokens used\n9\n|-|A1
+tool logs|thinking\nplan\ncodex\nnote\nexec\nls in /x\n succeeded in 0ms:\nf\nexec\ncat f in /x\n exited 1 in 1ms:\nerr\ncodex\nA1\ntokens used\n9\n|-|A1
+last message file|codex\njunk\nexec\nls\ncodex\nnot this\ntokens used\n9\nnot this\n|L1\nL2\n|L1\nL2
+prose about tokens|codex\nA1\ntokens used by the build\nA2\ntokens used\n9\n|-|A1\ntokens used by the build\nA2
+EOF
+}
+
+@test "research-verify (node): a codex run with no final answer records nothing (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" name raw scratch
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/../worktree/.scratch/research-7"
+    # name | raw output (printf format); codex writes no -o file in any row
+    while IFS='|' read -r name raw; do
+        echo "shape: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}"
+        mkdir -p "${SHAPE}" "${scratch}"
+        echo STALE > "${scratch}/codex-last.md"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # codex.md stays empty, so the body is never built
+        [[ -e "${scratch}/codex.md" && ! -s "${scratch}/codex.md" ]]
+        [[ ! -e "${scratch}/body.md" ]]
+    done <<'EOF'
+commentary at EOF|user\np\ncodex\nI will read the files first\n
+aborted in a tool call|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\n
+aborted with an error|codex\nnote\nERROR: stream disconnected before completion\n
+boundary after a tool log|codex\nlet me check\nexec\nls in /x\n succeeded in 0ms:\nf\ntokens used\n9\n
+answer then aborted commentary|codex\nA1\ntokens used\n9\ncodex\nmore commentary\n
+fake boundary in commentary|codex\nnote\ntokens used by the build are listed below\n
+fake boundary with a count|codex\nnote\ntokens used: see below\nmore\n
+EOF
+}
+
+@test "research-verify (node): a failing Record producer or filter leaves no body to post (fail closed)" {
+    local dir="${BATS_TEST_TMPDIR}/w" fail="${BATS_TEST_TMPDIR}/fail" name scratch
+    local cat_fail scrub_mode raw inputs posted="${BATS_TEST_TMPDIR}/posted"
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    scratch="${dir}/../worktree/.scratch/research-7"
+    mkdir -p "${fail}"
+    # cat fails on the file named by FAIL_CAT; awk run as the path filter
+    # (RV_N set) then misbehaves per SCRUB_MODE: fail = full output, exit 1;
+    # empty = no output, exit 0; truncate = first line only, exit 0
+    REAL_CAT="$(command -v cat)" REAL_AWK="$(command -v awk)" REAL_HEAD="$(command -v head)"
+    export REAL_CAT REAL_AWK REAL_HEAD
+    cat > "${fail}/cat" <<'SH'
+#!/bin/sh
+for a; do [ "$a" = "${FAIL_CAT}" ] && exit 1; done
+exec "${REAL_CAT}" "$@"
+SH
+    cat > "${fail}/awk" <<'SH'
+#!/bin/sh
+[ -n "${RV_N}" ] || exec "${REAL_AWK}" "$@"
+case "${SCRUB_MODE}" in
+    fail) "${REAL_AWK}" "$@"; exit 1 ;;
+    empty) "${REAL_CAT}" >/dev/null; exit 0 ;;
+    truncate) "${REAL_AWK}" "$@" | "${REAL_HEAD}" -n 1; exit 0 ;;
+esac
+exec "${REAL_AWK}" "$@"
+SH
+    # codex runs in the scratch dir after the Research reset: it leaves the
+    # body.md of an earlier successful build there, as a Record retry in the
+    # same scratch dir would find it, then plays the recorded shape
+    cat > "${fail}/codex" <<SH
+#!/bin/sh
+echo STALE-BODY > body.md
+touch "${BATS_TEST_TMPDIR}/stale-placed"
+exec "${BATS_TEST_TMPDIR}/bin/codex" "\$@"
+SH
+    # gh posts (records) the --body-file only when that file exists
+    cat > "${fail}/gh" <<SH
+#!/bin/sh
+f=
+while [ \$# -gt 0 ]; do [ "\$1" = --body-file ] && f=\$2; shift; done
+[ -f "\${f}" ] || exit 1
+"${REAL_CAT}" "\${f}" > "${posted}"
+echo https://example.invalid/c/1
+SH
+    chmod +x "${fail}"/*
+    # name | FAIL_CAT | SCRUB_MODE | codex raw output (printf format) | inputs all there
+    while IFS='|' read -r name cat_fail scrub_mode raw inputs; do
+        echo "failure: ${name}"   # names the failing row in the bats report
+        rm -rf "${SHAPE}" "${dir}" "${posted}" "${BATS_TEST_TMPDIR}/stale-placed"
+        mkdir -p "${SHAPE}" "${scratch}"
+        printf '%b' "${raw}" > "${SHAPE}/raw"
+        FAIL_CAT="${cat_fail}" SCRUB_MODE="${scrub_mode}" RV_OVERRIDE="${fail}" run _rv_run_shape "${dir}" '{}'
+        assert_success
+        # the stale body really was there before the Record
+        [[ -e "${BATS_TEST_TMPDIR}/stale-placed" ]]
+        # either every input was there (only the producer or the filter
+        # failed) or codex left no final answer
+        if [[ "${inputs}" == y ]]; then
+            [[ -s "${scratch}/agy.md" && -s "${scratch}/codex.md" && -s "${scratch}/claude.md" ]]
+        else
+            [[ ! -s "${scratch}/codex.md" ]]
+        fi
+        # The body build fails even though the later repo-check may still run.
+        run jq -r '[.ran[].rc] | any(. != 0)' <<<"${output}"
+        assert_output "true"
+        # ... leaves no body.md, stale or partial, for gh to post ...
+        [[ ! -e "${scratch}/body.md" ]]
+        # ... and gh posts nothing
+        [[ ! -e "${posted}" ]]
+    done <<'EOF'
+path filter fails (non-zero exit)|-|fail|codex\nA1\ntokens used\n9\n|y
+path filter prints nothing (empty output)|-|empty|codex\nA1\ntokens used\n9\n|y
+codex printed nothing (empty output)|-||\n|n
+path filter truncates the body (malformed output)|-|truncate|codex\nA1\ntokens used\n9\n|y
+codex stopped before its answer (malformed output)|-||codex\nI will read the files first\n|n
+EOF
+}
+
+@test "research-verify (node): no local absolute path reaches the Record, in any form" {
+    local dir="${BATS_TEST_TMPDIR}/w" src="${BATS_TEST_TMPDIR}/pinned src/distrobox-1.8" ref="${BATS_TEST_TMPDIR}/ref/" body
+    SHAPE="${BATS_TEST_TMPDIR}/shape"
+    export SHAPE
+    mkdir -p "${SHAPE}" "${dir}" "${src}" "${ref}"
+    printf 'codex\nignored\ntokens used\n1\n' > "${SHAPE}/raw"
+    {
+        printf 'repo file %s/script/x.sh:3\n' "${dir}"
+        printf 'repo root %s\n' "${dir}"
+        printf 'not the repo %s2/k\n' "${dir}"
+        printf 'source %s/lib/a.c:10\n' "${src}"
+        printf 'slash-ended source %sb.md\n' "${ref}"
+        printf 'home /home/alice/.config/x\n'
+        printf 'other home /home/bob/proj/y and /Users/carol/z\n'
+        printf 'uri file:///home/dave/w\n'
+        printf 'session /tmp/claude-1000/-home-eve-ws/scratchpad/q.txt end\n'
+        printf 'system /usr/bin/distrobox and /etc/passwd and /dev/null\n'
+        printf 'no scheme location:/root/private and host:/srv/x and C:/Temp/y\n'
+        printf 'unc \\\\server\\share\\c.txt and \\\\?\\D:\\e\n'
+        printf 'mac /private/tmp/x and /var/folders/ab/T/y\n'
+        printf 'root /root/.codex/log and ws /workspace/proj\n'
+        printf 'wsl /mnt/c/Users/frank/a.txt\n'
+        printf 'win C:\\Users\\gina\\b.txt\n'
+        printf 'opt [原始碼 /opt/tool/x.c] and uri file:///srv/h\n'
+        printf 'kept https://example.com/a/b and a/b and ./c and 1/2 and /\n'
+    } > "${SHAPE}/last"
+    HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
+    assert_success
+    body="${dir}/../worktree/.scratch/research-7/body-1.md"
+    run _rv_codex_section "${body}"
+    assert_output "$(printf '%s\n' \
+        'repo file script/x.sh:3' \
+        'repo root .' \
+        'not the repo <path>' \
+        'source distrobox-1.8/lib/a.c:10' \
+        'slash-ended source ref/b.md' \
+        'home ~/.config/x' \
+        'other home ~/proj/y and ~/z' \
+        'uri file://~/w' \
+        'session <tmp> end' \
+        'system <path> and <path> and <path>' \
+        'no scheme location:<path> and host:<path> and C:<path>' \
+        'unc <path> and <path>' \
+        'mac <path> and <path>' \
+        'root <path> and ws <path>' \
+        'wsl <path>' \
+        'win <path>' \
+        'opt [原始碼 <path>] and uri file://<path>' \
+        'kept https://example.com/a/b and a/b and ./c and 1/2 and /')"
+    # agy's original is scrubbed the same way
+    run grep -c '^1\. agy-claim \[原始碼 \./agy-src\]$' "${body}"
+    assert_output "1"
+    run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|/usr/|/etc/|/dev/|server|\\\\Users|${src}|${ref}" "${body}"
+    assert_output "0"
+    run grep -c 'comment:1/1 -->$' "${body}"
+    assert_output "1"
+    run grep -c '^\[claude\] agy 原文$' "${body}"
+    assert_output "1"
 }
 
 @test "research-verify (node): the claude verifier's schema demands at least one claim" {
@@ -565,7 +1045,7 @@ _rv_src_check() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"failed","attempts":2,"detail":"d"}')"
     assert_success
     run jq -r '.result.status, (.calls | length)' <<<"${output}"
-    assert_output "$(printf '%s\n' agy-failed 1)"
+    assert_output "$(printf '%s\n' agy-failed 2)"
 }
 
 @test "research-verify (node): a missing or empty verification fails closed, nothing is synthesized or posted" {
@@ -598,10 +1078,301 @@ _rv_src_check() {
 @test "research-verify (node): recorded only with a comment URL, record-failed otherwise" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     run jq -r '.result.status, .result.comment' <<<"${output}"
-    assert_output "$(printf '%s\n' recorded https://github.com/o/r/issues/7#issuecomment-1)"
+    assert_output "$(printf '%s\n' recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":""}')"
     run jq -r '.result.status' <<<"${output}"
     assert_output "record-failed"
+}
+
+# --- codex output: local paths rewritten before posting (#233) ----------------
+
+# Raw codex output citing the repo through every local prefix a run sees:
+# $1 = repoDir, $2 = the template's scratch dir, $3 = the worktree (or '').
+_codex_raw_with_paths() {
+    printf 'banner\ncodex\n'
+    printf -- '- %s/tree/lib/log.sh:12\n' "$2"
+    [[ -n "$3" ]] && printf -- '- %s/script/x.sh:3\n' "$3"
+    printf -- '- %s/doc/a.md:1\n' "$1"
+    printf -- '- %s/prompt.txt\n' "$2"
+    printf -- '- /elsewhere/scratchpad/tree/lib/y.sh:4\n'
+    printf '可合併\ntokens used\n5\n'
+}
+
+# The answer _codex_raw_with_paths should become: repo-relative paths.
+_codex_rel_answer() {
+    printf -- '- lib/log.sh:12\n'
+    [[ -n "$1" ]] && printf -- '- script/x.sh:3\n'
+    printf -- '- doc/a.md:1\n- <scratch>/prompt.txt\n- lib/y.sh:4\n可合併\n'
+}
+
+@test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
+    local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
+    local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
+    local replies='{"locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
+        "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
+    assert_success
+    local prompt
+    prompt="$(jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}")"
+    span="$(jq -rn --arg p "${prompt}" '$p | [match("`(cd [^`]*> answer-r1\\.md)`").captures[0].string][0]')"
+    assert [ -n "${span}" ]
+    mkdir -p "${scratch}"
+    _codex_raw_with_paths "${dir}" "${scratch}" "${wt}" > "${scratch}/out-r1.txt"
+    run bash -c "${span}"
+    assert_success
+    [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
+    run cat "${scratch}/answer-r1.md"
+    assert_output "$(_codex_rel_answer wt)"
+    # The comment posts that file, never the raw output.
+    run grep -c 'cat answer-r1.md' <<<"${prompt}"
+    assert_output "1"
+}
+
+@test "research-verify (node): codex.md has local paths rewritten repo-relative before it is posted" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir scratch
+    mkdir -p "${stub}"
+    dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
+    scratch="${dir}/../worktree/.scratch/research-7"
+    git init -q "${dir}"
+    mkdir -p "${BATS_TEST_TMPDIR}/raw"
+    _codex_raw_with_paths "${dir}" "${scratch}" '' > "${BATS_TEST_TMPDIR}/raw/codex.txt"
+    printf '#!/bin/sh\necho "1. agy-claim"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\ncat "%s/raw/codex.txt"\n' "${BATS_TEST_TMPDIR}" > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
+    run cat "${scratch}/codex.md"
+    assert_output "$(_codex_rel_answer '')"
+    run grep -c -- "- lib/log.sh:12" "${scratch}/body-1.md"
+    assert_output "1"
+}
+
+# Write stand-in $1 into the stub bin with shell body $2.
+_rv_stub() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf '#!/bin/sh\n%s\n' "$2" > "${BATS_TEST_TMPDIR}/bin/$1"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/$1"
+}
+
+# Stand-in agy / codex / gh that succeed; gh logs its args to gh.args and
+# appends one line per call to gh.calls, so a repeated call is visible.
+_rv_stubs() {
+    _rv_stub agy 'echo "1. agy-claim [官方文件 https://x]"'
+    _rv_stub codex 'cat >/dev/null; printf "banner\ncodex\ncodex-verdict-line\ntokens used\n5\n"'
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; printf '%s\n' \"\$*\" >> '${BATS_TEST_TMPDIR}/gh.calls'; printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+}
+
+# Run research-verify (exec, stub tools) with args question $3 (default q),
+# where stage $1 fails as kind $2: nonzero = its tool exits non-zero (a
+# stage without a tool: the agent itself fails), empty = no output,
+# malformed = output of the wrong shape. The record agent returns what gh
+# printed. Every other stage succeeds.
+_rv_fail_case() {
+    local replies dir="${BATS_TEST_TMPDIR}/$1-$2"
+    _rv_stubs
+    git init -q "${dir}"
+    rm -f "${BATS_TEST_TMPDIR}/gh.args" "${BATS_TEST_TMPDIR}/gh.calls"
+    replies="$(_rv_with "$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')" 'nonce:' '{"nonce":"<stdout>"}')"
+    case "$1:$2" in
+        research:nonzero) _rv_stub agy 'echo "1. c"; exit 3' ;;
+        research:empty) _rv_stub agy 'true' ;;
+        research:malformed) replies="$(_rv_with "${replies}" 'agy:' '{"status":"ok"}')" ;;
+        claude-verify:nonzero) replies="$(_rv_with "${replies}" 'claude-verify:' 'null')" ;;
+        claude-verify:empty) replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[]}')" ;;
+        claude-verify:malformed) replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[{"claim":"c1"}]}')" ;;
+        codex-verify:nonzero) _rv_stub codex 'cat >/dev/null; printf "codex\nv\n"; exit 1' ;;
+        codex-verify:empty) _rv_stub codex 'cat >/dev/null' ;;
+        codex-verify:malformed) _rv_stub codex 'cat >/dev/null; echo "no answer marker"' ;;
+        synthesize:nonzero) replies="$(_rv_with "${replies}" 'synthesize:' 'null')" ;;
+        synthesize:empty) replies="$(_rv_with "${replies}" 'synthesize:' '{}')" ;;
+        synthesize:malformed) replies="$(_rv_with "${replies}" 'synthesize:' '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}')" ;;
+        record:nonzero) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'; exit 1" ;;
+        record:empty) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'" ;;
+        record:malformed) _rv_stub gh "printf x > '${BATS_TEST_TMPDIR}/gh.args'; echo 'unexpected output'" ;;
+        ok:ok) ;;
+        *) return 99 ;;
+    esac
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _rv_run "$(jq -cn --arg d "${dir}" --arg q "${3:-q}" '{repo:"o/r",repoDir:$d,issue:7,question:$q}')" "${replies}" exec
+}
+
+# Stage $1 failing as each kind ends in status $2 with nothing recorded:
+# no comment, and gh never runs before the Record stage.
+_rv_assert_fails_closed() {
+    local kind json
+    for kind in nonzero empty malformed; do
+        echo "case: $1/${kind}"
+        json="$(_rv_fail_case "$1" "${kind}")"
+        run jq -r '.error, .result.status, .result.comment' <<<"${json}"
+        assert_output "$(printf '%s\n' null "$2" '')"
+        if [[ "$1" != record ]]; then
+            assert [ ! -e "${BATS_TEST_TMPDIR}/gh.args" ]
+        fi
+    done
+}
+
+@test "research-verify (node, exec): a small research records exactly one unnumbered comment" {
+    local body="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7/body-1.md"
+    run _rv_fail_case ok ok
+    assert_success
+    run jq -r '.error, .result.status, .result.comment' <<<"${output}"
+    assert_output "$(printf '%s\n' null recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
+    run grep -c '^issue comment 7 ' "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+    run wc -l < "${BATS_TEST_TMPDIR}/gh.calls"
+    assert_output "1"
+    run grep -c '^第 [0-9].*則$' "${body}"
+    assert_output "0"
+    run grep -c 'comment:1/1 -->$' "${body}"
+    assert_output "1"
+}
+
+@test "research-verify (node, exec): an over-limit research records bounded comments in conclusion, claims, codex, agy order" {
+    local dir="${BATS_TEST_TMPDIR}/long-record" replies json comments
+    comments="${BATS_TEST_TMPDIR}/comments"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    _rv_stub gh "if [ \"\$1 \$2\" = 'issue view' ]; then mkdir -p '${comments}'; for f in '${comments}'/*; do [ -f \"\$f\" ] || continue; n=\${f##*/}; jq -Rs --arg url 'https://github.com/o/r/issues/7#issuecomment-'\"\$n\" '{body:.,url:\$url}' < \"\$f\"; done | jq -s '{comments:.}'; exit; fi; mkdir -p '${comments}'; n=\$(find '${comments}' -type f | wc -l); cp \"\$7\" '${comments}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 1))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    json="${output}"
+    run jq -r '.error, .result.status' <<<"${json}"
+    assert_output "$(printf '%s\n' null recorded)"
+    run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
+    assert_output "4"
+    run bash -c 'for f in "$1"/*; do [ "$(wc -c < "$f")" -lt 65536 ] || exit 1; done' _ "${comments}"
+    assert_success
+    run bash -c 'for f in "$1"/*; do case "$(head -n 1 "$f")" in "[claude]"*) ;; *) exit 1 ;; esac; done' _ "${comments}"
+    assert_success
+    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
+    assert_output "4"
+}
+
+@test "research-verify (node, exec): a Record retry skips existing parts and posts only the remaining parts in order" {
+    local dir="${BATS_TEST_TMPDIR}/partial-retry" replies existing posted
+    existing="${BATS_TEST_TMPDIR}/existing.json"
+    posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    jq -cn '{comments:[
+        {body:"<!-- research-verify:0123456789abcdef:comment:1/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-1"},
+        {body:"<!-- research-verify:0123456789abcdef:comment:2/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-2"}
+    ]}' > "${existing}"
+    _rv_stub gh "if [ \"\$1 \$2\" = 'issue view' ]; then cat '${existing}'; exit; fi; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 3))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c 'for f in "$1"/*; do grep -m1 "<!-- research-verify:" "$f"; done' _ "${posted}"
+    assert_output "$(printf '%s\n' \
+        '<!-- research-verify:0123456789abcdef:comment:3/4 -->' \
+        '<!-- research-verify:0123456789abcdef:comment:4/4 -->')"
+    run bash -c 'find "$1" -type f | wc -l' _ "${posted}"
+    assert_output "2"
+}
+
+@test "research-verify (node, exec): recorded comments contain no attribution lines" {
+    local dir="${BATS_TEST_TMPDIR}/no-attribution" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'printf "1. claim [official https://x]\nGenerated with Claude Code\n"'
+    _rv_stub codex 'cat >/dev/null; printf "codex\nverdict\nCo-Authored-By: Claude <bot@example.test>\ntokens used\n5\n"'
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; cp \"\$7\" '${posted}'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[{"claim":"c1","verdict":"supported","basis":"Claude-Session: secret"}]}')"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run grep -E '^(Co-Authored-By:|Claude-Session:|Generated with Claude Code)' "${posted}"
+    assert_failure
+}
+
+@test "research-verify (node, exec): an over-limit conclusion paragraph is truncated with a note" {
+    local dir="${BATS_TEST_TMPDIR}/long-conclusion" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c '[ "$(wc -c < "$1/1")" -lt 65536 ] && grep -q "\[內容過長，已截斷\]" "$1/1"' _ "${posted}"
+    assert_success
+}
+
+@test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed research agy-failed
+}
+
+@test "research-verify (node, exec): a failing claude verifier records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed claude-verify verify-failed
+}
+
+@test "research-verify (node, exec): a failing codex verifier records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed codex-verify verify-failed
+}
+
+@test "research-verify (node, exec): a failing Synthesize records nothing (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed synthesize synthesize-failed
+}
+
+@test "research-verify (node, exec): a failing Record is record-failed, never recorded (non-zero exit, empty, malformed)" {
+    _rv_assert_fails_closed record record-failed
+}
+
+@test "research-verify (node, exec): block markers never collide with the text they fence" {
+    local q scratch="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7"
+    q='q ===END=== ===BEGIN-1=== ===END-1=== ===END-2=== end'
+    run _rv_fail_case ok ok "${q}"
+    assert_success
+    run jq -r '.error, .result.status' <<<"${output}"
+    assert_output "$(printf '%s\n' null recorded)"
+    run grep -cF "${q}" "${scratch}/agy-prompt.txt" "${scratch}/codex-prompt.txt" "${scratch}/claude.md"
+    assert_output "$(printf '%s\n' "${scratch}/agy-prompt.txt:1" "${scratch}/codex-prompt.txt:1" "${scratch}/claude.md:1")"
+}
+
+@test "research-verify (node, exec): every fenced block in a run gets its own marker" {
+    run _rv_fail_case ok ok
+    assert_success
+    run jq -r '[.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]] | (length | tostring) + " " + (unique | length | tostring)' <<<"${output}"
+    assert_output "3 3"
+}
+
+@test "research-verify (node, exec): two runs with the same args never share a block marker (issue #225)" {
+    local first second
+    first="$(_rv_fail_case ok ok)"
+    second="$(_rv_fail_case ok ok)"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" \
+        '[$a, $b] | map([.calls[].prompt | scan("===BEGIN-([^=]+)===") | .[0]]) | "\(.[0] | length) \(.[1] | length) \(add | unique | length)"'
+    assert_output "3 3 6"
+    run jq -rn --argjson a "${first}" --argjson b "${second}" '$a.result.status, $b.result.status'
+    assert_output "$(printf '%s\n' recorded recorded)"
+}
+
+@test "research-verify (node): a missing or malformed run nonce stops before Research with setup-failed" {
+    local val
+    for val in null '{}' '{"nonce":""}' '{"nonce":"12"}' '{"nonce":"0123456789abcdeg"}' '{"nonce":"===END-1==="}'; do
+        echo "nonce reply: ${val}"
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "$(_rv_ok_replies)" 'nonce:' "${val}")"
+        assert_success
+        run jq -r '.result.status, .result.comment, (.calls | length)' <<<"${output}"
+        assert_output "$(printf '%s\n' setup-failed '' 1)"
+    done
 }
 
 @test "research-verify (node): only a comment URL on THIS repo's issue counts as recorded" {
@@ -625,11 +1396,105 @@ _rv_src_check() {
     assert_output "recorded"
 }
 
+@test "research-verify: every phase prompt confines intermediate files to the run's scratch dir (#243)" {
+    run grep -c '^const SCRATCH_ONLY = ' "${RESEARCH}"
+    assert_output "1"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
+    assert_output "agy: claude-verify: codex-verify: synthesize: record: repo-check:"
+    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
+    assert_output "0"
+    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
+    assert_output "0"
+}
+
+@test "research-verify: requires a clean repo before Research and checks it after Record (#243)" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    # The first shell step captures the status BEFORE any write (mkdir, rm,
+    # redirect): nothing but a cd precedes the git status call.
+    run jq -r '.calls[1].prompt | [match("`([^`]*)`"; "g").captures[0].string][0]' <<<"${json}"
+    assert_output --regexp "^cd '/w' && before=\\\$\\(git -C '/w' status --porcelain --untracked-files=all -- \\.\\) && \\[ -z \"\\\$before\" \\] && mkdir -p "
+    assert_output --partial '> status-before.txt'
+    run jq -r '.calls[-1].label, .calls[-1].prompt' <<<"${json}"
+    assert_output --partial "repo-check:#7"
+    assert_output --partial "git -C '/w' status --porcelain --untracked-files=all -- . > status-after.txt"
+    run grep -c "schema: REPO_CHECK_SCHEMA" "${RESEARCH}"
+    assert_output "1"
+}
+
+@test "research-verify (node): extra repo paths after Record fail the run with repo-dirty and list the paths (#243)" {
+    local ok
+    ok="$(_rv_ok_replies)"
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'repo-check:' '{"extra":["?? doc/research/x.md"," M README.md"]}')"
+    assert_success
+    run jq -r '.result.status, .result.comment, .result.detail' <<<"${output}"
+    assert_output --partial "repo-dirty"
+    assert_output --partial "https://github.com/o/r/issues/7#issuecomment-1"
+    assert_output --partial "?? doc/research/x.md"
+    assert_output --partial " M README.md"
+    for val in 'null' '{}' '{"extra":"x"}'; do
+        run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'repo-check:' "${val}")"
+        run jq -r '.result.status' <<<"${output}"
+        assert_output "repo-dirty"
+    done
+}
+
+@test "research-verify (node): the repo-check shell step really lists a path a phase left in repoDir (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: leaves a note in the checkout (scratch is outside repoDir)
+    printf '#!/bin/sh\ntouch "%s/stray-note.md"\necho "1. claim [x]"\n' "${dir}" > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\ntokens used\\n1\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    [[ -e "${dir}/stray-note.md" ]]
+    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
+    assert_output "+ ?? stray-note.md"
+}
+
+@test "research-verify (node): a dirty repo stops before scratch creation and research (#301)" {
+    local dir="${BATS_TEST_TMPDIR}/dirty/repo"
+    git init -q "${dir}"
+    touch "${dir}/old-note.md"
+    run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    run jq -r '.result.status, (.ran | length)' <<<"${output}"
+    assert_output "$(printf '%s\n' agy-failed 2)"
+}
+
+@test "research-verify (node): the repo-check shell step fails closed when grep errors, e.g. an unreadable status-before.txt (#243)" {
+    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${stub}"
+    # agy misbehaves: removes the pre-run capture from the scratch dir (its cwd)
+    printf '#!/bin/sh\nrm -f status-before.txt\necho "1. claim [x]"\n' > "${stub}/agy"
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\ntokens used\\n1\\n"\n' > "${stub}/codex"
+    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
+    chmod +x "${stub}"/*
+    git init -q "${dir}"
+    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    run jq -r '.ran[-1].rc' <<<"${output}"
+    refute_output "0"
+    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
+    assert_output --partial "repo-check failed"
+}
+
 @test "doc/workflow.md documents research-verify and its args" {
     run grep -c '^## research-verify' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"
     run grep -c 'repo, repoDir, issue, question, context?, sources?, timeoutMin?' "${REPO_ROOT}/doc/workflow.md"
     assert_output "1"
+    run grep -c 'repo-dirty' "${REPO_ROOT}/doc/workflow.md"
+    assert [ "${output}" -ge 1 ]
+    run grep -c 'git -C <repoDir> status --porcelain' "${REPO_ROOT}/doc/workflow.md"
+    assert [ "${output}" -ge 1 ]
 }
 
 @test "this spec is a required unit spec of test.sh" {
