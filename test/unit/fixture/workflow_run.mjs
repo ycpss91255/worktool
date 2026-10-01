@@ -90,6 +90,10 @@ const agent = async (prompt, opts = {}) => {
   if (mode === 'exec-stage-checks' && label.startsWith('fix:')) {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
+    if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed') {
+      execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix', '--allow-empty'])
+    }
+    if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
   if (!['exec', 'exec-hooks'].includes(mode) && !(mode === 'exec-stage-checks' && label.startsWith('stage-check:'))) return reply(label)
   const { ok, stdout } = play(prompt)

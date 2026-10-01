@@ -1651,6 +1651,23 @@ _pl_stage_run() {
     done
 }
 
+@test "pr-loop (node): Fix rejects a committed but unpushed HEAD (#331)" {
+    _pl_stage_setup
+    local impl
+    for impl in codex claude; do
+        run _pl_stage_run "${impl}" unpushed
+        assert_success
+        local json="${output}"
+        run jq -cr '[.result.codexVerdict, ([.calls[].label | select(startswith("review:"))] | length), ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        assert_output '["blocked",1,1]'
+        run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
+        assert_output --partial 'git status: (clean)'
+        assert_output --partial "remote HEAD: ${PL_BEFORE}"
+        assert_output --partial "PR head: ${PL_BEFORE}"
+        refute_output --partial "local HEAD: ${PL_BEFORE}"
+    done
+}
+
 @test "pr-loop (node): light failed editing includes the step and reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
