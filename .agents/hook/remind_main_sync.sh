@@ -16,7 +16,7 @@
 #   queued     `--auto`: the merge lands later; pull once it has
 #   immediate  otherwise: pull right after
 #
-# Only a real subcommand triggers it: quoted regions are stripped first, so
+# Only a real subcommand triggers it: launches are parsed first, so
 # a commit message mentioning `gh pr merge` stays silent.
 #
 # Exit: always 0 (reminder JSON on stdout when it fires).
@@ -26,12 +26,8 @@ _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 hook_bootstrap "remind-main-sync"
-
-# Strip unnested "..." and '...' regions (worst case a false positive
-# survives - never a false negative).
-_strip_quoted() {
-    printf '%s' "$1" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g"
-}
+# shellcheck source=subcommand.sh
+source "${_HOOK_HERE}/lib/subcommand.sh"
 
 # _policy_note <cleaned-command> - worktool's merge-mode note, or nothing.
 _policy_note() {
@@ -47,11 +43,16 @@ _policy_note() {
 
 main() {
     hook_read_input
-    local _cmd _clean _variant _msg
+    local _cmd _clean _sub _variant _msg
     _cmd="$(hook_command)"
     [[ -z "${_cmd}" ]] && return 0
-    _clean="$(_strip_quoted "${_cmd}")"
-    [[ "${_clean}" =~ (^|[\;\&\|]|\$\()[[:space:]]*gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || return 0
+    _clean=''
+    while IFS= read -r _sub; do
+        [[ "${_sub}" =~ ^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || continue
+        _clean="${_sub}"
+        break
+    done < <(hook_subcommands "${_cmd}")
+    [[ -n "${_clean}" ]] || return 0
 
     if [[ "${_clean}" =~ --auto([[:space:]]|$) ]]; then
         _variant=queued
