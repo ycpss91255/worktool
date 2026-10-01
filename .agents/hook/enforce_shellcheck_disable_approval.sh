@@ -43,7 +43,7 @@ read_latest_user_message() {
             | .message.content
             | if type == "string" then .
               elif type == "array" then (map(select(.type == "text")) | .[0].text // empty)
-              else empty end' 2>/dev/null)"
+              else empty end' 2>/dev/null)" || continue
         if [[ -n "${_text}" ]]; then
             printf '%s\n' "${_text}"
             return 0
