@@ -69,5 +69,5 @@ commit_refs_check_commits() {
         log_error "${_bad} of ${_n} commits need a Refs: #<number> footer."
         return 1
     fi
-    log_info "${_n} commits checked: issue footers ok."
+    log_info "${_n} commits checked: issue footers ok. (enforcing commit ${_enforcing})"
 }

@@ -73,6 +73,18 @@ _introduce_refs_rule() {
     assert_output --partial '1 commits checked: issue footers ok.'
 }
 
+@test "post-rule commits with footers pass and report the enforcing commit" {
+    _commit_refs 'old work without footer'
+    _introduce_refs_rule
+    local _enforcing
+    _enforcing="$(git -C "${REPO}" rev-parse HEAD)"
+    _commit_refs $'new work\n\nRefs: #312'
+    run commit_refs_check_commits "${REPO}" "${_enforcing}..HEAD"
+    assert_success
+    assert_output --partial '1 commits checked: issue footers ok.'
+    assert_output --partial "enforcing commit ${_enforcing}"
+}
+
 @test "merge commits are exempt from the footer rule" {
     _commit_refs $'base\n\nRefs: #312'
     git -C "${REPO}" switch -q -c topic
