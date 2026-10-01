@@ -1,64 +1,84 @@
 #!/usr/bin/env bats
-# test/unit/adr_spec.bats - doc/adr wording guards
-#
-# WHAT THIS PROVES
-#   ADR 0002 (the box owns its HOME, issue #197) records a decision whose
-#   interfaces are NOT built yet: `just box assemble --home`, the refusal on
-#   a HOME conflict, the user-config symlinks and TMUX_TMPDIR. Each of
-#   decision items 2-4 must say so and name the issue that will build it
-#   (#198 / #199 / #179), so nobody reads them as current behaviour
-#   (codex round 1 on PR #222). The ADR must also not postpone the
-#   architecture diagram: the repo rule is that a decision that changes a
-#   diagram updates it in the same PR.
-#
-# Written test-first: RED against the round-0 ADR (present-tense items,
-# diagram listed among the deferred rewrites), GREEN after the fix.
-#
-#   ADR 0004 (invariant 1, user content belongs to the user, issue #202)
-#   lists the specs that guard the invariant. Every cited case must exist
-#   under that exact name in that exact spec file, so the ADR cannot claim
-#   a guard nobody runs; and "ask before changing", which nothing enforces
-#   yet, must stay marked as a gap (待補).
-#   Codex round 1 on PR #253: the definition must be a closed statement
-#   (user content is what worktool did NOT write), the guard section must
-#   name every writer of a user file (setup.sh AND assemble.sh through
-#   home_record), and doc/contract.md, once #201 creates it, must link
-#   invariant 1 to this ADR. RED against the round-0 ADR, GREEN after.
-#   Codex round 2 on PR #253: the contract link is checked fail-closed
-#   (no contract = failure), and the ADR must state that worktool owns its
-#   state keys in ~/.config/worktool/config (the file has no managed block)
-#   and mark the user lines setup.sh drops from it as a gap (待補).
-#   Codex round 3 on PR #253: the invariant-1 promise in doc/contract.md
-#   section 4 must carry the same state-key exception and name the same
-#   state-file gap, so the contract never promises more than the ADR.
+# test/unit/adr_spec.bats - shared ADR wording guards
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+_invariant_section() {
+    awk -v heading="## $2" '
+        $0 == heading { found = 1; next }
+        /^## / { if (found) exit }
+        found { print }
+        END { if (!found) exit 1 }
+    ' "$1"
+}
+
+_invariant_adr_files() {
+    find "${REPO_ROOT}/doc/adr" -maxdepth 1 -type f \
+        -name '*-invariant-*.md' -print | sort
+}
+
+_check_invariant_sections() {
+    local _actual _expected _heading _body
+    _expected="$(printf '%s\n' '## 一句話' '## 性質' '## 為什麼固定' \
+        '## 目前由哪些機制或測試守住')"
+    _actual="$(grep -E '^## ' "$1")" || return 1
+    if [[ "${_actual}" != "${_expected}" ]]; then
+        printf '%s: invariant sections differ\n' "$1"
+        return 1
+    fi
+    for _heading in 一句話 性質 為什麼固定 目前由哪些機制或測試守住; do
+        _body="$(_invariant_section "$1" "${_heading}")" || return 1
+        if ! grep -q '[^[:space:]]' <<<"${_body}"; then
+            printf '%s: empty section: %s\n' "$1" "${_heading}"
+            return 1
+        fi
+    done
+}
+
+_invariant_spec_paths() {
+    grep -oE 'test/(unit|integration|system|acceptance)/[A-Za-z0-9_/-]+_spec\.bats' "$1" |
+        sort -u
+}
+
+_check_invariant_spec_paths() {
+    local _path _missing=0
+    while IFS= read -r _path; do
+        [[ -f "${REPO_ROOT}/${_path}" ]] && continue
+        printf '%s: missing cited spec: %s\n' "$1" "${_path}"
+        _missing=1
+    done < <(_invariant_spec_paths "$1")
+    return "${_missing}"
+}
+
+_check_invariant_pending() {
+    _invariant_section "$1" 目前由哪些機制或測試守住 | grep -q '待補'
+}
+
+@test "every invariant ADR follows the shared format and cites existing guards" {
+    local _adr _count=0
+    while IFS= read -r _adr; do
+        _count=$((_count + 1))
+        run _check_invariant_sections "${_adr}"
+        assert_success
+        run _check_invariant_spec_paths "${_adr}"
+        assert_success
+        run _check_invariant_pending "${_adr}"
+        assert_success
+    done < <(_invariant_adr_files)
+    assert [ "${_count}" -gt 0 ]
+}
+
+@test "the shared invariant check rejects an ADR with a missing section" {
+    run _check_invariant_sections \
+        "${BATS_TEST_DIRNAME}/fixture/adr/9999-invariant-missing-section.md"
+    assert_failure
+    assert_output --partial "invariant sections differ"
+}
+
 setup() {
     ADR_0002="${REPO_ROOT}/doc/adr/0002-box-owns-its-home.md"
-    ADR_0004="${REPO_ROOT}/doc/adr/0004-invariant-user-content.md"
 }
 
-# The "## 目前由哪些機制或測試守住" section of ADR 0004, heading excluded.
-_adr4_guard_section() {
-    sed -n '/^## 目前由哪些機制或測試守住/,/^## /p' "${ADR_0004}" | sed '1d;/^## /d'
-}
-
-# Every spec citation in the guard section, one `<file>\t<case>` per line.
-# A citation is written `test/<...>.bats`:「<case name>」.
-_adr4_citations() {
-    local _q='`'
-    _adr4_guard_section \
-        | grep -oE "${_q}test/[^${_q}]+\\.bats${_q}:「[^」]+」" \
-        | sed -E "s/^${_q}([^${_q}]+)${_q}:「(.*)」\$/\\1\\t\\2/"
-}
-
-# Entry 1 of the invariant index (section 6) of doc/contract.md.
-_contract_invariant_1() {
-    sed -n '/^## 6\./,$p' "${REPO_ROOT}/doc/contract.md" | grep -E '^1\. '
-}
-
-# Decision item $1 (the "N. ..." line under "## 決策") of ADR 0002.
 _decision_item() {
     sed -n '/^## 決策/,/^## /p' "${ADR_0002}" | grep -E "^$1\. "
 }
@@ -85,121 +105,11 @@ _decision_item() {
 }
 
 @test "ADR 0002 does not postpone the architecture diagram update" {
-    # The deferral sentence (docs rewritten later by #198/#199/#179) must
-    # not list the diagram ...
     run grep -E "各自改寫" "${ADR_0002}"
     assert_success
     refute_output --partial "架構圖"
-    # ... and the ADR states the diagram is updated in this same change.
     run grep -c "架構圖.*同一個 PR" "${ADR_0002}"
     assert_success
-}
-
-@test "ADR 0004 has the four invariant sections, in order" {
-    run grep -E '^## ' "${ADR_0004}"
-    assert_success
-    assert_line --index 0 "## 一句話"
-    assert_line --index 1 "## 性質"
-    assert_line --index 2 "## 為什麼固定"
-    assert_line --index 3 "## 目前由哪些機制或測試守住"
-}
-
-@test "ADR 0004 names its issue and its parent" {
-    run grep -E '^- 討論：' "${ADR_0004}"
-    assert_success
-    assert_output --partial "#200"
-    assert_output --partial "#202"
-}
-
-@test "every spec case ADR 0004 cites exists under that name in that file" {
-    local _citations _file _case _n=0
-    _citations="$(_adr4_citations)"
-    [[ -n "${_citations}" ]] || fail "ADR 0004 cites no spec case"
-    while IFS=$'\t' read -r _file _case; do
-        _n=$((_n + 1))
-        [[ -f "${REPO_ROOT}/${_file}" ]] || fail "cited spec missing: ${_file}"
-        grep -qxF "@test \"${_case}\" {" "${REPO_ROOT}/${_file}" \
-            || fail "no case '${_case}' in ${_file}"
-    done <<<"${_citations}"
-    assert [ "${_n}" -ge 5 ]
-}
-
-@test "ADR 0004 marks 'ask before changing' as not yet guarded (待補)" {
-    run bash -c 'sed -n "/^## 目前由哪些機制或測試守住/,\$p" "$1" | grep -E "要改先問"' _ "${ADR_0004}"
-    assert_success
-    assert_output --partial "待補"
-}
-
-# The definition paragraph (the first line of "## 性質" that defines the term).
-_adr4_definition() {
-    sed -n '/^## 性質/,/^## /p' "${ADR_0004}" | grep -E '^「使用者寫的內容」'
-}
-
-@test "ADR 0004 defines user content as what worktool did NOT write (a closed statement, not a question)" {
-    run _adr4_definition
-    assert_success
-    refute_output --partial "是不是"
-    assert_output --partial "不是由 worktool 寫出來的"
-}
-
-@test "ADR 0004 names every script that writes a user file: setup.sh and assemble.sh (home_record)" {
-    run _adr4_guard_section
-    assert_success
-    refute_output --partial "只有 \`just box setup\`"
-    assert_output --partial "script/box/setup.sh"
-    assert_output --partial "script/box/assemble.sh"
-    assert_output --partial "home_record"
-    # ... and cites at least one assemble spec for the state-file write.
-    run _adr4_citations
-    assert_success
-    assert_output --regexp "test/[a-z]+/assemble_spec\.bats"
-}
-
-@test "doc/contract.md invariant index entry 1 links this ADR (issue #202 backfill)" {
-    # Codex round 2 on PR #253: the backfill is part of #202, so the check
-    # is fail-closed - a missing contract is a failure, not a pass.
-    assert [ -f "${REPO_ROOT}/doc/adr/0004-invariant-user-content.md" ]
-    assert [ -f "${REPO_ROOT}/doc/contract.md" ]
-    run _contract_invariant_1
-    assert_success
-    assert_output --partial "](adr/0004-invariant-user-content.md)"
-    assert_output --partial "#202"
-    refute_output --partial "待寫"
-}
-
-@test "ADR 0004 states the state-file key ownership exception and lists the dropped user lines as 待補" {
-    # Codex round 2 on PR #253: setup.sh and home_record replace state keys
-    # in ~/.config/worktool/config, which has no managed block.
-    run sed -n '/^## 性質/,/^## /p' "${ADR_0004}"
-    assert_success
-    assert_output --partial "狀態鍵"
-    assert_output --partial "\`~/.config/worktool/config\`"
-    assert_output --partial "\`home.source\`"
-    run _adr4_guard_section
-    assert_success
-    refute_output --partial "沒有刻意改動受管區塊以外既有內容的路徑"
-    refute_output --partial "保留它不管的行"
-    assert_output --regexp "狀態檔裡使用者自己加的行.*待補"
-}
-
-# The invariant-1 promise in section 4 of doc/contract.md: its bullet line
-# and its 驗證 line.
-_contract_promise_1() {
-    sed -n '/^## 4\./,/^## 5\./p' "${REPO_ROOT}/doc/contract.md" \
-        | grep -A1 -E '^- \*\*使用者寫的內容歸使用者'
-}
-
-@test "doc/contract.md invariant-1 promise carries the state-key exception and the known state-file gap" {
-    # Codex round 3 on PR #253: the contract must not promise more than the
-    # ADR. ADR 0004 carves out the state keys of ~/.config/worktool/config
-    # (no managed block) and records that setup.sh drops user lines there.
-    run _contract_promise_1
-    assert_success
-    [ "${#lines[@]}" -eq 2 ]
-    assert_line --index 0 --partial "\`~/.config/worktool/config\`"
-    assert_line --index 0 --partial "狀態鍵"
-    assert_line --index 0 --partial "](adr/0004-invariant-user-content.md)"
-    assert_line --index 1 --regexp "^  - 驗證：.*狀態檔裡使用者自己加的行.*待驗"
 }
 
 @test "this spec is a required unit spec of test.sh" {

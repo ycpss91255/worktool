@@ -68,7 +68,7 @@ _dispatched() {
 # group in the test image, then - after a `docker build` of the ubuntu
 # ghostty image - the ghostty group.
 EVERYTHING_IN_ORDER="$(printf '%s\n' \
-    --ci-lint --ci-unit \
+    --ci-lint --ci-unit --ci-matrix \
     --ci-integration build --ci-integration-ghostty \
     --ci-system --ci-acceptance \
     build system-real-entry.sh)"
@@ -79,8 +79,8 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --help
     assert_success
     local _flag
-    for _flag in --build --lint --unit --integration --system --system-real \
-        --acceptance --help; do
+    for _flag in --build --lint --unit --matrix --integration --system --system-real \
+        --acceptance --changed --base --filter --help; do
         assert_output --partial "${_flag}"
     done
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
@@ -139,7 +139,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 # --- no flag: everything, in order, stop at the first failure --------------
 
-@test "test.sh with no flag runs lint, unit, integration, system, acceptance, system-real in that order" {
+@test "test.sh with no flag runs lint, unit, matrix, integration, system, acceptance, system-real in that order" {
     run "${TEST_SH}"
     assert_success
     assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
@@ -149,7 +149,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
     assert_failure
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit \
+        --ci-lint --ci-unit --ci-matrix \
         --ci-integration build --ci-integration-ghostty \
         --ci-system)"
 }
@@ -164,7 +164,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 @test "test.sh --<tier> routes exactly that in-container gate and nothing else" {
     local _tier
-    for _tier in lint unit system acceptance; do
+    for _tier in lint unit matrix system acceptance; do
         rm -f "${FAKE_DOCKER_CALLS}"
         run "${TEST_SH}" "--${_tier}"
         assert_success
@@ -201,6 +201,18 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
 }
 
+@test "every bats runner image installs GNU parallel" {
+    local _dockerfile
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^[[:space:]]*parallel([[:space:]]*\\)?$' \
+            "${REPO_ROOT}/${_dockerfile}"
+        assert_success "${_dockerfile} must install GNU parallel for bats --jobs"
+    done
+}
+
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
@@ -226,7 +238,62 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+}
+
+@test "test.sh --unit forwards one spec path to the container gate" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
+}
+
+@test "test.sh --unit forwards multiple spec paths in order" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats test/unit/ci_gate_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
+}
+
+@test "test.sh --filter runs only matching cases" {
+    run env WORKTOOL_TEST_JOBS=2 "${TEST_SH}" --ci-unit \
+        test/unit/test_sh_spec.bats --filter '^test.sh -h is the same as --help$'
+    assert_success
+    assert_line '1..1'
+    assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
+    refute_output --partial 'test.sh --help exits 0'
+}
+
+@test "test.sh rejects a spec path from another tier" {
+    run "${TEST_SH}" --unit test/integration/smoke_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/smoke_spec.bats' is outside test/unit/ (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a missing spec path" {
+    run "${TEST_SH}" --unit test/unit/missing_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit/missing_spec.bats' does not exist (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a path that is not a bats spec" {
+    run "${TEST_SH}" --unit test/unit
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit' must end in .bats (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects specs that require a dedicated tier runner" {
+    run "${TEST_SH}" --integration test/integration/ghostty_config_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/ghostty_config_spec.bats' requires its dedicated runner (see --help)"
+
+    run "${TEST_SH}" --system test/system/real_engine_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/system/real_engine_spec.bats' requires its dedicated runner (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
 # --- errexit (issue #195) ----------------------------------------------------

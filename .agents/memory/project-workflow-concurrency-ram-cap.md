@@ -36,6 +36,6 @@ RAM; they were not the hog.
   Docker `/source` bind mount, so two gate runs racing while git mutates the
   tree produce SPURIOUS failures (seen 2026-07-05: 3 overlapping agents on one
   worktree -> 8 bogus unit failures; GitHub's isolated CI was green). Each
-  workflow item gets its own `.worktree/<name>`.
+  workflow item gets its own `../worktree/<name>`.
 
 Related: [[project-workflow-long-implement-no-schema]], [[feedback-use-monitor-for-ci]].

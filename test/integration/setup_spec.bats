@@ -39,6 +39,10 @@ EOF
     chmod +x "${DISTROBOX}"
     PATH="${DBX_DIR}:${PATH}"
     export PATH
+
+    # Issue #180: every managed command runs this checkout's entry wrapper,
+    # which hands over to `<distrobox> enter <box> ...`.
+    WRAPPER="${REPO_ROOT}/script/box/enter.sh"
 }
 
 @test "setup (tmux host) then status: status reports the stored decisions, sources and both blocks present" {
@@ -65,7 +69,7 @@ EOF
     assert_line "tmux: inside (user)"
     assert_line "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line "tmux.conf: ${TMUX_CONF} (managed block: absent)"
-    run grep -F "command = '${DISTROBOX}' enter dev -- tmux new -A -s main" "${GHOSTTY}"
+    run grep -F "command = '${WRAPPER}' --distrobox '${DISTROBOX}' --box dev -- tmux new -A -s main" "${GHOSTTY}"
     assert_success
 }
 
@@ -145,7 +149,7 @@ EOF
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "'${WRAPPER}' --distrobox '${DISTROBOX}' --box dev -- tmux new -A -s main"
 
     # Control: that environment really cannot reach this distrobox by name,
     # so the case below cannot pass by accident.
@@ -166,7 +170,7 @@ EOF
     assert_success
     local _cmd
     _cmd="$(sed -n "s/^set -g default-command '\\(.*\\)'\$/\\1/p" "${TMUX_CONF}")"
-    assert_equal "${_cmd}" "\"${DISTROBOX}\" enter dev"
+    assert_equal "${_cmd}" "\"${WRAPPER}\" --distrobox \"${DISTROBOX}\" --box dev"
     run env -i PATH=/usr/bin:/bin HOME="${HOME}" /bin/sh -c "${_cmd}"
     assert_success
     run cat "${DISTROBOX}.log"
