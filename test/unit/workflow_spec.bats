@@ -169,6 +169,31 @@ _meta_skeleton() {
     assert_output '[null,"mergeable",["mergeable","blocked","no-output"]]'
 }
 
+@test "pr-loop (node): full stops without fixes when review returns no-output (#310)" {
+    local mode implementer
+    for mode in '{}' '{"mode":"full"}'; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" \
+                '{"verdict":"no-output","blocking":[],"nonBlocking":[],"answer":""}'
+            assert_success
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            assert_output '[null,true,true,0,0]'
+        done
+    done
+}
+
+@test "pr-loop (node): full stops without fixes when review returns null (#310)" {
+    local mode implementer
+    for mode in '{}' '{"mode":"full"}'; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" 'null'
+            assert_success
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            assert_output '[null,true,true,0,0]'
+        done
+    done
+}
+
 @test "pr-loop codex=off path posts the quota note and never fabricates a [codex] line" {
     run grep -c 'codex 暫停中(配額)' "${PR_LOOP}"
     assert [ "${output}" -ge 1 ]
@@ -229,6 +254,9 @@ _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
     local replies='{"implement:": {"status":"ready"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    if [[ $# -ge 2 ]]; then
+        replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
