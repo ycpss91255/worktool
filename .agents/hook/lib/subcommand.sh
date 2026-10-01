@@ -265,8 +265,8 @@ hook_http_is_write() {
     _short="$(hook_http_data_flags "${_tool}" | awk '$1 ~ /^-[A-Za-z]$/ && $2 == "1" { printf "%s", substr($1, 2) }')"
     for ((_i = 0; _i < ${#_a[@]}; _i++)); do
         _w="${_a[_i]}"
-        _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")"
-        _rc=$?
+        _rc=0
+        _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")" || _rc=$?
         if [[ "${_rc}" -ne 1 ]]; then
             _data=1
             [[ "${_rc}" -eq 2 ]] && _i=$((_i + 1))

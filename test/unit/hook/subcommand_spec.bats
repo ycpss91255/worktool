@@ -509,3 +509,9 @@ _scripts() {
     assert_success
     assert_output "$(printf '%s\n' 'echo case x in foo' 'bats t')"
 }
+
+@test "HTTP write classification handles data flag verdicts under errexit" {
+    run bash -e -c 'source "$1"; hook_http_is_write curl --data body https://example.test' _ \
+        "${REPO_ROOT}/.agents/hook/lib/subcommand.sh"
+    assert_success
+}
