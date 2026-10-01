@@ -1560,3 +1560,25 @@ _rv_assert_fails_closed() {
     run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
 }
+
+_discuss_run() {
+    local replies="${1}" mode="${2:-}"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${WF_DIR}/discuss.js" \
+        "${DISCUSS_ARGS:-{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":309,\"question\":\"Choose a design\",\"context\":\"Approved premise\"}}" "${replies}" "${mode}"
+    assert_success
+}
+
+_discuss_replies() {
+    jq -cn '{"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
+        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],risks:[]},
+        "compare:":{status:"agreed",conclusion:"Use A",basis:["doc/contract.md:1"],disagreements:[],question:""},
+        "record:":{url:"https://github.com/o/r/issues/309#issuecomment-1"}}'
+}
+
+@test "discuss: first answers are independent and receive the approved context" {
+    _discuss_run "$(_discuss_replies)"
+    local json="${output}"
+    run jq -cr '[.error, [.calls[] | select(.label | test("^(claude|codex):")) |
+        [(.prompt | contains("Approved premise")), (.prompt | contains("private answer"))]]]' <<<"${json}"
+    assert_output '[null,[[true,false],[true,false]]]'
+}
