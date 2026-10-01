@@ -4,7 +4,9 @@
 #
 # Times `distrobox enter <box> -- ...` with bash's EPOCHREALTIME (microsecond
 # wall clock; no hyperfine, nothing to install) and reports min / median /
-# max in milliseconds for three metrics:
+# max in milliseconds for three metrics (the unit tests swap the clock for
+# an injected one through the test-only BENCH_CLOCK, issue #249; see
+# _now_us):
 #
 #   enter   distrobox enter <box> -- true          (wrapper + engine round trip)
 #   shell   distrobox enter <box> -- <shell>       (the same, plus a shell
@@ -198,6 +200,9 @@ Exit codes:
 Environment (tests only):
   BENCH_PSI_FILE  read the PSI from this file instead of the cgroup /
                   /proc/pressure/cpu lookup.
+  BENCH_CLOCK     run this program for the host clock (it prints the time
+                  in microseconds) instead of reading EPOCHREALTIME; a
+                  failing clock or a non-integer aborts the run (exit 1).
 EOF
 }
 
@@ -287,13 +292,39 @@ _parse_args() {
 
 # --- Timing ------------------------------------------------------------------
 
-# Store the wall clock in microseconds in the variable named $1. No
-# subshell: a $(...) fork would add its own latency to every sample.
-# EPOCHREALTIME is "<seconds>.<6 digits>" (the radix follows the locale).
+# Store the host clock in microseconds in the variable named $1. The real
+# clock is EPOCHREALTIME ("<seconds>.<6 digits>", the radix follows the
+# locale), read with no subshell: a $(...) fork would add its own latency
+# to every sample. BENCH_CLOCK (environment, tests only, issue #249)
+# replaces it with a program that prints the time in microseconds, so the
+# unit tests decide on injected times instead of the host's load.
 _now_us() {
     local -n _ref_now="$1"
+    if [[ -n "${BENCH_CLOCK:-}" ]]; then
+        _bench_clock_us _ref_now
+        return
+    fi
     local _t="${EPOCHREALTIME/,/.}"
     _ref_now=$(( 10#${_t%.*} * 1000000 + 10#${_t#*.} ))
+}
+
+# Store what the test-only BENCH_CLOCK program prints (microseconds) in the
+# variable named $1. A clock that fails or prints anything but an integer
+# is refused (return 1, RUN_ERR set): a bogus time must never become a
+# sample.
+_bench_clock_us() {
+    local -n _ref_clk="$1"
+    local _out _rc=0
+    _out="$("${BENCH_CLOCK}" </dev/null)" || _rc=$?
+    if (( _rc != 0 )); then
+        RUN_ERR="BENCH_CLOCK '${BENCH_CLOCK}' exited ${_rc}"
+        return 1
+    fi
+    if [[ ! "${_out}" =~ ^[0-9]+$ ]]; then
+        RUN_ERR="BENCH_CLOCK '${BENCH_CLOCK}' printed '${_out}' instead of an integer"
+        return 1
+    fi
+    _ref_clk=$(( 10#${_out} ))
 }
 
 # Run the command $2.. once with stdin/stdout closed off (stderr passes
@@ -303,10 +334,10 @@ _time_cmd() {
     local -n _ref_us="$1"
     shift
     local _t0 _t1 _rc
-    _now_us _t0
+    _now_us _t0 || return 1
     _rc=0
     "$@" </dev/null >/dev/null || _rc=$?
-    _now_us _t1
+    _now_us _t1 || return 1
     _ref_us=$(( _t1 - _t0 ))
     return "${_rc}"
 }
