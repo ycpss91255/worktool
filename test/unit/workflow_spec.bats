@@ -593,7 +593,58 @@ JS
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
 # args $1 and agent replies $2; $3 = exec plays each agent's shell steps.
 _rv_run() {
+    if [[ "${3:-}" == exec ]]; then
+        _rv_model_fixture "$1"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${RESEARCH}" "$1" "$2" ${3:+"$3"}
+}
+
+# Install the real resolver in a throwaway checkout and let old agy stubs
+# keep modelling research, while discovery has its own configurable output.
+_rv_model_fixture() {
+    local dir stub="${BATS_TEST_TMPDIR}/bin"
+    dir="$(jq -r '.repoDir' <<<"$1")"
+    [[ "${dir}" == "${BATS_TEST_TMPDIR}/"* && -d "${dir}/.git" ]] || return 1
+    mkdir -p "${dir}/.agents/script/research" "${dir}/lib"
+    cp "${REPO_ROOT}/.agents/script/research/agy-model.sh" "${dir}/.agents/script/research/"
+    cp "${REPO_ROOT}/lib/log.sh" "${dir}/lib/"
+    printf '\n/.agents/\n/lib/\n' >> "${dir}/.git/info/exclude"
+    mv "${stub}/agy" "${stub}/agy-research"
+    cat > "${stub}/agy" <<'SH'
+#!/bin/sh
+if [ "$1" = models ]; then
+    if [ -n "${RV_MODEL_LIST:-}" ]; then
+        cat "$RV_MODEL_LIST"
+        exit "${RV_MODELS_RC:-0}"
+    fi
+    printf 'gemini-3.10-flash-high\tGemini 3.10 Flash (High)\n'
+    exit 0
+fi
+exec "$(dirname "$0")/agy-research" "$@"
+SH
+    chmod +x "${stub}/agy"
+}
+
+@test "research-verify resolves a fresh model before each agy research call" {
+    local dir="${BATS_TEST_TMPDIR}/repo" json cmd
+    _rv_stubs
+    _rv_stub agy 'printf "%s\n" "$@" > agy.args; echo "1. claim [official https://x]"'
+    git init -q "${dir}"
+    export RV_MODEL_LIST="${BATS_TEST_TMPDIR}/models"
+    printf 'gemini-3.10-flash-high\tGemini 3.10 Flash (High)\n' > "${RV_MODEL_LIST}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    json="${output}"
+    run jq -r '.result.status' <<<"${json}"
+    assert_output recorded
+    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7/agy.args"
+    assert_output "$(printf '%s\n' --model gemini-3.10-flash-high)"
+    printf 'gemini-3.11-flash-high\tGemini 3.11 Flash (High)\n' > "${RV_MODEL_LIST}"
+    cmd="$(jq -r '.ran[].cmd | select(contains("timeout 960 agy"))' <<<"${json}")"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run bash -c "${cmd}"
+    assert_success
+    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7/agy.args"
+    assert_output "$(printf '%s\n' --model gemini-3.11-flash-high)"
 }
 
 # Agent replies of a run where every step succeeds.
