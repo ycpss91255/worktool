@@ -67,7 +67,7 @@ CI 也走同一個入口：
 
 `box` namespace 的 recipe 清單是釘住的，刪掉或改名一個 recipe 會變紅：
 
-- `test/unit/justfile_spec.bats`「just box lists assemble, bench, default, help (alias h), setup and status only」
+- `test/unit/justfile_spec.bats`「just box lists assemble, bench, default, enter, help (alias h), setup and status only」
 
 這些案例只證明「recipe 轉發到哪裡」沒變；腳本本身做的事由各腳本自己的 spec 檢查，不在本條的保證內。
 
@@ -76,5 +76,5 @@ CI 也走同一個入口：
 - **別名期整條待補。** 「發布」目前沒有定義（尚未有 release），別名期多長也沒有定案；沒有任何機制或測試確認改名的 recipe 保留了舊名。上面的案例在改名時只會變紅，要求的是改測試，而不是留別名。
 - **經 `just` 與直接執行腳本的行為等價沒有檢查。** 上面的案例只證明 recipe 原封轉發、驗證與說明由腳本負責；沒有任何測試以同一組參數分別經 `just` 與直接執行腳本，比較兩者的輸出、結束碼與副作用。
 - **`test` namespace 的 recipe 清單沒有釘住。** `box` 有列出全部 recipe 的案例，`test` 沒有；`test` 的 recipe 被刪掉時，只有轉發案例裡點名的那幾個會變紅。
-- **文件以 `just` 為入口沒有全面檢查。** 只有 `just box help` 背後的腳本清單有檢查（`test/unit/justfile_spec.bats`「README.md and doc/structure.md list all four scripts behind just box help, in order」）；沒有測試確認 `README.md` 與 `doc/` 不教使用者直接呼叫腳本。
+- **文件以 `just` 為入口沒有全面檢查。** 只有 `just box help` 背後的腳本清單有檢查（`test/unit/justfile_spec.bats`「README.md and doc/structure.md list all five scripts behind just box help, in order」）；沒有測試確認 `README.md` 與 `doc/` 不教使用者直接呼叫腳本。
 - **host 端的 install script 未定。** #200 定案驅動與 GUI app 是各自獨立的 host install script，M4 的 host bootstrap 要負責裝好 `just` 本身；這些動作如何經過 `just`，目前沒有定案，也還沒有實作與測試。

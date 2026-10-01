@@ -55,6 +55,7 @@ worktool/
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── adr_spec.bats         所有 invariant ADR 的資料驅動格式守門:四節非空、引用 spec 存在、待補揭露
 │   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔)
+│   │   │   ├── 0008_spec.bats  不變量 5 的 issue、just 命令模型連結、引用案例與介面語意守門
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
 │   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
 │   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
