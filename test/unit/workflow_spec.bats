@@ -1724,6 +1724,20 @@ _pl_stage_run() {
     assert_output '[null,"blocked",["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
 }
 
+@test "pr-loop (node): clean pushed fixes resume CI and review (#331)" {
+    local impl
+    for impl in codex claude; do
+        _pl_stage_setup
+        run _pl_stage_run "${impl}" pushed
+        assert_success
+        run jq -cr '[.error, .result.ciState, .result.rounds, .result.blockingLeft,
+            ([.calls[].label | select(startswith("review:"))] | length),
+            ([.calls[].label | select(startswith("ci:"))] | length), [.ran[].rc]]' <<<"${output}"
+        assert_output '[null,"green",1,["broken"],2,2,[0,0]]'
+        rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
+    done
+}
+
 @test "pr-loop (node): light failed editing includes the step and reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
