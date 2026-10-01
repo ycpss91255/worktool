@@ -1613,7 +1613,7 @@ _discuss_replies() {
     scratch="${dir}/../worktree/.scratch/discuss-309"
     mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
     printf 'Unique codex text\ndoc/contract.md:9\n/home/private/secret\nCo-Authored-By: Claude\n' > "${scratch}/codex-r1.md"
-    printf '#!/bin/sh\ncp "$7" "%s"\necho https://github.com/o/r/issues/309#issuecomment-1\n' "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
+    printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
     chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
     DISCUSS_ARGS="$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:309,question:"q"}')"
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "$(_discuss_replies | jq '."nonce:"={nonce:"0123456789abcdef"} | ."record:".url="<stdout>"')" exec
