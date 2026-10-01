@@ -784,6 +784,15 @@ _add_changed_spec() {
         "test/${SYSTEM_REAL_SPEC_REL}") _system_real=1; return 0 ;;
     esac
     local -n _tier_specs="_${_tier}"
+    if [[ "${_tier}" == unit ]]; then
+        local _selected
+        for _selected in "${_tier_specs[@]}"; do
+            if [[ "${_selected}" == "${_path}" ]]; then
+                unset -n _tier_specs
+                return 0
+            fi
+        done
+    fi
     _tier_specs+=("${_path}")
     unset -n _tier_specs
 }

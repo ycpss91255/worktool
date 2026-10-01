@@ -300,3 +300,22 @@ _dispatched() {
         assert_output --partial "此改動由 CI 的 ${tier} 驗證"
     done
 }
+
+@test "test.sh --changed selects a mapped unit spec once in first-seen order" {
+    mkdir -p "${TEMP_REPO}/lib"
+    printf '# home library\n' >"${TEMP_REPO}/lib/home.sh"
+    for spec in assemble setup status; do
+        printf '@test "example" { true; }\n' \
+            >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/lib/home.sh"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/unit/setup_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint \
+        '--ci-unit test/unit/assemble_spec.bats test/unit/setup_spec.bats test/unit/status_spec.bats')"
+}
