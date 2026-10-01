@@ -248,6 +248,13 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
 }
 
+@test "test.sh --unit forwards multiple spec paths in order" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats test/unit/ci_gate_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
