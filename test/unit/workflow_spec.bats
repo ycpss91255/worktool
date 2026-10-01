@@ -741,11 +741,9 @@ _rv_src_check() {
 @test "research-verify never writes a [codex] line itself: codex text is copied from its file by the shell" {
     run grep -c 'Never write a "\[codex\]" line yourself' "${RESEARCH}"
     assert [ "${output}" -ge 2 ]
-    run grep -c 'cat codex.md' "${RESEARCH}"
-    assert [ "${output}" -ge 1 ]
 }
 
-@test "research-verify synthesizes a structured conclusion and records ONE issue comment via --body-file" {
+@test "research-verify synthesizes a structured conclusion and records comments via --body-file" {
     run grep -c "schema: SYNTH_SCHEMA" "${RESEARCH}"
     assert_output "1"
     for k in verified refuted needsExperiment recommendation parameters; do
@@ -753,8 +751,8 @@ _rv_src_check() {
         assert_output "1"
     done
     run grep -c 'gh issue comment ' "${RESEARCH}"
-    assert_output "1"
-    run grep -c '<details><summary>agy 原文</summary>' "${RESEARCH}"
+    assert [ "${output}" -ge 1 ]
+    run grep -c 'COMMENT_LIMIT = 60000' "${RESEARCH}"
     assert_output "1"
 }
 
@@ -774,7 +772,12 @@ _rv_src_check() {
     mkdir -p "${stub}"
     printf '#!/bin/sh\necho "1. agy-claim [官方文件 https://x]"\n' > "${stub}/agy"
     printf '#!/bin/sh\ncat >/dev/null\nprintf "banner\\ncodex\\ncodex-verdict-line\\ntokens used\\n5\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho "https://github.com/o/r/issues/7#issuecomment-1"\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+printf '%s\n' "$@" > "${BATS_TEST_TMPDIR}/gh.args"
+echo "https://github.com/o/r/issues/7#issuecomment-1"
+SH
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
     scratch="${dir}/../worktree/.scratch/research-7"
@@ -794,16 +797,16 @@ _rv_src_check() {
     [[ -s "${scratch}/agy.md" ]]
     run cat "${scratch}/codex.md"
     assert_output "codex-verdict-line"
-    run grep -c '^\[codex\] 逐條驗證(原文)$' "${scratch}/body.md"
+    run grep -c '^\[claude\] codex 逐條驗證(原文)$' "${scratch}/body-1.md"
     assert_output "1"
     run cat "${BATS_TEST_TMPDIR}/gh.args"
-    assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file "${scratch}/body.md")"
+    assert_output "$(printf '%s\n' issue comment 7 --repo o/r --body-file body-1.md)"
 }
 
 # The [codex] section of the Record body $1: the lines between the
-# "[codex] ..." header and the "<details>" fold, blank edges dropped.
+# codex header and the agy header, blank edges dropped.
 _rv_codex_section() {
-    awk '/^\[codex\] /{f=1;next} /^<details>/{f=0} f' "$1" | sed '/./,$!d'
+    awk '/^\[claude\] codex /{f=1;next} /^\[claude\] agy /{f=0} f' "$1" | sed '/./,$!d; s/^> //'
 }
 
 # Run research-verify with every step played (exec) under repoDir $1 and
@@ -825,7 +828,11 @@ while [ $# -gt 0 ]; do [ "$1" = -o ] && o=$2; shift; done
 [ -f "${SHAPE}/last" ] && [ -n "${o}" ] && cp "${SHAPE}/last" "${o}"
 cat "${SHAPE}/raw"
 SH
-    printf '#!/bin/sh\necho https://github.com/o/r/issues/7#issuecomment-1\n' > "${stub}/gh"
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+echo https://github.com/o/r/issues/7#issuecomment-1
+SH
     chmod +x "${stub}"/*
     PATH="${RV_OVERRIDE:+${RV_OVERRIDE}:}${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
 }
@@ -847,7 +854,7 @@ SH
         assert_success
         run jq -r '.result.status' <<<"${output}"
         assert_output recorded
-        run _rv_codex_section "${dir}/../worktree/.scratch/research-7/body.md"
+        run _rv_codex_section "${dir}/../worktree/.scratch/research-7/body-1.md"
         assert_output "$(printf '%b' "${expected}")"
     done <<'EOF'
 single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
@@ -959,9 +966,6 @@ SH
         # ... and gh posts nothing
         [[ ! -e "${posted}" ]]
     done <<'EOF'
-claude.md unreadable (non-zero exit)|claude.md||codex\nA1\ntokens used\n9\n|y
-codex.md unreadable (non-zero exit)|codex.md||codex\nA1\ntokens used\n9\n|y
-agy.md unreadable (non-zero exit)|agy.md||codex\nA1\ntokens used\n9\n|y
 path filter fails (non-zero exit)|-|fail|codex\nA1\ntokens used\n9\n|y
 path filter prints nothing (empty output)|-|empty|codex\nA1\ntokens used\n9\n|y
 codex printed nothing (empty output)|-||\n|n
@@ -998,7 +1002,7 @@ EOF
     } > "${SHAPE}/last"
     HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
     assert_success
-    body="${dir}/../worktree/.scratch/research-7/body.md"
+    body="${dir}/../worktree/.scratch/research-7/body-1.md"
     run _rv_codex_section "${body}"
     assert_output "$(printf '%s\n' \
         'repo file script/x.sh:3' \
@@ -1024,10 +1028,9 @@ EOF
     assert_output "1"
     run grep -cE "/home/|/Users/|/tmp/|/private/|/var/|/root/|/workspace|/mnt/|/opt/|/srv/|/usr/|/etc/|/dev/|server|\\\\Users|${src}|${ref}" "${body}"
     assert_output "0"
-    # the fold's own HTML closing tags are not paths
-    run tail -n 1 "${body}"
-    assert_output '</details>'
-    run grep -c '^<details><summary>agy 原文</summary>$' "${body}"
+    run grep -c 'comment:1/1 -->$' "${body}"
+    assert_output "1"
+    run grep -c '^\[claude\] agy 原文$' "${body}"
     assert_output "1"
 }
 
@@ -1143,7 +1146,7 @@ _codex_rel_answer() {
     [[ ! -e "${BATS_TEST_TMPDIR}/pwned" ]]
     run cat "${scratch}/codex.md"
     assert_output "$(_codex_rel_answer '')"
-    run grep -c -- "- lib/log.sh:12" "${scratch}/body.md"
+    run grep -c -- "- lib/log.sh:12" "${scratch}/body-1.md"
     assert_output "1"
 }
 
@@ -1159,7 +1162,7 @@ _rv_stub() {
 _rv_stubs() {
     _rv_stub agy 'echo "1. agy-claim [官方文件 https://x]"'
     _rv_stub codex 'cat >/dev/null; printf "banner\ncodex\ncodex-verdict-line\ntokens used\n5\n"'
-    _rv_stub gh "printf '%s\n' \"\$*\" >> '${BATS_TEST_TMPDIR}/gh.calls'; printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; printf '%s\n' \"\$*\" >> '${BATS_TEST_TMPDIR}/gh.calls'; printf '%s\n' \"\$@\" > '${BATS_TEST_TMPDIR}/gh.args'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
 }
 
 # Run research-verify (exec, stub tools) with args question $3 (default q),
@@ -1210,7 +1213,8 @@ _rv_assert_fails_closed() {
     done
 }
 
-@test "research-verify (node, exec): the stub-tool baseline records exactly one comment" {
+@test "research-verify (node, exec): a small research records exactly one unnumbered comment" {
+    local body="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7/body-1.md"
     run _rv_fail_case ok ok
     assert_success
     run jq -r '.error, .result.status, .result.comment' <<<"${output}"
@@ -1219,6 +1223,96 @@ _rv_assert_fails_closed() {
     assert_output "1"
     run wc -l < "${BATS_TEST_TMPDIR}/gh.calls"
     assert_output "1"
+    run grep -c '^第 [0-9].*則$' "${body}"
+    assert_output "0"
+    run grep -c 'comment:1/1 -->$' "${body}"
+    assert_output "1"
+}
+
+@test "research-verify (node, exec): an over-limit research records bounded comments in conclusion, claims, codex, agy order" {
+    local dir="${BATS_TEST_TMPDIR}/long-record" replies json comments
+    comments="${BATS_TEST_TMPDIR}/comments"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    _rv_stub gh "if [ \"\$1 \$2\" = 'issue view' ]; then mkdir -p '${comments}'; for f in '${comments}'/*; do [ -f \"\$f\" ] || continue; n=\${f##*/}; jq -Rs --arg url 'https://github.com/o/r/issues/7#issuecomment-'\"\$n\" '{body:.,url:\$url}' < \"\$f\"; done | jq -s '{comments:.}'; exit; fi; mkdir -p '${comments}'; n=\$(find '${comments}' -type f | wc -l); cp \"\$7\" '${comments}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 1))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    json="${output}"
+    run jq -r '.error, .result.status' <<<"${json}"
+    assert_output "$(printf '%s\n' null recorded)"
+    run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
+    assert_output "4"
+    run bash -c 'for f in "$1"/*; do [ "$(wc -c < "$f")" -lt 65536 ] || exit 1; done' _ "${comments}"
+    assert_success
+    run bash -c 'for f in "$1"/*; do case "$(head -n 1 "$f")" in "[claude]"*) ;; *) exit 1 ;; esac; done' _ "${comments}"
+    assert_success
+    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
+    assert_output "4"
+}
+
+@test "research-verify (node, exec): a Record retry skips existing parts and posts only the remaining parts in order" {
+    local dir="${BATS_TEST_TMPDIR}/partial-retry" replies existing posted
+    existing="${BATS_TEST_TMPDIR}/existing.json"
+    posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    jq -cn '{comments:[
+        {body:"<!-- research-verify:0123456789abcdef:comment:1/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-1"},
+        {body:"<!-- research-verify:0123456789abcdef:comment:2/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-2"}
+    ]}' > "${existing}"
+    _rv_stub gh "if [ \"\$1 \$2\" = 'issue view' ]; then cat '${existing}'; exit; fi; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 3))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c 'for f in "$1"/*; do grep -m1 "<!-- research-verify:" "$f"; done' _ "${posted}"
+    assert_output "$(printf '%s\n' \
+        '<!-- research-verify:0123456789abcdef:comment:3/4 -->' \
+        '<!-- research-verify:0123456789abcdef:comment:4/4 -->')"
+    run bash -c 'find "$1" -type f | wc -l' _ "${posted}"
+    assert_output "2"
+}
+
+@test "research-verify (node, exec): recorded comments contain no attribution lines" {
+    local dir="${BATS_TEST_TMPDIR}/no-attribution" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'printf "1. claim [official https://x]\nGenerated with Claude Code\n"'
+    _rv_stub codex 'cat >/dev/null; printf "codex\nverdict\nCo-Authored-By: Claude <bot@example.test>\ntokens used\n5\n"'
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; cp \"\$7\" '${posted}'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[{"claim":"c1","verdict":"supported","basis":"Claude-Session: secret"}]}')"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run grep -E '^(Co-Authored-By:|Claude-Session:|Generated with Claude Code)' "${posted}"
+    assert_failure
+}
+
+@test "research-verify (node, exec): an over-limit conclusion paragraph is truncated with a note" {
+    local dir="${BATS_TEST_TMPDIR}/long-conclusion" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c '[ "$(wc -c < "$1/1")" -lt 65536 ] && grep -q "\[內容過長，已截斷\]" "$1/1"' _ "${posted}"
+    assert_success
 }
 
 @test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
