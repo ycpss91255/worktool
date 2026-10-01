@@ -27,6 +27,7 @@ const GATES = 'just test lint and only the touched specs with just test <tier> <
 const LOCAL_TEST_RULES = `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Never run just test changed or a whole tier locally; CI runs every tier.`
 const CODEX_TIMEOUT_SECONDS = 14400
 const CODEX_WAIT_SECONDS = 540
+const FORMAT_REPAIR_LIMIT = 1
 const sq = s => `'${String(s).replace(/'/g, `'\\''`)}'`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with main by merging.`
 const COMMON_GUARDRAILS = `
@@ -51,21 +52,34 @@ Do not use run_in_background or Monitor. Wait in repeated bounded foreground cal
 timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
 An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from \`tail -n 80 ${out}\`; never treat it as success.`
 
-const ask = (name, n, prior) => {
+const ask = (name, n, prior, correction = '', attempt = 0) => {
   const out = `${SCRATCH}/codex-r${n}.md`
-  const context = `${brief(n)}${prior ? `\nPrevious independent answers and disagreements: ${JSON.stringify(prior)}\nRespond to the evidence; do not concede merely to agree.` : ''}`
+  const context = `${brief(n)}${prior ? `\nPrevious independent answers and disagreements: ${JSON.stringify(prior)}\nRespond to the evidence; do not concede merely to agree.` : ''}${correction}`
   const prompt = name === 'claude' ? context : `Run codex; never answer for it. ${CODEX_DETACHED_RUN(out, `${out}.rc`)}\nBrief to copy verbatim:\n${context}\nRead the output and return answer/reasons/notes/risks; put judgments in reasons with evidence and other content in notes; error on failure or empty output. Never retype codex into a file.`
-  return agent(`${GUARDRAILS}\n${prompt}`, { label: `${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
+  return agent(`${GUARDRAILS}\n${prompt}`, { label: attempt ? `repair:${name}:r${n}:${attempt}` : `${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
 }
 const VERDICT = { type: 'object', properties: {
   status: { type: 'string', enum: ['agreed', 'derived', 'diverged'] }, conclusion: { type: 'string' },
   basis: { type: 'array', items: { type: 'string' } }, disagreements: { type: 'array', items: { type: 'string' } },
   question: { type: 'string' },
 }, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
-const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|#[1-9][0-9]*\b|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*:[1-9][0-9]*|grep:[^\r\n]+ in [^\r\n]+ -> [0-9]+ 筆/.test(b)
+const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|#[1-9][0-9]*\b|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*:[1-9][0-9]*|grep:[^\r\n]*->\s*\d+\s*筆/.test(b)
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(cited) && Array.isArray(x.notes) && Array.isArray(x.risks)
 const failedReasons = (agent, x) => Array.isArray(x?.reasons)
   ? x.reasons.flatMap((reason, i) => cited(reason) ? [] : [{ agent, reason_index: i + 1, reason }]) : []
+const failedBasis = x => Array.isArray(x?.basis)
+  ? x.basis.flatMap((basis, i) => cited(basis) ? [] : [{ basis_index: i + 1, basis }]) : []
+const repairFormat = async (value, valid, failures, retry) => {
+  for (let attempt = 1; !valid(value) && attempt <= FORMAT_REPAIR_LIMIT; attempt++) {
+    const correction = `\nFormat validation failed. Only correct the format; preserve the judgments and do not invent evidence. Resubmit the complete object.\nFailed entries (original text): ${JSON.stringify(failures(value))}\nOriginal submission: ${JSON.stringify(value)}\nAcceptable evidence: issue URL, #N, repo-relative file:line, or grep:<pattern> in <path> -> N 筆 (whitespace and parentheses allowed; N is a non-negative integer). Follow the required schema.`
+    value = (await retry(correction, attempt)) ?? value
+  }
+  return value
+}
+const answerWithRepair = async (name, n, prior) => repairFormat(
+  await ask(name, n, prior), validAnswer, x => failedReasons(name, x),
+  (correction, attempt) => ask(name, n, prior, correction, attempt),
+)
 const judgments = ({ answer, reasons, risks }) => ({ answer, reasons, risks })
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
 const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: 'nonce:', phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
@@ -73,13 +87,14 @@ if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, stat
 let prior = null
 let result
 for (let n = 1; n <= 3; n++) {
-  const [claude, codex] = await parallel([() => ask('claude', n, prior), () => ask('codex', n, prior)])
+  const [claude, codex] = await parallel([() => answerWithRepair('claude', n, prior), () => answerWithRepair('codex', n, prior)])
   if (!validAnswer(claude) || !validAnswer(codex)) return {
     issue: A.issue, status: 'answer-failed', rounds: n,
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
-  const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
-  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
+  const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `repair:compare:r${n}:${attempt}` : `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  const verdict = await repairFormat(await compare(), validVerdict, failedBasis, compare)
+  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict) }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
   prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
