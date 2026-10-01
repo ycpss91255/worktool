@@ -380,3 +380,26 @@ _selected_changed_specs() {
     assert_equal "$output" "$(printf '%s\n' \
         test/integration/setup_spec.bats test/integration/another_spec.bats)"
 }
+
+@test "test.sh --changed selects a mapped system spec once in first-seen order" {
+    mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration" \
+        "${TEMP_REPO}/test/system"
+    printf '# assemble\n' >"${TEMP_REPO}/script/box/assemble.sh"
+    printf '@test "unit" { true; }\n' >"${TEMP_REPO}/test/unit/assemble_spec.bats"
+    printf '@test "integration" { true; }\n' \
+        >"${TEMP_REPO}/test/integration/assemble_spec.bats"
+    for spec in real_assemble another; do
+        printf '@test "example" { true; }\n' \
+            >"${TEMP_REPO}/test/system/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/box/assemble.sh"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/real_assemble_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/another_spec.bats"
+
+    _selected_changed_specs system
+
+    assert_success
+    assert_equal "$output" "$(printf '%s\n' \
+        test/system/real_assemble_spec.bats test/system/another_spec.bats)"
+}
