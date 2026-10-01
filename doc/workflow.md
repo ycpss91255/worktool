@@ -8,7 +8,7 @@ worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一�
 |------|------|--------|
 | `pr-loop.js` | 一個 sub-issue -> 一個 PR,推到「CI 綠 + codex 可合併」 | 每一個 sub-issue；機械式小修改用 light |
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
-| `research-verify.js` | 找資料:agy(gemini)查,claude 與 codex 並行逐條驗證,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
+| `research-verify.js` | 找資料:agy(gemini)查,codex 逐條開來源核對、claude 抽查與整合,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
 ## 呼叫方式
 
@@ -157,23 +157,24 @@ args 範例：
    `just --justfile .agents/script/research/justfile.research model [--help]` 取得模型 ID；stdout 只輸出 ID，診斷與 help 走 stderr。
    解析成功後 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m --model <解析結果>`，
    留言會記錄每次研究呼叫實際使用的模型名稱。
-   prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
+   prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;找前例優先查 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 作補充；輸出寫進 `agy.md`。
    指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
    agent 回報的 `attempts` 不是 1 或 2 也算失敗。
-2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
-   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,`codex.md` 只存 codex 的**最終回答**:
+2. **Verify**:先由 codex 逐條核對；成功後 claude agent 讀取 codex 核對結果，抽查部分一手來源（至少一條，優先分歧、`UNVERIFIED` 與關鍵主張；只有一條主張時可抽查該條），附抽樣理由與成立 / 不成立 / 無法確認的依據，不重做全量核對、不自行大量網路查找。
+   codex 的 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條開啟每個主張的一手來源（含 `UNVERIFIED`），記錄來源是否支持主張、實際 URL／檔案:行號、摘錄與依據；不可讀或判定不了就標「無法確認」，不憑記憶或搜尋摘要、不自行大量網路查找。`codex.md` 只存 codex 的**最終回答**:
    優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊,
    且該區塊必須緊接內容恰為 `tokens used` 的一行(回合完成的邊界;`tokens used by ...` 之類的文字只是回答內容,不算邊界),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
    沒有這個邊界(停在 commentary、工具呼叫中或錯誤)就視為沒有最終回答,`codex.md` 為空,Record 不發(fail closed)。
    codex 非零結束、無輸出或最終回答抽取失敗都以非零結束。
    **兩路都必須有結果**:claude 沒回 claims(空值、空陣列,或任一條缺 claim / verdict / basis)或 codex 無輸出(配額/認證)就回傳
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
-3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
+3. **Synthesize**:由 claude 依 agy brief、codex 全量來源核對與自己的抽查結果整合：驗證後成立的事實、被推翻的主張、分歧、仍需實測的點、建議方案、需要維護者拍板的參數（結構化），不自行大量網路查找。
+   無法由來源判定（含雙方皆無法確認）或來源無法解決的矛盾只能歸入 `disagreements`，每條必含非空的 `claim`、`codexBasis`、`claudeBasis`，列出雙方依據或缺乏證據的原因；不投票、不偏好某模型、不選邊、不放進成立或推翻，也不在建議方案中假定任一方成立。`needsExperiment` 只列可解除不確定性的實測，不能取代分歧紀錄。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
 4. **Record**:留言一律以 `--body-file` 發出,每則上限集中為 60,000 bytes(低於 GitHub 的 65,536 字元限制)。
-   小型研究仍合併成一則;超過上限時第一則固定是驗證後成立、被推翻、仍需實測、建議方案與待拍板參數,
-   後續依序放 claude 逐條明細、引用格式的 codex 原文與 agy 原文,每則標明「第 n／N 則」。單一段落仍放不下時截斷並標記,
+   小型研究仍合併成一則;超過上限時第一則固定是驗證後成立、被推翻、分歧（不選邊）、仍需實測、建議方案與待拍板參數,
+   後續依序放 claude 來源抽查明細、引用格式的 codex 原文與 agy 原文,每則標明「第 n／N 則」。單一段落仍放不下時截斷並標記,
    不會讓整次 Record 因該段落失敗。每則都以 `[claude]` 開頭;codex 原文逐行引用,不會出現行首 `[codex]`。
    每頁帶本次 run nonce 組成的 marker;重試先讀 issue 既有留言,已存在的 marker 不再張貼,只補先前未成功的頁。
    `claude.md`、`agy.md` 或 `codex.md` 為空就不發。留言本文先拆分、過濾並驗證完整行數後才發送,

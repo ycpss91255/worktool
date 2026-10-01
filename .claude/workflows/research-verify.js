@@ -1,11 +1,11 @@
 export const meta = {
   name: 'research-verify',
-  description: 'Research one question with agy (gemini), verify every claim with a claude agent and codex in parallel, synthesize, and record bounded zh-TW comments on the issue; never substitutes another model when agy fails',
+  description: 'Research one question with agy (gemini), verify every cited source with codex, sample sources with a claude agent, synthesize, and record bounded zh-TW comments on the issue; never substitutes another model when agy fails',
   whenToUse: 'Any fact-finding the maintainer wants researched (agy finds, claude and codex verify). Pass args {repo, repoDir, issue, question, context?, sources?, timeoutMin?}.',
   phases: [
     { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
-    { title: 'Verify', detail: 'parallel: claude agent claim by claim (structured) + codex exec with the agy text on stdin (verbatim file)' },
-    { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
+    { title: 'Verify', detail: 'codex exec checks every cited source (verbatim file), then claude samples sources (structured)' },
+    { title: 'Synthesize', detail: 'claude agent: verified facts / refuted claims / unresolved disagreements with both bases, no side chosen / needs-experiment / recommendation / parameters (structured)' },
     { title: 'Record', detail: 'agent: bounded issue comments via --body-file: conclusion first, then claim detail and verbatim model text; then repo-check: git status equals the pre-run capture' },
   ],
 }
@@ -29,7 +29,7 @@ export const meta = {
 // the run where it happens (fail closed): no valid run nonce stops before agy
 // runs; a source that is not readable stops before agy runs;
 // agy failing twice stops before Verify (no other model's answer is dressed up
-// as agy's); a claude verifier without claims or a codex without output stops
+// as agy's); a claude sample without claims or a codex without output stops
 // before Synthesize (both verifiers are required); a missing or malformed
 // synthesis stops before Record. Nothing is posted unless all of them held.
 // Every shell step's exit status carries its success (agy exit 0 with a
@@ -155,10 +155,12 @@ const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enu
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
 const LIST = { type: 'array', items: { type: 'string' } }
+const DISAGREEMENT_SCHEMA = { type: 'object', properties: { claim: { type: 'string' }, codexBasis: { type: 'string' }, claudeBasis: { type: 'string' } }, required: ['claim', 'codexBasis', 'claudeBasis'], additionalProperties: false }
 const SYNTH_SCHEMA = { type: 'object', properties: {
   verified: { ...LIST }, refuted: { ...LIST }, needsExperiment: { ...LIST },
+  disagreements: { type: 'array', items: DISAGREEMENT_SCHEMA },
   recommendation: { type: 'string' }, parameters: { ...LIST },
-}, required: ['verified', 'refuted', 'needsExperiment', 'recommendation', 'parameters'] }
+}, required: ['verified', 'refuted', 'disagreements', 'needsExperiment', 'recommendation', 'parameters'] }
 const RECORD_SCHEMA = { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
 const REPO_CHECK_SCHEMA = { type: 'object', properties: { extra: { ...LIST } }, required: ['extra'] }
 
@@ -169,7 +171,8 @@ const SRC_CHECK = SOURCES.length ? `cd / && for f in ${SOURCES.map(sq).join(' ')
 
 const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 問題:${QUESTION}
-${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
+${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。
+前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充。`
 
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
@@ -181,11 +184,11 @@ ${fence(AGY_PROMPT)}
 4. If the resolver fails, stop immediately: return status "failed", attempts = the number of research calls made, detail = the last 20 lines of agy.err. Never run agy research or retry discovery on this failure. Every research attempt (including the retry) must run the literal resolver path in step 3 first. Success = exit 0 and agy.md is non-empty (\`[ -s agy.md ]\`). On an empty file, exit 124 (timeout) or any other failure: retry ONCE (same command, overwrite agy.md). Still failing -> return status "failed" with attempts = 2 and detail = the exit codes plus the last 20 lines of agy.err. Do not write anything into agy.md yourself.
 5. Return status "ok", attempts (1 or 2), detail = "agy.md <N> bytes".${SCRATCH_ONLY}`
 
-const CLAIM_CHECK = `Verify, claim by claim, the research answer agy wrote to ${SCRATCH}/agy.md (read that file; do not edit it). Question: ${QUESTION}
+const CLAIM_CHECK = `Read codex's source-by-source verification in ${SCRATCH}/codex.md, then spot-check the research answer agy wrote to ${SCRATCH}/agy.md (read that file; do not edit it). Question: ${QUESTION}
 ${CONTEXT ? `Context: ${CONTEXT}\n` : ''}${SRC_NOTE}
-For EVERY numbered claim (UNVERIFIED ones included) check it yourself against primary material: the local sources above first, then official docs / source code / release notes on the web. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.${SCRATCH_ONLY}`
+Sample a subset of cited primary sources (at least one; a single-claim answer may require that one claim): prioritize disputed, UNVERIFIED and consequential claims. Open the sampled sources yourself, using local sources above first. Record which claims you sampled and why in basis; do not repeat codex's exhaustive check or conduct broad web research. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.${SCRATCH_ONLY}`
 
-const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條驗證 agy 的每一個主張:成立 / 不成立 / 無法確認,每條附依據(檔案:行號、URL、指令輸出)。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
+const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條開啟每個主張所引用的一手來源(含 UNVERIFIED)，不要只憑記憶或搜尋摘要核對，也不要自行大量網路查找。每條記錄來源是否支持主張:成立 / 不成立 / 無法確認，附實際開啟的 URL 或檔案:行號、來源摘錄與核對依據；來源不可讀或無法判定時標「無法確認」，說明原因，不猜測。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 
@@ -198,7 +201,7 @@ ${fence(CODEX_PROMPT)}
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
 Inputs: agy's answer in ${SCRATCH}/agy.md; codex's claim-by-claim verification in ${SCRATCH}/codex.md; the claude verifier's verdicts (JSON):
 ${JSON.stringify(claims)}
-Rules: a claim is "verified" only when no verifier refutes it and at least one cites primary evidence; a claim any verifier refutes goes to "refuted" (say who refuted it and why); disagreement or "unverifiable" from both -> "needsExperiment" (say what to run). Each item is one zh-TW line with its evidence. recommendation = the approach you recommend in zh-TW; parameters = the values the maintainer must decide (one per line, with the options). Do not invent evidence; do not write a "[codex]" line.${SCRATCH_ONLY}`
+Rules: use agy's brief and cited sources, codex's exhaustive source checks and claude's source samples; do not conduct broad web research. A claim is "verified" only when primary evidence supports it and no unresolved contradiction remains; "refuted" requires decisive primary evidence against it. Any disagreement that the sources cannot resolve, or a claim the sources cannot determine (including both "unverifiable"), belongs ONLY in "disagreements": {claim, codexBasis, claudeBasis}, recording both sides' evidence or explicit lack of evidence. Never choose a side, count votes or favor a model; do not place these claims in verified or refuted, and do not assume either side in recommendation. needsExperiment = concrete checks that could resolve uncertainty, not a substitute for recording disagreements. Each list item is one zh-TW line with evidence. recommendation = an approach based only on established facts, preserving unresolved disagreements; parameters = values the maintainer must decide (one per line, with options). Do not invent evidence; do not write a "[codex]" or "[agy]" line; their words are copied from their files only.${SCRATCH_ONLY}`
 
 const bullets = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`).join('\n') : '- (無)')
 const VERDICT_ZH = { supported: '成立', refuted: '不成立', unverifiable: '無法確認' }
@@ -213,6 +216,9 @@ ${bullets(s.verified)}
 ### 被推翻的主張
 ${bullets(s.refuted)}
 
+### 分歧（不選邊）
+${bullets(s.disagreements.map(d => `${d.claim}；codex 依據：${d.codexBasis}；claude 依據：${d.claudeBasis}`))}
+
 ### 仍需實測
 ${bullets(s.needsExperiment)}
 
@@ -226,7 +232,7 @@ agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在
 
 const renderClaims = (claims) => claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —— ${c.basis}`).join('\n\n')
 const COMMENT_LIMIT = 60000
-const SPLIT_JS = String.raw`const fs=require("fs"),[out,run,limit,...files]=process.argv.slice(1),max=Number(limit);const read=f=>fs.readFileSync(f,"utf8").trim();const bytes=s=>Buffer.byteLength(s);const cut=(s,n)=>{const a=Array.from(s);let lo=0,hi=a.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(bytes(a.slice(0,mid).join(""))<=n)lo=mid;else hi=mid-1}return a.slice(0,lo).join("")};const quote=s=>s.split("\n").map(x=>"> "+x).join("\n");const sections=[{h:"[claude] claude 逐條驗證",t:read(files[1])},{h:"[claude] codex 逐條驗證(原文)",t:quote(read(files[2]))},{h:"[claude] agy 原文",t:read(files[3])}];const rawConclusion=read(files[0]),conclusion=bytes(rawConclusion)>max-500?cut(rawConclusion,max-600)+"\n\n[內容過長，已截斷]":rawConclusion;const all=conclusion+"\n\n"+sections.map(x=>x.h+"\n\n"+x.t).join("\n\n");let parts=[];if(bytes(all)+200<=max)parts=[all];else{parts=[conclusion];for(const x of sections){let cur=x.h;for(const p of x.t.split(/\n\s*\n/)){const room=max-bytes(cur)-500;if(bytes(p)>room){if(cur!==x.h)parts.push(cur);parts.push(x.h+"\n\n"+cut(p,max-bytes(x.h)-600)+"\n\n[內容過長，已截斷]");cur=x.h}else if(bytes(cur+"\n\n"+p)>max-300){parts.push(cur);cur=x.h+"\n\n"+p}else cur+="\n\n"+p}if(cur!==x.h)parts.push(cur)}}const total=parts.length;parts.forEach((p,i)=>{const marker="<!-- research-verify:"+run+":comment:"+(i+1)+"/"+total+" -->",number=total>1?"\n\n第 "+(i+1)+"／"+total+" 則":"";fs.writeFileSync(out+"/body-"+(i+1)+".md",p+number+"\n"+marker+"\n")});fs.writeFileSync(out+"/body-count",String(total))`
+const SPLIT_JS = String.raw`const fs=require("fs"),[out,run,limit,...files]=process.argv.slice(1),max=Number(limit);const read=f=>fs.readFileSync(f,"utf8").trim();const bytes=s=>Buffer.byteLength(s);const cut=(s,n)=>{const a=Array.from(s);let lo=0,hi=a.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(bytes(a.slice(0,mid).join(""))<=n)lo=mid;else hi=mid-1}return a.slice(0,lo).join("")};const quote=s=>s.split("\n").map(x=>"> "+x).join("\n");const sections=[{h:"[claude] claude 來源抽查",t:read(files[1])},{h:"[claude] codex 逐條驗證(原文)",t:quote(read(files[2]))},{h:"[claude] agy 原文",t:read(files[3])}];const rawConclusion=read(files[0]),conclusion=bytes(rawConclusion)>max-500?cut(rawConclusion,max-600)+"\n\n[內容過長，已截斷]":rawConclusion;const all=conclusion+"\n\n"+sections.map(x=>x.h+"\n\n"+x.t).join("\n\n");let parts=[];if(bytes(all)+200<=max)parts=[all];else{parts=[conclusion];for(const x of sections){let cur=x.h;for(const p of x.t.split(/\n\s*\n/)){const room=max-bytes(cur)-500;if(bytes(p)>room){if(cur!==x.h)parts.push(cur);parts.push(x.h+"\n\n"+cut(p,max-bytes(x.h)-600)+"\n\n[內容過長，已截斷]");cur=x.h}else if(bytes(cur+"\n\n"+p)>max-300){parts.push(cur);cur=x.h+"\n\n"+p}else cur+="\n\n"+p}if(cur!==x.h)parts.push(cur)}}const total=parts.length;parts.forEach((p,i)=>{const marker="<!-- research-verify:"+run+":comment:"+(i+1)+"/"+total+" -->",number=total>1?"\n\n第 "+(i+1)+"／"+total+" 則":"";fs.writeFileSync(out+"/body-"+(i+1)+".md",p+number+"\n"+marker+"\n")});fs.writeFileSync(out+"/body-count",String(total))`
 
 const RECORD_SPLIT = (claudeText) => {
   const tick = String.fromCharCode(96)
@@ -246,7 +252,8 @@ const REPO_CHECK = `Check that the research run on issue #${A.issue} left the ch
 const agyOk = (r) => !!r && r.status === 'ok' && [1, 2].includes(r.attempts)
 const claimOk = (c) => !!c && typeof c.claim === 'string' && ['supported', 'refuted', 'unverifiable'].includes(c.verdict) && typeof c.basis === 'string'
 const isList = (x) => Array.isArray(x) && x.every(i => typeof i === 'string')
-const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
+const disagreementOk = (d) => !!d && ['claim', 'codexBasis', 'claudeBasis'].every(k => isText(d[k])) && Object.keys(d).every(k => ['claim', 'codexBasis', 'claudeBasis'].includes(k))
+const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && Array.isArray(s.disagreements) && s.disagreements.every(disagreementOk) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
 // The Record step succeeded only if it returned a comment URL on THIS issue.
 const COMMENT_URL = new RegExp(`^https://github\\.com/${REPO.replace(/\./g, '\\.')}/issues/${A.issue}#issuecomment-[0-9]+$`, 'i')
 const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
@@ -262,11 +269,10 @@ if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped'
 log(`#${A.issue}: agy ok after ${res.attempts} attempt(s): ${res.detail}`)
 
 phase('Verify')
-const [claude, codex] = await parallel([
-  () => agent(CLAIM_CHECK, { label: `claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' }),
-  () => agent(CODEX_STEP(), { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' }),
-])
-// Fail closed: both verifiers must have checked the claims, or nothing is concluded.
+const codex = await agent(CODEX_STEP(), { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+if (!codex || codex.status !== 'ok') return stop('verify-failed', (codex && codex.status) || 'no-output', 0, (codex && codex.detail) || 'codex returned no output')
+const claude = await agent(CLAIM_CHECK, { label: `claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' })
+// Fail closed: codex must have output and claude must have sampled sources, or nothing is concluded.
 const claims = (claude && Array.isArray(claude.claims) && claude.claims.every(claimOk)) ? claude.claims : []
 const codexState = (codex && codex.status) || 'no-output'
 log(`#${A.issue}: claude checked ${claims.length} claim(s); codex ${codexState}`)
