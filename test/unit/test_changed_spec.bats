@@ -181,7 +181,7 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
 }
 
-@test "test.sh --changed runs every affected tier for test infrastructure" {
+@test "test.sh --changed fails open only to unit for test infrastructure" {
     mkdir -p "${TEMP_REPO}/test/helper"
     printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
     _commit_baseline
@@ -191,10 +191,10 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit --ci-matrix --ci-integration \
-        --ci-integration-ghostty --ci-system --ci-acceptance \
-        system-real-entry.sh)"
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    for tier in matrix integration system system-real acceptance; do
+        assert_output --partial "此改動由 CI 的 ${tier} 驗證"
+    done
 }
 
 @test "test.sh --changed fails open when the base diff is unreadable" {
