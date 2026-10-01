@@ -55,3 +55,13 @@ setup() {
         assert_success
     done
 }
+
+@test "approval rejection preserves exit two after evaluation and cleanup" {
+    run bats --filter '^merge of a milestone-gate PR without an approval is blocked and says what is missing$' "${MATRIX_SPEC}"
+    assert_success
+}
+
+@test "a merge without -R or a selector still resolves the PR under errexit" {
+    run bats --filter '^(without -R the repo comes from gh repo view|a PR URL selector gives both repo and number|a failed repo or PR resolution blocks the merge \(fail closed\))$' "${MATRIX_SPEC}"
+    assert_success
+}

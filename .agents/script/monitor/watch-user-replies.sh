@@ -37,7 +37,8 @@
 #   WATCH FETCH FAILED: could not list the open issues/PRs this cycle
 # Heartbeats and fetch warnings go to STDERR.
 
-set -uo pipefail
+# Strict script: expected non-zero results are handled explicitly.
+set -euo pipefail
 
 AGENT_TAGS=('[claude]' '[codex]')
 
@@ -63,13 +64,15 @@ watch_reply_is_user() {
 watch_replies_filter() {
     local _login="$1" _state="$2" _tsv="$3"
     local _num _id _author _b64 _body _preview
-    [[ -f "${_state}" ]] || : > "${_state}"
+    if [[ ! -f "${_state}" ]]; then
+        : > "${_state}" || return 1
+    fi
     while IFS=$'\t' read -r _num _id _author _b64; do
         [[ -n "${_id}" ]] || continue
-        _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)"
+        _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)" || return 1
         watch_reply_is_user "${_login}" "${_author}" "${_body}" || continue
         grep -qxF "${_id}" "${_state}" && continue
-        printf '%s\n' "${_id}" >> "${_state}"
+        printf '%s\n' "${_id}" >> "${_state}" || return 1
         _preview="$(printf '%s' "${_body}" | tr '\n\r\t' '   ' | cut -c1-200)"
         printf 'USER REPLY on #%s : %s\n' "${_num}" "${_preview}"
     done < "${_tsv}"
@@ -204,7 +207,7 @@ _parse_args() {
 # _seed <tmp> - mark every current reply as seen without announcing; refuse
 # a partial seed (it would re-announce the unread threads' history later).
 _seed() {
-    local _failed _total _list_failed
+    local _failed _total _list_failed _count _count_rc=0
     read -r _failed _total _list_failed < <(_fetch "${W_REPO}" "$1")
     if [[ "${_list_failed}" -ne 0 ]]; then
         printf '[watch] seed aborted: the open issues/PRs could not be listed\n' >&2
@@ -215,9 +218,14 @@ _seed() {
             "${_failed}" "${_total}" >&2
         return 1
     fi
-    watch_replies_filter "${W_LOGIN}" "${W_STATE}" "$1" >/dev/null
+    watch_replies_filter "${W_LOGIN}" "${W_STATE}" "$1" >/dev/null || return 1
+    _count="$(grep -c . "${W_STATE}")" || _count_rc=$?
+    if [[ "${_count_rc}" -gt 1 ]]; then
+        printf '[watch] cannot count seeded state\n' >&2
+        return 1
+    fi
     printf '[watch] seeded: %s id(s) marked seen, nothing announced\n' \
-        "$(grep -c . "${W_STATE}")" >&2
+        "${_count}" >&2
     return 0
 }
 
@@ -243,8 +251,9 @@ _watch() {
 }
 
 main() {
-    _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    local _parse_rc=0 _seed_rc=0
+    _parse_args "$@" || _parse_rc=$?
+    if [[ "${_parse_rc}" -eq 3 ]]; then
         _usage
         exit 0
     fi
@@ -253,10 +262,11 @@ main() {
     [[ -f "${W_STATE}" ]] || : >"${W_STATE}" || exit 1
 
     WATCH_TMP="$(mktemp)" || exit 1
-    trap 'rm -f "${WATCH_TMP}"' EXIT
+    trap 'if ! rm -f "${WATCH_TMP}"; then printf "[watch] temporary cleanup failed\n" >&2; fi' EXIT
     if [[ "${W_SEED}" -eq 1 ]]; then
-        _seed "${WATCH_TMP}"
-        exit $?
+        # Seed failures are expected verdicts; its probes handle their own errors.
+        _seed "${WATCH_TMP}" || _seed_rc=$?
+        exit "${_seed_rc}"
     fi
     _watch "${WATCH_TMP}"
     exit $?
