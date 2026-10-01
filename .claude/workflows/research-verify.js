@@ -186,7 +186,7 @@ const CLAIM_CHECK = `Verify, claim by claim, the research answer agy wrote to ${
 ${CONTEXT ? `Context: ${CONTEXT}\n` : ''}${SRC_NOTE}
 For EVERY numbered claim (UNVERIFIED ones included) check it yourself against primary material: the local sources above first, then official docs / source code / release notes on the web. Verdict: "supported" (you found primary evidence), "refuted" (primary evidence says otherwise), "unverifiable" (no primary evidence either way). basis = the concrete evidence (file:line, URL + quote, command output), in zh-TW, short. Do not add new claims. Never write a "[codex]" line yourself.${SCRATCH_ONLY}`
 
-const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條驗證 agy 的每一個主張:成立 / 不成立 / 無法確認,每條附依據(檔案:行號、URL、指令輸出)。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
+const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的研究回答。請逐條開啟每個主張所引用的一手來源(含 UNVERIFIED)，不要只憑記憶或搜尋摘要核對，也不要自行大量網路查找。每條記錄來源是否支持主張:成立 / 不成立 / 無法確認，附實際開啟的 URL 或檔案:行號、來源摘錄與核對依據；來源不可讀或無法判定時標「無法確認」，說明原因，不猜測。不要新增主張;最後以「## 結論」列出你認為可信的部分與需要實測的點。以繁體中文回答。
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 

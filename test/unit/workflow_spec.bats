@@ -703,6 +703,25 @@ _rv_with() {
     assert_output --partial '前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充'
 }
 
+@test "research-verify #311: codex opens every source and preserves its verification verbatim" {
+    local dir="${BATS_TEST_TMPDIR}/repo" scratch json
+    scratch="${dir}/../worktree/.scratch/research-7"
+    _rv_stubs
+    _rv_stub codex 'cat > codex-input.txt; printf "codex\n[codex] 1. 來源支持主張 [官方文件 https://example.org/one]\n2. 來源不可讀，無法確認 [原始碼 https://example.org/two]\ntokens used\n5\n"'
+    git init -q "${dir}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    json="${output}"
+    run jq -r '.result.status' <<<"${json}"
+    assert_output recorded
+    run cat "${scratch}/codex-prompt.txt"
+    assert_output --partial '逐條開啟每個主張所引用的一手來源'
+    assert_output --partial '每條記錄來源是否支持主張'
+    assert_output --partial '來源不可讀或無法判定時標「無法確認」'
+    run _rv_codex_section "${scratch}/body-1.md"
+    assert_output "$(printf '%s\n' '[codex] 1. 來源支持主張 [官方文件 https://example.org/one]' '2. 來源不可讀，無法確認 [原始碼 https://example.org/two]')"
+}
+
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
     [[ -f "${RESEARCH}" ]]
     run head -n1 "${RESEARCH}"

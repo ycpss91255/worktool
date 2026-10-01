@@ -158,7 +158,7 @@ args 範例：
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
    agent 回報的 `attempts` 不是 1 或 2 也算失敗。
 2. **Verify**(並行):claude agent 逐條判定(成立 / 不成立 / 無法確認,附依據,結構化,至少一條);
-   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條驗證,`codex.md` 只存 codex 的**最終回答**:
+   另一個 agent 以 `cat agy.md | codex exec --skip-git-repo-check` 讓 codex 逐條開啟每個主張的一手來源（含 `UNVERIFIED`），記錄來源是否支持主張、實際 URL／檔案:行號、摘錄與依據；不可讀或判定不了就標「無法確認」，不憑記憶或搜尋摘要、不自行大量網路查找。`codex.md` 只存 codex 的**最終回答**:
    優先取 codex 以 `-o`(`--output-last-message`)自己寫出的檔案;沒有才取 transcript 最後一個 `codex` 區塊,
    且該區塊必須緊接內容恰為 `tokens used` 的一行(回合完成的邊界;`tokens used by ...` 之類的文字只是回答內容,不算邊界),不含 commentary、工具執行紀錄與 `tokens used` 之後重複的回答(#223)。
    沒有這個邊界(停在 commentary、工具呼叫中或錯誤)就視為沒有最終回答,`codex.md` 為空,Record 不發(fail closed)。
