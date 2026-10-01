@@ -1720,3 +1720,11 @@ _discuss_replies() {
     run jq -cr '[.result.status,([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
     assert_output '["compare-failed",0]'
 }
+
+@test "pr-loop CI fixes explicitly run only changed unit specs locally (#326)" {
+    run _pl_run
+    assert_success
+    run jq -r '.calls[] | select(.label == "ci:#7") | .prompt' <<<"${output}"
+    assert_output --partial 'Locally run only just test lint and changed unit specs'
+    assert_output --partial 'Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally'
+}
