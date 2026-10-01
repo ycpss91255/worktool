@@ -662,6 +662,18 @@ SH
     assert [ ! -e "${BATS_TEST_TMPDIR}/gh.calls" ]
 }
 
+@test "research-verify records the resolved model in the research comment" {
+    local dir="${BATS_TEST_TMPDIR}/repo"
+    _rv_stubs
+    git init -q "${dir}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    run jq -r '.result.status' <<<"${output}"
+    assert_output recorded
+    run grep -A1 -x 'agy 實際使用模型:' "${dir}/../worktree/.scratch/research-7/body-1.md"
+    assert_output "$(printf '%s\n' 'agy 實際使用模型:' gemini-3.10-flash-high)"
+}
+
 # Agent replies of a run where every step succeeds.
 _rv_ok_replies() {
     cat <<'JSON'
