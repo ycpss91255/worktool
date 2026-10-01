@@ -670,6 +670,37 @@ _json_object_re() {
     assert_equal "$(_count_inbox_calls dev 'sh -c :')" "1"
 }
 
+# A test-only clock (BENCH_CLOCK) that prints $1 and exits $2.
+_bad_clock() {
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" %q\nexit %d\n' "$1" "$2" >"${MOCKBIN}/bad-clock"
+    chmod +x "${MOCKBIN}/bad-clock"
+}
+
+@test "a BENCH_CLOCK that prints something other than an integer aborts the measurement: exit 1, no metric line" {
+    _bad_clock "soon" 0
+    run env BENCH_CLOCK="${MOCKBIN}/bad-clock" "${BENCH}" --runs 2 --warmup 0
+    assert_failure 1
+    assert_line --regexp "^\[ERROR\] enter: BENCH_CLOCK .*bad-clock' printed 'soon' instead of an integer on run 1 - measurement aborted$"
+    refute_output --regexp '^(enter|shell|inbox): min='
+}
+
+@test "a BENCH_CLOCK that exits non-zero aborts the measurement: exit 1, no metric line" {
+    _bad_clock "1700000000000000" 4
+    run env BENCH_CLOCK="${MOCKBIN}/bad-clock" "${BENCH}" --runs 2 --warmup 0
+    assert_failure 1
+    assert_line --regexp "^\[ERROR\] enter: BENCH_CLOCK .*bad-clock' exited 4 on run 1 - measurement aborted$"
+    refute_output --regexp '^(enter|shell|inbox): min='
+}
+
+@test "without BENCH_CLOCK the host clock is the real one (EPOCHREALTIME): the production path still measures" {
+    run env -u BENCH_CLOCK "${BENCH}" --runs 2 --warmup 0
+    assert_success
+    assert_line --regexp "$(_metric_re enter)"
+    assert_line --regexp "$(_metric_re shell)"
+    # The fake clock was never read, so it cannot have produced the numbers.
+    assert_line "inbox: min=0.0 median=0.0 max=0.0 ms"
+}
+
 @test "distrobox missing from PATH exits 127 before measuring" {
     # A PATH with only what the tool itself needs (dirname for its own
     # path, sort for the statistics) and no distrobox. bash is resolved to
@@ -959,6 +990,15 @@ _resolved_psi() {
     assert_output --partial "BENCH_PSI_FILE"
     assert_output --partial "tests only"
     assert_equal "$(_sleeps)" "0"
+}
+
+@test "--help documents the test-only BENCH_CLOCK and says the real clock is EPOCHREALTIME" {
+    run "${BENCH}" --help
+    assert_success
+    assert_output --partial "BENCH_CLOCK"
+    assert_output --regexp "BENCH_CLOCK +run this program for the host clock"
+    assert_output --partial "tests only"
+    assert_output --partial "EPOCHREALTIME"
 }
 
 # --- doc/manifest.md states the system-real evidence contract ---------------
