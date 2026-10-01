@@ -86,3 +86,12 @@ x=foo" ""
     assert_success
     assert_output "SC2155"
 }
+
+@test "disable extraction continues when existing content has no directive under errexit" {
+    printf '%s\n' '# ordinary comment' > "${FIXTURE_DIR}/old.sh"
+    run bash -c 'source "$1"; new_shellcheck_disables "$2" "$3"; echo DONE' _ \
+        "${HOOK_SH}" "$(disable_line SC2034)" "${FIXTURE_DIR}/old.sh"
+    assert_success
+    assert_line "SC2034"
+    assert_line "DONE"
+}

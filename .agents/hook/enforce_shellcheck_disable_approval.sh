@@ -56,10 +56,13 @@ read_latest_user_message() {
 # directive, one per line, sorted and unique.
 _extract_disable_codes() {
     [[ -n "${1:-}" ]] || return 0
+    local _rc=0
     printf '%s' "$1" \
         | grep -oE '#[[:space:]]*shellcheck[[:space:]]+disable=SC[0-9]+(,SC[0-9]+)*' \
         | grep -oE 'SC[0-9]+' \
-        | sort -u
+        | sort -u || _rc=$?
+    [[ "${_rc}" -eq 1 ]] && return 0
+    return "${_rc}"
 }
 
 # new_shellcheck_disables <new_content> <existing_file_path> - see header.
