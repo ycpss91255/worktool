@@ -440,10 +440,11 @@ _gate() {
 
 # _check_pr_merge - resolve the PR of a `gh pr merge` launch, then gate it.
 _check_pr_merge() {
-    local _sel _repo _pr=''
+    local _sel='' _repo='' _pr=''
     local -a _view=(pr view --json number -q .number)
-    _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")"
-    _repo="$(_opt -R --repo)"
+    # No selector or no -R is a normal launch: keep the value empty.
+    _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")" || _sel=''
+    _repo="$(_opt -R --repo)" || _repo=''
     if [[ "${_sel}" =~ ^https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
         [[ -n "${_repo}" ]] || _repo="${BASH_REMATCH[1]}"
         _pr="${BASH_REMATCH[2]}"
