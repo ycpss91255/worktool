@@ -218,8 +218,8 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit --ci-matrix --ci-integration \
-        --ci-integration-ghostty --ci-system --ci-acceptance \
-        system-real-entry.sh)"
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    for tier in matrix integration system system-real acceptance; do
+        assert_output --partial "此改動由 CI 的 ${tier} 驗證"
+    done
 }
