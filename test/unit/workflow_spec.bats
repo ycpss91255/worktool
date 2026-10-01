@@ -161,7 +161,7 @@ _meta_skeleton() {
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
     local default
-    default="$(_pl_run)"
+    default="$(_pl_run '{}')"
     run _pl_run '{"mode":"full"}'
     assert_success
     assert_output "${default}"
