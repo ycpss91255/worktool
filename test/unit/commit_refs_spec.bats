@@ -41,6 +41,7 @@ _introduce_refs_rule() {
 }
 
 @test "a commit without a Refs footer fails with its SHA" {
+    _introduce_refs_rule
     _commit_refs 'missing footer'
     local _sha
     _sha="$(git -C "${REPO}" rev-parse HEAD)"
@@ -67,8 +68,9 @@ _introduce_refs_rule() {
 }
 
 @test "numeric Refs lines in the final paragraph pass, including multiple issues" {
+    _introduce_refs_rule
     _commit_refs $'subject\n\nRefs: #312\nRefs: #42'
-    run commit_refs_check_commits "${REPO}" HEAD
+    run commit_refs_check_commits "${REPO}" HEAD^..HEAD
     assert_success
     assert_output --partial '1 commits checked: issue footers ok.'
 }
@@ -85,7 +87,20 @@ _introduce_refs_rule() {
     assert_output --partial "enforcing commit ${_enforcing}"
 }
 
+@test "shallow history without the enforcing commit fails closed" {
+    _commit_refs 'old work without footer'
+    _introduce_refs_rule
+    _commit_refs $'new work\n\nRefs: #312'
+    local _shallow="${BATS_TEST_TMPDIR}/shallow"
+    git clone -q --depth 1 "file://${REPO}" "${_shallow}"
+    run commit_refs_check_commits "${_shallow}" HEAD
+    assert_failure 1
+    assert_output --partial 'Cannot find enforcing commit'
+    assert_output --partial 'fetch full history (fail closed)'
+}
+
 @test "merge commits are exempt from the footer rule" {
+    _introduce_refs_rule
     _commit_refs $'base\n\nRefs: #312'
     git -C "${REPO}" switch -q -c topic
     _commit_refs $'topic\n\nRefs: #312'
@@ -97,6 +112,7 @@ _introduce_refs_rule() {
 }
 
 @test "GitHub web commits are exempt but normal noreply commits still need footers" {
+    _introduce_refs_rule
     GIT_COMMITTER_NAME='GitHub' GIT_COMMITTER_EMAIL='noreply@github.com' _commit_refs 'web edit'
     run commit_refs_check_commits "${REPO}" HEAD
     assert_success
@@ -106,6 +122,7 @@ _introduce_refs_rule() {
 }
 
 @test "PR and push ranges exclude old commits and validate event inputs" {
+    _introduce_refs_rule
     _commit_refs 'old commit without footer'
     local _base _head _range
     _base="$(git -C "${REPO}" rev-parse HEAD)"

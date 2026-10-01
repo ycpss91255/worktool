@@ -404,7 +404,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
 分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
-**且** `test-system-real`、`commit-email`、`commit-attribution` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
+**且** `test-system-real`、`commit-email`、`commit-attribution`、`commit-refs` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
 失敗。上述每個 job 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
@@ -434,6 +434,22 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 - **修正**:`git config user.email "<id>+<帳號>@users.noreply.github.com"` 後,
   `git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main`
   改寫 PR 分支,再 `git push --force-with-lease`。
+
+### commit 訊息的 issue footer(`commit-refs`,#312)
+
+- **規則**:最後一段至少一行 `Refs: #<數字>`，多個 issue 各一行。
+  merge commit 與 committer email 為 `noreply@github.com` 的 GitHub 網頁 commit 豁免。
+- **引入邊界**:從 checkout 的 Git 歷史以
+  `git log --format=%H --reverse --diff-filter=A -- lib/commit_refs.sh`
+  取第一個 SHA，作為首次引入 footer 檢查的 commit；規則併入 main 後仍由歷史推導，
+  不寫死 SHA、不依可偽造的 commit 日期。只檢查以它為祖先的 commit（含它本身）；
+  舊 PR 與尚未採用規則的分支 commit 印出 SHA 與跳過註記，已推送歷史不改寫。
+- **機制**:`commit_refs_range` 沿用 commit-email 的 PR、push 與新 ref 範圍驗證，
+  `commit_refs_check_commits` 逐筆判斷 ancestry 與 footer，診斷輸出到 stderr。
+  找不到引入點、無法確認 ancestry 或 shallow clone 一律失敗並提示取得完整歷史；
+  shallow boundary 可能被 Git 當成檔案新增點，因此拒絕淺層歷史而不猜測。
+  CI checkout 已設定 `fetch-depth: 0`，結果納入 `ci-passed`。
+  `test/unit/commit_refs_spec.bats` 以暫存 Git repo 驗證規則前後與淺層歷史的行為。
 
 ### milestone 驗收 PR 的核准 gate(`milestone-gate-approval`,#187)
 

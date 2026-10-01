@@ -3,8 +3,11 @@
 # Source this library; it sets no shell options and prints nothing.
 # Public API:
 #   commit_refs_check_commits <repo> <git revision>...
-#       -> require a numeric Refs line in the final message paragraph;
-#          merge commits and noreply@github.com committers are exempt.
+#       -> require a numeric Refs line in the final message paragraph for
+#          descendants of the first addition of this library in HEAD history;
+#          older commits are skipped, never selected by commit dates.
+#          Merge commits and noreply@github.com committers are exempt.
+#          Missing or shallow enforcing history fails closed.
 #   commit_refs_range <event> <pr_base> <pr_head> <push_before>
 #                     <push_after> <default_ref>
 #       -> the same fail-closed revisions as commit_email_range.
@@ -36,6 +39,12 @@ _commit_refs_has_footer() {
 commit_refs_check_commits() {
     local _repo="$1" _tmp _sha _committer _message _enforcing _bad=0 _n=0 _rc
     shift
+    local _shallow
+    _shallow="$(git -C "${_repo}" rev-parse --is-shallow-repository)" || return 1
+    if [[ "${_shallow}" == true ]]; then
+        log_error 'Cannot find enforcing commit reliably in shallow history; fetch full history (fail closed).'
+        return 1
+    fi
     _enforcing="$(git -C "${_repo}" log --format=%H --reverse --diff-filter=A -- lib/commit_refs.sh)" || return 1
     _enforcing="${_enforcing%%$'\n'*}"
     if [[ -z "${_enforcing}" ]]; then
