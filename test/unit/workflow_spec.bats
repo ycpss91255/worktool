@@ -1597,3 +1597,11 @@ _discuss_replies() {
         ([.calls[] | select(.label | test("^(claude|codex):r[23]")) | (.prompt | contains("Choose storage"))] | all)]' <<<"${output}"
     assert_output '["diverged",3,6,true]'
 }
+
+@test "discuss: unresolved disagreement exposes exactly one maintainer question" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["storage","latency"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.ask_maintainer, .result.conclusion]' <<<"${output}"
+    assert_output '[["Choose A or B?"],"A versus B"]'
+}

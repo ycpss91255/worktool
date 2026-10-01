@@ -67,4 +67,6 @@ for (let n = 1; n <= 3; n++) {
   if (verdict.status !== 'diverged') break
   prior = { claude, codex, disagreements: verdict.disagreements }
 }
+if (result.status === 'diverged' && (!result.question.trim() || /[\r\n]/.test(result.question) || (result.question.match(/[?？]/g) || []).length > 1)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
+result.ask_maintainer = result.status === 'diverged' ? [result.question] : []
 return result
