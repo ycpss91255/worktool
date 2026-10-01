@@ -79,9 +79,9 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     assert_line "matrix/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "the hook sets set -uo pipefail itself, as issue #190 requires" {
+@test "the hook sets set -euo pipefail itself, as issue #190 requires" {
     assert [ -f "${HOOK_DIR}/enforce_milestone_gate_approval.sh" ]
-    run grep -cx 'set -uo pipefail' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
+    run grep -cx 'set -euo pipefail' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
     assert_output "1"
 }
 
