@@ -1588,3 +1588,12 @@ _discuss_replies() {
     run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.label | startswith("compare:"))] | length)]' <<<"${output}"
     assert_output '["agreed",1,1]'
 }
+
+@test "discuss: disagreement feeds back to both sides and stops at three rounds" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,([.calls[] | select(.label | test("^(claude|codex):"))] | length),
+        ([.calls[] | select(.label | test("^(claude|codex):r[23]")) | (.prompt | contains("Choose storage"))] | all)]' <<<"${output}"
+    assert_output '["diverged",3,6,true]'
+}

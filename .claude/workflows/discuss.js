@@ -43,18 +43,28 @@ Do not use run_in_background or Monitor. Wait in repeated bounded foreground cal
 timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
 An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from \`tail -n 80 ${out}\`; never treat it as success.`
 
-const ask = (name, n) => {
+const ask = (name, n, prior) => {
   const out = `${SCRATCH}/codex-r${n}.md`
-  const prompt = name === 'claude' ? brief(n) : `Run codex; never answer for it. ${CODEX_DETACHED_RUN(out, `${out}.rc`)}\nBrief to copy verbatim:\n${brief(n)}\nRead the output and return answer/reasons/risks; error on failure or empty output. Never retype codex into a file.`
+  const context = `${brief(n)}${prior ? `\nPrevious independent answers and disagreements: ${JSON.stringify(prior)}\nRespond to the evidence; do not concede merely to agree.` : ''}`
+  const prompt = name === 'claude' ? context : `Run codex; never answer for it. ${CODEX_DETACHED_RUN(out, `${out}.rc`)}\nBrief to copy verbatim:\n${context}\nRead the output and return answer/reasons/risks; error on failure or empty output. Never retype codex into a file.`
   return agent(`${GUARDRAILS}\n${prompt}`, { label: `${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
 }
-const [claude, codex] = await parallel([() => ask('claude', 1), () => ask('codex', 1)])
 const VERDICT = { type: 'object', properties: {
   status: { type: 'string', enum: ['agreed', 'derived', 'diverged'] }, conclusion: { type: 'string' },
   basis: { type: 'array', items: { type: 'string' } }, disagreements: { type: 'array', items: { type: 'string' } },
   question: { type: 'string' },
 }, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(r => typeof r === 'string' && r.trim()) && Array.isArray(x.risks)
-if (!validAnswer(claude) || !validAnswer(codex)) return { issue: A.issue, status: 'answer-failed', rounds: 1 }
-const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(claude)}\nCodex: ${JSON.stringify(codex)}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL or file:line).`, { label: 'compare:r1', phase: 'Compare', schema: VERDICT })
-return { issue: A.issue, ...verdict, claude, codex, rounds: 1 }
+const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(b => typeof b === 'string' && b.trim()) && Array.isArray(x.disagreements) && typeof x.question === 'string'
+let prior = null
+let result
+for (let n = 1; n <= 3; n++) {
+  const [claude, codex] = await parallel([() => ask('claude', n, prior), () => ask('codex', n, prior)])
+  if (!validAnswer(claude) || !validAnswer(codex)) return { issue: A.issue, status: 'answer-failed', rounds: n }
+  const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(claude)}\nCodex: ${JSON.stringify(codex)}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL or file:line). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
+  result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
+  if (verdict.status !== 'diverged') break
+  prior = { claude, codex, disagreements: verdict.disagreements }
+}
+return result
