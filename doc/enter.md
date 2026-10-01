@@ -126,8 +126,22 @@ exit 2。
 | 檔案 | 內容 |
 |------|------|
 | `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`box`);另有 assemble 寫的 `home` / `home.source` 與使用者的 `link=`。讀寫一律經過 `lib/config.sh`,setup 只就地更新自己的 key,其他行逐位元組保留 |
-| `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`command = '<distrobox>' enter <盒>` |
+| `$XDG_CONFIG_HOME/ghostty/config.ghostty`（已存在時），否則 legacy `ghostty/config` | 受管區塊:`command = '<distrobox>' enter <盒>` |
 | `$XDG_CONFIG_HOME/distrobox/distrobox.conf` | 受管區塊(**每次**都寫,`--auto-enter no` 也保留):進 `<盒>` 時 `unset TMUX TMUX_PANE` 的一行 shell,`distrobox-enter` 組 `exec` 請求前 source 它(issue #179,見上方「決策」第 2 點) |
+
+Ghostty 選檔規則（#173）：`config.ghostty` 已存在就用它，否則用 legacy
+`config`；兩檔都不存在時只建立 legacy，永不主動建立 `config.ghostty`。
+setup 以 `[INFO] ghostty config: <檔案> (config.ghostty exists)` 或
+`(config.ghostty absent; legacy fallback)` 說明選擇。
+兩檔都先檢查標記，任一檔標記不完整或兩檔合計超過一個受管區塊就拒絕，
+任何檔案都不寫，訊息點名兩檔。只有一個區塊且在非目標檔時，啟用會先組好
+兩份內容再依序寫入，只從原檔剝除受管區塊，印出
+`[INFO] moved: <原檔> -> <目標檔> (managed block)`；寫入失敗會明確回報，
+兩檔不是單一交易，第二次寫入失敗時需檢查兩檔。停用從實際有區塊的檔案移除，
+重跑已完成的啟用回報 `unchanged`，已停用則回報 `nothing to remove`。
+status 使用相同選檔規則，另列出已存在的另一檔，顯示實際區塊所在位置。
+選用 `config.ghostty` 且 host 的 `ghostty +version` 低於 1.3.0 時印出
+`[WARN]`，因為舊版不讀此檔；找不到 ghostty 執行檔就跳過版本檢查。
 
 `~/.tmux.conf` 不在清單裡:worktool 不讀也不寫它(issue #179)。
 
@@ -243,7 +257,7 @@ round 1 拿掉的「裸名字 fallback」同一類問題:**已知壞掉的半套
 
 ### 範例 log
 
-預設(PATH 上有 `/usr/bin/ghostty`,distrobox 在 `~/.local/bin`):
+預設（`config.ghostty` 已存在；PATH 上有 `/usr/bin/ghostty`,distrobox 在 `~/.local/bin`):
 
 ```text
 $ just box setup
@@ -251,9 +265,10 @@ $ just box setup
 [INFO] terminal: ghostty (default)
 [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
 [INFO] box: dev (default)
+[INFO] ghostty config: /home/me/.config/ghostty/config.ghostty (config.ghostty exists)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter dev)
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/.local/bin/distrobox' enter dev)
 ```
 
 再跑一次是冪等的(區塊已是最新就不重寫):
@@ -264,9 +279,10 @@ $ just box setup
 [INFO] terminal: ghostty (default)
 [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
 [INFO] box: dev (default)
+[INFO] ghostty config: /home/me/.config/ghostty/config.ghostty (config.ghostty exists)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] unchanged: /home/me/.config/ghostty/config (managed block already up to date)
+[INFO] unchanged: /home/me/.config/ghostty/config.ghostty (managed block already up to date)
 ```
 
 進 `work` 盒:

@@ -79,10 +79,14 @@
 # text) refuse the whole run before anything is written, exit 1 - a
 # rewrite of such a file would lose user lines (codex round 4 on PR #232):
 #   auto-enter yes, terminal ghostty:
-#     <config dir>/ghostty/config  command = '<distrobox>' enter <box>
+#     existing <config dir>/ghostty/config.ghostty, else legacy config:
+#       command = '<distrobox>' enter <box>
 #   auto-enter yes, terminal none: no terminal profile at all, a leftover
 #     block removed.
-#   auto-enter no: the block removed, the removal reported.
+#   auto-enter no: the block removed from either file, the removal reported.
+# Both Ghostty files are validated first, with at most one block in total.
+# Never create config.ghostty; migrate a legacy block to an existing new
+# file on enable. Log the choice and warn for a host version below 1.3.0.
 #
 # Write order: the state file first, then distrobox.conf, then the profile.
 # The stored values are validated before anything is written (a corrupt
@@ -165,7 +169,14 @@ back any time with `just box status`.
 Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
   {state-file}   the state file (key=value + key.source)
-  $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
+  $XDG_CONFIG_HOME/ghostty/config.ghostty (when it exists), else ghostty/config
+                                     managed block: command = ...
+Never creates config.ghostty. Validates both files before any write:
+at most one managed block across both files; malformed markers refuse the
+whole run and name both files. Enable moves the single block to the selected
+file; disable removes it from either file. User content and modes are kept.
+The selected file and reason are logged. A host Ghostty below 1.3.0 warns
+when config.ghostty is selected; no executable means no version check.
   $XDG_CONFIG_HOME/distrobox/distrobox.conf
                                      managed block, on every run: drops
                                      TMUX / TMUX_PANE from `distrobox enter
@@ -281,13 +292,23 @@ _resolve() {
 # ANYTHING is written - the state file included - so a refusal leaves the
 # whole run untouched.
 _blocks_check() {
-    local _file _problem _rc=0
-    for _file in "$(enter_distrobox_conf)" "$(enter_ghostty_config)"; do
-        _problem="$(enter_block_check "${_file}")" && continue
-        log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
-        _rc=1
+    local _file _problem _rc=0 _count=0 _n
+    local _legacy
+    _legacy="$(enter_config_dir)/ghostty/config"
+    for _file in "$(enter_distrobox_conf)" "${_legacy}" "${_legacy}.ghostty"; do
+        if ! _problem="$(enter_block_check "${_file}")"; then
+            log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
+            _rc=1
+        fi
     done
-    return "${_rc}"
+    for _file in "${_legacy}" "${_legacy}.ghostty"; do
+        _n="$(enter_block_count "${_file}")" || return 1
+        _count=$((_count + _n))
+    done
+    if [[ "${_count}" -gt 1 || "${_rc}" -ne 0 ]]; then
+        log_error "managed block validation failed: ${_legacy} and ${_legacy}.ghostty (at most one block across both files); nothing was written"
+        return 1
+    fi
 }
 
 # Resolve every decision into the globals and log each one.
@@ -310,12 +331,40 @@ _resolve_all() {
         log_info "terminal detected: ${_detected%% *} (${_detected#* })"
     fi
     log_info "box: ${BOX} (${BOX_SRC})"
+    GHOSTTY_TARGET="$(enter_ghostty_target)"
+    if [[ "${GHOSTTY_TARGET}" == *.ghostty ]]; then
+        log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty exists)"
+        _ghostty_version_warn
+    else
+        log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty absent; legacy fallback)"
+    fi
     # Only the paths that WRITE a managed command need a distrobox, and
     # they need it before anything is written, so a refusal leaves the
     # whole run untouched.
     if [[ "${AUTO_ENTER}" == "yes" && "${TERMINAL}" == "ghostty" ]]; then
         _resolve_distrobox || return 1
     fi
+}
+
+# The new filename is unreadable by Ghostty before 1.3.0. Check the host
+# executable only; its absence does not prevent configuring a profile.
+_ghostty_version_warn() {
+    local _exe _output _version _major _minor
+    _exe="$(enter_which ghostty)" || return 0
+    if ! _output="$("${_exe}" +version 2>&1)"; then
+        log_warn "could not check ghostty +version: ${_output}"
+        return 0
+    fi
+    if [[ "${_output}" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        _version="${BASH_REMATCH[0]}"
+        _major="${BASH_REMATCH[1]}" _minor="${BASH_REMATCH[2]}"
+        if (( 10#${_major} < 1 || (10#${_major} == 1 && 10#${_minor} < 3) )); then
+            log_warn "ghostty ${_version} does not read ${GHOSTTY_TARGET} (requires 1.3.0 or newer)"
+        fi
+    else
+        log_warn "could not parse ghostty +version: ${_output}"
+    fi
+    return 0
 }
 
 # Resolve the distrobox the managed command will name into DISTROBOX and
@@ -431,11 +480,46 @@ _apply_enable() {
 # terminal ghostty: the ghostty block enters the box and runs nothing after
 # it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
-    # DISTROBOX was resolved (and the run refused if it could not be) in
-    # _resolve_all, before any file was touched. The body is shell source,
-    # so the path goes in as a quoted shell word.
-    _block_write "$(enter_ghostty_config)" \
-        "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    local _body _other
+    _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    _other="$(enter_config_dir)/ghostty/config"
+    if [[ "${GHOSTTY_TARGET}" == "${_other}" ]]; then
+        _other+=".ghostty"
+    fi
+    if enter_block_present "${_other}"; then
+        _ghostty_move "${_other}" "${GHOSTTY_TARGET}" "${_body}"
+    else
+        _block_write "${GHOSTTY_TARGET}" "${_body}"
+    fi
+}
+
+# Prepare both contents before either write. Each replacement is atomic;
+# a failure between the replacements is reported, never silently ignored.
+_ghostty_move() {
+    local _source="$1" _target="$2" _body="$3" _stage _rc=0
+    if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
+        log_info "dry-run: would move managed block from ${_source} to ${_target}"
+        return 0
+    fi
+    if ! _stage="$(mktemp -d)"; then
+        log_error "failed to prepare move: ${_source} -> ${_target}"
+        return 1
+    fi
+    if ! enter_block_strip "${_source}" >"${_stage}/source" \
+        || ! enter_block_compose "${_target}" "${_body}" >"${_stage}/target"; then
+        log_error "failed to prepare move: ${_source} -> ${_target}"
+        _rc=1
+    elif ! config_write_atomic "${_target}" <"${_stage}/target"; then
+        log_error "failed to write ${_target} while moving from ${_source}"
+        _rc=1
+    elif ! config_write_atomic "${_source}" <"${_stage}/source"; then
+        log_error "failed to write ${_source} after writing ${_target}; inspect both files before re-running"
+        _rc=1
+    else
+        log_info "moved: ${_source} -> ${_target} (managed block)"
+    fi
+    rm -rf -- "${_stage}" || return 1
+    return "${_rc}"
 }
 
 # terminal none: no terminal profile is written at all (doc/enter.md); the
@@ -448,13 +532,25 @@ _apply_ghostty() {
 # of issue #175 is for the managed command, which a desktop session runs.
 _apply_no_terminal() {
     log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
-    _block_remove "$(enter_ghostty_config)"
+    _ghostty_remove
 }
 
 # auto-enter no: restore the host shell by removing the managed block,
 # reporting the file either way.
 _apply_disable() {
-    _block_remove "$(enter_ghostty_config)" report
+    _ghostty_remove report
+}
+
+# A single block may still live in the non-target file before migration.
+_ghostty_remove() {
+    local _target="${GHOSTTY_TARGET}" _other
+    _other="$(enter_config_dir)/ghostty/config"
+    [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
+    if enter_block_present "${_other}"; then
+        _block_remove "${_other}" "${1:-}"
+    else
+        _block_remove "${_target}" "${1:-}"
+    fi
 }
 
 # Every run: the distrobox.conf block that keeps a caller's TMUX / TMUX_PANE

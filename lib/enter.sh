@@ -9,7 +9,7 @@
 # a throwaway directory; the real home is never touched by a spec):
 #   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config} (lib/config.sh)
 #   (the ONE state file is lib/config.sh's; nothing here names it)
-#   enter_ghostty_config   -> <config dir>/ghostty/config
+#   enter_ghostty_target   -> existing config.ghostty, otherwise legacy config
 #   enter_distrobox_conf   -> <config dir>/distrobox/distrobox.conf
 #
 # There is no tmux decision and no ~/.tmux.conf path (issue #179): the
@@ -102,7 +102,15 @@ enter_keys() { printf '%s\n' auto-enter terminal box; }
 
 # --- Paths -------------------------------------------------------------------
 enter_config_dir() { config_xdg_dir; }
-enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
+enter_ghostty_target() {
+    local _legacy
+    _legacy="$(enter_config_dir)/ghostty/config"
+    if [[ -e "${_legacy}.ghostty" ]]; then
+        printf '%s\n' "${_legacy}.ghostty"
+    else
+        printf '%s\n' "${_legacy}"
+    fi
+}
 # distrobox reads this file itself, on every run, from the same
 # ${XDG_CONFIG_HOME:-$HOME/.config} (pinned distrobox 1.8.2.5, the
 # config_files list of distrobox-enter).
