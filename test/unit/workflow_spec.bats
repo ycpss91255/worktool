@@ -1610,3 +1610,11 @@ _rv_assert_fails_closed() {
     run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
 }
+
+@test "pr-loop CI fixes explicitly run only changed unit specs locally (#326)" {
+    run _pl_run
+    assert_success
+    run jq -r '.calls[] | select(.label == "ci:#7") | .prompt' <<<"${output}"
+    assert_output --partial 'Locally run only just test lint and changed unit specs'
+    assert_output --partial 'Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally'
+}
