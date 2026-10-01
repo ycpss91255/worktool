@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 # lib/commit_refs.sh - issue footer checks (issue #312).
 # Source this library; it sets no shell options and prints nothing.
-# Public API: commit_refs_check_commits <repo> <git revision>...
+# Public API:
+#   commit_refs_check_commits <repo> <git revision>...
+#       -> require a numeric Refs line in the final message paragraph;
+#          merge commits and noreply@github.com committers are exempt.
+#   commit_refs_range <event> <pr_base> <pr_head> <push_before>
+#                     <push_after> <default_ref>
+#       -> the same fail-closed revisions as commit_email_range.
 # Diagnostics go to stderr; a rejected range or commit returns 1.
 
 # shellcheck source-path=SCRIPTDIR
 _COMMIT_REFS_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./log.sh
 source "${_COMMIT_REFS_LIB_DIR}/log.sh"
+# shellcheck source=./commit_email.sh
+source "${_COMMIT_REFS_LIB_DIR}/commit_email.sh"
+
+commit_refs_range() {
+    commit_email_range "$@"
+}
 
 _commit_refs_has_footer() {
     local _message="$1" _line

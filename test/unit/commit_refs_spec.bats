@@ -53,3 +53,28 @@ _commit_refs() {
     run commit_refs_check_commits "${REPO}" HEAD
     assert_failure 1
 }
+
+@test "PR and push ranges exclude old commits and validate event inputs" {
+    _commit_refs 'old commit without footer'
+    local _base _head _range
+    _base="$(git -C "${REPO}" rev-parse HEAD)"
+    git -C "${REPO}" update-ref refs/remotes/origin/main "${_base}"
+    _commit_refs $'new work\n\nRefs: #312'
+    _head="$(git -C "${REPO}" rev-parse HEAD)"
+    local _event
+    for _event in pull_request push; do
+        _range="$(commit_refs_range "${_event}" "${_base}" "${_head}" "${_base}" "${_head}" refs/remotes/origin/main)"
+        run commit_refs_check_commits "${REPO}" "${_range}"
+        assert_success
+        assert_output --partial '1 commits checked'
+    done
+    _range="$(commit_refs_range push ignored ignored 0000000000000000000000000000000000000000 "${_head}" refs/remotes/origin/main)"
+    local -a _revs
+    mapfile -t _revs <<< "${_range}"
+    run commit_refs_check_commits "${REPO}" "${_revs[@]}"
+    assert_success
+    assert_output --partial '1 commits checked'
+    run commit_refs_range push ignored ignored '' "${_head}" refs/remotes/origin/main
+    assert_failure 1
+    assert_output --partial 'fail closed'
+}
