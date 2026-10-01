@@ -493,6 +493,8 @@ _pl_blocked_run() {
 @test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
     run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
     assert_output "1"
+    run grep -c 'gates: item.gates' "${FANOUT}"
+    assert_output "1"
     run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
     assert_output "1"
     run grep -c 'await parallel(batch.map' "${FANOUT}"
