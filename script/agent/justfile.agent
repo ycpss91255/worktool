@@ -2,6 +2,10 @@
 set working-directory := '../..'
 set positional-arguments
 
+# List agent launch actions.
+default:
+    @just --justfile script/agent/justfile.agent --list
+
 # Launch Codex without GitHub authentication: just agent codex -- exec <prompt>.
 codex *args:
     @./script/agent/codex.sh "$@"
