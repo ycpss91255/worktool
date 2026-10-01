@@ -1,4 +1,4 @@
-# watch state of the agent scripts (.agents/script/watch-user-replies.sh)
+# watch state of the agent scripts (.agents/script/monitor/watch-user-replies.sh)
 .agents/state/
 
 # --- container / CI artifacts ---

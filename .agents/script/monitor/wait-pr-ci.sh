@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .agents/script/wait-pr-ci.sh - poll the check rollup of one or more PRs
+# .agents/script/monitor/wait-pr-ci.sh - poll the check rollup of one or more PRs
 # until they settle; the Monitor companion of the wait-pr-ci skill
 # (.agents/skills/wait-pr-ci/SKILL.md).
 #
@@ -31,7 +31,7 @@
 
 set -uo pipefail
 
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/lib/log.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/log.sh"
 
 readonly DEFAULT_FILTER='.name=="ci-passed"'
 
