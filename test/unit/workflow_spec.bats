@@ -1738,6 +1738,15 @@ _pl_stage_run() {
     done
 }
 
+@test "pr-loop (node): a missing worktree stops the stage script (#331)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/missing" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"}')" \
+        '{"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
+    assert_success
+    run jq -cr '[.error, .result.codexVerdict, (.ran[0].rc != 0), .result.blockingLeft]' <<<"${output}"
+    assert_output '[null,"blocked",true,["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
+}
+
 @test "pr-loop (node): light failed editing includes the step and reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \

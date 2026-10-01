@@ -171,14 +171,15 @@ const result = (extra) => ({ issue: A.issue, ...extra })
 
 // Read fresh remote state rather than trusting an implementer's completion prose.
 const checkStage = async (pr, stage, before = '') => {
-  const script = `cd ${sq(WT)} &&
+  const script = `cd ${sq(WT)} && {
 errors=''
 status=$(git status --porcelain) || errors='git status failed; '
 local_head=$(git rev-parse HEAD) || errors="$errors local HEAD lookup failed; "
 remote_head=$(git ls-remote --exit-code origin ${sq(`refs/heads/${A.branch}`)}) || errors="$errors remote HEAD lookup failed; "
 remote_head=$(printf '%s' "$remote_head" | cut -f1)
 pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid) || errors="$errors PR head lookup failed; "
-jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'`
+jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'
+}`
   const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
 Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
     label: `stage-check:${stage}:#${pr}`,
