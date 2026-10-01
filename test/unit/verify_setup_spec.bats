@@ -1112,3 +1112,10 @@ FRAG
     assert_failure
     assert_output --partial "[WARN] ghostty 1.2.0 does not read"
 }
+
+@test "3.2: setup preserves recorded box HOME and reports user config links" {
+    run "${VERIFY}" 3.2
+    assert_success
+    assert_line "home: <H>/dev-box (default)"
+    assert_line "link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)"
+}

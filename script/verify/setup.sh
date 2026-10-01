@@ -900,6 +900,23 @@ _item_3_2() {
     # The block went INTO the user's files; it did not replace them.
     _expect_user_content 3.2 after-write || _bad=1
 
+    # Seed assemble's persisted HOME and a linked user-config entry through
+    # the shared config API, then ensure setup preserves and reports both.
+    mkdir -p "${ITEM_H}/dev-box" || return 1
+    printf 'acceptance credential\n' >"${ITEM_H}/.acceptance-user" || return 1
+    ln -s "${ITEM_H}/.acceptance-user" "${ITEM_H}/dev-box/.acceptance-user" || return 1
+    "${_env[@]}" bash -c 'source "$1/lib/config.sh"; config_set home "$HOME/dev-box" home.source default link .acceptance-user' bash "${REPO_ROOT}" || return 1
+    _run_norm "${_env[@]}" just box setup || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+    _show_norm_file "${_state}" || return 1
+    _expect_only_lines 3.2 "${_state}" "${STATE_FILE_LINES[@]}" \
+        'home=<H>/dev-box' 'home.source=default' 'link=.acceptance-user' || _bad=1
+    _run_norm "${_env[@]}" just box status || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+    _expect_lines 3.2 \
+        'home: <H>/dev-box (default)' \
+        'link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)' || _bad=1
+
     if [[ "${_setup_rc}" -ne 0 ]]; then
         _fail "3.2: just box setup exited ${_setup_rc}, expected 0"
         _bad=1
