@@ -104,7 +104,7 @@ args 範例：
 |------|------|------|
 | `repo` | 是 | `owner/name`(只允許英數、`.`、`_`、`-`);gh 一律帶 `--repo` |
 | `repoDir` | 是 | 本機 main checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>/` |
-| `issue` | 是 | 正整數;結論以**一則**留言貼到這個 issue |
+| `issue` | 是 | 正整數;結論與研究明細以一則或多則留言貼到這個 issue |
 | `question` | 是 | 研究問題 |
 | `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
 | `sources` | 否 | 本機一手資料路徑陣列(例如鎖定版原始碼),給 claude 與 codex 驗證時直接讀 |
@@ -141,10 +141,14 @@ args 範例：
    `status: 'verify-failed'` 並停在這裡,不綜合、不留言(研究原文留在 scratch,可重跑)。
 3. **Synthesize**:合併成驗證後成立的事實、被推翻的主張、仍需實測的點、建議方案、需要維護者拍板的參數(結構化)。
    結果缺欄位、型別不對或建議方案為空就回傳 `status: 'synthesize-failed'`,不留言,**不以替代結論冒充**。
-4. **Record**:一則 issue 留言(`--body-file`):`[claude]` 結論 + codex 原文(由 shell 從 `codex.md` 複製,
-   agent 不自己寫 `[codex]` 行)+ agy 原文放在 `<details>` 摺疊區塊;`claude.md`、`agy.md` 或 `codex.md` 為空就不發。
-   留言本文先組成暫存檔、過濾後才改名成 `body.md`,任一步(讀檔或過濾)失敗都不會留下 `body.md`,不發出空白或不完整的留言(fail closed)。
-   整則留言發出前經過路徑過濾(#223):`sources` 改寫成其目錄名、`repoDir` 改寫成 `.`(只在路徑邊界),
+4. **Record**:留言一律以 `--body-file` 發出,每則上限集中為 60,000 bytes(低於 GitHub 的 65,536 字元限制)。
+   小型研究仍合併成一則;超過上限時第一則固定是驗證後成立、被推翻、仍需實測、建議方案與待拍板參數,
+   後續依序放 claude 逐條明細、引用格式的 codex 原文與 agy 原文,每則標明「第 n／N 則」。單一段落仍放不下時截斷並標記,
+   不會讓整次 Record 因該段落失敗。每則都以 `[claude]` 開頭;codex 原文逐行引用,不會出現行首 `[codex]`。
+   每頁帶本次 run nonce 組成的 marker;重試先讀 issue 既有留言,已存在的 marker 不再張貼,只補先前未成功的頁。
+   `claude.md`、`agy.md` 或 `codex.md` 為空就不發。留言本文先拆分、過濾並驗證完整行數後才發送,
+   任一步(讀檔或過濾)失敗都不發出空白或不完整的留言(fail closed)。
+   每則留言發出前經過路徑過濾(#223):`sources` 改寫成其目錄名、`repoDir` 改寫成 `.`(只在路徑邊界),
    `$HOME` 與任何 `/home/<user>`、`/Users/<user>` 改成 `~`,Claude session 的 `/tmp` 暫存路徑改成 `<tmp>`;
    其餘絕對路徑一律遮成 `<path>`(預設拒絕,不留例外:`/usr`、`/etc`、`/root`、`/workspace`、`/private/tmp`、`/var/folders`、
    `/mnt/c/Users`、`file:///...` 的路徑、緊跟在非 URL 冒號後的路徑如 `location:/root`、`host:/srv`、`C:\Users\...`、

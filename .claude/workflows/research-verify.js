@@ -1,12 +1,12 @@
 export const meta = {
   name: 'research-verify',
-  description: 'Research one question with agy (gemini), verify every claim with a claude agent and codex in parallel, synthesize, and record ONE zh-TW comment on the issue; never substitutes another model when agy fails',
+  description: 'Research one question with agy (gemini), verify every claim with a claude agent and codex in parallel, synthesize, and record bounded zh-TW comments on the issue; never substitutes another model when agy fails',
   whenToUse: 'Any fact-finding the maintainer wants researched (agy finds, claude and codex verify). Pass args {repo, repoDir, issue, question, context?, sources?, timeoutMin?}.',
   phases: [
     { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
     { title: 'Verify', detail: 'parallel: claude agent claim by claim (structured) + codex exec with the agy text on stdin (verbatim file)' },
     { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
-    { title: 'Record', detail: 'agent: ONE issue comment via --body-file: [claude] conclusion, verbatim [codex], agy original folded; then repo-check: git status equals the pre-run capture' },
+    { title: 'Record', detail: 'agent: bounded issue comments via --body-file: conclusion first, then claim detail and verbatim model text; then repo-check: git status equals the pre-run capture' },
   ],
 }
 
@@ -16,7 +16,7 @@ export const meta = {
 //   Workflow({ scriptPath: "<repoDir>/.claude/workflows/research-verify.js", args: {
 //     repo: "ycpss91255/worktool",     // required: owner/name for every gh call
 //     repoDir: "/path/to/worktool",     // required: local checkout; scratch files go under ../worktree/.scratch/
-//     issue: 179,                      // required: the issue that receives the ONE result comment
+//     issue: 179,                      // required: the issue that receives the result comments
 //     question: "...",                 // required: the research question
 //     context: "...",                  // optional: background agy and the verifiers should know
 //     sources: ["/path/to/src"],       // optional: local primary material (e.g. pinned source) for the verifiers
@@ -203,7 +203,7 @@ Rules: a claim is "verified" only when no verifier refutes it and at least one c
 const bullets = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`).join('\n') : '- (無)')
 const VERDICT_ZH = { supported: '成立', refuted: '不成立', unverifiable: '無法確認' }
 
-const renderClaude = (s, claims, attempts) => `[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)
+const renderConclusion = (s, attempts) => `[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)
 
 **問題**:${QUESTION}
 
@@ -222,16 +222,22 @@ ${s.recommendation}
 ### 需要維護者拍板的參數
 ${bullets(s.parameters)}
 
-### claude 逐條驗證
-${bullets(claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —— ${c.basis}`))}
-
 agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`../worktree/.scratch/research-${A.issue}/\`)。`
 
-const RECORD = (claudeText) => `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
+const renderClaims = (claims) => claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —— ${c.basis}`).join('\n\n')
+const COMMENT_LIMIT = 60000
+const SPLIT_JS = String.raw`const fs=require("fs"),[out,run,limit,...files]=process.argv.slice(1),max=Number(limit);const read=f=>fs.readFileSync(f,"utf8").trim();const bytes=s=>Buffer.byteLength(s);const cut=(s,n)=>{const a=Array.from(s);let lo=0,hi=a.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(bytes(a.slice(0,mid).join(""))<=n)lo=mid;else hi=mid-1}return a.slice(0,lo).join("")};const quote=s=>s.split("\n").map(x=>"> "+x).join("\n");const sections=[{h:"### claude 逐條驗證",t:read(files[1])},{h:"[claude] codex 逐條驗證(原文)",t:quote(read(files[2]))},{h:"[claude] agy 原文",t:read(files[3])}];const conclusion=read(files[0]);const all=conclusion+"\n\n"+sections.map(x=>x.h+"\n\n"+x.t).join("\n\n");let parts=[];if(bytes(all)+200<=max)parts=[all];else{parts=[conclusion];for(const x of sections){let cur=x.h;for(const p of x.t.split(/\n\s*\n/)){const room=max-bytes(cur)-500;if(bytes(p)>room){if(cur!==x.h)parts.push(cur);parts.push(x.h+"\n\n"+cut(p,max-bytes(x.h)-600)+"\n\n[內容過長，已截斷]");cur=x.h}else if(bytes(cur+"\n\n"+p)>max-300){parts.push(cur);cur=x.h+"\n\n"+p}else cur+="\n\n"+p}if(cur!==x.h)parts.push(cur)}}const total=parts.length;parts.forEach((p,i)=>{const marker="<!-- research-verify:"+run+":comment:"+(i+1)+"/"+total+" -->";fs.writeFileSync(out+"/body-"+(i+1)+".md",p+"\n\n第 "+(i+1)+"／"+total+" 則\n"+marker+"\n")});fs.writeFileSync(out+"/body-count",String(total))`
+
+const RECORD_SPLIT = (claudeText) => {
+  const tick = String.fromCharCode(96)
+  const build = `${CD} && rm -f body.md body-*.md body-count existing.json conclusion.md claims.md codex-clean.md agy-clean.md conclusion-raw.md claims-raw.md && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && awk 'BEGIN{s=0} /^===CLAIMS-${RUN}===$/{s=1;next} {print > (s ? "claims-raw.md" : "conclusion-raw.md")}' claude.md && [ -s conclusion-raw.md ] && [ -s claims-raw.md ] && ${SCRUB} < conclusion-raw.md > conclusion.md && ${SCRUB} < claims-raw.md > claims.md && ${SCRUB} < codex.md > codex-clean.md && ${SCRUB} < agy.md > agy-clean.md && [ -s conclusion.md ] && [ -s claims.md ] && [ -s codex-clean.md ] && [ -s agy-clean.md ] && [ "$(wc -l < conclusion-raw.md)" -eq "$(wc -l < conclusion.md)" ] && [ "$(wc -l < claims-raw.md)" -eq "$(wc -l < claims.md)" ] && [ "$(wc -l < codex.md)" -eq "$(wc -l < codex-clean.md)" ] && [ "$(wc -l < agy.md)" -eq "$(wc -l < agy-clean.md)" ] && node -e ${sq(SPLIT_JS)} ${sq(SCRATCH)} ${sq(RUN)} ${COMMENT_LIMIT} conclusion.md claims.md codex-clean.md agy-clean.md && [ -s body-count ]`
+  const post = `${CD} && gh issue view ${A.issue} --repo ${sq(REPO)} --json comments > existing.json && count=$(cat body-count) && i=1 && url= && while [ "$i" -le "$count" ]; do body="body-$i.md"; marker=$(grep -m1 '<!-- research-verify:' "$body"); old=$(jq -r --arg marker "$marker" '.comments[] | select(.body | contains($marker)) | .url' existing.json | tail -n 1); if [ -n "$old" ]; then url=$old; else url=$(gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file "$body") || exit $?; fi; i=$((i + 1)); done; printf '%s\\n' "$url"`
+  return `Post the research result for issue #${A.issue} as bounded comments. Never write a "[codex]" line yourself: codex.md is copied by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.
-2. Build the body in the foreground: \`${CD} && rm -f body.md body-raw.md body-tmp.md && [ -s claude.md ] && [ -s agy.md ] && [ -s codex.md ] && { cat claude.md && printf '\\n\\n[codex] 逐條驗證(原文)\\n\\n' && cat codex.md && printf '\\n\\n<details><summary>agy 原文</summary>\\n\\n' && cat agy.md && printf '\\n\\n</details>\\n'; } > body-raw.md && ${SCRUB} < body-raw.md > body-tmp.md && [ -s body-tmp.md ] && tail -n 1 body-tmp.md | grep -qx '</details>' && mv body-tmp.md body.md\` (the filter rewrites local absolute paths; do not drop it; any body.md of an earlier build is removed first, and the new one is renamed into place only once every step succeeded and the filtered body is non-empty and whole). If it fails (claude.md, agy.md or codex.md missing, empty or unreadable, or the filter failed or printed an empty or cut-off body), post nothing and return url = "".
-3. \`gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}\`; return url = the comment URL it prints (empty string if it failed).${SCRATCH_ONLY}
+2. Build the bodies in the foreground: ${tick}${build}${tick}. The filters rewrite local absolute paths; a paragraph that cannot fit is truncated with a note.
+3. Post in order and skip markers already present: ${tick}${post}${tick}; return url = the final comment URL (empty string if it failed).${SCRATCH_ONLY}
 ${fence(claudeText)}`
+}
 
 const REPO_CHECK = `Check that the research run on issue #${A.issue} left the checkout ${JSON.stringify(REPO_DIR)} as it found it. Change nothing; only run and report.
 1. Run in the foreground: \`${CD} && ${REPO_DIFF}\`. repo-extra.txt gets "+ <line>" for each status line that appeared and "- <line>" for each that vanished (e.g. a deleted untracked file); if git or grep failed it holds a "repo-check failed" line instead.
@@ -271,7 +277,8 @@ const s = await agent(SYNTH(claims), { label: `synthesize:#${A.issue}`, phase: '
 if (!synthOk(s)) return stop('synthesize-failed', 'ok', claims.length, 'synthesis missing or malformed', s || null)
 
 phase('Record')
-const rec = await agent(RECORD(renderClaude(s, claims, res.attempts)), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
+const recordText = `${renderConclusion(s, res.attempts)}\n===CLAIMS-${RUN}===\n${renderClaims(claims)}`
+const rec = await agent(RECORD_SPLIT(recordText), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
 const url = rec ? rec.url : undefined
 // Fail closed (#243): no answer counts as dirty; the extra lines are the detail.
 const chk = await agent(REPO_CHECK, { label: `repo-check:#${A.issue}`, phase: 'Record', schema: REPO_CHECK_SCHEMA, agentType: 'general-purpose' })
