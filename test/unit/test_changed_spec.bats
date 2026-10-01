@@ -60,3 +60,16 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
 }
+
+@test "test.sh --changed fails open to the whole tier for an unmapped library" {
+    mkdir -p "${TEMP_REPO}/lib"
+    printf '# library\n' >"${TEMP_REPO}/lib/unmapped.sh"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/lib/unmapped.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+}

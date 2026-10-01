@@ -665,7 +665,7 @@ _add_changed_spec() {
 }
 
 _run_changed() {
-    local _base="$1" _list _path _tier _spec
+    local _base="$1" _list _path _tier _spec _mapped _full_unit=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     _changed_files "${_base}" "${_list}"
@@ -673,16 +673,25 @@ _run_changed() {
         if _add_changed_spec "${_path}"; then
             continue
         fi
+        _mapped="$(_mapped_specs "${_path}")"
+        if [[ -z "${_mapped}" ]]; then
+            _full_unit=1
+            continue
+        fi
         while IFS= read -r _spec; do
             [[ -n "${_spec}" ]] || continue
             _add_changed_spec "${_spec}"
-        done < <(_mapped_specs "${_path}")
+        done <<<"${_mapped}"
     done <"${_list}"
     rm -f "${_list}"
     _run_host_step lint ""
     for _tier in unit matrix integration system acceptance; do
         local -n _specs="_${_tier}"
-        [[ "${#_specs[@]}" -eq 0 ]] || _run_host_step "${_tier}" "" "${_specs[@]}"
+        if [[ "${_tier}" == unit && "${_full_unit}" -eq 1 ]]; then
+            _run_host_step unit ""
+        elif [[ "${#_specs[@]}" -gt 0 ]]; then
+            _run_host_step "${_tier}" "" "${_specs[@]}"
+        fi
         unset -n _specs
     done
 }
