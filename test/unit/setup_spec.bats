@@ -1218,3 +1218,259 @@ _assert_control_char_refused() {
     assert_failure 2
     assert_output "setup.sh: unknown option '--unknown' (see --help)"
 }
+
+# --- #178: the remaining uncovered setup.sh paths ----------------------------
+#
+# Five paths the M3 acceptance audit found unguarded or only partly guarded:
+# config_write_atomic failure, mode preservation, dry-run removal and
+# unchanged profiles. Multi-block refusal is covered in managed_block_spec.bats.
+# No host tmux config is managed after #179.
+#
+# Scope: this section is the unit layer of #178 only. The acceptance layer
+# (script/verify/setup.sh items, doc/acceptance.md criteria and the
+# test/unit/verify_setup_spec.bats degraded-copy cases) is tracked in #231,
+# as recorded in the #178 issue body.
+
+# Install a stand-in for command $1 (mv or mktemp) first on the returned
+# PATH directory: it exits 1 when its LAST argument is $FAIL_TARGET (mv's
+# destination) or "$FAIL_TARGET.XXXXXX" (mktemp's template), and runs the
+# real command otherwise. Prints the directory to prepend to PATH.
+_fail_bin() {
+    local _dir="${BATS_TEST_TMPDIR}/failbin" _real
+    _real="$(command -v "$1")"
+    mkdir -p "${_dir}"
+    printf '#!/usr/bin/env bash\n_real=%q\n' "${_real}" >"${_dir}/$1"
+    cat >>"${_dir}/$1" <<'STUB'
+for _a in "$@"; do _last="$_a"; done
+case "${_last:-}" in "${FAIL_TARGET}"|"${FAIL_TARGET}.XXXXXX") exit 1 ;; esac
+exec "${_real}" "$@"
+STUB
+    chmod +x "${_dir}/$1"
+    printf '%s\n' "${_dir}"
+}
+
+# Number of lines of text $2 (a run's output) exactly equal to $1. grep -c
+# already prints 0 on "no match" (exit 1); only a real error (exit >= 2)
+# is passed on to the caller.
+_count_line() {
+    local _rc=0
+    grep -cxF -- "$1" <<<"$2" || _rc=$?
+    if [[ "${_rc}" -gt 1 ]]; then
+        return "${_rc}"
+    fi
+}
+
+# _count_line itself: "no match" (grep exit 1) is a count of 0, a real grep
+# error (exit 2) must reach the caller instead of being swallowed (codex
+# round 1 on PR #227). A `grep` stand-in first on PATH produces the error.
+@test "#178: _count_line prints 0 and succeeds when no line matches" {
+    run _count_line "absent" $'one\ntwo'
+    assert_success
+    assert_output "0"
+}
+
+@test "#178: _count_line returns grep's error status instead of a count" {
+    local _bin="${BATS_TEST_TMPDIR}/grepbin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 2\n' >"${_bin}/grep"
+    chmod +x "${_bin}/grep"
+    PATH="${_bin}:${PATH}" run _count_line "one" $'one\ntwo'
+    assert_failure 2
+}
+
+# Seed the ghostty config with a user line, the current managed block (via
+# a real setup run) and a user line after it; keep a reference copy.
+_seed_managed_ghostty() {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    printf 'font-size = 12\n' >>"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+}
+
+# 1. config_write_atomic failure --------------------------------------------------
+
+@test "#178: a profile write whose rename fails is reported once, exit 1, profile byte-identical, no temp file left" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "wrote: ${GHOSTTY}"
+    # The state file is written first and stays written.
+    assert_line "[INFO] wrote: ${CONFIG}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: a profile write whose temp file cannot be created is reported once, exit 1, profile byte-identical" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+    local _bin
+    _bin="$(_fail_bin mktemp)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: after a failed profile write, status shows the block absent and a re-run completes it" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    run "${REPO_ROOT}/script/box/status.sh"
+    assert_success
+    assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
+
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter dev)"
+    assert_equal "$(_block_count "${GHOSTTY}")" "1"
+    run "${REPO_ROOT}/script/box/status.sh"
+    assert_success
+    assert_line "ghostty: ${GHOSTTY} (managed block: present)"
+}
+
+@test "#178: a state file write that fails is reported once, exit 1, no profile touched, no temp file left" {
+    _seed_managed_ghostty
+    cp -p -- "${CONFIG}" "${BATS_TEST_TMPDIR}/config.ref"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${CONFIG}" run "${SETUP}" --terminal ghostty --box other
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${CONFIG}" "${output}")" "1"
+    refute_line --partial "wrote:"
+    cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${CONFIG}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: a block removal that fails is reported once, exit 1, profile byte-identical, no temp file left" {
+    _seed_managed_ghostty
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --auto-enter no
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed: ${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+# 2. config_write_atomic mode preservation ---------------------------------------------------------------
+
+# Seed the ghostty config with mode $1, then write, rewrite and remove the
+# managed block, asserting the mode after every step.
+_assert_mode_kept() {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    chmod "$1" "${GHOSTTY}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line --partial "[INFO] wrote: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+    run "${SETUP}" --terminal ghostty --box other
+    assert_success
+    assert_line --partial "[INFO] wrote: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line --partial "[INFO] removed: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+}
+
+@test "#178: a 0644 ghostty config stays 0644 through write, rewrite and removal" {
+    _assert_mode_kept 644
+}
+
+@test "#178: a 0600 ghostty config stays 0600 through write, rewrite and removal" {
+    _assert_mode_kept 600
+}
+
+@test "#178: distrobox.conf keeps 0644 through write, rewrite and auto-enter no" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf"
+    mkdir -p "$(dirname -- "${_conf}")"
+    printf '# user config\n' >"${_conf}"
+    chmod 0644 "${_conf}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --terminal ghostty --box other
+    assert_success
+    assert_line --partial "[INFO] wrote: ${_conf} (managed block:"
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run head -n 1 "${_conf}"
+    assert_output '# user config'
+}
+
+# 3. dry-run removal ----------------------------------------------------------
+
+@test "#178: --dry-run --auto-enter no over a managed block reports it once and leaves every file byte-identical" {
+    _seed_managed_ghostty
+    cp -p -- "${CONFIG}" "${BATS_TEST_TMPDIR}/config.ref"
+    local _inode
+    _inode="$(stat -c '%i' "${GHOSTTY}")"
+    run "${SETUP}" --dry-run --auto-enter no
+    assert_success
+    assert_equal "$(_count_line "[INFO] dry-run: would remove managed block from ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed:"
+    refute_line --partial "wrote:"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
+    assert_equal "$(stat -c '%i' "${GHOSTTY}")" "${_inode}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: --dry-run --terminal none over a managed block reports the removal and removes nothing" {
+    _seed_managed_ghostty
+    run "${SETUP}" --dry-run --terminal none
+    assert_success
+    assert_equal "$(_count_line "[INFO] dry-run: would remove managed block from ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed:"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+# 4. unchanged ----------------------------------------------------------------
+
+@test "#178: a re-run with the same decisions does not rewrite the profile (no wrote line, same inode)" {
+    _seed_managed_ghostty
+    local _inode
+    _inode="$(stat -c '%i' "${GHOSTTY}")"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_equal "$(_count_line "[INFO] unchanged: ${GHOSTTY} (managed block already up to date)" "${output}")" "1"
+    refute_line --partial "wrote: ${GHOSTTY}"
+    assert_equal "$(stat -c '%i' "${GHOSTTY}")" "${_inode}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+@test "#178: --dry-run over an up-to-date block says unchanged, not would write" {
+    _seed_managed_ghostty
+    run "${SETUP}" --dry-run --terminal ghostty
+    assert_success
+    assert_line "[INFO] unchanged: ${GHOSTTY} (managed block already up to date)"
+    refute_line --partial "would write ${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+# 5. Multi-block files are refused before any write (issue #179).
+# Covered by managed_block_spec.bats: malformed markers x operation x
+# managed file, re-running setup on two managed blocks, and --dry-run refusal.
