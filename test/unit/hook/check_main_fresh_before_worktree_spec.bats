@@ -134,3 +134,9 @@ _advance_origin() {
     run jq -r '.hookSpecificOutput.permissionDecision' <<<"${output}"
     assert_output "deny"
 }
+
+@test "a missing git working directory allows without leaking exit 128" {
+    _check "git -C ${BATS_TEST_TMPDIR}/missing worktree add wt main"
+    assert_success
+    assert_output ""
+}
