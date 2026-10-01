@@ -1254,6 +1254,32 @@ _rv_assert_fails_closed() {
     assert_output "4"
 }
 
+@test "research-verify (node, exec): a Record retry skips existing parts and posts only the remaining parts in order" {
+    local dir="${BATS_TEST_TMPDIR}/partial-retry" replies existing posted
+    existing="${BATS_TEST_TMPDIR}/existing.json"
+    posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'awk '\''BEGIN { printf "1. "; for (i = 0; i < 70000; i++) printf "a"; print " [official https://x]" }'\'''
+    _rv_stub codex 'cat >/dev/null; awk '\''BEGIN { print "codex"; for (i = 0; i < 70000; i++) printf "c"; print ""; print "tokens used"; print "5" }'\'''
+    jq -cn '{comments:[
+        {body:"<!-- research-verify:0123456789abcdef:comment:1/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-1"},
+        {body:"<!-- research-verify:0123456789abcdef:comment:2/4 -->",url:"https://github.com/o/r/issues/7#issuecomment-2"}
+    ]}' > "${existing}"
+    _rv_stub gh "if [ \"\$1 \$2\" = 'issue view' ]; then cat '${existing}'; exit; fi; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-'\$((n + 3))"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' "$(jq -cn --arg basis "$(printf '%070000d' 0)" '{claims:[{claim:"c1",verdict:"supported",basis:$basis}]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c 'for f in "$1"/*; do grep -m1 "<!-- research-verify:" "$f"; done' _ "${posted}"
+    assert_output "$(printf '%s\n' \
+        '<!-- research-verify:0123456789abcdef:comment:3/4 -->' \
+        '<!-- research-verify:0123456789abcdef:comment:4/4 -->')"
+    run bash -c 'find "$1" -type f | wc -l' _ "${posted}"
+    assert_output "2"
+}
+
 @test "research-verify (node, exec): recorded comments contain no attribution lines" {
     local dir="${BATS_TEST_TMPDIR}/no-attribution" replies posted="${BATS_TEST_TMPDIR}/posted"
     _rv_stubs
