@@ -6,7 +6,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 Every `gh` call names its repo with `-R ycpss91255/worktool` (see AGENTS.md: never rely on the current directory's remote). Bodies go through a file (`--body-file <file>`), never an inline `--body "..."` or a heredoc; the `enforce_gh_body_file` hook denies the rest.
 
-- **Create an issue**: `gh issue create -R ycpss91255/worktool --title "..." --body-file <file> --label <label>`.
+- **Create an issue**: `gh issue create -R ycpss91255/worktool --title "..." --body-file <file> --label <label> --milestone <M>`. Every new issue declares its milestone: `--milestone <name>` (or `-m <name>`) when it belongs to one, otherwise no `--milestone` and a body line `milestone: 無`. Exactly one of the two; the `enforce_issue_milestone` hook blocks neither and both.
 - **Read an issue**: `gh issue view <number> -R ycpss91255/worktool --comments`, filtering comments by `jq` and also fetching labels.
 - **List issues**: `gh issue list -R ycpss91255/worktool --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> -R ycpss91255/worktool --body-file <file>`

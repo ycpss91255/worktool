@@ -6,7 +6,7 @@
 # worktree whose commit-ish is main, not a new branch named main. DENIES
 # (permissionDecision "deny") when local main is behind origin/main, so a
 # new worktree never starts from a stale base and later needs a rebase
-# (worktool: every sub-issue works in its own .worktree/<name>, and `main`
+# (worktool: every sub-issue works in ../worktree/<name>, and `main`
 # only moves by merged PRs - see AGENTS.md git conventions). Allows when:
 #   - the command launches no worktree from main / origin/main (quoted
 #     text and heredoc bodies that mention one are data: lib/subcommand.sh)
@@ -106,7 +106,7 @@ main() {
     [[ -z "${_cwd}" ]] && _cwd="${PWD}"
     [[ -n "${_cmd}" ]] || return 0
     _dir="$(_worktree_dir "${_cmd}" "${_cwd}")" || return 0
-    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)"
+    _root="$(git -C "${_dir}" rev-parse --show-toplevel 2>/dev/null)" || return 0
     [[ -n "${_root}" ]] || return 0
     _n="$(_behind "${_root}")"
     [[ "${_n}" =~ ^[1-9][0-9]*$ ]] || return 0

@@ -16,6 +16,17 @@ _check() { run_hook remind_main_sync "$(hook_json "$1")"; }
 # Print the additionalContext of the hook's JSON output.
 _context() { jq -r '.hookSpecificOutput.additionalContext' <<<"${output}"; }
 
+@test "nested gh pr merge -> immediate advisory reminder" {
+    local command
+    for command in "bash -c 'gh pr merge 42 --merge'" "eval 'gh pr merge 42 --merge'"; do
+        _check "${command}"
+        assert_success
+        run _context
+        assert_output --partial "pull --ff-only origin main"
+        assert_output --partial "[variant=immediate]"
+    done
+}
+
 @test "gh pr merge --merge -> immediate reminder to ff-pull main, no merge-mode note" {
     _check "gh pr merge 42 --repo ycpss91255/worktool --merge"
     assert_success
@@ -70,4 +81,10 @@ _context() { jq -r '.hookSpecificOutput.additionalContext' <<<"${output}"; }
     _check ""
     assert_success
     assert_output ""
+}
+
+@test "main sync advisory allows when JSON emission fails" {
+    run bash -c 'jq() { if [[ "$1" == -n ]]; then return 7; fi; command jq "$@"; }; export -f jq; printf "%s" "$1" | "$2"' _ \
+        "$(hook_json 'gh pr merge 42 --merge')" "${HOOK_DIR}/remind_main_sync.sh"
+    assert_success
 }

@@ -7,19 +7,31 @@
 #
 # Every path derives from HOME / XDG_CONFIG_HOME ONLY (tests point HOME at
 # a throwaway directory; the real home is never touched by a spec):
-#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config}
-#   enter_config_path      -> <config dir>/worktool/config   (the ONE state file)
+#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config} (lib/config.sh)
+#   (the ONE state file is lib/config.sh's; nothing here names it)
 #   enter_ghostty_config   -> <config dir>/ghostty/config
-#   enter_tmux_conf        -> $HOME/.tmux.conf
+#   enter_distrobox_conf   -> <config dir>/distrobox/distrobox.conf
+#
+# There is no tmux decision and no ~/.tmux.conf path (issue #179): the
+# terminal enters the box and gets its login shell; tmux is something the
+# user starts inside the box, where it gets the box's own server
+# (TMUX_TMPDIR, box/dev.ini). worktool never reads or writes the host's
+# tmux config.
+#
+# The box's tmux environment (issue #179, codex round 4 on PR #232):
+#   enter_distrobox_conf_body <box> -> the ONE line setup.sh keeps in the
+#                             managed block of distrobox's own user config,
+#                             so no `distrobox enter <box>` ever hands the
+#                             box the caller's TMUX / TMUX_PANE (see the
+#                             function comment).
 #
 # Decisions (the keys of the state file) and their defaults:
 #   auto-enter  yes|no        default yes
 #   terminal    ghostty|none  default ghostty when the ghostty EXECUTABLE is
 #                             on PATH, or (secondary) a ghostty config dir
 #                             exists; else none
-#   tmux        inside|host   default inside
 #   box         <name>        default dev
-#   enter_keys                -> prints the four keys, one per line
+#   enter_keys                -> prints the three keys, one per line
 #   enter_default <key>       -> prints the default of one key
 #   enter_choices <key>       -> prints the allowed values (`a|b`), empty for box
 #   enter_expected <key>      -> the allowed values in human form (messages)
@@ -34,24 +46,25 @@
 #                                refuses the run; there is no bare-name
 #                                fallback - see the function comment)
 #
-# Shell quoting (issue #175 round 1). BOTH managed bodies are shell SOURCE,
-# not argv: ghostty runs a `command` without a `direct:` prefix through
-# `/bin/sh -c`, and tmux runs `default-command` the same way. An install
-# path holding a space or a shell metacharacter would otherwise be split
-# into words or change what the command means.
+# Shell quoting (issue #175 round 1). The managed body is shell SOURCE, not
+# argv: ghostty runs a `command` without a `direct:` prefix through
+# `/bin/sh -c`. An install path holding a space or a shell metacharacter
+# would otherwise be split into words or change what the command means.
 #   enter_sh_squote <s>       -> $s as a single-quoted POSIX shell word
-#   enter_sh_dquote <s>       -> $s as a double-quoted POSIX shell word
 #   enter_first_word <s>      -> the first shell word of $s, decoded
+#   enter_after_first_word <s>-> $s minus its first (setup-encoded) word
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
+#                                (through the enter.sh wrapper, issue #180)
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
 #   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
-# State file: `<key>=<value>` plus `<key>.source=default|user` per key.
+# State file (lib/config.sh owns it; read with config_get <key>):
+# `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
-#                                      `<key>.source`
-#   enter_config_get <file> <key>   -> prints the value (nothing when absent;
-#                                      first occurrence when repeated)
-#   enter_config_check <file>       -> 0 when EVERY LINE holding a known key
+#                                      `<key>.source` (a `tmux` line an
+#                                      earlier worktool stored is not: it
+#                                      is ignored, and preserved on rewrite)
+#   enter_config_check       -> 0 when EVERY LINE holding a known key
 #                                      (repeats and empty values included)
 #                                      has a valid value or source (whatever
 #                                      the source says: the file is
@@ -59,8 +72,12 @@
 #                                      `invalid value ...` line and returns 1
 #
 # Managed block: exactly one per file, delimited by exact marker lines, so
-# it can be replaced in place and removed without touching user content. A
-# file that somehow holds several blocks is collapsed to one on rewrite.
+# it can be replaced in place and removed without touching user content.
+# The helpers below TRUST the markers, so a writer validates them first:
+#   enter_block_check <file>           -> 0 when well-formed (no marker, or
+#                                         one exact BEGIN ... END); else
+#                                         prints the problems with their
+#                                         line numbers and returns 1
 #   enter_block_present <file>         -> 0 when the file holds a block
 #   enter_block_count <file>           -> number of blocks (0 when absent)
 #   enter_block_body <file>            -> lines between the FIRST block's markers
@@ -68,19 +85,28 @@
 #   enter_block_compose <file> <body>  -> content with exactly one block, stdout
 #
 # This is a library: it defines functions and must be sourced, not executed.
-# Sourcing has no side effects.
+# Sourcing has no side effects; it sources lib/config.sh (same dir), the
+# one reader/writer of the state file.
+
+# The state file's format is lib/config.sh's (its one reader/writer).
+# shellcheck source-path=SCRIPTDIR
+_ENTER_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./config.sh
+source "${_ENTER_LIB_DIR}/config.sh"
 
 ENTER_BLOCK_BEGIN='# BEGIN worktool managed block (just box setup; do not edit)'
 ENTER_BLOCK_END='# END worktool managed block'
 
 # The decision keys, one per line, in report order.
-enter_keys() { printf '%s\n' auto-enter terminal tmux box; }
+enter_keys() { printf '%s\n' auto-enter terminal box; }
 
 # --- Paths -------------------------------------------------------------------
-enter_config_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
-enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
+enter_config_dir() { config_xdg_dir; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
-enter_tmux_conf() { printf '%s/.tmux.conf\n' "${HOME}"; }
+# distrobox reads this file itself, on every run, from the same
+# ${XDG_CONFIG_HOME:-$HOME/.config} (pinned distrobox 1.8.2.5, the
+# config_files list of distrobox-enter).
+enter_distrobox_conf() { printf '%s/distrobox/distrobox.conf\n' "$(enter_config_dir)"; }
 
 # --- Executables the decisions depend on (issue #175) ------------------------
 
@@ -160,16 +186,7 @@ enter_sh_squote() {
     printf "'%s'\n" "${_s}"
 }
 
-# $1 as a POSIX shell word in DOUBLE quotes: inside "..." only \ ` $ " are
-# special, so exactly those four are backslash-escaped (the backslash
-# first, or the escapes would be escaped again).
-#
-# Used where an OUTER layer already owns the single quote: the ~/.tmux.conf
-# managed block is `set -g default-command '<shell command>'`, and a tmux
-# single-quoted value is fully literal - no escape, no expansion - which
-# makes it the one tmux form whose content needs no second encoding. The
-# price is that a path holding a single quote cannot be delivered through
-# it at all; setup.sh refuses that case rather than writing a broken file.
+# Encode a legacy double-quoted wrapper path for status readback.
 enter_sh_dquote() {
     local _s="$1"
     _s="${_s//\\/\\\\}"
@@ -182,12 +199,12 @@ enter_sh_dquote() {
 # 0 when $1 can be written into a managed block at all (issue #175 round
 # 2): no newline and no carriage return.
 #
-# Shell quoting makes a valid WORD out of any text, but both managed files
-# are LINE-BASED - ghostty reads its config line by line, and so does tmux.
-# A path holding a newline therefore splits the managed body across two
+# Shell quoting makes a valid WORD out of any text, but the managed file is
+# LINE-BASED - ghostty reads its config line by line. A path holding a
+# newline therefore splits the managed body across two
 # lines, and ghostty rejects the whole file with `unknown field` - after
 # setup had already written it and exited 0. There is no encoding that
-# fixes this on both sides, so such a path is refused instead.
+# fixes this, so such a path is refused instead.
 enter_path_single_line() {
     [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]]
 }
@@ -241,25 +258,95 @@ enter_first_word() {
     printf '%s\n' "${_out}"
 }
 
-# The distrobox program recorded in managed-block body $1, or nothing when
-# the body names none. setup.sh writes exactly two bodies that name one:
-#   command = '<distrobox>' enter <box> -- tmux new -A -s main
-#   set -g default-command '"<distrobox>" enter <box>'
-# (the tmux-on-host ghostty body, `command = tmux new -A -s main`, names
-# none). The unquoted / double-quoted-outer shapes an earlier worktool
-# wrote are still decoded, so a block a user already has keeps reporting.
-# status.sh reads this back to say whether that path still runs.
+# $1 with its FIRST shell word removed (and the one space after it), or
+# nothing (return 1) when that word is not encoded the way setup.sh encodes
+# one: the decoded word is re-encoded in the same quoting style and must be
+# exactly the prefix of $1.
+enter_after_first_word() {
+    local _s="$1" _word _enc
+    _word="$(enter_first_word "${_s}")"
+    case "${_s}" in
+        "'"*) _enc="$(enter_sh_squote "${_word}")" ;;
+        '"'*) _enc="$(enter_sh_dquote "${_word}")" ;;
+        *)    _enc="${_word}" ;;
+    esac
+    [[ "${_s}" == "${_enc} "* ]] || return 1
+    printf '%s\n' "${_s#"${_enc} "}"
+}
+
+# The distrobox program recorded in ghostty managed-block body $1, or
+# nothing when the body names none. setup.sh writes one body:
+#   command = '<distrobox>' enter <box>
+# The shapes an earlier worktool wrote (`... -- tmux new -A -s main`
+# after it, an unquoted path) are still decoded, so a block a user already
+# has keeps reporting. status.sh reads this back to say whether that path
+# still runs.
 enter_body_distrobox() {
     local _body="$1" _rest _prog
     case "${_body}" in
-        'command = '*)               _rest="${_body#command = }" ;;
-        "set -g default-command '"*) _rest="${_body#set -g default-command \'}" ;;
-        'set -g default-command "'*) _rest="${_body#set -g default-command \"}" ;;
+        'command = '*) _rest="${_body#command = }" ;;
         *) return 0 ;;
     esac
     _prog="$(enter_first_word "${_rest}")"
+    if [[ "${_prog##*/}" == "enter.sh" ]]; then
+        _rest="$(enter_after_first_word "${_rest}")" || return 0
+        [[ "${_rest}" == "--distrobox "* ]] || return 0
+        _prog="$(enter_first_word "${_rest#--distrobox }")"
+    fi
     [[ "${_prog##*/}" == "distrobox" ]] || return 0
     printf '%s\n' "${_prog}"
+}
+
+# --- The box's tmux environment (issue #179) ---------------------------------
+
+# The managed body of distrobox.conf for box $1: ONE line of POSIX sh that
+# drops TMUX and TMUX_PANE when the distrobox run it is sourced into
+# targets box $1.
+#
+# WHY THE ENVIRONMENT, NOT THE BINARY (codex rounds 1-4 on PR #232): the
+# leak is not a tmux binary. `distrobox enter` copies the caller's whole
+# environment into the box (distrobox-enter's generate_enter_command turns
+# `printenv` into one `--env` per variable; only a fixed list - HOME, PATH,
+# PWD, ... - is skipped, and TMUX is not on it). Entered from a HOST tmux
+# pane, the box therefore inherits TMUX, which names the host server's
+# socket on the /tmp distrobox shares with the host, and tmux prefers the
+# socket in $TMUX over TMUX_TMPDIR. Any wrapper around the tmux binary is
+# bypassed by running the real binary (`distrobox enter dev -- <real
+# tmux>`, where no box shell ever runs). The only place every entry passes
+# through is distrobox-enter itself, before it builds the `exec` request.
+#
+# WHY distrobox.conf: distrobox-enter SOURCES its config files as shell,
+# before it reads its own arguments and before that `printenv`; there is
+# no skip-list option and no `--unset` flag (an `--additional-flags "--env
+# TMUX="` would still pass an empty TMUX, and a managed terminal command
+# prefixed with `env -u TMUX` covers that one command only). An `unset`
+# there is simply never copied.
+#
+# ONLY THE BOX WORKTOOL MANAGES: the line applies to box $1 - the box
+# `just box setup` is configured for (`box`, default dev) - and to no other
+# box, which keeps the upstream behaviour. Sourced, the file sees
+# distrobox-enter's own arguments as "$@", and it decides the target the
+# way distrobox-enter's own option loop does (pinned 1.8.2.5), never by
+# "some token equals the box name" (codex round 4 on PR #232: an option
+# VALUE equal to the name must not count):
+#   - -n / --name and -a / --additional-flags take a value; only the
+#     -n / --name value is a box name;
+#   - every other option is a flag; every positional argument sets the
+#     name, so the LAST one wins;
+#   - `--`, `-e`, `--exec` end the options (what follows is the command);
+#   - no name on the command line: DBX_CONTAINER_NAME.
+# It never shifts or sets distrobox-enter's "$@" and unsets its own
+# variables.
+#
+# $1 is a validated box name (enter_value_ok), written single-quoted.
+enter_distrobox_conf_body() {
+    local _box _line
+    _box="$(enter_sh_squote "$1")"
+    _line="$(cat <<'EOF'
+_worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != @BOX@ ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v
+EOF
+)"
+    printf '%s\n' "${_line//@BOX@/${_box}}"
 }
 
 # --- Defaults and choices ----------------------------------------------------
@@ -275,7 +362,6 @@ enter_default() {
     case "$1" in
         auto-enter) printf 'yes\n' ;;
         terminal)   _enter_default_terminal ;;
-        tmux)       printf 'inside\n' ;;
         box)        printf 'dev\n' ;;
         *)          return 1 ;;
     esac
@@ -286,7 +372,6 @@ enter_choices() {
     case "$1" in
         auto-enter) printf 'yes|no\n' ;;
         terminal)   printf 'ghostty|none\n' ;;
-        tmux)       printf 'inside|host\n' ;;
         box)        printf '\n' ;;
         *)          return 1 ;;
     esac
@@ -320,14 +405,6 @@ enter_value_ok() {
 
 # --- State file --------------------------------------------------------------
 
-# Print the value of key $2 in state file $1 (first match; nothing when the
-# file or the key is absent). Exact key match on the text before the first
-# `=`, so `box` never matches `box.source`.
-enter_config_get() {
-    [[ -f "$1" ]] || return 0
-    awk -F= -v k="$2" '$1 == k { print substr($0, length(k) + 2); exit }' "$1"
-}
-
 # 0 when $1 is a key the state file may hold: a decision key or its
 # `<key>.source` companion.
 enter_key_known() {
@@ -343,23 +420,59 @@ enter_key_known() {
 # first occurrence; the check must not). On the first bad line, in file
 # order, prints `invalid value '<v>' for <key> (expected <...>)` on stdout
 # and returns 1, so the caller can prefix the path and refuse the run
-# before writing.
+# before writing. The file is read through lib/config.sh (config_each).
 enter_config_check() {
-    local _file="$1" _line _key _value
-    [[ -f "${_file}" ]] || return 0
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        [[ "${_line}" == *=* ]] || continue
-        _key="${_line%%=*}"
-        enter_key_known "${_key}" || continue
-        _value="${_line#*=}"
-        enter_value_ok "${_key}" "${_value}" && continue
-        printf "invalid value '%s' for %s (expected %s)\n" \
-            "${_value}" "${_key}" "$(enter_expected "${_key}")"
-        return 1
-    done <"${_file}"
+    config_each _enter_check_entry
+}
+
+# One entry of the state file (config_each: <lineno> <key> <has_value>
+# <value>): every line of a known key is judged; a bare `<key>` line is that
+# key with an empty value (lib/config.sh's format) and is judged as such.
+_enter_check_entry() {
+    local _key="$2" _value="$4"
+    enter_key_known "${_key}" || return 0
+    enter_value_ok "${_key}" "${_value}" && return 0
+    printf "invalid value '%s' for %s (expected %s)\n" \
+        "${_value}" "${_key}" "$(enter_expected "${_key}")"
+    return 1
 }
 
 # --- Managed block -----------------------------------------------------------
+
+# Validate the marker structure of file $1 (issue #179, codex round 4 on PR
+# #232): 0 when the file is absent, holds no marker, or holds exactly one
+# well-formed block; otherwise prints the problems, with their line
+# numbers, as ONE `; `-joined line and returns 1. Every writer checks this
+# FIRST: the helpers below trust the markers, and an orphan BEGIN used to
+# make compose / strip drop every line after it. Malformed is:
+#   an unpaired BEGIN or END, END before BEGIN, a BEGIN inside a block,
+#   more than one block, and a marker line with any extra text (leading
+#   blanks, trailing text or blanks).
+enter_block_check() {
+    [[ -f "$1" ]] || return 0
+    awk -v b="${ENTER_BLOCK_BEGIN}" -v e="${ENTER_BLOCK_END}" '
+        function p(s) { msg = msg (msg == "" ? "" : "; ") s }
+        BEGIN { pb = "# BEGIN worktool managed block"; pe = "# END worktool managed block" }
+        { l = $0; sub(/^[ \t]+/, "", l) }
+        $0 == b {
+            if (open) p("nested BEGIN at line " NR " (BEGIN at line " ob " has no END yet)")
+            else { open = 1; ob = NR }
+            nb++; bl = bl (bl == "" ? "" : ", ") NR
+            next
+        }
+        $0 == e {
+            if (!open) p("END at line " NR " has no BEGIN")
+            else open = 0
+            next
+        }
+        index(l, pb) == 1 || index(l, pe) == 1 { p("line " NR " is a marker with extra text") }
+        END {
+            if (open) p("BEGIN at line " ob " has no END")
+            if (nb > 1) p(nb " blocks (BEGIN at lines " bl "), at most one is allowed")
+            if (msg != "") { print msg; exit 1 }
+        }
+    ' "$1"
+}
 
 enter_block_present() {
     [[ -f "$1" ]] && grep -qxF "${ENTER_BLOCK_BEGIN}" "$1"

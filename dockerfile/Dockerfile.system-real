@@ -126,9 +126,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 # e2fsprogs xz-utils pigz - what the dind image carried for the engine
 # ncurses-bin   - `tput`-style terminal queries stay sane under a non-tty
 #                 harness
+# parallel      - bats --jobs uses GNU parallel to schedule spec files
 # ghostty       - issue #172 layer 2: the real terminal under test
 # xvfb xauth    - the headless X server `xvfb-run` starts for it
 # dbus-x11      - `dbus-run-session`, for the single-instance fixture
+# tmux          - issue #179: a HOST-side tmux server. distrobox shares
+#                 /tmp with the box, so the chain cases start a tmux server
+#                 on the runner first and prove neither the terminal nor a
+#                 `tmux` typed in the box ends up on it
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -142,8 +147,10 @@ RUN apt-get update && \
         git \
         iproute2 iptables kmod \
         ncurses-bin \
+        parallel \
         pigz \
         procps \
+        tmux \
         util-linux \
         xauth xvfb \
         xz-utils \
@@ -199,6 +206,7 @@ RUN bash --version >/dev/null && \
     command -v rev >/dev/null && \
     command -v xvfb-run >/dev/null && \
     command -v dbus-run-session >/dev/null && \
+    tmux -V >/dev/null && \
     docker buildx version >/dev/null && \
     docker compose version >/dev/null && \
     [ -x /usr/local/bin/dockerd-entrypoint.sh ] && \

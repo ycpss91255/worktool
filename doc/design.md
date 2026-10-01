@@ -7,7 +7,7 @@
 以 distrobox 為基礎的模型,取代 init_ubuntu「apt 直接裝到 host」的 module
 系統。開發用 CLI/TUI 工具全部住在一個共用的 distrobox「dev 盒」,使用者直接
 活在盒內(終端自動進盒);host 只保留驅動、docker、snapd、桌面 GUI app(以
-install script 形式)與容器框架。設定檔留在共用 HOME。
+install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/0002-box-owns-its-home.md`)。
 
 ## 治理規則
 
@@ -52,8 +52,8 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
 2. 一個共用「dev」盒裝所有容器化 CLI/TUI 工具。
 3. 活在盒裡:終端自動進盒;fish/tmux/zoxide/fzf/thefuck + 所有編輯器/CLI/TUI/
    監控/AI 工具都在盒內。
-4. 設定留共用 HOME(distrobox 共用 HOME):`~/.config/*`、`~/.gitconfig`、
-   `~/.ssh`;工具在盒、設定共用,不需同步。
+4. ~~設定留共用 HOME~~ 已被取代:盒子使用獨立 HOME,見
+   `doc/adr/0002-box-owns-its-home.md`(#197)。
 5. host 保留:驅動(nvidia/kvm)、docker、snapd、桌面 GUI app、容器框架、終端
    自動進盒設定。
 6. 桌面 GUI app 改做 host install script(放 `tool/`),不進 module 系統。
@@ -74,7 +74,10 @@ install script 形式)與容器框架。設定檔留在共用 HOME。
    `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
    --warmup 2 --max-ms 300`),shell 中位數(enter + shell 啟動,即使用者拿到提示
    字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
-   一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。CI 實測(docker 29.8.0 +
+   一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
+   pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
+   (未判定,不給通過也不給退化;CI 上一樣是紅),見
+   `doc/adr/0003-latency-gate-inconclusive.md`(issue #181)。CI 實測(docker 29.8.0 +
    預設 runc、warm 容器):amd64 enter 中位數約 88 ms、arm64 約 87 ms,離目標
    有 3 倍餘裕,故維持 docker + runc、不換 runtime;實機數字由人類清單收集
    (issue #22)。
@@ -147,7 +150,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
    同儕,而是 `just test lint`。
 3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
-   **全部**(lint、unit、integration、system、acceptance、system-real,依序,遇到第一個
+   **全部**(lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個
    失敗即停);`just test unit` 只跑單元層;`just box assemble --dry-run` 只印指令、
    不執行(base ADR-00000011 §3)。
 4. **justfile 是薄轉發器**:每個 recipe 就是把 `*args` **原樣**傳給對應腳本的一行
@@ -168,7 +171,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 **root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
 
 ```just
-mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
 mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
 
 # Default: list the namespaces.
@@ -183,10 +186,11 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 
 | 指令 | 轉發到 |
 |------|--------|
-| `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
+| `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
 | `just test build [args]` | `./script/test/test.sh --build "$@"` |
 | `just test lint [args]` | `./script/test/test.sh --lint "$@"` |
 | `just test unit [args]` | `./script/test/test.sh --unit "$@"` |
+| `just test matrix [args]` | `./script/test/test.sh --matrix "$@"` |
 | `just test integration [args]` | `./script/test/test.sh --integration "$@"` |
 | `just test system [args]` | `./script/test/test.sh --system "$@"` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
@@ -247,9 +251,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    recipe 加各自的腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
-   (lint、test-unit、test-integration、test-system、test-acceptance、
+   (lint、test-unit、test-matrix、test-integration、test-system、test-acceptance、
    test-system-real、ci-passed),matrix 以 `just test <tier>` 執行(tier 為 lint /
-   unit / integration / system / acceptance),real job 以 `just test system-real`
+   unit / matrix / integration / system / acceptance),real job 以 `just test system-real`
    執行。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
@@ -269,9 +273,11 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
 - M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。盒內先裝 tmux、fish
   (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 跑的是
-  `<distrobox 絕對路徑> enter dev -- tmux new -A -s main`(issue #175:桌面啟動
-  的終端繼承 systemd user manager 的 PATH,裸名字找不到)、後面接盒內 fish,
-  兩者不裝自動進盒跑不起來;只裝套件,設定留 M5。
+  `<distrobox 絕對路徑> enter dev`(issue #175:桌面啟動的終端繼承 systemd user
+  manager 的 PATH,裸名字找不到),直接得到盒內 fish;不自動開 tmux(issue #179:
+  distrobox 與 host 共用 /tmp,舊的 `-- tmux new -A -s main` 會附著到 host 的 tmux
+  server)。盒內自己開的 tmux 由 `box/dev.ini` 設的 `TMUX_TMPDIR` 得到盒子自己的
+  server;只裝套件,設定留 M5。
   Checkpoint:開終端即在盒內、達效能目標。Exit:人類審核。
 - M4 host bootstrap:install.sh 在 host 裝 docker+distrobox+`just`(冪等、
   可重跑;`just` 在此之前為前置需求,見「決策」)。
@@ -281,8 +287,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 
 盒子工具(由最日常關鍵往下):
 
-- M5 shell 核心:fish + tmux(+ 共用 HOME 設定)。最重要,日常骨幹。套件本身已在
-  M3 裝進盒(#160);M5 做的是 dotfiles、主題、plugin 與共用 HOME 的設定。
+- M5 shell 核心:fish + tmux(+ 盒子 HOME 裡的 tool config)。最重要,日常骨幹。
+  套件本身已在 M3 裝進盒(#160);M5 做的是 tool config、主題、plugin(放在盒子
+  HOME,見 `doc/adr/0002-box-owns-its-home.md`)。
 - M6 導覽/檔案:ripgrep、fd、eza、bat、yazi、zoxide、fzf、tree、ncdu、lnav。
 - M7 編輯器 + git:neovim、lazygit、tig、git、git-lfs。
 - M8 runtime/pkg + AI CLI:python3、pipx、fnm、jq、curl、wget、gum、glow、

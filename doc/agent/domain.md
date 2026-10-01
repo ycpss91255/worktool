@@ -4,12 +4,13 @@
 
 ## 動手之前先讀這些
 
+- **[doc/contract.md](../contract.md)**：對外契約；這是文件結構偏離 skill 慣例的唯一例外：契約要與程式在同一個 PR 審查，避免悄悄脫鉤。
 - **`doc/design.md`**：願景、治理規則、已定共識、milestone 計畫。
 - **`doc/structure.md`**：目錄結構與對外介面（`just` 指令表、錯誤來源與結束碼）。
 - **`doc/enter.md`**、**`doc/manifest.md`**：終端自動進盒與盒子清單兩塊的行為與格式。
 - **`doc/acceptance.md`**：各 milestone 的驗收項目。
-- **`CONTEXT.md`**（repo 根目錄）：名詞與縮寫，本 repo 的專有名詞表。
-- **`doc/adr/`**：讀跟你要動的範圍有關的 ADR。
+- **[CONTEXT.md](../../CONTEXT.md)**（repo 根目錄）：名詞與縮寫，本 repo 的專有名詞表。
+- **[doc/adr/](../adr/)**：不變量各一份 ADR，從 [契約的不變量索引](../contract.md#6-不變量索引) 找到；動手前讀相關的不變量與機制型 ADR。機制型 ADR 以「依據 ADR-NNNN」連回它服務的不變量 ADR。
 
 上面任一檔不存在時，**安靜略過**：不要指出它缺席，也不要建議先建它。`/domain-modeling` skill（經 `/grill-with-docs` 與 `/improve-codebase-architecture` 觸發）會在名詞或決議真的定下來時才建立。
 
@@ -26,6 +27,7 @@
     ├── agent/
     ├── diagram/
     ├── design.md
+    ├── contract.md
     ├── structure.md
     ├── enter.md
     ├── manifest.md

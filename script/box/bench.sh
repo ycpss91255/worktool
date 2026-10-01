@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# bench.sh - measure the enter latency of a worktool box (M3, issues #150
-# and #162).
+# bench.sh - measure the enter latency of a worktool box (M3, issues #150,
+# #162 and #181).
 #
 # Times `distrobox enter <box> -- ...` with bash's EPOCHREALTIME (microsecond
 # wall clock; no hyperfine, nothing to install) and reports min / median /
-# max in milliseconds for three metrics:
+# max in milliseconds for three metrics (the unit tests swap the clock for
+# an injected one through the test-only BENCH_CLOCK, issue #249; see
+# _now_us):
 #
 #   enter   distrobox enter <box> -- true          (wrapper + engine round trip)
 #   shell   distrobox enter <box> -- <shell>       (the same, plus a shell
@@ -27,12 +29,30 @@
 # other two metrics are reported, not judged. The < 300 ms target itself and
 # the runtime decision (runc / crun) live in issue #22, not here.
 #
+# Quiet-host precondition (issue #181, doc/adr/0003-latency-gate-inconclusive.md):
+# a wall-clock number taken on a busy host is not evidence either way, so
+# before the first run the script waits until CPU pressure (PSI) `some
+# avg10 <= 2.00` has held for 5 consecutive seconds (one poll a second),
+# read from this process's own cgroup v2 cpu.pressure, else from
+# /proc/pressure/cpu. It waits at most --max-wait seconds (60, or 120 when
+# CI is set); a host that does not get quiet in time is exit 3
+# (inconclusive: no verdict, nothing on stdout, distrobox never called).
+# PSI is read again and recorded (one stderr line: `psi before|after
+# <metric> run <k>: <path> some avg10=<value>`) before and after every
+# run, a failed run included; one reading above the limit voids the whole
+# batch (exit 3, even when that run also failed; slow samples are never
+# dropped). The limit is exact at any number of decimals: 2.001 is busy.
+# loadavg is printed next to every PSI verdict as evidence and never
+# decides. When no PSI file is readable (a kernel without PSI), a warning
+# says so and the measurement runs unguarded rather than never at all.
+#
 # The backing script of `just box bench` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
 #
 #   ./script/box/bench.sh                          # dev box, 2 warmup + 10 runs
 #   ./script/box/bench.sh --runs 3 --warmup 1      # quicker
 #   ./script/box/bench.sh --max-ms 300             # gate: exit 1 above 300 ms
+#   ./script/box/bench.sh --max-wait 30            # give up (exit 3) sooner
 #   ./script/box/bench.sh --json                   # one JSON object instead
 #   ./script/box/bench.sh --shell 'fish -c exit'   # time another shell
 #   ./script/box/bench.sh --help                   # usage
@@ -63,7 +83,9 @@
 # reporting.
 #
 # Exit codes: 0 ok (and within --max-ms), 1 measurement failed or the shell
-# median exceeds --max-ms, 2 usage error, 127 distrobox not on PATH.
+# median exceeds --max-ms, 2 usage error, 3 inconclusive (the host was not
+# quiet within --max-wait, or turned busy mid-run), 127 distrobox not on
+# PATH.
 #
 # Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
 # unhandled failure stops the script at once. A non-zero status the script
@@ -92,7 +114,22 @@ OPT_WARMUP=2
 OPT_MAX_MS=""          # empty = no gate
 OPT_JSON=0
 OPT_SHELL="sh -c :"
+OPT_MAX_WAIT=""        # empty = 60, or 120 when CI is set (_default_max_wait)
 OPT_HELP=0
+
+# --- Quiet-host precondition (issue #181) ------------------------------------
+PSI_LIMIT="2.00"       # `some avg10` limit, compared exactly (_dec_le)
+PSI_QUIET_S=5          # consecutive quiet seconds before the first run
+# Where the PSI comes from. BENCH_PSI_FILE (environment, tests only)
+# replaces the whole lookup below.
+CGROUP_FS="/sys/fs/cgroup"
+PROC_SELF_CGROUP="/proc/self/cgroup"
+PROC_PSI="/proc/pressure/cpu"
+LOADAVG_FILE="/proc/loadavg"
+PSI_PATH=""            # the PSI file in use; empty = none readable
+PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
+PSI_PEAK=""            # highest reading of the batch, as printed
+LOADAVG="n/a"
 
 # --- Input validation rules (what keeps --json valid JSON) -------------------
 BOX_NAME_RE='^[A-Za-z0-9._-]+$'
@@ -117,7 +154,7 @@ EOF
 _usage() {
     cat >&2 <<'EOF'
 Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
-                [--shell CMD] [-h|--help]
+                [--shell CMD] [--max-wait N] [-h|--help]
 
 Measure the enter latency of a worktool box with bash EPOCHREALTIME:
 
@@ -139,7 +176,33 @@ prints `<metric>: min=<ms> median=<ms> max=<ms> ms` (one line each).
   --json         Print one JSON object instead of the three text lines.
   --shell CMD    Command for the shell and inbox metrics, word-split
                  (default: sh -c :). No control characters (newline, tab).
+  --max-wait N   Wait at most N seconds, N >= 1, for a quiet host before
+                 measuring (default: 60; 120 when CI is set).
   -h, --help     Show this help and exit.
+
+Quiet host: measuring starts once CPU pressure (PSI) some avg10 <= 2.00
+has held for 5 consecutive seconds, read from this process's cgroup v2
+cpu.pressure, else /proc/pressure/cpu (the path read is printed; loadavg
+is printed too, it never decides). PSI is read again and recorded on
+stderr before and after every run, a failed one included: one reading
+above the limit voids the whole batch (exit 3, even over a failed run).
+The limit is exact (2.001 is above it). No readable PSI: a warning, and
+the measurement runs unguarded.
+
+Exit codes:
+  0    measured, and the shell median is within --max-ms (if given)
+  1    a run failed, or the shell median exceeds --max-ms
+  2    usage error
+  3    inconclusive: the host was not quiet within --max-wait, or turned
+       busy mid-run (no verdict, no metric line)
+  127  distrobox not on PATH
+
+Environment (tests only):
+  BENCH_PSI_FILE  read the PSI from this file instead of the cgroup /
+                  /proc/pressure/cpu lookup.
+  BENCH_CLOCK     run this program for the host clock (it prints the time
+                  in microseconds) instead of reading EPOCHREALTIME; a
+                  failing clock or a non-integer aborts the run (exit 1).
 EOF
 }
 
@@ -194,6 +257,7 @@ _set_opt() {
         --runs)   _check_int_min "$1" "$2" 1 || return 2; OPT_RUNS=$(( 10#$2 )) ;;
         --warmup) _check_int_min "$1" "$2" 0 || return 2; OPT_WARMUP=$(( 10#$2 )) ;;
         --max-ms) _check_int_min "$1" "$2" 1 || return 2; OPT_MAX_MS=$(( 10#$2 )) ;;
+        --max-wait) _check_int_min "$1" "$2" 1 || return 2; OPT_MAX_WAIT=$(( 10#$2 )) ;;
     esac
 }
 
@@ -203,7 +267,7 @@ _set_opt() {
 _parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --box|--runs|--warmup|--max-ms|--shell)
+            --box|--runs|--warmup|--max-ms|--shell|--max-wait)
                 if [[ $# -lt 2 ]]; then
                     _usage_error "$1 requires an argument"
                     return 2
@@ -211,7 +275,7 @@ _parse_args() {
                 _set_opt "$1" "$2" || return 2
                 shift
                 ;;
-            --box=*|--runs=*|--warmup=*|--max-ms=*|--shell=*)
+            --box=*|--runs=*|--warmup=*|--max-ms=*|--shell=*|--max-wait=*)
                 _set_opt "${1%%=*}" "${1#*=}" || return 2
                 ;;
             --json) OPT_JSON=1 ;;
@@ -228,13 +292,39 @@ _parse_args() {
 
 # --- Timing ------------------------------------------------------------------
 
-# Store the wall clock in microseconds in the variable named $1. No
-# subshell: a $(...) fork would add its own latency to every sample.
-# EPOCHREALTIME is "<seconds>.<6 digits>" (the radix follows the locale).
+# Store the host clock in microseconds in the variable named $1. The real
+# clock is EPOCHREALTIME ("<seconds>.<6 digits>", the radix follows the
+# locale), read with no subshell: a $(...) fork would add its own latency
+# to every sample. BENCH_CLOCK (environment, tests only, issue #249)
+# replaces it with a program that prints the time in microseconds, so the
+# unit tests decide on injected times instead of the host's load.
 _now_us() {
     local -n _ref_now="$1"
+    if [[ -n "${BENCH_CLOCK:-}" ]]; then
+        _bench_clock_us _ref_now
+        return
+    fi
     local _t="${EPOCHREALTIME/,/.}"
     _ref_now=$(( 10#${_t%.*} * 1000000 + 10#${_t#*.} ))
+}
+
+# Store what the test-only BENCH_CLOCK program prints (microseconds) in the
+# variable named $1. A clock that fails or prints anything but an integer
+# is refused (return 1, RUN_ERR set): a bogus time must never become a
+# sample.
+_bench_clock_us() {
+    local -n _ref_clk="$1"
+    local _out _rc=0
+    _out="$("${BENCH_CLOCK}" </dev/null)" || _rc=$?
+    if (( _rc != 0 )); then
+        RUN_ERR="BENCH_CLOCK '${BENCH_CLOCK}' exited ${_rc}"
+        return 1
+    fi
+    if [[ ! "${_out}" =~ ^[0-9]+$ ]]; then
+        RUN_ERR="BENCH_CLOCK '${BENCH_CLOCK}' printed '${_out}' instead of an integer"
+        return 1
+    fi
+    _ref_clk=$(( 10#${_out} ))
 }
 
 # Run the command $2.. once with stdin/stdout closed off (stderr passes
@@ -244,10 +334,10 @@ _time_cmd() {
     local -n _ref_us="$1"
     shift
     local _t0 _t1 _rc
-    _now_us _t0
+    _now_us _t0 || return 1
     _rc=0
     "$@" </dev/null >/dev/null || _rc=$?
-    _now_us _t1
+    _now_us _t1 || return 1
     _ref_us=$(( _t1 - _t0 ))
     return "${_rc}"
 }
@@ -278,7 +368,9 @@ _inbox_cmd() {
 # Time metric $1: OPT_WARMUP unrecorded runs, then OPT_RUNS recorded ones
 # appended (microseconds) to the array named $2, each run made by the
 # runner $3 (_time_cmd or _inbox_cmd) on the command $4... The first run
-# that fails aborts the metric (return 1). Diagnostics show the in-box
+# that fails aborts the metric (return 1) unless the PSI reading after it
+# is above the limit: a reading above the limit before or after any run
+# (failed or not) voids the batch (return 3), and wins over the failure. Diagnostics show the in-box
 # timer as `<timer>` (as --help does), not its one-line source.
 _run_metric() {
     local _name="$1" _runner="$3"
@@ -286,9 +378,14 @@ _run_metric() {
     shift 3
     local _i _us _rc _shown="${*//"${INBOX_TIMER}"/<timer>}"
     for (( _i = 0; _i < OPT_WARMUP + OPT_RUNS; _i++ )); do
+        _psi_guard "before ${_name} run $(( _i + 1 ))" || return 3
         RUN_ERR=""
         _rc=0
         "${_runner}" _us "$@" || _rc=$?
+        # The after-run check comes FIRST, whatever the run returned: a
+        # run that failed on a host that turned busy during it is no
+        # evidence of a broken box - the batch is void (3), not failed (1).
+        _psi_guard "after ${_name} run $(( _i + 1 ))" || return 3
         if (( _rc != 0 )); then
             log_error "${_name}: ${RUN_ERR:-"'${_shown}' exited ${_rc}"} on run $(( _i + 1 )) - measurement aborted"
             return 1
@@ -297,6 +394,145 @@ _run_metric() {
     done
     log_info "${_name}: ${OPT_WARMUP} warmup + ${OPT_RUNS} run(s) of '${_shown}' done"
     return 0
+}
+
+# --- Quiet host: PSI and loadavg (issue #181) --------------------------------
+
+# Return 0 when the decimal number $1 <= the decimal number $2, compared
+# EXACTLY at any number of decimals (2.001 > 2.00; nothing is truncated).
+# Both must match ^[0-9]+(\.[0-9]+)?$ (_psi_read validated them): the
+# integer parts are compared as digit strings without leading zeros (by
+# length, then lexically), the fractions padded with zeros to one length
+# and compared lexically - equal-length digit strings order like numbers.
+_dec_le() {
+    local _ai="${1%%.*}" _bi="${2%%.*}" _af="" _bf=""
+    [[ "$1" == *.* ]] && _af="${1#*.}"
+    [[ "$2" == *.* ]] && _bf="${2#*.}"
+    _ai="${_ai#"${_ai%%[!0]*}"}"
+    _bi="${_bi#"${_bi%%[!0]*}"}"
+    if (( ${#_ai} != ${#_bi} )); then
+        (( ${#_ai} < ${#_bi} ))
+        return
+    fi
+    if [[ "${_ai}" != "${_bi}" ]]; then
+        [[ "${_ai}" < "${_bi}" ]]
+        return
+    fi
+    while (( ${#_af} < ${#_bf} )); do _af+="0"; done
+    while (( ${#_bf} < ${#_af} )); do _bf+="0"; done
+    [[ ! "${_af}" > "${_bf}" ]]
+}
+
+# Read `some avg10` from the PSI file $1 into PSI_VAL (as printed, after
+# checking it is a plain decimal number). PSI_VAL is cleared first, so a
+# failed read never leaves the previous reading behind. Returns 1 when the
+# file is unreadable or has no such line.
+_psi_read() {
+    local _line _re='^some avg10=([0-9]+(\.[0-9]+)?)( |$)'
+    PSI_VAL=""
+    [[ -r "$1" ]] || return 1
+    while IFS= read -r _line; do
+        if [[ "${_line}" =~ ${_re} ]]; then
+            PSI_VAL="${BASH_REMATCH[1]}"
+            return 0
+        fi
+    done 2>/dev/null <"$1"
+    return 1
+}
+
+# Return 0 when the last reading (PSI_VAL) is within the limit.
+_psi_quiet() {
+    [[ -n "${PSI_VAL}" ]] && _dec_le "${PSI_VAL}" "${PSI_LIMIT}"
+}
+
+# Set PSI_PATH to the first PSI file that yields a reading: BENCH_PSI_FILE
+# when set (tests only), else this process's own cgroup v2 cpu.pressure,
+# else PROC_PSI. PSI_PATH stays empty when none does.
+_psi_resolve() {
+    PSI_PATH=""
+    if [[ -n "${BENCH_PSI_FILE+set}" ]]; then
+        if _psi_read "${BENCH_PSI_FILE}"; then PSI_PATH="${BENCH_PSI_FILE}"; fi
+        return 0
+    fi
+    local _line _rel=""
+    if [[ -r "${PROC_SELF_CGROUP}" ]]; then
+        while IFS= read -r _line; do
+            if [[ "${_line}" == 0::* ]]; then _rel="${_line#0::}"; fi
+        done <"${PROC_SELF_CGROUP}"
+    fi
+    local _cg="${CGROUP_FS}${_rel%/}/cpu.pressure"
+    if [[ -n "${_rel}" ]] && _psi_read "${_cg}"; then
+        PSI_PATH="${_cg}"
+    elif _psi_read "${PROC_PSI}"; then
+        PSI_PATH="${PROC_PSI}"
+    fi
+}
+
+# Set LOADAVG to the 1 / 5 / 15 minute load averages ("n/a" when
+# unreadable). Recorded as evidence next to every PSI verdict, never judged.
+_loadavg() {
+    local _a _b _c _rest
+    LOADAVG="n/a"
+    if [[ -r "${LOADAVG_FILE}" ]] && read -r _a _b _c _rest <"${LOADAVG_FILE}"; then
+        LOADAVG="${_a} ${_b} ${_c}"
+    fi
+}
+
+# Wait, polling PSI once a second, until `some avg10 <= 2.00` has held for
+# PSI_QUIET_S consecutive seconds (readings at t .. t + PSI_QUIET_S).
+# Return 3 (inconclusive) once OPT_MAX_WAIT seconds have passed without it.
+_wait_quiet() {
+    local _streak=-1 _waited=0
+    while :; do
+        if _psi_read "${PSI_PATH}" && _psi_quiet; then
+            _streak=$(( _streak + 1 ))
+        else
+            _streak=-1
+        fi
+        if (( _streak >= PSI_QUIET_S )); then
+            _loadavg
+            log_info "host quiet: ${PSI_PATH} some avg10=${PSI_VAL} <= 2.00 for ${PSI_QUIET_S}s; loadavg=${LOADAVG}"
+            return 0
+        fi
+        if (( _waited >= OPT_MAX_WAIT )); then
+            _loadavg
+            log_error "host too busy to measure (inconclusive): ${PSI_PATH} some avg10=${PSI_VAL:-?} for ${_waited}s; loadavg=${LOADAVG}; re-run when idle"
+            return 3
+        fi
+        sleep 1
+        _waited=$(( _waited + 1 ))
+    done
+}
+
+# The precondition before the first run: find the PSI, then wait for a
+# quiet host (return 3 when it does not come). No readable PSI is said
+# out loud and measured unguarded - never a silent pass, never a hang.
+_host_precondition() {
+    _psi_resolve
+    if [[ -z "${PSI_PATH}" ]]; then
+        _loadavg
+        log_warn "no CPU pressure (PSI) readable (cgroup v2 cpu.pressure, ${PROC_PSI}) - quiet-host check skipped, measuring anyway; loadavg=${LOADAVG}"
+        return 0
+    fi
+    _wait_quiet
+}
+
+# Read PSI at the sample boundary $1 names ("before enter run 3"), record
+# it (one stderr line: the boundary, the path and the value) and return 3 -
+# the whole batch is void - when it is above the limit or unreadable.
+# Tracks the batch's peak reading. A no-op when no PSI is in use.
+_psi_guard() {
+    [[ -n "${PSI_PATH}" ]] || return 0
+    if _psi_read "${PSI_PATH}" && _psi_quiet; then
+        log_info "psi $1: ${PSI_PATH} some avg10=${PSI_VAL}"
+        if [[ -z "${PSI_PEAK}" ]] || ! _dec_le "${PSI_VAL}" "${PSI_PEAK}"; then
+            PSI_PEAK="${PSI_VAL}"
+        fi
+        return 0
+    fi
+    _loadavg
+    log_error "host too busy mid-run (inconclusive): ${PSI_PATH} some avg10=${PSI_VAL:-?} $1; loadavg=${LOADAVG}; batch void, re-run when idle"
+    return 3
 }
 
 # --- Statistics and output ---------------------------------------------------
@@ -370,8 +606,8 @@ _check_threshold() {
 
 # --- Main --------------------------------------------------------------------
 
-# Measure the three metrics (enter, shell, inbox) and report. Runs only
-# after the command line was fully validated.
+# Wait for a quiet host, measure the three metrics (enter, shell, inbox)
+# and report. Runs only after the command line was fully validated.
 _bench_exec() {
     if ! command -v distrobox >/dev/null 2>&1; then
         log_error "distrobox not found on PATH - cannot bench"
@@ -380,13 +616,18 @@ _bench_exec() {
     local -a _shell_argv _enter_us=() _shell_us=() _inbox_us=()
     local -a _e_stats _s_stats _i_stats
     read -r -a _shell_argv <<<"${OPT_SHELL}"
+    _host_precondition || return $?
 
     _run_metric enter _enter_us _time_cmd \
-        distrobox enter "${OPT_BOX}" -- true || return 1
+        distrobox enter "${OPT_BOX}" -- true || return $?
     _run_metric shell _shell_us _time_cmd \
-        distrobox enter "${OPT_BOX}" -- "${_shell_argv[@]}" || return 1
+        distrobox enter "${OPT_BOX}" -- "${_shell_argv[@]}" || return $?
     _run_metric inbox _inbox_us _inbox_cmd \
-        distrobox enter "${OPT_BOX}" -- bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return 1
+        distrobox enter "${OPT_BOX}" -- bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return $?
+    if [[ -n "${PSI_PATH}" ]]; then
+        _loadavg
+        log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
+    fi
 
     _stats _enter_us _e_stats
     _stats _shell_us _s_stats
@@ -401,8 +642,20 @@ _bench_exec() {
     _check_threshold "${_s_stats[1]}"
 }
 
+# Default --max-wait: 60 s, or 120 s on CI (a shared runner may need
+# longer to settle; a busy one is still exit 3, never skipped).
+_default_max_wait() {
+    [[ -z "${OPT_MAX_WAIT}" ]] || return 0
+    if [[ -n "${CI:-}" ]]; then
+        OPT_MAX_WAIT=120
+    else
+        OPT_MAX_WAIT=60
+    fi
+}
+
 bench_run() {
     _parse_args "$@" || return 2
+    _default_max_wait
     if (( OPT_HELP )); then
         _usage
         return 0

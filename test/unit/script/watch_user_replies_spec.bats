@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test/unit/script/watch_user_replies_spec.bats - .agents/script/watch-user-replies.sh
+# test/unit/script/watch_user_replies_spec.bats - .agents/script/monitor/watch-user-replies.sh
 #
 # The user-REPLY watcher, a Monitor companion. worktool adaptation: the
 # default state file lives in the repo, under the gitignored .agents/state/
@@ -27,7 +27,7 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 bats_require_minimum_version 1.5.0
 
 setup() {
-    SCRIPT="${REPO_ROOT}/.agents/script/watch-user-replies.sh"
+    SCRIPT="${REPO_ROOT}/.agents/script/monitor/watch-user-replies.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${STUB_DIR}"
     cat > "${STUB_DIR}/gh" <<'EOF'
@@ -353,4 +353,64 @@ EOF
         --repo owner/repo --login maintainer --once
     assert_success
     assert_output ""
+}
+
+@test "reply watcher stops on unexpected failures inherited by sourced callers" {
+    run bash -c 'source "$1"; false; echo UNREACHABLE' _ "${SCRIPT}"
+    assert_failure 1
+    refute_output --partial "UNREACHABLE"
+}
+
+@test "reply watcher serves help after capturing its non-zero parse result" {
+    run "${SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage: watch-user-replies.sh"
+}
+
+@test "failed seed preserves exit one when temporary cleanup also fails" {
+    _fake_gh fail
+    cat > "${STUB_DIR}/rm" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${2:-}" == /tmp/tmp.* ]]; then exit 9; fi
+exec /bin/rm "$@"
+STUB
+    chmod +x "${STUB_DIR}/rm"
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    assert_output --partial "seed aborted"
+    assert_output --partial "cleanup failed"
+}
+
+@test "seed refuses malformed comment data instead of marking it seen" {
+    cat > "${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+    'issue list') echo 5 ;;
+    'pr list') exit 0 ;;
+    *) printf '5\t901\tmaintainer\t%%%s\n' '%' ;;
+esac
+STUB
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    [[ ! -s "${STATE}" ]]
+}
+
+@test "reply filtering propagates state write failures in conditional callers" {
+    _row 5 901 maintainer hello
+    mkdir "${BATS_TEST_TMPDIR}/directory"
+    run bash -c 'source "$1"; rc=0; watch_replies_filter maintainer "$2" "$3" || rc=$?; exit "$rc"' _ \
+        "${SCRIPT}" "${BATS_TEST_TMPDIR}/directory" "${TSV}"
+    assert_failure 1
+    refute_output --partial "USER REPLY"
+}
+
+@test "seed reports a failed state count instead of printing success" {
+    cat > "${STUB_DIR}/grep" <<'STUB'
+#!/usr/bin/env bash
+exit 2
+STUB
+    chmod +x "${STUB_DIR}/grep"
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    refute_output --partial "seeded:"
 }

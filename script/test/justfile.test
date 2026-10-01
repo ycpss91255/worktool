@@ -24,7 +24,7 @@ set working-directory := '../..'
 # not re-split by the shell.
 set positional-arguments
 
-# Everything CI runs: lint, unit, integration, system, acceptance, system-real, in order, stop at the first failure.
+# Everything CI runs: lint, unit, matrix, integration, system, acceptance, system-real, in order, stop at the first failure.
 default:
     ./script/test/test.sh
 
@@ -36,9 +36,17 @@ build *args:
 lint *args:
     ./script/test/test.sh --lint "$@"
 
+# Lint plus specs selected from changes since origin/main (override with --base <ref>); unknown impact fails open.
+changed *args:
+    ./script/test/test.sh --changed "$@"
+
 # Unit bats (test/unit/).
 unit *args:
     ./script/test/test.sh --unit "$@"
+
+# Full-product matrix bats (test/matrix/); slow and required by CI.
+matrix *args:
+    ./script/test/test.sh --matrix "$@"
 
 # Integration bats (test/integration/), both groups: the default one, then the ghostty one (real ghostty, Ubuntu 26.04 image, no display).
 integration *args:
@@ -65,3 +73,7 @@ alias h := help
 # Show the test runner help (test.sh --help): every flag, the default order, the environment knobs.
 help:
     ./script/test/test.sh --help
+
+# Check script directory layout and repository artifacts.
+script-layout *args:
+    @./script/test/check-script-layout.sh "$@"

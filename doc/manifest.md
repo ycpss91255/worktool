@@ -26,13 +26,42 @@ worktool 的盒子清單**就是一個原生的 distrobox-assemble 檔案**(INI 
 [dev]
 image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
+additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
+init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"
+init_hooks=echo <box/tmux-env.sh 的 base64> | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh
+init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | base64 -d >/etc/fish/conf.d/worktool-tmux.fish && chmod 0644 /etc/fish/conf.d/worktool-tmux.fish
 ```
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
-放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 **auto-enter 前提** ——
-`just box setup` 預設把終端指到 `distrobox enter dev -- tmux new -A -s main`,而
-#5 的驗收要求「開終端即盒內 fish」,所以兩者必須先裝進盒,自動進盒才跑得起來。
-M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、plugin)留在 M5。
+放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 —— `just box setup` 預設把
+終端指到 `'<distrobox>' enter dev`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
+使用者進盒後自己開的工具。M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、
+plugin)留在 M5。
+
+`additional_flags` 與 `init_hooks` 是 **M3(issue #179)** 加的**盒內 tmux 隔離**:
+distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid>/default`)
+因此盒內外共用,盒內打 `tmux` 會連到 host 的 server。`additional_flags` 以
+`--env` 設**容器環境變數** `TMUX_TMPDIR`(`${HOME}` 在建盒時展開,目錄在 #196 的
+盒子 HOME `~/dev-box` 底下),盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
+盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
+`--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
+—— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`;`mkdir -p -m 0700` 只管它**新建**的目錄,所以之後再明確 `chown` 成盒內使用者、`chmod 0700`,已存在但權限或擁有者不對的目錄在下次盒子啟動時會被改正(codex 第 1–4 輪的非阻擋項)。從 host 的 tmux pane
+進盒時,`distrobox enter` 會把呼叫端的 `TMUX`(指向 host server 的 socket)與
+`TMUX_PANE` 帶進盒內,而 tmux 先看 `TMUX`;這是**環境**的洩漏,包 tmux 執行檔擋不住
+(直接執行真執行檔就繞過,codex 第 1–4 輪,PR #232),所以盒內不包 tmux,改在環境
+建立處拿掉:第一道在 host 端,`just box setup` 在 distrobox 自己的
+`distrobox.conf` 維護受管區塊,`distrobox-enter` 組 `exec` 請求前 source 它,進
+該盒時 `unset TMUX TMUX_PANE`(見 [`enter.md`](enter.md));第二道是第二、三個
+`init_hooks`:把 [`box/tmux-env.sh`](../box/tmux-env.sh) 裝到
+`/etc/profile.d/worktool-tmux.sh`(sh / bash 登入 shell)、
+[`box/tmux-env.fish`](../box/tmux-env.fish) 裝到
+`/etc/fish/conf.d/worktool-tmux.fish`(fish),盒內登入 shell 一啟動就把不指向盒子
+`TMUX_TMPDIR` 的 `TMUX`(連同 `TMUX_PANE`)從整個環境拿掉。清單一行放不下腳本,
+所以這兩行放的是各檔的 base64;`test/unit/box_tmux_env_spec.bats` 斷言 blob 與檔案
+逐位元組相同,可讀的檔案是
+唯一來源。同一個鍵出現多次時 distrobox-assemble
+以 `&&` 串接,依序執行。每個鍵各佔一行:distrobox-assemble 一行讀一個鍵。
+見 [`enter.md`](enter.md)。
 
 ### worktool 要求的必要鍵
 
@@ -111,15 +140,103 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
      STDERR(沿用 `lib/log.sh`),讓 STDOUT 保持乾淨、機器可讀。輸出採**逐一參數的
      shell 跳脫**(`printf '%q'`),因此含有空白、`;` 或 `$()` 的路徑會被表示成
      單一安全參數,直接複製貼上即可忠實重跑,不會被再次拆分或解讀。
+5. **連結 user config 進盒子 HOME**(issue #199,[ADR 0002](adr/0002-box-owns-its-home.md)
+   決策 3):distrobox 建盒**成功之後**才做,試跑模式與建盒失敗時都不做。詳見下方
+   「user config 連結」。
 
-包裝器**絕不在 host 上安裝任何東西、也不需要 root**;唯一的副作用是呼叫
-distrobox,由 distrobox 自己管理容器。選項:`--dry-run`、`--file <manifest>`、
-`--help`(`-h`,印 usage 後 exit 0);未知選項以
+包裝器**絕不在 host 上安裝任何東西、也不需要 root**;副作用只有呼叫 distrobox
+(由 distrobox 自己管理容器),以及成功後把盒子 HOME 記進設定檔、在盒子 HOME 裡建
+user config 的 symlink(見下兩節)。選項:
+`--dry-run`、`--file <manifest>`、`--home <路徑>`、`--help`(`-h`,印 usage 後 exit 0);未知選項以
 `assemble.sh: unknown option '<x>' (see --help)` 拒絕、exit 2、什麼都不跑。
+
+### 盒子的 HOME(`--home`,issue #198)
+
+盒子有自己的 HOME(決定見 #196)。distrobox **只在建盒時**決定 HOME,之後要換只能
+刪盒重建,所以:
+
+- **解析順序**(與 `just box setup` 相同):`--home <路徑>`(`user`)> 設定檔裡
+  `home.source=user` 的紀錄(`user`)> 預設 `~/<盒名>-box`(`default`;盒名取自清單
+  的區段名,dev 盒 = `~/dev-box`)。解析結果印在 stderr:
+  `[INFO] box home: /home/me/dev-box (default)`。
+- **驗證**(腳本負責):`--home` 必須是絕對路徑、不可含換行、不可是 `/`;結尾的 `/`
+  會去掉(distrobox 也這麼做)。不合格是參數錯誤:
+  `assemble.sh: --home needs an absolute path, got 'dev-box' (see --help)`、exit 2。
+  設定檔裡的 `home` 套用同一組規則(絕對路徑、不可含 CR、不可是 `/`),`home.source`
+  必須是 `default|user`,且 `home` 與 `home.source` 必須成對出現;任一不符時 exit 1:
+  `[ERROR] <設定檔>: invalid value 'dev-box' for home (expected an absolute path)`、
+  `[ERROR] <設定檔>: home.source without home (the two are recorded together)`。
+- **交給 distrobox 的方式**:以環境變數 `DBX_CONTAINER_CUSTOM_HOME`(distrobox-create
+  文件列出的變數,效果等同 `--home`)傳入,所以 dry-run 印出的指令行維持
+  `distrobox assemble create --file <清單>` 不變;使用者環境裡原本的
+  `DBX_CONTAINER_CUSTOM_HOME` 一律被解析結果蓋掉。清單裡若自己寫了
+  distrobox-assemble 的 `home=` 鍵(它會蓋過環境變數)則拒絕、exit 1,盒子 HOME
+  只由 `--home` 決定。
+- **記錄**:distrobox 成功後,把 `home=<路徑>` 與 `home.source=default|user` 寫進
+  `~/.config/worktool/config`(與 `just box setup` 同一份檔、同一種
+  `key=value` + `key.source` 格式)。寫法經過 `lib/config.sh`:就地改這兩行(重複的
+  同名行一併收掉,沒有就附加),其他行逐字保留,`just box setup` 也只改它自己的 key;
+  `just box status` 最後一行顯示它。dry-run 不寫。
+- **已存在的盒子換 HOME 一律拒絕**:真正執行前向 container manager 查詢同名盒子
+  建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
+  與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox
+  設定檔(`distrobox.conf`、`~/.distroboxrc` 等,依 distrobox 的讀取順序,取最後一個
+  `container_manager=`;只讀不 source,接受引號與行尾 `# 註解`;讀不成 manager 名稱的
+  `container_manager=` 行(空值、命令替換等)一律拒絕、exit 1,不跳過),都沒有時照 distrobox 的順序 podman、
+  podman-launcher、docker、lilipod 自動偵測)。盒子是否存在看 `<manager> ps -a`
+  的容器名單。與解析結果不同時 exit 1、**什麼都不改**(不呼叫 distrobox、不寫
+  設定檔),印出刪盒重建的指令(有給 `--file` 時一併帶上清單的絕對路徑),
+  **絕不自動重建**:
+
+```text
+[ERROR] box 'dev' already exists with HOME /home/me/dev-box; distrobox sets a box's HOME only when the box is created, so it cannot become /data/dev-box. Nothing was changed.
+[ERROR] to use /data/dev-box, remove the box and recreate it (the files under /home/me/dev-box stay on disk):
+[ERROR]   distrobox rm dev
+[ERROR]   just box assemble --home /data/dev-box
+[ERROR] or keep the current HOME: just box assemble --home /home/me/dev-box
+```
+
+  沒給 `--home`、而既有的盒子是舊的共用 HOME 盒(HOME 就是 host 的 `~`)時同樣
+  被拒絕,重建指令是不帶 `--home` 的 `just box assemble`。HOME 相同時照常往下跑
+  (distrobox 自己回報 `dev already exists`,不重建)。manager 不在 PATH 上、或名單
+  查詢失敗時無法判斷盒子在不在,盒子存在但讀不到 HOME(inspect 失敗)時也無法比對,
+  兩者都 exit 1、什麼都不改(`[ERROR] cannot tell whether box 'dev' already exists:
+  ...`)。dry-run 不查 manager。
+
+### user config 連結(issue #199)
+
+盒子有自己的 HOME 之後,盒內的 git、gh、ssh 找不到 host 的 user config,所以
+`script/box/assemble.sh` 在建盒成功後,以 `lib/link.sh` 把 user config 用
+**symlink** 帶進盒子 HOME:
+
+- 每一項是 `<盒子 HOME>/<路徑> -> $HOME/<路徑>` 的**絕對路徑** symlink。distrobox
+  會把 host HOME 以原路徑掛進盒內,所以這條連結在盒內也解得開。**不複製、不修改**,
+  host 那份是唯一一份。
+- 預設清單:`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh`。
+  在 `~/.config/worktool/config`(`$XDG_CONFIG_HOME/worktool/config`)加
+  `link=<路徑>`(一行一項,可寫 `~/.aws` 或相對 HOME 的 `.aws`)可以擴充;HOME
+  以外的路徑、含 `..` 的路徑會 `[WARN]` 並略過。
+- 盒子 HOME 已有同名項目(檔案、目錄、別的 symlink,含失效的 symlink)→
+  **不覆蓋**,`[WARN]` 並略過。host 上沒有的來源 → 略過,不建失效連結。
+- **只寫在盒子 HOME 之內**:盒子 HOME 本身、或某一項的上層目錄在盒子 HOME 裡
+  是 symlink(例如 `.config -> /elsewhere`)或不是目錄 → 不跟隨,`[WARN]` 並略過
+  該項,不會經由它把連結建到盒子 HOME 外面。
+- 每一項都印 log(stderr):`[INFO] link: <盒子 HOME>/.ssh -> $HOME/.ssh`、
+  `(already linked)`、`not found on the host - skipped` 或上述 `[WARN]`。
+  有連結建不起來時 exit 1。
+- 盒子 HOME 就是上節 #198 解析、交給 distrobox、記進設定檔的**同一個路徑**
+  (`--home`、設定檔的 `home.source=user` 紀錄或預設 `~/<盒名>-box`),所以連結建在
+  盒內 `$HOME` 實際指向的目錄,盒內的 git、gh、ssh 在 `$HOME/.ssh`、
+  `$HOME/.gitconfig` 就找得到。連結在記錄盒子 HOME 之後才建。
+- 盒子 HOME 就是 host HOME(`--home ~`)時兩邊共用 HOME,user config 本來就在盒內的
+  `$HOME`,所以**不建任何連結**,只印一行
+  `[INFO] link: box dev shares the host HOME - user config already in place`。
+- 專案目錄不連結:盒內以絕對路徑就讀得到。
+- 每一項的狀態由 `just box status` 報告(見 [`enter.md`](enter.md))。
 
 ### 用法
 
-使用者介面是 `just box assemble [--dry-run] [--file <manifest>]`(`box` 是盒子
+使用者介面是 `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]`(`box` 是盒子
 生命週期的 namespace;`just` 是使用者的通用介面,命令模型比照 base
 ADR-00000005/10/11,見 [`design.md`](design.md)「決策」)。recipe 只是把參數**原樣**
 轉發給 `script/box/assemble.sh`;參數驗證與 `--help` 都在腳本。
@@ -136,6 +253,9 @@ just box assemble --dry-run --file box/other.ini
 just box assemble
 just box assemble --file box/other.ini
 
+# 指定盒子的 HOME(預設 ~/dev-box;建盒後不可改)
+just box assemble --home /data/dev-box
+
 # 說明(由腳本印出)
 just box assemble --help
 ```
@@ -147,6 +267,7 @@ just box assemble --help
 WORKTOOL_DRY_RUN=1 ./script/box/assemble.sh           # 以環境變數試跑,同上
 ./script/box/assemble.sh                              # = just box assemble
 ./script/box/assemble.sh --file box/other.ini         # = just box assemble --file box/other.ini
+./script/box/assemble.sh --home /data/dev-box         # = just box assemble --home /data/dev-box
 ```
 
 ## 進盒延遲量測(just box bench)
@@ -160,7 +281,7 @@ bash 內建的 `EPOCHREALTIME`(微秒精度的 wall clock)計時,**不依賴 hyp
 ### 用法
 
 ```text
-bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [-h|--help]
+bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [--max-wait N] [-h|--help]
 ```
 
 | 選項 | 說明 | 預設 |
@@ -171,12 +292,14 @@ bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD
 | `--max-ms N` | 門檻:**shell 指標的中位數**超過 N ms 即 exit 1(供 gate 使用) | 無門檻 |
 | `--json` | 改印**一個** JSON 物件,不印三行文字 | 關 |
 | `--shell CMD` | shell 與 inbox 指標要跑的指令(以空白拆成參數);不得含控制字元(見下方「輸入驗證」) | `sh -c :` |
+| `--max-wait N` | 量測前最多等幾秒讓主機安靜下來(N >= 1;見下方「安靜主機前置條件」);逾時 exit 3 | `60`;有設 `CI` 時 `120` |
 | `-h`, `--help` | 印 usage 後 exit 0 | |
 
 ```bash
 just box bench                          # dev 盒,每個指標 2 次暖身 + 10 次量測
 just box bench --runs 3 --warmup 1      # 快一點
 just box bench --max-ms 300             # 當 gate:shell 中位數 > 300 ms 即 exit 1
+just box bench --max-wait 30            # 最多等 30 秒安靜,等不到即 exit 3
 just box bench --json                   # 一個 JSON 物件
 just box bench --shell 'fish -c exit'   # 量另一個 shell 的啟動
 just box bench --help                   # 說明(由腳本印出)
@@ -209,6 +332,44 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 {"box":"dev","runs":10,"warmup":2,"shell_cmd":"sh -c :","unit":"ms","enter":{"min":..,"median":..,"max":..},"shell":{"min":..,"median":..,"max":..},"inbox":{"min":..,"median":..,"max":..}}
 ```
 
+### 安靜主機前置條件(issue #181)
+
+在忙碌主機上量到的 wall-clock 延遲不是證據:同一個 commit 在同一台機器上,曾因負載
+不同得到相反的判定(issue #181)。所以 bench.sh 在**第一次量測之前**先確認主機安靜,
+量測途中也持續確認;結果因此分成三種(通過、退化、未判定),決議與依據見
+`doc/adr/0003-latency-gate-inconclusive.md`。
+
+- **安靜判準**:CPU pressure(PSI)的 `some avg10 <= 2.00`(含 2.00),**連續 5 秒**
+  成立(每秒讀一次,t .. t+5 都成立)。PSI 優先讀 bench.sh **自己所在 cgroup v2** 的
+  `cpu.pressure`(`/proc/self/cgroup` 的 `0::<路徑>` 對到 `/sys/fs/cgroup<路徑>/cpu.pressure`),
+  讀不到才讀 `/proc/pressure/cpu`。loadavg(`/proc/loadavg`)**只記錄、不判定**。
+- **最多等待**:`--max-wait` 秒,預設 60;有設 `CI` 環境變數時預設 120
+  (`script/test/test.sh` 以 `-e CI` 把它傳進 system-real 的 DinD runner)。逾時 →
+  exit 3,STDERR 印
+  `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
+  STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
+- **量測途中**:每一次執行(暖身也算、失敗的那一次也算)的**前後**都讀取並**記錄** PSI
+  (每個邊界在 STDERR 印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
+  STDOUT 不變);任何一次超標(精確比較、不截斷小數:`2.001` 算超標),
+  **整批作廢** → exit 3,STDERR 印
+  `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
+  不印任何指標行、不判 `--max-ms`;同一次執行本身失敗時也是 exit 3、不是 1。讀不到
+  數值時 `<值>` 印 `?`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
+- **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
+  幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
+  擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、
+  整批作廢(見 ADR 0003「影響」的實跑數字)。
+- **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
+  量完印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+- **沒有 PSI**:兩個來源都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
+  印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
+  並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。
+- **測試專用**:環境變數 `BENCH_PSI_FILE` 取代上述查找,直接讀指定檔案(`--help` 標為
+  tests only);單元測試以假 PSI 檔與假 `sleep` 驅動等待。
+
+CI 與實機同一套規則、同一個入口:CI 上的 3 一樣讓 job 失敗,不因 runner 忙而跳過 gate;
+300 ms 門檻不變。
+
 ### 輸入驗證(`--json` 永遠是合法 JSON)
 
 物件裡只有兩個字串(`box`、`shell_cmd`),bench.sh 不寫完整的 JSON 跳脫器,而是在
@@ -223,14 +384,16 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 訊息裡的 `<值>` 以 `printf %q` 引用,所以就算值裡有換行,錯誤訊息仍是 STDERR 上的
 **一行**。
 
-結束碼:`0` 完成(且未超過 `--max-ms`);`1` 量測失敗(任一指標任一次 enter 非零結束,
+結束碼:`0` 量測有效且完成(且未超過 `--max-ms`);`1` 量測失敗(任一指標任一次 enter 非零結束,
 或 inbox 的 timer 印出的不是整數;失敗的 enter 沒有值得報告的延遲,立即中止、不印統計)
 或 shell 中位數超過 `--max-ms`(統計仍會印出,原因印在 STDERR;`--max-ms` **只看
 shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 `bench.sh: unknown option '<x>' (see --help)` 拒絕,整條指令列先解析完才動作,
 所以 `--help --bogus` 也是 exit 2、什麼都不跑;`--runs 0`、`--warmup -1`、
-`--max-ms abc`、以及上表的 `--box` / `--shell` 違規同樣 exit 2);`127` PATH 上沒有
-distrobox。
+`--max-ms abc`、`--max-wait 0`、以及上表的 `--box` / `--shell` 違規同樣 exit 2);
+`3` **未判定(inconclusive)**:主機在 `--max-wait` 內沒有安靜下來,或量測途中壓力
+超標(見上方「安靜主機前置條件」;不給通過也不給退化、不印指標行);`127` PATH 上
+沒有 distrobox。
 
 ### 達標由 system-real gate 強制,runtime 決策不在這裡
 
@@ -273,8 +436,18 @@ issue #129),不再延後到 M5。
     `--max-ms` 的通過/失敗結束碼且不看 inbox、`--json` 形狀(以文法斷言整個物件、
     反斜線與雙引號的跳脫)、`--box` / `--shell` 的輸入驗證(`a"b`、含換行的 shell 等
     exit 2 且什麼都沒呼叫)、enter 全過之後 shell 或 inbox 失敗、timer 印非整數、
-    `--help`、未知選項 exit 2 且什麼都沒呼叫;
+    `--help`、未知選項 exit 2 且什麼都沒呼叫;issue #181 再以假 PSI 檔
+    (`BENCH_PSI_FILE`)與假 `sleep`(每次呼叫計為一秒、可逐次改寫 PSI)驗證安靜主機
+    前置條件:安靜即量、忙到 `--max-wait` 用完 exit 3 且 distrobox 一次都沒呼叫、
+    安靜秒數必須連續、幾秒後變安靜就量、量測途中 PSI 超標整批作廢 exit 3、讀不到 PSI
+    時警告並照常量測、PSI 來源的優先順序(cgroup v2 → `/proc/pressure/cpu`)、
+    `--max-wait` 的預設(60 / CI 120)與輸入驗證;
     `test/unit/justfile_spec.bats` 另證明 `just box bench --runs 3` 原樣轉發。
+    M3(issue #198)在 `assemble_spec.bats` 加盒子 HOME:預設 `~/<盒名>-box`(盒名
+    取自清單)、`--home` / `--home=` 為 `user`、結尾 `/` 去掉、設定檔的 user 紀錄
+    優先於預設而 default 紀錄會重新推導;缺參數 / 相對路徑 / 空字串 / `/` / 含換行
+    皆 exit 2 且什麼都不跑;設定檔裡壞掉的 `home` 與清單自帶 `home=` 皆 exit 1;
+    dry-run 的 STDOUT 指令行不變、不寫設定檔。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
 - 整合(`test/integration/assemble_spec.bats`):
@@ -283,6 +456,11 @@ issue #129),不再延後到 M5。
     `assemble create --file <解析後的清單>` 呼叫 distrobox;另外斷言「從 repo 以外
     執行會傳入解析後的絕對路徑」以及「清單無效時(缺 image、image 引號不成對)
     完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
+    M3(issue #198)再加一支假 `docker`(`inspect` 回答既有盒子建盒時的
+    `--home`):盒子 HOME 以 `DBX_CONTAINER_CUSTOM_HOME` 交給 distrobox(argv 不變、
+    環境裡原有的值被蓋掉)、成功後記進設定檔且保留其他行、distrobox 失敗不記;既有
+    盒子 HOME 不同(含沒給 `--home` 的舊盒)時 exit 1、印刪盒重建指令、不呼叫
+    distrobox、設定檔不變;HOME 相同時照常執行;dry-run 不查 manager。
   - **不證明什麼**:真正的 distrobox 會怎麼解析清單(mock 不解析),更不證明盒子
     能建出來。
 - 整合,**ghostty 組**(`test/integration/ghostty_config_spec.bats`,M3 issue
@@ -294,8 +472,8 @@ issue #129),不再延後到 M5。
     `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
     是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
     `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
-    `distrobox enter dev -- tmux new -A -s main`;`--tmux host` 解析成
-    `tmux new -A -s main`、`--box work` 換成該盒名。另有兩個對照案例證明斷言不是
+    `'<distrobox 絕對路徑>' enter dev`(後面不接 tmux,issue #179)、`--box work`
+    換成該盒名。另有兩個對照案例證明斷言不是
     恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
     `+validate-config` 以 `unknown field` 拒絕。
   - **不證明什麼**:視窗真的開得起來、真的進得了盒 —— 那是 real-engine 組的
@@ -396,8 +574,7 @@ issue #129),不再延後到 M5。
     fzf --version` 印出版本,容器狀態為 `running`;M3(issue #160)再加兩個案例:
     `distrobox enter dev -- tmux -V` 印出 `tmux <版本>`、`distrobox enter dev --
     fish --version` 印出 `fish, version <版本>`,兩個版本都印進 TAP log 當證據
-    (auto-enter 的前提:終端 profile 跑的是 `tmux new -A -s main`、後面接盒內
-    fish);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
+    (終端 profile 跑 `'<distrobox>' enter dev` 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
     盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
     exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
     fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
@@ -412,18 +589,36 @@ issue #129),不再延後到 M5。
     判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell
     'fish -c exit' --max-ms 1` 跑一次負向案例,要求 exit 1、三行指標仍在、同樣兩行
     fish INFO 仍在、`[ERROR] shell median ... exceeds --max-ms 1`,證明 gate 會咬
-    (見上方「進盒延遲量測」);(e) **ghostty 鏈**(M3,issue #172):在 runner 內
+    (見上方「進盒延遲量測」);兩個案例都要求安靜主機前置條件的證據行
+    (`[INFO] host quiet: <PSI 路徑> ...` 或讀不到 PSI 的 `[WARN]`,issue #181),
+    且只接受自己的判定碼(0 / 1),所以 runner 太忙回 3 一樣是紅;(e) **ghostty 鏈**(M3,issue #172):在 runner 內
     用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
     ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
     釘住 `gtk-single-instance = false`,command 為
-    `distrobox enter dev -- tmux new -A -s chain fish <盒內腳本>`;判準是**盒內**
-    留下的標記檔(內容含 `fish=<版本>`、`tmux=yes`、`host=<節點名>`),而不是
-    ghostty 的結束碼 —— runner 本身沒有裝 fish(spec 明確斷言 `command -v fish`
-    失敗),所以會回答的只可能是盒內那一個;標記裡的 `host=` 還要等於
+    `distrobox enter dev -- fish <盒內腳本>`(issue #179:中間沒有 tmux);判準是
+    **盒內**留下的標記檔(內容含 `fish=<版本>`、`ctrenv=<容器檔>`、
+    `mntns=<mount namespace>`、`tmux=no`、`host=<節點名>`),而不是 ghostty 的結束碼
+    —— runner 本身沒有裝 fish(spec 明確斷言),所以會回答的只可能是盒內那一個;
+    容器身分的斷言 Docker / Podman 通用:`ctrenv=` 必須是**所用引擎**寫進每個容器
+    的檔案(podman `/run/.containerenv`、docker `/.dockerenv`,distrobox 自己也以
+    兩者之一判定「在容器內」),且因為 DinD runner 本身也是 docker 容器、光看檔案
+    分不出 runner 與盒子,`mntns=` 還必須等於引擎回報的 dev 容器 pid
+    (`inspect --format '{{.State.Pid}}'`,兩個引擎同一個模板)的 mount namespace、
+    且不是 runner 自己的;標記裡的 `host=` 還要等於
     `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
     HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
     +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
-    件事,不是路徑本身。另兩個負向案例:
+    件事,不是路徑本身。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
+    tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
+    tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
+    打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
+    (`TMUX_TMPDIR` 傳到盒內、pid 與 host server 不同、mount namespace 等於 dev
+    容器、該行程的根目錄裡有引擎的容器檔、socket 在 `TMUX_TMPDIR` 底下、兩邊的
+    `tmux ls` 互不列出對方的 session);第三案(codex 第 1 輪,PR #232)在 host
+    tmux server 的**新視窗(真的 host pane)**裡執行 `distrobox enter dev`,先斷言盒內
+    真的繼承了 host pane 的 `TMUX`(回歸情境確實發生),再斷言盒內 `tmux` 仍得到
+    盒子自己的 server(同上各項),host 的 `tmux ls` 不列盒內的 session。
+    另兩個負向案例:
     - **永不結束的指令**:盒內 payload **先寫一個獨立的 ready 標記**(內含
       `fish=<版本>`),**再** `exec sleep infinity`。案例只有在 ready 標記出現的
       前提下才接受 `timeout` 的 124 —— 否則就是「視窗/`distrobox enter` 在到達
@@ -496,7 +691,12 @@ issue #129),不再延後到 M5。
     自己在指令結束後退出)、每個 ghostty 呼叫外層 `timeout -k`、CI job 的
     `timeout-minutes`;(f) 冪等:第二次
     `script/box/assemble.sh` exit 0、印上游的 `dev already exists`、不重建、`dev` 仍
-    恰好一個、仍可 `rg --version`;(g) 清理:`distrobox rm -f dev` exit 0 後
+    恰好一個、仍可 `rg --version`;盒子 HOME(issue #198):第一次 assemble 帶
+    `--home <BOX_HOME>`(刻意不是預設 `~/dev-box`),盒內 `printenv HOME` 恰為該路徑、
+    `DISTROBOX_HOST_HOME` 為 runner 的 HOME、設定檔記下 `home=<BOX_HOME>`;第二次
+    不帶 `--home` 沿用紀錄(`(user)`)而不被拒絕;再以不同的 `--home` 執行則
+    exit 1、印 `distrobox rm dev`、新路徑沒被建立、`dev` 仍一個且 HOME 不變;
+    (g) 清理:`distrobox rm -f dev` exit 0 後
     `docker ps -a` 不再有 `dev`。長步驟都包在有界的 `timeout` 裡(assemble 600s、
     第一次 enter 900s、其餘 300s/120s),失敗時印出 dockerd 日誌與盒子的
     `docker logs`。環境隔離同 shim 組:全新的 HOME(因盒子會 bind-mount HOME、
@@ -536,7 +736,7 @@ issue #129),不再延後到 M5。
     `./script/test/test.sh --acceptance`)。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);裸 `just test`(底層
-`./script/test/test.sh` 不帶旗標)依序跑 lint 與五個 tier(lint、unit、integration、
+`./script/test/test.sh` 不帶旗標)依序跑 lint 與六個 tier(lint、unit、matrix、integration、
 system、acceptance、system-real),遇到第一個失敗即停,等同 CI;子 recipe
 `just test <tier>` 只收窄到一層。執行方式見 [`structure.md`](structure.md)。
 
