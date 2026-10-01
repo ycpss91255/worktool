@@ -230,7 +230,7 @@ _meta_skeleton() {
 # call when ${BATS_TEST_TMPDIR}/gh.fail exists. The work dir is WORK.
 _pl_codex_round() {
     local stub="${BATS_TEST_TMPDIR}/bin"
-    mkdir -p "${stub}" "${WORK}"
+    mkdir -p "${stub}" "${WORK}" "${BATS_TEST_TMPDIR}/repo" "${BATS_TEST_TMPDIR}/worktree/n"
     cat > "${stub}/gh" <<SH
 #!/bin/sh
 case " \$* " in
@@ -251,7 +251,7 @@ SH
     chmod +x "${stub}/gh" "${stub}/git"
     local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/repo" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
 }
 
