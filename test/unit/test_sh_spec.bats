@@ -285,6 +285,17 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh rejects specs that require a dedicated tier runner" {
+    run "${TEST_SH}" --integration test/integration/ghostty_config_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/ghostty_config_spec.bats' requires its dedicated runner (see --help)"
+
+    run "${TEST_SH}" --system test/system/real_engine_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/system/real_engine_spec.bats' requires its dedicated runner (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {

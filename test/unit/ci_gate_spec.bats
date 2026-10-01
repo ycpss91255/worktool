@@ -136,6 +136,37 @@ EOF
     refute_output --partial 'below the required specs'
 }
 
+@test "a partial filter that matches no cases fails the tier" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] unit bats OK'
+}
+
+@test "an integration filter narrows the default group without running ghostty" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-integration --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: integration bats ran zero cases'
+    refute_output --partial 'a real ghostty is on PATH'
+}
+
+@test "a system filter narrows the shim group without running the real engine" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-system --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: system bats ran zero cases'
+    refute_output --partial 'a real docker engine is live'
+}
+
 # --- the declared required lists ---------------------------------------------
 
 @test "test.sh declares the M2 required specs of the unit tier" {

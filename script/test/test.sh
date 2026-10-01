@@ -416,9 +416,7 @@ _run_bats_tier() {
         _die "${_tier} bats failed"
     fi
     local _ok=0
-    if [[ "${_partial}" -eq 0 ]]; then
-        _verify_tap "${_tier}" "${_tap}" "${_min}" || _ok=1
-    fi
+    _verify_tap "${_tier}" "${_tap}" "${_min}" || _ok=1
     rm -f "${_tap}"
     [[ "${_ok}" -eq 0 ]] || exit 1
     _info "${_tier} bats OK"
@@ -431,7 +429,7 @@ _run_acceptance()  { _run_bats_tier acceptance "$@"; }
 # Integration tier, default group: every test/integration/*.bats except
 # the ghostty spec (which needs a real ghostty and has its own image).
 _run_integration() {
-    if [[ $# -gt 1 || -n "${1:-}" ]]; then
+    if [[ $# -gt 1 ]]; then
         _run_bats_tier integration "$@"
         return 0
     fi
@@ -443,7 +441,11 @@ _run_integration() {
     done
     [[ "${#_specs[@]}" -gt 0 ]] \
         || _die "no integration (default group) specs found under ${REPO_ROOT}/test/integration"
-    _run_bats_tier integration "" -- "${_specs[@]}"
+    if [[ -n "${1:-}" ]]; then
+        _run_bats_tier integration "$1" "${_specs[@]}"
+    else
+        _run_bats_tier integration "" -- "${_specs[@]}"
+    fi
 }
 
 # Integration tier, ghostty group: exactly the ghostty spec, run in the
@@ -455,7 +457,7 @@ _run_integration_ghostty() {
 # System tier, shim group: every test/system/*.bats except the real-engine
 # spec (which needs a live daemon and has its own runner).
 _run_system() {
-    if [[ $# -gt 1 || -n "${1:-}" ]]; then
+    if [[ $# -gt 1 ]]; then
         _run_bats_tier system "$@"
         return 0
     fi
@@ -467,7 +469,11 @@ _run_system() {
     done
     [[ "${#_specs[@]}" -gt 0 ]] \
         || _die "no system (shim group) specs found under ${REPO_ROOT}/test/system"
-    _run_bats_tier system "" -- "${_specs[@]}"
+    if [[ -n "${1:-}" ]]; then
+        _run_bats_tier system "$1" "${_specs[@]}"
+    else
+        _run_bats_tier system "" -- "${_specs[@]}"
+    fi
 }
 
 # System tier, real-engine group: exactly the real-engine spec, run by the
@@ -551,6 +557,10 @@ _validate_spec_paths() {
         _absolute="$(realpath "${REPO_ROOT}/${_path}")"
         [[ "${_absolute}" == "${_root}"* ]] \
             || _usage_error "spec path '${_path}' is outside test/${_tier}/"
+        if [[ "${_absolute}" == "${INTEGRATION_GHOSTTY_SPEC}" \
+            || "${_absolute}" == "${SYSTEM_REAL_SPEC}" ]]; then
+            _usage_error "spec path '${_path}' requires its dedicated runner"
+        fi
     done
 }
 
