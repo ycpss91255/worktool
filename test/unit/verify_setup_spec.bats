@@ -1100,3 +1100,15 @@ EOF
     assert_line "multiple-refused=ghostty/config unchanged=yes"
     assert_line "multiple-refused=ghostty/config+config.ghostty unchanged=yes"
 }
+
+@test "3.9: missing old Ghostty version warning cannot pass" {
+    _stub ghostty '#!/bin/sh' 'echo Ghostty 1.2.0'
+    local _repo
+    _repo="$(_repo_copy)"
+    _insert_before 'setup_run() {' "${_repo}/script/box/setup.sh" <<'FRAG'
+_ghostty_version_warn() { return 0; }
+FRAG
+    run "${_repo}/script/verify/setup.sh" 3.9
+    assert_failure
+    assert_output --partial "[WARN] ghostty 1.2.0 does not read"
+}

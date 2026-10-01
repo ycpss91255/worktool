@@ -1425,6 +1425,15 @@ _item_3_9() {
     printf 'font-size = 17\n' >"${_target}" || return 1
     _run_norm "${_env[@]}" just box setup --terminal ghostty || return 1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+    local _exe _version _major _minor
+    if _exe="$(command -v ghostty)" && _version="$("${_exe}" +version 2>/dev/null)"; then
+        if [[ "${_version}" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            _version="${BASH_REMATCH[0]}" _major="${BASH_REMATCH[1]}" _minor="${BASH_REMATCH[2]}"
+            if (( 10#${_major} < 1 || (10#${_major} == 1 && 10#${_minor} < 3) )); then
+                _expect_lines 3.9 "[WARN] ghostty ${_version} does not read <H>/.config/ghostty/config.ghostty (requires 1.3.0 or newer)" || _bad=1
+            fi
+        fi
+    fi
     _expect_lines 3.9 \
         '[INFO] ghostty config: <H>/.config/ghostty/config.ghostty (config.ghostty exists)' \
         '[INFO] moved: <H>/.config/ghostty/config -> <H>/.config/ghostty/config.ghostty (managed block)' || _bad=1
