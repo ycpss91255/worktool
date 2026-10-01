@@ -220,8 +220,10 @@ main() {
     _start="$(date -u +%s)"
     while :; do
         _iter=$((_iter + 1))
-        _poll_all "${_start}" _prev
-        _rc=$?
+        _rc=0
+        # Poll verdicts are expected non-zero; nested probes run deliberately
+        # in this conditional context, with gh failures checked by _poll_all.
+        _poll_all "${_start}" _prev || _rc=$?
         [[ "${_rc}" -eq 1 ]] && return 1
         if [[ "${_rc}" -eq 0 ]]; then
             echo "ALL_DONE"

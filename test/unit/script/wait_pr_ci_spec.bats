@@ -189,3 +189,11 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     assert_success
     assert_output --partial "Usage: wait-pr-ci.sh"
 }
+
+@test "wait CI keeps polling pending snapshots instead of exiting two" {
+    _fixture ci-passed SUCCESS 10
+    run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 2 --interval 0
+    assert_failure 124
+    assert_output --partial "checks=pending"
+    assert_output --partial "max-iterations (2) reached"
+}
