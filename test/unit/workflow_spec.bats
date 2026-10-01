@@ -1621,7 +1621,7 @@ _rv_assert_fails_closed() {
     assert_success
     local json="${output}"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
-    assert_output "agy: claude-verify: codex-verify: synthesize: record: repo-check:"
+    assert_output "agy: codex-verify: claude-verify: synthesize: record: repo-check:"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
