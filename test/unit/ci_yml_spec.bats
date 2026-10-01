@@ -420,16 +420,16 @@ _pull_request_types() {
     assert_output --partial 'fetch-depth: 0'
     assert_output --partial 'persist-credentials: false'
     assert_output --partial 'source lib/commit_refs.sh'
-    assert_output --partial 'commit_refs_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}"'
-    assert_output --partial 'commit_refs_check_commits . "${revs[@]}"'
-    assert_output --partial 'EVENT: ${{ github.event_name }}'
-    assert_output --partial 'PR_BASE: ${{ github.event.pull_request.base.sha }}'
-    assert_output --partial 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'
-    assert_output --partial 'PUSH_BEFORE: ${{ github.event.before }}'
-    assert_output --partial 'PUSH_AFTER: ${{ github.event.after }}'
-    assert_output --partial 'DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}'
+    assert_output --partial "commit_refs_range \"\${EVENT}\" \"\${PR_BASE}\" \"\${PR_HEAD}\" \"\${PUSH_BEFORE}\" \"\${PUSH_AFTER}\" \"\${DEFAULT_REF}\""
+    assert_output --partial "commit_refs_check_commits . \"\${revs[@]}\""
+    assert_output --partial "EVENT: \${{ github.event_name }}"
+    assert_output --partial "PR_BASE: \${{ github.event.pull_request.base.sha }}"
+    assert_output --partial "PR_HEAD: \${{ github.event.pull_request.head.sha }}"
+    assert_output --partial "PUSH_BEFORE: \${{ github.event.before }}"
+    assert_output --partial "PUSH_AFTER: \${{ github.event.after }}"
+    assert_output --partial "DEFAULT_REF: refs/remotes/origin/\${{ github.event.repository.default_branch }}"
     run _job_block ci-passed
     assert_output --partial 'commit-refs]'
-    assert_output --partial 'REFS_RESULT: ${{ needs.commit-refs.result }}'
-    assert_output --partial '[ "${REFS_RESULT}" = "success" ] || exit 1'
+    assert_output --partial "REFS_RESULT: \${{ needs.commit-refs.result }}"
+    assert_output --partial "[ \"\${REFS_RESULT}\" = \"success\" ] || exit 1"
 }
