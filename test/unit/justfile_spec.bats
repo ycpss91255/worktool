@@ -229,6 +229,14 @@ _listed_names() {
     assert_equal "$(_last_argc)" "3"
 }
 
+@test "just test changed forwards --changed and every argument verbatim" {
+    _stub_scripts
+    _just test changed --base main
+    assert_success
+    assert_equal "$(_stub_calls)" "test.sh --changed --base main"
+    assert_equal "$(_last_argc)" "3"
+}
+
 @test "just test selfcheck forwards to selfcheck.sh, --root X passing through" {
     _stub_scripts
     _just test selfcheck
