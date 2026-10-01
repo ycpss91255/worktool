@@ -63,13 +63,15 @@ main() {
     fi
     _msg+="$(_policy_note "${_clean}")"
 
-    jq -n --arg m "${_msg}" --arg v "${_variant}" '{
+    if ! jq -n --arg m "${_msg}" --arg v "${_variant}" '{
         systemMessage: $m,
         hookSpecificOutput: {
             hookEventName: "PreToolUse",
             additionalContext: ($m + " [variant=" + $v + "]")
         }
-    }'
+    }'; then
+        printf '[hook:%s] cannot emit advisory reminder\n' "${HOOK_NAME}" >&2
+    fi
     return 0
 }
 
