@@ -7,7 +7,7 @@
 # behaviour:
 #   - the lib refuses to run as a top-level script (library guard)
 #   - hook_bootstrap turns on the exit-code-contract strict mode (set -u +
-#     pipefail, NOT -e) and self-locates HOOK_LIB_DIR / HOOK_REPO_ROOT from
+#     pipefail and -e) and self-locates HOOK_LIB_DIR / HOOK_REPO_ROOT from
 #     its own file - a LIB_DIR in the environment (the worktool test helper
 #     exports one for lib/) never redirects it
 #   - hook_read_input / hook_command / hook_field parse the stdin payload
@@ -75,18 +75,21 @@ EOF
     assert_output "ALL_DEFINED"
 }
 
-@test "hook_bootstrap turns on set -u + pipefail but NOT -e" {
+@test "hook_bootstrap stops after an unexpected failure with errexit" {
     cat >"${SNIPPET}" <<'EOF'
 source "$1/hook_bootstrap.sh"
 hook_bootstrap snip
 [[ "$-" == *u* ]] && echo HAS_U
-[[ "$-" != *e* ]] && echo NO_E
+[[ "$-" == *e* ]] && echo HAS_E
 set -o | grep -q "pipefail.*on" && echo HAS_PIPEFAIL
+false
+echo UNREACHABLE
 EOF
     run bash "${SNIPPET}" "${HOOK_LIB}"
-    assert_success
+    assert_failure 1
     assert_output --partial "HAS_U"
-    assert_output --partial "NO_E"
+    assert_output --partial "HAS_E"
+    refute_output --partial "UNREACHABLE"
     assert_output --partial "HAS_PIPEFAIL"
 }
 
@@ -167,4 +170,27 @@ EOF
     assert_success
     run jq -r '.hookSpecificOutput | .hookEventName + "|" + .additionalContext' <<<"${output}"
     assert_output "UserPromptSubmit|remember to sync"
+}
+
+@test "malformed input leaves hook_field empty and allows the decider" {
+    _write_hook <<'EOF'
+hook_bootstrap fieldtest
+HOOK_INPUT='invalid json'
+value="$(hook_field .cwd)"
+[[ -z "${value}" ]] || hook_block "unexpected value"
+hook_allow
+EOF
+    _run "anything"
+    assert_success
+    assert_output ""
+}
+
+@test "advisory context exits zero when jq cannot emit JSON" {
+    _write_hook <<'EOF'
+hook_bootstrap ctx
+jq() { return 7; }
+hook_context "remember to sync"
+EOF
+    _run "anything"
+    assert_success
 }

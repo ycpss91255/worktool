@@ -163,3 +163,12 @@ _rec() {
     assert_output "${PHRASE}"
     [[ "$(approval_phrase; printf x)" == "${PHRASE}x" ]]
 }
+
+@test "agy and Gemini markers cannot count as human approval" {
+    local _agent
+    for _agent in agy gemini; do
+        run bash -c 'source "$1"; approval_is_human_approval OWNER "  [$2] $(approval_phrase)"' _ \
+            "${REPO_ROOT}/lib/approval.sh" "${_agent}"
+        assert_failure 1
+    done
+}

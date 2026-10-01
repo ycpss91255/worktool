@@ -4,8 +4,8 @@
 # WHAT THIS PROVES
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
-#   - zero special cases: the root justfile is exactly two `mod?` lines
-#     (test, box) plus a `default` that lists them - no other recipe;
+#   - zero special cases: the root justfile is action `mod?` lines
+#     (test, box, agent) plus a `default` that lists them - no other recipe;
 #   - action-named namespaces: script/test/justfile.test and
 #     script/box/justfile.box, each with its own `default`, `help` (alias
 #     `h`) and `set working-directory := '../..'`, so every recipe runs at
@@ -140,17 +140,18 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is exactly two mod? lines (test, box) and one default recipe" {
+@test "root justfile is three mod? lines (test, box, agent) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
     run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
     assert_success
-    assert_equal "${#lines[@]}" 4
+    assert_equal "${#lines[@]}" 5
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 "default:"
-    assert_line --index 3 --regexp '^[[:space:]]+@just --list$'
+    assert_line --index 2 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
+    assert_line --index 3 "default:"
+    assert_line --index 4 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
@@ -174,10 +175,10 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the two namespaces and default, nothing else" {
+@test "just --list shows the three namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "box default test "
+    assert_equal "$(_listed_names)" "agent box default test "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
 }
@@ -212,7 +213,7 @@ _listed_names() {
 @test "just test <verb> forwards exactly --<verb> for every tier verb and build" {
     _stub_scripts
     local _verb
-    for _verb in build lint unit integration system system-real acceptance; do
+    for _verb in build lint unit matrix integration system system-real acceptance; do
         : >"${STUB_CALLS}"
         _just test "${_verb}"
         assert_success
@@ -226,6 +227,14 @@ _listed_names() {
     _just test lint --foo bar
     assert_success
     assert_equal "$(_stub_calls)" "test.sh --lint --foo bar"
+    assert_equal "$(_last_argc)" "3"
+}
+
+@test "just test changed forwards --changed and every argument verbatim" {
+    _stub_scripts
+    _just test changed --base main
+    assert_success
+    assert_equal "$(_stub_calls)" "test.sh --changed --base main"
     assert_equal "$(_last_argc)" "3"
 }
 
@@ -489,7 +498,7 @@ _listed_names() {
     # Matrix: job name (gate, keyed on by branch protection / ci-passed) ->
     # tier. The names are the pre-existing ones.
     local _pair _gate _tier
-    for _pair in 'lint=lint' 'test-unit=unit' 'test-integration=integration' \
+    for _pair in 'lint=lint' 'test-unit=unit' 'test-matrix=matrix' 'test-integration=integration' \
         'test-system=system' 'test-acceptance=acceptance'; do
         _gate="${_pair%%=*}"
         _tier="${_pair#*=}"
@@ -503,4 +512,10 @@ _listed_names() {
     assert_line --regexp '^ +run: just test system-real$'
     # Exactly those two invocations: no gate bypasses the grammar.
     assert_equal "${#lines[@]}" 2
+}
+
+@test "just agent lists the Codex launcher without starting it" {
+    _just agent
+    assert_success
+    assert_equal "$(_listed_names)" "codex default "
 }

@@ -37,19 +37,59 @@ setup() {
     TEST_SH="${REPO_ROOT}/script/test/test.sh"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     export FAKE_DOCKER_CALLS="${BATS_TEST_TMPDIR}/docker.calls"
+    export FAKE_GIT_ROOT="${REPO_ROOT}"
     unset FAKE_DOCKER_FAIL_ON
     mkdir -p "${FAKE_BIN}"
+    _write_fake_docker
+    # The host dispatch test runs inside Docker: /source's worktree Git
+    # metadata is intentionally unavailable. Stub only that host listing.
+    cat >"${FAKE_BIN}/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == -C && "$2" == "${FAKE_GIT_ROOT}" && "$3" == ls-files ]]; then
+    printf 'script/test/test.sh\0'
+else
+    exec /usr/bin/git "$@"
+fi
+EOF
+    chmod +x "${FAKE_BIN}/docker" "${FAKE_BIN}/git"
+    export PATH="${FAKE_BIN}:${PATH}"
+    export TEST_IMAGE_PREBUILT=1
+}
+
+_write_fake_docker() {
     cat >"${FAKE_BIN}/docker" <<'EOF'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"${FAKE_DOCKER_CALLS}"
+if [[ -n "${FAKE_DOCKER_SNAPSHOT:-}" ]]; then
+    args=("$@")
+    mounts=() values=()
+    while (( $# )); do
+        case "$1" in
+            -v) mounts+=("$2"); shift ;;
+            -e) values+=("${2#*=}"); shift ;;
+        esac
+        shift
+    done
+    printf '%s\n' "${mounts[@]}" >"${FAKE_DOCKER_SNAPSHOT}.mounts"
+    for mount in "${mounts[@]}"; do
+        host="${mount%%:*}" container="${mount#*:}"
+        for value in "${values[@]}"; do
+            if [[ "$value" == "${container}/"* ]]; then
+                file="${host}/${value#"${container}/"}"
+                if [[ -f "$file" ]]; then
+                    printf '%s\n' "$file" >"${FAKE_DOCKER_SNAPSHOT}.path"
+                    tr '\0' '\n' <"$file" >"${FAKE_DOCKER_SNAPSHOT}.contents"
+                fi
+            fi
+        done
+    done
+    set -- "${args[@]}"
+fi
 if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
     exit 1
 fi
 exit 0
 EOF
-    chmod +x "${FAKE_BIN}/docker"
-    export PATH="${FAKE_BIN}:${PATH}"
-    export TEST_IMAGE_PREBUILT=1
 }
 
 # Print the gate each recorded docker call dispatched, in order: the
@@ -68,7 +108,7 @@ _dispatched() {
 # group in the test image, then - after a `docker build` of the ubuntu
 # ghostty image - the ghostty group.
 EVERYTHING_IN_ORDER="$(printf '%s\n' \
-    --ci-lint --ci-unit \
+    --ci-lint --ci-unit --ci-matrix \
     --ci-integration build --ci-integration-ghostty \
     --ci-system --ci-acceptance \
     build system-real-entry.sh)"
@@ -79,8 +119,8 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --help
     assert_success
     local _flag
-    for _flag in --build --lint --unit --integration --system --system-real \
-        --acceptance --help; do
+    for _flag in --build --lint --unit --matrix --integration --system --system-real \
+        --acceptance --changed --base --filter --help; do
         assert_output --partial "${_flag}"
     done
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
@@ -139,7 +179,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 # --- no flag: everything, in order, stop at the first failure --------------
 
-@test "test.sh with no flag runs lint, unit, integration, system, acceptance, system-real in that order" {
+@test "test.sh with no flag runs lint, unit, matrix, integration, system, acceptance, system-real in that order" {
     run "${TEST_SH}"
     assert_success
     assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
@@ -149,7 +189,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
     assert_failure
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit \
+        --ci-lint --ci-unit --ci-matrix \
         --ci-integration build --ci-integration-ghostty \
         --ci-system)"
 }
@@ -164,7 +204,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 
 @test "test.sh --<tier> routes exactly that in-container gate and nothing else" {
     local _tier
-    for _tier in lint unit system acceptance; do
+    for _tier in lint unit matrix system acceptance; do
         rm -f "${FAKE_DOCKER_CALLS}"
         run "${TEST_SH}" "--${_tier}"
         assert_success
@@ -201,6 +241,18 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged .* \./script/test/system-real-entry\.sh$'
 }
 
+@test "every bats runner image installs GNU parallel" {
+    local _dockerfile
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^[[:space:]]*parallel([[:space:]]*\\)?$' \
+            "${REPO_ROOT}/${_dockerfile}"
+        assert_success "${_dockerfile} must install GNU parallel for bats --jobs"
+    done
+}
+
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
@@ -226,7 +278,62 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+}
+
+@test "test.sh --unit forwards one spec path to the container gate" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
+}
+
+@test "test.sh --unit forwards multiple spec paths in order" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats test/unit/ci_gate_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
+}
+
+@test "test.sh --filter runs only matching cases" {
+    run env WORKTOOL_TEST_JOBS=2 "${TEST_SH}" --ci-unit \
+        test/unit/test_sh_spec.bats --filter '^test.sh -h is the same as --help$'
+    assert_success
+    assert_line '1..1'
+    assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
+    refute_output --partial 'test.sh --help exits 0'
+}
+
+@test "test.sh rejects a spec path from another tier" {
+    run "${TEST_SH}" --unit test/integration/smoke_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/smoke_spec.bats' is outside test/unit/ (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a missing spec path" {
+    run "${TEST_SH}" --unit test/unit/missing_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit/missing_spec.bats' does not exist (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a path that is not a bats spec" {
+    run "${TEST_SH}" --unit test/unit
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit' must end in .bats (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects specs that require a dedicated tier runner" {
+    run "${TEST_SH}" --integration test/integration/ghostty_config_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/ghostty_config_spec.bats' requires its dedicated runner (see --help)"
+
+    run "${TEST_SH}" --system test/system/real_engine_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/system/real_engine_spec.bats' requires its dedicated runner (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
 # --- errexit (issue #195) ----------------------------------------------------
@@ -235,4 +342,38 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run grep -E '^set -[a-z]+( pipefail)?$' "${TEST_SH}"
     assert_success
     assert_output 'set -euo pipefail'
+}
+
+@test "host lint snapshots linked-worktree paths without extra mounts and cleans up after either exit" {
+    local root="${BATS_TEST_TMPDIR}/repo" linked="${BATS_TEST_TMPDIR}/linked"
+    export FAKE_DOCKER_SNAPSHOT="${BATS_TEST_TMPDIR}/snapshot"
+    mkdir -p "${root}/script/test"
+    cp "${TEST_SH}" "${root}/script/test/test.sh"
+    git -C "${root}" init -q
+    git -C "${root}" add .
+    git -C "${root}" -c user.name=Fixture \
+        -c user.email=test@example.invalid commit -qm fixture
+    run git -C "${root}" log -1 --format=%ae
+    assert_success
+    assert_output 'test@example.invalid'
+    git -C "${root}" worktree add -q -b fixture "${linked}"
+    mkdir -p "${linked}/script/box"
+    touch "${linked}/script/box/planted-artifact.sh"
+    local failure snapshot
+    for failure in '' --ci-lint; do
+        FAKE_DOCKER_FAIL_ON="${failure}" run bash "${linked}/script/test/test.sh" --lint
+        if [[ -n "${failure}" ]]; then
+            assert_failure 1
+        else
+            assert_success
+        fi
+        assert [ -f "${FAKE_DOCKER_SNAPSHOT}.contents" ]
+        run cat "${FAKE_DOCKER_SNAPSHOT}.contents"
+        assert_line 'script/box/planted-artifact.sh'
+        run cut -d : -f 1 "${FAKE_DOCKER_SNAPSHOT}.mounts"
+        assert_output "${linked}"
+        snapshot="$(cat "${FAKE_DOCKER_SNAPSHOT}.path")"
+        assert [ ! -e "${snapshot}" ]
+        rm -f "${FAKE_DOCKER_SNAPSHOT}".*
+    done
 }

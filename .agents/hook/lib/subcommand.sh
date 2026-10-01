@@ -30,7 +30,8 @@
 #     4. an array assignment's list (`a=(x y)`) is data and becomes '_'
 #     5. the rest is split on ; && || | and newlines, on a background & (not
 #        the & of a redirection: 2>&1, &>f), and on ( and ), so the body of
-#        a subshell ( ... ) is launched like any other command
+#        a subshell ( ... ) is launched like any other command. Case
+#        patterns and arithmetic (( ... )) are data, not launches
 #     6. leading VAR=val assignments, the reserved words that open or close
 #        a compound command (if then elif else fi while until do done
 #        esac ! { }), and sudo / env / command / time / nohup / exec
@@ -99,6 +100,11 @@
 #   hook_timeout_lead <sub-command>   the leading `timeout|gtimeout
 #     [options] <duration> ` of a sub-command (valued options such as
 #     -k 5 / --signal TERM included), or nothing when it has none
+#   hook_scripts <command>   the command line itself, then every command
+#     line it runs (header step 7: bash -c, a script heredoc / here-string,
+#     eval; recursively, behind any wrapper or timeout(1)), each ended by a
+#     NUL byte and printed as its shell reads it, heredocs kept, so a hook
+#     can read the stdin a nested launch is fed. A substitution shows as '_'
 #
 # Deliberately simple (no full shell parser): $'...' escapes are not
 # expanded, a `#` comment is not recognised, and a script FILE run by name
@@ -248,6 +254,25 @@ _hook_http_item() {
     return 1
 }
 
+# _hook_http_method_option <tool> <word> <next> <index-var> <method-var> <short>
+# Internal method parser; advances the caller's index when consuming a value.
+_hook_http_method_option() {
+    local -n _index_ref="$4" _method_ref="$5"
+    case "$1:$2" in
+        curl:-X|curl:--request|wget:--method)
+            _index_ref=$((_index_ref + 1)); _method_ref="$3" ;;
+        curl:--request=*|wget:--method=*) _method_ref="${2#*=}" ;;
+        curl:-X?*) _method_ref="${2:2}" ;;
+        curl:--*) ;;
+        curl:-*)
+            # A cluster hiding a method or data flag is unreadable (fail closed).
+            if [[ "${2:1}" == *[X${6}]* ]]; then
+                HOOK_HTTP_BODY='@'
+            fi ;;
+    esac
+    return 0
+}
+
 # hook_http_is_write <tool> <word>... - see the header.
 HOOK_HTTP_BODY=''
 hook_http_is_write() {
@@ -259,8 +284,8 @@ hook_http_is_write() {
     _short="$(hook_http_data_flags "${_tool}" | awk '$1 ~ /^-[A-Za-z]$/ && $2 == "1" { printf "%s", substr($1, 2) }')"
     for ((_i = 0; _i < ${#_a[@]}; _i++)); do
         _w="${_a[_i]}"
-        _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")"
-        _rc=$?
+        _rc=0
+        _v="$(_hook_data_flag "${_tool}" "${_w}" "${_a[_i + 1]:-}")" || _rc=$?
         if [[ "${_rc}" -ne 1 ]]; then
             _data=1
             [[ "${_rc}" -eq 2 ]] && _i=$((_i + 1))
@@ -270,24 +295,9 @@ hook_http_is_write() {
             continue
         fi
         case "${_tool}" in
-            curl)
-                case "${_w}" in
-                    -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --request=*) _m="${_w#*=}" ;;
-                    -X?*) _m="${_w:2}" ;;
-                    --*) ;;
-                    # A cluster hiding -X or a data flag cannot be read (fail closed).
-                    -*)
-                        if [[ "${_w:1}" == *[X${_short}]* ]]; then
-                            HOOK_HTTP_BODY='@'
-                            return 0
-                        fi ;;
-                esac ;;
-            wget)
-                case "${_w}" in
-                    --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --method=*) _m="${_w#*=}" ;;
-                esac ;;
+            curl|wget)
+                _hook_http_method_option "${_tool}" "${_w}" "${_a[_i + 1]:-}" _i _m "${_short}"
+                [[ "${HOOK_HTTP_BODY}" == '@' ]] && return 0 ;;
             *)
                 # httpie: http [METHOD] URL [ITEMS]
                 case "${_w}" in
@@ -594,6 +604,9 @@ _hook_strip_wrappers() {
                 # command -v / -V looks a name up; it launches nothing.
                 [[ "${_w[_i + 1]:-}" == -[vV]* ]] \
                     || _i="$(_hook_after_opts "${_i}" '' "${_w[@]}")" ;;
+            builtin)
+                [[ "${_w[_i + 1]:-}" == cd || "${_w[_i + 1]:-}" == pushd ]] \
+                    && _i=$((_i + 1)) ;;
             *)
                 [[ "${_w[_i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && _i=$((_i + 1)) ;;
         esac
@@ -681,6 +694,89 @@ _hook_emit() {
     fi
 }
 
+# _hook_case_patterns <text> - replace case patterns with data, keeping bodies.
+# Quotes and substitutions have already been made opaque by the quoting pass.
+_hook_case_patterns() {
+    local _t="$1" _out='' _i _c _depth=0 _parens=0 _header=''
+    local _re=$'(^|[;(&|\n])[[:space:]]*((if|then|elif|else|while|until|do|!|[{])[[:space:]]+)*case[[:space:]]+[^[:space:]]+[[:space:]]+in[[:space:]]$'
+    local -a _state=()
+    local _start='(^|[[:space:];(&|])case[[:space:]]'
+    [[ "${_t}" =~ ${_start} ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_state[_depth]:-}" == pattern ]]; then
+            if [[ "${_t:_i}" =~ ^[[:space:]]*esac([[:space:];]|$) ]]; then
+                _state[_depth]=''
+                _depth=$((_depth - 1))
+            else
+                case "${_c}" in
+                    '(') [[ -n "${_header}" ]] && _parens=$((_parens + 1)) ;;
+                    ')')
+                        if [[ "${_parens}" -gt 0 ]]; then
+                            _parens=$((_parens - 1))
+                        else
+                            [[ "${_out}" =~ ${_re} ]] && _out+=_
+                            _out+=$'\n'
+                            _state[_depth]=body
+                            _header=''
+                        fi ;;
+                esac
+                [[ "${_c}" != [[:space:]] ]] && _header=1
+                continue
+            fi
+        fi
+        _out+="${_c}"
+        if [[ "${_out}" =~ ${_re} ]]; then
+            _depth=$((_depth + 1))
+            _state[_depth]=pattern
+            _header=''
+        elif [[ "${_depth}" -gt 0 && "${_t:_i:2}" == ';;' || "${_depth}" -gt 0 && "${_t:_i:2}" == ';&' ]]; then
+            [[ "${_t:_i:3}" == ';;&' ]] && _i=$((_i + 1))
+            _i=$((_i + 1))
+            _out+=$'\n'
+            _state[_depth]=pattern
+            _header=''
+        fi
+    done
+    printf '%s' "${_out}"
+}
+
+# _hook_arithmetic <text> - arithmetic parentheses enclose data, not launches.
+_hook_arithmetic() {
+    local _t="$1" _out='' _i _c _depth=0 _start=0
+    [[ "${_t}" == *'(('* ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_depth}" -eq 0 && "${_t:_i:2}" == '((' ]]; then
+            _depth=2
+            _start="${_i}"
+            _i=$((_i + 1))
+        elif [[ "${_depth}" -gt 0 ]]; then
+            case "${_c}" in
+                '(') _depth=$((_depth + 1)) ;;
+                ')')
+                    if [[ "${_depth}" -eq 2 ]]; then
+                        if [[ "${_t:_i:2}" == '))' ]]; then
+                            _out+=' '
+                            _i=$((_i + 1))
+                        else
+                            # Bash falls back to subshells when the pair is separated.
+                            _out+="${_t:_start:_i-_start+1}"
+                        fi
+                        _depth=0
+                    else
+                        _depth=$((_depth - 1))
+                    fi ;;
+            esac
+        else
+            _out+="${_c}"
+        fi
+    done
+    # An unclosed candidate must not hide possible launches either.
+    [[ "${_depth}" -gt 0 ]] && _out+="${_t:_start}"
+    printf '%s' "${_out}"
+}
+
 # _hook_split <unquoted command> - the command with every separator of
 # header steps 4 and 5 turned into a newline.
 _hook_split() {
@@ -688,6 +784,7 @@ _hook_split() {
     while [[ "${_t}" =~ ${_re_arr} ]]; do
         _t="${_t/"${BASH_REMATCH[0]}"/=_}"
     done
+    _t="$(_hook_arithmetic "$(_hook_case_patterns "${_t}")")"
     _t="${_t//&&/$'\n'}"
     _t="${_t//||/$'\n'}"
     _t="${_t//|/$'\n'}"
@@ -721,4 +818,19 @@ _hook_subcommands_enc() {
 hook_subcommands_raw() {
     local _HOOK_RAW=1
     hook_subcommands "$1"
+}
+
+# hook_scripts <command> - see the header. Every \001 of the input is
+# escaped first (as hook_subcommands does); _hook_decode restores it.
+hook_scripts() {
+    local _sub _lead _script _text
+    printf '%s\0' "$1"
+    _text="$(_hook_split "$(_hook_strip_heredocs "${1//$'\001'/$'\001'z}" | _hook_unquote)")"
+    while IFS= read -r _sub; do
+        _sub="$(_hook_strip_wrappers "${_sub}")"
+        _lead="$(hook_timeout_lead "${_sub}")"
+        _script="$(_hook_inner_script "$(_hook_strip_wrappers "${_sub#"${_lead}"}")")" || continue
+        hook_scripts "$(_hook_decode "${_script}")"
+    done <<<"${_text}"
+    return 0
 }

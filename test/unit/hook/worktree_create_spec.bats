@@ -2,7 +2,7 @@
 # test/unit/hook/worktree_create_spec.bats - .agents/hook/worktree_create.sh
 #
 # The WorktreeCreate hook places Claude Code's worktrees at
-# <repo>/.worktree/<name> (gitignored, the same place the pr-loop workflow
+# <repo>/../worktree/<name> (the same place the pr-loop workflow
 # uses) and prints ONLY that absolute path on stdout. Driven as a subprocess
 # with a throwaway git repo as CLAUDE_PROJECT_DIR.
 
@@ -26,11 +26,11 @@ _create() {
 
 _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
 
-@test "creates the worktree under <repo>/.worktree/<name> and prints only the path" {
+@test "creates the worktree under <repo>/../worktree/<name> and prints only the path" {
     _named "agent-abc"
     assert_success
-    assert_output "${FAKE_REPO}/.worktree/agent-abc"
-    [ -e "${FAKE_REPO}/.worktree/agent-abc/.git" ]
+    assert_output "${BATS_TEST_TMPDIR}/worktree/agent-abc"
+    [ -e "${BATS_TEST_TMPDIR}/worktree/agent-abc/.git" ]
 }
 
 @test "creates the worktree on a worktree-<name> branch" {
@@ -45,7 +45,7 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
     assert_success
     _named "dup"
     assert_success
-    assert_output "${FAKE_REPO}/.worktree/dup"
+    assert_output "${BATS_TEST_TMPDIR}/worktree/dup"
 }
 
 @test "rejects a name with a path separator" {
@@ -59,7 +59,7 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
     assert_failure
 }
 
-@test "rejects '.' (it would hand back .worktree itself)" {
+@test "rejects '.' (it would hand back the worktree root itself)" {
     _named "."
     assert_failure
     assert_output ""
@@ -72,7 +72,7 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
 }
 
 @test "does not hand back a plain directory that is not a worktree" {
-    mkdir -p "${FAKE_REPO}/.worktree/plain"
+    mkdir -p "${BATS_TEST_TMPDIR}/worktree/plain"
     _named "plain"
     assert_failure
     assert_output ""
@@ -87,5 +87,5 @@ _named() { _create "$(jq -n --arg n "$1" '{name:$n}')"; }
     _create "$(hook_json "ls")"
     assert_success
     assert_output ""
-    [ ! -e "${FAKE_REPO}/.worktree" ]
+    [ ! -e "${BATS_TEST_TMPDIR}/worktree" ]
 }

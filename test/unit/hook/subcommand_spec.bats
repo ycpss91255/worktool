@@ -442,3 +442,76 @@ setup() {
     done
     [[ -z "${_MISS}" ]] || fail "$(printf 'control bytes that did not round-trip:\n%s' "${_MISS}")"
 }
+
+# _scripts <command> - hook_scripts output, NUL ends turned into "<END>"
+# lines so bats can compare it.
+_scripts() {
+    local _script
+    while IFS= read -r -d '' _script; do
+        printf '%s<END>' "${_script}"
+    done < <(hook_scripts "$1")
+}
+
+@test "hook_scripts prints the command itself when it runs no nested script" {
+    run _scripts "gh issue create --title x"
+    assert_success
+    assert_output "gh issue create --title x<END>"
+}
+
+@test "hook_scripts prints the script of bash -c / eval with its heredoc kept" {
+    run _scripts "$(printf "bash -c \"gh issue create -F - <<'EOF'\nmilestone: x\nEOF\"")"
+    assert_success
+    assert_output "$(printf "bash -c \"gh issue create -F - <<'EOF'\nmilestone: x\nEOF\"<END>gh issue create -F - <<'EOF'\nmilestone: x\nEOF<END>")"
+    run _scripts "eval 'cat b.md | gh issue create -F -'"
+    assert_output "eval 'cat b.md | gh issue create -F -'<END>cat b.md | gh issue create -F -<END>"
+}
+
+@test "hook_scripts follows nesting and a leading timeout / wrapper" {
+    run _scripts "timeout 5 sudo bash -c \"eval 'gh issue create'\""
+    assert_success
+    assert_output "timeout 5 sudo bash -c \"eval 'gh issue create'\"<END>eval 'gh issue create'<END>gh issue create<END>"
+}
+
+@test "hook_scripts prints the script a shell reads from a heredoc" {
+    run _scripts "$(printf "bash <<'X'\ngh issue create -F - <<'EOF'\nmilestone: x\nEOF\nX")"
+    assert_success
+    assert_output "$(printf "bash <<'X'\ngh issue create -F - <<'EOF'\nmilestone: x\nEOF\nX<END>gh issue create -F - <<'EOF'\nmilestone: x\nEOF<END>")"
+}
+
+@test "case patterns do not launch alternatives but arm bodies still launch" {
+    run hook_subcommands "case \"\$x\" in foo|bats) echo ok;; (bats|bar) bats t;; esac; ls"
+    assert_success
+    assert_output "$(printf '%s\n' "case \$x in _" 'echo ok' 'bats t' 'ls')"
+}
+
+@test "arithmetic commands do not launch expressions but following commands still launch" {
+    run hook_subcommands '(( bats = 1 )); (( x = (bats | 2) && 3 )); bats t'
+    assert_success
+    assert_output 'bats t'
+}
+
+@test "double parentheses with separate closing parens still launch subshell bodies" {
+    run hook_subcommands '((bats t) ); ls'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'ls')"
+
+    run hook_subcommands '((bats t) || zzz 5)'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'zzz 5')"
+
+    run hook_subcommands '((echo hi) ; bats t)'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo hi' 'bats t')"
+}
+
+@test "a case word in command arguments does not hide a pipeline launch" {
+    run hook_subcommands 'echo case x in foo | bats t'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo case x in foo' 'bats t')"
+}
+
+@test "HTTP write classification handles data flag verdicts under errexit" {
+    run bash -e -c 'source "$1"; hook_http_is_write curl --data body https://example.test' _ \
+        "${REPO_ROOT}/.agents/hook/lib/subcommand.sh"
+    assert_success
+}

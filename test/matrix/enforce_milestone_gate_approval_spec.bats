@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
-# test/unit/hook/enforce_milestone_gate_approval_spec.bats -
+# test/matrix/enforce_milestone_gate_approval_spec.bats -
 # .agents/hook/enforce_milestone_gate_approval.sh (issue #190)
 #
 # The agent-side half of the milestone-gate approval (#187). The rules it
@@ -17,13 +17,13 @@
 # gh is a PATH stub fed from files in BATS_TEST_TMPDIR: nothing touches
 # the network. The stub logs each call to ${GH_STUB_DIR}/calls.
 
-load "${BATS_TEST_DIRNAME}/../../helper/common"
-load "${BATS_TEST_DIRNAME}/../../helper/hook"
+load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/hook"
 
 setup() {
     # The single tables and classifiers the matrices read (hook_http_data_flags,
     # hook_http_is_write, hook_api_endpoint_urls).
-    # shellcheck source=../../../.agents/hook/lib/subcommand.sh
+    # shellcheck source=../../.agents/hook/lib/subcommand.sh
     source "${HOOK_DIR}/lib/subcommand.sh"
     GH_STUB_DIR="${BATS_TEST_TMPDIR}/gh"
     mkdir -p "${GH_STUB_DIR}/bin"
@@ -73,15 +73,15 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
 
 # --- required spec / registration ---------------------------------------------
 
-@test "this spec is a required unit spec of test.sh" {
-    run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
+@test "this spec is a required matrix spec of test.sh" {
+    run bash -c 'source "$1" && _required_specs matrix' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
-    assert_line "unit/hook/$(basename -- "${BATS_TEST_FILENAME}")"
+    assert_line "matrix/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "the hook sets set -uo pipefail itself, as issue #190 requires" {
+@test "the hook sets set -euo pipefail itself, as issue #190 requires" {
     assert [ -f "${HOOK_DIR}/enforce_milestone_gate_approval.sh" ]
-    run grep -cx 'set -uo pipefail' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
+    run grep -cx 'set -euo pipefail' "${HOOK_DIR}/enforce_milestone_gate_approval.sh"
     assert_output "1"
 }
 
@@ -347,7 +347,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
 
 @test "a marked body quoting the phrase passes (inline and file)" {
     local _f="${BATS_TEST_TMPDIR}/marked.md"
-    printf '[codex] 等維護者留言「%s」\n' "${PHRASE}" >"${_f}"
+    printf '[claude] 等維護者留言「%s」\n' "${PHRASE}" >"${_f}"
     _check "gh pr comment 7 --body '[claude] 請維護者留言「${PHRASE}」'"
     assert_success
     assert_output ""
@@ -787,7 +787,7 @@ _calls() { cat "${GH_STUB_DIR}/calls" 2>/dev/null; }
     for _c in "gh pr merge 7 -R ycpss91255/worktool --merge" \
         "gh -R ycpss91255/worktool pr merge 7 && gh pr view 7" \
         "gh pr comment 7 --body '[claude] 請維護者留言「${PHRASE}」'" \
-        "gh api repos/o/r/issues/7/comments -f 'body=[codex] 等「${PHRASE}」'" \
+        "gh api repos/o/r/issues/7/comments -f 'body=[claude] 等「${PHRASE}」'" \
         "$(printf "bash <<'EOF'\ngh pr comment 7 --body '[claude] ok'\ngh pr merge 7 -R ycpss91255/worktool\nEOF")" \
         "timeout 60 bash -c 'gh issue comment 7 --body \"[claude] ok\"'"; do
         _check "${_c}"
@@ -944,11 +944,11 @@ _report() {
     _report
 }
 
-# --- tag rule (scope revision): every agent comment starts with [claude]/[codex] --
+# --- tag rule (scope revision): the Claude invocation only accepts its own marker --
 
 # The tag dimension: <label>|<body>|<want status>.
 _tags() {
-    printf '%s\n' "claude|[claude] ok|0" "codex|[codex] ok|0" "space-then-tag|  \t[claude] ok|0" \
+    printf '%s\n' "claude|[claude] ok|0" "codex|[codex] ok|2" "space-then-tag|  \t[claude] ok|0" \
         "untagged|looks good|2" "tag-not-at-start|ok [claude]|2" "empty||2"
 }
 
@@ -1007,7 +1007,7 @@ _body_cmd() {
 @test "the tag rule message names the rule and #187" {
     _check "gh pr comment 7 --body 'looks good'"
     assert_failure 2
-    assert_output --partial "must start with [claude] or [codex]"
+    assert_output --partial "must start with [claude]"
     assert_output --partial "#187"
 }
 
@@ -1433,7 +1433,7 @@ _copy_hook_with_extra_flags() {
     run bash -c 'printf "%s" "$1" | "$2"' _ \
         "$(hook_json "gh api -X GET repos/o/r/issues/7/comments --zz-data body=untagged")" "${_hook}"
     assert_failure 2
-    assert_output --partial "must start with [claude] or [codex]"
+    assert_output --partial "must start with [claude]"
     run bash -c 'printf "%s" "$1" | "$2"' _ \
         "$(hook_json "curl --zz-curl x https://api.github.com/repos/o/r/issues/7/comments")" "${_hook}"
     assert_failure 2

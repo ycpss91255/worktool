@@ -23,12 +23,21 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     SETTINGS="${REPO_ROOT}/.claude/settings.json"
+    CODEX_HOOKS="${REPO_ROOT}/.codex/hooks.json"
 }
 
 # Print "<event>|<matcher>|<command>" for every registered hook command.
 _registered() {
     jq -r '.hooks | to_entries[] | .key as $e | .value[]
         | (.matcher // "") as $m | .hooks[] | "\($e)|\($m)|\(.command)"' "${SETTINGS}"
+}
+
+# Print the hook script basename for one matcher in one registration file.
+_registered_names() {
+    local _settings="$1" _matcher="$2"
+    jq -r --arg matcher "${_matcher}" '
+        .hooks.PreToolUse[] | select(.matcher == $matcher) | .hooks[].command
+        | capture("/(?<name>[^/]+[.]sh)(?:[\\\"]*)(?: codex)?$").name' "${_settings}"
 }
 
 # --- layout ------------------------------------------------------------------
@@ -51,9 +60,9 @@ _registered() {
 @test "the agent scripts are executable real files" {
     local _s
     for _s in watch-user-replies.sh wait-pr-ci.sh; do
-        assert [ -f "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ ! -L "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ -x "${REPO_ROOT}/.agents/script/${_s}" ]
+        assert [ -f "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ ! -L "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ -x "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
     done
 }
 
@@ -64,31 +73,87 @@ _registered() {
 
 # --- settings.json -----------------------------------------------------------
 
+@test "settings.json disables Claude Code attribution for commits and PRs" {
+    run jq -c '.attribution' "${SETTINGS}"
+    assert_success
+    assert_output '{"commit":"","pr":""}'
+}
+
+@test "AGENTS.md forbids attribution lines in commits, PR bodies and comments" {
+    run grep -F 'commit 訊息、PR 說明與留言一律不加署名' "${REPO_ROOT}/AGENTS.md"
+    assert_success
+    assert_output --partial 'Co-Authored-By'
+    assert_output --partial 'Claude-Session'
+    assert_output --partial 'Generated with'
+}
+
 @test "settings.json registers exactly the carried hooks per event and matcher" {
     run _registered
     assert_success
     local _p="\${CLAUDE_PROJECT_DIR}/.claude/hook"
     assert_output "$(printf '%s\n' \
         "PreToolUse|Bash|${_p}/test-must-use-docker.sh" \
+        "PreToolUse|Bash|${_p}/enforce_local_test_scope.sh" \
         "PreToolUse|Bash|${_p}/enforce_long_job_timeout.sh" \
         "PreToolUse|Bash|${_p}/check_main_fresh_before_worktree.sh" \
         "PreToolUse|Bash|${_p}/remind_main_sync.sh" \
         "PreToolUse|Bash|${_p}/enforce_gh_body_file.sh" \
+        "PreToolUse|Bash|${_p}/enforce_no_local_paths.sh" \
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
+        "PreToolUse|Bash|${_p}/enforce_main_checkout_readonly.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
+        "PreToolUse|Bash|${_p}/enforce_tdd_commit.sh" \
+        "PreToolUse|Bash|${_p}/enforce_issue_milestone.sh" \
+        "PreToolUse|Bash|${_p}/enforce_no_attribution.sh" \
         "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
+        "PreToolUse|Edit|Write|MultiEdit|NotebookEdit|${_p}/enforce_main_checkout_readonly.sh" \
+        "PreToolUse|Workflow|Agent|${_p}/enforce_cpu_capacity.sh" \
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
-        "UserPromptSubmit||${_p}/remind_no_emoji.sh")"
+        "UserPromptSubmit||${_p}/remind_no_emoji.sh" \
+        "Stop||${_p}/enforce_reply_language.sh")"
+}
+
+@test "codex registers every Claude PreToolUse Bash hook" {
+    run diff -u \
+        <(_registered_names "${SETTINGS}" Bash) \
+        <(_registered_names "${CODEX_HOOKS}" Bash)
+    assert_success
+}
+
+@test "every Codex Bash hook resolves from the repo root and accepts the measured payload" {
+    local _command _payload _repo
+    _payload='{"session_id":"s","turn_id":"t","transcript_path":"/tmp/x.jsonl","cwd":"<dir>","hook_event_name":"PreToolUse","model":"m","permission_mode":"bypassPermissions","tool_name":"Bash","tool_input":{"command":"echo hi"},"tool_use_id":"exec-1"}'
+    _repo="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_repo}/test/unit"
+    cp -R "${REPO_ROOT}/.agents" "${_repo}/.agents"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    git init -q "${_repo}"
+
+    while IFS= read -r _command; do
+        run bash -c 'cd "$1" && printf "%s" "$2" | bash -c "$3"' _ \
+            "${_repo}/test/unit" "${_payload}" "${_command}"
+        assert_success "Codex hook command failed: ${_command}"
+        assert_output ""
+    done < <(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "${CODEX_HOOKS}")
 }
 
 @test "every hook in .agents/hook is registered (no orphan hook)" {
-    local _f _name
+    local _f _name _count
     for _f in "${REPO_ROOT}"/.agents/hook/*.sh; do
         _name="$(basename -- "${_f}")"
-        run grep -c "/.claude/hook/${_name}\"" "${SETTINGS}"
-        assert_output "1"
+        _count=0
+        if grep -Fq "/.claude/hook/${_name}" "${SETTINGS}"; then
+            _count=$((_count + 1))
+        fi
+        local _config
+        for _config in "${CODEX_HOOKS}" "${REPO_ROOT}/.agents/hooks.json" "${REPO_ROOT}/.gemini/settings.json"; do
+            if grep -Fq "/.agents/hook/${_name}" "${_config}"; then
+                _count=$((_count + 1))
+            fi
+        done
+        assert [ "${_count}" -gt 0 ]
     done
 }
 
@@ -135,7 +200,9 @@ _registered() {
         run grep -cF "]($(basename -- "${_f}"))" "${_dir}/MEMORY.md"
         assert_output "1"
     done
-    assert_equal "${_n}" 22
+    # The files themselves are the count; only guard against a glob that
+    # matched nothing, which would make the loop above pass vacuously.
+    assert [ "${_n}" -gt 0 ]
     while IFS= read -r _link; do
         assert [ -f "${_dir}/${_link}" ]
     done < <(grep -oE '\]\([^)]+\.md\)' "${_dir}/MEMORY.md" | sed -E 's/^\]\((.*)\)$/\1/')
@@ -159,7 +226,7 @@ _registered() {
 @test "the wait-pr-ci skill names only scripts this repo carries" {
     run grep -nE 'wait-pr-ci-batch|wait-tag-ci|rebase-pr' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     assert_failure 1
-    run grep -c '.claude/script/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
+    run grep -c '.claude/script/monitor/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     refute_output "0"
 }
 
@@ -202,15 +269,17 @@ _registered() {
 }
 
 @test "issue-tracker docs list only gh commands the hooks accept, each with -R" {
-    local _f _cmd _bad='' _bt=$'\x60'
+    local _f _cmd _h _bad='' _bt=$'\x60'
     for _f in "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md" \
         "${REPO_ROOT}/doc/agent/issue-tracker.md"; do
         while IFS= read -r _cmd; do
             [[ "${_cmd}" =~ ^gh\ (issue|pr)\  ]] || continue
             [[ "${_cmd}" == *"-R ycpss91255/worktool"* ]] || _bad+="no -R: ${_cmd}"$'\n'
-            run bash -c 'jq -n --arg c "$1" "{tool_name:\"Bash\",tool_input:{command:\$c}}" | "$2"' \
-                _ "${_cmd}" "${REPO_ROOT}/.agents/hook/enforce_gh_body_file.sh"
-            [[ -z "${output}" ]] || _bad+="denied: ${_cmd}"$'\n'
+            for _h in enforce_gh_body_file enforce_issue_milestone; do
+                run bash -c 'jq -n --arg c "$1" "{tool_name:\"Bash\",tool_input:{command:\$c}}" | "$2"' \
+                    _ "${_cmd}" "${REPO_ROOT}/.agents/hook/${_h}.sh"
+                [[ "${status}" -eq 0 && -z "${output}" ]] || _bad+="${_h} denied: ${_cmd}"$'\n'
+            done
         done < <(grep -E '^- ' "${_f}" | grep -oE "${_bt}gh [^${_bt}]+${_bt}" | tr -d "${_bt}")
     done
     assert_equal "${_bad}" ""
@@ -220,4 +289,48 @@ _registered() {
     run grep -nE '^- .*(heredoc|--body ")' "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md"
     assert_failure 1
     assert_output ""
+}
+
+@test "agent docs identify the contract as the sole skill layout exception with its review rationale" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E 'contract\.md.*唯一.*例外.*同一個 PR.*悄悄脫鉤' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}
+
+@test "agent docs require invariant ADRs and mechanism ADR backlinks" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E '不變量.*各一份 ADR' "${REPO_ROOT}/${doc}"
+        assert_success
+        run grep -E '機制型 ADR.*依據 ADR-NNNN.*不變量' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}
+
+@test "agent domain navigation links resolve to the contract glossary and invariant ADRs" {
+    local doc base target links
+    for doc in AGENTS.md doc/agent/domain.md; do
+        base="${REPO_ROOT}/$(dirname -- "${doc}")"
+        links=$(grep -oE '\]\([^)]+\)' "${REPO_ROOT}/${doc}" | sed -E 's/^\]\((.*)\)$/\1/')
+        for target in contract.md CONTEXT.md adr/; do
+            run grep -F "${target}" <<< "${links}"
+            assert_success
+        done
+        while IFS= read -r target; do
+            assert [ -e "${base}/${target%%#*}" ]
+        done <<< "${links}"
+    done
+    local adr
+    for adr in "${REPO_ROOT}"/doc/adr/00{04,05,06,07,08,09,10,11,12,13}-*.md; do
+        assert [ -f "${adr}" ]
+    done
+}
+
+@test "local test scope guard is registered for both agents" {
+    run _registered_names "${SETTINGS}" Bash
+    assert_line 'enforce_local_test_scope.sh'
+    run _registered_names "${CODEX_HOOKS}" Bash
+    assert_line 'enforce_local_test_scope.sh'
 }
