@@ -136,6 +136,11 @@ _required_specs() {
                 unit/ghostty_fixture_spec.bats \
                 unit/setup_spec.bats \
                 unit/status_spec.bats \
+                unit/link_spec.bats \
+                unit/config_spec.bats \
+                unit/config_mutation_spec.bats \
+                unit/config_owner_spec.bats \
+                unit/config_validate_spec.bats \
                 unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \

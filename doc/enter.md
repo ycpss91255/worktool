@@ -17,7 +17,7 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 | 指令 | 做什麼 |
 |------|--------|
 | `just box setup [選項]` | 決定「要不要自動進盒、用哪個終端、tmux 放哪、進哪個盒」,寫進**單一設定檔**,並寫入(或移除)終端 profile 的**受管區塊** |
-| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、以及受管區塊在不在 |
+| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、受管區塊在不在,以及每一項 user config 連結的狀態(#199) |
 | `just box enter [選項]` | 進盒;盒子**第一次啟動**時顯示進度、log 與逾時(見下方「首次啟動的進度」)。受管 command 跑的就是它 |
 
 只動 HOME / `XDG_CONFIG_HOME` 底下的檔案;不裝任何東西、不動 host 的 shell rc、
@@ -55,7 +55,7 @@ exit 2。
 
 | 檔案 | 內容 |
 |------|------|
-| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」),setup 重寫時原樣保留 |
+| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`tmux`、`box`);另有 `just box assemble` 寫的盒子 HOME `home` / `home.source`(issue #198,見 [`manifest.md`](manifest.md)「盒子的 HOME」)與使用者自己加的 `link=`(issue #199)。檔案有多個寫入者,讀寫一律經過 `lib/config.sh`(只有它知道檔案位置,其他模組拿不到路徑,只能呼叫 `config_*`;寫入以鎖序列化):每個寫入者只**就地**改自己的 key(沒有就附加在最後),其他行(註解、空行、別人的 key、不認得的 key、重複行)逐字保留,原子寫入並保留檔案權限 |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`--tmux inside` 時 `command = '<enter.sh>' --distrobox '<distrobox>' --box <盒> -- tmux new -A -s main`;`--tmux host` 時 `command = tmux new -A -s main` |
 | `~/.tmux.conf` | 受管區塊(只有 `--terminal ghostty` + `--tmux host`):`set -g default-command '"<enter.sh>" --distrobox "<distrobox>" --box <盒>'` |
 
@@ -304,6 +304,10 @@ box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
 tmux.conf: /home/me/.tmux.conf (managed block: absent)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (linked)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (linked)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (linked)
 home: /home/me/dev-box (default)
 ```
 
@@ -325,9 +329,28 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 第二行是**舊版**留下來的形狀:現在的 setup 不會再寫裸名字(解析不到就拒絕),
 但使用者機器上可能還有先前寫入的區塊,所以報告仍然認得並指出它。
 
+`home:` 前面是 user config 連結(issue #199,由 `just box assemble` 建立,見
+[`manifest.md`](manifest.md)「user config 連結」),每一項一行,四種狀態:
+
+```text
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (blocked by existing file)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (missing source)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (not linked yet; run: just box assemble)
+```
+
+盒子 HOME 就是 `home:` 那行的值,也就是 `just box assemble` 記下的那一個(#198),
+連結報告與 `home:` 讀的是設定檔裡同一個 `home=`。還沒記錄時連結只有一行;記錄的
+盒子 HOME 就是 host HOME(`--home ~`)時兩邊共用 HOME、不需要連結,也只有一行:
+
+```text
+link: box HOME not recorded - user config not linked yet (run: just box assemble)
+link: the box HOME is the host HOME - user config already in place
+```
+
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
-後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態、`distrobox:` 與 `home:` 那兩行,
+後面照樣列出預設值(全部 `(default)`)、兩個檔案的區塊狀態、`distrobox:`、`link:` 與 `home:` 那三行,
 報告永遠不會是空的。
 
 ## 首次啟動的進度(just box enter,issue #180)
@@ -441,10 +464,14 @@ tmux 跑起來;真 ghostty 的部分仍然只在 integration 的 ghostty 組):
   有設定檔的逐行輸出與順序、缺 key 回預設、`XDG_CONFIG_HOME`、只印 stdout、
   `--help` / 未知選項,以及 `distrobox:` 那行的四種狀態(runnable / NOT
   RUNNABLE / 裸名字 / PATH 上找不到)與三種記錄形狀的解碼(單引號、tmux 雙層
-  引用、以及舊版沒有 quote 的絕對路徑);
+  引用、以及舊版沒有 quote 的絕對路徑),以及 user config 連結的四種狀態(#199);
+  `test/unit/link_spec.bats`(#199)—— 預設清單、`link=` 擴充與無效項目、
+  建立絕對 symlink、host 檔內容不變、同名檔 / 目錄 / 外來 symlink 不覆蓋且
+  warn、盒子 HOME 本身或上層目錄是 symlink 或檔案時不跟隨、來源不存在不建連結、每項都有 log、
+  重跑冪等(盒子 HOME 由 #198 解析並記錄,見 `lib/home.sh`);
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發
   argv、真腳本在暫時 HOME 下的 `--dry-run` / `status`、壞選項由腳本而非 justfile
-  拒絕。三個都是 `test.sh` 的**必要 spec**。
+  拒絕。四個都是 `test.sh` 的**必要 spec**。
 - 整合:`test/integration/setup_spec.bats` —— `setup` 之後 `status` 的來回:host
   變體兩個區塊都 present、切回 inside 後 tmux.conf 區塊消失、`--auto-enter no` 後兩個
   都 absent、`--dry-run` 後什麼都沒存、setup 的 log 與 status 的報告逐行一致;
