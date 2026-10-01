@@ -40,14 +40,14 @@ for TREE in script .agents/script; do
     done < <(find "${ROOT}/${TREE}" -maxdepth 1 -type f -executable -print0)
 done
 # The artifact pattern table lives here; match every path component.
-ARTIFACT_PATTERNS=('*.bak' '*.orig' '*.rej' '*.log' '_backup' 'review_log')
+ARTIFACT_PATTERNS=('[.]bak$' '[.]orig$' '[.]rej$' '[.]log$' '^_backup$' '^review_log$')
 check_artifact() {
     local path="$1" component pattern
     local components=()
     IFS=/ read -r -a components <<< "${path}"
     for component in "${components[@]}"; do
         for pattern in "${ARTIFACT_PATTERNS[@]}"; do
-            if [[ "${component}" == ${pattern} ]]; then
+            if [[ "${component}" =~ ${pattern} ]]; then
                 log_error "process artifact: ${path}"
                 FAILED=1
                 return 0
