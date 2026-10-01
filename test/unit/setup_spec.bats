@@ -1058,6 +1058,167 @@ _assert_control_char_refused() {
     assert_failure 2
 }
 
+@test "#173: selection prefers an existing config.ghostty and otherwise uses legacy without creating the new name" {
+    local _new="${GHOSTTY}.ghostty" _mode _target
+    for _mode in neither legacy new both; do
+        rm -rf "${HOME}/.config"
+        mkdir -p "$(dirname -- "${GHOSTTY}")"
+        case "${_mode}" in legacy|both) printf 'theme = dark\n' >"${GHOSTTY}" ;; esac
+        case "${_mode}" in new|both) printf 'font-size = 14\n' >"${_new}" ;; esac
+        _target="${GHOSTTY}"
+        case "${_mode}" in new|both) _target="${_new}" ;; esac
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        assert_line --partial "[INFO] ghostty config: ${_target} (config.ghostty"
+        run cat "${_target}"
+        assert_line "${CMD_ENTER}"
+        case "${_mode}" in
+            neither|legacy) assert [ ! -e "${_new}" ] ;;
+            new) assert [ ! -e "${GHOSTTY}" ] ;;
+            both) assert_equal "$(cat "${GHOSTTY}")" 'theme = dark' ;;
+        esac
+    done
+}
+
+@test "#173: invalid markers in either config or a block in each refuse every operation without writes and name both files" {
+    local _new="${GHOSTTY}.ghostty" _bad _operation
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _bad in legacy new both; do
+        for _operation in enable disable dry-run; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            case "${_bad}" in
+                legacy) printf '%s\n' "${BEGIN}" >>"${GHOSTTY}" ;;
+                new) printf '%s\n' "${END}" >>"${_new}" ;;
+                both)
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${GHOSTTY}"
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${_new}"
+                    ;;
+            esac
+            cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            case "${_operation}" in
+                enable) run "${SETUP}" --terminal ghostty ;;
+                disable) run "${SETUP}" --auto-enter no ;;
+                dry-run) run "${SETUP}" --terminal ghostty --dry-run ;;
+            esac
+            assert_failure 1
+            assert_output --partial "${GHOSTTY}"
+            assert_output --partial "${_new}"
+            assert_output --partial 'nothing was written'
+            cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cmp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            assert [ ! -e "${CONFIG}" ]
+            assert [ ! -e "${HOME}/.config/distrobox/distrobox.conf" ]
+        done
+    done
+}
+
+@test "#173: enable moves a legacy block to the existing new config, preserves user content and modes, and reruns unchanged" {
+    local _new="${GHOSTTY}.ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'theme = dark\n%s\ncommand = old\n%s\nfont-size = 12\n' "${BEGIN}" "${END}" >"${GHOSTTY}"
+    printf 'font-family = monospace\n' >"${_new}"
+    chmod 0640 "${GHOSTTY}"
+    chmod 0600 "${_new}"
+    cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    run "${SETUP}" --terminal ghostty --dry-run
+    assert_success
+    assert_line --partial "dry-run: would move managed block from ${GHOSTTY} to ${_new}"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    assert_equal "$(cat "${_new}")" 'font-family = monospace'
+    assert [ ! -e "${CONFIG}" ]
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] moved: ${GHOSTTY} -> ${_new} (managed block)"
+    printf 'theme = dark\nfont-size = 12\n' >"${BATS_TEST_TMPDIR}/expected"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" 640
+    assert_equal "$(stat -c '%a' "${_new}")" 600
+    cp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] unchanged: ${_new} (managed block already up to date)"
+    refute_line --partial '[INFO] moved:'
+    cmp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    run cat "${_new}"
+    assert_line --index 0 'font-family = monospace'
+    assert_line "${CMD_ENTER}"
+    assert_equal "$(_block_count "${_new}")" 1
+}
+
+@test "#173: disabling or selecting no terminal strips the block from either file and keeps both user files on rerun" {
+    local _new="${GHOSTTY}.ghostty" _file _option
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _file in "${GHOSTTY}" "${_new}"; do
+        for _option in disable none; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            printf '%s\ncommand = old\n%s\n' "${BEGIN}" "${END}" >>"${_file}"
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            assert_line --partial "[INFO] removed: ${_file}"
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            refute_line --partial '[INFO] removed:'
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+        done
+    done
+}
+
+@test "#173: config.ghostty warns only for host Ghostty versions below 1.3.0 and skips an absent executable" {
+    local _version _exe="${DBX_DIR}/ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'font-size = 14\n' >"${GHOSTTY}.ghostty"
+    for _version in 1.0.0 1.2.3 1.3.0 1.3.1 1.10.0 2.0.0; do
+        printf "#!/bin/sh\n[ \"\$1\" = +version ] || exit 1\nprintf \"Ghostty %s\\n\"\n" "${_version}" >"${_exe}"
+        chmod +x "${_exe}"
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        case "${_version}" in
+            1.0.0|1.2.3)
+                assert_line "[WARN] ghostty ${_version} does not read ${GHOSTTY}.ghostty (requires 1.3.0 or newer)"
+                ;;
+            *) refute_line --partial '[WARN] ghostty' ;;
+        esac
+    done
+    rm "${_exe}"
+    PATH=/usr/bin:/bin run "${SETUP}" --terminal ghostty --distrobox "${DISTROBOX}"
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+    rm "${GHOSTTY}.ghostty"
+    printf '#!/bin/sh\nprintf "Ghostty 1.2.3\\n"\n' >"${_exe}"
+    chmod +x "${_exe}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+}
+
+@test "#173: help explains config selection, validation, migration and the old host version warning" {
+    run "${SETUP}" --help
+    assert_success
+    assert_output --partial "\$XDG_CONFIG_HOME/ghostty/config.ghostty"
+    assert_output --partial 'Never creates config.ghostty'
+    assert_output --partial 'at most one managed block across both files'
+    assert_output --partial 'moves the single block'
+    assert_output --partial 'below 1.3.0'
+    run "${SETUP}" --help --unknown
+    assert_failure 2
+    assert_output "setup.sh: unknown option '--unknown' (see --help)"
+}
+
 # --- #178: the remaining uncovered setup.sh paths ----------------------------
 #
 # Five paths the M3 acceptance audit found unguarded or only partly guarded:

@@ -581,7 +581,7 @@ EOF
 # defaults, which is what makes ghostty exit on its own.
 _write_ghostty_config() {
     local _file
-    _file="$(enter_ghostty_config)"
+    _file="$(enter_ghostty_target)"
     mkdir -p "$(dirname -- "${_file}")"
     printf 'gtk-single-instance = false\n' >"${_file}"
     enter_block_compose "${_file}" "command = $1" >"${_file}.new"
@@ -780,7 +780,7 @@ _desktop_path() {
     # round 1).
     run "${_setup}" --terminal ghostty --box dev
     assert_success
-    _ghostty_config="$(enter_ghostty_config)"
+    _ghostty_config="$(enter_ghostty_target)"
     _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
@@ -862,7 +862,7 @@ _host_tmux_pid() {
     # The command exactly as the DELIVERED setup.sh writes it.
     run "${_setup}" --terminal ghostty --box dev
     assert_success
-    _file="$(enter_ghostty_config)"
+    _file="$(enter_ghostty_target)"
     _body="$(enter_block_body "${_file}")"
     [[ "${_body}" == "command = "*" enter dev" ]] \
         || fail "setup.sh wrote an unexpected managed body: '${_body}'"
@@ -1160,7 +1160,7 @@ _run_cell() {
     case "${_e}" in
         e1)
             local _file _body _res="${HOME}/matrix-${_tag}.txt"
-            _file="$(enter_ghostty_config)"
+            _file="$(enter_ghostty_target)"
             _body="$(enter_block_body "${_file}")"
             [[ "${_body}" == "command = "*" enter dev" ]] \
                 || fail "setup.sh wrote an unexpected managed body: '${_body}'"

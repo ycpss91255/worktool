@@ -448,3 +448,29 @@ _write_block() {
     assert_success
     assert_output 'set -euo pipefail'
 }
+
+@test "#173: status reports both existing configs and the distrobox recorded in the actual block location without writes" {
+    local _new="${GHOSTTY}.ghostty" _file _broken="${BATS_TEST_TMPDIR}/gone/distrobox"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _file in "${GHOSTTY}" "${_new}"; do
+        printf 'theme = dark\n' >"${GHOSTTY}"
+        printf 'font-size = 14\n' >"${_new}"
+        printf '%s\ncommand = '\''%s'\'' enter dev\n%s\n' "${BEGIN}" "${_broken}" "${END}" >>"${_file}"
+        cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+        cp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+        run "${STATUS}"
+        assert_success
+        assert_line "ghostty: ${_file} (managed block: present)"
+        assert_line --partial "ghostty: ${GHOSTTY} (managed block:"
+        assert_line --partial "ghostty: ${_new} (managed block:"
+        assert_line "distrobox: ${_broken} (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+        cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+        cmp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+        assert [ ! -e "${CONFIG}" ]
+    done
+    rm "${GHOSTTY}"
+    run "${STATUS}"
+    assert_success
+    assert_line "ghostty: ${_new} (managed block: present)"
+    refute_line --partial "ghostty: ${GHOSTTY} ("
+}
