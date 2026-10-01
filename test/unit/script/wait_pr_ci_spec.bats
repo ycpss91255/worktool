@@ -53,12 +53,12 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
         run --separate-stderr "${SCRIPT}" --repo owner/repo --prs 21,22 \
             --max-iterations 2 --interval 0
         assert_failure 1
-        [[ "${stderr}" == *"${_error}"* ]]
-        [[ "${stderr}" == *"failed to query owner/repo PR21"* ]]
+        [[ "${stderr:-}" == *"${_error}"* ]]
+        [[ "${stderr:-}" == *"failed to query owner/repo PR21"* ]]
         refute_output --partial "no-checks"
         refute_output --partial "PR22"
         refute_output --partial "ALL_DONE"
-        [[ "${stderr}" != *"max-iterations"* ]]
+        [[ "${stderr:-}" != *"max-iterations"* ]]
     done
 }
 
