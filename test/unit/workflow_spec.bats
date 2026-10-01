@@ -685,7 +685,7 @@ _rv_ok_replies() {
  "agy:": {"status": "ok", "attempts": 1, "detail": "agy.md 10 bytes"},
  "claude-verify:": {"claims": [{"claim": "c1", "verdict": "supported", "basis": "b1"}]},
  "codex-verify:": {"status": "ok", "detail": "codex.md 9 bytes"},
- "synthesize:": {"verified": ["v1"], "refuted": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
+ "synthesize:": {"verified": ["v1"], "refuted": [], "disagreements": [], "needsExperiment": [], "recommendation": "r1", "parameters": []},
  "record:": {"url": "https://github.com/o/r/issues/7#issuecomment-1"},
  "repo-check:": {"extra": []}}
 JSON
@@ -733,6 +733,27 @@ _rv_with() {
     assert_output --partial 'Sample a subset of cited primary sources'
     assert_output --partial 'at least one'
     refute_output --partial 'For EVERY numbered claim'
+}
+
+@test "research-verify #311: unresolved disagreements record both bases without choosing a side" {
+    local dir="${BATS_TEST_TMPDIR}/repo" replies json
+    _rv_stubs
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'synthesize:' '{"verified":[],"refuted":[],"disagreements":[{"claim":"c1 無法由來源判定","codexBasis":"codex: 官方文件未說明 https://example.org/one","claudeBasis":"claude: 原始碼不足以判定 https://example.org/two"}],"needsExperiment":[],"recommendation":"保留分歧，等待可判定的一手來源","parameters":[]}')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    json="${output}"
+    run jq -r '.result.status' <<<"${json}"
+    assert_output recorded
+    run jq -r '.calls[] | select(.label | startswith("synthesize:")) | .prompt' <<<"${json}"
+    assert_output --partial 'disagreements'
+    assert_output --partial 'Never choose a side'
+    refute_output --partial 'a claim any verifier refutes goes to'
+    run cat "${dir}/../worktree/.scratch/research-7/body-1.md"
+    assert_output --partial '### 分歧（不選邊）'
+    assert_output --partial 'c1 無法由來源判定'
+    assert_output --partial 'codex: 官方文件未說明 https://example.org/one'
+    assert_output --partial 'claude: 原始碼不足以判定 https://example.org/two'
 }
 
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
@@ -943,7 +964,7 @@ _rv_src_check() {
 @test "research-verify synthesizes a structured conclusion and records comments via --body-file" {
     run grep -c "schema: SYNTH_SCHEMA" "${RESEARCH}"
     assert_output "1"
-    for k in verified refuted needsExperiment recommendation parameters; do
+    for k in verified refuted disagreements needsExperiment recommendation parameters; do
         run grep -c "${k}: {" "${RESEARCH}"
         assert_output "1"
     done
@@ -1504,7 +1525,7 @@ _rv_assert_fails_closed() {
     _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-1'"
     git init -q "${dir}"
     replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
-    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
+    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],disagreements:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
 
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
     assert_success

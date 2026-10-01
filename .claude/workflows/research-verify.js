@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
     { title: 'Verify', detail: 'codex exec checks every cited source (verbatim file), then claude samples sources (structured)' },
-    { title: 'Synthesize', detail: 'agent: verified facts / refuted claims / needs-experiment / recommendation / parameters (structured)' },
+    { title: 'Synthesize', detail: 'claude agent: verified facts / refuted claims / unresolved disagreements with both bases, no side chosen / needs-experiment / recommendation / parameters (structured)' },
     { title: 'Record', detail: 'agent: bounded issue comments via --body-file: conclusion first, then claim detail and verbatim model text; then repo-check: git status equals the pre-run capture' },
   ],
 }
@@ -155,10 +155,12 @@ const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enu
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
 const LIST = { type: 'array', items: { type: 'string' } }
+const DISAGREEMENT_SCHEMA = { type: 'object', properties: { claim: { type: 'string' }, codexBasis: { type: 'string' }, claudeBasis: { type: 'string' } }, required: ['claim', 'codexBasis', 'claudeBasis'], additionalProperties: false }
 const SYNTH_SCHEMA = { type: 'object', properties: {
   verified: { ...LIST }, refuted: { ...LIST }, needsExperiment: { ...LIST },
+  disagreements: { type: 'array', items: DISAGREEMENT_SCHEMA },
   recommendation: { type: 'string' }, parameters: { ...LIST },
-}, required: ['verified', 'refuted', 'needsExperiment', 'recommendation', 'parameters'] }
+}, required: ['verified', 'refuted', 'disagreements', 'needsExperiment', 'recommendation', 'parameters'] }
 const RECORD_SCHEMA = { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
 const REPO_CHECK_SCHEMA = { type: 'object', properties: { extra: { ...LIST } }, required: ['extra'] }
 
@@ -199,7 +201,7 @@ ${fence(CODEX_PROMPT)}
 const SYNTH = (claims) => `Synthesize the research on issue #${A.issue}. Question: ${QUESTION}
 Inputs: agy's answer in ${SCRATCH}/agy.md; codex's claim-by-claim verification in ${SCRATCH}/codex.md; the claude verifier's verdicts (JSON):
 ${JSON.stringify(claims)}
-Rules: a claim is "verified" only when no verifier refutes it and at least one cites primary evidence; a claim any verifier refutes goes to "refuted" (say who refuted it and why); disagreement or "unverifiable" from both -> "needsExperiment" (say what to run). Each item is one zh-TW line with its evidence. recommendation = the approach you recommend in zh-TW; parameters = the values the maintainer must decide (one per line, with the options). Do not invent evidence; do not write a "[codex]" line.${SCRATCH_ONLY}`
+Rules: use agy's brief and cited sources, codex's exhaustive source checks and claude's source samples; do not conduct broad web research. A claim is "verified" only when primary evidence supports it and no unresolved contradiction remains; "refuted" requires decisive primary evidence against it. Any disagreement that the sources cannot resolve, or a claim the sources cannot determine (including both "unverifiable"), belongs ONLY in "disagreements": {claim, codexBasis, claudeBasis}, recording both sides' evidence or explicit lack of evidence. Never choose a side, count votes or favor a model; do not place these claims in verified or refuted, and do not assume either side in recommendation. needsExperiment = concrete checks that could resolve uncertainty, not a substitute for recording disagreements. Each list item is one zh-TW line with evidence. recommendation = an approach based only on established facts, preserving unresolved disagreements; parameters = values the maintainer must decide (one per line, with options). Do not invent evidence; do not write a "[codex]" or "[agy]" line; their words are copied from their files only.${SCRATCH_ONLY}`
 
 const bullets = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`).join('\n') : '- (無)')
 const VERDICT_ZH = { supported: '成立', refuted: '不成立', unverifiable: '無法確認' }
@@ -213,6 +215,9 @@ ${bullets(s.verified)}
 
 ### 被推翻的主張
 ${bullets(s.refuted)}
+
+### 分歧（不選邊）
+${bullets(s.disagreements.map(d => `${d.claim}；codex 依據：${d.codexBasis}；claude 依據：${d.claudeBasis}`))}
 
 ### 仍需實測
 ${bullets(s.needsExperiment)}
@@ -247,7 +252,8 @@ const REPO_CHECK = `Check that the research run on issue #${A.issue} left the ch
 const agyOk = (r) => !!r && r.status === 'ok' && [1, 2].includes(r.attempts)
 const claimOk = (c) => !!c && typeof c.claim === 'string' && ['supported', 'refuted', 'unverifiable'].includes(c.verdict) && typeof c.basis === 'string'
 const isList = (x) => Array.isArray(x) && x.every(i => typeof i === 'string')
-const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
+const disagreementOk = (d) => !!d && ['claim', 'codexBasis', 'claudeBasis'].every(k => isText(d[k])) && Object.keys(d).every(k => ['claim', 'codexBasis', 'claudeBasis'].includes(k))
+const synthOk = (s) => !!s && ['verified', 'refuted', 'needsExperiment', 'parameters'].every(k => isList(s[k])) && Array.isArray(s.disagreements) && s.disagreements.every(disagreementOk) && typeof s.recommendation === 'string' && s.recommendation.trim() !== ''
 // The Record step succeeded only if it returned a comment URL on THIS issue.
 const COMMENT_URL = new RegExp(`^https://github\\.com/${REPO.replace(/\./g, '\\.')}/issues/${A.issue}#issuecomment-[0-9]+$`, 'i')
 const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
