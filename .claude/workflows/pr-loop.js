@@ -181,7 +181,7 @@ pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid
 jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'`
   const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
 Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
-    label: `stage-check:${stage}:#${pr}`, phase: stage,
+    label: `stage-check:${stage}:#${pr}`,
     schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
     agentType: 'general-purpose',
   })
@@ -217,6 +217,8 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
   phase('Locate')
   const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
+  const checked = await checkStage(loc.pr, 'Implement')
+  if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
   const ci = await agent(CI(loc.pr), { label: `ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
@@ -230,6 +232,9 @@ const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', 
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
+const implemented = await checkStage(pr, 'Implement')
+if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
+sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')

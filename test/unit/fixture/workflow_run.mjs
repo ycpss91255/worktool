@@ -87,7 +87,7 @@ const withStdout = (value, stdout) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   calls.push({ label, schema: opts.schema || null, prompt })
-  if (mode === 'exec-stage-checks' && label.startsWith('fix:')) {
+  if (mode === 'exec-stage-checks' && label.startsWith(process.env.PL_STAGE === 'Implement' ? 'implement:' : 'fix:')) {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
     if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed') {

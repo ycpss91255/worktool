@@ -237,11 +237,19 @@ case " \$* " in
     *" issue view "*" --json body "*)
         [ -e "${BATS_TEST_TMPDIR}/gh.fail" ] && exit 1
         cat "${BATS_TEST_TMPDIR}/body.md" ;;
+    *" pr view "*) echo abc ;;
 esac
 exit 0
 SH
-    chmod +x "${stub}/gh"
-    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
+    cat > "${stub}/git" <<'SH'
+#!/bin/sh
+case "$1" in
+    rev-parse) echo abc ;;
+    ls-remote) printf 'abc\trefs/heads/b\n' ;;
+esac
+SH
+    chmod +x "${stub}/gh" "${stub}/git"
+    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${BATS_TEST_TMPDIR}" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
@@ -253,7 +261,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
-    local replies='{"implement:": {"status":"ready"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    local replies='{"implement:": {"status":"ready"}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
@@ -264,7 +272,7 @@ _pl_run() {
 
 _pl_blocked_run() {
     local implementer="$1"
-    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
@@ -1186,7 +1194,7 @@ _codex_rel_answer() {
 @test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
-    local replies='{"locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
+    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
         "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
@@ -1592,7 +1600,7 @@ _rv_assert_fails_closed() {
     run _pl_run '{"mode":"light","codex":"off"}'
     assert_success
     run jq -cr '[.error, [.calls[].label], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
-    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","ci:#7"],false]'
+    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
 }
 
 @test "milestone-fanout (node): forwards light mode to each child (#310)" {
@@ -1637,9 +1645,9 @@ _pl_stage_run() {
 }
 
 @test "pr-loop (node): Fix rejects uncommitted changes before CI or another review (#331)" {
-    _pl_stage_setup
     local impl
     for impl in codex claude; do
+        _pl_stage_setup
         run _pl_stage_run "${impl}"
         assert_success
         local json="${output}"
@@ -1648,13 +1656,14 @@ _pl_stage_run() {
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial 'git status: ?? pending.txt'
         assert_output --partial "local HEAD: ${PL_BEFORE}"
+        rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
     done
 }
 
 @test "pr-loop (node): Fix rejects a committed but unpushed HEAD (#331)" {
-    _pl_stage_setup
     local impl
     for impl in codex claude; do
+        _pl_stage_setup
         run _pl_stage_run "${impl}" unpushed
         assert_success
         local json="${output}"
@@ -1665,13 +1674,14 @@ _pl_stage_run() {
         assert_output --partial "remote HEAD: ${PL_BEFORE}"
         assert_output --partial "PR head: ${PL_BEFORE}"
         refute_output --partial "local HEAD: ${PL_BEFORE}"
+        rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
     done
 }
 
 @test "pr-loop (node): Fix rejects an unchanged PR head (#331)" {
-    _pl_stage_setup
     local impl
     for impl in codex claude; do
+        _pl_stage_setup
         run _pl_stage_run "${impl}" unchanged
         assert_success
         local json="${output}"
@@ -1679,6 +1689,29 @@ _pl_stage_run() {
         assert_output '["blocked",1,1]'
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial "PR head: ${PL_BEFORE}; before: ${PL_BEFORE}"
+        rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
+    done
+}
+
+@test "pr-loop (node): Implement checks cleanliness and pushed PR before CI (#331)" {
+    local impl
+    for impl in codex claude light; do
+        _pl_stage_setup
+        local root="${BATS_TEST_TMPDIR}" replies json
+        replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:":{status:"ready",reason:""},"locate:":{pr:7,sha:$sha},
+            "review:":{verdict:"mergeable",blocking:[],nonBlocking:[],answer:"ok"},
+            "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"}}')"
+        PL_STAGE=Implement PL_ACTION=dirty PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+            "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
+            "${replies}" exec-stage-checks
+        assert_success
+        json="${output}"
+        run jq -cr '[.result.ciState, ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        assert_output '["none",0]'
+        run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
+        assert_output --partial 'Implement check failed:'
+        assert_output --partial 'git status: ?? pending.txt'
+        rm -rf "${root}/worktree/n" "${root}/remote"
     done
 }
 
