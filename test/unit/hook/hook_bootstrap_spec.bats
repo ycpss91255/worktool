@@ -184,3 +184,13 @@ EOF
     assert_success
     assert_output ""
 }
+
+@test "advisory context exits zero when jq cannot emit JSON" {
+    _write_hook <<'EOF'
+hook_bootstrap ctx
+jq() { return 7; }
+hook_context "remember to sync"
+EOF
+    _run "anything"
+    assert_success
+}

@@ -117,8 +117,10 @@ hook_block() {
 hook_context() {
     local _msg="${1:?hook_context needs <message>}"
     local _event="${2:-PreToolUse}"
-    jq -n --arg m "${_msg}" --arg e "${_event}" '{
+    if ! jq -n --arg m "${_msg}" --arg e "${_event}" '{
         hookSpecificOutput: { hookEventName: $e, additionalContext: $m }
-    }'
+    }'; then
+        printf '[hook:%s] cannot emit advisory context\n' "${HOOK_NAME}" >&2
+    fi
     exit 0
 }
