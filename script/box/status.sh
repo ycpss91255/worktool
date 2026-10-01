@@ -125,11 +125,22 @@ _report() {
     while IFS= read -r _key; do
         _report_key "${_key}"
     done < <(enter_keys)
-    _report_block ghostty "$(enter_ghostty_target)"
+    _report_ghostty
     _report_block distrobox.conf "$(enter_distrobox_conf)"
     _report_distrobox
     _report_links
     _report_home
+}
+
+# Report the selected file and any existing companion, so a block that
+# has not yet migrated and malformed markers remain visible.
+_report_ghostty() {
+    local _target="$(enter_ghostty_target)" _other="$(enter_config_dir)/ghostty/config"
+    [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
+    _report_block ghostty "${_target}"
+    if [[ -e "${_other}" ]]; then
+        _report_block ghostty "${_other}"
+    fi
 }
 
 # `link: <box home>/<path> -> $HOME/<path> (<state>)` per user-config entry
@@ -182,8 +193,12 @@ _report_home() {
 # it reports what the next `just box setup` would resolve instead, so the
 # line is never absent.
 _report_distrobox() {
-    local _recorded
-    _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_target)")")"
+    local _recorded="" _file _target
+    _target="$(enter_ghostty_target)"
+    for _file in "${_target}" "$(enter_config_dir)/ghostty/config" "$(enter_config_dir)/ghostty/config.ghostty"; do
+        _recorded="$(enter_body_distrobox "$(enter_block_body "${_file}")")"
+        [[ -z "${_recorded}" ]] || break
+    done
     if [[ -n "${_recorded}" ]]; then
         _report_recorded_distrobox "${_recorded}"
         return 0
