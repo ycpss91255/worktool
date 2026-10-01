@@ -360,3 +360,9 @@ EOF
     assert_failure 1
     refute_output --partial "UNREACHABLE"
 }
+
+@test "reply watcher serves help after capturing its non-zero parse result" {
+    run "${SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage: watch-user-replies.sh"
+}
