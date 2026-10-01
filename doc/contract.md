@@ -72,7 +72,7 @@
 2. 一個來源：盒子定義只有一份、tool config 只有一份（[ADR 0005](adr/0005-invariant-single-source.md)，#203）
 3. host 與盒子互不干擾（[ADR 0006](adr/0006-invariant-host-box-separation.md)，#204）
 4. 永不靜默失敗（[ADR 0007](adr/0007-invariant-no-silent-failure.md)，#205）
-5. 使用者介面極少：just 是唯一入口，recipe 語意固定（ADR 待寫：#206）
+5. 使用者介面極少：just 是唯一入口，recipe 語意固定（[ADR 0008](adr/0008-invariant-minimal-interface.md)，#206）
 6. 冪等：同一個指令重跑，結果相同（[ADR 0009](adr/0009-invariant-idempotent.md)：#207）
 7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（ADR 待寫：#208）
 8. host 依賴最小：除驅動與 GUI app 外，只需 docker 與 just（ADR 待寫：#209）
