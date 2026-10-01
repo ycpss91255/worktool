@@ -19,7 +19,7 @@ export const meta = {
 //     repoDir: "/path/to/worktool",     // required: the local checkout the worktrees hang off
 //     issue: 150,                      // required: the ONE sub-issue this PR closes
 //     branch: "m3/150-bench",          // required: branch off origin/main
-//     name: "bench",                   // required: worktree name under <repoDir>/.worktree/
+//     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
 //     gates: "just test lint, ...",    // optional: default = the six tiers
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
@@ -44,11 +44,12 @@ const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
 if (!Number.isInteger(MAX) || MAX < 0) throw new Error(`pr-loop: args.maxRounds must be a non-negative integer, got ${JSON.stringify(A.maxRounds)}`)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
+const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
 const GATES = A.gates || 'just test lint, just test unit, just test integration, just test system, just test acceptance, just test system-real'
 const PARENT = A.parent || ''
-const WT = `${REPO_DIR}/.worktree/${A.name}`
-const SCRATCH = `${REPO_DIR}/.worktree/.scratch/${A.name}`   // .worktree/ is gitignored
+const WT = `${WORKTREE_ROOT}/${A.name}`
+const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
 // POSIX single quoting: how a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // A literal path, escaped for a sed -E s#...#...# pattern.
