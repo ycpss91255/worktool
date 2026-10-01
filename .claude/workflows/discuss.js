@@ -62,7 +62,7 @@ const VERDICT = { type: 'object', properties: {
   basis: { type: 'array', items: { type: 'string' } }, disagreements: { type: 'array', items: { type: 'string' } },
   question: { type: 'string' },
 }, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
-const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|#[1-9][0-9]*\b|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*:[1-9][0-9]*|grep:[^\r\n]+ in [^\r\n]+ -> [0-9]+ 筆/.test(b)
+const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|#[1-9][0-9]*\b|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*:[1-9][0-9]*|grep:[^\r\n]*->\s*\d+\s*筆/.test(b)
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(cited) && Array.isArray(x.notes) && Array.isArray(x.risks)
 const failedReasons = (agent, x) => Array.isArray(x?.reasons)
   ? x.reasons.flatMap((reason, i) => cited(reason) ? [] : [{ agent, reason_index: i + 1, reason }]) : []

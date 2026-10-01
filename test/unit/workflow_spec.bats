@@ -1887,6 +1887,14 @@ _discuss_replies() {
     assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
 }
 
+@test "discuss: accepts the real parenthesized dev box search basis (#342)" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:".basis=["grep:dev 盒 in doc/（不含 *.svg）-> 30 筆"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.comment]' <<<"${output}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
+}
+
 @test "discuss: real dev box notes need no citations and both answer prompts separate them (#340)" {
     local replies json
     replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |
