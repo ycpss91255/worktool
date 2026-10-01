@@ -1876,6 +1876,27 @@ _discuss_replies() {
     assert_output '["agreed",1,1]'
 }
 
+@test "discuss: accepts the dev box answer citing local issues and PR shorthand (#335)" {
+    local replies
+    replies="$(_discuss_replies | jq '."codex:".reasons=["Codex cited #212 and #319 to say this is only a summary of existing usage"] |
+        ."claude:".reasons=["The existing workflow is documented in doc/workflow.md:224"] |
+        ."compare:".basis=["Existing usage follows #212, #319 and PR #311"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.error,.result.status,.result.rounds,.result.comment,
+        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
+}
+
+@test "discuss: uncited reasons fail with the side, one-based position and original text (#335)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".reasons += ["Trust Claude"] |
+        ."codex:".reasons += ["Trust Codex", "No supporting evidence"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,.result.failed_reasons,
+        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+    assert_output '["answer-failed",1,[{"agent":"claude","reason_index":2,"reason":"Trust Claude"},{"agent":"codex","reason_index":2,"reason":"Trust Codex"},{"agent":"codex","reason_index":3,"reason":"No supporting evidence"}],0]'
+}
+
 @test "discuss: disagreement feeds back to both sides and stops at three rounds" {
     local replies
     replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
