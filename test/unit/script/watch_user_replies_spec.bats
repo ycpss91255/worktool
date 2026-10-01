@@ -366,3 +366,16 @@ EOF
     assert_success
     assert_output --partial "Usage: watch-user-replies.sh"
 }
+
+@test "failed seed preserves exit one when temporary cleanup also fails" {
+    _fake_gh fail
+    cat > "${STUB_DIR}/rm" <<'STUB'
+#!/usr/bin/env bash
+exit 9
+STUB
+    chmod +x "${STUB_DIR}/rm"
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    assert_output --partial "seed aborted"
+    assert_output --partial "cleanup failed"
+}

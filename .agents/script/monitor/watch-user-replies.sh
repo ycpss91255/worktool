@@ -216,7 +216,7 @@ _seed() {
             "${_failed}" "${_total}" >&2
         return 1
     fi
-    watch_replies_filter "${W_LOGIN}" "${W_STATE}" "$1" >/dev/null
+    watch_replies_filter "${W_LOGIN}" "${W_STATE}" "$1" >/dev/null || return 1
     printf '[watch] seeded: %s id(s) marked seen, nothing announced\n' \
         "$(grep -c . "${W_STATE}")" >&2
     return 0
@@ -244,7 +244,7 @@ _watch() {
 }
 
 main() {
-    local _parse_rc=0
+    local _parse_rc=0 _seed_rc=0
     _parse_args "$@" || _parse_rc=$?
     if [[ "${_parse_rc}" -eq 3 ]]; then
         _usage
@@ -255,10 +255,11 @@ main() {
     [[ -f "${W_STATE}" ]] || : >"${W_STATE}" || exit 1
 
     WATCH_TMP="$(mktemp)" || exit 1
-    trap 'rm -f "${WATCH_TMP}"' EXIT
+    trap 'if ! rm -f "${WATCH_TMP}"; then printf "[watch] temporary cleanup failed\n" >&2; fi' EXIT
     if [[ "${W_SEED}" -eq 1 ]]; then
-        _seed "${WATCH_TMP}"
-        exit $?
+        # Seed failures are expected verdicts; its probes handle their own errors.
+        _seed "${WATCH_TMP}" || _seed_rc=$?
+        exit "${_seed_rc}"
     fi
     _watch "${WATCH_TMP}"
     exit $?
