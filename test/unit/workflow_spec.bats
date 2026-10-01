@@ -2192,3 +2192,19 @@ _discuss_replies() {
         assert_success
     done
 }
+
+@test "run identifier: fanout logs the issue list before its child workflows (#313)" {
+    local issues json
+    for issues in '[215,264]' '[319]'; do
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+            "$(jq -cn --arg dir "${REPO_ROOT}" --argjson issues "${issues}" \
+                '{repo:"o/r",repoDir:$dir,items:[$issues[] | {issue:.,branch:"b",name:"n",task:"t"}]}')" '{}'
+        assert_success
+        json="${output}"
+        run jq -e --argjson issues "${issues}" '
+            .error == null and .logs[0] == ("fanout " + ($issues | map(tostring) | join("+")))
+            and [.workflowCalls[].args.issue] == $issues
+            and ([.calls[].label | test("^pr-loop #[0-9]+ ")] | all)' <<<"${json}"
+        assert_success
+    done
+}

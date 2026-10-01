@@ -1,6 +1,6 @@
 export const meta = {
   name: 'milestone-fanout',
-  description: 'Fan out independent sub-issues, each through pr-loop, with configurable child workflow concurrency; the CPU gate separately limits active test containers to two; reports each PR as it finishes; never merges',
+  description: 'Run independent issues through pr-loop concurrently and report results without merging.',
   whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,gates?}]}.',
   phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches bounded by concurrency; each result is logged when its child workflow finishes' }],
 }
@@ -38,11 +38,12 @@ for (const it of A.items) {
 }
 const CONCURRENCY = A.concurrency === undefined ? 10 : A.concurrency
 if (!Number.isInteger(CONCURRENCY) || CONCURRENCY <= 0) throw new Error('milestone-fanout: args.concurrency must be a positive integer')
+const RUN_ID = `fanout ${A.items.map(item => item.issue).join('+')}`
 const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
 phase('Fan-out')
-log(`${A.items.length} sub-issue(s): ${A.items.map(i => '#' + i.issue).join(', ')}`)
+log(RUN_ID)
 const runItem = async (item) => {
     let result
     try {
