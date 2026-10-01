@@ -50,6 +50,39 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/example_spec.bats')"
 }
 
+@test "test.sh --changed runs a changed matrix spec itself after lint" {
+    mkdir -p "${TEMP_REPO}/test/matrix"
+    printf '@test "matrix" { true; }\n' \
+        >"${TEMP_REPO}/test/matrix/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/matrix/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-matrix test/matrix/example_spec.bats')"
+}
+
+@test "test.sh --changed runs a changed matrix spec during fallback" {
+    mkdir -p "${TEMP_REPO}/test/helper" "${TEMP_REPO}/test/matrix"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
+    printf '@test "matrix" { true; }\n' \
+        >"${TEMP_REPO}/test/matrix/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/helper/common.bash"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/matrix/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint --ci-unit \
+        '--ci-matrix test/matrix/example_spec.bats')"
+}
+
 @test "test.sh --changed skips a deleted spec" {
     printf '@test "deleted" { true; }\n' >"${TEMP_REPO}/test/unit/deleted_spec.bats"
     _commit_baseline
@@ -62,23 +95,106 @@ _dispatched() {
     assert_equal "$(_dispatched)" --ci-lint
 }
 
-@test "test.sh --changed routes dedicated specs to their runners" {
-    mkdir -p "${TEMP_REPO}/test/integration" "${TEMP_REPO}/test/system"
-    printf '@test "ghostty" { true; }\n' \
-        >"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
+@test "test.sh --changed leaves a changed integration spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/integration"
+    printf '@test "integration" { true; }\n' \
+        >"${TEMP_REPO}/test/integration/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/integration/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 integration 驗證"
+}
+
+@test "test.sh --changed leaves a changed system spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/system"
+    printf '@test "system" { true; }\n' \
+        >"${TEMP_REPO}/test/system/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system 驗證"
+}
+
+@test "test.sh --changed leaves a changed acceptance spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/acceptance"
+    printf '@test "acceptance" { true; }\n' \
+        >"${TEMP_REPO}/test/acceptance/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/acceptance/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 acceptance 驗證"
+}
+
+@test "test.sh --changed leaves the real-engine spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/system"
     printf '@test "real engine" { true; }\n' \
         >"${TEMP_REPO}/test/system/real_engine_spec.bats"
     _commit_baseline
-    printf '\n# changed\n' \
-        >>"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
     printf '\n# changed\n' >>"${TEMP_REPO}/test/system/real_engine_spec.bats"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-integration-ghostty system-real-entry.sh)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
+}
+
+@test "test.sh --changed leaves Dockerfile.ghostty verification to CI" {
+    mkdir -p "${TEMP_REPO}/dockerfile"
+    printf 'FROM scratch\n' >"${TEMP_REPO}/dockerfile/Dockerfile.ghostty"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/dockerfile/Dockerfile.ghostty"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 integration 驗證"
+}
+
+@test "test.sh --changed leaves Dockerfile.system-real verification to CI" {
+    mkdir -p "${TEMP_REPO}/dockerfile"
+    printf 'FROM scratch\n' >"${TEMP_REPO}/dockerfile/Dockerfile.system-real"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/dockerfile/Dockerfile.system-real"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
+}
+
+@test "test.sh --changed leaves the system-real entry verification to CI" {
+    mkdir -p "${TEMP_REPO}/script/test"
+    printf '# entry\n' >"${TEMP_REPO}/script/test/system-real-entry.sh"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/test/system-real-entry.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
 }
 
 @test "test.sh --changed maps a changed library to its spec" {
@@ -111,8 +227,8 @@ _dispatched() {
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint '--ci-unit test/unit/setup_spec.bats' \
-        '--ci-integration test/integration/setup_spec.bats')"
+        --ci-lint '--ci-unit test/unit/setup_spec.bats')"
+    assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
 @test "test.sh --changed fails open when a mapped spec is missing" {
@@ -156,7 +272,7 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
 }
 
-@test "test.sh --changed runs every affected tier for test infrastructure" {
+@test "test.sh --changed fails open only to unit for test infrastructure" {
     mkdir -p "${TEMP_REPO}/test/helper"
     printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
     _commit_baseline
@@ -166,10 +282,10 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit --ci-matrix --ci-integration \
-        --ci-integration-ghostty --ci-system --ci-acceptance \
-        system-real-entry.sh)"
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    for tier in matrix integration system system-real acceptance; do
+        assert_output --partial "此改動由 CI 的 ${tier} 驗證"
+    done
 }
 
 @test "test.sh --changed fails open when the base diff is unreadable" {
@@ -179,8 +295,8 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit --ci-matrix --ci-integration \
-        --ci-integration-ghostty --ci-system --ci-acceptance \
-        system-real-entry.sh)"
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    for tier in matrix integration system system-real acceptance; do
+        assert_output --partial "此改動由 CI 的 ${tier} 驗證"
+    done
 }

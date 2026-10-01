@@ -16,6 +16,7 @@
 3. GitHub CI 執行全部 tier，作為 branch protection 所需 `ci-passed` 的完整驗證。
 4. 所有測試仍只經 `just test ...` 在 Docker 內執行；本決策只改變本機選取範圍，不建立另一套測試入口。
 5. 本決策取代 #274 要求本機執行完整 unit tier 的部分。
+6. `just test changed` 的自動選取只執行 lint、改到的 unit spec 與改到的 matrix spec；無法判定影響時只 fail open 到完整 unit。integration、system、system-real、acceptance 與 Ghostty／system-real runner 映像一律提示並交由 CI 驗證，開發者仍可明確執行個別重 tier 指令。
 
 ## 影響
 
