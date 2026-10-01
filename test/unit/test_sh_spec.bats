@@ -37,21 +37,15 @@ setup() {
     TEST_SH="${REPO_ROOT}/script/test/test.sh"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     export FAKE_DOCKER_CALLS="${BATS_TEST_TMPDIR}/docker.calls"
+    export FAKE_GIT_ROOT="${REPO_ROOT}"
     unset FAKE_DOCKER_FAIL_ON
     mkdir -p "${FAKE_BIN}"
-    cat >"${FAKE_BIN}/docker" <<'EOF'
-#!/usr/bin/env bash
-printf 'docker %s\n' "$*" >>"${FAKE_DOCKER_CALLS}"
-if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
-    exit 1
-fi
-exit 0
-EOF
+    _write_fake_docker
     # The host dispatch test runs inside Docker: /source's worktree Git
     # metadata is intentionally unavailable. Stub only that host listing.
     cat >"${FAKE_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == -C && "$2" == "${REPO_ROOT}" && "$3" == ls-files ]]; then
+if [[ "$1" == -C && "$2" == "${FAKE_GIT_ROOT}" && "$3" == ls-files ]]; then
     printf 'script/test/test.sh\0'
 else
     exec /usr/bin/git "$@"
@@ -60,6 +54,42 @@ EOF
     chmod +x "${FAKE_BIN}/docker" "${FAKE_BIN}/git"
     export PATH="${FAKE_BIN}:${PATH}"
     export TEST_IMAGE_PREBUILT=1
+}
+
+_write_fake_docker() {
+    cat >"${FAKE_BIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"${FAKE_DOCKER_CALLS}"
+if [[ -n "${FAKE_DOCKER_SNAPSHOT:-}" ]]; then
+    args=("$@")
+    mounts=() values=()
+    while (( $# )); do
+        case "$1" in
+            -v) mounts+=("$2"); shift ;;
+            -e) values+=("${2#*=}"); shift ;;
+        esac
+        shift
+    done
+    printf '%s\n' "${mounts[@]}" >"${FAKE_DOCKER_SNAPSHOT}.mounts"
+    for mount in "${mounts[@]}"; do
+        host="${mount%%:*}" container="${mount#*:}"
+        for value in "${values[@]}"; do
+            if [[ "$value" == "${container}/"* ]]; then
+                file="${host}/${value#"${container}/"}"
+                if [[ -f "$file" ]]; then
+                    printf '%s\n' "$file" >"${FAKE_DOCKER_SNAPSHOT}.path"
+                    tr '\0' '\n' <"$file" >"${FAKE_DOCKER_SNAPSHOT}.contents"
+                fi
+            fi
+        done
+    done
+    set -- "${args[@]}"
+fi
+if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
+    exit 1
+fi
+exit 0
+EOF
 }
 
 # Print the gate each recorded docker call dispatched, in order: the
@@ -314,13 +344,33 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_output 'set -euo pipefail'
 }
 
-@test "host lint supplies Git paths to Docker without another checkout mount" {
-    local root="${BATS_TEST_TMPDIR}/repo"
+@test "host lint snapshots linked-worktree paths without extra mounts and cleans up after either exit" {
+    local root="${BATS_TEST_TMPDIR}/repo" linked="${BATS_TEST_TMPDIR}/linked"
+    export FAKE_DOCKER_SNAPSHOT="${BATS_TEST_TMPDIR}/snapshot"
     mkdir -p "${root}/script/test"
     cp "${TEST_SH}" "${root}/script/test/test.sh"
     git -C "${root}" init -q
-    run bash "${root}/script/test/test.sh" --lint
-    assert_success
-    run grep -F 'WORKTOOL_LAYOUT_PATHS=/source/.agents/state/' "${FAKE_DOCKER_CALLS}"
-    assert_success
+    git -C "${root}" add .
+    git -C "${root}" -c user.name=Fixture \
+        -c user.email=54975526+ycpss91255@users.noreply.github.com commit -qm fixture
+    git -C "${root}" worktree add -q -b fixture "${linked}"
+    mkdir -p "${linked}/script/box"
+    touch "${linked}/script/box/planted-artifact.sh"
+    local failure snapshot
+    for failure in '' --ci-lint; do
+        FAKE_DOCKER_FAIL_ON="${failure}" run bash "${linked}/script/test/test.sh" --lint
+        if [[ -n "${failure}" ]]; then
+            assert_failure 1
+        else
+            assert_success
+        fi
+        assert [ -f "${FAKE_DOCKER_SNAPSHOT}.contents" ]
+        run cat "${FAKE_DOCKER_SNAPSHOT}.contents"
+        assert_line 'script/box/planted-artifact.sh'
+        run cut -d : -f 1 "${FAKE_DOCKER_SNAPSHOT}.mounts"
+        assert_output "${linked}"
+        snapshot="$(cat "${FAKE_DOCKER_SNAPSHOT}.path")"
+        assert [ ! -e "${snapshot}" ]
+        rm -f "${FAKE_DOCKER_SNAPSHOT}".*
+    done
 }
