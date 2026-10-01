@@ -308,6 +308,31 @@ _pl_blocked_run() {
     assert_output '[true,true,true,true,true]'
 }
 
+@test "pr-loop (node): Implement and Fix run only slice specs locally, then lint and changed before push" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
     local implementer
     for implementer in codex claude; do
