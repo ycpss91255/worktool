@@ -1311,14 +1311,12 @@ _item_3_7() {
     printf 'distrobox-blocks=%s\n' "${_blocks}"
     [[ "${_blocks}" -eq 1 ]] || _bad=1
     _check_user_content 3.7 after-write distrobox.conf "${_conf}" '# acceptance user config' 'container_manager=docker' || _bad=1
-    cat >"${ITEM_T}/isolation.sh" <<'SH' || return 1
-. "$1"
-printf 'TMUX=%s TMUX_PANE=%s\n' "${TMUX-unset}" "${TMUX_PANE-unset}"
-SH
-    _run_norm env TMUX=host TMUX_PANE=pane sh "${ITEM_T}/isolation.sh" "${_conf}" dev || return 1
+    # The config is sourced by a child shell, not by this checker's source graph.
+    local _isolation='. "$1"; printf "TMUX=%s TMUX_PANE=%s\n" "${TMUX-unset}" "${TMUX_PANE-unset}"'
+    _run_norm env TMUX=host TMUX_PANE=pane sh -c "${_isolation}" sh "${_conf}" dev || return 1
     _expect_lines 3.7 'TMUX=unset TMUX_PANE=unset' || _bad=1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
-    _run_norm env TMUX=host TMUX_PANE=pane sh "${ITEM_T}/isolation.sh" "${_conf}" other || return 1
+    _run_norm env TMUX=host TMUX_PANE=pane sh -c "${_isolation}" sh "${_conf}" other || return 1
     _expect_lines 3.7 'TMUX=host TMUX_PANE=pane' || _bad=1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_user_content 3.7 after-write || _bad=1
