@@ -352,7 +352,10 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     git -C "${root}" init -q
     git -C "${root}" add .
     git -C "${root}" -c user.name=Fixture \
-        -c user.email=54975526+ycpss91255@users.noreply.github.com commit -qm fixture
+        -c user.email=test@example.invalid commit -qm fixture
+    run git -C "${root}" log -1 --format=%ae
+    assert_success
+    assert_output 'test@example.invalid'
     git -C "${root}" worktree add -q -b fixture "${linked}"
     mkdir -p "${linked}/script/box"
     touch "${linked}/script/box/planted-artifact.sh"
