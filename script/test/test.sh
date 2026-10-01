@@ -533,6 +533,7 @@ _validate_spec_paths() {
     local _path _absolute _root="${REPO_ROOT}/test/${_tier}/"
     for _path in "$@"; do
         [[ "${_path}" != /* ]] || _usage_error "spec path '${_path}' must be relative to the repo root"
+        [[ -e "${REPO_ROOT}/${_path}" ]] || _usage_error "spec path '${_path}' does not exist"
         _absolute="$(realpath "${REPO_ROOT}/${_path}")"
         [[ "${_absolute}" == "${_root}"* ]] \
             || _usage_error "spec path '${_path}' is outside test/${_tier}/"
