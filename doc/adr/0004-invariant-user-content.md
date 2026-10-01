@@ -32,7 +32,7 @@ worktool 的核心承諾是重建（#200 定案 2、3）：換機、重灌、升
 
 目前會寫進使用者檔案的有兩個指令。
 
-`just box setup`（`script/box/setup.sh`）在 ghostty config 與 `~/.tmux.conf` 各維護一個受管區塊，標記行定義在 `lib/enter.sh`（`ENTER_BLOCK_BEGIN`／`ENTER_BLOCK_END`），寫入走 `enter_block_compose`（把既有區塊全部剝除，再把唯一一個區塊放回第一個區塊原本的位置；沒有區塊時附加在檔尾），移除走 `enter_block_strip`（只剝除受管區塊）。它也改寫 worktool 自己的狀態檔 `~/.config/worktool/config`。
+`just box setup`（`script/box/setup.sh`）在 ghostty config 與 distrobox.conf 各維護一個受管區塊，標記行定義在 `lib/enter.sh`（`ENTER_BLOCK_BEGIN`／`ENTER_BLOCK_END`），寫入或移除前先以 `enter_block_check` 檢查標記；多個區塊或其他不完整標記一律拒絕，任何檔案都不寫。合法檔案寫入走 `enter_block_compose`（取代唯一區塊並維持原位；沒有區塊時附加在檔尾），移除走 `enter_block_strip`（只剝除受管區塊）。它也改寫 worktool 自己的狀態檔 `~/.config/worktool/config`。
 
 `just box assemble`（`script/box/assemble.sh`）在 distrobox 建好盒子後，透過 `lib/home.sh` 的 `home_record` 把盒子 HOME 記進同一個狀態檔 `~/.config/worktool/config`：只移除舊的 `home=`／`home.source=` 兩行、把新的一對附加在檔尾，其他每一行原樣留下、順序不變；先寫同目錄暫存檔再改名取代；試跑與 distrobox 失敗時不寫。
 
@@ -43,18 +43,18 @@ worktool 的核心承諾是重建（#200 定案 2、3）：換機、重灌、升
 - 可以新建、只在受管區塊內寫：
   - `test/unit/setup_spec.bats`:「the ghostty block is written exactly once and a re-run is idempotent (unchanged)」：既有的 `theme = dark` 留在第一行，區塊附加在後，重跑內容不變。
   - `test/unit/setup_spec.bats`:「a changed decision replaces the block in place: user lines before and after it survive」：改寫區塊時，區塊前後的使用者行原樣留下、順序不變。
-  - `test/unit/setup_spec.bats`:「a file that already holds two managed blocks is collapsed to exactly one, in place of the first」：檔內有兩個區塊時收成一個，夾在中間與檔尾的使用者行都留下。
+  - `test/unit/setup_spec.bats`:「a file that already holds two managed blocks is refused, not collapsed: exit 1, the file unchanged」：檔內有兩個區塊時拒絕執行、exit 1；原檔不改，區塊前後與中間的使用者行都留下。另由 `test/unit/managed_block_spec.bats`:「malformed markers x operation x managed file: refused, exit 1, the file keeps every byte, nothing else is written」檢查包含雙區塊的各種錯誤標記，檔案逐位元組不變。
 - 永不刪（只移除自己寫的）：
-  - `test/unit/setup_spec.bats`:「--auto-enter no removes both managed blocks, reports each, keeps user content」：移除兩個區塊後，兩個檔都只剩使用者原本的那一行。
-  - `test/unit/setup_spec.bats`:「--auto-enter no removes every managed block a file holds」：區塊之間的使用者行在移除後留下。
-  - `test/unit/setup_spec.bats`:「--auto-enter no with nothing managed says so for both files」：沒有區塊時不建立、也不動任何檔。
+  - `test/unit/setup_spec.bats`:「--auto-enter no removes the ghostty managed block, reports it, keeps user content」：移除 ghostty 區塊並回報，使用者原本的那一行留下。
+  - `test/unit/setup_spec.bats`:「--auto-enter no refuses a file with two managed blocks the same way」：移除遇到雙區塊時拒絕執行、不回報已移除，原檔及區塊之間的使用者行留下。
+  - `test/unit/setup_spec.bats`:「--auto-enter no with nothing managed says so」：ghostty 沒有區塊時回報 nothing to remove，也不建立 ghostty 設定檔。
 - 永不覆蓋：
   - `test/unit/setup_spec.bats`:「rewriting an existing profile keeps its file mode」：改寫與移除後，檔案權限維持使用者原本設的值。
   - `test/unit/setup_spec.bats`:「--dry-run logs every decision and what it would write, and writes nothing」與 `test/unit/setup_spec.bats`:「--dry-run --auto-enter no reports what it would remove and removes nothing」：試跑不寫、不刪。
   - worktool 自己的狀態檔（`~/.config/worktool/config`）使用者也可以編輯：`test/unit/setup_spec.bats`:「a stored user choice persists across runs; a default key is recomputed」（使用者選的值不被預設蓋掉）、`test/unit/setup_spec.bats`:「#198: setup keeps the box home lines assemble recorded in the state file」（setup 改寫狀態檔時保留 assemble 記下的 `home`／`home.source` 那一對；其他使用者的行不保留，見下方待補）、`test/integration/setup_spec.bats`:「a state file setup wrote and a user then corrupted is refused by both scripts, and setup leaves it as is」（使用者改壞的狀態檔被拒絕、原樣留下，不被「修正」）。
   - `just box assemble` 寫同一個狀態檔：`test/integration/assemble_spec.bats`:「#198: a successful run records home= and home.source= in the state file, keeping the other lines」（註解行與 `auto-enter` 等使用者的行原樣留下、順序不變，只換掉 `home` 那一對）、`test/integration/assemble_spec.bats`:「#198: a failed distrobox run records nothing」（失敗不寫）、`test/unit/assemble_spec.bats`:「#198: dry-run records nothing in the state file」（試跑不寫）、`test/unit/assemble_spec.bats`:「#198: a stored user home is used when --home is not given; --home still wins」（使用者存的 home 不被預設蓋掉）。
 
-這些測試只證明 `setup.sh` 對 ghostty config、`~/.tmux.conf`、狀態檔，以及 `assemble.sh` 對狀態檔的行為，不能推到其他指令或檔案。以下尚無機制或測試，標為待補：
+這些測試只證明 `setup.sh` 對 ghostty config、distrobox.conf、狀態檔，以及 `assemble.sh` 對狀態檔的行為，不能推到其他指令或檔案。以下尚無機制或測試，標為待補：
 
 - 要改先問：待補。目前沒有詢問流程；受管區塊以外會被改動的只有狀態檔的狀態鍵（依上面的例外不需詢問），以及下面兩條待補的情形。之後任何功能需要改既有內容時，要先有詢問機制與測試。
 - 狀態檔裡使用者自己加的行：待補。`home_record` 只換掉 `home`／`home.source`，其他行原樣留下（見上面 assemble 的案例）；但 `setup.sh` 的 `_config_render` 依已決定的值重寫整個狀態檔，只帶回 `home` 那一對，使用者自己加的註解或鍵會被刪掉。目前沒有測試守住，違反第 3、4 條。

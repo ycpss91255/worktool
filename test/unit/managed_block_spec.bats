@@ -146,6 +146,36 @@ _other() {
     done
 }
 
+@test "re-running setup on two managed blocks gives the same refusal and writes nothing" {
+    local _file _op _path _before _first_output
+    local -a _args
+    for _file in ghostty dbxconf; do
+        for _op in replace remove; do
+            rm -rf "${HOME}/.config"
+            _path="$(_path "${_file}")"
+            mkdir -p "$(dirname -- "${_path}")"
+            _content two-blocks "$(_body_for "${_file}" "${_op}")" >"${_path}"
+            _before="$(sha256sum <"${_path}")"
+            mapfile -t _args < <(_op_args "${_op}")
+
+            run "${SETUP}" "${_args[@]}"
+            assert_failure 1
+            assert_line --partial "[ERROR] ${_path}: malformed worktool managed block markers: 2 blocks"
+            _first_output="${output}"
+            assert_equal "$(sha256sum <"${_path}")" "${_before}"
+            assert [ ! -e "${CONFIG}" ]
+            assert [ ! -e "$(_other "${_file}")" ]
+
+            run "${SETUP}" "${_args[@]}"
+            assert_failure 1
+            assert_output "${_first_output}"
+            assert_equal "$(sha256sum <"${_path}")" "${_before}"
+            assert [ ! -e "${CONFIG}" ]
+            assert [ ! -e "$(_other "${_file}")" ]
+        done
+    done
+}
+
 @test "control: well-formed markers x operation x managed file succeed and keep the user lines" {
     local _file _op _path _cell
     local -a _args

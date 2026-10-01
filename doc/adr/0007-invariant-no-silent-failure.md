@@ -51,14 +51,14 @@ worktool 不會在沒有說出來的情況下替使用者做決定，也不會�
 
 `just box setup` 與 `just box assemble` 把每個決策連同來源（`(default)` 或 `(user)`）印在 log 裡，並寫進狀態檔；`just box status` 把狀態檔裡的決策與來源印出來：
 
-- `test/unit/setup_spec.bats`「defaults (no ghostty dir): yes / none / inside / dev, each logged as (default), state file written with sources」
+- `test/unit/setup_spec.bats`「defaults (no ghostty dir): yes / none / dev, each logged as (default), state file written with sources, no tmux key」
 - `test/unit/setup_spec.bats`「user overrides are logged as (user) and stored with source=user」
 - `test/unit/setup_spec.bats`「#175: the config dir alone still selects ghostty when no executable is on PATH, and the log says so」
 - `test/unit/setup_spec.bats`「#175: terminal is none only when there is neither an executable nor a config dir, and the log names both」
 - `test/unit/setup_spec.bats`「--dry-run logs every decision and what it would write, and writes nothing」
 - `test/unit/assemble_spec.bats`「#198: the default box home is ~/<box>-box, logged as (default); stdout keeps the bare command」
 - `test/unit/assemble_spec.bats`「#198: --home <path> and --home=<path> are the user's choice, logged as (user)」
-- `test/unit/status_spec.bats`「prints every stored decision with its source and the block presence per file」
+- `test/unit/status_spec.bats`「prints every stored decision with its source and the block presence: nine lines, no tmux」
 - `test/unit/status_spec.bats`「#198: the recorded box home is shown with its source, as the last line」
 
 ### 性質 2：失敗印原因與下一步
