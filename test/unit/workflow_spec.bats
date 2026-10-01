@@ -1995,6 +1995,22 @@ _discuss_replies() {
     assert_output '["diverged",true,"https://github.com/o/r/issues/309#issuecomment-1",0]'
 }
 
+@test "discuss: repairs multiline or unrelated maintainer questions before recording (#348)" {
+    local question replies
+    for question in $'Choose A?\nOr B?' 'Choose storage? Choose latency?'; do
+        replies="$(_discuss_replies | jq --arg q "${question}" '
+            ."compare:".status="diverged" | ."compare:".question="Choose A or B?" |
+            {"repair:compare:": ."compare:"} + . | ."compare:".question=$q')"
+        _discuss_run "${replies}"
+        run jq -cr --arg q "${question}" '[.result.status, .result.ask_maintainer,
+            ([.calls[] | select(.role == "record:")] | length),
+            [.calls[] | select(.role | startswith("repair:compare:")) |
+                [(.prompt | contains($q | tojson)), (.prompt | contains("question")),
+                 (.prompt | contains("single line")), (.prompt | contains("one decision"))]]]' <<<"${output}"
+        assert_output '["diverged",["Choose A or B?"],1,[[true,true,true,true],[true,true,true,true],[true,true,true,true]]]'
+    done
+}
+
 @test "discuss: repairs an uncited answer with its original author before recording (#342)" {
     local replies
     replies="$(_discuss_replies | jq '{"repair:codex:": ."codex:"} + . |

@@ -92,7 +92,9 @@ const validQuestion = question => {
   return questions.length === 3 && !questions[2].trim() &&
     /^(?:[^?？]*[。.!]\s*)*(?:還是|或是|抑或|或者|or\b|alternatively\b)/i.test(questions[1].trim())
 }
-const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
+const failedQuestion = x => x?.status === 'diverged' && !validQuestion(x.question)
+  ? [{ field: 'question', rule: 'non-empty single line asking one decision; A? or B? is one question', value: x.question }] : []
+const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string' && !failedQuestion(x).length
 let prior = null
 let result
 for (let n = 1; n <= 3; n++) {
@@ -102,13 +104,12 @@ for (let n = 1; n <= 3; n++) {
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
   const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `${RUN_ID} repair:compare:r${n}:${attempt}` : `${RUN_ID} compare:r${n}`, phase: 'Compare', schema: VERDICT })
-  const verdict = await repairFormat(await compare(), validVerdict, failedBasis, compare)
+  const verdict = await repairFormat(await compare(), validVerdict, x => [...failedBasis(x), ...failedQuestion(x)], compare)
   if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict) }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
   prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
 }
-if (result.status === 'diverged' && !validQuestion(result.question)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
 result.ask_maintainer = result.status === 'diverged' ? [result.question] : []
 const labels = { agreed: '一致（定案）', derived: '可由不變量／前例推出（自行定案）', diverged: '分歧（交維護者，一次一題）' }
 const text = `[claude] ${labels[result.status]}\n\n${result.conclusion}\n\n## 依據\n${result.basis.map(b => `- ${b}`).join('\n')}\n\n## Claude 判斷與依據\n${result.claude.answer}\n${result.claude.reasons.map(b => `- ${b}`).join('\n')}\n\n## Claude 說明與執行紀錄\n${result.claude.notes.map(b => `- ${b}`).join('\n')}\n\n## codex 說明與執行紀錄\n${result.codex.notes.map(b => `- ${b}`).join('\n')}\n\n${result.ask_maintainer.length ? `## 維護者問題\n${result.ask_maintainer[0]}\n` : ''}\n## 分歧\n${result.disagreements.map(b => `- ${b}`).join('\n')}\n`
