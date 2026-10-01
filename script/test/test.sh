@@ -508,6 +508,11 @@ Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
+  --changed [--base REF]
+                  Always run lint, then select specs from committed,
+                  uncommitted, and untracked changes since REF (default:
+                  origin/main). Unknown impact or an unreadable diff runs the
+                  whole affected tier.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
   --matrix [SPEC...] [--filter REGEX]
