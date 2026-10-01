@@ -664,12 +664,23 @@ _add_changed_spec() {
     unset -n _specs
 }
 
+_is_test_infrastructure() {
+    case "$1" in
+        script/test/*|dockerfile/Dockerfile.*|justfile*|test/helper/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 _run_changed() {
-    local _base="$1" _list _path _tier _spec _mapped _full_unit=0
+    local _base="$1" _list _path _tier _spec _mapped _full_unit=0 _all_tiers=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     _changed_files "${_base}" "${_list}"
     while IFS= read -r _path; do
+        if _is_test_infrastructure "${_path}"; then
+            _all_tiers=1
+            continue
+        fi
         if _add_changed_spec "${_path}"; then
             continue
         fi
@@ -687,13 +698,16 @@ _run_changed() {
     _run_host_step lint ""
     for _tier in unit matrix integration system acceptance; do
         local -n _specs="_${_tier}"
-        if [[ "${_tier}" == unit && "${_full_unit}" -eq 1 ]]; then
+        if [[ "${_all_tiers}" -eq 1 ]]; then
+            _run_host_step "${_tier}" ""
+        elif [[ "${_tier}" == unit && "${_full_unit}" -eq 1 ]]; then
             _run_host_step unit ""
         elif [[ "${#_specs[@]}" -gt 0 ]]; then
             _run_host_step "${_tier}" "" "${_specs[@]}"
         fi
         unset -n _specs
     done
+    [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
 }
 
 # Parse the WHOLE command line before running anything, so an unknown option

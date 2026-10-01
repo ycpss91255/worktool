@@ -29,7 +29,9 @@ _commit_baseline() {
 }
 
 _dispatched() {
-    sed -nE 's/^docker run .* (--ci-[a-z-]+)( .*)?$/\1\2/p' \
+    sed -nE \
+        -e 's/^docker run .* (--ci-[a-z-]+)( .*)?$/\1\2/p' \
+        -e 's/^docker run .*(system-real-entry\.sh)$/\1/p' \
         "${FAKE_DOCKER_CALLS}"
 }
 
@@ -72,4 +74,20 @@ _dispatched() {
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+}
+
+@test "test.sh --changed runs every affected tier for test infrastructure" {
+    mkdir -p "${TEMP_REPO}/test/helper"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/helper/common.bash"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint --ci-unit --ci-matrix --ci-integration \
+        --ci-integration-ghostty --ci-system --ci-acceptance \
+        system-real-entry.sh)"
 }
