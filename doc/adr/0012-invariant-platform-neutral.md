@@ -24,9 +24,9 @@
 ## 目前由哪些機制或測試守住
 
 - 機制（建 image）：`.github/workflows/ci.yml` 的 `build-image` 在 `ubuntu-latest`（amd64）與 `ubuntu-24.04-arm`（arm64）兩種 GitHub-hosted runner 上各自以原生方式 `docker build` 測試 image、存檔並上傳成該架構專屬的 artifact；這個 job 只建 image，本身不跑任何測試。
-- 機制（跑測試）：承載測試的 job 是 `gate`（五個 gate）與 `test-system-real`，都在同樣兩種 runner 上以原生方式執行同一個 `just test <tier>`，不經模擬；main 的 branch protection 要求 `ci-passed`。
+- 機制（跑測試）：承載測試的 job 是 `gate`（六個 gate）與 `test-system-real`，都在同樣兩種 runner 上以原生方式執行同一個 `just test <tier>`，不經模擬；main 的 branch protection 要求 `ci-passed`。
 - `test/unit/ci_yml_spec.bats`：「build-image, gate and test-system-real run on the matrix runner」「build-image, gate and test-system-real name both runners in their runner dimension」「the runner dimension of every leg-carrying job is EXACTLY the two runners (a third turns red)」—— 建 image 的 job 與承載測試的 job 都跑在兩種架構上，沒有 job 寫死單一架構。
-- `test/unit/ci_yml_spec.bats`：「gate runs every one of the five gates on the runner dimension」「the gate dimension is EXACTLY the five gates (a sixth turns red)」—— 兩種架構跑的是同一組 gate。
+- `test/unit/ci_yml_spec.bats`：「gate runs every one of the six gates on the runner dimension」「the gate dimension is EXACTLY the six gates (a seventh turns red)」—— 兩種架構跑的是同一組 gate。
 - `test/unit/ci_yml_spec.bats`：「build-image uploads the test image under an arch-specific artifact name」「gate downloads the same arch-specific artifact it runs on」「every test-image artifact name carries the runner (no cross-arch collision)」—— 每個架構的 gate 用的是自己架構建出的測試 image，不會拿另一個架構的 image 過關。
 - `test/unit/ci_yml_spec.bats`：「ci-passed needs every other job and runs even when one failed」「ci-passed verifies every needed job's result is success」—— 任何一個架構的任何一個 leg 不是 `success`，`ci-passed` 就是紅。
 - `test/system/real_engine_spec.bats`：「real engine: assemble.sh with the delivered box/dev.ini creates the dev box from ubuntu:26.04」—— 由 `test-system-real` 在兩種架構上各跑一次，證明兩個架構都能從交付的 `box/dev.ini` 以真實引擎建出 Ubuntu 26.04 的 dev 盒（同一檔其餘真實引擎案例亦同）。

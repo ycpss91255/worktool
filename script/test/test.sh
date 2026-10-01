@@ -148,6 +148,7 @@ _required_specs() {
                 unit/adr/0005_spec.bats \
                 unit/adr/0006_spec.bats \
                 unit/adr/0010_spec.bats \
+                unit/adr/0012_spec.bats \
                 unit/contract_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
