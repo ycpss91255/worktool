@@ -489,3 +489,9 @@ _scripts() {
     assert_success
     assert_output 'bats t'
 }
+
+@test "a case word in command arguments does not hide a pipeline launch" {
+    run hook_subcommands 'echo case x in foo | bats t'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo case x in foo' 'bats t')"
+}

@@ -694,7 +694,7 @@ _hook_emit() {
 # Quotes and substitutions have already been made opaque by the quoting pass.
 _hook_case_patterns() {
     local _t="$1" _out='' _i _c _depth=0 _parens=0 _header=''
-    local _re='(^|[;(&|[:space:]])case[[:space:]]+[^[:space:]]+[[:space:]]+in[[:space:]]$'
+    local _re=$'(^|[;(&|\n])[[:space:]]*((if|then|elif|else|while|until|do|!|[{])[[:space:]]+)*case[[:space:]]+[^[:space:]]+[[:space:]]+in[[:space:]]$'
     local -a _state=()
     local _start='(^|[[:space:];(&|])case[[:space:]]'
     [[ "${_t}" =~ ${_start} ]] || { printf '%s' "${_t}"; return 0; }
