@@ -493,12 +493,21 @@ _pl_blocked_run() {
 @test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
     run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
     assert_output "1"
-    run grep -c 'gates: item.gates' "${FANOUT}"
-    assert_output "1"
     run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
     assert_output "1"
     run grep -c 'await parallel(batch.map' "${FANOUT}"
     assert_output "1"
+}
+
+@test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
+    local replies
+    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
+    assert_success
+    run jq -e '.error == null and (.workflowCalls | length == 2) and .workflowCalls[0].args.gates == "just test lint" and (.workflowCalls[1].args | has("gates") | not)' <<<"${output}"
+    assert_success
+    assert_output "true"
 }
 
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
