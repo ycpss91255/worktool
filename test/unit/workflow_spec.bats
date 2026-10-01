@@ -540,6 +540,17 @@ JS
     done
 }
 
+@test "milestone-fanout (node): rejects invalid concurrency before starting children" {
+    local value
+    for value in 1.5 0 -1 '"4"' null true false '[]' '{}' '1e400'; do
+        run _fanout_batches "{\"concurrency\":${value}}"
+        assert_success
+        run jq -e '.error == "milestone-fanout: args.concurrency must be a positive integer" and .batches == [] and .children == []' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
     replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'

@@ -35,6 +35,7 @@ for (const it of A.items) {
   }
 }
 const CONCURRENCY = A.concurrency === undefined ? 10 : A.concurrency
+if (!Number.isInteger(CONCURRENCY) || CONCURRENCY <= 0) throw new Error('milestone-fanout: args.concurrency must be a positive integer')
 const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
