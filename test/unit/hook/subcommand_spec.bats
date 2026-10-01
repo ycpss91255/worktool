@@ -479,9 +479,9 @@ _scripts() {
 }
 
 @test "case patterns do not launch alternatives but arm bodies still launch" {
-    run hook_subcommands 'case "$x" in foo|bats) echo ok;; (bats|bar) bats t;; esac; ls'
+    run hook_subcommands "case \"\$x\" in foo|bats) echo ok;; (bats|bar) bats t;; esac; ls"
     assert_success
-    assert_output "$(printf '%s\n' 'case $x in _' 'echo ok' 'bats t' 'ls')"
+    assert_output "$(printf '%s\n' "case \$x in _" 'echo ok' 'bats t' 'ls')"
 }
 
 @test "arithmetic commands do not launch expressions but following commands still launch" {
