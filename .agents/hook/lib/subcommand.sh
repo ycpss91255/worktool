@@ -689,6 +689,53 @@ _hook_emit() {
     fi
 }
 
+# _hook_case_patterns <text> - replace case patterns with data, keeping bodies.
+# Quotes and substitutions have already been made opaque by the quoting pass.
+_hook_case_patterns() {
+    local _t="$1" _out='' _i _c _depth=0 _parens=0 _header=''
+    local _re='(^|[;(&|[:space:]])case[[:space:]]+[^[:space:]]+[[:space:]]+in[[:space:]]$'
+    local -a _state=()
+    local _start='(^|[[:space:];(&|])case[[:space:]]'
+    [[ "${_t}" =~ ${_start} ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_state[_depth]:-}" == pattern ]]; then
+            if [[ "${_t:_i}" =~ ^[[:space:]]*esac([[:space:];]|$) ]]; then
+                _state[_depth]=''
+                _depth=$((_depth - 1))
+            else
+                case "${_c}" in
+                    '(') [[ -n "${_header}" ]] && _parens=$((_parens + 1)) ;;
+                    ')')
+                        if [[ "${_parens}" -gt 0 ]]; then
+                            _parens=$((_parens - 1))
+                        else
+                            [[ "${_out}" =~ ${_re} ]] && _out+=_
+                            _out+=$'\n'
+                            _state[_depth]=body
+                            _header=''
+                        fi ;;
+                esac
+                [[ "${_c}" != [[:space:]] ]] && _header=1
+                continue
+            fi
+        fi
+        _out+="${_c}"
+        if [[ "${_out}" =~ ${_re} ]]; then
+            _depth=$((_depth + 1))
+            _state[_depth]=pattern
+            _header=''
+        elif [[ "${_depth}" -gt 0 && "${_t:_i:2}" == ';;' || "${_depth}" -gt 0 && "${_t:_i:2}" == ';&' ]]; then
+            [[ "${_t:_i:3}" == ';;&' ]] && _i=$((_i + 1))
+            _i=$((_i + 1))
+            _out+=$'\n'
+            _state[_depth]=pattern
+            _header=''
+        fi
+    done
+    printf '%s' "${_out}"
+}
+
 # _hook_split <unquoted command> - the command with every separator of
 # header steps 4 and 5 turned into a newline.
 _hook_split() {
@@ -696,6 +743,7 @@ _hook_split() {
     while [[ "${_t}" =~ ${_re_arr} ]]; do
         _t="${_t/"${BASH_REMATCH[0]}"/=_}"
     done
+    _t="$(_hook_case_patterns "${_t}")"
     _t="${_t//&&/$'\n'}"
     _t="${_t//||/$'\n'}"
     _t="${_t//|/$'\n'}"

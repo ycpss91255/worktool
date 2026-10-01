@@ -477,3 +477,9 @@ _scripts() {
     assert_success
     assert_output "$(printf "bash <<'X'\ngh issue create -F - <<'EOF'\nmilestone: x\nEOF\nX<END>gh issue create -F - <<'EOF'\nmilestone: x\nEOF<END>")"
 }
+
+@test "case patterns do not launch alternatives but arm bodies still launch" {
+    run hook_subcommands 'case "$x" in foo|bats) echo ok;; (bats|bar) bats t;; esac; ls'
+    assert_success
+    assert_output "$(printf '%s\n' 'case $x in _' 'echo ok' 'bats t' 'ls')"
+}
