@@ -1629,3 +1629,14 @@ _discuss_replies() {
     refute_output --partial '/home/private'
     refute_output --partial 'Co-Authored-By:'
 }
+
+@test "discuss: deriving a decision requires cited evidence and records no maintainer question" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:".status="derived"')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,.result.ask_maintainer]' <<<"${output}"
+    assert_output '["derived",1,[]]'
+    _discuss_run "$(jq '."compare:".basis=["Trust me"]' <<<"${replies}")"
+    run jq -cr '[.result.status,([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '["compare-failed",0]'
+}
