@@ -34,6 +34,7 @@ for (const it of A.items) {
     if (!it[k]) throw new Error(`milestone-fanout: item ${JSON.stringify(it.issue || it)} lacks ${k}`)
   }
 }
+const CONCURRENCY = 10
 const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
@@ -55,8 +56,8 @@ const runItem = async (item) => {
     return result || { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: ['pr-loop returned nothing'] }
 }
 const results = []
-for (let i = 0; i < A.items.length; i += 2) {
-  const batch = A.items.slice(i, i + 2)
+for (let i = 0; i < A.items.length; i += CONCURRENCY) {
+  const batch = A.items.slice(i, i + CONCURRENCY)
   const completed = await parallel(batch.map(item => () => runItem(item)))
   results.push(...completed)
 }
