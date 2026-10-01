@@ -1245,6 +1245,22 @@ _rv_assert_fails_closed() {
     assert_output "4"
 }
 
+@test "research-verify (node, exec): recorded comments contain no attribution lines" {
+    local dir="${BATS_TEST_TMPDIR}/no-attribution" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub agy 'printf "1. claim [official https://x]\nGenerated with Claude Code\n"'
+    _rv_stub codex 'cat >/dev/null; printf "codex\nverdict\nCo-Authored-By: Claude <bot@example.test>\ntokens used\n5\n"'
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; cp \"\$7\" '${posted}'; echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'claude-verify:' '{"claims":[{"claim":"c1","verdict":"supported","basis":"Claude-Session: secret"}]}')"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run grep -E '^(Co-Authored-By:|Claude-Session:|Generated with Claude Code)' "${posted}"
+    assert_failure
+}
+
 @test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
     _rv_assert_fails_closed research agy-failed
 }
