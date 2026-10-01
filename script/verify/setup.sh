@@ -249,13 +249,11 @@ TMUX_USER_LINES=(
 # about itself, and `status` prints the same four decisions from its own
 # defaults when the file is missing entirely.
 STATE_FILE_LINES=(
-    '# worktool auto-enter state: written by "just box setup", read by "just box status".'
+    '# worktool state: written by "just box setup" and "just box assemble", read by "just box status"; other lines are kept.'
     'auto-enter=yes'
     'auto-enter.source=default'
     'terminal=ghostty'
     'terminal.source=default'
-    'tmux=inside'
-    'tmux.source=default'
     'box=dev'
     'box.source=default'
 )
@@ -848,7 +846,6 @@ _item_3_2() {
         '[INFO] auto-enter: yes (default)' \
         '[INFO] terminal: ghostty (default)' \
         '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
-        '[INFO] tmux: inside (default)' \
         '[INFO] box: dev (default)' \
         '[INFO] distrobox: <D> (absolute path written into the managed command)' \
         '[INFO] wrote: <H>/.config/worktool/config' \
@@ -877,10 +874,11 @@ _item_3_2() {
         'config: <H>/.config/worktool/config' \
         'auto-enter: yes (default)' \
         'terminal: ghostty (default)' \
-        'tmux: inside (default)' \
         'box: dev (default)' \
         'ghostty: <H>/.config/ghostty/config (managed block: present)' \
-        'tmux.conf: <H>/.tmux.conf (managed block: absent)' \
+        'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)' \
+        'link: box HOME not recorded - user config not linked yet (run: just box assemble)' \
+        'home: not recorded (run: just box assemble)' \
         'distrobox: <D> (recorded in a managed block: runnable)' \
         || _bad=1
     _status_rc="${LAST_RC}"

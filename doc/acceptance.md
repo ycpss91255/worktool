@@ -741,53 +741,13 @@ rc=0
       ```bash
       just verify setup 3.1; echo rc=$?
       ```
-  - [ ] 3.2 真的寫入:設定檔(讀回來逐行比對)+ ghostty 受管區塊(進到使用者既有內容裡,不是取而代之);status 的報告有八行,最後一行說受管區塊裡的 distrobox 還跑不跑得起來
-    - 預期看到資訊
-      ```text
-      ./script/box/setup.sh "$@"
-      [INFO] auto-enter: yes (default)
-      [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable <G>)
-      [INFO] tmux: inside (default)
-      [INFO] box: dev (default)
-      [INFO] distrobox: <D> (absolute path written into the managed command)
-      [INFO] wrote: <H>/.config/worktool/config
-      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
-      rc=0
-      # worktool auto-enter state: written by "just box setup", read by "just box status".
-      auto-enter=yes
-      auto-enter.source=default
-      terminal=ghostty
-      terminal.source=default
-      tmux=inside
-      tmux.source=default
-      box=dev
-      box.source=default
-      ./script/box/status.sh "$@"
-      config: <H>/.config/worktool/config
-      auto-enter: yes (default)
-      terminal: ghostty (default)
-      tmux: inside (default)
-      box: dev (default)
-      ghostty: <H>/.config/ghostty/config (managed block: present)
-      tmux.conf: <H>/.tmux.conf (managed block: absent)
-      distrobox: <D> (recorded in a managed block: runnable)
-      rc=0
-      # worktool acceptance: user content that must survive every write
-      font-size = 13
-      window-padding-x = 7
-      # BEGIN worktool managed block (just box setup; do not edit)
-      command = '<D>' enter dev -- tmux new -A -s main
-      # END worktool managed block
-      user-content after-write: ghostty=intact tmux.conf=intact
-      rc=0
-      ```
-      (上面四段的每一行內容都在判準內:setup 的八行決策 log 與 status 的八行報告各只能出現一次;`<H>/.config/worktool/config` 那九行是**把狀態檔讀回來**跟本文件公佈的內容整份比對 —— 多一行少一行都紅。為什麼要讀回來:`[INFO] wrote: ...` 是產品自己講自己,而狀態檔根本沒寫出來時,`status` 會用預設值印出**一模一樣**的四個決策,只差第一行變成 `config: <H>/.config/worktool/config (not found - defaults shown; run: just box setup)` —— 所以這些行是以**整行**比對,不是「有包含」,不然那條降級訊息正好包含了它要否證的那一行(round 16)。
-      最後一段是 ghostty 設定檔的全文:前三行是本項在 setup 之前種下的使用者內容,後三行才是受管區塊 —— 受管區塊是**加進去**的,不是把整份設定換掉,這就是 `user-content after-write:` 那行在講的事。區塊的三行是 #175 的本體,只有比對文字才看得出受管 command 是不是**已 quote 的絕對路徑**。「檔案在、區塊在」不等於「區塊寫對了」,更不等於「使用者原本的東西還在」)
+  - [ ] 3.2 寫入後由 status 與檔案全文確認直接進盒、distrobox.conf 隔離區塊；狀態檔由共用 config 介面保存，沒有 tmux 決策（PR #232、#228）
+    - 預期看到資訊：`command = '<D>' enter dev`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
     - 驗收方式
       ```bash
       just verify setup 3.2; echo rc=$?
       ```
+      預期 `rc=0`。狀態檔全文逐行比對；受管區塊必須放進使用者設定，既有內容必須完整保留。`~/.tmux.conf` 僅作為不得被改動的使用者檔案。
   - [ ] 3.3 改回 host shell:先 setup(輸出略,同 3.2)再 `--auto-enter no`:移除區塊並逐一回報(user 來源標記);移除前確實有一個受管區塊,移除後只剩零個
     - 預期看到資訊(第一次 setup 的輸出略,從它留下的受管區塊數起)
       ```text

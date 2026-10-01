@@ -1235,3 +1235,11 @@ EOF
     assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
     refute_output --partial "[INFO] tmux:"
 }
+
+@test "3.2: direct-entry state and distrobox isolation are reported" {
+    run "${VERIFY}" 3.2
+    assert_success
+    assert_line "distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)"
+    assert_line "home: not recorded (run: just box assemble)"
+    refute_output --partial "tmux: inside"
+}
