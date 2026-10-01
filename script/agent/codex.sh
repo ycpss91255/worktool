@@ -21,10 +21,10 @@ main() {
     mkdir -p "${_root}/.agents/state"
     _scratch="$(mktemp -d "${_root}/.agents/state/codex-no-gh.XXXXXX")"
     trap 'rm -rf -- "${_scratch}"' EXIT
-    export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
-    export HOME="${_scratch}" GH_CONFIG_DIR="${_scratch}/gh" XDG_CONFIG_HOME="${_scratch}/config"
-    unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-    codex "${_args[@]}" || _rc=$?
+    env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+        CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}" HOME="${_scratch}" \
+        GH_CONFIG_DIR="${_scratch}/gh" XDG_CONFIG_HOME="${_scratch}/config" \
+        codex "${_args[@]}" || _rc=$?
     rm -rf -- "${_scratch}"
     trap - EXIT
     return "${_rc}"
