@@ -755,9 +755,15 @@ _run_changed_tiers() {
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
         local -n _full_tier="_full_${_tier}"
-        if [[ "${_tier}" =~ ^(integration|system)$ \
-            && ( "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 \
-                || "${#_selected_specs[@]}" -gt 0 ) ]]; then
+        if [[ "${_tier}" != unit \
+            && ( "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
+            _info "此改動由 CI 的 ${_tier} 驗證"
+            unset -n _selected_specs
+            unset -n _full_tier
+            continue
+        fi
+        if [[ "${_tier}" =~ ^(integration|system|acceptance)$ \
+            && "${#_selected_specs[@]}" -gt 0 ]]; then
             _info "此改動由 CI 的 ${_tier} 驗證"
             unset -n _selected_specs
             unset -n _full_tier
@@ -771,11 +777,12 @@ _run_changed_tiers() {
         unset -n _selected_specs
         unset -n _full_tier
     done
-    [[ "${_ghostty}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
-        || _run_ghostty_in_container
-    [[ "${_system_real}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
-        || _run_host_step system-real ""
-    [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
+    if [[ "${_ghostty}" -eq 1 ]]; then
+        _info "此改動由 CI 的 integration 驗證"
+    fi
+    if [[ "${_system_real}" -eq 1 || "${_all_tiers}" -eq 1 ]]; then
+        _info "此改動由 CI 的 system-real 驗證"
+    fi
 }
 
 _run_changed() {
