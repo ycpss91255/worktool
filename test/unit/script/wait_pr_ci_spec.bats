@@ -15,12 +15,17 @@
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 
 setup() {
+    bats_require_minimum_version 1.5.0
     SCRIPT="${REPO_ROOT}/.agents/script/wait-pr-ci.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${STUB_DIR}"
     FIXTURE_JSON="${BATS_TEST_TMPDIR}/gh-response.json"
     cat >"${STUB_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
+if [[ -n "${GH_FAILURE:-}" ]]; then
+    printf '%s\n' "${GH_FAILURE}" >&2
+    exit 1
+fi
 cat "${FIXTURE_JSON}"
 EOF
     chmod +x "${STUB_DIR}/gh"
@@ -40,6 +45,22 @@ _fixture() {
 _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interval 0 "$@"; }
 
 # --- polling -----------------------------------------------------------------
+
+@test "a failed PR query reports auth or network errors and stops immediately" {
+    local _error
+    for _error in 'authentication required' 'network connection refused'; do
+        export GH_FAILURE="${_error}"
+        run --separate-stderr "${SCRIPT}" --repo owner/repo --prs 21,22 \
+            --max-iterations 2 --interval 0
+        assert_failure 1
+        [[ "${stderr:-}" == *"${_error}"* ]]
+        [[ "${stderr:-}" == *"failed to query owner/repo PR21"* ]]
+        refute_output --partial "no-checks"
+        refute_output --partial "PR22"
+        refute_output --partial "ALL_DONE"
+        [[ "${stderr:-}" != *"max-iterations"* ]]
+    done
+}
 
 @test "the default filter is worktool's ci-passed check" {
     _fixture ci-passed SUCCESS 3600
