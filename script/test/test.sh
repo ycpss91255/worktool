@@ -801,7 +801,8 @@ _run_changed() {
             _info "此改動由 CI 的 integration 驗證"
             continue
         fi
-        if [[ "${_path}" == dockerfile/Dockerfile.system-real ]]; then
+        if [[ "${_path}" == dockerfile/Dockerfile.system-real \
+            || "${_path}" == script/test/system-real-entry.sh ]]; then
             _info "此改動由 CI 的 system-real 驗證"
             continue
         fi
