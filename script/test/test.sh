@@ -522,8 +522,9 @@ given):
   --changed [--base REF]
                   Always run lint, then select specs from committed,
                   uncommitted, and untracked changes since REF (default:
-                  origin/main). Unknown impact or an unreadable diff runs the
-                  whole affected tier.
+                  origin/main). Runs changed unit and matrix specs only;
+                  heavier tiers are reported for CI. Unknown impact or an
+                  unreadable diff runs the whole unit tier only.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
   --matrix [SPEC...] [--filter REGEX]
@@ -756,7 +757,7 @@ _run_changed_tiers() {
         local -n _selected_specs="_${_tier}"
         local -n _full_tier="_full_${_tier}"
         if [[ "${_tier}" != unit \
-            && ( "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
+            && ( "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
             _info "此改動由 CI 的 ${_tier} 驗證"
             unset -n _selected_specs
             unset -n _full_tier
@@ -769,7 +770,7 @@ _run_changed_tiers() {
             unset -n _full_tier
             continue
         fi
-        if [[ "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
+        if [[ "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
             _run_host_step "${_tier}" ""
         elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
             _run_host_step "${_tier}" "" "${_selected_specs[@]}"
@@ -780,21 +781,21 @@ _run_changed_tiers() {
     if [[ "${_ghostty}" -eq 1 ]]; then
         _info "此改動由 CI 的 integration 驗證"
     fi
-    if [[ "${_system_real}" -eq 1 || "${_all_tiers}" -eq 1 ]]; then
+    if [[ "${_system_real}" -eq 1 || "${_full_fallback}" -eq 1 ]]; then
         _info "此改動由 CI 的 system-real 驗證"
     fi
 }
 
 _run_changed() {
-    local _base="$1" _list _path _spec _mapped _all_tiers=0
+    local _base="$1" _list _path _spec _mapped _full_fallback=0
     local _full_unit=0 _full_matrix=0 _full_integration=0
     local _full_system=0 _full_acceptance=0
     local _ghostty=0 _system_real=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
-        _info "changed-file diff unreadable; running every tier"
-        _all_tiers=1
+        _info "changed-file diff unreadable; running the unit tier"
+        _full_fallback=1
     fi
     while IFS= read -r _path; do
         if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
@@ -807,7 +808,7 @@ _run_changed() {
             continue
         fi
         if _is_test_infrastructure "${_path}"; then
-            _all_tiers=1
+            _full_fallback=1
             continue
         fi
         if _add_changed_spec "${_path}"; then
