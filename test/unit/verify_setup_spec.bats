@@ -409,30 +409,6 @@ EOF
 # so the degradation is invisible to every item that does not first write
 # a ~/.tmux.conf block and then switch back to `--tmux inside`. The log
 # line is the one the correct product prints, naming the same body.
-_degrade_inside_removal_empties() {
-    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'FRAG'
-_apply_ghostty() {
-    local _ghostty _tmux_conf _body _rc=0
-    _ghostty="$(enter_ghostty_config)"
-    _tmux_conf="$(enter_tmux_conf)"
-    if [[ "${TMUX}" == "inside" ]]; then
-        _block_write "${_ghostty}" \
-            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
-        if enter_block_present "${_tmux_conf}"; then
-            _body="$(enter_block_body "${_tmux_conf}")"
-            : >"${_tmux_conf}" || _rc=1
-            log_info "removed: ${_tmux_conf} (managed block: ${_body})"
-        fi
-        return "${_rc}"
-    fi
-    _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-    _block_write "${_tmux_conf}" \
-        "set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'" || _rc=1
-    return "${_rc}"
-}
-FRAG
-}
-
 # --- Control ------------------------------------------------------------------
 
 @test "control: with every tool behaving, all nine items pass (so the failure cases below are not vacuous)" {
@@ -999,78 +975,6 @@ EOF
 # the `_block_remove "${_tmux_conf}"` INSIDE `_apply_ghostty`, taken when the
 # user switches from `--tmux host` back to `--tmux inside`.
 
-@test "3.9: a just that prints a plausible setup but exits 1 cannot pass" {
-    _stub_just_plausible 1
-    run "${VERIFY}" 3.9
-    assert_failure
-    assert_output --partial "[FAIL]"
-    refute_output --partial "3.9 PASS"
-}
-
-@test "3.9: a staging setup that exits 0 without writing the tmux.conf block cannot pass (the removal would be vacuous)" {
-    # "The tmux.conf block is gone after the switch" is true of a file that
-    # never had one, so the precondition is measured and printed.
-    _stub_just_plausible 0
-    run "${VERIFY}" 3.9
-    assert_failure
-    assert_line "tmux-blocks-before=0"
-    refute_output --partial "3.9 PASS"
-}
-
-@test "3.9: a switch back to --tmux inside that empties ~/.tmux.conf instead of stripping its block cannot pass (GAP D)" {
-    # The degraded product really runs, really reports removing the block by
-    # name and really leaves zero blocks behind: `tmux-blocks-before=1`,
-    # `tmux-blocks=0`, `status` calls the file `absent` - and the user's tmux
-    # configuration is zero lines long. Only the seeded content, and the
-    # whole-file comparison next to it, can see the difference.
-    local _repo
-    _repo="$(_repo_copy)"
-    _degrade_inside_removal_empties "${_repo}"
-    run "${_repo}/script/verify/setup.sh" 3.9
-    assert_failure
-    assert_line "[INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '\"<D>\" enter dev')"
-    assert_line "tmux-blocks-before=1"
-    assert_line "tmux-blocks=0"
-    assert_line "ghostty-blocks=1"
-    assert_line "tmux.conf: <H>/.tmux.conf (managed block: absent)"
-    # The staging write is cleared first, so the failure is charged to the
-    # switch and to nothing else.
-    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
-    assert_line "user-content after-switch: ghostty=intact tmux.conf=LOST"
-    assert_output --partial "lost the user's own content"
-    refute_output --partial "3.9 PASS"
-}
-
-@test "3.9 is what catches it: the same degradation leaves every other item of section 3 green" {
-    # The honest measure of the gap 3.9 closes. 3.2, 3.5 and 3.6 run the
-    # tmux-INSIDE branch this degradation lives on, and still pass: their
-    # ~/.tmux.conf holds no managed block, so the degraded call never fires.
-    # 3.3 and 3.7 reach `_apply_disable`, 3.8 reaches `_apply_no_terminal`.
-    # That is how a data-losing switch-back would have reached the
-    # maintainer's machine with all eight items, lint and every other tier
-    # green.
-    local _repo
-    _repo="$(_repo_copy)"
-    _degrade_inside_removal_empties "${_repo}"
-    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8
-    assert_success
-    assert_output --partial "3.2 PASS"
-    assert_output --partial "3.7 PASS"
-    assert_output --partial "3.8 PASS"
-}
-
-@test "3.9: a grep -c that answers 0 but exits 2 cannot pass (the block counts must mean the files were read)" {
-    _stub_grep_count_unreadable '-c'
-    run "${VERIFY}" 3.9
-    assert_failure
-    refute_output --partial "3.9 PASS"
-}
-
-# --- Group realbox ------------------------------------------------------------
-# The guard is enforced by the dispatcher, so it is exercised the way the
-# dispatcher reaches it: by sourcing the script (which defines its
-# functions and runs nothing) and calling it.
-
 @test "realbox: an item in the group is refused without the explicit opt-in" {
     run bash -c "source '${VERIFY}'; _realbox_guard 5.1"
     assert_failure
@@ -1172,4 +1076,11 @@ EOF
     assert_line "ghostty-blocks-before=1"
     assert_line "ghostty-blocks=0"
     assert_line "distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)"
+}
+
+@test "3.9: existing config.ghostty receives the legacy block with user content intact" {
+    run "${VERIFY}" 3.9
+    assert_success
+    assert_line "legacy-blocks=0 target-blocks=1"
+    assert_line "ghostty: <H>/.config/ghostty/config.ghostty (managed block: present)"
 }

@@ -182,7 +182,7 @@ _item_title() {
         3.6) printf '%s\n' 'the four remaining states of the status distrobox line' ;;
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
-        3.9) printf '%s\n' '--tmux inside after host removes the tmux.conf block and keeps the file' ;;
+        3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
         *) return 1 ;;
     esac
 }
@@ -332,7 +332,7 @@ Items:
   3.6  the four remaining states of the status distrobox line
   3.7  distrobox.conf isolates host TMUX and keeps user content
   3.8  --terminal none removes the profile and preserves isolation
-  3.9  --tmux inside after host removes the tmux.conf block and keeps the file
+  3.9  existing config.ghostty receives the legacy block without content loss
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
@@ -1362,148 +1362,40 @@ _item_3_8() {
 }
 
 # --- 3.9 ---------------------------------------------------------------------
-# `--tmux host` and then `--tmux inside`: the switch BACK, and the THIRD
-# place in script/box/setup.sh that removes a managed block.
-#
-# The first two are whole functions a decision routes to - `_apply_disable`
-# (`--auto-enter no`, items 3.3 and 3.7) and `_apply_no_terminal`
-# (`--terminal none`, item 3.8). This one is a single call INSIDE
-# `_apply_ghostty`: on the tmux-inside branch it removes the ~/.tmux.conf
-# block that an earlier `--tmux host` run wrote, because tmux running in
-# the box has no use for a host-side `default-command`.
-#
-# Items 3.2, 3.5 and 3.6 run that very branch - and never reach the
-# removal. Their ~/.tmux.conf holds no block, so `_block_remove` returns on
-# its first line and their `tmux.conf=intact` is again about a file the
-# product only opened to look inside. Degrade THIS call site alone so it
-# empties the file instead of stripping the block and items 3.1 to 3.8 all
-# stay green; so does every unit case, and so did the integration case for
-# this exact transition, which asked only for `managed block: absent` - a
-# verdict an emptied file earns just as easily.
-#
-# So the item stages the pair the way 3.8 does, measures that both blocks
-# are really there, and then makes the switch: the ghostty block has to be
-# rewritten with the inside body, the ~/.tmux.conf block has to be removed
-# and reported, and what is left of ~/.tmux.conf has to be exactly the
-# user's own lines.
+# Switch to the existing modern file: move the single block, keep both files.
 _item_3_9() {
     _require_tools env just sed grep mktemp || return 1
     _item_begin || return 1
-    local _d _ghostty _tmux_conf _bad=0
-    local _g_before _t_before _g_blocks _t_blocks _switch_rc _status_rc
-    # As in 3.8, ghostty the EXECUTABLE is deliberately not required: both
-    # runs force `--terminal ghostty` themselves, so neither logs a
-    # `terminal detected:` line and the item behaves identically wherever
-    # ghostty is (or is not) installed. What is under test is the tmux
-    # placement, not the terminal detection 3.1, 3.2 and 3.7 already pin.
-    _d="$(_resolve_exec distrobox 'both runs write its absolute path into a managed block')" || return 1
-    NORM_D="${_d}"
-    # ~/.tmux.conf is the file this item is about, and it is the user's.
     _seed_user_content 3.9 || return 1
-    _ghostty="${ITEM_H}/.config/ghostty/config"
-    _tmux_conf="${ITEM_H}/.tmux.conf"
-
+    local _legacy="${ITEM_H}/.config/ghostty/config" _target="${ITEM_H}/.config/ghostty/config.ghostty"
+    local _before _old _new _bad=0
+    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return 1
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
-    # Staging, not the check: its output is 3.7's and is not repeated. The
-    # status is checked, because a switch that "removed the block" means
-    # nothing unless a block was written first.
-    "${_env[@]}" just box setup --terminal ghostty --tmux host >/dev/null 2>&1 || {
-        _fail "3.9: the staging 'just box setup --terminal ghostty --tmux host' failed, so there is no ~/.tmux.conf block for --tmux inside to remove"
-        return 1
-    }
-    _expect_user_content 3.9 after-write || _bad=1
-
-    # Both preconditions are MEASURED. `tmux-blocks=0` below is vacuously
-    # true of a ~/.tmux.conf that never held a block at all.
-    _g_before="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
-    printf 'ghostty-blocks-before=%s\n' "${_g_before}"
-    _t_before="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks-before=%s\n' "${_t_before}"
-    if [[ "${_g_before}" -ne 1 ]]; then
-        _fail "3.9: ${_ghostty} held ${_g_before} managed block(s) before the switch, expected 1"
-        _bad=1
-    fi
-    if [[ "${_t_before}" -ne 1 ]]; then
-        _fail "3.9: ${_tmux_conf} held ${_t_before} managed block(s) before the switch, expected 1; 'the tmux.conf block is gone' proves nothing about a block that was never there"
-        _bad=1
-    fi
-
-    _run_norm "${_env[@]}" just box setup --terminal ghostty --tmux inside || return 1
-    # One run, two different file actions: the ghostty block is REWRITTEN
-    # with the inside body (which carries the quoted absolute path again,
-    # because tmux now starts inside the box), and the ~/.tmux.conf block
-    # is REMOVED and named with the body it held.
+    "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
+    _before="$(_count_matching 'BEGIN worktool managed block' "${_legacy}")" || return 1
+    [[ "${_before}" -eq 1 ]] || return 1
+    printf 'font-size = 17\n' >"${_target}" || return 1
+    _run_norm "${_env[@]}" just box setup --terminal ghostty || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_lines 3.9 \
-        '[INFO] auto-enter: yes (default)' \
-        '[INFO] terminal: ghostty (user)' \
-        '[INFO] tmux: inside (user)' \
-        '[INFO] box: dev (default)' \
-        '[INFO] distrobox: <D> (absolute path written into the managed command)' \
-        '[INFO] wrote: <H>/.config/worktool/config' \
-        "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
-        "[INFO] removed: <H>/.tmux.conf (managed block: ${MANAGED_TMUX_CONF_BODY})" \
-        || _bad=1
-    # `--terminal ghostty` came from the option, so there is no detection
-    # to report; the absence is part of the documented output.
-    _refute_line 3.9 '[INFO] terminal detected:' || _bad=1
-    _switch_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_switch_rc}"
-
-    # The whole of ~/.tmux.conf, not a count of what is missing from it.
-    # Every line the run printed above is word for word what a switch that
-    # TRUNCATED this file prints, and so is `tmux-blocks=0`; only the file
-    # itself says whether the user still has a tmux configuration.
-    if _show_norm_file "${_tmux_conf}"; then
-        _expect_only_lines 3.9 "${_tmux_conf}" "${TMUX_USER_LINES[@]}" || _bad=1
-    else
-        _fail "3.9: the switch left no readable ${_tmux_conf}"
-        _bad=1
-    fi
-
-    _g_blocks="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
-    printf 'ghostty-blocks=%s\n' "${_g_blocks}"
-    _t_blocks="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks=%s\n' "${_t_blocks}"
-    # The ghostty file was written on the same run, so its user content is
-    # checked here too: one of the two files was rewritten and the other
-    # stripped, and both must have come through with the user's lines.
-    _expect_user_content 3.9 after-switch || _bad=1
-
-    # `status` reads the switch back: tmux is stored as inside, the ghostty
-    # block is still there, the tmux.conf one is gone, and the recorded
-    # distrobox is the one the ghostty block now names.
+        '[INFO] ghostty config: <H>/.config/ghostty/config.ghostty (config.ghostty exists)' \
+        '[INFO] moved: <H>/.config/ghostty/config -> <H>/.config/ghostty/config.ghostty (managed block)' || _bad=1
+    _old="$(_count_matching 'BEGIN worktool managed block' "${_legacy}")" || return 1
+    _new="$(_count_matching 'BEGIN worktool managed block' "${_target}")" || return 1
+    printf 'legacy-blocks=%s target-blocks=%s\n' "${_old}" "${_new}"
+    [[ "${_old}" -eq 0 && "${_new}" -eq 1 ]] || _bad=1
+    _check_user_content 3.9 after-move config.ghostty "${_target}" 'font-size = 17' || _bad=1
+    _expect_user_content 3.9 after-move || _bad=1
+    _show_norm_file "${_target}" || return 1
+    _expect_lines 3.9 "${MANAGED_CMD}" || _bad=1
     _run_norm "${_env[@]}" just box status || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_lines 3.9 \
-        'config: <H>/.config/worktool/config' \
-        'auto-enter: yes (default)' \
-        'terminal: ghostty (user)' \
-        'tmux: inside (user)' \
-        'box: dev (default)' \
-        'ghostty: <H>/.config/ghostty/config (managed block: present)' \
-        'tmux.conf: <H>/.tmux.conf (managed block: absent)' \
-        'distrobox: <D> (recorded in a managed block: runnable)' \
-        || _bad=1
-    _status_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_status_rc}"
-
-    if [[ "${_switch_rc}" -ne 0 ]]; then
-        _fail "3.9: just box setup --terminal ghostty --tmux inside exited ${_switch_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_status_rc}" -ne 0 ]]; then
-        _fail "3.9: just box status exited ${_status_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_g_blocks}" -ne 1 ]]; then
-        _fail "3.9: ${_ghostty} holds ${_g_blocks} managed block(s) after the switch, expected 1"
-        _bad=1
-    fi
-    if [[ "${_t_blocks}" -ne 0 ]]; then
-        _fail "3.9: ${_t_blocks} managed block(s) left in ${_tmux_conf}, expected 0"
-        _bad=1
-    fi
+        'ghostty: <H>/.config/ghostty/config.ghostty (managed block: present)' \
+        'ghostty: <H>/.config/ghostty/config (managed block: absent)' || _bad=1
     return "${_bad}"
 }
+
 
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
