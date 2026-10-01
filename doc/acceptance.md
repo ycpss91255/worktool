@@ -851,7 +851,7 @@ rc=0
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
 - [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
-  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗
+  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
       preexisting-dev=0

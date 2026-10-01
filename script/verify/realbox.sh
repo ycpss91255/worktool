@@ -773,7 +773,10 @@ realbox_run() {
         return 2
     fi
 
-    trap _on_exit EXIT INT TERM HUP
+    trap _on_exit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
     local _rc=0
     for _i in "${_items[@]}"; do
         _dispatch_item "${_i}" || {

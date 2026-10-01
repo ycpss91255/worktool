@@ -29,6 +29,25 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "5.1: an interrupt during bench removes the owned box and exits 130" {
+    cp "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STATE}/just"
+    export VERIFY_TOOL="${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == bench ]]; then
+    kill -INT "${VERIFY_PID}"
+    exit 0
+fi
+exec "${VERIFY_TOOL}" "$@"
+STUB
+    run bash -c 'export VERIFY_PID=$$; exec "$@"' _ "${REALBOX}" --allow-real-box 5.1
+    assert_failure 130
+    assert_line "cleanup-rc=0"
+    [ ! -s "${STATE}/boxes" ]
+    assert_equal "$(_count_calls gh)" "0"
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
