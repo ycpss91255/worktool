@@ -5,7 +5,11 @@ setup() {
     mkdir -p "${BATS_TEST_TMPDIR}/bin"
     export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
     export MODEL_LIST="${BATS_TEST_TMPDIR}/models"
-    printf '#!/bin/sh\n[ "$1" = models ] || exit 99\ncat "$MODEL_LIST"\n' > "${BATS_TEST_TMPDIR}/bin/agy"
+    cat > "${BATS_TEST_TMPDIR}/bin/agy" <<'SH'
+#!/bin/sh
+[ "$1" = models ] || exit 99
+cat "$MODEL_LIST"
+SH
     chmod +x "${BATS_TEST_TMPDIR}/bin/agy"
 }
 
@@ -20,7 +24,7 @@ setup() {
 }
 
 _resolve() {
-    run just --justfile "${REPO_ROOT}/.agents/script/research/justfile.research" model "$@"
+    run just --justfile "${REPO_ROOT}/.agents/script/research/justfile.research" model
 }
 
 @test "agy model rejects a failed models command even with a valid model in stdout" {
