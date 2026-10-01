@@ -241,6 +241,13 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
+@test "test.sh --unit forwards one spec path to the container gate" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
