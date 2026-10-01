@@ -147,6 +147,23 @@ EOF
     refute_output --partial '[ci] unit bats OK'
 }
 
+# Newer bats exits non-zero on an empty filtered suite ("Found no tests")
+# after printing the plan 1..0; the gate must still name the zero-case miss.
+@test "a filter bats rejects as an empty suite still reports zero cases" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nprintf "1..0\\n"\nexit 1\n' >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    PATH="${_bin}:${PATH}" run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure 1
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] ERROR: unit bats failed'
+}
+
 @test "an integration filter narrows the default group without running ghostty" {
     _make_repo_copy
 

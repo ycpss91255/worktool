@@ -367,6 +367,21 @@ _verify_tap() {
     return 0
 }
 
+# Exit for a bats run of tier $1 that returned non-zero; $2 = its captured
+# TAP stream (removed here). Newer bats exits non-zero on an empty (filtered)
+# suite after printing "1..0"; that is named as the zero-case miss.
+_die_bats_failed() {
+    local _tier="$1" _tap="$2" _empty=0
+    if grep -qx '1\.\.0' "${_tap}"; then
+        _empty=1
+    fi
+    rm -f "${_tap}"
+    if [[ "${_empty}" -eq 1 ]]; then
+        _die "${_tier} bats ran zero cases - a missing required case is not green"
+    fi
+    _die "${_tier} bats failed"
+}
+
 # Run one bats tier as a gate. $1 = tier label; the remaining arguments are
 # the spec paths (files or directories, handed to `bats -r`) that make up
 # the tier. Omit them to run every test/<tier>/*.bats.
@@ -412,8 +427,7 @@ _run_bats_tier() {
         --no-parallelize-within-files -r)
     [[ -z "${_filter}" ]] || _bats_args+=(-f "${_filter}")
     if ! bats "${_bats_args[@]}" "${_paths[@]}" | tee "${_tap}"; then
-        rm -f "${_tap}"
-        _die "${_tier} bats failed"
+        _die_bats_failed "${_tier}" "${_tap}"
     fi
     local _ok=0
     _verify_tap "${_tier}" "${_tap}" "${_min}" || _ok=1
