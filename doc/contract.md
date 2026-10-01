@@ -74,7 +74,7 @@
 4. 永不靜默失敗（[ADR 0007](adr/0007-invariant-no-silent-failure.md)，#205）
 5. 使用者介面極少：just 是唯一入口，recipe 語意固定（[ADR 0008](adr/0008-invariant-minimal-interface.md)，#206）
 6. 冪等：同一個指令重跑，結果相同（[ADR 0009](adr/0009-invariant-idempotent.md)：#207）
-7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（ADR 待寫：#208）
+7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（[ADR 0010](adr/0010-invariant-black-box-verifiable.md)，#208）
 8. host 依賴最小：除驅動與 GUI app 外，只需 docker 與 just（ADR 待寫：#209）
 9. 正確性不綁單一平台（ADR 待寫：#210）
 10. 相容性：同一個大版號內不破壞原本的用法（ADR 待寫：#211）
