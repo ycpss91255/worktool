@@ -93,6 +93,7 @@ _registered_names() {
     local _p="\${CLAUDE_PROJECT_DIR}/.claude/hook"
     assert_output "$(printf '%s\n' \
         "PreToolUse|Bash|${_p}/test-must-use-docker.sh" \
+        "PreToolUse|Bash|${_p}/enforce_local_test_scope.sh" \
         "PreToolUse|Bash|${_p}/enforce_long_job_timeout.sh" \
         "PreToolUse|Bash|${_p}/check_main_fresh_before_worktree.sh" \
         "PreToolUse|Bash|${_p}/remind_main_sync.sh" \
@@ -325,4 +326,11 @@ _registered_names() {
     for adr in "${REPO_ROOT}"/doc/adr/00{04,05,06,07,08,09,10,11,12,13}-*.md; do
         assert [ -f "${adr}" ]
     done
+}
+
+@test "local test scope guard is registered for both agents" {
+    run _registered_names "${SETTINGS}" Bash
+    assert_line 'enforce_local_test_scope.sh'
+    run _registered_names "${CODEX_HOOKS}" Bash
+    assert_line 'enforce_local_test_scope.sh'
 }

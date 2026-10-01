@@ -520,13 +520,63 @@ _pl_blocked_run() {
     assert_output "1"
 }
 
-@test "milestone-fanout forwards implementer and limits child workflows to two at a time" {
-    run grep -c 'implementer: IMPLEMENTER' "${FANOUT}"
-    assert_output "1"
-    run grep -c 'A.items.slice(i, i + 2)' "${FANOUT}"
-    assert_output "1"
-    run grep -c 'await parallel(batch.map' "${FANOUT}"
-    assert_output "1"
+# Execute the fanout template at the Workflow tool seam, recording child batches.
+_fanout_batches() {
+    node --input-type=module - "${FANOUT}" "$1" <<'JS'
+import { readFileSync } from 'node:fs'
+const [path, options] = process.argv.slice(2)
+const items = Array.from({ length: 23 }, (_, i) => ({ issue: i + 1, branch: `b${i}`, name: `n${i}`, task: 't' }))
+const args = { repo: 'o/r', repoDir: '/work', items, ...JSON.parse(options) }
+const batches = [], children = [], logs = []
+const parallel = async fns => {
+  batches.push(fns.length)
+  return Promise.all(fns.map(fn => fn()))
+}
+const workflow = async (options, args) => {
+  children.push({ options, args })
+  await Promise.resolve()
+  return { issue: args.issue, pr: args.issue, ciState: 'green', codexVerdict: 'mergeable', rounds: 0 }
+}
+const body = readFileSync(path, 'utf8').replace(/^export const meta/m, 'const meta')
+const run = new (async () => {}).constructor('args', 'parallel', 'workflow', 'phase', 'log', body)
+try {
+  const result = await run(args, parallel, workflow, () => {}, message => logs.push(message))
+  console.log(JSON.stringify({ result, batches, children, logs, error: null }))
+} catch (error) {
+  console.log(JSON.stringify({ error: error.message, batches, children }))
+}
+JS
+}
+
+@test "milestone-fanout (node): defaults to ten children per batch and returns every result" {
+    run _fanout_batches '{}'
+    assert_success
+    run jq -e '.error == null and .batches == [10,10,3] and [.result[].issue] == [range(1;24)] and (.children | length == 23) and ([.children[].args.implementer] | all(. == "codex")) and ([.logs[] | select(contains(" done:"))] | length == 23)' <<<"${output}"
+    assert_success
+    assert_output "true"
+}
+
+@test "milestone-fanout (node): honors custom positive concurrency and forwards implementer" {
+    local config expected
+    for config in 1 4 30; do
+        expected=$(jq -cn --argjson n "${config}" '[range(0;23;$n) | [($n), (23 - .)] | min]')
+        run _fanout_batches "{\"concurrency\":${config},\"implementer\":\"claude\"}"
+        assert_success
+        run jq -e --argjson expected "${expected}" '.error == null and .batches == $expected and [.result[].issue] == [range(1;24)] and ([.children[].args.implementer] | all(. == "claude"))' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "milestone-fanout (node): rejects invalid concurrency before starting children" {
+    local value
+    for value in 1.5 0 -1 '"4"' null true false '[]' '{}' '1e400'; do
+        run _fanout_batches "{\"concurrency\":${value}}"
+        assert_success
+        run jq -e '.error == "milestone-fanout: args.concurrency must be a positive integer" and .batches == [] and .children == []' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
 }
 
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
@@ -1559,4 +1609,12 @@ _rv_assert_fails_closed() {
     assert_success
     run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
+}
+
+@test "pr-loop CI fixes explicitly run only changed unit specs locally (#326)" {
+    run _pl_run
+    assert_success
+    run jq -r '.calls[] | select(.label == "ci:#7") | .prompt' <<<"${output}"
+    assert_output --partial 'Locally run only just test lint and changed unit specs'
+    assert_output --partial 'Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally'
 }
