@@ -1516,3 +1516,11 @@ _rv_assert_fails_closed() {
     run jq -cr '[.error, [.calls[].label], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
     assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","ci:#7"],false]'
 }
+
+@test "milestone-fanout (node): forwards light mode to each child (#310)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"mode\":\"light\",\"items\":[{\"issue\":310,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" '{}'
+    assert_success
+    run jq -cr '[.error, .workflowCalls[0].args.mode]' <<<"${output}"
+    assert_output '[null,"light"]'
+}
