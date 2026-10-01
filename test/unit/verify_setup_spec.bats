@@ -377,28 +377,6 @@ _insert_before() {
 # both tmux placements; ~/.tmux.conf is written over wholesale, and the
 # report is exactly the one a correct write prints. This is the regression
 # section 3 could not see: 3.1-3.6 never take this branch.
-_degrade_tmux_path_overwrites() {
-    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'EOF'
-_apply_ghostty() {
-    local _ghostty _tmux_conf _body _rc=0
-    _ghostty="$(enter_ghostty_config)"
-    _tmux_conf="$(enter_tmux_conf)"
-    if [[ "${TMUX}" == "inside" ]]; then
-        _block_write "${_ghostty}" \
-            "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX} -- tmux new -A -s main" || _rc=1
-        _block_remove "${_tmux_conf}" || _rc=1
-        return "${_rc}"
-    fi
-    _block_write "${_ghostty}" "command = tmux new -A -s main" || _rc=1
-    _body="set -g default-command '$(enter_sh_dquote "${DISTROBOX}") enter ${BOX}'"
-    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "${_body}" "${ENTER_BLOCK_END}" \
-        >"${_tmux_conf}" || _rc=1
-    log_info "wrote: ${_tmux_conf} (managed block: ${_body})"
-    return "${_rc}"
-}
-EOF
-}
-
 # Degrade the copy at $1 so that ONLY `_apply_no_terminal` - the
 # `--terminal none` removal path - empties each managed file instead of
 # stripping its block. `_apply_disable` (`--auto-enter no`, the removal
@@ -950,85 +928,6 @@ EOF
 # The item that closes the gap: section 3 printed `tmux.conf=intact` on every
 # item while no item ever asked the product to WRITE ~/.tmux.conf.
 
-@test "3.7: a just that prints a plausible tmux-host setup but exits 1 cannot pass" {
-    _stub_just_plausible 1
-    run "${VERIFY}" 3.7
-    assert_failure
-    assert_output --partial "[FAIL]"
-}
-
-@test "3.7: a setup that logs the tmux.conf write without writing it cannot pass" {
-    # Every decision line is there and the run exits 0; the file the write
-    # line names was never created, so there is no block to show.
-    _stub_just_plausible 0
-    run "${VERIFY}" 3.7
-    assert_failure
-    refute_output --partial "3.7 PASS"
-}
-
-@test "3.7: a --tmux host write that overwrites the whole ~/.tmux.conf instead of replacing its managed block cannot pass (GAP B)" {
-    # The degraded product really runs, really writes the documented body
-    # into ~/.tmux.conf and really reports it. `status` says the block is
-    # present, the counts are 1 then 0 - and the user's tmux configuration
-    # is gone. Only the user content seeded before setup can see it.
-    local _repo
-    _repo="$(_repo_copy)"
-    _degrade_tmux_path_overwrites "${_repo}"
-    run "${_repo}/script/verify/setup.sh" 3.7
-    assert_failure
-    assert_line "[INFO] wrote: <H>/.tmux.conf (managed block: set -g default-command '\"<D>\" enter dev')"
-    assert_line "set -g default-command '\"<D>\" enter dev'"
-    assert_line "tmux.conf: <H>/.tmux.conf (managed block: present)"
-    assert_line "user-content after-write: ghostty=intact tmux.conf=LOST"
-    assert_output --partial "lost the user's own content"
-    refute_output --partial "3.7 PASS"
-}
-
-@test "3.7 is what catches it: the same degradation leaves every tmux-inside item green" {
-    # The honest measure of the gap. 3.1, 3.2, 3.3, 3.5 and 3.6 all run the
-    # tmux-INSIDE path, which this degradation does not touch, so they pass
-    # word for word - which is exactly how a regression confined to the tmux
-    # path used to reach the maintainer's machine.
-    local _repo
-    _repo="$(_repo_copy)"
-    _degrade_tmux_path_overwrites "${_repo}"
-    run "${_repo}/script/verify/setup.sh" 3.1 3.2 3.3 3.5 3.6
-    assert_success
-    assert_output --partial "3.2 PASS"
-    assert_output --partial "3.6 PASS"
-}
-
-@test "3.7: a removal that empties ~/.tmux.conf instead of stripping its managed block cannot pass" {
-    # The other side of the round trip: `tmux-blocks-before=1`,
-    # `tmux-blocks=0` and every removal line are what a correct removal
-    # prints, and an emptied file satisfies all three.
-    local _repo
-    _repo="$(_repo_copy)"
-    cat >>"${_repo}/lib/enter.sh" <<'EOF'
-enter_block_strip() { :; }
-EOF
-    run "${_repo}/script/verify/setup.sh" 3.7
-    assert_failure
-    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
-    assert_line "user-content after-removal: ghostty=LOST tmux.conf=LOST"
-    assert_line "tmux-blocks-before=1"
-    assert_line "tmux-blocks=0"
-    refute_output --partial "3.7 PASS"
-}
-
-@test "3.7: a grep -c that answers 0 but exits 2 cannot pass (tmux-blocks=0 must mean the file was read)" {
-    _stub_grep_count_unreadable '-c'
-    run "${VERIFY}" 3.7
-    assert_failure
-    refute_output --partial "3.7 PASS"
-}
-
-# --- 3.8 ----------------------------------------------------------------------
-# The item that closes the last gap of the same class: `--terminal none`
-# never appeared anywhere in script/verify/, while `_apply_no_terminal`
-# REMOVES the managed block from both managed files - and a machine with no
-# ghostty takes that path by default.
-
 @test "3.8: a just that prints a plausible setup but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.8
@@ -1262,4 +1161,12 @@ EOF
     run "${VERIFY}" 3.5
     assert_success
     assert_line "command = '<D>' enter dev"
+}
+
+@test "3.7: distrobox isolation block is checked and host tmux config stays untouched" {
+    run "${VERIFY}" 3.7
+    assert_success
+    assert_line "distrobox-blocks=1"
+    assert_line "user-content after-write: ghostty=intact tmux.conf=intact"
+    refute_output --partial "[INFO] tmux:"
 }

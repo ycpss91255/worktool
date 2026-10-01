@@ -180,7 +180,7 @@ _item_title() {
         3.4) printf '%s\n' 'bad input is refused and nothing is created' ;;
         3.5) printf '%s\n' 'no distrobox on PATH is refused; --distrobox names one' ;;
         3.6) printf '%s\n' 'the four remaining states of the status distrobox line' ;;
-        3.7) printf '%s\n' '--tmux host writes and removes the ~/.tmux.conf block' ;;
+        3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes both managed blocks and keeps both files' ;;
         3.9) printf '%s\n' '--tmux inside after host removes the tmux.conf block and keeps the file' ;;
         *) return 1 ;;
@@ -330,7 +330,7 @@ Items:
   3.4  bad input is refused and nothing is created
   3.5  no distrobox on PATH is refused; --distrobox names one
   3.6  the four remaining states of the status distrobox line
-  3.7  --tmux host writes and removes the ~/.tmux.conf block
+  3.7  distrobox.conf isolates host TMUX and keeps user content
   3.8  --terminal none removes both managed blocks and keeps both files
   3.9  --tmux inside after host removes the tmux.conf block and keeps the file
 
@@ -1302,117 +1302,28 @@ but status reported
 }
 
 # --- 3.7 ---------------------------------------------------------------------
-# `--tmux host`: the ONE decision that makes `just box setup` write
-# ~/.tmux.conf. Every other item of this section runs the tmux-INSIDE path,
-# where the product only ever opens ~/.tmux.conf to look for a block to
-# remove - so their `tmux.conf=intact` says nothing about what a write does
-# to that file, and a regression confined to this path passed all six.
-#
-# The item therefore asks the whole round trip on the file that section 3
-# otherwise never exercises: the block lands IN the seeded config, `status`
-# reports it, the removal takes it out again, and the user's own lines are
-# counted on BOTH sides of both operations.
+# The second managed file now belongs to distrobox, never host tmux.
 _item_3_7() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp sh || return 1
     _item_begin || return 1
-    local _g _d _before _blocks _setup_rc _status_rc _remove_rc _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
-    NORM_G="${_g}"
-    NORM_D="${_d}"
-    # ~/.tmux.conf is a real user's file with real user lines in it; the
-    # whole point of this item is what happens to them.
     _seed_user_content 3.7 || return 1
-
+    local _conf="${ITEM_H}/.config/distrobox/distrobox.conf" _blocks _bad=0
+    mkdir -p "${ITEM_H}/.config/distrobox" || return 1
+    printf '# acceptance user config\ncontainer_manager=docker\n' >"${_conf}" || return 1
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
-    _run_norm "${_env[@]}" just box setup --tmux host || return 1
-    # Two managed files, two bodies: the ghostty one no longer names a
-    # distrobox at all (tmux runs on the host), and the tmux.conf one
-    # carries the quoted absolute path instead (#175).
-    _expect_lines 3.7 \
-        '[INFO] auto-enter: yes (default)' \
-        '[INFO] terminal: ghostty (default)' \
-        '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
-        '[INFO] tmux: host (user)' \
-        '[INFO] box: dev (default)' \
-        '[INFO] distrobox: <D> (absolute path written into the managed command)' \
-        '[INFO] wrote: <H>/.config/worktool/config' \
-        "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_HOST_CMD})" \
-        "[INFO] wrote: <H>/.tmux.conf (managed block: ${MANAGED_TMUX_CONF_BODY})" \
-        || _bad=1
-    _setup_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_setup_rc}"
-
-    # The file itself, not the report about it: the markers and the ONE body
-    # they delimit. `[INFO] wrote: ...` is the product's own word for what it
-    # put where.
-    local _tmux_conf="${ITEM_H}/.tmux.conf"
-    if _show_norm_file "${_tmux_conf}"; then
-        _expect_lines 3.7 \
-            "${VERIFY_BLOCK_BEGIN}" \
-            "${MANAGED_TMUX_CONF_BODY}" \
-            "${VERIFY_BLOCK_END}" \
-            || _bad=1
-    else
-        _fail "3.7: setup --tmux host left no readable ${_tmux_conf}"
-        _bad=1
-    fi
-    # The block went INTO ~/.tmux.conf; it did not replace it. This is the
-    # assertion section 3 never made: the three lines above are there word
-    # for word whether the block was inserted or the file was overwritten.
+    _run_norm "${_env[@]}" just box setup --terminal ghostty || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || return 1
+    _blocks="$(_count_matching 'BEGIN worktool managed block' "${_conf}")" || return 1
+    printf 'distrobox-blocks=%s\n' "${_blocks}"
+    [[ "${_blocks}" -eq 1 ]] || _bad=1
+    _check_user_content 3.7 after-write distrobox.conf "${_conf}" '# acceptance user config' 'container_manager=docker' || _bad=1
+    _run_norm env TMUX=host TMUX_PANE=pane sh -c '. "$1"; printf "TMUX=%s TMUX_PANE=%s\n" "${TMUX-unset}" "${TMUX_PANE-unset}"' sh "${_conf}" dev || return 1
+    _expect_lines 3.7 'TMUX=unset TMUX_PANE=unset' || _bad=1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+    _run_norm env TMUX=host TMUX_PANE=pane sh -c '. "$1"; printf "TMUX=%s TMUX_PANE=%s\n" "${TMUX-unset}" "${TMUX_PANE-unset}"' sh "${_conf}" other || return 1
+    _expect_lines 3.7 'TMUX=host TMUX_PANE=pane' || _bad=1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_user_content 3.7 after-write || _bad=1
-
-    _run_norm "${_env[@]}" just box status || return 1
-    _expect_lines 3.7 \
-        'tmux: host (user)' \
-        'ghostty: <H>/.config/ghostty/config (managed block: present)' \
-        'tmux.conf: <H>/.tmux.conf (managed block: present)' \
-        'distrobox: <D> (recorded in a managed block: runnable)' \
-        || _bad=1
-    _status_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_status_rc}"
-
-    # "The tmux.conf block was removed" is vacuously true of a file that
-    # never had one, so the precondition is measured on THAT file.
-    _before="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks-before=%s\n' "${_before}"
-    if [[ "${_before}" -ne 1 ]]; then
-        _fail "3.7: ${_tmux_conf} held ${_before} managed block(s) before the removal, expected 1"
-        _bad=1
-    fi
-
-    _run_norm "${_env[@]}" just box setup --auto-enter no || return 1
-    _expect_lines 3.7 \
-        '[INFO] auto-enter: no (user)' \
-        '[INFO] tmux: host (user)' \
-        "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_HOST_CMD})" \
-        "[INFO] removed: <H>/.tmux.conf (managed block: ${MANAGED_TMUX_CONF_BODY})" \
-        || _bad=1
-    _remove_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_remove_rc}"
-
-    _blocks="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks=%s\n' "${_blocks}"
-    # `tmux-blocks=0` is equally true of a ~/.tmux.conf the removal emptied,
-    # so the user's lines are counted on the far side of the removal too.
-    _expect_user_content 3.7 after-removal || _bad=1
-
-    if [[ "${_setup_rc}" -ne 0 ]]; then
-        _fail "3.7: just box setup --tmux host exited ${_setup_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_status_rc}" -ne 0 ]]; then
-        _fail "3.7: just box status exited ${_status_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_remove_rc}" -ne 0 ]]; then
-        _fail "3.7: just box setup --auto-enter no exited ${_remove_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_blocks}" -ne 0 ]]; then
-        _fail "3.7: ${_blocks} managed block(s) left in ${_tmux_conf}, expected 0"
-        _bad=1
-    fi
     return "${_bad}"
 }
 

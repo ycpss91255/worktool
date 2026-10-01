@@ -825,59 +825,13 @@ rc=0
       ```bash
       just verify setup 3.6; echo rc=$?
       ```
-  - [ ] 3.7 `--tmux host`:唯一會寫 `~/.tmux.conf` 的路徑 —— 區塊寫進使用者既有的 `~/.tmux.conf`(不是取而代之)、`status` 兩個受管檔都報 `present`、`--auto-enter no` 把兩個區塊都移掉,而使用者那三行在寫入與移除的兩側都還在
-    - 預期看到資訊
-      ```text
-      ./script/box/setup.sh "$@"
-      [INFO] auto-enter: yes (default)
-      [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable <G>)
-      [INFO] tmux: host (user)
-      [INFO] box: dev (default)
-      [INFO] distrobox: <D> (absolute path written into the managed command)
-      [INFO] wrote: <H>/.config/worktool/config
-      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = tmux new -A -s main)
-      [INFO] wrote: <H>/.tmux.conf (managed block: set -g default-command '"<D>" enter dev')
-      rc=0
-      # worktool acceptance: user content that must survive every write
-      set -g history-limit 12345
-      set -g mouse on
-      # BEGIN worktool managed block (just box setup; do not edit)
-      set -g default-command '"<D>" enter dev'
-      # END worktool managed block
-      user-content after-write: ghostty=intact tmux.conf=intact
-      ./script/box/status.sh "$@"
-      config: <H>/.config/worktool/config
-      auto-enter: yes (default)
-      terminal: ghostty (default)
-      tmux: host (user)
-      box: dev (default)
-      ghostty: <H>/.config/ghostty/config (managed block: present)
-      tmux.conf: <H>/.tmux.conf (managed block: present)
-      distrobox: <D> (recorded in a managed block: runnable)
-      rc=0
-      tmux-blocks-before=1
-      ./script/box/setup.sh "$@"
-      [INFO] auto-enter: no (user)
-      [INFO] terminal: ghostty (default)
-      [INFO] terminal detected: ghostty (ghostty executable <G>)
-      [INFO] tmux: host (user)
-      [INFO] box: dev (default)
-      [INFO] wrote: <H>/.config/worktool/config
-      [INFO] removed: <H>/.config/ghostty/config (managed block: command = tmux new -A -s main)
-      [INFO] removed: <H>/.tmux.conf (managed block: set -g default-command '"<D>" enter dev')
-      rc=0
-      tmux-blocks=0
-      user-content after-removal: ghostty=intact tmux.conf=intact
-      rc=0
-      ```
-      (`--tmux host` 是**唯一**會寫 `~/.tmux.conf` 的決策,所以本項是整個 3 裡唯一讓產品真的寫那個檔的地方;3.1-3.6 全跑 `--tmux inside`,它們的 `tmux.conf=intact` 只證明「不該碰的沒被碰」。這裡兩個受管檔各有一個區塊,而且兩個 body 不一樣:tmux 跑在 host 上,所以 ghostty 那個不再帶 distrobox(`command = tmux new -A -s main`),絕對路徑改由 `~/.tmux.conf` 那個帶 —— tmux 的單引號值是全字面、沒有任何跳脫,所以裡面那層用雙引號(#175 round 1)。
-      中間那六行是 `~/.tmux.conf` 的全文:前三行是本項在 setup 之前種下的使用者內容,後三行才是受管區塊。`[INFO] wrote: ...` 那行與區塊那三行,對「把整份 `~/.tmux.conf` 覆寫成受管區塊」的產品**一字不差**地成立 —— 分得出來的只有 `user-content after-write:`。`tmux-blocks-before=1` 是移除那一半的前提(對一個從來沒有區塊的檔案來說「區塊被移除了」是恆真的),`tmux-blocks=0` 則同樣對「被清空的檔案」成立,所以使用者內容在移除的兩側各查一次。
-      判準是上面每一行的**內容**,各只能出現一次;`status` 的 `tmux.conf: ... (managed block: present)` 與 `distrobox: <D> (recorded in a managed block: runnable)` 一起證明受管紀錄是從 `~/.tmux.conf` 那個區塊讀回來的 —— ghostty 那個 body 根本沒有 distrobox 可讀)
+  - [ ] 3.7 distrobox.conf 受管區塊清掉進入 dev 時繼承的 `TMUX`／`TMUX_PANE`，保留其他盒子的環境與使用者內容（PR #232）
+    - 預期看到資訊：`distrobox-blocks=1`、`TMUX=unset TMUX_PANE=unset`、`TMUX=host TMUX_PANE=pane`、`user-content after-write: ghostty=intact tmux.conf=intact`。
     - 驗收方式
       ```bash
       just verify setup 3.7; echo rc=$?
       ```
+      預期 `rc=0`；受管 distrobox.conf 在 shell 中以 dev 與 other 參數執行，前者清掉 host tmux 環境、後者保留。設定檔原有內容不變；host 的 `~/.tmux.conf` 完全不改動。
   - [ ] 3.8 `--terminal none`:另一條移除路徑(`_apply_no_terminal`,不是 `--auto-enter no` 的 `_apply_disable`)—— 先用 `--terminal ghostty --tmux host` 佈置兩個受管區塊,再跑 `--terminal none`:兩個區塊都被移除、決策仍然存得起來,而使用者那三行在兩個檔案裡都還在
     - 預期看到資訊(第一次佈置用的 setup 輸出略,同 3.7;本項從它留下的兩個受管區塊數起)
       ```text
