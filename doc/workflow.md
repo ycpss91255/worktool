@@ -58,6 +58,8 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 4. 等 CI 全綠，失敗時在同一 worktree 修正並追加 commit、再推送；不跑 codex 複驗，也不 merge。
 
 仍遵守一個 issue 一個 PR、noreply author 與 committer、無署名、不改寫已推送 commit。
+修改失敗的結構化結果須帶 `reason`（失敗步驟與原因），workflow 會把它附在 `blockingLeft`；未提供原因時明確標示。發布並 Locate 後，同樣執行下述 Implement 完成檢查。
+
 回傳沿用 full 的欄位，`codexVerdict: "skipped"`、`rounds: 0`；以 `ciState` 與 `blockingLeft` 判斷是否完成。
 例如上述呼叫只需把 `mode` 改為 `"light"`，並以 `gates` 指定此次修改的 lint 與 spec 指令。
 
@@ -67,6 +69,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
    push 前阻塞執行 `just test lint` 與 `just test changed`。本機不跑整個 tier；全部 tier 由 CI 執行；
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
+   Locate 找到 PR 後，以腳本讀取 `git status --porcelain`、本地 HEAD、`git ls-remote` 的遠端分支 HEAD 與 PR head；工作區必須乾淨，三個 HEAD 必須相同。檢查失敗就以 `blockingLeft` 附上狀態與 HEAD 比較，不進入 CI。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
 3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
 4. **Codex**:agent 把 **PR 描述 + 對應 issue + 完整 diff** 餵給 `codex exec`,逐項確認
@@ -79,6 +82,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
+   Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
@@ -256,7 +260,9 @@ Record 之前的失敗 gh 完全沒被呼叫。
 
 codex 以 `setsid nohup` 脫離執行，寫 rc 檔；每次前景等待上限 540 秒，codex 硬上限 14,400 秒。
 完成後清理掛載該 checkout 的測試 container；非零 rc 或空輸出不能當成功。
-留言以 `[claude]` 開頭，包含結論、每個判斷的 issue URL／檔案:行號依據、分歧與維護者問題；
+每條理由與比對依據接受完整 issue URL、本 repo 的 issue／PR 簡寫 `#<正整數>`（例如 `#212`），
+或 repo 相對路徑的 `檔案:行號`（例如 `doc/contract.md:1`）；每條都必須含至少一項依據。
+留言以 `[claude]` 開頭，包含結論、每個判斷的依據、分歧與維護者問題；
 codex 最終輸出由 shell 複製並逐行引用，不由 Claude 重打，發布前過濾本機路徑與署名。
 Record 分兩次前景工具呼叫：先刪除舊 `body.md` 並組文；組文成功後才執行獨立的發布指令，
 `--body-file` 使用字面絕對路徑，讓 PreToolUse hook 在發布前讀到本次完成的內文。組文失敗就停止發布。
@@ -265,3 +271,7 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 回傳 `{ issue, status, rounds, conclusion, basis, disagreements, ask_maintainer, claude, codex, comment }`。
 成功的 `status` 是 `agreed`／`derived`／`diverged`；nonce、作答、比對或留言失敗分別為
 `setup-failed`／`answer-failed`／`compare-failed`／`record-failed`，失敗不冒充定案。
+`answer-failed` 另帶 `failed_reasons`，每項為 `{ agent, reason_index, reason }`：
+`agent` 是 `claude` 或 `codex`，`reason_index` 從 1 起算，`reason` 保留未通過依據檢查的理由原文。
+雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
+而沒有可列出的未通過理由，`failed_reasons` 為空陣列。
