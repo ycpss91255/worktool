@@ -27,3 +27,17 @@ setup() {
     assert_success
     assert_output ''
 }
+@test "rejects every common artifact including tracked ignored files" {
+    local path
+    for path in note.bak note.orig note.rej note.log nested/_backup/keep nested/review_log/keep; do
+        mkdir -p "${ROOT}/$(dirname "${path}")"
+        touch "${ROOT}/${path}"
+    done
+    printf '*.log\n' > "${ROOT}/.gitignore"
+    git -C "${ROOT}" add -f note.log
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_failure 1
+    for path in note.bak note.orig note.rej note.log nested/_backup/keep nested/review_log/keep; do
+        assert_output --partial "${path}"
+    done
+}
