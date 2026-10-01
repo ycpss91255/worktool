@@ -182,7 +182,8 @@ agy 出口契約見[官方文件](https://antigravity.google/docs/hooks)。
 `[claude]`、`[codex]`、`[agy]` 或 `[gemini]`，外家標記仍拒絕。
 
 2026-10-01 的 headless 實測及環境限制記在
-[#242 實測留言](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928231226)。
+[#242 實測留言](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928231226)
+與 [agy 拒絕格式更正及實機驗證](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928827779)。
 Codex 在 worktree 子路徑下，即使加 bypass 與 `--no-daemon`，仍未證明本
 worktree 的新版留言 hook 被載入；不能只憑 PreToolUse 事件存在判定安全。
 因此 headless 啟動使用 `just agent codex -- <Codex 參數...>`：清掉四種
