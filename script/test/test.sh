@@ -626,12 +626,46 @@ _run_host_step() {
     esac
 }
 
+_changed_files() {
+    local _base="$1" _out="$2"
+    : >"${_out}"
+    git -C "${REPO_ROOT}" diff --name-only "${_base}...HEAD" >>"${_out}" \
+        || _die "cannot read changed files from base ${_base}"
+    git -C "${REPO_ROOT}" diff --name-only >>"${_out}"
+    git -C "${REPO_ROOT}" diff --cached --name-only >>"${_out}"
+    git -C "${REPO_ROOT}" ls-files --others --exclude-standard >>"${_out}"
+    sort -u -o "${_out}" "${_out}"
+}
+
+_run_changed() {
+    local _base="$1" _list _path _tier
+    local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
+    _list="$(mktemp)" || _die "mktemp failed"
+    _changed_files "${_base}" "${_list}"
+    while IFS= read -r _path; do
+        if [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]]; then
+            _tier="${BASH_REMATCH[1]}"
+            local -n _specs="_${_tier}"
+            _specs+=("${_path}")
+            unset -n _specs
+        fi
+    done <"${_list}"
+    rm -f "${_list}"
+    _run_host_step lint ""
+    for _tier in unit matrix integration system acceptance; do
+        local -n _specs="_${_tier}"
+        [[ "${#_specs[@]}" -eq 0 ]] || _run_host_step "${_tier}" "" "${_specs[@]}"
+        unset -n _specs
+    done
+}
+
 # Parse the WHOLE command line before running anything, so an unknown option
 # anywhere in it refuses the run as a whole. Host steps accumulate in the
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
 # container gate instead and stands alone.
 main() {
     local _steps=() _paths=() _ci="" _step _help=0 _filter="" _tier=""
+    local _changed=0 _base="origin/main" _base_set=0
     [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
         || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
     while [[ $# -gt 0 ]]; do
@@ -641,6 +675,13 @@ main() {
                 _ci="$1" ;;
             --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
+            --changed) _changed=1 ;;
+            --base)
+                [[ $# -gt 1 ]] || _usage_error "option '--base' requires a value"
+                shift
+                _base="$1"
+                _base_set=1
+                ;;
             --filter)
                 [[ $# -gt 1 ]] || _usage_error "option '--filter' requires a value"
                 shift
@@ -654,6 +695,12 @@ main() {
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
     fi
+    if [[ "${_changed}" -eq 1 && ( -n "${_ci}" || "${#_steps[@]}" -gt 0 ) ]]; then
+        _usage_error "option '--changed' takes no other test step"
+    fi
+    if [[ "${_base_set}" -eq 1 && "${_changed}" -eq 0 ]]; then
+        _usage_error "option '--base' requires --changed"
+    fi
     if [[ "${#_paths[@]}" -gt 0 || -n "${_filter}" ]]; then
         [[ "${#_steps[@]}" -le 1 ]] \
             || _usage_error "spec paths and --filter require exactly one bats tier"
@@ -664,6 +711,10 @@ main() {
     fi
     if [[ "${_help}" -eq 1 ]]; then
         _usage
+        return 0
+    fi
+    if [[ "${_changed}" -eq 1 ]]; then
+        _run_changed "${_base}"
         return 0
     fi
     if [[ -n "${_ci}" ]]; then
