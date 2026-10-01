@@ -563,11 +563,11 @@ _check_api_merge() {
 
 # _judge_body <body> <source> - the tag rule (issue #190 scope revision):
 # every comment an agent posts starts, after leading whitespace, with
-# [claude] or [codex]; an untagged (or empty) one blocks, phrase or not.
+# its own agent marker; an untagged (or empty) one blocks, phrase or not.
 # CI (#187) takes an untagged OWNER comment as the maintainer's own.
 _judge_body() {
     approval_has_agent_marker "${_AGENT}" "$1" && return 0
-    hook_block "$2: comments posted by this agent must start with [${_AGENT}]." \
+    hook_block "$2: comments posted by this agent must start with [${_AGENT}]; untagged comments count as the maintainer's own (see #187)." \
         "Start the body with [${_AGENT}] and retry; never write the maintainer's approval."
 }
 
