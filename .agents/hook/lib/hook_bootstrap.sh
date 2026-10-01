@@ -25,6 +25,7 @@
 #   hook_field <jq-filter>  echo a field of HOOK_INPUT via jq (empty if absent
 #                           or jq is missing)
 #   hook_command            shorthand for the Bash tool's .tool_input.command
+#   hook_worktree_root <r>  print the shared worktree root beside repo <r>
 #   hook_allow              standard pass path: exit 0
 #   hook_block <reason>...  standard block path: "[hook:<name>] BLOCKED" + exit 2
 #   hook_context <msg> [ev] non-blocking: emit additionalContext JSON + exit 0
@@ -81,6 +82,13 @@ hook_field() {
 # hook_command - shorthand for the Bash tool's command string.
 hook_command() {
     hook_field '.tool_input.command'
+}
+
+# hook_worktree_root <repo-root> - worktrees and their scratch space live in
+# the worktree/ directory beside the main checkout.
+hook_worktree_root() {
+    local _repo_root="${1:?hook_worktree_root needs <repo-root>}"
+    printf '%s/worktree' "$(dirname -- "${_repo_root}")"
 }
 
 # hook_allow - the standard pass path.
