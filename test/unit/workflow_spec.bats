@@ -228,7 +228,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
-    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    local replies='{"implement:": {"status":"ready"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
@@ -1523,4 +1523,12 @@ _rv_assert_fails_closed() {
     assert_success
     run jq -cr '[.error, .workflowCalls[0].args.mode]' <<<"${output}"
     assert_output '[null,"light"]'
+}
+
+@test "pr-loop (node): light stops before review when editing fails (#310)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
+    assert_success
+    run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
+    assert_output '[null,["implement:#310"],0,1]'
 }
