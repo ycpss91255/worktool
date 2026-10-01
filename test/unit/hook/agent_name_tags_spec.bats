@@ -57,3 +57,11 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
         assert_equal "${status}" "${_expected}"
     done
 }
+
+@test "approval flag initialization permits a literal help request" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"gh pr comment --help"}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}

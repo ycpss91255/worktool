@@ -16,10 +16,9 @@
 # .agents/hook/lib/subcommand.sh.
 
 # shellcheck source-path=SCRIPTDIR/lib
-# Exit-code-contract hook: `set -uo pipefail`, NOT -e (a probe returning 1
-# must not abort the decision); every gh lookup is still checked on its own,
-# never through a pipe, so fail closed does not depend on pipefail.
-set -uo pipefail
+# Strict hook: expected non-zero probes are handled explicitly. Every gh
+# lookup is checked on its own, never through a pipe, to preserve fail closed.
+set -euo pipefail
 
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
@@ -99,7 +98,9 @@ _api_derive() {
     _API_ATTACH=''
     read -r -a _all <<<"${_API_VALUE_OPTS}"
     for _o in "${_all[@]}"; do
-        [[ "${_o}" == -[!-] ]] && _API_ATTACH+="${_o:1:1}"
+        if [[ "${_o}" == -[!-] ]]; then
+            _API_ATTACH+="${_o:1:1}"
+        fi
     done
 }
 
