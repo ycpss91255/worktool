@@ -58,6 +58,8 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 4. 等 CI 全綠，失敗時在同一 worktree 修正並追加 commit、再推送；不跑 codex 複驗，也不 merge。
 
 仍遵守一個 issue 一個 PR、noreply author 與 committer、無署名、不改寫已推送 commit。
+修改失敗的結構化結果須帶 `reason`（失敗步驟與原因），workflow 會把它附在 `blockingLeft`；未提供原因時明確標示。發布並 Locate 後，同樣執行下述 Implement 完成檢查。
+
 回傳沿用 full 的欄位，`codexVerdict: "skipped"`、`rounds: 0`；以 `ciState` 與 `blockingLeft` 判斷是否完成。
 例如上述呼叫只需把 `mode` 改為 `"light"`，並以 `gates` 指定此次修改的 lint 與 spec 指令。
 
@@ -67,6 +69,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
    push 前阻塞執行 `just test lint` 與 `just test changed`。本機不跑整個 tier；全部 tier 由 CI 執行；
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
+   Locate 找到 PR 後，以腳本讀取 `git status --porcelain`、本地 HEAD、`git ls-remote` 的遠端分支 HEAD 與 PR head；工作區必須乾淨，三個 HEAD 必須相同。檢查失敗就以 `blockingLeft` 附上狀態與 HEAD 比較，不進入 CI。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
 3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
 4. **Codex**:agent 把 **PR 描述 + 對應 issue + 完整 diff** 餵給 `codex exec`,逐項確認
@@ -79,6 +82,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
+   Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
