@@ -727,11 +727,10 @@ rc=0
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
       [INFO] terminal detected: ghostty (ghostty executable <G>)
-      [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] dry-run: would write <H>/.config/worktool/config
-      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)
+      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)
       rc=0
       files 2->2
       user-content after-dry-run: ghostty=intact tmux.conf=intact

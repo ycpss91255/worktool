@@ -202,7 +202,7 @@ DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 # Items 3.1, 3.2, 3.3 and 3.9 all name it: a quoted ABSOLUTE distrobox path
 # is the whole of issue #175, and it lives in the TEXT - no exit code and
 # no file count can see a regression back to the bare name.
-MANAGED_CMD="command = '<D>' enter dev -- tmux new -A -s main"
+MANAGED_CMD="command = '<D>' enter dev"
 
 # The two bodies the `--tmux host` pair writes (items 3.7, 3.8 and 3.9). tmux
 # runs `default-command` through /bin/sh, so the path goes in double-quoted
@@ -806,7 +806,6 @@ _item_3_1() {
         '[INFO] auto-enter: yes (default)' \
         '[INFO] terminal: ghostty (default)' \
         '[INFO] terminal detected: ghostty (ghostty executable <G>)' \
-        '[INFO] tmux: inside (default)' \
         '[INFO] box: dev (default)' \
         '[INFO] distrobox: <D> (absolute path written into the managed command)' \
         '[INFO] dry-run: would write <H>/.config/worktool/config' \

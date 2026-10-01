@@ -1228,3 +1228,10 @@ EOF
     run "${REAL_FIND}" "${TMPDIR}" -mindepth 1 -maxdepth 1
     assert_output ""
 }
+
+@test "3.1: main direct-entry dry-run passes without a tmux decision" {
+    run "${VERIFY}" 3.1
+    assert_success
+    assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    refute_output --partial "[INFO] tmux:"
+}
