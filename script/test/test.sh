@@ -533,9 +533,6 @@ _validate_spec_paths() {
     local _path _absolute _root="${REPO_ROOT}/test/${_tier}/"
     for _path in "$@"; do
         [[ "${_path}" != /* ]] || _usage_error "spec path '${_path}' must be relative to the repo root"
-        [[ -e "${REPO_ROOT}/${_path}" ]] || _usage_error "spec path '${_path}' does not exist"
-        [[ "${_path}" == *.bats ]] || _usage_error "spec path '${_path}' must end in .bats"
-        [[ -f "${REPO_ROOT}/${_path}" ]] || _usage_error "spec path '${_path}' is not a file"
         _absolute="$(realpath "${REPO_ROOT}/${_path}")"
         [[ "${_absolute}" == "${_root}"* ]] \
             || _usage_error "spec path '${_path}' is outside test/${_tier}/"
@@ -627,6 +624,7 @@ main() {
         _step="${_ci:-${_steps[0]:-}}"
         _tier="$(_tier_for_step "${_step}")" \
             || _usage_error "spec paths and --filter require a bats tier"
+        _validate_spec_paths "${_tier}" "${_paths[@]}"
     fi
     if [[ "${_help}" -eq 1 ]]; then
         _usage
