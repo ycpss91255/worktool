@@ -10,10 +10,13 @@ setup() {
 }
 
 @test "agy model fails closed when no Gemini flash-high model is available" {
-    printf '%s\tDisplay name\n' claude-9.0-flash-high gemini-4.0-pro-high > "${MODEL_LIST}"
-    _resolve
-    assert_failure
-    assert_output --partial 'no Gemini flash-high model'
+    local list
+    for list in '' claude-9.0-flash-high gemini-4.0-pro-high; do
+        printf '%s\tDisplay name\n' "${list}" > "${MODEL_LIST}"
+        _resolve
+        assert_failure
+        assert_output --partial 'no Gemini flash-high model'
+    done
 }
 
 _resolve() {
@@ -34,6 +37,5 @@ _resolve() {
         claude-9.0-flash-high gemini-3.10-flash-high-preview > "${MODEL_LIST}"
     _resolve
     assert_success
-    assert_line 'gemini-3.10-flash-high'
-    refute_line 'gemini-3.9-flash-high'
+    assert_output 'gemini-3.10-flash-high'
 }
