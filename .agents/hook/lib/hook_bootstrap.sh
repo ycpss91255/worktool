@@ -9,17 +9,16 @@
 # centralizes it so a hook collapses to: source this, read input, decide,
 # call hook_allow / hook_block / hook_context.
 #
-# Hooks are exit-code-contract scripts - Claude Code reads the exit code
-# (0 = allow, 2 = block) - so hook_bootstrap turns on `set -uo pipefail`
-# and NOT -e: a conditional probe (`[[ ]]`, `grep -q`, a regex match)
-# legitimately returns 1 without aborting the decision flow.
+# Hooks use `set -euo pipefail`: unexpected failures stop execution.
+# Expected non-zero probes must be handled explicitly to preserve
+# the allow (0), block (2), and advisory (always 0) contracts.
 #
 # The lib lives inside this repo and self-locates from its own file; it
 # never honors a LIB_DIR from the environment (worktool's own lib/ is a
 # different directory, and the test helper exports LIB_DIR for it).
 #
 # Public API (all prefixed `hook_`):
-#   hook_bootstrap [name]   set -uo pipefail + HOOK_LIB_DIR / HOOK_REPO_ROOT
+#   hook_bootstrap [name]   set -euo pipefail + HOOK_LIB_DIR / HOOK_REPO_ROOT
 #                           + HOOK_NAME (default: script basename minus .sh)
 #   hook_read_input         read the stdin JSON payload once into HOOK_INPUT
 #   hook_field <jq-filter>  echo a field of HOOK_INPUT via jq (empty if absent
@@ -45,13 +44,13 @@ HOOK_NAME="${HOOK_NAME:-hook}"
 HOOK_INPUT="${HOOK_INPUT:-}"
 
 # hook_bootstrap [name] - exit-code-contract strict mode + path resolution.
-#   1. set -uo pipefail (deliberately NOT -e).
+#   1. set -euo pipefail.
 #   2. HOOK_LIB_DIR = this file's directory; HOOK_REPO_ROOT = three levels
 #      up (.agents/hook/lib -> repo root). Both resolved physically, so a
 #      hook reached through the .claude/hook symlink lands in the same repo.
 #   3. HOOK_NAME = $1, else the script basename minus .sh.
 hook_bootstrap() {
-    set -uo pipefail
+    set -euo pipefail
 
     HOOK_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
     HOOK_REPO_ROOT="$(cd -- "${HOOK_LIB_DIR}/../../.." && pwd -P)"
