@@ -50,6 +50,21 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/example_spec.bats')"
 }
 
+@test "test.sh --changed runs a changed matrix spec itself after lint" {
+    mkdir -p "${TEMP_REPO}/test/matrix"
+    printf '@test "matrix" { true; }\n' \
+        >"${TEMP_REPO}/test/matrix/example_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/matrix/example_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-matrix test/matrix/example_spec.bats')"
+}
+
 @test "test.sh --changed skips a deleted spec" {
     printf '@test "deleted" { true; }\n' >"${TEMP_REPO}/test/unit/deleted_spec.bats"
     _commit_baseline
