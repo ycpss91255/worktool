@@ -1985,6 +1985,48 @@ _discuss_replies() {
     assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
 }
 
+@test "discuss: accepts the real managed block either-or question without repair (#348)" {
+    local question replies
+    question='「受管區塊」的定義要不要寫成「只由 worktool 寫入與移除」，明示區塊內容只歸 worktool？這等於先決定 ADR 0004 待補項的歸屬。還是寫成「由 worktool 寫入與移除」，讓那個待補項維持未決？'
+    replies="$(_discuss_replies | jq --arg q "${question}" '."compare:".status="diverged" | ."compare:".question=$q')"
+    _discuss_run "${replies}"
+    run jq -ce --arg q "${question}" '[.result.status, .result.ask_maintainer == [$q],
+        .result.comment, ([.calls[] | select(.role | startswith("repair:"))] | length)]' <<<"${output}"
+    assert_output '["diverged",true,"https://github.com/o/r/issues/309#issuecomment-1",0]'
+}
+
+@test "discuss: repairs multiline or unrelated maintainer questions before recording (#348)" {
+    local question replies
+    for question in $'Choose A?\nOr B?' 'Choose storage? Choose latency?'; do
+        replies="$(_discuss_replies | jq --arg q "${question}" '
+            ."compare:".status="diverged" | ."compare:".question="Choose A or B?" |
+            {"repair:compare:": ."compare:"} + . | ."compare:".question=$q')"
+        _discuss_run "${replies}"
+        run jq -cr --arg q "${question}" '[.result.status, .result.ask_maintainer,
+            ([.calls[] | select(.role == "record:")] | length),
+            [.calls[] | select(.role | startswith("repair:compare:")) |
+                [(.prompt | contains($q | tojson)), (.prompt | contains("question")),
+                 (.prompt | contains("single line")), (.prompt | contains("one decision"))]]]' <<<"${output}"
+        assert_output '["diverged",["Choose A or B?"],1,[[true,true,true,true],[true,true,true,true],[true,true,true,true]]]'
+    done
+}
+
+@test "discuss: reports the question field after one unsuccessful repair without recording (#348)" {
+    local question replies
+    for question in '' $'Choose A?\nOr B?' 'Choose storage? Choose latency?'; do
+        replies="$(_discuss_replies | jq --arg q "${question}" '
+            ."compare:".status="diverged" | ."compare:".question="Initial storage? Initial latency?" |
+            {"repair:compare:": ."compare:"} + . | ."repair:compare:".question=$q')"
+        _discuss_run "${replies}"
+        run jq -cr --arg q "${question}" '[.result.status, .result.rounds, .result.failed_basis,
+            [.result.failed_question[] | [.field, .value == $q, (.rule | contains("single line")),
+                (.rule | contains("one decision"))]],
+            ([.calls[] | select(.role | startswith("repair:compare:"))] | length),
+            ([.calls[] | select(.role == "record:")] | length)]' <<<"${output}"
+        assert_output '["compare-failed",1,[],[["question",true,true,true]],1,0]'
+    done
+}
+
 @test "discuss: repairs an uncited answer with its original author before recording (#342)" {
     local replies
     replies="$(_discuss_replies | jq '{"repair:codex:": ."codex:"} + . |
