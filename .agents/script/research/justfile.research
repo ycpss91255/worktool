@@ -1,0 +1,6 @@
+set working-directory := '../../..'
+set positional-arguments
+
+# Resolve the latest Gemini flash-high model for research.
+model *args:
+    ./.agents/script/research/agy-model.sh "$@"
