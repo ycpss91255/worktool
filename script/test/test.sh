@@ -801,6 +801,10 @@ _run_changed() {
             _info "此改動由 CI 的 integration 驗證"
             continue
         fi
+        if [[ "${_path}" == dockerfile/Dockerfile.system-real ]]; then
+            _info "此改動由 CI 的 system-real 驗證"
+            continue
+        fi
         if _is_test_infrastructure "${_path}"; then
             _all_tiers=1
             continue
