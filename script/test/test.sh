@@ -496,6 +496,17 @@ _run_system() {
 _run_system_real() { _run_bats_tier system-real "" -- "${SYSTEM_REAL_SPEC}"; }
 
 # --- Usage -------------------------------------------------------------------
+_usage_environment() {
+    cat >&2 <<'EOF'
+Environment:
+  TEST_IMAGE             test image tag (default worktool-test:local)
+  TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
+  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
+  SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+  GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
+EOF
+}
+
 _usage() {
     cat >&2 <<'EOF'
 Usage: test.sh [OPTION...]
@@ -508,6 +519,11 @@ Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
+  --changed [--base REF]
+                  Always run lint, then select specs from committed,
+                  uncommitted, and untracked changes since REF (default:
+                  origin/main). Unknown impact or an unreadable diff runs the
+                  whole affected tier.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
   --matrix [SPEC...] [--filter REGEX]
@@ -534,14 +550,9 @@ SPEC paths are relative to the repo root and must be .bats files under the
 Internal (what the steps above run inside the container; not for hosts):
   --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system
   --ci-system-real --ci-acceptance
-
-Environment:
-  TEST_IMAGE             test image tag (default worktool-test:local)
-  TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
-  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
-  SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
-  GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
+    printf '\n' >&2
+    _usage_environment
 }
 
 # Refuse the command line: one line on stderr, exit 2, nothing has run.
@@ -626,14 +637,177 @@ _run_host_step() {
     esac
 }
 
+_changed_files() {
+    local _base="$1" _out="$2"
+    : >"${_out}"
+    if ! git -C "${REPO_ROOT}" diff --name-only "${_base}...HEAD" >>"${_out}"; then
+        return 1
+    fi
+    git -C "${REPO_ROOT}" diff --name-only >>"${_out}" || return 1
+    git -C "${REPO_ROOT}" diff --cached --name-only >>"${_out}" || return 1
+    git -C "${REPO_ROOT}" ls-files --others --exclude-standard >>"${_out}" \
+        || return 1
+    sort -u -o "${_out}" "${_out}"
+}
+
+# One mapping table for production paths and the specs that observe them.
+# Format: shell pattern|repo-relative spec path.
+_changed_path_map() {
+    cat <<'MAP'
+lib/log.sh|test/unit/log_spec.bats
+lib/manifest.sh|test/unit/manifest_spec.bats
+lib/home.sh|test/unit/assemble_spec.bats
+lib/home.sh|test/unit/setup_spec.bats
+lib/home.sh|test/unit/status_spec.bats
+lib/enter.sh|test/unit/enter_spec.bats
+lib/approval.sh|test/unit/approval_spec.bats
+lib/approval.sh|test/unit/hook/enforce_milestone_gate_approval_representative_spec.bats
+lib/approval.sh|test/unit/hook/approval_check_spec.bats
+lib/attribution.sh|test/unit/attribution_spec.bats
+lib/commit_attribution.sh|test/unit/commit_attribution_spec.bats
+lib/commit_email.sh|test/unit/commit_email_spec.bats
+script/box/assemble.sh|test/unit/assemble_spec.bats
+script/box/assemble.sh|test/integration/assemble_spec.bats
+script/box/assemble.sh|test/system/real_assemble_spec.bats
+script/box/bench.sh|test/unit/bench_spec.bats
+script/box/enter.sh|test/unit/enter_spec.bats
+script/box/enter.sh|test/integration/enter_spec.bats
+script/box/setup.sh|test/unit/setup_spec.bats
+script/box/setup.sh|test/integration/setup_spec.bats
+script/box/status.sh|test/unit/status_spec.bats
+script/box/justfile.box|test/unit/justfile_spec.bats
+MAP
+    _changed_hook_path_map
+}
+
+_changed_hook_path_map() {
+    cat <<'MAP'
+.agents/hook/check_main_fresh_before_worktree.sh|test/unit/hook/check_main_fresh_before_worktree_spec.bats
+.agents/hook/enforce_codex_round_cap.sh|test/unit/hook/enforce_codex_round_cap_spec.bats
+.agents/hook/enforce_cpu_capacity.sh|test/unit/hook/enforce_cpu_capacity_spec.bats
+.agents/hook/enforce_gh_body_file.sh|test/unit/hook/enforce_gh_body_file_spec.bats
+.agents/hook/enforce_issue_milestone.sh|test/unit/hook/enforce_issue_milestone_spec.bats
+.agents/hook/enforce_long_job_timeout.sh|test/unit/hook/enforce_long_job_timeout_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/matrix/enforce_milestone_gate_approval_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/unit/hook/enforce_milestone_gate_approval_representative_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/unit/hook/approval_check_spec.bats
+.agents/hook/enforce_no_attribution.sh|test/matrix/enforce_no_attribution_spec.bats
+.agents/hook/enforce_no_attribution.sh|test/unit/hook/enforce_no_attribution_spec.bats
+.agents/hook/enforce_no_local_paths.sh|test/unit/hook/enforce_no_local_paths_spec.bats
+.agents/hook/enforce_reply_language.sh|test/unit/hook/enforce_reply_language_spec.bats
+.agents/hook/enforce_scope_on_guard_issues.sh|test/unit/hook/enforce_scope_on_guard_issues_spec.bats
+.agents/hook/enforce_shellcheck_disable_approval.sh|test/unit/hook/enforce_shellcheck_disable_approval_spec.bats
+.agents/hook/enforce_tdd_commit.sh|test/matrix/enforce_tdd_commit_spec.bats
+.agents/hook/enforce_tdd_commit.sh|test/unit/hook/enforce_tdd_commit_representative_spec.bats
+.agents/hook/remind_main_sync.sh|test/unit/hook/remind_main_sync_spec.bats
+.agents/hook/remind_no_emoji.sh|test/unit/hook/remind_no_emoji_spec.bats
+.agents/hook/remind_workflow_tdd.sh|test/unit/hook/remind_workflow_tdd_spec.bats
+.agents/hook/test-must-use-docker.sh|test/unit/hook/test_must_use_docker_spec.bats
+.agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
+.agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats
+.agents/hook/lib/subcommand.sh|test/unit/hook/subcommand_spec.bats
+.agents/script/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
+.agents/script/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
+MAP
+}
+
+_mapped_specs() {
+    local _path="$1" _pattern _spec
+    while IFS='|' read -r _pattern _spec; do
+        if [[ "${_path}" == "${_pattern}" ]]; then
+            printf '%s\n' "${_spec}"
+        fi
+    done < <(_changed_path_map)
+}
+
+_add_changed_spec() {
+    local _path="$1" _mapped="${2:-0}" _tier
+    [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
+        || return 1
+    _tier="${BASH_REMATCH[1]}"
+    if [[ ! -f "${REPO_ROOT}/${_path}" ]]; then
+        if [[ "${_mapped}" -eq 1 ]]; then
+            local -n _full_tier="_full_${_tier}"
+            _full_tier=1
+            unset -n _full_tier
+        fi
+        return 0
+    fi
+    case "${_path}" in
+        "test/${INTEGRATION_GHOSTTY_SPEC_REL}") _ghostty=1; return 0 ;;
+        "test/${SYSTEM_REAL_SPEC_REL}") _system_real=1; return 0 ;;
+    esac
+    local -n _tier_specs="_${_tier}"
+    _tier_specs+=("${_path}")
+    unset -n _tier_specs
+}
+
+_is_test_infrastructure() {
+    case "$1" in
+        script/test/*|dockerfile/Dockerfile.*|justfile*|test/helper/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_run_changed_tiers() {
+    local _tier
+    _run_host_step lint ""
+    for _tier in unit matrix integration system acceptance; do
+        local -n _selected_specs="_${_tier}"
+        local -n _full_tier="_full_${_tier}"
+        if [[ "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
+            _run_host_step "${_tier}" ""
+        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
+            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
+        fi
+        unset -n _selected_specs
+        unset -n _full_tier
+    done
+    [[ "${_ghostty}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
+        || _run_ghostty_in_container
+    [[ "${_system_real}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
+        || _run_host_step system-real ""
+    [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
+}
+
+_run_changed() {
+    local _base="$1" _list _path _spec _mapped _all_tiers=0
+    local _full_unit=0 _full_matrix=0 _full_integration=0
+    local _full_system=0 _full_acceptance=0
+    local _ghostty=0 _system_real=0
+    local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
+    _list="$(mktemp)" || _die "mktemp failed"
+    if ! _changed_files "${_base}" "${_list}"; then
+        _info "changed-file diff unreadable; running every tier"
+        _all_tiers=1
+    fi
+    while IFS= read -r _path; do
+        if _is_test_infrastructure "${_path}"; then
+            _all_tiers=1
+            continue
+        fi
+        if _add_changed_spec "${_path}"; then
+            continue
+        fi
+        _mapped="$(_mapped_specs "${_path}")"
+        if [[ -z "${_mapped}" ]]; then
+            _full_unit=1
+            continue
+        fi
+        while IFS= read -r _spec; do
+            [[ -n "${_spec}" ]] || continue
+            _add_changed_spec "${_spec}" 1
+        done <<<"${_mapped}"
+    done <"${_list}"
+    rm -f "${_list}"
+    _run_changed_tiers
+}
+
 # Parse the WHOLE command line before running anything, so an unknown option
 # anywhere in it refuses the run as a whole. Host steps accumulate in the
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
 # container gate instead and stands alone.
-main() {
-    local _steps=() _paths=() _ci="" _step _help=0 _filter="" _tier=""
-    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
-        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+_parse_test_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) _help=1 ;;
@@ -641,6 +815,13 @@ main() {
                 _ci="$1" ;;
             --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
+            --changed) _changed=1 ;;
+            --base)
+                [[ $# -gt 1 ]] || _usage_error "option '--base' requires a value"
+                shift
+                _base="$1"
+                _base_set=1
+                ;;
             --filter)
                 [[ $# -gt 1 ]] || _usage_error "option '--filter' requires a value"
                 shift
@@ -651,8 +832,22 @@ main() {
         esac
         shift
     done
+}
+
+main() {
+    _steps=() _paths=() _ci="" _step="" _help=0 _filter="" _tier=""
+    _changed=0 _base="origin/main" _base_set=0
+    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
+        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+    _parse_test_args "$@"
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
+    fi
+    if [[ "${_changed}" -eq 1 && ( -n "${_ci}" || "${#_steps[@]}" -gt 0 ) ]]; then
+        _usage_error "option '--changed' takes no other test step"
+    fi
+    if [[ "${_base_set}" -eq 1 && "${_changed}" -eq 0 ]]; then
+        _usage_error "option '--base' requires --changed"
     fi
     if [[ "${#_paths[@]}" -gt 0 || -n "${_filter}" ]]; then
         [[ "${#_steps[@]}" -le 1 ]] \
@@ -664,6 +859,10 @@ main() {
     fi
     if [[ "${_help}" -eq 1 ]]; then
         _usage
+        return 0
+    fi
+    if [[ "${_changed}" -eq 1 ]]; then
+        _run_changed "${_base}"
         return 0
     fi
     if [[ -n "${_ci}" ]]; then
