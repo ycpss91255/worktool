@@ -342,3 +342,41 @@ _dispatched() {
         '--ci-unit test/unit/hook/enforce_local_test_scope_spec.bats' \
         '--ci-matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/another_spec.bats')"
 }
+
+# Observe selection before CI-only tiers are deferred by the dispatcher.
+_selected_changed_specs() {
+    run bash -c '
+        source "$1/script/test/test.sh"
+        tier="$2"
+        _run_changed_tiers() {
+            local -n selected="_${tier}"
+            printf "%s\n" "${selected[@]}"
+        }
+        if [[ "$2" == acceptance ]]; then
+            _changed_path_map() {
+                printf "%s\n" "lib/example.sh|test/acceptance/example_spec.bats"
+            }
+        fi
+        main --changed --base main
+    ' _ "${TEMP_REPO}" "$1"
+}
+
+@test "test.sh --changed selects a mapped integration spec once in first-seen order" {
+    mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration"
+    printf '# setup\n' >"${TEMP_REPO}/script/box/setup.sh"
+    printf '@test "unit" { true; }\n' >"${TEMP_REPO}/test/unit/setup_spec.bats"
+    for spec in setup another; do
+        printf '@test "example" { true; }\n' \
+            >"${TEMP_REPO}/test/integration/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/box/setup.sh"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/integration/setup_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/integration/another_spec.bats"
+
+    _selected_changed_specs integration
+
+    assert_success
+    assert_equal "$output" "$(printf '%s\n' \
+        test/integration/setup_spec.bats test/integration/another_spec.bats)"
+}
