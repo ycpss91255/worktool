@@ -45,3 +45,18 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
         --ci-lint '--ci-unit test/unit/example_spec.bats')"
 }
+
+@test "test.sh --changed maps a changed library to its spec" {
+    mkdir -p "${TEMP_REPO}/lib"
+    printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
+    printf '@test "log" { true; }\n' >"${TEMP_REPO}/test/unit/log_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/lib/log.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/log_spec.bats')"
+}

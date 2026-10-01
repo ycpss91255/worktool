@@ -637,18 +637,46 @@ _changed_files() {
     sort -u -o "${_out}" "${_out}"
 }
 
+# One mapping table for production paths and the specs that observe them.
+# Format: shell pattern|repo-relative spec path.
+_changed_path_map() {
+    cat <<'MAP'
+lib/log.sh|test/unit/log_spec.bats
+MAP
+}
+
+_mapped_specs() {
+    local _path="$1" _pattern _spec
+    while IFS='|' read -r _pattern _spec; do
+        if [[ "${_path}" == ${_pattern} ]]; then
+            printf '%s\n' "${_spec}"
+        fi
+    done < <(_changed_path_map)
+}
+
+_add_changed_spec() {
+    local _path="$1" _tier
+    [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
+        || return 1
+    _tier="${BASH_REMATCH[1]}"
+    local -n _specs="_${_tier}"
+    _specs+=("${_path}")
+    unset -n _specs
+}
+
 _run_changed() {
-    local _base="$1" _list _path _tier
+    local _base="$1" _list _path _tier _spec
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     _changed_files "${_base}" "${_list}"
     while IFS= read -r _path; do
-        if [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]]; then
-            _tier="${BASH_REMATCH[1]}"
-            local -n _specs="_${_tier}"
-            _specs+=("${_path}")
-            unset -n _specs
+        if _add_changed_spec "${_path}"; then
+            continue
         fi
+        while IFS= read -r _spec; do
+            [[ -n "${_spec}" ]] || continue
+            _add_changed_spec "${_spec}"
+        done < <(_mapped_specs "${_path}")
     done <"${_list}"
     rm -f "${_list}"
     _run_host_step lint ""
