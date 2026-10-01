@@ -70,7 +70,7 @@
 
 1. 使用者寫的內容歸使用者：可以新建、要改先問、永不刪、永不覆蓋（[ADR 0004](adr/0004-invariant-user-content.md)，#202）
 2. 一個來源：盒子定義只有一份、tool config 只有一份（[ADR 0005](adr/0005-invariant-single-source.md)，#203）
-3. host 與盒子互不干擾（ADR 待寫：#204）
+3. host 與盒子互不干擾（[ADR 0006](adr/0006-invariant-host-box-separation.md)，#204）
 4. 永不靜默失敗（[ADR 0007](adr/0007-invariant-no-silent-failure.md)，#205）
 5. 使用者介面極少：just 是唯一入口，recipe 語意固定（ADR 待寫：#206）
 6. 冪等：同一個指令重跑，結果相同（[ADR 0009](adr/0009-invariant-idempotent.md)：#207）
