@@ -380,3 +380,17 @@ STUB
     assert_output --partial "seed aborted"
     assert_output --partial "cleanup failed"
 }
+
+@test "seed refuses malformed comment data instead of marking it seen" {
+    cat > "${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+    'issue list') echo 5 ;;
+    'pr list') exit 0 ;;
+    *) printf '5\t901\tmaintainer\t%%%s\n' '%' ;;
+esac
+STUB
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    [[ ! -s "${STATE}" ]]
+}

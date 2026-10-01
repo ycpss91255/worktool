@@ -67,7 +67,7 @@ watch_replies_filter() {
     [[ -f "${_state}" ]] || : > "${_state}"
     while IFS=$'\t' read -r _num _id _author _b64; do
         [[ -n "${_id}" ]] || continue
-        _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)"
+        _body="$(printf '%s' "${_b64}" | base64 -d 2>/dev/null)" || return 1
         watch_reply_is_user "${_login}" "${_author}" "${_body}" || continue
         grep -qxF "${_id}" "${_state}" && continue
         printf '%s\n' "${_id}" >> "${_state}"
