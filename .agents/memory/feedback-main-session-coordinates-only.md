@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: b21b8285-cb10-409f-8ab7-1102a23e51e6
-  modified: 2026-10-01T01:39:55.260Z
+  modified: 2026-10-01T06:50:40.802Z
 ---
 
 The main conversation only decides and coordinates. Every change to a repo
@@ -23,6 +23,14 @@ after creation; updates are comments starting with [claude] / [codex] / [agy]
 carries evidence (issue link, file:line, URL) or is marked 推論. /tmp and the
 scratchpad hold only one-off scripts, deleted after use; process artefacts
 (backups, review logs, drafts) stay under the workspace and out of git.
+
+Second relay (same day): open an issue before any change, internal tools and
+repo structure included, and put `Refs: #N` in commit footers (#312); every
+workflow run prints a short identifier and prefixes its agent labels with it
+(#313); script/ is split by type with a lint against top-level scripts and
+process artefacts (#314); when a question must go to the maintainer, attach
+everything the decision needs (draft interface, options) and check terms
+against the glossary first.
 
 **Why:** maintainer rule, relayed 2026-10-01 from the vendor_kit session
 ("修改的部分使用workflow 做處理不要你自己做", "這個事情應該使用 workflow 做處理才對",
