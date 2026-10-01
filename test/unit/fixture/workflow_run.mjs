@@ -2,7 +2,7 @@
 // with stand-in agent/parallel/phase/log, for test/unit/workflow_spec.bats.
 //
 // Usage:
-//   node workflow_run.mjs <template.js> <args-json> <replies-json> [exec]
+//   node workflow_run.mjs <template.js> <args-json> <replies-json> [exec|exec-hooks]
 //
 // <replies-json> maps an agent label PREFIX to the value that agent returns
 // (a missing prefix returns null, as a failed agent does). Without `exec`
@@ -18,6 +18,8 @@
 // Fail closed: a Write target without a well-formed block, or the first
 // step that exits non-zero, stops the agent and it returns null (a shell
 // failure is a failed agent, never the canned reply).
+// `exec-hooks` also runs both publication body hooks before each shell
+// step, using the unchanged tool cwd rather than following shell `cd`.
 // A top-level reply field equal to "<stdout>" becomes the trimmed stdout of
 // the agent's last step (e.g. the URL `gh issue comment` printed).
 // Prints ONE JSON object: { result, error, calls: [{label, schema, prompt}],
@@ -26,12 +28,23 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 const replies = JSON.parse(repliesJson)
 const calls = []
 const ran = []
 const workflowCalls = []
+
+// Check the body before each shell launch, as registered PreToolUse hooks do.
+const checkHooks = (cmd) => {
+  if (mode !== 'exec-hooks') return
+  const input = JSON.stringify({ cwd: process.cwd(), tool_name: 'Bash', tool_input: { command: cmd } })
+  for (const hook of ['enforce_no_local_paths', 'enforce_milestone_gate_approval']) {
+    const path = fileURLToPath(new URL(`../../../.agents/hook/${hook}.sh`, import.meta.url))
+    execFileSync('bash', [path], { input, stdio: ['pipe', 'pipe', 'pipe'] })
+  }
+}
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
@@ -53,6 +66,7 @@ const play = (prompt) => {
   for (const [, cmd] of outside.matchAll(/`((?:cd|mkdir|gh) [^`]*)`/g)) {
     if (/(^|\s)<[A-Za-z][A-Za-z0-9_-]*>(\s|$)/.test(cmd)) continue
     try {
+      checkHooks(cmd)
       stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
       ran.push({ cmd, rc: 0 })
     } catch (e) {
@@ -71,7 +85,7 @@ const withStdout = (value, stdout) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   calls.push({ label, schema: opts.schema || null, prompt })
-  if (mode !== 'exec') return reply(label)
+  if (!['exec', 'exec-hooks'].includes(mode)) return reply(label)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(label), stdout) : null
 }

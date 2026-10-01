@@ -1611,6 +1611,116 @@ _rv_assert_fails_closed() {
     assert_output '[null,["implement:#310"],0,1]'
 }
 
+_discuss_run() {
+    local replies="${1}" mode="${2:-}"
+    local workflow_args='{"repo":"o/r","repoDir":"/w","issue":309,"question":"Choose a design","context":"Approved premise"}'
+    workflow_args="${DISCUSS_ARGS:-${workflow_args}}"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${WF_DIR}/discuss.js" \
+        "${workflow_args}" "${replies}" "${mode}"
+    assert_success
+}
+
+_discuss_replies() {
+    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
+        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],risks:[]},
+        "compare:":{status:"agreed",conclusion:"Use A",basis:["doc/contract.md:1"],disagreements:[],question:""},
+        "record:":{url:"https://github.com/o/r/issues/309#issuecomment-1"}}'
+}
+
+@test "discuss: first answers are independent and receive the approved context" {
+    _discuss_run "$(_discuss_replies)"
+    local json="${output}"
+    run jq -cr '[.error, [.calls[] | select(.label | test("^(claude|codex):")) |
+        [(.prompt | contains("Approved premise")), (.prompt | contains("private answer"))]]]' <<<"${json}"
+    assert_output '[null,[[true,false],[true,false]]]'
+}
+
+@test "discuss: agreement stops after one round" {
+    _discuss_run "$(_discuss_replies)"
+    run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.label | startswith("compare:"))] | length)]' <<<"${output}"
+    assert_output '["agreed",1,1]'
+}
+
+@test "discuss: disagreement feeds back to both sides and stops at three rounds" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,([.calls[] | select(.label | test("^(claude|codex):"))] | length),
+        ([.calls[] | select(.label | test("^(claude|codex):r[23]")) | (.prompt | contains("Choose storage"))] | all)]' <<<"${output}"
+    assert_output '["diverged",3,6,true]'
+}
+
+@test "discuss: unresolved disagreement exposes exactly one maintainer question" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["storage","latency"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.ask_maintainer, .result.conclusion]' <<<"${output}"
+    assert_output '[["Choose A or B?"],"A versus B"]'
+}
+
+@test "discuss: records conclusion and cited basis with shell copied codex text" {
+    local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted"
+    scratch="${dir}/../worktree/.scratch/discuss-309"
+    mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
+    printf 'Unique codex text\ndoc/contract.md:9\n/home/private/secret\nCo-Authored-By: Claude\n' > "${scratch}/codex-r1.md"
+    printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    DISCUSS_ARGS="$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:309,question:"q"}')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "$(_discuss_replies | jq '."nonce:"={nonce:"0123456789abcdef"} | ."record:".url="<stdout>"')" exec
+    run jq -cr '[.result.status,.result.comment]' <<<"${output}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
+    run cat "${posted}"
+    assert_output --partial '[claude]'
+    assert_output --partial '一致（定案）'
+    assert_output --partial '依據'
+    assert_output --partial 'doc/contract.md:1'
+    assert_output --partial '> Unique codex text'
+    refute_output --partial 'Codex private answer'
+    refute_output --partial '/home/private'
+    refute_output --partial 'Co-Authored-By:'
+}
+
+@test "discuss: Record builds before a separate hook checked publication and removes stale bodies" {
+    local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted" json replies
+    scratch="${dir}/../worktree/.scratch/discuss-309"
+    mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
+    printf 'Unique codex text\ndoc/contract.md:9\n' > "${scratch}/codex-r1.md"
+    printf "#!/bin/sh\ncp \"\$7\" \"%s\"\necho https://github.com/o/r/issues/309#issuecomment-1\n" "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    DISCUSS_ARGS="$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:309,question:"q"}')"
+    replies="$(_discuss_replies | jq '."record:".url="<stdout>"')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "${replies}" exec-hooks
+    json="${output}"
+    run jq -cr '[.result.status,.result.comment]' <<<"${json}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
+    run jq -cr --arg body "${scratch}/body.md" '[
+        (.ran | length == 2), (.ran[0].rc == 0), (.ran[1].rc == 0),
+        (.ran[0].cmd | contains("gh issue comment") | not),
+        (.ran[1].cmd == ("gh issue comment 309 --repo '\''o/r'\'' --body-file '\''" + $body + "'\''"))
+    ]' <<<"${json}"
+    assert_output '[true,true,true,true,true]'
+    run cat "${posted}"
+    assert_output --partial '> Unique codex text'
+    # A failed rebuild must delete the old body and never attempt publication.
+    rm "${scratch}/codex-r1.md" "${posted}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "${replies}" exec-hooks
+    run jq -cr '[.result.status, (.ran | length), (.ran[0].rc != 0)]' <<<"${output}"
+    assert_output '["record-failed",1,true]'
+    [ ! -e "${scratch}/body.md" ]
+    [ ! -e "${posted}" ]
+}
+
+@test "discuss: deriving a decision requires cited evidence and records no maintainer question" {
+    local replies
+    replies="$(_discuss_replies | jq '."compare:".status="derived"')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,.result.ask_maintainer]' <<<"${output}"
+    assert_output '["derived",1,[]]'
+    _discuss_run "$(jq '."compare:".basis=["Trust me"]' <<<"${replies}")"
+    run jq -cr '[.result.status,([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '["compare-failed",0]'
+}
+
 @test "pr-loop CI fixes explicitly run only changed unit specs locally (#326)" {
     run _pl_run
     assert_success
