@@ -128,7 +128,7 @@ EOF
     rm "${COPY}/test/integration/assemble_spec.bats"
 
     run "${COPY}/script/test/test.sh" --ci-integration \
-        test/integration/smoke_spec.bats --filter 'smoke'
+        test/integration/smoke_spec.bats
 
     assert_success
     assert_output --partial '[ci] partial integration run; this does not stand for the whole tier'
