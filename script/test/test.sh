@@ -617,8 +617,6 @@ main() {
         _usage_error "internal flag ${_ci} takes no other option"
     fi
     if [[ "${#_paths[@]}" -gt 0 ]]; then
-        [[ "${#_paths[@]}" -eq 1 ]] \
-            || _usage_error "one spec path is supported"
         [[ "${#_steps[@]}" -le 1 ]] \
             || _usage_error "spec paths and --filter require exactly one bats tier"
         _step="${_ci:-${_steps[0]:-}}"
