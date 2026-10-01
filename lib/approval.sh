@@ -54,7 +54,7 @@ approval_is_human_approval() {
     # Ignore leading whitespace so ` [claude]` cannot pass as human.
     _body="${_body#"${_body%%[![:space:]]*}"}"
     case "${_body}" in
-        '[claude]'* | '[codex]'*) return 1 ;;
+        '[claude]'* | '[codex]'* | '[agy]'* | '[gemini]'*) return 1 ;;
     esac
     [[ "${_body}" == *"$(_approval_phrase)"* ]]
 }
