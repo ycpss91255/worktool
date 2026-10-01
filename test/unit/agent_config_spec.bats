@@ -294,3 +294,13 @@ _registered_names() {
         assert_success
     done
 }
+
+@test "agent docs require invariant ADRs and mechanism ADR backlinks" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E '不變量.*各一份 ADR' "${REPO_ROOT}/${doc}"
+        assert_success
+        run grep -E '機制型 ADR.*依據 ADR-NNNN.*不變量' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}

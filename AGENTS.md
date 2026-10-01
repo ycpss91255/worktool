@@ -18,6 +18,7 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 
 - 每個設計決議先在 issue 討論（中文）；定案後才寫 ADR。
 - ADR 放 `doc/adr/NNNN-<slug>.md`，檔案系統即登錄，不另立索引。
+- 不變量各一份 ADR，從 [doc/contract.md 的不變量索引](doc/contract.md#6-不變量索引) 找到；機制型 ADR 以「依據 ADR-NNNN」連回它服務的不變量 ADR。
 - 架構圖與流程圖（`doc/diagram/*.drawio.svg`）是單一事實來源；決議改動圖面時，同一個 PR 一起更新圖。
 
 ## git 慣例
