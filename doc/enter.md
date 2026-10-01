@@ -17,7 +17,8 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 | 指令 | 做什麼 |
 |------|--------|
 | `just box setup [選項]` | 決定「要不要自動進盒、用哪個終端、進哪個盒」,寫進**單一設定檔**,並寫入(或移除)終端 profile 的**受管區塊** |
-| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、以及受管區塊在不在 |
+| `just box status` | 印出目前生效的決策、每個決策的來源(`default` / `user`)、受管區塊在不在,以及每一項 user config 連結的狀態(#199) |
+| `just box enter [選項]` | 手動進盒;盒子第一次啟動時顯示進度、log 與逾時(見下方「首次啟動的進度」) |
 
 只動 HOME / `XDG_CONFIG_HOME` 底下的檔案;不裝任何東西、不動 host 的 shell rc、
 不需要 root。
@@ -38,7 +39,7 @@ grilling)的目標行為:
 
 1. **開終端**:`ghostty -> '<distrobox>' enter dev -> 盒內 fish`(盒內使用者的登入
    shell)。不自動啟動、不自動附著 tmux;**沒有**任何 tmux 相關的決策或選項
-   (`--tmux inside|host` 移除,設定檔也不再有 `tmux` 這個 key)。
+   (`--tmux inside|host` 移除,setup 不再寫 `tmux` 這個 key,舊 key 保留為非受管資料)。
 2. **盒內自己開 tmux**:得到**盒子自己的 tmux server**,永遠不連到 host 的 server
    或 session。機制在建盒時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
    變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(建盒時展開;在 #196 的盒子 HOME
