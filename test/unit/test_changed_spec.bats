@@ -91,3 +91,16 @@ _dispatched() {
         --ci-integration-ghostty --ci-system --ci-acceptance \
         system-real-entry.sh)"
 }
+
+@test "test.sh --changed fails open when the base diff is unreadable" {
+    _commit_baseline
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base missing-ref' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint --ci-unit --ci-matrix --ci-integration \
+        --ci-integration-ghostty --ci-system --ci-acceptance \
+        system-real-entry.sh)"
+}

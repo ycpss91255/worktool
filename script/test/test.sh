@@ -629,11 +629,13 @@ _run_host_step() {
 _changed_files() {
     local _base="$1" _out="$2"
     : >"${_out}"
-    git -C "${REPO_ROOT}" diff --name-only "${_base}...HEAD" >>"${_out}" \
-        || _die "cannot read changed files from base ${_base}"
-    git -C "${REPO_ROOT}" diff --name-only >>"${_out}"
-    git -C "${REPO_ROOT}" diff --cached --name-only >>"${_out}"
-    git -C "${REPO_ROOT}" ls-files --others --exclude-standard >>"${_out}"
+    if ! git -C "${REPO_ROOT}" diff --name-only "${_base}...HEAD" >>"${_out}"; then
+        return 1
+    fi
+    git -C "${REPO_ROOT}" diff --name-only >>"${_out}" || return 1
+    git -C "${REPO_ROOT}" diff --cached --name-only >>"${_out}" || return 1
+    git -C "${REPO_ROOT}" ls-files --others --exclude-standard >>"${_out}" \
+        || return 1
     sort -u -o "${_out}" "${_out}"
 }
 
@@ -675,7 +677,10 @@ _run_changed() {
     local _base="$1" _list _path _tier _spec _mapped _full_unit=0 _all_tiers=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
-    _changed_files "${_base}" "${_list}"
+    if ! _changed_files "${_base}" "${_list}"; then
+        _info "changed-file diff unreadable; running every tier"
+        _all_tiers=1
+    fi
     while IFS= read -r _path; do
         if _is_test_infrastructure "${_path}"; then
             _all_tiers=1
