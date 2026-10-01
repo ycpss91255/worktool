@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Adapt agy run_command to the shared Bash comment guard.
+# Adapt the measured agy run_command payload to the shared Bash guard.
 set -euo pipefail
 _HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-jq -c '.tool_name = "Bash" | .tool_input.command = (.tool_input.CommandLine // .tool_input.command)' |
+jq -c '{tool_name:"Bash", cwd:.toolCall.args.Cwd,
+    tool_input:{command:.toolCall.args.CommandLine}}' |
     "${_HERE}/enforce_milestone_gate_approval.sh" agy
