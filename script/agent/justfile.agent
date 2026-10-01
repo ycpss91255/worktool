@@ -1,0 +1,7 @@
+# Agent launch interface; validation belongs to each script.
+set working-directory := '../..'
+set positional-arguments
+
+# Launch Codex without GitHub authentication: just agent codex -- exec <prompt>.
+codex *args:
+    @./script/agent/codex.sh "$@"

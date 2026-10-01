@@ -15,6 +15,8 @@
 mod? test 'script/test/justfile.test'
 # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status | enter [--box N] [-- CMD]  (M3 adds rm)
 mod? box 'script/box/justfile.box'
+# Agent launch without GitHub authentication (headless fallback).
+mod? agent 'script/agent/justfile.agent'
 
 # Default: list the namespaces.
 default:
