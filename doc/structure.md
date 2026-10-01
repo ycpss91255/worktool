@@ -101,6 +101,7 @@ worktool/
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
+│   │   │                enforce_main_checkout_readonly、
 │   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
@@ -152,7 +153,16 @@ Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
 `.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
 Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現有
 Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
-`enforce_shellcheck_disable_approval.sh` 等 hook 的判定。
+`enforce_shellcheck_disable_approval.sh`、`enforce_main_checkout_readonly.sh` 等 hook
+的判定；因此 Codex 對主 checkout 的 `apply_patch` 也會被同一規則擋下。
+
+`.agents/hook/enforce_main_checkout_readonly.sh` 把 `git rev-parse --git-dir` 與
+`--git-common-dir` 相同的 working tree 判為主 checkout。Claude 的檔案編輯工具與
+Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；linked worktree
+位於 repo 同層的 `worktree/`，不在主 checkout 內。Bash
+裡會改動 working tree 的 git 指令同樣拒絕，包含經 `git -C`、`bash -c` 或
+`eval` 指定的呼叫。`git fetch`、`git pull --ff-only`、指定的 `git worktree`
+管理動作、唯讀 git 指令與 `gh` 仍可在主 checkout 執行。
 
 本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`
 在此 Codex 接線沒有對應事件，因此不註冊；`enforce_reply_language.sh` 只接 Claude
