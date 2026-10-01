@@ -319,3 +319,26 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint \
         '--ci-unit test/unit/assemble_spec.bats test/unit/setup_spec.bats test/unit/status_spec.bats')"
 }
+
+@test "test.sh --changed selects a mapped matrix spec once in first-seen order" {
+    mkdir -p "${TEMP_REPO}/.agents/hook" "${TEMP_REPO}/test/matrix" \
+        "${TEMP_REPO}/test/unit/hook"
+    printf '# hook\n' >"${TEMP_REPO}/.agents/hook/enforce_local_test_scope.sh"
+    printf '@test "unit" { true; }\n' \
+        >"${TEMP_REPO}/test/unit/hook/enforce_local_test_scope_spec.bats"
+    printf '@test "matrix" { true; }\n' \
+        >"${TEMP_REPO}/test/matrix/enforce_local_test_scope_spec.bats"
+    printf '@test "another" { true; }\n' >"${TEMP_REPO}/test/matrix/another_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/.agents/hook/enforce_local_test_scope.sh"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/matrix/enforce_local_test_scope_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/matrix/another_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint \
+        '--ci-unit test/unit/hook/enforce_local_test_scope_spec.bats' \
+        '--ci-matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/another_spec.bats')"
+}
