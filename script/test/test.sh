@@ -790,6 +790,10 @@ _run_changed() {
         _all_tiers=1
     fi
     while IFS= read -r _path; do
+        if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
+            _info "此改動由 CI 的 integration 驗證"
+            continue
+        fi
         if _is_test_infrastructure "${_path}"; then
             _all_tiers=1
             continue
