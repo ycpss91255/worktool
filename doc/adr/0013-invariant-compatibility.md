@@ -36,7 +36,7 @@ worktool 的主痛點是重建成本高（#200 定案 2）：換機、重灌時�
 
 下面的案例釘住的是**目前**的用法：用法一改，對應的案例會紅。但它們比對的是當下寫在 spec 裡的期望，不是上一個版本；改用法的 PR 可以同時改掉 spec，案例本身判斷不出這次改動是否跨了大版號。所以它們只算「用法改變時看得見」，不算守住本不變量。
 
-- `test/unit/justfile_spec.bats` 「just box lists assemble, bench, default, help (alias h), setup and status only」「just test <verb> forwards exactly --<verb> for every tier verb and build」：`just box` 與 `just test` 的指令集合是精確比對，少一個或改名就紅。
+- `test/unit/justfile_spec.bats` 「just box lists assemble, bench, default, enter, help (alias h), setup and status only」「just test <verb> forwards exactly --<verb> for every tier verb and build」：`just box` 與 `just test` 的指令集合是精確比對，少一個或改名就紅。
 - `test/unit/assemble_spec.bats` 「an unknown option exits 2 with the documented message on stderr, nothing on stdout, and executes nothing」：未知選項的結束碼 2 與訊息格式。
 - `test/unit/manifest_spec.bats` 「valid manifest (section + image) passes validation」：目前格式的盒子清單（區段名 + `image`）被接受。
 
