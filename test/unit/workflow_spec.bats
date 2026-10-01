@@ -1856,8 +1856,8 @@ _discuss_run() {
 }
 
 _discuss_replies() {
-    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
-        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],risks:[]},
+    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],notes:[],risks:[]},
+        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],notes:[],risks:[]},
         "compare:":{status:"agreed",conclusion:"Use A",basis:["doc/contract.md:1"],disagreements:[],question:""},
         "record:":{url:"https://github.com/o/r/issues/309#issuecomment-1"}}'
 }
@@ -1874,6 +1874,73 @@ _discuss_replies() {
     _discuss_run "$(_discuss_replies)"
     run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.label | startswith("compare:"))] | length)]' <<<"${output}"
     assert_output '["agreed",1,1]'
+}
+
+@test "discuss: accepts the dev box answer citing local issues and PR shorthand (#335)" {
+    local replies
+    replies="$(_discuss_replies | jq '."codex:".reasons=["Codex cited #212 and #319 to say this is only a summary of existing usage"] |
+        ."claude:".reasons=["The existing workflow is documented in doc/workflow.md:224"] |
+        ."compare:".basis=["Existing usage follows #212, #319 and PR #311"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.error,.result.status,.result.rounds,.result.comment,
+        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
+}
+
+@test "discuss: real dev box notes need no citations and both answer prompts separate them (#340)" {
+    local replies json
+    replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |
+        ."codex:".notes=["Avoid 清單是自己的建議，不是文件規則", "rc=0、輸出檔路徑、沒有要停的容器"]')"
+    _discuss_run "${replies}"
+    json="${output}"
+    run jq -cr '[.result.status, .result.claude.notes, .result.codex.notes,
+        ([.calls[] | select(.label | test("^(claude|codex):")) |
+            (.schema.required | index("notes") != null) and (.schema.properties.notes.items.type == "string") and
+            (.prompt | contains("Put judgments in reasons with evidence; put explanations and execution records in notes"))] | all)]' <<<"${json}"
+    assert_output "[\"agreed\",[\"\`開發盒\`、\`dev 容器\` 目前找不到用法（grep 無結果）\"],[\"Avoid 清單是自己的建議，不是文件規則\",\"rc=0、輸出檔路徑、沒有要停的容器\"],true]"
+}
+
+@test "discuss: real notes stay out of comparison and appear in separate comment sections (#340)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |
+        ."codex:".notes=["Avoid 清單是自己的建議，不是文件規則", "rc=0、輸出檔路徑、沒有要停的容器"] |
+        ."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,
+        ([.calls[] | select(.label | test("^(compare|claude|codex):")) |
+            (.prompt | test("grep 無結果|Avoid 清單|rc=0、輸出檔路徑") | not)] | all),
+        (.calls[] | select(.label == "record:") | .prompt |
+            contains("## Claude 說明與執行紀錄\n- `開發盒`、`dev 容器` 目前找不到用法（grep 無結果）") and
+            contains("## codex 說明與執行紀錄\n- Avoid 清單是自己的建議，不是文件規則\n- rc=0、輸出檔路徑、沒有要停的容器"))]' <<<"${output}"
+    assert_output '["diverged",true,true]'
+}
+
+@test "discuss: search records cite negative evidence while uncited judgments still fail (#340)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".reasons=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）；grep:開發盒|dev 容器 in doc/ -> 0 筆"] |
+        ."codex:".reasons=["grep:dev box in doc/ -> 2 筆"] |
+        ."compare:".basis=["grep:開發盒|dev 容器 in doc/ -> 0 筆"]')"
+    _discuss_run "${replies}"
+    local json="${output}"
+    run jq -cr '[.result.status, .result.failed_reasons,
+        ([.calls[] | select(.label | test("^(claude|codex|compare):")) |
+            (.prompt | contains("grep:<pattern> in <path> -> N 筆"))] | all)]' <<<"${json}"
+    assert_output '["agreed",null,true]'
+    _discuss_run "$(jq '."codex:".reasons=["Avoid 清單是自己的建議，不是文件規則"] |
+        ."codex:".notes=["rc=0、輸出檔路徑、沒有要停的容器"]' <<<"${replies}")"
+    run jq -cr '[.result.status, .result.failed_reasons,
+        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+    assert_output '["answer-failed",[{"agent":"codex","reason_index":1,"reason":"Avoid 清單是自己的建議，不是文件規則"}],0]'
+}
+
+@test "discuss: uncited reasons fail with the side, one-based position and original text (#335)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".reasons += ["Trust Claude"] |
+        ."codex:".reasons += ["Trust Codex", "No supporting evidence"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.rounds,.result.failed_reasons,
+        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+    assert_output '["answer-failed",1,[{"agent":"claude","reason_index":2,"reason":"Trust Claude"},{"agent":"codex","reason_index":2,"reason":"Trust Codex"},{"agent":"codex","reason_index":3,"reason":"No supporting evidence"}],0]'
 }
 
 @test "discuss: disagreement feeds back to both sides and stops at three rounds" {
