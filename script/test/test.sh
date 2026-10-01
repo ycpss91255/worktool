@@ -490,19 +490,29 @@ Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
-  --unit          Unit bats (test/unit/).
-  --matrix        Full-product matrix bats (test/matrix/); slow, CI-required.
-  --integration   Integration bats (test/integration/), BOTH groups: the
+  --unit [SPEC...] [--filter REGEX]
+                  Unit bats (test/unit/), optionally narrowed by spec and name.
+  --matrix [SPEC...] [--filter REGEX]
+                  Matrix bats (test/matrix/), optionally narrowed; slow in full.
+  --integration [SPEC...] [--filter REGEX]
+                  Integration bats (test/integration/), optionally narrowed.
+                  With no selector, runs BOTH groups: the
                   default one in the test image, then the ghostty one
                   (test/integration/ghostty_config_spec.bats) in the ubuntu
                   image that carries a real ghostty. No display needed.
-  --system        System bats, shim group (test/system/ minus the real-engine
-                  spec; real distrobox + fake container manager).
+  --system [SPEC...] [--filter REGEX]
+                  System bats, optionally narrowed within test/system/. With
+                  no selector, runs the shim group minus the real-engine spec.
   --system-real   System bats, real-engine group (test/system/real_engine_spec
                   .bats) in the docker-in-docker runner - the ONLY step that
                   uses --privileged; slow.
-  --acceptance    Acceptance bats (test/acceptance/).
+  --acceptance [SPEC...] [--filter REGEX]
+                  Acceptance bats, optionally narrowed within test/acceptance/.
   -h, --help      Show this help and exit.
+
+SPEC paths are relative to the repo root and must be .bats files under the
+selected tier. A narrowed run is partial: it skips the required-spec and TAP
+plan-minimum gate checks and does not stand for the whole tier.
 
 Internal (what the steps above run inside the container; not for hosts):
   --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system

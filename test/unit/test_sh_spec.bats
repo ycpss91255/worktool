@@ -80,7 +80,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_success
     local _flag
     for _flag in --build --lint --unit --matrix --integration --system --system-real \
-        --acceptance --help; do
+        --acceptance --filter --help; do
         assert_output --partial "${_flag}"
     done
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
