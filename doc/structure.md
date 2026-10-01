@@ -54,7 +54,7 @@ worktool/
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── adr_spec.bats         所有 invariant ADR 的資料驅動格式守門:四節非空、引用 spec 存在、待補揭露
-│   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔；含 0005、0006、0009、0010)
+│   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔:0004、0005、0006、0007、0008、0009、0010、0013)
 │   │   │   ├── 0004_spec.bats   ADR 0004 的討論、引用案例、writer、狀態鍵例外與 contract 對齊
 │   │   │   ├── 0007_spec.bats   ADR 0007 的機制引用、精確案例名、退出碼文件與 contract 索引守門(#205)
 │   │   │   └── 0008_spec.bats  不變量 5 的 issue、just 命令模型連結、引用案例與介面語意守門
