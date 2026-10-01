@@ -30,7 +30,8 @@
 #     4. an array assignment's list (`a=(x y)`) is data and becomes '_'
 #     5. the rest is split on ; && || | and newlines, on a background & (not
 #        the & of a redirection: 2>&1, &>f), and on ( and ), so the body of
-#        a subshell ( ... ) is launched like any other command
+#        a subshell ( ... ) is launched like any other command. Case
+#        patterns and arithmetic (( ... )) are data, not launches
 #     6. leading VAR=val assignments, the reserved words that open or close
 #        a compound command (if then elif else fi while until do done
 #        esac ! { }), and sudo / env / command / time / nohup / exec
@@ -689,6 +690,89 @@ _hook_emit() {
     fi
 }
 
+# _hook_case_patterns <text> - replace case patterns with data, keeping bodies.
+# Quotes and substitutions have already been made opaque by the quoting pass.
+_hook_case_patterns() {
+    local _t="$1" _out='' _i _c _depth=0 _parens=0 _header=''
+    local _re=$'(^|[;(&|\n])[[:space:]]*((if|then|elif|else|while|until|do|!|[{])[[:space:]]+)*case[[:space:]]+[^[:space:]]+[[:space:]]+in[[:space:]]$'
+    local -a _state=()
+    local _start='(^|[[:space:];(&|])case[[:space:]]'
+    [[ "${_t}" =~ ${_start} ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_state[_depth]:-}" == pattern ]]; then
+            if [[ "${_t:_i}" =~ ^[[:space:]]*esac([[:space:];]|$) ]]; then
+                _state[_depth]=''
+                _depth=$((_depth - 1))
+            else
+                case "${_c}" in
+                    '(') [[ -n "${_header}" ]] && _parens=$((_parens + 1)) ;;
+                    ')')
+                        if [[ "${_parens}" -gt 0 ]]; then
+                            _parens=$((_parens - 1))
+                        else
+                            [[ "${_out}" =~ ${_re} ]] && _out+=_
+                            _out+=$'\n'
+                            _state[_depth]=body
+                            _header=''
+                        fi ;;
+                esac
+                [[ "${_c}" != [[:space:]] ]] && _header=1
+                continue
+            fi
+        fi
+        _out+="${_c}"
+        if [[ "${_out}" =~ ${_re} ]]; then
+            _depth=$((_depth + 1))
+            _state[_depth]=pattern
+            _header=''
+        elif [[ "${_depth}" -gt 0 && "${_t:_i:2}" == ';;' || "${_depth}" -gt 0 && "${_t:_i:2}" == ';&' ]]; then
+            [[ "${_t:_i:3}" == ';;&' ]] && _i=$((_i + 1))
+            _i=$((_i + 1))
+            _out+=$'\n'
+            _state[_depth]=pattern
+            _header=''
+        fi
+    done
+    printf '%s' "${_out}"
+}
+
+# _hook_arithmetic <text> - arithmetic parentheses enclose data, not launches.
+_hook_arithmetic() {
+    local _t="$1" _out='' _i _c _depth=0 _start=0
+    [[ "${_t}" == *'(('* ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_depth}" -eq 0 && "${_t:_i:2}" == '((' ]]; then
+            _depth=2
+            _start="${_i}"
+            _i=$((_i + 1))
+        elif [[ "${_depth}" -gt 0 ]]; then
+            case "${_c}" in
+                '(') _depth=$((_depth + 1)) ;;
+                ')')
+                    if [[ "${_depth}" -eq 2 ]]; then
+                        if [[ "${_t:_i:2}" == '))' ]]; then
+                            _out+=' '
+                            _i=$((_i + 1))
+                        else
+                            # Bash falls back to subshells when the pair is separated.
+                            _out+="${_t:_start:_i-_start+1}"
+                        fi
+                        _depth=0
+                    else
+                        _depth=$((_depth - 1))
+                    fi ;;
+            esac
+        else
+            _out+="${_c}"
+        fi
+    done
+    # An unclosed candidate must not hide possible launches either.
+    [[ "${_depth}" -gt 0 ]] && _out+="${_t:_start}"
+    printf '%s' "${_out}"
+}
+
 # _hook_split <unquoted command> - the command with every separator of
 # header steps 4 and 5 turned into a newline.
 _hook_split() {
@@ -696,6 +780,7 @@ _hook_split() {
     while [[ "${_t}" =~ ${_re_arr} ]]; do
         _t="${_t/"${BASH_REMATCH[0]}"/=_}"
     done
+    _t="$(_hook_arithmetic "$(_hook_case_patterns "${_t}")")"
     _t="${_t//&&/$'\n'}"
     _t="${_t//||/$'\n'}"
     _t="${_t//|/$'\n'}"
