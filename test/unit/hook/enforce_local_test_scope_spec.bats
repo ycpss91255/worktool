@@ -27,3 +27,20 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     _check 'script/test/test.sh'
     assert_failure 2
 }
+
+@test "light tests selected unit specs and help remain allowed" {
+    _check 'just test lint'
+    assert_success
+    _check 'just test changed'
+    assert_success
+    _check "bash -c 'just test unit test/unit/log_spec.bats --filter example'"
+    assert_success
+    _check 'script/test/test.sh --unit test/unit/log_spec.bats'
+    assert_success
+    _check 'just test matrix --help'
+    assert_success
+    _check 'script/test/test.sh --help'
+    assert_success
+    _check "printf '%s' 'just test matrix'"
+    assert_success
+}

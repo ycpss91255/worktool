@@ -25,6 +25,9 @@ _heavy_test() {
         script/test/test.sh|*/script/test/test.sh) _words=("${_words[@]:1}") ;;
         *) return 1 ;;
     esac
+    for _word in "${_words[@]}"; do
+        [[ "${_word}" == --help || "${_word}" == -h ]] && return 1
+    done
     [[ "${#_words[@]}" -gt 0 ]] || return 0
     for _word in "${_words[@]}"; do
         case "${_word}" in
