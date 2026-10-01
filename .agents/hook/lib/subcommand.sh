@@ -254,6 +254,25 @@ _hook_http_item() {
     return 1
 }
 
+# _hook_http_method_option <tool> <word> <next> <index-var> <method-var> <short>
+# Internal method parser; advances the caller's index when consuming a value.
+_hook_http_method_option() {
+    local -n _index_ref="$4" _method_ref="$5"
+    case "$1:$2" in
+        curl:-X|curl:--request|wget:--method)
+            _index_ref=$((_index_ref + 1)); _method_ref="$3" ;;
+        curl:--request=*|wget:--method=*) _method_ref="${2#*=}" ;;
+        curl:-X?*) _method_ref="${2:2}" ;;
+        curl:--*) ;;
+        curl:-*)
+            # A cluster hiding a method or data flag is unreadable (fail closed).
+            if [[ "${2:1}" == *[X${6}]* ]]; then
+                HOOK_HTTP_BODY='@'
+            fi ;;
+    esac
+    return 0
+}
+
 # hook_http_is_write <tool> <word>... - see the header.
 HOOK_HTTP_BODY=''
 hook_http_is_write() {
@@ -276,24 +295,9 @@ hook_http_is_write() {
             continue
         fi
         case "${_tool}" in
-            curl)
-                case "${_w}" in
-                    -X|--request) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --request=*) _m="${_w#*=}" ;;
-                    -X?*) _m="${_w:2}" ;;
-                    --*) ;;
-                    # A cluster hiding -X or a data flag cannot be read (fail closed).
-                    -*)
-                        if [[ "${_w:1}" == *[X${_short}]* ]]; then
-                            HOOK_HTTP_BODY='@'
-                            return 0
-                        fi ;;
-                esac ;;
-            wget)
-                case "${_w}" in
-                    --method) _i=$((_i + 1)); _m="${_a[_i]:-}" ;;
-                    --method=*) _m="${_w#*=}" ;;
-                esac ;;
+            curl|wget)
+                _hook_http_method_option "${_tool}" "${_w}" "${_a[_i + 1]:-}" _i _m "${_short}"
+                [[ "${HOOK_HTTP_BODY}" == '@' ]] && return 0 ;;
             *)
                 # httpie: http [METHOD] URL [ITEMS]
                 case "${_w}" in
