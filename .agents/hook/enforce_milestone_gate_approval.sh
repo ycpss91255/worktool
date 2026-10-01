@@ -413,7 +413,7 @@ _repo_of() {
 # _gate <owner/repo> <number> - block the merge unless lib/approval.sh
 # passes it on the PR's labels and comments.
 _gate() {
-    local _repo="$1" _pr="$2" _json _labels _records _reason _rc
+    local _repo="$1" _pr="$2" _json _labels _records _reason _rc=0
     local _what="merge of ${_repo}#${_pr}"
     # Each gh call is checked by its own exit status (never through a pipe).
     _json="$(_gh api --paginate "repos/${_repo}/issues/${_pr}/labels")" \
@@ -430,8 +430,7 @@ _gate() {
         rm -f -- "${_records}"
         _fail_closed "${_what}: cannot read the PR comments"
     fi
-    _reason="$(approval_evaluate "${_labels}" <"${_records}")"
-    _rc=$?
+    _reason="$(approval_evaluate "${_labels}" <"${_records}")" || _rc=$?
     rm -f -- "${_records}"
     [[ "${_rc}" -eq 0 ]] && return 0
     hook_block "${_what}: milestone-gate acceptance PR without the maintainer's approval - ${_reason}" \

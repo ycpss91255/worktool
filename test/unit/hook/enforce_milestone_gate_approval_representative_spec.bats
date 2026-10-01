@@ -55,3 +55,8 @@ setup() {
         assert_success
     done
 }
+
+@test "approval rejection preserves exit two after evaluation and cleanup" {
+    run bats --filter '^merge of a milestone-gate PR without an approval is blocked and says what is missing$' "${MATRIX_SPEC}"
+    assert_success
+}
