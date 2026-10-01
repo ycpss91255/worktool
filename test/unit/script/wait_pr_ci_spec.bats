@@ -5,7 +5,7 @@
 # worktool adaptation: the default filter is the one required check,
 # `ci-passed`; the script follows the worktool CLI contract (whole command
 # line parsed before --help is served, `wait-pr-ci.sh: unknown option '<x>'
-# (see --help)` exit 2, `set -uo pipefail`); a conflicting PR fails without
+# (see --help)` exit 2, `set -euo pipefail`); a conflicting PR fails without
 # pointing at scripts this repo does not have. The stale-rollup guards from
 # initialization (issue #22 there) are kept.
 #
@@ -176,4 +176,10 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     run "${SCRIPT}" --repo owner/repo --prs 1,x
     assert_failure 2
     assert_output --partial "--prs"
+}
+
+@test "wait CI stops on unexpected failures inherited by sourced callers" {
+    run bash -c 'source "$1"; false; echo UNREACHABLE' _ "${SCRIPT}"
+    assert_failure 1
+    refute_output --partial "UNREACHABLE"
 }

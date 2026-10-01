@@ -27,9 +27,9 @@
 # Exit: 0 ALL_DONE (every PR all-pass + MERGEABLE), 1 FAIL (a check failed
 # or a PR conflicts / its query fails), 2 argument error, 124 --max-iterations exhausted.
 #
-# Exit-code-contract script: `set -uo pipefail`, no -e.
+# Strict script: expected non-zero results are handled explicitly.
 
-set -uo pipefail
+set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/log.sh"
 
