@@ -5,14 +5,14 @@ description: Wait for a PR's GitHub CI to settle via the Monitor tool (one notif
 
 # wait-pr-ci
 
-Wait for CI to finish on one or more PRs with `Monitor`, so each state change streams in as a notification and the agent is not blocked on `sleep` loops. The poll loop lives in `.claude/script/wait-pr-ci.sh` (a symlink to `.agents/script/wait-pr-ci.sh`), so the Monitor command stays one line.
+Wait for CI to finish on one or more PRs with `Monitor`, so each state change streams in as a notification and the agent is not blocked on `sleep` loops. The poll loop lives in `.claude/script/monitor/wait-pr-ci.sh` (a symlink to `.agents/script/monitor/wait-pr-ci.sh`), so the Monitor command stays one line.
 
 ## Usage
 
 ```
 Monitor(
   description: "PR #<num> CI",
-  command: ".claude/script/wait-pr-ci.sh --repo ycpss91255/worktool --prs <CSV>",
+  command: ".claude/script/monitor/wait-pr-ci.sh --repo ycpss91255/worktool --prs <CSV>",
   timeout_ms: 2400000,     # the test-system-real job alone may take up to 40 min
   persistent: false,       # the script exits on ALL_DONE / FAIL
 )

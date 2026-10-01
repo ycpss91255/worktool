@@ -716,8 +716,8 @@ _changed_hook_path_map() {
 .agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
 .agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats
 .agents/hook/lib/subcommand.sh|test/unit/hook/subcommand_spec.bats
-.agents/script/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
-.agents/script/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
+.agents/script/monitor/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
+.agents/script/monitor/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP
 }
 
