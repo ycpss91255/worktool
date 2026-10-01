@@ -32,7 +32,7 @@
 
 測試（每一條都是可查的檔名與案例名）：
 
-- `test/unit/justfile_spec.bats` 的「root justfile is three mod? lines (test, box, agent) and one default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
+- `test/unit/justfile_spec.bats` 的「root justfile is four mod? lines (test, box, agent, verify) and one default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
 - `test/unit/justfile_spec.bats` 的「no justfile prints usage or a valid: list of its own」：justfile 不自己印 usage 或選項清單，這些只能來自腳本。
 - `test/unit/justfile_spec.bats` 的「just test <verb> forwards exactly --<verb> for every tier verb and build」：每個 `just test` 動詞原樣轉發到 `test.sh`（以替身腳本記錄收到的參數）。
 - `test/unit/justfile_spec.bats` 的「just box assemble --dry-run prints distrobox assemble create --file box/dev.ini via the real script」：經 `just` 呼叫交付的 `assemble.sh`，看到的是使用者會看到的輸出。

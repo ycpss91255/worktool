@@ -37,8 +37,8 @@
 
 入口的形狀固定：root `justfile` 只有 namespace，列出來的也只有 namespace：
 
-- `test/unit/justfile_spec.bats`「root justfile is three mod? lines (test, box, agent) and one default recipe」
-- `test/unit/justfile_spec.bats`「just --list shows the three namespaces and default, nothing else」
+- `test/unit/justfile_spec.bats`「root justfile is four mod? lines (test, box, agent, verify) and one default recipe」
+- `test/unit/justfile_spec.bats`「just --list shows the four namespaces and default, nothing else」
 - `test/unit/justfile_spec.bats`「bare just is just --list」
 
 recipe 只轉發，參數驗證、使用說明與錯誤訊息由腳本負責，justfile 不自己印 usage、不自己驗證參數。下列案例檢查的只是這種轉發與錯誤歸屬，並沒有比較經 `just` 與直接執行腳本的行為是否等價：
