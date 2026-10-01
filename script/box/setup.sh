@@ -281,13 +281,22 @@ _resolve() {
 # ANYTHING is written - the state file included - so a refusal leaves the
 # whole run untouched.
 _blocks_check() {
-    local _file _problem _rc=0
-    for _file in "$(enter_distrobox_conf)" "$(enter_ghostty_target)"; do
-        _problem="$(enter_block_check "${_file}")" && continue
-        log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
-        _rc=1
+    local _file _problem _rc=0 _count=0 _n
+    local _legacy="$(enter_config_dir)/ghostty/config"
+    for _file in "$(enter_distrobox_conf)" "${_legacy}" "${_legacy}.ghostty"; do
+        if ! _problem="$(enter_block_check "${_file}")"; then
+            log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
+            _rc=1
+        fi
     done
-    return "${_rc}"
+    for _file in "${_legacy}" "${_legacy}.ghostty"; do
+        _n="$(enter_block_count "${_file}")" || return 1
+        _count=$((_count + _n))
+    done
+    if [[ "${_count}" -gt 1 || "${_rc}" -ne 0 ]]; then
+        log_error "managed block validation failed: ${_legacy} and ${_legacy}.ghostty (at most one block across both files); nothing was written"
+        return 1
+    fi
 }
 
 # Resolve every decision into the globals and log each one.

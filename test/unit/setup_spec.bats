@@ -1079,3 +1079,37 @@ _assert_control_char_refused() {
         esac
     done
 }
+
+@test "#173: invalid markers in either config or a block in each refuse every operation without writes and name both files" {
+    local _new="${GHOSTTY}.ghostty" _bad _operation
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _bad in legacy new both; do
+        for _operation in enable disable dry-run; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            case "${_bad}" in
+                legacy) printf '%s\n' "${BEGIN}" >>"${GHOSTTY}" ;;
+                new) printf '%s\n' "${END}" >>"${_new}" ;;
+                both)
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${GHOSTTY}"
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${_new}"
+                    ;;
+            esac
+            cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            case "${_operation}" in
+                enable) run "${SETUP}" --terminal ghostty ;;
+                disable) run "${SETUP}" --auto-enter no ;;
+                dry-run) run "${SETUP}" --terminal ghostty --dry-run ;;
+            esac
+            assert_failure 1
+            assert_output --partial "${GHOSTTY}"
+            assert_output --partial "${_new}"
+            assert_output --partial 'nothing was written'
+            cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cmp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            assert [ ! -e "${CONFIG}" ]
+            assert [ ! -e "${HOME}/.config/distrobox/distrobox.conf" ]
+        done
+    done
+}
