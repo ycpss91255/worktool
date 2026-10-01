@@ -18,3 +18,11 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     run awk '/^\*\*user config\*\*:/ { on=1; next } on { print }' "${REPO_ROOT}/CONTEXT.md"
     assert_line '_Avoid_: dotfiles'
 }
+
+@test "agent domain guidance links the existing root glossary without a missing marker" {
+    run cat "${REPO_ROOT}/AGENTS.md" "${REPO_ROOT}/doc/agent/domain.md"
+    assert_success
+    refute_output --regexp 'CONTEXT\.md[^；、\n]*尚未建立'
+    assert_output --partial '[CONTEXT.md](CONTEXT.md)'
+    assert_output --partial '[CONTEXT.md](../../CONTEXT.md)'
+}

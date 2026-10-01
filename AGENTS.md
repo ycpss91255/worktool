@@ -7,7 +7,7 @@ issue 記在 GitHub `ycpss91255/worktool`（`gh` 一律帶 `-R ycpss91255/workto
 五個標準狀態 = 同名標籤；另有 `needs-decision`（等維護者拍板）。見 `doc/agent/triage-labels.md`。
 
 ### Domain docs
-單一語境：整體設計與治理見 `doc/design.md`、對外介面見 `doc/structure.md`（`just` 指令表）與 `doc/enter.md`、`doc/manifest.md`、驗收見 `doc/acceptance.md`；名詞見根目錄 `CONTEXT.md`（尚未建立）、ADR 見 `doc/adr/`。見 `doc/agent/domain.md`。
+單一語境：整體設計與治理見 `doc/design.md`、對外介面見 `doc/structure.md`（`just` 指令表）與 `doc/enter.md`、`doc/manifest.md`、驗收見 `doc/acceptance.md`；名詞見根目錄 [CONTEXT.md](CONTEXT.md)、ADR 見 `doc/adr/`。見 `doc/agent/domain.md`。
 
 ### Agent 設定版面
 所有 agent 設定都在 repo 層級，不依賴別的 repo、不在使用者層級建立任何東西：真檔放 `.agents/`（`hook/` 與其 `lib/`、`script/`、`skills/`、`memory/`），`.claude/{hook,script,skills,memory}` 是指向 `../.agents/*` 的相對 symlink，`.claude/settings.json` 進版控、以 `${CLAUDE_PROJECT_DIR}/.claude/hook/<名稱>.sh` 註冊 hook；`.claude/workflows/` 是 Workflow 範本。watch 腳本的 state 放被 gitignore 的 `.agents/state/`。改 hook 或腳本時同步改 `test/unit/hook/`、`test/unit/script/` 的 spec。見 `doc/structure.md`。
