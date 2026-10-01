@@ -143,12 +143,13 @@ _meta_skeleton() {
 }
 
 @test "pr-loop closes exactly one issue and locates the PR by branch with a structured schema, not by parsing prose" {
-    run grep -c "Closes #\\\${A.issue}" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "schema: LOCATE_SCHEMA" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "gh pr list --repo \\\${REPO} --head \\\${A.branch}" "${PR_LOOP}"
-    assert_output "1"
+    local mode
+    for mode in full light; do
+        run _pl_run "{\"mode\":\"${mode}\"}"
+        assert_success
+        run jq -cr '[(.calls | map(select(.label | startswith("locate:"))) | length), (.calls[] | select(.label | startswith("locate:")) | .schema.required), ([.calls[].prompt | scan("Closes #283")] | length)]' <<<"${output}"
+        assert_output '[1,["pr","sha"],1]'
+    done
 }
 
 @test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
