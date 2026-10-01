@@ -479,13 +479,11 @@ _run_system_real() { _run_bats_tier system-real "" -- "${SYSTEM_REAL_SPEC}"; }
 _usage() {
     cat >&2 <<'EOF'
 Usage: test.sh [OPTION...]
-
 Run the worktool self-test. Everything runs inside Docker; the host only
 needs docker. With no option, every step below runs in this order and the
 run stops at the first failure:
 
   lint, unit, matrix, integration, system, acceptance, system-real
-
 Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
@@ -511,9 +509,8 @@ given):
   -h, --help      Show this help and exit.
 
 SPEC paths are relative to the repo root and must be .bats files under the
-selected tier. A narrowed run is partial: it skips the required-spec and TAP
-plan-minimum gate checks and does not stand for the whole tier.
-
+  selected tier. A narrowed run is partial: it skips the required-spec and TAP
+  plan-minimum gate checks and does not stand for the whole tier.
 Internal (what the steps above run inside the container; not for hosts):
   --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system
   --ci-system-real --ci-acceptance
@@ -615,8 +612,6 @@ main() {
         || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            # Recorded, not served: the rest of the line is still validated
-            # (`--help --bogus` is a usage error, not help).
             -h|--help) _help=1 ;;
             --ci-lint|--ci-unit|--ci-matrix|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
@@ -632,7 +627,6 @@ main() {
         esac
         shift
     done
-    # Every rule about the command line runs before help is served.
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
     fi
@@ -648,10 +642,6 @@ main() {
         _usage
         return 0
     fi
-    # A failing gate or step ends the script right there with its own exit
-    # status: errexit is what stops the run at the first failure, so the
-    # steps are called plainly (never in an `if` / `||`, which would turn
-    # errexit off inside them).
     if [[ -n "${_ci}" ]]; then
         _run_ci_gate "${_ci}" "${_filter}" "${_paths[@]/#/${REPO_ROOT}/}"
         return 0
