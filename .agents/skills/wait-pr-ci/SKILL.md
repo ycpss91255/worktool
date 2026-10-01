@@ -18,7 +18,7 @@ Monitor(
 )
 ```
 
-`--help` prints every option. The relative path resolves against the agent's cwd: run it from the repo root or from a worktree under `.worktree/` (each carries `.claude/`). `${CLAUDE_PROJECT_DIR}` is only set for hooks, not for Bash / Monitor commands.
+`--help` prints every option. The relative path resolves against the agent's cwd: run it from the repo root or from a sibling worktree under `../worktree/` (each carries `.claude/`). `${CLAUDE_PROJECT_DIR}` is only set for hooks, not for Bash / Monitor commands.
 
 ## What it watches
 
