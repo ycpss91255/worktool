@@ -1261,6 +1261,20 @@ _rv_assert_fails_closed() {
     assert_failure
 }
 
+@test "research-verify (node, exec): an over-limit conclusion paragraph is truncated with a note" {
+    local dir="${BATS_TEST_TMPDIR}/long-conclusion" replies posted="${BATS_TEST_TMPDIR}/posted"
+    _rv_stubs
+    _rv_stub gh "[ \"\$1 \$2\" = 'issue view' ] && { echo '{\"comments\":[]}'; exit; }; mkdir -p '${posted}'; n=\$(find '${posted}' -type f | wc -l); cp \"\$7\" '${posted}/'\$((n + 1)); echo 'https://github.com/o/r/issues/7#issuecomment-1'"
+    git init -q "${dir}"
+    replies="$(_rv_with "$(_rv_ok_replies)" 'record:' '{"url":"<stdout>"}')"
+    replies="$(_rv_with "${replies}" 'synthesize:' "$(jq -cn --arg recommendation "$(printf '%070000d' 0)" '{verified:[],refuted:[],needsExperiment:[],recommendation:$recommendation,parameters:[]}')")"
+
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
+    assert_success
+    run bash -c '[ "$(wc -c < "$1/1")" -lt 65536 ] && grep -q "\[內容過長，已截斷\]" "$1/1"' _ "${posted}"
+    assert_success
+}
+
 @test "research-verify (node, exec): a failing Research records nothing (non-zero exit, empty, malformed)" {
     _rv_assert_fails_closed research agy-failed
 }
