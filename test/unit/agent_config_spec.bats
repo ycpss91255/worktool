@@ -304,3 +304,22 @@ _registered_names() {
         assert_success
     done
 }
+
+@test "agent domain navigation links resolve to the contract glossary and invariant ADRs" {
+    local doc base target links
+    for doc in AGENTS.md doc/agent/domain.md; do
+        base="${REPO_ROOT}/$(dirname -- "${doc}")"
+        links=$(grep -oE '\]\([^)]+\)' "${REPO_ROOT}/${doc}" | sed -E 's/^\]\((.*)\)$/\1/')
+        for target in contract.md CONTEXT.md adr/; do
+            run grep -F "${target}" <<< "${links}"
+            assert_success
+        done
+        while IFS= read -r target; do
+            assert [ -e "${base}/${target%%#*}" ]
+        done <<< "${links}"
+    done
+    local adr
+    for adr in "${REPO_ROOT}"/doc/adr/00{04,05,06,07,08,09,10,11,12,13}-*.md; do
+        assert [ -f "${adr}" ]
+    done
+}
