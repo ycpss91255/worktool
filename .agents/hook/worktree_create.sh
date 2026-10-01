@@ -3,8 +3,8 @@
 # registered in .claude/settings.json.
 #
 # Replaces Claude Code's default worktree location (.claude/worktrees/<name>)
-# with <repo>/.worktree/<name>: the gitignored directory where worktool
-# keeps every worktree (the pr-loop workflow uses .worktree/<name> too,
+# with <repo>/../worktree/<name>: the directory beside the main checkout where
+# worktool keeps every worktree (the pr-loop workflow uses it too,
 # see doc/workflow.md), so they are easy to find and never committed.
 #
 # Contract (Claude Code WorktreeCreate): a JSON object with `.name` arrives
@@ -30,7 +30,7 @@ main() {
     hook_read_input
     [[ -n "$(hook_field '.tool_name')" ]] && exit 0
 
-    local _name _root _dir _branch
+    local _name _root _worktree_root _dir _branch
     _name="$(hook_field '.name')"
     [[ -n "${_name}" ]] || _fail "missing .name in payload"
     # The name becomes a directory and a branch component: a plain word that
@@ -45,9 +45,10 @@ main() {
     # .git is a directory in the main checkout and a file in a linked worktree.
     [[ -n "${_root}" && -e "${_root}/.git" ]] || _fail "no repo root"
 
-    _dir="${_root}/.worktree/${_name}"
+    _worktree_root="$(hook_worktree_root "${_root}")"
+    _dir="${_worktree_root}/${_name}"
     _branch="worktree-${_name}"
-    mkdir -p "${_root}/.worktree" || _fail "mkdir ${_root}/.worktree failed"
+    mkdir -p "${_worktree_root}" || _fail "mkdir ${_worktree_root} failed"
 
     # Already present (idempotent): hand the path back - but only when it
     # really is a worktree (.git file), never a plain directory.
