@@ -403,3 +403,14 @@ STUB
     assert_failure 1
     refute_output --partial "USER REPLY"
 }
+
+@test "seed reports a failed state count instead of printing success" {
+    cat > "${STUB_DIR}/grep" <<'STUB'
+#!/usr/bin/env bash
+exit 2
+STUB
+    chmod +x "${STUB_DIR}/grep"
+    run "${SCRIPT}" --repo owner/repo --login maintainer --state-file "${STATE}" --seed
+    assert_failure 1
+    refute_output --partial "seeded:"
+}

@@ -207,7 +207,7 @@ _parse_args() {
 # _seed <tmp> - mark every current reply as seen without announcing; refuse
 # a partial seed (it would re-announce the unread threads' history later).
 _seed() {
-    local _failed _total _list_failed
+    local _failed _total _list_failed _count _count_rc=0
     read -r _failed _total _list_failed < <(_fetch "${W_REPO}" "$1")
     if [[ "${_list_failed}" -ne 0 ]]; then
         printf '[watch] seed aborted: the open issues/PRs could not be listed\n' >&2
@@ -219,8 +219,13 @@ _seed() {
         return 1
     fi
     watch_replies_filter "${W_LOGIN}" "${W_STATE}" "$1" >/dev/null || return 1
+    _count="$(grep -c . "${W_STATE}")" || _count_rc=$?
+    if [[ "${_count_rc}" -gt 1 ]]; then
+        printf '[watch] cannot count seeded state\n' >&2
+        return 1
+    fi
     printf '[watch] seeded: %s id(s) marked seen, nothing announced\n' \
-        "$(grep -c . "${W_STATE}")" >&2
+        "${_count}" >&2
     return 0
 }
 
