@@ -18,7 +18,9 @@
 #   is exactly that path (and DISTROBOX_HOST_HOME the runner's HOME). The
 #   second assemble, without --home, reuses the recorded user choice; a
 #   third one with a DIFFERENT --home is refused with exit 1 and leaves the
-#   box and its HOME as they were.
+#   box and its HOME as they were. Issue #199: that first assemble also
+#   links the host user config (~/.ssh, ~/.gitconfig) into BOX_HOME, and a
+#   case reads it back at `$HOME` INSIDE the box.
 #
 #   M3 (issue #160) adds tmux and fish to the manifest: `just box setup`
 #   points the terminal at `distrobox enter dev -- tmux new -A -s main` and
@@ -213,12 +215,19 @@ _diag() {
 # --- (b) real assemble: the box is created by the real engine ----------------
 
 @test "real engine: assemble.sh with the delivered box/dev.ini creates the dev box from ubuntu:26.04" {
+    # Issue #199: host user config for assemble to link into the box HOME
+    # (read back inside the box by the #199 case below).
+    mkdir -p "${HOME}/.ssh"
+    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
+    printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
     cd "${REPO_ROOT}"
     run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_output --partial "Distrobox 'dev' successfully created."
     assert_line "[INFO] box home: ${BOX_HOME} (user)"
+    assert_line "[INFO] link: ${BOX_HOME}/.ssh -> ${HOME}/.ssh"
+    assert_line "[INFO] link: ${BOX_HOME}/.gitconfig -> ${HOME}/.gitconfig"
 
     # Exactly one container named dev now exists in the nested daemon ...
     run _count_named dev
@@ -321,6 +330,32 @@ _log_lines() {
     assert [ -d "${BOX_HOME}" ]
     run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
     assert_success
+}
+
+# Issue #199 (ADR 0002 decision 3): the dev box has its own HOME (BOX_HOME,
+# #198), so assemble.sh linked the host user config into it - the first
+# assemble case writes that config before it runs. The tools inside the
+# box find it where they look: at `$HOME/.ssh` and `$HOME/.gitconfig` of
+# the box, not by a host path.
+@test "real engine (#199): the user config linked into the box HOME is found at \$HOME inside the box" {
+    # The links sit in the box HOME on the host side ...
+    assert_equal "$(readlink "${BOX_HOME}/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(readlink "${BOX_HOME}/.gitconfig")" "${HOME}/.gitconfig"
+    # ... and resolve INSIDE the box, where $HOME is the box's own HOME
+    # (quoted heredoc: nothing expands on the host side).
+    local _probe="${HOME}/link-probe.sh"
+    cat >"${_probe}" <<'PROBE'
+printf 'home=%s\n' "$HOME"
+printf 'ssh=%s\n' "$(cat "$HOME/.ssh/worktool-link-probe")"
+printf 'git=%s\n' "$(sed -n 's/^[[:space:]]*name = //p' "$HOME/.gitconfig")"
+PROBE
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh "${_probe}" </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line "home=${BOX_HOME}"
+    assert_line "ssh=worktool-link-probe"
+    assert_line "git=worktool-link-probe"
+    _log_lines link "${lines[@]}"
 }
 
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------

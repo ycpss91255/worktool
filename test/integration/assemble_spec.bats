@@ -19,6 +19,10 @@
 # (exit 1, nothing changed). The existing box's HOME is read from the
 # container manager (`inspect`, the `--home` distrobox handed its init); a
 # fake `docker` below answers that probe.
+#
+# Issue #199 (user config links): after a successful create the user
+# config is symlinked into that same box HOME; never after a failed create
+# or in dry-run, and an existing entry is never overwritten.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -356,4 +360,143 @@ EOF2
     _abs="$(printf '%q' "$(cd -P -- "${BATS_TEST_TMPDIR}" && pwd)/my box.ini")"
     assert_line "[ERROR]   just box assemble --file ${_abs} --home /srv/new"
     assert_line "[ERROR] or keep the current HOME: just box assemble --file ${_abs} --home /srv/old"
+}
+
+# --- issue #199: user config is linked into the box HOME after create -------
+# The box HOME is the one #198 resolves and records (--home, else the
+# recorded user choice, else ~/<box>-box): the links go there, and only
+# after distrobox succeeded. Each case writes its own host user config;
+# setup() gives none, so the #198 cases above link nothing.
+
+# A host ~/.ssh holding one fake key.
+_user_config() {
+    mkdir -p "${HOME}/.ssh"
+    printf 'fake-private-key\n' >"${HOME}/.ssh/id_test"
+}
+
+@test "#199: after a successful create the user config is linked into the default box HOME and logged" {
+    _user_config
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_success
+    assert_equal "$(readlink "${HOME}/dev-box/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "fake-private-key"
+    assert_line "[INFO] link: ${HOME}/dev-box/.ssh -> ${HOME}/.ssh"
+}
+
+@test "#199: the links follow --home, the same box HOME distrobox and the state file get" {
+    local _box="${BATS_TEST_TMPDIR}/my box"
+    _user_config
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --home "${_box}"
+    assert_success
+    assert_equal "$(readlink "${_box}/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(cat "${ENV_RECORD}")" "${_box}"
+    run grep -x "home=${_box}" "${CONFIG}"
+    assert_success
+    [[ ! -e "${HOME}/dev-box" ]] || fail "linked into the default box HOME instead of --home"
+}
+
+@test "#199: an existing entry in the box HOME survives assemble with a warning" {
+    _user_config
+    mkdir -p "${HOME}/dev-box/.ssh"
+    printf 'box-own\n' >"${HOME}/dev-box/.ssh/id_test"
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}"
+    assert_success
+    [[ ! -L "${HOME}/dev-box/.ssh" ]] || fail "the existing .ssh was replaced"
+    assert_equal "$(cat "${HOME}/dev-box/.ssh/id_test")" "box-own"
+    assert_equal "$(cat "${HOME}/.ssh/id_test")" "fake-private-key"
+    assert_output --partial "[WARN]"
+}
+
+@test "#199: a box whose HOME is the host HOME gets no links, and the log says so" {
+    _user_config
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --home "${HOME}/"
+    assert_success
+    assert_line "[INFO] link: box dev shares the host HOME - user config already in place"
+    [[ ! -L "${HOME}/.ssh" ]] || fail "the host .ssh was touched"
+}
+
+@test "#199: a failed create links nothing" {
+    _user_config
+    cd "${REPO_ROOT}"
+    FAKE_DBX_RC=1 run "${ASSEMBLE}"
+    assert_failure 1
+    [[ ! -e "${HOME}/dev-box" ]] || fail "the box HOME was touched after a failed create"
+}
+
+@test "#199: dry-run links nothing" {
+    _user_config
+    cd "${REPO_ROOT}"
+    run "${ASSEMBLE}" --dry-run
+    assert_success
+    [[ ! -e "${HOME}/dev-box" ]] || fail "dry-run touched the box HOME"
+}
+
+# --- #199 r3/r4: assemble owns only home / home.source in the state file -
+# The state file has several writers (setup: the four decisions; assemble:
+# home / home.source; the user: link= lines). assemble must update its
+# own keys in place and keep every other byte - whitespace-only lines, CRLF
+# lines, trailing blank lines and a missing final newline included - and a
+# refused run must leave the whole file byte-for-byte. The matrix is
+# (record, refuse) x EOF framing, every case compared with cmp: `run cat` /
+# `$(...)` drop trailing newlines and cannot see the framing.
+
+# The tail of the state file for EOF framing $1, as a printf %b string.
+_tail() {
+    case "$1" in
+        nl)     printf '%s' 'link=.config/foo\n' ;;
+        nonl)   printf '%s' 'link=.config/foo' ;;
+        blanks) printf '%s' 'link=.config/foo\n\n\n' ;;
+        ws)     printf '%s' 'link=.config/foo\n  \t ' ;;
+        crlf)   printf '%s' '# crlf note\r\nlink=.config/foo\r\n' ;;
+        crlf-nonl)   printf '%s' '# crlf note\r\nlink=.config/foo\r' ;;
+        crlf-blanks) printf '%s' 'link=.config/foo\r\n\r\n\r\n' ;;
+        crlf-ws)     printf '%s' 'link=.config/foo\r\n  \t \r' ;;
+    esac
+}
+
+_HEAD='# my own notes about worktool\n\nauto-enter=no\nauto-enter.source=user\n'
+_OWN_IN='home=/srv/old\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture-key=a = b\nhome=/srv/old\n'
+_OWN_OUT='home=/srv/new\nlink=~/.aws\nlink=~/.aws\nhome.source=user\n   \nfuture-key=a = b\n'
+
+@test "#199 r4: a recorded home x every EOF framing keeps every foreign byte and updates home once" {
+    local _framing _tail
+    cd "${REPO_ROOT}"
+    for _framing in nl nonl blanks ws crlf crlf-nonl crlf-blanks crlf-ws; do
+        _tail="$(_tail "${_framing}")"
+        mkdir -p "$(dirname -- "${CONFIG}")"
+        printf '%b' "${_HEAD}${_OWN_IN}${_tail}" >"${CONFIG}"
+        printf '%b' "${_HEAD}${_OWN_OUT}${_tail}" >"${BATS_TEST_TMPDIR}/expected"
+        FAKE_BOX_HOME=/srv/new run "${ASSEMBLE}" --home /srv/new
+        assert_success
+        run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+        [[ "${status}" -eq 0 ]] || fail "framing ${_framing}: ${output}"
+    done
+}
+
+@test "#199 r4: a refused home change x every EOF framing leaves the state file byte-for-byte" {
+    local _framing
+    cd "${REPO_ROOT}"
+    for _framing in nl nonl blanks ws crlf crlf-nonl crlf-blanks crlf-ws; do
+        mkdir -p "$(dirname -- "${CONFIG}")"
+        printf '%b' "${_HEAD}${_OWN_IN}$(_tail "${_framing}")" >"${CONFIG}"
+        cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
+        FAKE_BOX_HOME=/srv/old run "${ASSEMBLE}" --home /srv/new
+        assert_failure 1
+        run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+        [[ "${status}" -eq 0 ]] || fail "framing ${_framing}: ${output}"
+    done
+}
+
+@test "#199 r3: assemble keeps the state file's mode" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf '%b' "${_HEAD}${_OWN_IN}" >"${CONFIG}"
+    chmod 0640 "${CONFIG}"
+    cd "${REPO_ROOT}"
+    FAKE_BOX_HOME=/srv/new run "${ASSEMBLE}" --home /srv/new
+    assert_success
+    assert_equal "$(stat -c %a "${CONFIG}")" "640"
 }

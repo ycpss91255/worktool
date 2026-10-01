@@ -163,6 +163,127 @@ _block_count() {
     assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
 }
 
+# --- #199 r3-r5: setup owns only its own keys in the shared state file --
+# The state file has several writers (setup: the four decisions; assemble:
+# home / home.source; the user: link= lines). setup must update its own
+# keys in place and keep every other byte: comments, blank and
+# whitespace-only lines, link= entries (duplicates too), the box home, keys
+# a later version may add, CRLF lines, trailing blank lines and a missing
+# final newline. The matrix is setup run x EOF framing x (append: two of
+# setup's keys are new | replace-only: all of them are already there), and
+# every case compares the whole file byte-for-byte (cmp) with the file it
+# must be: `run cat` / `$(...)` drop trailing newlines and cannot see the
+# framing. Only the replace-only half can see a writer that normalises the
+# final newline (an appended key always ends the file with one); the
+# mutation spec (config_mutation_spec) proves each half fails on the
+# mutant it is meant to see.
+
+# EOF framings, one `<name>|<tail>` per line (printf %b strings).
+_framings() {
+    printf '%s\n' \
+        'nl|link=.config/foo\n' \
+        'nonl|link=.config/foo' \
+        'blanks|link=.config/foo\n\n\n' \
+        'ws|link=.config/foo\n  \t ' \
+        'crlf|# crlf note\r\nlink=.config/foo\r\n' \
+        'crlf-nonl|# crlf note\r\nlink=.config/foo\r' \
+        'crlf-blanks|link=.config/foo\r\n\r\n\r\n' \
+        'crlf-ws|link=.config/foo\r\n  \t \r'
+}
+
+# The setup runs: `<args>|<auto-enter src>|<terminal src>|<tmux src>|<box src>`
+# (what each run must leave, starting from tmux=host / box=dev by the user).
+_runs() {
+    printf '%s\n' \
+        '|yes default|none default|host user|dev user' \
+        '--terminal none --tmux inside --box work|yes default|none user|inside user|work user' \
+        '--auto-enter no|no user|none default|host user|dev user'
+}
+
+_HEAD='# my own notes about worktool\n\nlink=~/.aws\n'
+
+# The body (printf %b) holding setup's keys: $1 auto-enter $2 its source
+# $3 terminal $4 its source (both lines left out when $1 is empty), $5 tmux
+# $6 its source, $7 box $8 its source, $9 extra lines after box.source.
+_body() {
+    local _ae=''
+    [[ -z "$1" ]] || _ae="auto-enter=$1\\nauto-enter.source=$2\\nterminal=$3\\nterminal.source=$4\\n"
+    printf '%s' "${_HEAD}${_ae}tmux=$5\\ntmux.source=$6\\nfuture-key=some value = with = inside\\nbox=$7\\nbox.source=$8\\n$9link=~/.aws\\n   \\n"
+}
+
+# Run every setup run x every framing, the input made by `_body` with
+# (\$1 = append | replace); fail naming the first case whose bytes differ.
+_matrix() {
+    local _mode="$1" _name _tail _sep _row _want _in
+    local -a _c _opts _ae _te _tm _bx
+    while IFS='|' read -r _name _tail; do
+        while IFS= read -r _row; do
+            IFS='|' read -r -a _c <<<"${_row}"
+            read -r -a _opts <<<"${_c[0]}"
+            read -r -a _ae <<<"${_c[1]}"
+            read -r -a _te <<<"${_c[2]}"
+            read -r -a _tm <<<"${_c[3]}"
+            read -r -a _bx <<<"${_c[4]}"
+            if [[ "${_mode}" == append ]]; then
+                _in="$(_body '' '' '' '' host user dev user 'box=dev\n')${_tail}"
+                _sep=''
+                [[ "${_tail}" == *'\n' ]] || _sep='\n'
+                _want="$(_body '' '' '' '' "${_tm[0]}" "${_tm[1]}" "${_bx[0]}" "${_bx[1]}" '')${_tail}${_sep}"
+                _want+="auto-enter=${_ae[0]}\\nauto-enter.source=${_ae[1]}\\nterminal=${_te[0]}\\nterminal.source=${_te[1]}\\n"
+            else
+                _in="$(_body yes default none default host user dev user 'box=dev\n')${_tail}"
+                _want="$(_body "${_ae[0]}" "${_ae[1]}" "${_te[0]}" "${_te[1]}" "${_tm[0]}" "${_tm[1]}" "${_bx[0]}" "${_bx[1]}" '')${_tail}"
+            fi
+            mkdir -p "$(dirname -- "${CONFIG}")"
+            printf '%b' "${_in}" >"${CONFIG}"
+            printf '%b' "${_want}" >"${BATS_TEST_TMPDIR}/expected"
+            "${SETUP}" "${_opts[@]}" >/dev/null 2>&1 \
+                || { echo "setup failed: ${_mode} ${_name} ${_c[0]:-<defaults>}"; return 1; }
+            cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}" \
+                || { echo "bytes differ: ${_mode} ${_name} ${_c[0]:-<defaults>}"; return 1; }
+        done < <(_runs)
+    done < <(_framings)
+}
+
+@test "#199 r4: every setup run x every EOF framing, appending two keys, keeps every foreign byte" {
+    run _matrix append
+    assert_success
+}
+
+@test "#199 r5: every setup run x every EOF framing, replace-only (all keys present), keeps every byte" {
+    run _matrix replace
+    assert_success
+}
+
+@test "#199 r4: a CRLF line of one of setup's own keys is refused (exit 1) and the file is left byte-for-byte" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\r\ntmux=host\r\ntmux.source=user\n' >"${CONFIG}"
+    cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
+    run "${SETUP}"
+    assert_failure 1
+    assert_output --partial "invalid value"
+    run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+    assert_success
+}
+
+@test "#199 r3: a user link= line survives just box setup (the lost-entry regression)" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    run grep -x 'link=~/.aws' "${CONFIG}"
+    assert_success
+}
+
+@test "#199 r3: setup keeps the state file's mode" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\ntmux=host\ntmux.source=user\n' >"${CONFIG}"
+    chmod 0640 "${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    assert_equal "$(stat -c %a "${CONFIG}")" "640"
+}
+
 @test "terminal none with auto-enter yes says no terminal profile is managed and names the manual command" {
     run "${SETUP}"
     assert_success

@@ -4,8 +4,14 @@
 # A thin, robust wrapper over `distrobox assemble create --file <manifest>`.
 # It validates the manifest first (fail fast on a missing/invalid file) and
 # then either prints the exact distrobox invocation (dry-run) or executes it.
-# It never installs anything on the host and never needs root - the only
-# side effect is invoking distrobox, which manages the container itself.
+# It never installs anything on the host and never needs root. Side effects:
+# invoking distrobox, which manages the container itself, and - after a
+# successful create, never in dry-run - symlinking the user config
+# (~/.ssh, ~/.gitconfig, ~/.gnupg, ~/.config/gh, plus `link=` lines of the
+# state file) into the box HOME (see "Box HOME" below; lib/link.sh, issue
+# #199). A box whose HOME is the host HOME needs no links.
+# Nothing is copied, no host file is modified, an existing entry is never
+# overwritten.
 #
 # The backing script of `just box assemble` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -30,7 +36,7 @@
 # `[INFO] box home: <path> (default|user)`, handed to distrobox as
 # DBX_CONTAINER_CUSTOM_HOME (distrobox-create's documented variable, so the
 # dry-run command line stays the same), and recorded in
-# ~/.config/worktool/config after a successful run. An EXISTING box whose
+# the state file (lib/config.sh) after a successful run. An EXISTING box whose
 # HOME differs is refused - exit 1, nothing changed, the remove-and-recreate
 # commands printed - because only a new box can take a new HOME; worktool
 # never removes a box by itself. When the container manager distrobox would
@@ -61,6 +67,8 @@ source "${LIB_DIR}/log.sh"
 source "${LIB_DIR}/manifest.sh"
 # shellcheck source=home.sh
 source "${LIB_DIR}/home.sh"
+# shellcheck source=link.sh
+source "${LIB_DIR}/link.sh"
 
 # Default manifest, relative to the repo root. It is resolved to a concrete
 # path at run time (see _resolve_manifest): `box/dev.ini` when invoked from the
@@ -69,15 +77,18 @@ DEFAULT_MANIFEST="box/dev.ini"
 
 # --- Helpers -----------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
 
 Assemble the worktool dev box from its manifest with
-`distrobox assemble create --file <manifest>`.
+`distrobox assemble create --file <manifest>`. After a successful create,
+symlink the user config (~/.ssh ~/.gitconfig ~/.gnupg ~/.config/gh, plus
+`link=<path>` lines of {state-file}) into the box HOME (see
+--home); an existing entry is never overwritten.
 
   --file <manifest>  Box manifest to assemble (default: box/dev.ini).
   --home <path>      The box's own HOME, an absolute path (default: the
-                     choice recorded in $XDG_CONFIG_HOME/worktool/config,
+                     choice recorded in {state-file},
                      else ~/<box>-box, e.g. ~/dev-box). Fixed when the box
                      is created: an existing box with a different HOME is
                      refused (exit 1) - remove it and assemble again.
@@ -189,15 +200,15 @@ _check_home_option() {
 # same order as `just box setup`. A corrupt stored home refuses the run.
 _resolve_home() {
     local _problem
-    BOX_NAME="$1" CONFIG="$(enter_config_path)"
-    if ! _problem="$(home_config_check "${CONFIG}")"; then
-        log_error "${CONFIG}: ${_problem}"
+    BOX_NAME="$1"
+    if ! _problem="$(home_config_check)"; then
+        config_log error "" ": ${_problem}"
         return 1
     fi
     if [[ "${OPT_HOME_SET}" -eq 1 ]]; then
         BOX_HOME="${OPT_HOME}" BOX_HOME_SRC=user
-    elif [[ "$(enter_config_get "${CONFIG}" home.source)" == user ]]; then
-        BOX_HOME="$(home_normalize "$(enter_config_get "${CONFIG}" home)")"
+    elif [[ "$(config_get home.source)" == user ]]; then
+        BOX_HOME="$(home_normalize "$(config_get home)")"
         BOX_HOME_SRC=user
     else
         BOX_HOME="$(home_default "${BOX_NAME}")" BOX_HOME_SRC=default
@@ -279,11 +290,26 @@ _assemble_exec() {
     local _rc=0
     DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
-    if ! home_record "${CONFIG}" "${BOX_HOME}" "${BOX_HOME_SRC}"; then
-        log_error "failed to record the box home in ${CONFIG}"
+    if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then
+        config_log error "failed to record the box home in "
         return 1
     fi
-    log_info "recorded box home in ${CONFIG}"
+    config_log info "recorded box home in "
+    _assemble_link
+}
+
+# Link the user config into the box HOME (issue #199, lib/link.sh): only
+# after a successful create, never in dry-run. The box HOME is BOX_HOME,
+# the one _resolve_home picked and home_record just recorded (issue #198) -
+# the same path distrobox was given. A box whose HOME is the host HOME
+# (`--home ~`) already sees the user config: nothing to link.
+_assemble_link() {
+    if [[ "${BOX_HOME}" == "$(home_normalize "${HOME}")" ]]; then
+        log_info "link: box ${BOX_NAME} shares the host HOME - user config already in place"
+        return 0
+    fi
+    log_info "linking user config into the box HOME ${BOX_HOME}"
+    link_apply "${BOX_HOME}"
 }
 
 # Guard: only run when executed directly, not when sourced (keeps the file
