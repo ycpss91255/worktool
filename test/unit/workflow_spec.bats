@@ -1582,3 +1582,9 @@ _discuss_replies() {
         [(.prompt | contains("Approved premise")), (.prompt | contains("private answer"))]]]' <<<"${json}"
     assert_output '[null,[[true,false],[true,false]]]'
 }
+
+@test "discuss: agreement stops after one round" {
+    _discuss_run "$(_discuss_replies)"
+    run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.label | startswith("compare:"))] | length)]' <<<"${output}"
+    assert_output '["agreed",1,1]'
+}

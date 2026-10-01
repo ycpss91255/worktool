@@ -4,6 +4,7 @@ export const meta = {
   whenToUse: 'Pass {repo, repoDir, issue, question, context?, premises?, references?}.',
   phases: [
     { title: 'Answer', detail: 'Independent answers' },
+    { title: 'Compare', detail: 'Compare evidence and conclusions' },
   ],
 }
 
@@ -48,4 +49,12 @@ const ask = (name, n) => {
   return agent(`${GUARDRAILS}\n${prompt}`, { label: `${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
 }
 const [claude, codex] = await parallel([() => ask('claude', 1), () => ask('codex', 1)])
-return { issue: A.issue, claude, codex, rounds: 1 }
+const VERDICT = { type: 'object', properties: {
+  status: { type: 'string', enum: ['agreed', 'derived', 'diverged'] }, conclusion: { type: 'string' },
+  basis: { type: 'array', items: { type: 'string' } }, disagreements: { type: 'array', items: { type: 'string' } },
+  question: { type: 'string' },
+}, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
+const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(r => typeof r === 'string' && r.trim()) && Array.isArray(x.risks)
+if (!validAnswer(claude) || !validAnswer(codex)) return { issue: A.issue, status: 'answer-failed', rounds: 1 }
+const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(claude)}\nCodex: ${JSON.stringify(codex)}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL or file:line).`, { label: 'compare:r1', phase: 'Compare', schema: VERDICT })
+return { issue: A.issue, ...verdict, claude, codex, rounds: 1 }
