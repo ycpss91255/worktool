@@ -150,6 +150,13 @@ _checks_per_promise() {
     [ -f "${REPO_ROOT}/doc/adr/0012-invariant-platform-neutral.md" ]
 }
 
+@test "invariant 10 links to its merged ADR 0013" {
+    run grep -E '^10\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0013](adr/0013-invariant-compatibility.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0013-invariant-compatibility.md" ]
+}
+
 @test "every relative link in doc/contract.md resolves to an existing file" {
     local target found=0
     while IFS= read -r target; do

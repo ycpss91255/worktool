@@ -77,6 +77,6 @@
 7. 對外承諾必須黑箱可驗；開發與正式使用走同一個入口（[ADR 0010](adr/0010-invariant-black-box-verifiable.md)，#208）
 8. host 依賴最小：除驅動與 GUI app 外，只需 docker 與 just（[ADR 0011](adr/0011-invariant-minimal-host-deps.md)，#209）
 9. 正確性不綁單一平台（[ADR 0012](adr/0012-invariant-platform-neutral.md)，#210）
-10. 相容性：同一個大版號內不破壞原本的用法（ADR 待寫：#211）
+10. 相容性：同一個大版號內不破壞原本的用法（[ADR 0013](adr/0013-invariant-compatibility.md)，#211）
 
 #200 定案時，第 11 條「進盒 < 300 ms」待 #181 定案，本索引不列入；是否補列另行決定。
