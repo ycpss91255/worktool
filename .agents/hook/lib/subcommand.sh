@@ -739,23 +739,37 @@ _hook_case_patterns() {
 
 # _hook_arithmetic <text> - arithmetic parentheses enclose data, not launches.
 _hook_arithmetic() {
-    local _t="$1" _out='' _i _c _depth=0
+    local _t="$1" _out='' _i _c _depth=0 _start=0
     [[ "${_t}" == *'(('* ]] || { printf '%s' "${_t}"; return 0; }
     for ((_i = 0; _i < ${#_t}; _i++)); do
         _c="${_t:_i:1}"
         if [[ "${_depth}" -eq 0 && "${_t:_i:2}" == '((' ]]; then
             _depth=2
+            _start="${_i}"
             _i=$((_i + 1))
-            _out+=' '
         elif [[ "${_depth}" -gt 0 ]]; then
             case "${_c}" in
                 '(') _depth=$((_depth + 1)) ;;
-                ')') _depth=$((_depth - 1)) ;;
+                ')')
+                    if [[ "${_depth}" -eq 2 ]]; then
+                        if [[ "${_t:_i:2}" == '))' ]]; then
+                            _out+=' '
+                            _i=$((_i + 1))
+                        else
+                            # Bash falls back to subshells when the pair is separated.
+                            _out+="${_t:_start:_i-_start+1}"
+                        fi
+                        _depth=0
+                    else
+                        _depth=$((_depth - 1))
+                    fi ;;
             esac
         else
             _out+="${_c}"
         fi
     done
+    # An unclosed candidate must not hide possible launches either.
+    [[ "${_depth}" -gt 0 ]] && _out+="${_t:_start}"
     printf '%s' "${_out}"
 }
 

@@ -490,6 +490,20 @@ _scripts() {
     assert_output 'bats t'
 }
 
+@test "double parentheses with separate closing parens still launch subshell bodies" {
+    run hook_subcommands '((bats t) ); ls'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'ls')"
+
+    run hook_subcommands '((bats t) || zzz 5)'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'zzz 5')"
+
+    run hook_subcommands '((echo hi) ; bats t)'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo hi' 'bats t')"
+}
+
 @test "a case word in command arguments does not hide a pipeline launch" {
     run hook_subcommands 'echo case x in foo | bats t'
     assert_success
