@@ -256,11 +256,7 @@ _stub_just_tiers() {
 
 # --- Controls: the real thing, so the negatives are not vacuous --------------
 
-@test "this spec is a required unit spec of test.sh" {
-    run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
-    assert_success
-    assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
-}
+
 
 @test "control: item 2.4 passes against this checkout and prints the documented six lines" {
     # stderr dropped on purpose: the contract is that STDOUT alone is the

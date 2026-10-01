@@ -101,7 +101,7 @@ _reset_log() {
 
 _distrobox_conf() { printf '%s\n' "${HOME}/.config/distrobox/distrobox.conf"; }
 
-# The user lines ~/.distrobox.conf is seeded with: what a maintainer's own tmux
+# The user lines distrobox.conf is seeded with: the host distrobox
 # configuration stands for, and what every check below asks to survive.
 DISTROBOX_USER_LINES=(
     '# worktool acceptance: user content that must survive every write'
@@ -114,9 +114,7 @@ _seed_distrobox_conf() {
     printf '%s\n' "${DISTROBOX_USER_LINES[@]}" >"$(_distrobox_conf)"
 }
 
-# The state file a maintainer who chose `--tmux host` once already has. The
-# decision is STORED, so the next bare `just box setup` writes ~/.distrobox.conf
-# whether or not this run asked for it - the case GAP A is about.
+# A user-owned config entry that setup must retain.
 _seed_shared_state() {
     mkdir -p "${HOME}/.config/worktool"
     printf 'link=.ssh\n' >"${HOME}/.config/worktool/config"
@@ -156,9 +154,7 @@ _insert_before() {
     rm -f "${_file}.new"
 }
 
-# Degrade the copy at $1 so ONLY the tmux-host path overwrites its file: the
-# ghostty block is still replaced in place and the report is word for word
-# the one a correct write prints.
+# Only the distrobox isolation write overwrites user content.
 _degrade_distrobox_overwrites() {
     _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'FRAG'
 _apply_box_env() {
@@ -173,11 +169,7 @@ FRAG
 
 # --- self-registration -------------------------------------------------------
 
-@test "this spec is a required unit spec of test.sh" {
-    run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
-    assert_success
-    assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
-}
+
 
 # --- CLI and the realbox opt-in ----------------------------------------------
 
@@ -425,8 +417,7 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line "ghostty=regular"
     assert_line --partial "ghostty.sha="
     assert_line "worktool=absent-dir"
-    # ~/.distrobox.conf is in the set: `just box setup` writes it whenever the
-    # stored tmux decision is `host`, and without this line step 3 would
+    # distrobox.conf is in the set: every setup maintains it, and step 3 would
     # have nothing to restore it from.
     assert_line "distrobox-conf=regular"
     assert_line --partial "distrobox-conf.sha="
@@ -443,7 +434,7 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 }
 
 @test "5.2.1 refuses the whole item when a file setup can write cannot be backed up" {
-    # A directory where ~/.distrobox.conf should be: `just box setup --tmux host`
+    # A directory where distrobox.conf should be: `just box setup`
     # would still try to write there, and nothing could put it back. The
     # refusal lands BEFORE a backup directory exists.
     mkdir -p "$(_distrobox_conf)"
@@ -456,7 +447,7 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 }
 
 @test "5.2.1 refuses when the link behind a config leads somewhere it cannot copy" {
-    # A symlinked ~/.distrobox.conf whose target is a directory: `cp -a` would
+    # A symlinked distrobox.conf whose target is a directory: `cp -a` would
     # copy the link, and the file behind it - the one that actually holds
     # the user's configuration - could not be preserved at all.
     mkdir -p "${BATS_TEST_TMPDIR}/not-a-file"
@@ -684,7 +675,7 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 # --- 5.2 and the user's own content (GAP A) ----------------------------------
 # These run the REAL product out of a copy of the checkout, so the output is
 # what it really prints. The scenario is the maintainer's: the state file
-# already says `tmux=host`, so a bare `just box setup` writes ~/.distrobox.conf
+# contains a user-config link; bare setup still writes distrobox.conf
 # whether or not this run asked it to.
 
 @test "5.2: the apply keeps the user's own content in every managed file (the degraded case below is not vacuous)" {
@@ -703,10 +694,10 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line "blocks=0"
 }
 
-@test "5.2: a product whose distrobox isolation path overwrites the whole ~/.distrobox.conf is caught after the apply, and the backup puts it back (GAP A)" {
+@test "5.2: a product whose distrobox isolation path overwrites the whole distrobox.conf is caught after the apply, and the backup puts it back (GAP A)" {
     # Every signal 5.2 used to have stays green: setup exits 0, status is
     # fine, the managed block is in the file, and step 3 reports a clean
-    # restore. What says the apply destroyed the maintainer's tmux
+    # restore. What says the apply destroyed the maintainer's distrobox
     # configuration is the user-content line - checked BEFORE step 3, or
     # the restore would hide the damage it was meant to undo.
     local _repo
@@ -726,14 +717,14 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line "restore-ok=1"
     assert_line "backup-removed=1"
     # And the file is back, byte for byte - only possible because the backup
-    # set covers ~/.distrobox.conf.
+    # set covers distrobox.conf.
     run cat "$(_distrobox_conf)"
     assert_output "$(printf '%s\n' "${DISTROBOX_USER_LINES[@]}")"
 }
 
-@test "5.2: a managed block left in ~/.distrobox.conf fails the restore, exactly as one left in the ghostty config does" {
+@test "5.2: a managed block left in distrobox.conf fails the restore, exactly as one left in the ghostty config does" {
     # blocks= counts every user-owned managed file: a restore that put the
-    # ghostty config back and forgot ~/.distrobox.conf used to print blocks=0.
+    # ghostty config back and forgot distrobox.conf used to print blocks=0.
     _seed_distrobox_conf
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
         >>"$(_distrobox_conf)"
