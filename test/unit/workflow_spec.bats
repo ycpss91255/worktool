@@ -2208,3 +2208,17 @@ _discuss_replies() {
         assert_success
     done
 }
+
+@test "run identifier: research logs the issue first and prefixes every agent label (#313)" {
+    local issue json
+    for issue in 129 313; do
+        run _rv_run "{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":${issue},\"question\":\"q\"}" \
+            "$(_rv_ok_replies | jq --arg url "https://github.com/o/r/issues/${issue}#issuecomment-1" '.["record:"].url = $url')"
+        assert_success
+        json="${output}"
+        run jq -e --arg id "research #${issue}" '
+            .error == null and .result.status == "recorded" and .logs[0] == $id
+            and (.calls | length > 0) and ([.calls[].label | startswith($id + " ")] | all)' <<<"${json}"
+        assert_success
+    done
+}
