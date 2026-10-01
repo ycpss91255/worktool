@@ -477,3 +477,35 @@ _scripts() {
     assert_success
     assert_output "$(printf "bash <<'X'\ngh issue create -F - <<'EOF'\nmilestone: x\nEOF\nX<END>gh issue create -F - <<'EOF'\nmilestone: x\nEOF<END>")"
 }
+
+@test "case patterns do not launch alternatives but arm bodies still launch" {
+    run hook_subcommands "case \"\$x\" in foo|bats) echo ok;; (bats|bar) bats t;; esac; ls"
+    assert_success
+    assert_output "$(printf '%s\n' "case \$x in _" 'echo ok' 'bats t' 'ls')"
+}
+
+@test "arithmetic commands do not launch expressions but following commands still launch" {
+    run hook_subcommands '(( bats = 1 )); (( x = (bats | 2) && 3 )); bats t'
+    assert_success
+    assert_output 'bats t'
+}
+
+@test "double parentheses with separate closing parens still launch subshell bodies" {
+    run hook_subcommands '((bats t) ); ls'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'ls')"
+
+    run hook_subcommands '((bats t) || zzz 5)'
+    assert_success
+    assert_output "$(printf '%s\n' 'bats t' 'zzz 5')"
+
+    run hook_subcommands '((echo hi) ; bats t)'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo hi' 'bats t')"
+}
+
+@test "a case word in command arguments does not hide a pipeline launch" {
+    run hook_subcommands 'echo case x in foo | bats t'
+    assert_success
+    assert_output "$(printf '%s\n' 'echo case x in foo' 'bats t')"
+}

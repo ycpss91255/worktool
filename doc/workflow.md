@@ -84,7 +84,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 
 ## milestone-fanout
 
-用途：讓多個彼此獨立的 sub-issue 各跑一遍 `pr-loop`。每批最多兩個 workflow 並行，因此主機上同時最多兩個測試；一批結束才開始下一批。每個結果完成後都會寫入 log，workflow 本身不 merge。
+用途：讓多個彼此獨立的 sub-issue 各跑一遍 `pr-loop`。每批最多 `concurrency` 個 `pr-loop` 子 workflow 並行（預設 10）；一批結束才開始下一批。`concurrency` 限制同時進行的實作工作數；CPU 閘門（#279／#288）另外限制同時執行的測試容器數，上限仍為 2。每個結果完成後都會寫入 log，workflow 本身不 merge。
 
 | 參數 | 必要 | 說明 |
 |------|------|------|
@@ -96,6 +96,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
 | `codex` | 否 | `on`(預設)或 `off` |
 | `maxRounds` | 否 | 每個 PR 的 Fix 輪數上限，預設 3 |
+| `concurrency` | 否 | 每批實作工作數上限，正整數，預設 10；非法值 throw，不啟動子 workflow |
 
 args 範例：
 
@@ -106,6 +107,7 @@ args 範例：
   "parent": "#280",
   "implementer": "codex",
   "maxRounds": 3,
+  "concurrency": 4,
   "items": [
     { "issue": 281, "branch": "feat/281-a", "name": "impl281", "task": "完成 issue #281。" },
     { "issue": 282, "branch": "feat/282-b", "name": "impl282", "task": "完成 issue #282。" }
