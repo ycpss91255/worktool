@@ -16,7 +16,7 @@
 #   2.2  every M3 sub-issue PR body shows RED evidence before GREEN
 #        evidence (the check itself is doc/evidence/tdd.sh, kept where it
 #        is: it is the implementation this item has always used)
-#   2.3  the "window -> box -> tmux/fish" chain is proven by CI: the
+#   2.3  the "window -> box -> fish" chain is proven by CI: the
 #        integration ghostty group and the system-real chain cases
 #   2.4  the acceptance machinery's own negative: the 2.2 checker bites
 #        bad evidence, and a pipeline without `pipefail` loses an upstream
@@ -41,7 +41,7 @@
 #     question - one verdict line, or two placeholder `ok` lines, would
 #     otherwise certify evidence that is almost entirely absent. What is
 #     missing, extra or repeated is named on stderr.
-#   - A criterion the document states as a VALUE (`tmux=yes`,
+#   - A criterion the document states as a VALUE (`tmux=no`,
 #     `FORWARDED_STARTED=yes`, `COMMAND_FINISHED=no`) is pinned literally; a
 #     MEASUREMENT (a container id, a fish version, an elapsed time, a delay
 #     in ms) is matched by shape only, because the document says in so many
@@ -125,7 +125,7 @@ SYSTEM_REAL_PATTERN='^# (chain|chain-host|hang|single-instance)|^ok .*ghostty ch
 # also pins the case count per tier (9 and 5). Adding a chain case means
 # adding it to the document's block and to the list here; that is the point.
 INTEGRATION_CASES=(
-    "setup --tmux inside after host: status shows the tmux.conf block gone, ghostty still present"
+    "setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line"
     "preflight: a real ghostty is on PATH and reports its version"
     "setup.sh writes a ghostty config that +validate-config accepts"
     "+show-config follows setup.sh --box work (the box name reaches ghostty)"
@@ -137,7 +137,7 @@ INTEGRATION_CASES=(
 )
 SYSTEM_REAL_CASES=(
     "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)"
-    "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)"
+    "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)"
     "ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging"
     "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)"
     "ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH"
@@ -145,7 +145,7 @@ SYSTEM_REAL_CASES=(
 
 # The diagnostic criteria doc/acceptance.md publishes for each tier, as
 # anchored extended regexes; each must be matched by exactly one line of the
-# tier's block. The values the document names as judgements (`tmux=yes`,
+# tier's block. The values the document names as judgements (`tmux=no`,
 # `FORWARDED_STARTED=yes`, `FORWARDED_AFTER_RETURN=yes`,
 # `COMMAND_FINISHED=no`, and the 124 the hang case is cut by) are literal;
 # the values the document explicitly calls per-run measurements (`host=`,
@@ -161,8 +161,8 @@ SYSTEM_REAL_CASES=(
 # published without a bound and stay shape-only.
 INTEGRATION_CRITERIA=()
 SYSTEM_REAL_CRITERIA=(
-    '^# chain: inbox-ok fish=[0-9]+(\.[0-9]+)+ tmux=yes host=[^[:space:]]+$'
-    '^# chain-host: marker host=[^[:space:]]+ == docker inspect dev hostname$'
+    '^# chain: inbox-ok fish=[0-9]+(\.[0-9]+)+ ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=[^[:space:]]+$'
+    '^# chain-in-box: marker mntns=mnt:\[[0-9]+\] == dev container; host=[^[:space:]]+ == docker inspect dev hostname$'
     '^# hang-ready: hang-ready fish=[0-9]+(\.[0-9]+)+ host=[^[:space:]]+$'
     '^# hang: in-box command started, then timed out after [0-9]+s \(budget [0-9]+s, status 124\)$'
     '^# single-instance: PRIMARY=up$'
@@ -175,7 +175,7 @@ SYSTEM_REAL_CRITERIA=(
     '^# single-instance: RUNNING_COMMANDS=2$'
     '^# single-instance: PRIMARY_WRAPPER_ALIVE=yes$'
     '^# single-instance: COMMAND_FINISHED=no$'
-    '^# chain-desktop-path: inbox-ok fish=[0-9]+(\.[0-9]+)+ tmux=yes host=[^[:space:]]+$'
+    '^# chain-desktop-path: inbox-ok fish=[0-9]+(\.[0-9]+)+ ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=[^[:space:]]+$'
 )
 
 # Lines whose ORDER the document turns into a judgement. The hang case only
@@ -293,7 +293,7 @@ _item_title() {
     case "$1" in
         2.1) printf '%s\n' "the bare six-tier just test run is green" ;;
         2.2) printf '%s\n' "every sub-issue PR body shows RED evidence before GREEN" ;;
-        2.3) printf '%s\n' "CI proves the window -> box -> tmux/fish chain" ;;
+        2.3) printf '%s\n' "CI proves the window -> box -> fish chain" ;;
         2.4) printf '%s\n' "the acceptance machinery's own negative bites" ;;
         *)   return 1 ;;
     esac

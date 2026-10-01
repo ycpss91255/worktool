@@ -190,7 +190,7 @@ EOF
 
 _integration_block() {
     cat <<'EOF'
-ok 8 setup --tmux inside after host: status shows the tmux.conf block gone, ghostty still present
+ok 8 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
 ok 1 preflight: a real ghostty is on PATH and reports its version
 ok 2 setup.sh writes a ghostty config that +validate-config accepts
 ok 5 +show-config follows setup.sh --box work (the box name reaches ghostty)
@@ -205,9 +205,9 @@ EOF
 _system_real_block() {
     cat <<'EOF'
 ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)
-# chain: inbox-ok fish=4.2.1 tmux=yes host=ca83e9d035cd
-# chain-host: marker host=ca83e9d035cd == docker inspect dev hostname
-ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)
+# chain: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
+# chain-in-box: marker mntns=mnt:[1234] == dev container; host=ca83e9d035cd == docker inspect dev hostname
+ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)
 # hang-ready: hang-ready fish=4.2.1 host=ca83e9d035cd
 # hang: in-box command started, then timed out after 45s (budget 45s, status 124)
 ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
@@ -222,7 +222,7 @@ ok 14 ghostty chain: a command that has STARTED inside the box and never ends FA
 # single-instance: PRIMARY_WRAPPER_ALIVE=yes
 # single-instance: COMMAND_FINISHED=no
 ok 15 ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)
-# chain-desktop-path: inbox-ok fish=4.2.1 tmux=yes host=ca83e9d035cd
+# chain-desktop-path: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
 ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
 EOF
 }
@@ -621,8 +621,8 @@ EOF
     PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
     assert_success
     assert_line 'ok 1 preflight: a real ghostty is on PATH and reports its version'
-    assert_line '# chain: inbox-ok fish=4.2.1 tmux=yes host=ca83e9d035cd'
-    assert_line "ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)"
+    assert_line '# chain: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd'
+    assert_line "ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)"
     assert_line '# single-instance: COMMAND_FINISHED=no'
 }
 
@@ -705,10 +705,10 @@ EOF
     assert_output --partial 'printed no line meeting the documented criterion ^# single-instance: RUNNING_COMMANDS=2$'
 }
 
-@test "degenerate: plausible-but-wrong criterion values fail 2.3 (tmux=no, FORWARDED_STARTED=no, COMMAND_FINISHED=yes)" {
+@test "degenerate: plausible-but-wrong criterion values fail 2.3 (tmux=yes, FORWARDED_STARTED=no, COMMAND_FINISHED=yes)" {
     _stub_ci_tools
     _write_tier_blocks
-    sed -i -e 's/tmux=yes/tmux=no/' \
+    sed -i -e 's/tmux=no/tmux=yes/' \
         -e 's/FORWARDED_STARTED=yes/FORWARDED_STARTED=no/' \
         -e 's/COMMAND_FINISHED=no/COMMAND_FINISHED=yes/' "${SYS_BLOCK}"
     _stub_just_blocks 0 0
