@@ -760,7 +760,11 @@ _run_changed_tiers() {
         local -n _full_tier="_full_${_tier}"
         if [[ "${_tier}" != unit \
             && ( "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
-            _info "此改動由 CI 的 ${_tier} 驗證"
+            if [[ "${_tier}" == matrix && "${#_selected_specs[@]}" -gt 0 ]]; then
+                _run_host_step "${_tier}" "" "${_selected_specs[@]}"
+            else
+                _info "此改動由 CI 的 ${_tier} 驗證"
+            fi
             unset -n _selected_specs
             unset -n _full_tier
             continue
