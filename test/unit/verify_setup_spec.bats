@@ -1257,3 +1257,9 @@ EOF
     assert_success
     assert_output --partial "invalid value 'sideways' for terminal"
 }
+
+@test "3.5: explicit distrobox path writes direct-entry command" {
+    run "${VERIFY}" 3.5
+    assert_success
+    assert_line "command = '<D>' enter dev"
+}

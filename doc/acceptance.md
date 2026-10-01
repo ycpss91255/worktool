@@ -785,7 +785,6 @@ rc=0
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (default)
       [INFO] terminal detected: ghostty (ghostty executable <H>/bin/ghostty)
-      [INFO] tmux: inside (default)
       [INFO] box: dev (default)
       [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
       error: recipe `setup` failed on line 44 with exit code 1
@@ -793,7 +792,7 @@ rc=0
       files 2->2
       user-content after-refusal: ghostty=intact tmux.conf=intact
       rc=0
-      command = '<D>' enter dev -- tmux new -A -s main
+      command = '<D>' enter dev
       user-content after-write: ghostty=intact tmux.conf=intact
       rc=0
       ```

@@ -1095,7 +1095,7 @@ _item_3_5() {
         if [[ "${_grc}" -eq 0 ]]; then
             _cmd_norm="$(_norm_line "${_cmd}")" || return 1
             printf '%s\n' "${_cmd_norm}"
-            if [[ "${_cmd_norm}" != "command = '<D>' enter dev -- tmux new -A -s main" ]]; then
+            if [[ "${_cmd_norm}" != "command = '<D>' enter dev" ]]; then
                 _fail "3.5: the managed command is '${_cmd_norm}', not the quoted absolute distrobox path #175 requires"
                 _bad=1
             fi
