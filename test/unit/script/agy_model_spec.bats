@@ -9,6 +9,13 @@ setup() {
     chmod +x "${BATS_TEST_TMPDIR}/bin/agy"
 }
 
+@test "agy model fails closed when no Gemini flash-high model is available" {
+    printf '%s\tDisplay name\n' claude-9.0-flash-high gemini-4.0-pro-high > "${MODEL_LIST}"
+    _resolve
+    assert_failure
+    assert_output --partial 'no Gemini flash-high model'
+}
+
 _resolve() {
     run just --justfile "${REPO_ROOT}/.agents/script/research/justfile.research" model "$@"
 }
