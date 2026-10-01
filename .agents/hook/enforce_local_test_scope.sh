@@ -9,7 +9,7 @@ source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "enforce-local-test-scope"
 
 _heavy_test() {
-    local _launch="$1" _word _lead
+    local _launch="$1" _word _lead _direct=''
     local -a _encoded=() _words=()
     _lead="$(hook_timeout_lead "${_launch}")"
     _launch="$(_hook_strip_wrappers "${_launch#"${_lead}"}")"
@@ -22,19 +22,36 @@ _heavy_test() {
         just|*/just)
             [[ "${_words[1]:-}" == test ]] || return 1
             _words=("${_words[@]:2}") ;;
-        script/test/test.sh|*/script/test/test.sh) _words=("${_words[@]:1}") ;;
+        script/test/test.sh|*/script/test/test.sh) _direct=1; _words=("${_words[@]:1}") ;;
         *) return 1 ;;
     esac
     for _word in "${_words[@]}"; do
         [[ "${_word}" == --help || "${_word}" == -h ]] && return 1
     done
     [[ "${#_words[@]}" -gt 0 ]] || return 0
+    if [[ -z "${_direct}" ]]; then
+        _blocked_tier "${_words[0]}" "${_words[@]:1}"
+        return $?
+    fi
+    local _filter=''
     for _word in "${_words[@]}"; do
+        if [[ -n "${_filter}" ]]; then _filter=''; continue; fi
+        [[ "${_word}" == --filter ]] && { _filter=1; continue; }
         case "${_word}" in
-            matrix|integration|system|system-real|acceptance|--matrix|--integration|--system|--system-real|--acceptance) return 0 ;;
-            unit|--unit) _has_spec "${_words[@]:1}" || return 0 ;;
+            --matrix|--integration|--system|--system-real|--acceptance) return 0 ;;
+            --unit) _has_spec "${_words[@]}" || return 0 ;;
         esac
     done
+    return 1
+}
+
+_blocked_tier() {
+    local _tier="$1"
+    shift
+    case "${_tier}" in
+        matrix|integration|system|system-real|acceptance) return 0 ;;
+        unit) _has_spec "$@" || return 0 ;;
+    esac
     return 1
 }
 

@@ -50,3 +50,10 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     assert_success
     assert_line 'matrix/enforce_local_test_scope_spec.bats'
 }
+
+@test "a filter value naming a heavy tier is data rather than a tier launch" {
+    _check 'just test unit test/unit/log_spec.bats --filter matrix'
+    assert_success
+    _check 'script/test/test.sh --unit test/unit/log_spec.bats --filter system'
+    assert_success
+}
