@@ -158,7 +158,8 @@ Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
 
 `.agents/hook/enforce_main_checkout_readonly.sh` 把 `git rev-parse --git-dir` 與
 `--git-common-dir` 相同的 working tree 判為主 checkout。Claude 的檔案編輯工具與
-Codex 的 `apply_patch` 不得寫入其中（`.agents/memory/`、`.worktree/` 例外）；Bash
+Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；linked worktree
+位於 repo 同層的 `worktree/`，不在主 checkout 內。Bash
 裡會改動 working tree 的 git 指令同樣拒絕，包含經 `git -C`、`bash -c` 或
 `eval` 指定的呼叫。`git fetch`、`git pull --ff-only`、指定的 `git worktree`
 管理動作、唯讀 git 指令與 `gh` 仍可在主 checkout 執行。

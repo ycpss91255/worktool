@@ -6,7 +6,7 @@ load "${BATS_TEST_DIRNAME}/../helper/hook"
 
 setup() {
     MAIN_REPO="${BATS_TEST_TMPDIR}/main"
-    LINKED_REPO="${MAIN_REPO}/.worktree/linked"
+    LINKED_REPO="${BATS_TEST_TMPDIR}/worktree/linked"
     OUTSIDE="${BATS_TEST_TMPDIR}/outside"
     mkdir -p "${MAIN_REPO}" "${OUTSIDE}"
     git -C "${MAIN_REPO}" init -q
@@ -58,6 +58,13 @@ _wrapped() {
             fi
         done
     done
+}
+
+@test "a .worktree path inside the main checkout is not exempt" {
+    run_hook enforce_main_checkout_readonly \
+        "$(_edit_payload Edit "${MAIN_REPO}/.worktree/not-a-linked-worktree/file")"
+    assert_failure 2
+    assert_output --partial "main checkout"
 }
 
 @test "matrix: mutating git command x main worktree git-C x direct bash-c eval" {

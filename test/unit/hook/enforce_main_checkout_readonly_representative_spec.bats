@@ -6,7 +6,7 @@ load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
 setup() {
     MAIN_REPO="${BATS_TEST_TMPDIR}/main"
-    LINKED_REPO="${MAIN_REPO}/.worktree/linked"
+    LINKED_REPO="${BATS_TEST_TMPDIR}/worktree/linked"
     mkdir -p "${MAIN_REPO}"
     git -C "${MAIN_REPO}" init -q
     git -C "${MAIN_REPO}" config user.email test@example.com

@@ -42,7 +42,6 @@ _block_edit_if_main() {
     _top="${_repo[0]}" _git="${_repo[1]}" _common="${_repo[2]}"
     [[ "${_git}" == "${_common}" ]] || return 0
     [[ "${_path}" == "${_top}" || "${_path}" == "${_top}/"* ]] || return 0
-    [[ "${_path}" != "${_top}/.worktree/"* ]] || return 0
     [[ "${_path}" != "${_top}/.agents/memory/"* ]] || return 0
     hook_block "file edit targets the main checkout: ${_path}" \
         "Create or reuse a linked worktree and make the change there."
