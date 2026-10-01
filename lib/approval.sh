@@ -75,3 +75,11 @@ approval_evaluate() {
     printf '%s\n' "需要維護者留言:$(_approval_phrase)"
     return 1
 }
+
+# approval_has_agent_marker <agent> <body> - exact own marker after whitespace.
+approval_has_agent_marker() {
+    local _agent="$1" _body="$2"
+    case "${_agent}" in claude|codex|agy|gemini) ;; *) return 1 ;; esac
+    _body="${_body#"${_body%%[![:space:]]*}"}"
+    [[ "${_body}" == "[${_agent}]"* ]]
+}
