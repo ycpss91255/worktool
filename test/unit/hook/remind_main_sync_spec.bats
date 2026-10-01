@@ -82,3 +82,9 @@ _context() { jq -r '.hookSpecificOutput.additionalContext' <<<"${output}"; }
     assert_success
     assert_output ""
 }
+
+@test "main sync advisory allows when JSON emission fails" {
+    run bash -c 'jq() { if [[ "$1" == -n ]]; then return 7; fi; command jq "$@"; }; export -f jq; printf "%s" "$1" | "$2"' _ \
+        "$(hook_json 'gh pr merge 42 --merge')" "${HOOK_DIR}/remind_main_sync.sh"
+    assert_success
+}

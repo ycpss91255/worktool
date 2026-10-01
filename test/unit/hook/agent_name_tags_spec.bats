@@ -57,3 +57,27 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
         assert_equal "${status}" "${_expected}"
     done
 }
+
+@test "approval flag initialization permits a literal help request" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"gh pr comment --help"}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}
+
+@test "approval tripwire allows text with no relevant gh launch" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"pwd"}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}
+
+@test "API comment fields skip metadata before judging the marked body" {
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        '{"tool_input":{"command":"gh api repos/o/r/issues/1/comments -f title=metadata -f \"body=[claude]\""}}' \
+        "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh"
+    assert_success
+    assert_output ""
+}

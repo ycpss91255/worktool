@@ -16,10 +16,9 @@
 # .agents/hook/lib/subcommand.sh.
 
 # shellcheck source-path=SCRIPTDIR/lib
-# Exit-code-contract hook: `set -uo pipefail`, NOT -e (a probe returning 1
-# must not abort the decision); every gh lookup is still checked on its own,
-# never through a pipe, so fail closed does not depend on pipefail.
-set -uo pipefail
+# Strict hook: expected non-zero probes are handled explicitly. Every gh
+# lookup is checked on its own, never through a pipe, to preserve fail closed.
+set -euo pipefail
 
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
@@ -99,7 +98,9 @@ _api_derive() {
     _API_ATTACH=''
     read -r -a _all <<<"${_API_VALUE_OPTS}"
     for _o in "${_all[@]}"; do
-        [[ "${_o}" == -[!-] ]] && _API_ATTACH+="${_o:1:1}"
+        if [[ "${_o}" == -[!-] ]]; then
+            _API_ATTACH+="${_o:1:1}"
+        fi
     done
 }
 
@@ -412,7 +413,7 @@ _repo_of() {
 # _gate <owner/repo> <number> - block the merge unless lib/approval.sh
 # passes it on the PR's labels and comments.
 _gate() {
-    local _repo="$1" _pr="$2" _json _labels _records _reason _rc
+    local _repo="$1" _pr="$2" _json _labels _records _reason _rc=0
     local _what="merge of ${_repo}#${_pr}"
     # Each gh call is checked by its own exit status (never through a pipe).
     _json="$(_gh api --paginate "repos/${_repo}/issues/${_pr}/labels")" \
@@ -429,8 +430,7 @@ _gate() {
         rm -f -- "${_records}"
         _fail_closed "${_what}: cannot read the PR comments"
     fi
-    _reason="$(approval_evaluate "${_labels}" <"${_records}")"
-    _rc=$?
+    _reason="$(approval_evaluate "${_labels}" <"${_records}")" || _rc=$?
     rm -f -- "${_records}"
     [[ "${_rc}" -eq 0 ]] && return 0
     hook_block "${_what}: milestone-gate acceptance PR without the maintainer's approval - ${_reason}" \
@@ -440,10 +440,11 @@ _gate() {
 
 # _check_pr_merge - resolve the PR of a `gh pr merge` launch, then gate it.
 _check_pr_merge() {
-    local _sel _repo _pr=''
+    local _sel='' _repo='' _pr=''
     local -a _view=(pr view --json number -q .number)
-    _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")"
-    _repo="$(_opt -R --repo)"
+    # No selector or no -R is a normal launch: keep the value empty.
+    _sel="$(_positional "${_MERGE_VALUE_OPTS}" "$((_ARG0 + 1))")" || _sel=''
+    _repo="$(_opt -R --repo)" || _repo=''
     if [[ "${_sel}" =~ ^https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
         [[ -n "${_repo}" ]] || _repo="${BASH_REMATCH[1]}"
         _pr="${BASH_REMATCH[2]}"
@@ -641,8 +642,8 @@ _check_api_fields() {
     local _typed="$1" _v _body _rc
     shift
     while IFS= read -r -d '' _v; do
-        _body="$(_api_field_body "${_v}" "${_typed}")"
-        _rc=$?
+        _rc=0
+        _body="$(_api_field_body "${_v}" "${_typed}")" || _rc=$?
         [[ "${_rc}" -eq 2 ]] && exit 2
         [[ "${_rc}" -eq 0 ]] && _judge_body "${_body}" "gh api comment body"
     done < <(_opt_values "$@")
@@ -831,10 +832,11 @@ _check_http() {
 # unknown interpreter, plain text): block. Plain text that merely mentions
 # such a call (a commit message, an echo) is blocked too.
 _tripwire() {
-    local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase
+    local _t="${1//\\$'\n'/ }" _q="[\"']?" _raw _phrase _rc=0
     local _f='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
     local _re="(^|[^[:alnum:]_.-])gh${_q}${_f}[[:space:]]+${_q}(pr${_q}${_f}[[:space:]]+${_q}(merge|comment|review|create|new|close|reopen)|issue${_q}${_f}[[:space:]]+${_q}(comment|create|new|close|reopen)|api)([\"';&|)[:space:]]|$)"
-    _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)"
+    _raw="$(grep -oE -- "${_re}" <<<"${_t}" | wc -l)" || _rc=$?
+    [[ "${_rc}" -le 1 ]] || _fail_closed "cannot count raw gh launches"
     _phrase="$(approval_phrase)"
     if [[ "${_raw}" -le "${_CHECKED}" ]] \
         && [[ "$(_count "${_phrase}" "${_t}")" -le "$(_count "${_phrase}" "${_CHECKED_TEXT}")" ]] \

@@ -5,7 +5,7 @@
 # worktool adaptation: the default filter is the one required check,
 # `ci-passed`; the script follows the worktool CLI contract (whole command
 # line parsed before --help is served, `wait-pr-ci.sh: unknown option '<x>'
-# (see --help)` exit 2, `set -uo pipefail`); a conflicting PR fails without
+# (see --help)` exit 2, `set -euo pipefail`); a conflicting PR fails without
 # pointing at scripts this repo does not have. The stale-rollup guards from
 # initialization (issue #22 there) are kept.
 #
@@ -176,4 +176,33 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     run "${SCRIPT}" --repo owner/repo --prs 1,x
     assert_failure 2
     assert_output --partial "--prs"
+}
+
+@test "wait CI stops on unexpected failures inherited by sourced callers" {
+    run bash -c 'source "$1"; false; echo UNREACHABLE' _ "${SCRIPT}"
+    assert_failure 1
+    refute_output --partial "UNREACHABLE"
+}
+
+@test "wait CI serves help after capturing its non-zero parse result" {
+    run "${SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage: wait-pr-ci.sh"
+}
+
+@test "wait CI keeps polling pending snapshots instead of exiting two" {
+    _fixture ci-passed SUCCESS 10
+    run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 2 --interval 0
+    assert_failure 124
+    assert_output --partial "checks=pending"
+    assert_output --partial "max-iterations (2) reached"
+}
+
+@test "an invalid --check-filter stays pending until the polling limit" {
+    _fixture ci-passed SUCCESS 3600
+    _once --check-filter '['
+    assert_failure 124
+    assert_output --partial "PR21: checks=pending mergeable=MERGEABLE"
+    assert_output --partial "max-iterations (1) reached"
+    refute_output --partial "ALL_DONE"
 }

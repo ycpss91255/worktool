@@ -27,9 +27,9 @@
 # Exit: 0 ALL_DONE (every PR all-pass + MERGEABLE), 1 FAIL (a check failed
 # or a PR conflicts / its query fails), 2 argument error, 124 --max-iterations exhausted.
 #
-# Exit-code-contract script: `set -uo pipefail`, no -e.
+# Strict script: expected non-zero results are handled explicitly.
 
-set -uo pipefail
+set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/log.sh"
 
@@ -146,7 +146,7 @@ _checks_state() {
                 and (\$c | all((.completedAt | fromdateiso8601) > (\$ws - \$sw)))
              then \"pending\" else \"all-pass\" end)
           elif (\$c | any(.conclusion != null and .conclusion != \"SUCCESS\")) then \"FAIL\"
-          else \"pending\" end" <<<"$1" 2>/dev/null)"
+          else \"pending\" end" <<<"$1" 2>/dev/null)" || _state=pending
     printf '%s' "${_state:-pending}"
 }
 
@@ -210,8 +210,9 @@ _poll_all() {
 }
 
 main() {
-    _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    local _parse_rc=0
+    _parse_args "$@" || _parse_rc=$?
+    if [[ "${_parse_rc}" -eq 3 ]]; then
         _usage
         return 0
     fi
@@ -219,8 +220,10 @@ main() {
     _start="$(date -u +%s)"
     while :; do
         _iter=$((_iter + 1))
-        _poll_all "${_start}" _prev
-        _rc=$?
+        _rc=0
+        # Poll verdicts are expected non-zero; nested probes run deliberately
+        # in this conditional context, with gh failures checked by _poll_all.
+        _poll_all "${_start}" _prev || _rc=$?
         [[ "${_rc}" -eq 1 ]] && return 1
         if [[ "${_rc}" -eq 0 ]]; then
             echo "ALL_DONE"
