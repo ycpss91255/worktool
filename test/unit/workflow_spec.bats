@@ -609,6 +609,10 @@ _rv_model_fixture() {
     cp "${REPO_ROOT}/.agents/script/research/agy-model.sh" "${dir}/.agents/script/research/"
     cp "${REPO_ROOT}/lib/log.sh" "${dir}/lib/"
     printf '\n/.agents/\n/lib/\n' >> "${dir}/.git/info/exclude"
+    [[ -f "${stub}/agy" ]] || return 0
+    if grep -qF 'RV_MODEL_LIST' "${stub}/agy"; then
+        return 0
+    fi
     mv "${stub}/agy" "${stub}/agy-research"
     cat > "${stub}/agy" <<'SH'
 #!/bin/sh
@@ -833,7 +837,7 @@ _rv_src_check() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","sources":["/x"]}' \
         "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"bad-source","attempts":0,"detail":"not readable: /x"}')"
     assert_success
-    run jq -r '.result.status, (.calls | length)' <<<"${output}"
+    run jq -r '.result.status, .result.detail, (.calls | length)' <<<"${output}"
     assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 2)"
 }
 
