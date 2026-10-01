@@ -21,7 +21,7 @@ export const meta = {
 //     branch: "m3/150-bench",          // required: branch off origin/main
 //     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
-//     gates: "just test lint, ...",    // optional: default = the six tiers
+//     gates: "just test lint, ...",    // optional extra gates; default = lint + changed
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
 //     maxRounds: 3,                    // optional: number of Fix rounds allowed (0 = review once, never fix)
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
@@ -46,7 +46,7 @@ const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
-const GATES = A.gates || 'just test lint, just test unit, just test integration, just test system, just test acceptance, just test system-real'
+const GATES = A.gates || 'just test lint, just test changed'
 const PARENT = A.parent || ''
 const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
@@ -74,8 +74,10 @@ const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, s
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
+const LOCAL_TEST_RULES = `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and just test changed. Never run a whole tier locally; CI runs every tier.`
+const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with main by merging.`
 const COMMON_GUARDRAILS = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host; commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
 const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
@@ -136,14 +138,14 @@ Return the structured verdict without editing files, pushing, commenting, or mer
 const FIX = (pr, round, blocking) => `${RULES}
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
-Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
+Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
 Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
 ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
-Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, pull --rebase if the remote moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
+Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
 Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (review round ${round})", with no trailer lines); push. Post a PR comment starting with "[codex] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
 
@@ -212,6 +214,6 @@ return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes,
 //   "name": "impl283",
 //   "task": "依 issue #283 的範圍與驗收實作。",
 //   "implementer": "codex",
-//   "gates": "just test lint, just test unit",
+//   "gates": "just test lint, just test changed",
 //   "maxRounds": 3
 // }

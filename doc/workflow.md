@@ -38,7 +38,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `branch` | 是 | 從 `origin/main` 開的分支名 |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
-| `gates` | 否 | 預設六道 `just test ...`;純文件可縮成 `just test lint, just test unit` |
+| `gates` | 否 | 額外 gate；預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
@@ -48,7 +48,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 ## 迴圈內容
 
 1. **Implement**:agent 在自己的 worktree(`git worktree add -b <branch> <repoDir>/../worktree/<name> origin/main`)依 TDD 做:
-   先寫測試看到 RED,再實作到 GREEN;六道 gate 在 Docker 內以 `just test <tier>` 阻塞執行;push;
+   先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
+   push 前阻塞執行 `just test lint` 與 `just test changed`。本機不跑整個 tier；全部 tier 由 CI 執行；
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
 3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
@@ -62,7 +63,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
-6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge**:合併順序、rebase 衝突由主迴圈處理。
+   已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
+6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
 ## milestone-fanout
 
@@ -72,7 +74,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
-| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`，可另給 `gates` |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 使用 lint + changed 預設 |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
 | `codex` | 否 | `on`(預設)或 `off` |

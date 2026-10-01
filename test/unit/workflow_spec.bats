@@ -308,6 +308,54 @@ _pl_blocked_run() {
     assert_output '[true,true,true,true,true]'
 }
 
+@test "pr-loop (node): Implement and Fix run only slice specs locally, then lint and changed before push" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("just test <tier> <spec> [--filter]"),
+            contains("before pushing run just test lint and just test changed"),
+            contains("Never run a whole tier locally; CI runs every tier"),
+            (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
+@test "pr-loop (node): Implement and Fix preserve pushed history except for the commit-email remedy" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
     local implementer
     for implementer in codex claude; do
@@ -451,6 +499,17 @@ _pl_blocked_run() {
     assert_output "1"
     run grep -c 'await parallel(batch.map' "${FANOUT}"
     assert_output "1"
+}
+
+@test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
+    local replies
+    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
+    assert_success
+    run jq -e '.error == null and (.workflowCalls | length == 2) and .workflowCalls[0].args.gates == "just test lint" and (.workflowCalls[1].args | has("gates") | not)' <<<"${output}"
+    assert_success
+    assert_output "true"
 }
 
 # Run research-verify under node (test/unit/fixture/workflow_run.mjs) with
