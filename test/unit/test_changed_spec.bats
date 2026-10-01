@@ -38,10 +38,12 @@ _dispatched() {
 @test "test.sh --changed runs a changed spec itself after lint" {
     printf '@test "example" { true; }\n' >"${TEMP_REPO}/test/unit/example_spec.bats"
     _commit_baseline
+    git -C "${TEMP_REPO}" update-ref refs/remotes/origin/main HEAD
     printf '\n# changed\n' >>"${TEMP_REPO}/test/unit/example_spec.bats"
+    git -C "${TEMP_REPO}" add test/unit/example_spec.bats
+    git -C "${TEMP_REPO}" commit -qm changed
 
-    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
-        _ "${TEMP_REPO}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed' _ "${TEMP_REPO}"
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
@@ -64,10 +66,9 @@ _dispatched() {
 }
 
 @test "test.sh --changed fails open to the whole tier for an unmapped library" {
+    _commit_baseline
     mkdir -p "${TEMP_REPO}/lib"
     printf '# library\n' >"${TEMP_REPO}/lib/unmapped.sh"
-    _commit_baseline
-    printf '\n# changed\n' >>"${TEMP_REPO}/lib/unmapped.sh"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"

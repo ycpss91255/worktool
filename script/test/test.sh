@@ -496,6 +496,17 @@ _run_system() {
 _run_system_real() { _run_bats_tier system-real "" -- "${SYSTEM_REAL_SPEC}"; }
 
 # --- Usage -------------------------------------------------------------------
+_usage_environment() {
+    cat >&2 <<'EOF'
+Environment:
+  TEST_IMAGE             test image tag (default worktool-test:local)
+  TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
+  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
+  SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+  GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
+EOF
+}
+
 _usage() {
     cat >&2 <<'EOF'
 Usage: test.sh [OPTION...]
@@ -539,14 +550,9 @@ SPEC paths are relative to the repo root and must be .bats files under the
 Internal (what the steps above run inside the container; not for hosts):
   --ci-lint --ci-unit --ci-matrix --ci-integration --ci-integration-ghostty --ci-system
   --ci-system-real --ci-acceptance
-
-Environment:
-  TEST_IMAGE             test image tag (default worktool-test:local)
-  TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
-  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
-  SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
-  GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
+    printf '\n' >&2
+    _usage_environment
 }
 
 # Refuse the command line: one line on stderr, exit 2, nothing has run.
@@ -649,6 +655,45 @@ _changed_files() {
 _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
+lib/manifest.sh|test/unit/manifest_spec.bats
+lib/home.sh|test/unit/assemble_spec.bats
+lib/home.sh|test/unit/setup_spec.bats
+lib/home.sh|test/unit/status_spec.bats
+lib/enter.sh|test/unit/enter_spec.bats
+lib/approval.sh|test/unit/approval_spec.bats
+lib/attribution.sh|test/unit/attribution_spec.bats
+lib/commit_attribution.sh|test/unit/commit_attribution_spec.bats
+lib/commit_email.sh|test/unit/commit_email_spec.bats
+script/box/assemble.sh|test/unit/assemble_spec.bats
+script/box/assemble.sh|test/integration/assemble_spec.bats
+script/box/assemble.sh|test/system/real_assemble_spec.bats
+script/box/bench.sh|test/unit/bench_spec.bats
+script/box/enter.sh|test/unit/enter_spec.bats
+script/box/setup.sh|test/unit/setup_spec.bats
+script/box/status.sh|test/unit/status_spec.bats
+script/box/justfile.box|test/unit/justfile_spec.bats
+.agents/hook/check_main_fresh_before_worktree.sh|test/unit/hook/check_main_fresh_before_worktree_spec.bats
+.agents/hook/enforce_codex_round_cap.sh|test/unit/hook/enforce_codex_round_cap_spec.bats
+.agents/hook/enforce_cpu_capacity.sh|test/unit/hook/enforce_cpu_capacity_spec.bats
+.agents/hook/enforce_gh_body_file.sh|test/unit/hook/enforce_gh_body_file_spec.bats
+.agents/hook/enforce_issue_milestone.sh|test/unit/hook/enforce_issue_milestone_spec.bats
+.agents/hook/enforce_long_job_timeout.sh|test/unit/hook/enforce_long_job_timeout_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/matrix/enforce_milestone_gate_approval_spec.bats
+.agents/hook/enforce_no_attribution.sh|test/matrix/enforce_no_attribution_spec.bats
+.agents/hook/enforce_no_local_paths.sh|test/unit/hook/enforce_no_local_paths_spec.bats
+.agents/hook/enforce_reply_language.sh|test/unit/hook/enforce_reply_language_spec.bats
+.agents/hook/enforce_scope_on_guard_issues.sh|test/unit/hook/enforce_scope_on_guard_issues_spec.bats
+.agents/hook/enforce_shellcheck_disable_approval.sh|test/unit/hook/enforce_shellcheck_disable_approval_spec.bats
+.agents/hook/enforce_tdd_commit.sh|test/matrix/enforce_tdd_commit_spec.bats
+.agents/hook/remind_main_sync.sh|test/unit/hook/remind_main_sync_spec.bats
+.agents/hook/remind_no_emoji.sh|test/unit/hook/remind_no_emoji_spec.bats
+.agents/hook/remind_workflow_tdd.sh|test/unit/hook/remind_workflow_tdd_spec.bats
+.agents/hook/test-must-use-docker.sh|test/unit/hook/test_must_use_docker_spec.bats
+.agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
+.agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats
+.agents/hook/lib/subcommand.sh|test/unit/hook/subcommand_spec.bats
+.agents/script/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
+.agents/script/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP
 }
 
@@ -724,11 +769,7 @@ _run_changed() {
 # anywhere in it refuses the run as a whole. Host steps accumulate in the
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
 # container gate instead and stands alone.
-main() {
-    local _steps=() _paths=() _ci="" _step _help=0 _filter="" _tier=""
-    local _changed=0 _base="origin/main" _base_set=0
-    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
-        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+_parse_test_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) _help=1 ;;
@@ -753,6 +794,14 @@ main() {
         esac
         shift
     done
+}
+
+main() {
+    _steps=() _paths=() _ci="" _step="" _help=0 _filter="" _tier=""
+    _changed=0 _base="origin/main" _base_set=0
+    [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
+        || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+    _parse_test_args "$@"
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
     fi
