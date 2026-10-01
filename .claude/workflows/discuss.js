@@ -24,7 +24,9 @@ log(RUN_ID)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WT = REPO_DIR
-const SCRATCH = `${REPO_DIR}/../worktree/.scratch/discuss-${A.issue}`
+const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: `${RUN_ID} nonce:`, phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
+if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
+const SCRATCH = `${REPO_DIR}/../worktree/.scratch/discuss-${A.issue}-${nonce.nonce}`
 const GATES = 'just test lint and only the touched specs with just test <tier> <spec>'
 const LOCAL_TEST_RULES = `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Never run just test changed or a whole tier locally; CI runs every tier.`
 const CODEX_TIMEOUT_SECONDS = 14400
@@ -84,8 +86,6 @@ const answerWithRepair = async (name, n, prior) => repairFormat(
 )
 const judgments = ({ answer, reasons, risks }) => ({ answer, reasons, risks })
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
-const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: `${RUN_ID} nonce:`, phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
-if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
 let prior = null
 let result
 for (let n = 1; n <= 3; n++) {

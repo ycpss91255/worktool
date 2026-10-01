@@ -18,6 +18,7 @@
 // Fail closed: a Write target without a well-formed block, or the first
 // step that exits non-zero, stops the agent and it returns null (a shell
 // failure is a failed agent, never the canned reply).
+// `exec-record` plays only Record agents against prepared model output files.
 // `exec-stage-checks` plays only pr-loop stage-check agents; implementation
 // and review remain canned so the checks can inspect real test repositories.
 // `exec-hooks` also runs both publication body hooks before each shell
@@ -97,7 +98,8 @@ const agent = async (prompt, opts = {}) => {
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
-  if (!['exec', 'exec-hooks'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
+  if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
+  if (!['exec', 'exec-hooks', 'exec-record'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(role), stdout) : null
 }
