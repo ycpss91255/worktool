@@ -94,6 +94,11 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)" || {
     exit 1
 }
 
+LIB_DIR="${REPO_ROOT}/lib"
+# shellcheck source-path=SCRIPTDIR/../../lib
+# shellcheck source=manifest.sh
+source "${LIB_DIR}/manifest.sh"
+
 # --- Item registry -----------------------------------------------------------
 # Every item belongs to exactly one group, and the group decides what the
 # item is allowed to touch:
@@ -202,7 +207,7 @@ NORM_H=""
 
 # --- Cleanup -----------------------------------------------------------------
 VERIFY_CLEAN_DIRS=()
-REALBOX_NAME="dev"
+REALBOX_NAME="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
 REALBOX_CREATED=0
 
 _cleanup() {

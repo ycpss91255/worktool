@@ -72,13 +72,15 @@ LIB_DIR="${REPO_ROOT}/lib"
 
 # shellcheck source=lib/guard.sh
 source "${LIB_DIR}/guard.sh"
+# shellcheck source=lib/manifest.sh
+source "${LIB_DIR}/manifest.sh"
 # shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
 ISSUE="22"
-BOX="dev"
+BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
 DECOY_IMAGE="ubuntu:24.04"
 OPT_IN=0
 

@@ -72,6 +72,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 
 # shellcheck source=log.sh
 source "${LIB_DIR}/log.sh"
+# shellcheck source=manifest.sh
+source "${LIB_DIR}/manifest.sh"
 
 # --- Constants ---------------------------------------------------------------
 # The repository every query is scoped to. Not overridable: an acceptance
@@ -642,7 +644,7 @@ item_6_3() {
 # _realbox_begin before it creates anything.
 
 EVIDENCE_ALLOW_REALBOX=0
-EVIDENCE_REALBOX_BOX="dev"
+EVIDENCE_REALBOX_BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
 EVIDENCE_REALBOX_OWNED=0
 EVIDENCE_REALBOX_WORKDIR=""
 EVIDENCE_REALBOX_CLAIM=""

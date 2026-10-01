@@ -29,6 +29,17 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "realbox: the default box name follows the shipped manifest before opt-in" {
+    local _repo="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_repo}"
+    cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${_repo}/"
+    sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
+    run "${_repo}/script/verify/realbox.sh" 5.1
+    assert_failure 2
+    assert_output --partial "named 'acceptance-box'"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
 @test "5.1: an interrupt during bench removes the owned box and exits 130" {
     cp "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STATE}/just"
     export VERIFY_TOOL="${STATE}/just"
