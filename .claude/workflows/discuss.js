@@ -1,6 +1,6 @@
 export const meta = {
   name: 'discuss',
-  description: 'Independent Claude and codex answers before asking the maintainer',
+  description: 'Compare independent Claude and codex answers before asking the maintainer.',
   whenToUse: 'Pass {repo, repoDir, issue, question, context?, premises?, references?}.',
   phases: [
     { title: 'Answer', detail: 'Independent answers' },
@@ -19,6 +19,8 @@ if (!Number.isInteger(A.issue) || A.issue < 1) throw new Error('discuss: invalid
 for (const k of ['context', 'premises', 'references']) {
   if (A[k] !== undefined && typeof A[k] !== 'string') throw new Error(`discuss: invalid args.${k}`)
 }
+const RUN_ID = `discuss #${A.issue}`
+log(RUN_ID)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WT = REPO_DIR
@@ -56,7 +58,7 @@ const ask = (name, n, prior, correction = '', attempt = 0) => {
   const out = `${SCRATCH}/codex-r${n}.md`
   const context = `${brief(n)}${prior ? `\nPrevious independent answers and disagreements: ${JSON.stringify(prior)}\nRespond to the evidence; do not concede merely to agree.` : ''}${correction}`
   const prompt = name === 'claude' ? context : `Run codex; never answer for it. ${CODEX_DETACHED_RUN(out, `${out}.rc`)}\nBrief to copy verbatim:\n${context}\nRead the output and return answer/reasons/notes/risks; put judgments in reasons with evidence and other content in notes; error on failure or empty output. Never retype codex into a file.`
-  return agent(`${GUARDRAILS}\n${prompt}`, { label: attempt ? `repair:${name}:r${n}:${attempt}` : `${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
+  return agent(`${GUARDRAILS}\n${prompt}`, { label: attempt ? `${RUN_ID} repair:${name}:r${n}:${attempt}` : `${RUN_ID} ${name}:r${n}`, phase: 'Answer', schema: ANSWER, agentType: 'general-purpose' })
 }
 const VERDICT = { type: 'object', properties: {
   status: { type: 'string', enum: ['agreed', 'derived', 'diverged'] }, conclusion: { type: 'string' },
@@ -82,7 +84,7 @@ const answerWithRepair = async (name, n, prior) => repairFormat(
 )
 const judgments = ({ answer, reasons, risks }) => ({ answer, reasons, risks })
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
-const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: 'nonce:', phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
+const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: `${RUN_ID} nonce:`, phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
 if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
 let prior = null
 let result
@@ -92,7 +94,7 @@ for (let n = 1; n <= 3; n++) {
     issue: A.issue, status: 'answer-failed', rounds: n,
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
-  const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `repair:compare:r${n}:${attempt}` : `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `${RUN_ID} repair:compare:r${n}:${attempt}` : `${RUN_ID} compare:r${n}`, phase: 'Compare', schema: VERDICT })
   const verdict = await repairFormat(await compare(), validVerdict, failedBasis, compare)
   if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict) }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
@@ -109,7 +111,7 @@ let marker
 const out = `codex-r${result.rounds}.md`
 const build = `cd ${sq(SCRATCH)} && rm -f body.md && [ -s ${sq(out)} ] && ${SCRUB} < conclusion-raw.md > conclusion.md && ${SCRUB} < ${sq(out)} > codex-clean.md && [ -s conclusion.md ] && [ -s codex-clean.md ] && { cat conclusion.md; printf '\n## codex 原文（shell 複製）\n\n'; sed 's/^/> /' codex-clean.md; } > body.md`
 const publish = `gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file ${sq(`${SCRATCH}/body.md`)}`
-const recorded = await agent(`${GUARDRAILS}\n${SCRATCH_ONLY}\nRecord only: comments start with [claude]. Never retype codex text: shell copies the final output, not the structured summary.\nWrite the text between the markers byte for byte to the path ${JSON.stringify(`${SCRATCH}/conclusion-raw.md`)} with the Write tool.\n===BEGIN-${marker}===\n${text}\n===END-${marker}===\nRun the build in the foreground: \`${build}\`. Wait for successful completion; on failure stop without publishing. Only after the build succeeds, run this separate foreground command in a new tool call: \`${publish}\`. Never combine the two commands. Return the printed URL.`, { label: 'record:', phase: 'Record', schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } })
+const recorded = await agent(`${GUARDRAILS}\n${SCRATCH_ONLY}\nRecord only: comments start with [claude]. Never retype codex text: shell copies the final output, not the structured summary.\nWrite the text between the markers byte for byte to the path ${JSON.stringify(`${SCRATCH}/conclusion-raw.md`)} with the Write tool.\n===BEGIN-${marker}===\n${text}\n===END-${marker}===\nRun the build in the foreground: \`${build}\`. Wait for successful completion; on failure stop without publishing. Only after the build succeeds, run this separate foreground command in a new tool call: \`${publish}\`. Never combine the two commands. Return the printed URL.`, { label: `${RUN_ID} record:`, phase: 'Record', schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } })
 const prefix = `https://github.com/${REPO}/issues/${A.issue}#issuecomment-`
 if (!recorded || typeof recorded.url !== 'string' || !recorded.url.toLowerCase().startsWith(prefix.toLowerCase()) || !/^[0-9]+$/.test(recorded.url.slice(prefix.length))) return { ...result, status: 'record-failed', comment: '' }
 return { ...result, comment: recorded.url }

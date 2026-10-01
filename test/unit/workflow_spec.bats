@@ -2222,3 +2222,22 @@ _discuss_replies() {
         assert_success
     done
 }
+
+@test "run identifier: discuss logs the issue first and prefixes normal and repair agent labels (#313)" {
+    local issue replies json
+    for issue in 319 313; do
+        replies="$(_discuss_replies | jq --arg url "https://github.com/o/r/issues/${issue}#issuecomment-1" '
+            .["record:"].url = $url | .["repair:codex:"] = .["codex:"]
+            | .["repair:compare:"] = .["compare:"]
+            | .["codex:"].reasons = ["uncited"] | .["compare:"].basis = ["uncited"]')"
+        DISCUSS_ARGS="{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":${issue},\"question\":\"q\"}" \
+            _discuss_run "${replies}"
+        json="${output}"
+        run jq -e --arg id "discuss #${issue}" '
+            .error == null and .result.status == "agreed" and .logs[0] == $id
+            and ([.calls[].label | startswith($id + " ")] | all)
+            and ([.calls[].role | startswith("repair:codex:")] | any)
+            and ([.calls[].role | startswith("repair:compare:")] | any)' <<<"${json}"
+        assert_success
+    done
+}
