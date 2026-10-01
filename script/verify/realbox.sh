@@ -769,7 +769,7 @@ realbox_run() {
 
     # Group realbox: nothing happens without the explicit opt-in.
     if [[ "${OPT_IN}" -ne 1 ]]; then
-        guard_fail "realbox.sh works on THIS machine: it creates and removes a distrobox named '${BOX}', rewrites the ghostty and worktool configs under \$XDG_CONFIG_HOME, and comments on ${REPO}#${ISSUE}. Pass --allow-real-box to say you want that. Refusing to run."
+        guard_fail "realbox.sh works on THIS machine: it creates and removes a distrobox named '${BOX}', rewrites the ghostty and worktool configs under \$XDG_CONFIG_HOME, and comments on ${REPO}#${ISSUE}. Pass --allow-real-box to say you want that. Refusing to run." || return 2
         return 2
     fi
 
