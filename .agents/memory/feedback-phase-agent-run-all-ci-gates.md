@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 15320221-f6f9-442e-9faa-924d66c5db63
-  modified: 2026-10-01T00:13:18.857Z
+  modified: 2026-10-01T09:46:44.541Z
 ---
 
 Local test runs cover only what the change touches: `just test lint` plus the
@@ -23,10 +23,13 @@ no env-var mode switch). The old rule (run all six gates locally) came from
 init_ubuntu, where a skipped tier hid a break; CI's required `ci-passed`
 covers that now.
 
-**How to apply:** implementation prompts say "TDD loop: run only the slice's
-spec; before push: lint + `just test changed`; everything else is CI". Until
-#298/#299/#300 merge, run `just test lint` and `just test unit` with
-`WORKTOOL_TEST_JOBS=2` at most once per slice, one codex job at a time. On a
+**How to apply:** implementation prompts say "run ONLY the unit specs you add
+or change (`just test unit <spec> [--filter]`) and `just test lint`; never run
+matrix / integration / system / acceptance, a whole unit tier, or `just test
+changed`; CI runs everything". NEVER tell an agent to run "the matrix specs that
+exercise this lib" -- on 2026-10-01 that wording made two codex jobs run the
+81-case approval matrix locally for 40-50 minutes each and saturated the host
+(#326 adds a hook that blocks it). A 30-minute audit cron stops any such run. On a
 red CI job, check `gh pr checks <n> -R ycpss91255/worktool` first to see
 WHICH job (and runner leg) failed. Relates to
 [[feedback-autonomous-test-gap-remediation]] and [[project-ci-lint-covers-bats]].
