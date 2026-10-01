@@ -37,9 +37,12 @@
 # was a clean machine with /usr/bin/ghostty and no ~/.config/ghostty yet,
 # resolved to `none` with nothing in the log to say why.
 #
-# State file: $XDG_CONFIG_HOME/worktool/config (~/.config/worktool/config),
+# State file: lib/config.sh (it alone knows where the file is),
 # `<key>=<value>` plus `<key>.source=default|user` per key. A user choice
 # persists across runs until overridden; default keys are recomputed.
+# The file is shared (assemble records home=, the user adds link= lines):
+# setup sets only its own keys, in place, through lib/config.sh, and keeps
+# every other line byte-for-byte.
 #
 # `<distrobox>` below is the ABSOLUTE path of the distrobox this run
 # resolved (`[INFO] distrobox: ...`), never the bare name: a terminal the
@@ -120,7 +123,6 @@ OPT_DRY_RUN=0
 OPT_HELP=0
 
 # --- Resolved decisions (set by _resolve_all) --------------------------------
-CONFIG=""
 AUTO_ENTER="" TERMINAL="" BOX=""
 AUTO_ENTER_SRC="" TERMINAL_SRC="" BOX_SRC=""
 
@@ -130,12 +132,12 @@ DISTROBOX=""
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
                 [--box <name>] [--distrobox <path>] [--dry-run]
 
 Choose how a new terminal enters the worktool dev box, store the choice in
-$XDG_CONFIG_HOME/worktool/config and write the terminal profile for it.
+{state-file} and write the terminal profile for it.
 Every decision is logged as `[INFO] <key>: <value> (default|user)`; read it
 back any time with `just box status`.
 
@@ -162,7 +164,7 @@ back any time with `just box status`.
 
 Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
-  $XDG_CONFIG_HOME/worktool/config   the state file (key=value + key.source)
+  {state-file}   the state file (key=value + key.source)
   $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
   $XDG_CONFIG_HOME/distrobox/distrobox.conf
                                      managed block, on every run: drops
@@ -250,8 +252,8 @@ _parse_args() {
 # so a default-sourced line can be wrong too), and nothing is written.
 _config_check() {
     local _problem
-    _problem="$(enter_config_check "${CONFIG}")" && return 0
-    log_error "${CONFIG}: ${_problem}"
+    _problem="$(enter_config_check)" && return 0
+    config_log error "" ": ${_problem}"
     return 1
 }
 
@@ -264,8 +266,8 @@ _resolve() {
         printf '%s user\n' "${_opt}"
         return 0
     fi
-    _stored="$(enter_config_get "${CONFIG}" "${_key}")"
-    _stored_src="$(enter_config_get "${CONFIG}" "${_key}.source")"
+    _stored="$(config_get "${_key}")"
+    _stored_src="$(config_get "${_key}.source")"
     if [[ -n "${_stored}" && "${_stored_src}" == "user" ]]; then
         printf '%s user\n' "${_stored}"
         return 0
@@ -352,28 +354,6 @@ _resolve_distrobox() {
 
 # --- File actions (every one logged; --dry-run only logs) --------------------
 
-# Replace a file atomically with the content on stdin: written next to the
-# target, then renamed, so a reader never sees a half-written file. An
-# existing target keeps its mode (mktemp creates 0600; a user's profile must
-# not end up more private than they made it).
-_write_atomic() {
-    local _target="$1" _tmp
-    mkdir -p "$(dirname -- "${_target}")" || return 1
-    _tmp="$(mktemp "${_target}.XXXXXX")" || return 1
-    if cat >"${_tmp}" && _copy_mode "${_target}" "${_tmp}" \
-        && mv -f "${_tmp}" "${_target}"; then
-        return 0
-    fi
-    rm -f "${_tmp}"
-    return 1
-}
-
-# Give file $2 the mode of file $1 when $1 exists (nothing to keep otherwise).
-_copy_mode() {
-    [[ -f "$1" ]] || return 0
-    chmod --reference="$1" "$2"
-}
-
 # Make file $1 hold exactly one managed block with body $2. The markers were
 # validated by _blocks_check before anything was written, so the file holds
 # no block or exactly one.
@@ -388,7 +368,7 @@ _block_write() {
         log_info "dry-run: would write ${_file} (managed block: ${_body})"
         return 0
     fi
-    if ! enter_block_compose "${_file}" "${_body}" | _write_atomic "${_file}"; then
+    if ! enter_block_compose "${_file}" "${_body}" | config_write_atomic "${_file}"; then
         log_error "failed to write ${_file}"
         return 1
     fi
@@ -409,32 +389,30 @@ _block_remove() {
         log_info "dry-run: would remove managed block from ${_file}"
         return 0
     fi
-    if ! enter_block_strip "${_file}" | _write_atomic "${_file}"; then
+    if ! enter_block_strip "${_file}" | config_write_atomic "${_file}"; then
         log_error "failed to write ${_file}"
         return 1
     fi
     log_info "removed: ${_file} (managed block: ${_body})"
 }
 
-# Write the state file from the resolved decisions.
+# Set the resolved decisions (and their sources) in the state file IN
+# PLACE (lib/config.sh config_set): the state file is shared - assemble
+# records home= there, the user adds link= lines - so only setup's own
+# keys change and every other line stays byte-for-byte.
 _config_write() {
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
-        log_info "dry-run: would write ${CONFIG}"
+        config_log info "dry-run: would write "
         return 0
     fi
-    if ! _config_render | _write_atomic "${CONFIG}"; then
-        log_error "failed to write ${CONFIG}"
+    if ! config_set \
+        auto-enter "${AUTO_ENTER}" auto-enter.source "${AUTO_ENTER_SRC}" \
+        terminal "${TERMINAL}" terminal.source "${TERMINAL_SRC}" \
+        box "${BOX}" box.source "${BOX_SRC}"; then
+        config_log error "failed to write "
         return 1
     fi
-    log_info "wrote: ${CONFIG}"
-}
-
-_config_render() {
-    printf '# worktool auto-enter state: written by "just box setup", read by "just box status".\n'
-    printf '%s=%s\n%s.source=%s\n' \
-        auto-enter "${AUTO_ENTER}" auto-enter "${AUTO_ENTER_SRC}" \
-        terminal "${TERMINAL}" terminal "${TERMINAL_SRC}" \
-        box "${BOX}" box "${BOX_SRC}"
+    config_log info "wrote: "
 }
 
 # --- Apply -------------------------------------------------------------------
@@ -493,7 +471,6 @@ setup_run() {
         _usage
         return 0
     fi
-    CONFIG="$(enter_config_path)"
     _resolve_all || return 1
     _config_write || return 1
     _apply_box_env || return 1

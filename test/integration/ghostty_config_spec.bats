@@ -248,7 +248,7 @@ EOF
     run _ghostty +show-config
     assert_success
     refute_line "command = ${EXPECTED_COMMAND}"
-    refute_line --partial 'distrobox enter'
+    refute_line --partial 'enter.sh'
 }
 
 @test "+validate-config refuses a config ghostty cannot parse (the check bites)" {

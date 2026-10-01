@@ -30,6 +30,12 @@
 #   by box/dev.ini), whose process lives in the box's mount namespace and
 #   which does not list the host session.
 #
+#   M3 (issue #180): the FIRST enter runs through the delivered entry
+#   wrapper script/box/enter.sh (the manual just box enter command),
+#   and asserts that a real first initialisation is observable - the
+#   first-launch notice, the host log path and progress lines on stderr -
+#   and that the host log file exists and is not empty.
+#
 #   M3 (issues #150, #23) adds the enter-latency GATE: once the box is
 #   initialised, the delivered `script/box/bench.sh` measures the real
 #   enter latency (`--box dev --runs 5 --warmup 2`) with `--max-ms
@@ -47,6 +53,15 @@
 #   message, so the gate is proven to bite on a real box - a green positive
 #   case can never be a no-op threshold. The runtime decision (docker +
 #   default runc stays; CI measured ~88 ms) is recorded in issue #22.
+#
+#   Issue #181 puts a quiet-host precondition in front of the gate: bench.sh
+#   first waits for CPU pressure (PSI) `some avg10 <= 2.00` held for 5 s
+#   (120 s at most on CI, where test.sh passes CI into the runner) and a
+#   host that stays busy, or turns busy mid-run, is exit 3 (inconclusive).
+#   Both cases here require their own verdict (0 / 1), so a 3 is red too:
+#   CI never skips the gate because the runner is busy. Both cases also
+#   require the precondition's evidence line (the PSI path, its value and
+#   loadavg, or the warning that no PSI is readable) in the TAP stream.
 #
 # HOW (docker-in-docker; see doc/manifest.md 測試對應 and issue #129)
 #   This spec runs ONLY inside the dedicated runner image
@@ -103,6 +118,7 @@ ENTER_MAX_MS=300
 setup() {
     ASSEMBLE="${REPO_ROOT}/script/box/assemble.sh"
     BENCH="${REPO_ROOT}/script/box/bench.sh"
+    ENTER="${REPO_ROOT}/script/box/enter.sh"
 
     # Hermetic distrobox environment: a fresh HOME (no ~/.distroboxrc, no
     # cache), docker selected explicitly, no desktop entry generation.
@@ -113,6 +129,10 @@ setup() {
     # per-test BATS_TEST_TMPDIR that bats removes after each case.
     export HOME="${BATS_FILE_TMPDIR}/home"
     mkdir -p "${HOME}"
+    # Issue #198: the box's own HOME, requested with --home. Per-FILE for
+    # the same reason as HOME, and deliberately NOT the default
+    # ~/dev-box, so the case proves the requested path is the one used.
+    BOX_HOME="${BATS_FILE_TMPDIR}/box-home"
     export DBX_CONTAINER_MANAGER=docker
     export DBX_CONTAINER_GENERATE_ENTRY=0
 
@@ -194,11 +214,19 @@ _diag() {
 # --- (b) real assemble: the box is created by the real engine ----------------
 
 @test "real engine: assemble.sh with the delivered box/dev.ini creates the dev box from ubuntu:26.04" {
+    # Issue #199: host user config for assemble to link into the box HOME
+    # (read back inside the box by the #199 case below).
+    mkdir -p "${HOME}/.ssh"
+    printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
+    printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
     cd "${REPO_ROOT}"
-    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" </dev/null
+    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_output --partial "Distrobox 'dev' successfully created."
+    assert_line "[INFO] box home: ${BOX_HOME} (user)"
+    assert_line "[INFO] link: ${BOX_HOME}/.ssh -> ${HOME}/.ssh"
+    assert_line "[INFO] link: ${BOX_HOME}/.gitconfig -> ${HOME}/.gitconfig"
 
     # Exactly one container named dev now exists in the nested daemon ...
     run _count_named dev
@@ -223,12 +251,34 @@ _log_lines() {
 
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
-@test "real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)" {
+# M3 (issue #180): the FIRST enter goes through the delivered entry wrapper
+# `script/box/enter.sh`, as a manual just box enter would, so a
+# real first initialisation is observable: stderr carries the first-launch
+# notice, the host log path and progress lines (the interval is shortened
+# to 5 s so even a fast CI init shows several), and the host log exists
+# and holds the init output. The progress lines go into the TAP stream as
+# evidence.
+@test "real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version" {
     cd "${REPO_ROOT}"
-    run timeout "${FIRST_ENTER_TIMEOUT}" distrobox enter dev -- rg --version </dev/null
+    local _log="${HOME}/.cache/worktool/dev-init.log"
+    run _docker inspect --type container -f '{{.State.StartedAt}}' dev
+    assert_success
+    assert_output --regexp '^0001-01-01'
+    WORKTOOL_INIT_INTERVAL=5 run timeout "${FIRST_ENTER_TIMEOUT}" \
+        "${ENTER}" --box dev --timeout "${FIRST_ENTER_TIMEOUT}" -- rg --version </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+    assert_output --partial "first launch of box 'dev'"
+    assert_output --partial "full init log: ${_log}"
+    assert_line --regexp '^\[INFO\] first launch: .+ - [0-9m]+s elapsed - '
+    assert_line --regexp 'first launch: initialisation complete after '
+    local _first=()
+    mapfile -t _first < <(printf '%s\n' "${lines[@]}" | grep -F 'first launch')
+    _log_lines first-launch "${_first[@]}"
+    assert [ -s "${_log}" ]
+    run grep -c 'container_setup_done' "${_log}"
+    assert_success
     # The box is now a running, initialised container.
     run _docker inspect dev --format '{{.State.Status}}'
     assert_output "running"
@@ -263,6 +313,49 @@ _log_lines() {
     _log_lines fish "${lines[@]}"
 }
 
+# --- (c2) the box's own HOME (issue #198) -------------------------------------
+
+@test "real engine (#198): \$HOME inside the box is the path assemble --home asked for" {
+    # printenv prints the two values in the order asked, one per line.
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- \
+        printenv HOME DISTROBOX_HOST_HOME </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_equal "${lines[0]}" "${BOX_HOME}"
+    assert_equal "${lines[1]}" "${HOME}"
+    _log_lines box-home "${lines[@]}"
+    # distrobox created the directory on the host side, and recorded it.
+    assert [ -d "${BOX_HOME}" ]
+    run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
+    assert_success
+}
+
+# Issue #199 (ADR 0002 decision 3): the dev box has its own HOME (BOX_HOME,
+# #198), so assemble.sh linked the host user config into it - the first
+# assemble case writes that config before it runs. The tools inside the
+# box find it where they look: at `$HOME/.ssh` and `$HOME/.gitconfig` of
+# the box, not by a host path.
+@test "real engine (#199): the user config linked into the box HOME is found at \$HOME inside the box" {
+    # The links sit in the box HOME on the host side ...
+    assert_equal "$(readlink "${BOX_HOME}/.ssh")" "${HOME}/.ssh"
+    assert_equal "$(readlink "${BOX_HOME}/.gitconfig")" "${HOME}/.gitconfig"
+    # ... and resolve INSIDE the box, where $HOME is the box's own HOME
+    # (quoted heredoc: nothing expands on the host side).
+    local _probe="${HOME}/link-probe.sh"
+    cat >"${_probe}" <<'PROBE'
+printf 'home=%s\n' "$HOME"
+printf 'ssh=%s\n' "$(cat "$HOME/.ssh/worktool-link-probe")"
+printf 'git=%s\n' "$(sed -n 's/^[[:space:]]*name = //p' "$HOME/.gitconfig")"
+PROBE
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh "${_probe}" </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line "home=${BOX_HOME}"
+    assert_line "ssh=worktool-link-probe"
+    assert_line "git=worktool-link-probe"
+    _log_lines link "${lines[@]}"
+}
+
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------
 
 # Regex of one bench.sh millisecond value (`88.7`, `120.0`).
@@ -276,6 +369,13 @@ _assert_metric_lines() {
     assert_line --regexp "^enter: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
     assert_line --regexp "^shell: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
     assert_line --regexp "^inbox: min=${BENCH_NUM} median=${BENCH_NUM} max=${BENCH_NUM} ms$"
+}
+
+# Assert that the last `run` printed the quiet-host evidence (issue #181):
+# the PSI file read, its value and loadavg - or the warning that no PSI
+# file is readable and the run went unguarded.
+_assert_quiet_host_evidence() {
+    assert_line --regexp '^\[INFO\] host quiet: /.+ some avg10=[0-9.]+ <= 2\.00 for 5s; loadavg=.+$|^\[WARN\] no CPU pressure \(PSI\) readable .* measuring anyway; loadavg=.+$'
 }
 
 # The shell metric is measured on the box's fish (issue #160): `fish -c
@@ -309,6 +409,7 @@ _assert_fish_timed() {
     _assert_metric_lines
     # Both the shell metric and the in-box timer really ran fish.
     _assert_fish_timed 2 5
+    _assert_quiet_host_evidence
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
     _log_lines bench "${lines[@]}"
@@ -325,6 +426,7 @@ _assert_fish_timed() {
     assert_failure 1
     _assert_metric_lines
     _assert_fish_timed 0 1
+    _assert_quiet_host_evidence
     assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
     refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
     _log_lines bench-gate "${lines[@]}"
@@ -687,8 +789,9 @@ _desktop_path() {
     assert_success
     _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev"
 
-    # (3) The same program, in the chain shape that ends by itself, run by
-    # a real ghostty window under the desktop PATH.
+    # (3) The same distrobox program in the chain shape that ends by
+    # itself, run by a real
+    # ghostty window under the desktop PATH.
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
@@ -962,7 +1065,8 @@ _cell_prepare() {
     local _rc=0
     TMUX_CASE_ACTIVE=1
     if [[ ! -e "$(_tmux_sentinel_sum)" ]]; then
-        printf 'set -g @worktool_cfg sentinel\n' >"$(_tmux_sentinel)"
+        printf 'set -g @worktool_cfg host-sentinel\n' >"$(_tmux_sentinel)"
+        printf 'set -g @worktool_cfg sentinel\n' >"${BOX_HOME}/.tmux.conf"
         sha256sum <"$(_tmux_sentinel)" >"$(_tmux_sentinel_sum)"
     fi
     run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --box dev
@@ -1181,6 +1285,9 @@ _e4_cell() {
     # box is left alone, nothing is re-created.
     assert_output --partial "dev already exists"
     refute_output --partial "successfully created"
+    # Issue #198: no --home given, so the recorded user choice is reused -
+    # the same HOME the box has, hence no refusal.
+    assert_line "[INFO] box home: ${BOX_HOME} (user)"
     run _count_named dev
     assert_output "1"
     # And it is still the same usable box.
@@ -1188,6 +1295,24 @@ _e4_cell() {
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+}
+
+@test "real engine (#198): assemble with a DIFFERENT --home is refused (exit 1) and the box keeps its HOME" {
+    cd "${REPO_ROOT}"
+    local _other="${BATS_FILE_TMPDIR}/other-home"
+    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${_other}" </dev/null
+    assert_failure 1
+    assert_line --partial "[ERROR] box 'dev' already exists with HOME ${BOX_HOME}"
+    assert_line "[ERROR]   distrobox rm dev"
+    refute_output --partial "Creating dev"
+    assert [ ! -e "${_other}" ]
+    run _count_named dev
+    assert_output "1"
+    run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- printenv HOME </dev/null
+    assert_success
+    assert_output "${BOX_HOME}"
+    run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
+    assert_success
 }
 
 # --- (g) teardown: distrobox rm removes the box ------------------------------

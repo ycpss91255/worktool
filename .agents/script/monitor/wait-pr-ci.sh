@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .agents/script/wait-pr-ci.sh - poll the check rollup of one or more PRs
+# .agents/script/monitor/wait-pr-ci.sh - poll the check rollup of one or more PRs
 # until they settle; the Monitor companion of the wait-pr-ci skill
 # (.agents/skills/wait-pr-ci/SKILL.md).
 #
@@ -25,11 +25,13 @@
 # any argument error; usage on stderr.
 #
 # Exit: 0 ALL_DONE (every PR all-pass + MERGEABLE), 1 FAIL (a check failed
-# or a PR conflicts), 2 argument error, 124 --max-iterations exhausted.
+# or a PR conflicts / its query fails), 2 argument error, 124 --max-iterations exhausted.
 #
-# Exit-code-contract script: `set -uo pipefail`, no -e.
+# Strict script: expected non-zero results are handled explicitly.
 
-set -uo pipefail
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/log.sh"
 
 readonly DEFAULT_FILTER='.name=="ci-passed"'
 
@@ -66,7 +68,7 @@ Options:
                             unlimited; for tests)
   -h, --help                show this help and exit
 
-Exit: 0 ALL_DONE, 1 FAIL, 2 argument error, 124 max-iterations reached.
+Exit: 0 ALL_DONE, 1 FAIL / query error, 2 argument error, 124 max-iterations reached.
 EOF
 }
 
@@ -144,7 +146,7 @@ _checks_state() {
                 and (\$c | all((.completedAt | fromdateiso8601) > (\$ws - \$sw)))
              then \"pending\" else \"all-pass\" end)
           elif (\$c | any(.conclusion != null and .conclusion != \"SUCCESS\")) then \"FAIL\"
-          else \"pending\" end" <<<"$1" 2>/dev/null)"
+          else \"pending\" end" <<<"$1" 2>/dev/null)" || _state=pending
     printf '%s' "${_state:-pending}"
 }
 
@@ -161,7 +163,10 @@ POLL_VERDICT=''
 _poll_pr() {
     local _pr="$1" _json _oid _prev _state _m
     _json="$(gh pr view "${_pr}" --repo "${REPO}" \
-        --json mergeable,statusCheckRollup,headRefOid 2>/dev/null)" || _json='{}'
+        --json mergeable,statusCheckRollup,headRefOid)" || {
+        log_error "wait-pr-ci.sh: failed to query ${REPO} PR${_pr}; resolve the gh error above and retry"
+        return 1
+    }
     _oid="$(jq -r '.headRefOid // ""' <<<"${_json}" 2>/dev/null)"
     _prev="${HEAD_BY_PR[${_pr}]:-}"
     HEAD_BY_PR[${_pr}]="${_oid}"
@@ -187,7 +192,7 @@ _poll_all() {
     local -n _prev_ref="$2"
     local _pr _out='' _rc=0 _fail=''
     for _pr in "${PRS[@]}"; do
-        _poll_pr "${_pr}" "$1"
+        _poll_pr "${_pr}" "$1" || return 1
         _out+="${POLL_LINE}"$'\n'
         case "${POLL_VERDICT}" in
             ready) ;;
@@ -205,8 +210,9 @@ _poll_all() {
 }
 
 main() {
-    _parse_args "$@"
-    if [[ $? -eq 3 ]]; then
+    local _parse_rc=0
+    _parse_args "$@" || _parse_rc=$?
+    if [[ "${_parse_rc}" -eq 3 ]]; then
         _usage
         return 0
     fi
@@ -214,8 +220,10 @@ main() {
     _start="$(date -u +%s)"
     while :; do
         _iter=$((_iter + 1))
-        _poll_all "${_start}" _prev
-        _rc=$?
+        _rc=0
+        # Poll verdicts are expected non-zero; nested probes run deliberately
+        # in this conditional context, with gh failures checked by _poll_all.
+        _poll_all "${_start}" _prev || _rc=$?
         [[ "${_rc}" -eq 1 ]] && return 1
         if [[ "${_rc}" -eq 0 ]]; then
             echo "ALL_DONE"

@@ -7,8 +7,8 @@
 #
 # Every path derives from HOME / XDG_CONFIG_HOME ONLY (tests point HOME at
 # a throwaway directory; the real home is never touched by a spec):
-#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config}
-#   enter_config_path      -> <config dir>/worktool/config   (the ONE state file)
+#   enter_config_dir       -> ${XDG_CONFIG_HOME:-$HOME/.config} (lib/config.sh)
+#   (the ONE state file is lib/config.sh's; nothing here names it)
 #   enter_ghostty_config   -> <config dir>/ghostty/config
 #   enter_distrobox_conf   -> <config dir>/distrobox/distrobox.conf
 #
@@ -52,18 +52,19 @@
 # would otherwise be split into words or change what the command means.
 #   enter_sh_squote <s>       -> $s as a single-quoted POSIX shell word
 #   enter_first_word <s>      -> the first shell word of $s, decoded
+#   enter_after_first_word <s>-> $s minus its first (setup-encoded) word
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
+#                                (through the enter.sh wrapper, issue #180)
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
 #   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
-# State file: `<key>=<value>` plus `<key>.source=default|user` per key.
+# State file (lib/config.sh owns it; read with config_get <key>):
+# `<key>=<value>` plus `<key>.source=default|user` per key.
 #   enter_key_known <key>           -> 0 when <key> is a decision key or a
 #                                      `<key>.source` (a `tmux` line an
 #                                      earlier worktool stored is not: it
-#                                      is ignored, and dropped on rewrite)
-#   enter_config_get <file> <key>   -> prints the value (nothing when absent;
-#                                      first occurrence when repeated)
-#   enter_config_check <file>       -> 0 when EVERY LINE holding a known key
+#                                      is ignored, and preserved on rewrite)
+#   enter_config_check       -> 0 when EVERY LINE holding a known key
 #                                      (repeats and empty values included)
 #                                      has a valid value or source (whatever
 #                                      the source says: the file is
@@ -84,7 +85,14 @@
 #   enter_block_compose <file> <body>  -> content with exactly one block, stdout
 #
 # This is a library: it defines functions and must be sourced, not executed.
-# Sourcing has no side effects.
+# Sourcing has no side effects; it sources lib/config.sh (same dir), the
+# one reader/writer of the state file.
+
+# The state file's format is lib/config.sh's (its one reader/writer).
+# shellcheck source-path=SCRIPTDIR
+_ENTER_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./config.sh
+source "${_ENTER_LIB_DIR}/config.sh"
 
 ENTER_BLOCK_BEGIN='# BEGIN worktool managed block (just box setup; do not edit)'
 ENTER_BLOCK_END='# END worktool managed block'
@@ -93,8 +101,7 @@ ENTER_BLOCK_END='# END worktool managed block'
 enter_keys() { printf '%s\n' auto-enter terminal box; }
 
 # --- Paths -------------------------------------------------------------------
-enter_config_dir() { printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"; }
-enter_config_path() { printf '%s/worktool/config\n' "$(enter_config_dir)"; }
+enter_config_dir() { config_xdg_dir; }
 enter_ghostty_config() { printf '%s/ghostty/config\n' "$(enter_config_dir)"; }
 # distrobox reads this file itself, on every run, from the same
 # ${XDG_CONFIG_HOME:-$HOME/.config} (pinned distrobox 1.8.2.5, the
@@ -179,6 +186,16 @@ enter_sh_squote() {
     printf "'%s'\n" "${_s}"
 }
 
+# Encode a legacy double-quoted wrapper path for status readback.
+enter_sh_dquote() {
+    local _s="$1"
+    _s="${_s//\\/\\\\}"
+    _s="${_s//\`/\\\`}"
+    _s="${_s//\$/\\\$}"
+    _s="${_s//\"/\\\"}"
+    printf '"%s"\n' "${_s}"
+}
+
 # 0 when $1 can be written into a managed block at all (issue #175 round
 # 2): no newline and no carriage return.
 #
@@ -241,6 +258,22 @@ enter_first_word() {
     printf '%s\n' "${_out}"
 }
 
+# $1 with its FIRST shell word removed (and the one space after it), or
+# nothing (return 1) when that word is not encoded the way setup.sh encodes
+# one: the decoded word is re-encoded in the same quoting style and must be
+# exactly the prefix of $1.
+enter_after_first_word() {
+    local _s="$1" _word _enc
+    _word="$(enter_first_word "${_s}")"
+    case "${_s}" in
+        "'"*) _enc="$(enter_sh_squote "${_word}")" ;;
+        '"'*) _enc="$(enter_sh_dquote "${_word}")" ;;
+        *)    _enc="${_word}" ;;
+    esac
+    [[ "${_s}" == "${_enc} "* ]] || return 1
+    printf '%s\n' "${_s#"${_enc} "}"
+}
+
 # The distrobox program recorded in ghostty managed-block body $1, or
 # nothing when the body names none. setup.sh writes one body:
 #   command = '<distrobox>' enter <box>
@@ -255,6 +288,11 @@ enter_body_distrobox() {
         *) return 0 ;;
     esac
     _prog="$(enter_first_word "${_rest}")"
+    if [[ "${_prog##*/}" == "enter.sh" ]]; then
+        _rest="$(enter_after_first_word "${_rest}")" || return 0
+        [[ "${_rest}" == "--distrobox "* ]] || return 0
+        _prog="$(enter_first_word "${_rest#--distrobox }")"
+    fi
     [[ "${_prog##*/}" == "distrobox" ]] || return 0
     printf '%s\n' "${_prog}"
 }
@@ -367,14 +405,6 @@ enter_value_ok() {
 
 # --- State file --------------------------------------------------------------
 
-# Print the value of key $2 in state file $1 (first match; nothing when the
-# file or the key is absent). Exact key match on the text before the first
-# `=`, so `box` never matches `box.source`.
-enter_config_get() {
-    [[ -f "$1" ]] || return 0
-    awk -F= -v k="$2" '$1 == k { print substr($0, length(k) + 2); exit }' "$1"
-}
-
 # 0 when $1 is a key the state file may hold: a decision key or its
 # `<key>.source` companion.
 enter_key_known() {
@@ -390,20 +420,21 @@ enter_key_known() {
 # first occurrence; the check must not). On the first bad line, in file
 # order, prints `invalid value '<v>' for <key> (expected <...>)` on stdout
 # and returns 1, so the caller can prefix the path and refuse the run
-# before writing.
+# before writing. The file is read through lib/config.sh (config_each).
 enter_config_check() {
-    local _file="$1" _line _key _value
-    [[ -f "${_file}" ]] || return 0
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
-        [[ "${_line}" == *=* ]] || continue
-        _key="${_line%%=*}"
-        enter_key_known "${_key}" || continue
-        _value="${_line#*=}"
-        enter_value_ok "${_key}" "${_value}" && continue
-        printf "invalid value '%s' for %s (expected %s)\n" \
-            "${_value}" "${_key}" "$(enter_expected "${_key}")"
-        return 1
-    done <"${_file}"
+    config_each _enter_check_entry
+}
+
+# One entry of the state file (config_each: <lineno> <key> <has_value>
+# <value>): every line of a known key is judged; a bare `<key>` line is that
+# key with an empty value (lib/config.sh's format) and is judged as such.
+_enter_check_entry() {
+    local _key="$2" _value="$4"
+    enter_key_known "${_key}" || return 0
+    enter_value_ok "${_key}" "${_value}" && return 0
+    printf "invalid value '%s' for %s (expected %s)\n" \
+        "${_value}" "${_key}" "$(enter_expected "${_key}")"
+    return 1
 }
 
 # --- Managed block -----------------------------------------------------------

@@ -41,6 +41,10 @@ EOF
     chmod +x "${DISTROBOX}"
     PATH="${DBX_DIR}:${PATH}"
     export PATH
+
+    # Issue #180: every managed command runs this checkout's entry wrapper,
+    # which hands over to `<distrobox> enter <box> ...`.
+    WRAPPER="${REPO_ROOT}/script/box/enter.sh"
 }
 
 @test "setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line" {

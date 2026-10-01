@@ -156,3 +156,19 @@ _rec() {
     run approval_is_human_approval OWNER 'ok'
     assert_failure
 }
+
+@test "approval_phrase prints the approval phrase without a newline" {
+    run approval_phrase
+    assert_success
+    assert_output "${PHRASE}"
+    [[ "$(approval_phrase; printf x)" == "${PHRASE}x" ]]
+}
+
+@test "agy and Gemini markers cannot count as human approval" {
+    local _agent
+    for _agent in agy gemini; do
+        run bash -c 'source "$1"; approval_is_human_approval OWNER "  [$2] $(approval_phrase)"' _ \
+            "${REPO_ROOT}/lib/approval.sh" "${_agent}"
+        assert_failure 1
+    done
+}

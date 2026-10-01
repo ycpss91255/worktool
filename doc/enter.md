@@ -12,7 +12,7 @@ dev 盒。狀態:M3(終端自動進盒 + 效能)。整體設計與治理見
 profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host shell rc 裡
 `exec distrobox enter` 會讓 ssh / 非互動 shell 全部踩雷,**不採用**。
 
-落地成兩個 `box` 動詞:
+落地成三個 `box` 動詞:
 
 | 指令 | 做什麼 |
 |------|--------|
@@ -94,7 +94,7 @@ grilling)的目標行為:
    設定,放在盒子自己的 HOME(#196,M5)。
 
 舊版留下的東西:設定檔裡的 `tmux=` / `tmux.source=` 行**不再是決策**——不報告、
-不當成壞值拒絕,下次 `just box setup` 重寫設定檔時自然消失;`~/.tmux.conf` 裡若有
+不當成壞值拒絕,`just box setup` 更新時保留為非受管 key;`~/.tmux.conf` 裡若有
 舊版寫的受管區塊,worktool 不會動它,請自行刪除(M3 尚未發布,只有驗收機器上會有)。
 
 ## 進盒設定(just box setup / status)
@@ -124,7 +124,7 @@ exit 2。
 
 | 檔案 | 內容 |
 |------|------|
-| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`box`) |
+| `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`box`);另有 assemble 寫的 `home` / `home.source` 與使用者的 `link=`。讀寫一律經過 `lib/config.sh`,setup 只就地更新自己的 key,其他行逐位元組保留 |
 | `$XDG_CONFIG_HOME/ghostty/config` | 受管區塊:`command = '<distrobox>' enter <盒>` |
 | `$XDG_CONFIG_HOME/distrobox/distrobox.conf` | 受管區塊(**每次**都寫,`--auto-enter no` 也保留):進 `<盒>` 時 `unset TMUX TMUX_PANE` 的一行 shell,`distrobox-enter` 組 `exec` 請求前 source 它(issue #179,見上方「決策」第 2 點) |
 
@@ -357,9 +357,18 @@ box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
 distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (linked)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (linked)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (linked)
+home: /home/me/dev-box (default)
 ```
 
-最後一行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
+`home:` 是 `just box assemble` 記下的盒子 HOME 與來源(issue #198);還沒 assemble
+過時是 `home: not recorded (run: just box assemble)`。記錄的值不是絕對路徑時,和其他
+壞掉的值一樣以 `[ERROR] <設定檔>: invalid value ...` 拒絕、exit 1。
+
+`distrobox:` 那行是 issue #175 的「可讀錯誤」:受管 command 寫的是絕對路徑,所以 distrobox
 之後被移走 / 移除 / 升級掉時,這裡會直接講清楚,而不是讓你開窗看到一閃而過的
 `not found`:
 
@@ -373,10 +382,112 @@ distrobox: not found on PATH (install distrobox, then re-run: just box setup)
 第二行是**舊版**留下來的形狀:現在的 setup 不會再寫裸名字(解析不到就拒絕),
 但使用者機器上可能還有先前寫入的區塊,所以報告仍然認得並指出它。
 
+`home:` 前面是 user config 連結(issue #199,由 `just box assemble` 建立,見
+[`manifest.md`](manifest.md)「user config 連結」),每一項一行,四種狀態:
+
+```text
+link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
+link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (blocked by existing file)
+link: /home/me/dev-box/.gnupg -> /home/me/.gnupg (missing source)
+link: /home/me/dev-box/.config/gh -> /home/me/.config/gh (not linked yet; run: just box assemble)
+```
+
+盒子 HOME 就是 `home:` 那行的值,也就是 `just box assemble` 記下的那一個(#198),
+連結報告與 `home:` 讀的是設定檔裡同一個 `home=`。還沒記錄時連結只有一行;記錄的
+盒子 HOME 就是 host HOME(`--home ~`)時兩邊共用 HOME、不需要連結,也只有一行:
+
+```text
+link: box HOME not recorded - user config not linked yet (run: just box assemble)
+link: the box HOME is the host HOME - user config already in place
+```
+
 還沒跑過 `setup` 時第一行會是
 `config: /home/me/.config/worktool/config (not found - defaults shown; run: just box setup)`,
 後面照樣列出預設值(全部 `(default)`)、ghostty 的區塊狀態與 `distrobox:` 那行,
 報告永遠不會是空的。
+
+## 首次啟動的進度(just box enter,issue #180)
+
+盒子第一次 `distrobox enter` 時,distrobox-init 會在盒內安裝基本套件與
+`additional_packages`(實機約 3.5 分鐘)。distrobox 本身在這段期間只印兩行靜態
+訊息(`Starting container... [ OK ]`、`Installing basic packages...`),apt 的輸出
+全部被它的過濾迴圈丟掉,`--verbose` 也不會即時轉送,而且它等待
+`container_setup_done` 的迴圈**沒有逾時**。研究與決定見 issue #180。
+
+所以 worktool 在**進盒包裝層** `script/box/enter.sh`(`just box enter`)處理,不改
+distrobox。可手動執行 `just box enter`;它最後
+`exec <distrobox> enter <盒> [-- <指令>...]`。依 issue #179,
+`just box setup` 寫出的終端受管 command 直接跑 `distrobox enter <盒>`。
+
+### 選項
+
+| 選項 | 值 | 預設 | 意義 |
+|------|----|------|------|
+| `--box` | 容器名(`[A-Za-z0-9][A-Za-z0-9_.-]*`) | `dev` | 要進哪個盒;不合規則(空白、換行、`/` 等)exit 2 |
+| `--distrobox` | 絕對路徑的可執行檔 | PATH 上解析到的那一個 | 手動使用 wrapper 時要執行的 distrobox 絕對路徑 |
+| `--timeout` | 正整數(秒) | `900`(15 分鐘),或環境變數 `WORKTOOL_INIT_TIMEOUT` | 首次初始化的逾時 |
+| `-- <指令>...` | — | 無(進登入 shell) | 在盒內執行的指令,原封交給 `distrobox enter <盒> -- <指令>...` |
+| `-h`, `--help` | — | — | usage |
+
+進度行的間隔預設 10 秒,可用環境變數 `WORKTOOL_INIT_INTERVAL` 改(測試用它縮短)。
+未知選項、無效的值、缺值都由 `enter.sh` 自己拒絕(`enter.sh: unknown option
+'--bogus' (see --help)`,exit 2);整行命令列解析完才處理 `--help`。
+
+### 流程
+
+1. **判斷首次初始化**:`docker inspect --type container -f '{{.State.StartedAt}}' <盒>`
+   是零值(`0001-01-01T00:00:00Z`,從沒啟動過)才算首次。不用 `docker exec` 查
+   `/.containersetupdone`:容器沒在跑時 exec 會失敗。其他情況(盒子啟動過、沒有這個
+   盒、沒有 docker)一律**直接交給** `distrobox enter`,由它自己報錯;平常進盒只多
+   一次 `docker inspect`。
+2. **首次啟動**:stderr 先印說明、查 log 的指令與 host log 路徑,再
+   `docker start <盒>`,並在背景把 `docker logs -f <盒>` 完整寫進
+   `${XDG_CACHE_HOME:-~/.cache}/worktool/<盒>-init.log`。之後每 10 秒一行
+   「目前階段 + 經過時間 + 最新一行初始化輸出」:階段 = log 裡最後一行
+   `distrobox: ...`(distrobox 自己顯示的階段標題),最新一行略過 `+ ` 開頭的 xtrace
+   行、截到 60 字元。stderr 是 TTY 時**原地覆寫同一行**,否則逐行印。
+3. **完成**:log 出現 `container_setup_done` 就印「初始化完成」,清掉背景行程,
+   `exec distrobox enter`。
+4. **失敗或逾時**:distrobox-init 印出 `Error:` 行、容器中途停了、`docker start`
+   失敗、背景的 `docker logs -f` 提早結束(Docker 錯誤、權限、連線中斷;訊息帶它的
+   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
+   **不停止、不刪除盒子**(刪盒是使用者的決定;逾時時盒子可能還在裝,訊息會給
+   `docker logs -f <盒>`)。
+5. **清理**:背景的 `docker logs -f` 是唯一的背景行程,成功、失敗、逾時、Ctrl-C
+   (exit 130)、SIGTERM(exit 143)時都由 trap 清掉。中斷時盒子繼續在背景初始化,
+   訊息會說明並給 `docker logs -f`。
+
+不採用 pre_init_hooks 心跳(在盒內印 `distrobox:` 行讓 distrobox 轉送):會打亂
+distrobox 的階段顯示,也有遺留行程的風險。
+
+### 範例
+
+非 TTY(例如接到檔案)時的首次啟動:
+
+```text
+$ just box enter
+[INFO] first launch of box 'dev': distrobox installs its packages first - this can take several minutes (timeout 15m00s)
+[INFO] follow the full output in another terminal: docker logs -f dev
+[INFO] full init log: /home/me/.cache/worktool/dev-init.log
+[INFO] first launch: Installing basic packages... - 10s elapsed - Get:12 http://archive.ubuntu.com/ubuntu resolute/main amd64
+[INFO] first launch: Installing basic packages... - 20s elapsed - Unpacking libfoo (1.2-3) ...
+...
+[INFO] first launch: Setting up read-only mounts... - 3m30s elapsed - distrobox: Setting up read-only mounts...
+[INFO] first launch: initialisation complete after 3m32s - entering the box
+```
+
+逾時(盒子保留,由使用者決定是否重建):
+
+```text
+[ERROR] first launch of box 'dev' failed: timed out after 15m00s without container_setup_done (the box may still be installing: docker logs -f dev)
+[ERROR] init log: /home/me/.cache/worktool/dev-init.log
+[ERROR] last 20 lines of the init log:
+  | ...
+[ERROR] the box was left as it is (not stopped, not removed); to start over: distrobox rm -f dev, then open a new terminal
+```
+
+已知限制:ghostty 的受管 command 結束時預設會關掉視窗;
+要看完失敗訊息,可以在另一個終端跑 `just box enter`,或查 host log。
 
 ## 測試對應
 
@@ -403,7 +514,7 @@ host tmux server 的部分在 system-real):
   command,並斷言 `$(...)` 與反引號的 sentinel 檔沒有被建立)與單引號;issue #179
   一組:受管 command 後面不接任何東西(沒有 tmux)、`--tmux` 是未知選項(exit 2)、
   `~/.tmux.conf` 不論哪種決策都不被讀寫(內容與權限不變)、舊設定檔的 `tmux=` 行被
-  忽略且重寫時消失;distrobox.conf 受管區塊每次都寫、`--terminal none` /
+  忽略並保留為非受管 key;distrobox.conf 受管區塊每次都寫、`--terminal none` /
   `--auto-enter no` 保留且冪等、跟著 `--box` 改、`--dry-run` 不寫;
   `test/unit/managed_block_spec.bats` —— 標記狀態(只有 BEGIN / 只有 END /
   END 在前 / 巢狀 / 兩個區塊 / BEGIN 或 END 多了文字 / 縮排)× 操作(新寫 /
@@ -422,7 +533,7 @@ host tmux server 的部分在 system-real):
   有設定檔的逐行輸出與順序、缺 key 回預設、`XDG_CONFIG_HOME`、只印 stdout、
   `--help` / 未知選項,以及 `distrobox:` 那行的四種狀態(runnable / NOT
   RUNNABLE / 裸名字 / PATH 上找不到)與記錄形狀的解碼(單引號、舊版沒有 quote 的
-  絕對路徑、舊版後接 `-- tmux new -A -s main` 的形狀);報告是七行(含
+  絕對路徑、舊版後接 `-- tmux new -A -s main` 的形狀);未記錄盒子 HOME 時報告是九行(含
   `distrobox.conf:` 區塊 present / absent)、沒有 tmux 行,
   舊設定檔的 `tmux=` 行與 `~/.tmux.conf` 裡的區塊既不報告也不拒絕;
   `test/unit/justfile_spec.bats` —— `just box setup` / `just box status` 原封轉發

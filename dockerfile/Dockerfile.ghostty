@@ -41,6 +41,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 #                   managed block `just box setup` writes
 # ca-certificates - kept for parity with the other images
 # git             - test fixtures / future harness
+# parallel        - bats --jobs uses GNU parallel to schedule spec files
 # The archive version is deliberately NOT pinned here: 26.04 is a
 # supported release and its ghostty gets security updates within the
 # 1.3.0 series (the spec asserts the major.minor it sees, not a build).
@@ -51,6 +52,7 @@ RUN apt-get update && \
         ca-certificates \
         ghostty \
         git \
+        parallel \
     && rm -rf /var/lib/apt/lists/*
 
 # bats core + extensions (bats-support / bats-assert). Both are plain

@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
-# test/unit/script/wait_pr_ci_spec.bats - .agents/script/wait-pr-ci.sh
+# test/unit/script/wait_pr_ci_spec.bats - .agents/script/monitor/wait-pr-ci.sh
 #
 # The Monitor companion that polls a PR's check rollup until it settles.
 # worktool adaptation: the default filter is the one required check,
 # `ci-passed`; the script follows the worktool CLI contract (whole command
 # line parsed before --help is served, `wait-pr-ci.sh: unknown option '<x>'
-# (see --help)` exit 2, `set -uo pipefail`); a conflicting PR fails without
+# (see --help)` exit 2, `set -euo pipefail`); a conflicting PR fails without
 # pointing at scripts this repo does not have. The stale-rollup guards from
 # initialization (issue #22 there) are kept.
 #
@@ -15,12 +15,17 @@
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 
 setup() {
-    SCRIPT="${REPO_ROOT}/.agents/script/wait-pr-ci.sh"
+    bats_require_minimum_version 1.5.0
+    SCRIPT="${REPO_ROOT}/.agents/script/monitor/wait-pr-ci.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${STUB_DIR}"
     FIXTURE_JSON="${BATS_TEST_TMPDIR}/gh-response.json"
     cat >"${STUB_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
+if [[ -n "${GH_FAILURE:-}" ]]; then
+    printf '%s\n' "${GH_FAILURE}" >&2
+    exit 1
+fi
 cat "${FIXTURE_JSON}"
 EOF
     chmod +x "${STUB_DIR}/gh"
@@ -40,6 +45,22 @@ _fixture() {
 _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interval 0 "$@"; }
 
 # --- polling -----------------------------------------------------------------
+
+@test "a failed PR query reports auth or network errors and stops immediately" {
+    local _error
+    for _error in 'authentication required' 'network connection refused'; do
+        export GH_FAILURE="${_error}"
+        run --separate-stderr "${SCRIPT}" --repo owner/repo --prs 21,22 \
+            --max-iterations 2 --interval 0
+        assert_failure 1
+        [[ "${stderr:-}" == *"${_error}"* ]]
+        [[ "${stderr:-}" == *"failed to query owner/repo PR21"* ]]
+        refute_output --partial "no-checks"
+        refute_output --partial "PR22"
+        refute_output --partial "ALL_DONE"
+        [[ "${stderr:-}" != *"max-iterations"* ]]
+    done
+}
 
 @test "the default filter is worktool's ci-passed check" {
     _fixture ci-passed SUCCESS 3600
@@ -155,4 +176,33 @@ _once() { run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 1 --interv
     run "${SCRIPT}" --repo owner/repo --prs 1,x
     assert_failure 2
     assert_output --partial "--prs"
+}
+
+@test "wait CI stops on unexpected failures inherited by sourced callers" {
+    run bash -c 'source "$1"; false; echo UNREACHABLE' _ "${SCRIPT}"
+    assert_failure 1
+    refute_output --partial "UNREACHABLE"
+}
+
+@test "wait CI serves help after capturing its non-zero parse result" {
+    run "${SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage: wait-pr-ci.sh"
+}
+
+@test "wait CI keeps polling pending snapshots instead of exiting two" {
+    _fixture ci-passed SUCCESS 10
+    run "${SCRIPT}" --repo owner/repo --prs 21 --max-iterations 2 --interval 0
+    assert_failure 124
+    assert_output --partial "checks=pending"
+    assert_output --partial "max-iterations (2) reached"
+}
+
+@test "an invalid --check-filter stays pending until the polling limit" {
+    _fixture ci-passed SUCCESS 3600
+    _once --check-filter '['
+    assert_failure 124
+    assert_output --partial "PR21: checks=pending mergeable=MERGEABLE"
+    assert_output --partial "max-iterations (1) reached"
+    refute_output --partial "ALL_DONE"
 }

@@ -10,7 +10,7 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 狀態:M2(盒子清單格式 + 最小 assemble)。設計與 milestone 計畫見
 [`doc/design.md`](doc/design.md);清單格式、assemble 流程與從 clone 到 assemble
 的完整驗證步驟見 [`doc/manifest.md`](doc/manifest.md);終端自動進盒的設定
-(`just box setup` / `status`)見 [`doc/enter.md`](doc/enter.md);目錄結構見
+(`just box setup` / `status` / `enter`)見 [`doc/enter.md`](doc/enter.md);目錄結構見
 [`doc/structure.md`](doc/structure.md)。
 
 ## 架構與流程
@@ -73,11 +73,12 @@ justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完�
 | `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
-| `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`) |
-| `just box assemble [--dry-run] [--file <manifest>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`) |
+| `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`、`enter`) |
+| `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`);`--home` 是盒子自己的 HOME,預設 `~/<盒名>-box`(dev 盒 = `~/dev-box`),建盒後不可改 |
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--box <名稱>] [--distrobox <路徑>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty **執行檔** / `dev`;終端跑 `'<distrobox>' enter dev`,得到盒內 fish,不自動開 tmux、不碰 `~/.tmux.conf`),每個決策印 `[INFO] <key>: <value> (default\|user)`(`terminal` 用預設時還會印偵測依據),寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊(裡面的 distrobox 是**已 quote 的絕對路徑**,桌面啟動的終端才找得到;解析不到就拒絕整次執行,或用 `--distrobox` 指定);`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box status` | 印出目前生效的進盒決策、來源(`default` / `user`)、受管區塊是否存在,以及受管 command 裡的 distrobox 現在還跑不跑得起來 |
-| `just box help`(或 `h`) | 依序印 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh` 的 usage |
+| `just box enter [--box <名稱>] [--distrobox <路徑>] [--timeout <秒>] [-- <指令>...]` | 進盒;盒子**第一次啟動**(distrobox-init 裝套件,可能要數分鐘)時先說明、給 `docker logs -f <盒>` 與 host log 路徑,之後每 10 秒印「階段 + 經過時間 + 最新一行輸出」,逾時(預設 15 分鐘)或失敗時印原因、log 最後 20 行與復原方式並 exit 1(不停、不刪盒);可手動使用此 wrapper;終端受管 command 直接跑 distrobox(見 [`doc/enter.md`](doc/enter.md)) |
+| `just box help`(或 `h`) | 依序印 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh`、`enter.sh` 的 usage |
 
 打錯 recipe 名(`just test bogus`)得到 `just` 自己的錯誤、exit 1;給了腳本不認得的
 選項(`just box assemble --bogus`)得到腳本自己的 `unknown option ... (see --help)`、

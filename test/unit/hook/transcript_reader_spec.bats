@@ -109,3 +109,12 @@ EOF
     assert_success
     assert_output "approve SC2155"
 }
+
+@test "transcript reader skips a malformed latest record under errexit" {
+    local f="${FIXTURE_DIR}/mixed.jsonl"
+    printf '%s\n' '{"type":"user","message":{"role":"user","content":"approve SC2034"}}' 'invalid json' > "${f}"
+    run bash -c 'source "$1"; read_latest_user_message "$2"; echo DONE' _ "${HOOK_SH}" "${f}"
+    assert_success
+    assert_line "approve SC2034"
+    assert_line "DONE"
+}

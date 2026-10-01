@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "TRANSCRIPT_PATH",
+  "cwd": "/workspace",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "The implementation is complete and all requested checks now pass. I updated the configuration, verified the behavior, and documented the result for future maintainers."
+}
