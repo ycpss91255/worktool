@@ -964,7 +964,7 @@ _rv_src_check() {
 @test "research-verify synthesizes a structured conclusion and records comments via --body-file" {
     run grep -c "schema: SYNTH_SCHEMA" "${RESEARCH}"
     assert_output "1"
-    for k in verified refuted disagreements needsExperiment recommendation parameters; do
+    for k in verified refuted needsExperiment recommendation parameters; do
         run grep -c "${k}: {" "${RESEARCH}"
         assert_output "1"
     done
@@ -1283,9 +1283,16 @@ EOF
 @test "research-verify (node): a failed or malformed synthesis fails closed, nothing is posted" {
     local ok val
     ok="$(_rv_ok_replies)"
-    for val in 'null' '{"verified":[],"refuted":[],"needsExperiment":[],"parameters":[]}' \
+    for val in '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b","claudeBasis":"b","extra":"x"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"b","claudeBasis":" "}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","claudeBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":[{"claim":"c","codexBasis":"","claudeBasis":"b"}]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[],"disagreements":{}}' \
+               'null' '{"verified":[],"refuted":[],"needsExperiment":[],"parameters":[]}' \
                '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"","parameters":[]}' \
-               '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
+               '{"verified":"x","refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}' \
+               '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
         run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'synthesize:' "${val}")"
         assert_success
         run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("record:"))] | length)' <<<"${output}"
