@@ -1,8 +1,8 @@
 export const meta = {
   name: 'milestone-fanout',
-  description: 'Fan out independent sub-issues, each through pr-loop, with at most two child workflows and test runs active; reports each PR as it finishes; never merges',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, mode?, implementer?, codex?, maxRounds?, items:[{issue,branch,name,task,gates?}]}.',
-  phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches of at most two; each result is logged when its child workflow finishes' }],
+  description: 'Fan out independent sub-issues, each through pr-loop, with configurable child workflow concurrency; the CPU gate separately limits active test containers to two; reports each PR as it finishes; never merges',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,gates?}]}.',
+  phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches bounded by concurrency; each result is logged when its child workflow finishes' }],
 }
 
 // milestone-fanout: run pr-loop for several INDEPENDENT sub-issues at once.
@@ -12,6 +12,7 @@ export const meta = {
 //     parent: "#5",
 //     codex: "on" | "off",
 //     maxRounds: 3,
+//     concurrency: 4,                // optional positive integer; limits implementation work
 //     repoDir: "/path/to/worktool",   // required: local checkout
 //     items: [
 //       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "...", gates: "just test lint, just test changed" },
@@ -20,7 +21,8 @@ export const meta = {
 //   } })
 //
 // Each item runs the whole pr-loop independently (pipeline, no barrier) and
-// is logged as soon as its own loop ends. Only sub-issues with NO dependency
+// is logged as soon as its own loop ends. The CPU gate independently caps
+// active test containers at two. Only sub-issues with NO dependency
 // on each other belong in one fan-out; stacked work goes through pr-loop one
 // at a time. Merging stays with the main loop (one PR at a time, rebase on
 // conflicts, merge commit, keep agent commits).
@@ -34,6 +36,8 @@ for (const it of A.items) {
     if (!it[k]) throw new Error(`milestone-fanout: item ${JSON.stringify(it.issue || it)} lacks ${k}`)
   }
 }
+const CONCURRENCY = A.concurrency === undefined ? 10 : A.concurrency
+if (!Number.isInteger(CONCURRENCY) || CONCURRENCY <= 0) throw new Error('milestone-fanout: args.concurrency must be a positive integer')
 const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
@@ -55,8 +59,8 @@ const runItem = async (item) => {
     return result || { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: ['pr-loop returned nothing'] }
 }
 const results = []
-for (let i = 0; i < A.items.length; i += 2) {
-  const batch = A.items.slice(i, i + 2)
+for (let i = 0; i < A.items.length; i += CONCURRENCY) {
+  const batch = A.items.slice(i, i + CONCURRENCY)
   const completed = await parallel(batch.map(item => () => runItem(item)))
   results.push(...completed)
 }
@@ -69,6 +73,7 @@ return results.filter(Boolean)
 //   "parent": "#280",
 //   "implementer": "codex",
 //   "maxRounds": 3,
+//   "concurrency": 4,
 //   "items": [
 //     { "issue": 281, "branch": "feat/281-a", "name": "impl281", "task": "完成 issue #281。" },
 //     { "issue": 282, "branch": "feat/282-b", "name": "impl282", "task": "完成 issue #282。" }
