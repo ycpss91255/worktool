@@ -11,11 +11,11 @@
 #   The stages, and the case that breaks each one:
 #     just box            - exits 1 with the documented recipe list
 #     just box            - exits 0 with nothing / without the header
-#     just box help       - exits 1 with the four documented Usage lines
-#     grep '^Usage:'      - exits 2 with the four documented Usage lines
-#     grep -o             - exits 2 with the four documented script names
-#     sort -u             - exits 1 with the four documented script names
-#     wc -l               - exits 1 printing `4`, and exits 0 printing a word
+#     just box help       - exits 1 with the five documented Usage lines
+#     grep '^Usage:'      - exits 2 with the five documented Usage lines
+#     grep -o             - exits 2 with the five documented script names
+#     sort -u             - exits 1 with the five documented script names
+#     wc -l               - exits 1 printing `5`, and exits 0 printing a word
 #     timeout             - exits 1 with the documented recipe list
 #     timeout             - kills a `just box help` that never returns (124)
 #
@@ -61,7 +61,7 @@ _stub() {
     chmod +x "${FAKE_BIN}/${_name}"
 }
 
-# The four Usage lines doc/acceptance.md M3 item 1.1 publishes, as a stub
+# The five Usage lines doc/acceptance.md M3 item 1.1 publishes, as a stub
 # would print them.
 _usage_lines_body() {
     cat <<'EOF'
@@ -69,6 +69,7 @@ printf 'Usage: assemble.sh [--file <manifest>] [--dry-run]\n'
 printf 'Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]\n'
 printf 'Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]\n'
 printf 'Usage: status.sh\n'
+printf 'Usage: enter.sh [--box NAME]\n'
 EOF
 }
 
@@ -93,6 +94,7 @@ if [ "${1:-}" = box ]; then
     printf '    assemble *args # Assemble the dev box from its manifest.\n'
     printf '    bench *args    # Measure the enter latency of the dev box.\n'
     printf '    default        # List the box verbs.\n'
+    printf '    enter *args    # Enter the box.\n'
     printf '    help           # Show every box script every help. [alias: h]\n'
     printf '    setup *args    # Choose how a new terminal enters the box.\n'
     printf '    status *args   # Show the auto-enter decisions in force.\n'
@@ -114,6 +116,7 @@ EOF
     assert_line --partial 'assemble *args #'
     assert_line --partial 'bench *args    #'
     assert_line --partial 'default '
+    assert_line --partial 'enter *args'
     assert_line --partial 'help '
     assert_line --partial 'setup *args    #'
     assert_line --partial 'status *args   #'
@@ -121,7 +124,8 @@ EOF
     assert_line --partial 'Usage: bench.sh'
     assert_line --partial 'Usage: setup.sh'
     assert_line 'Usage: status.sh'
-    assert_line 'four-usages'
+    assert_line --partial 'Usage: enter.sh'
+    assert_line 'five-usages'
 }
 
 @test "control: no argument runs the same items as naming 1.1 explicitly" {
@@ -137,7 +141,7 @@ EOF
     _stub_just_documented 0
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_success
-    assert_line 'four-usages'
+    assert_line 'five-usages'
 }
 
 # --- The false-pass this work removes: plausible output, non-zero status -----
@@ -147,10 +151,10 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'exited 1 - what it printed does not count'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
-@test "false-pass guard: just box help printing the four Usage lines but exiting 1 fails" {
+@test "false-pass guard: just box help printing the five Usage lines but exiting 1 fails" {
     {
         cat <<'EOF'
 if [ "${1:-}" = box ] && [ "${2:-}" = help ]; then
@@ -162,6 +166,7 @@ fi
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -171,10 +176,10 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'exited 1 - what it printed does not count'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
-@test "false-pass guard: grep printing the four Usage lines but exiting 2 fails" {
+@test "false-pass guard: grep printing the five Usage lines but exiting 2 fails" {
     _stub_just_documented 0
     {
         cat <<'EOF'
@@ -192,15 +197,15 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial "grep '^Usage:' failed (exit 2)"
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
-@test "false-pass guard: grep -o printing the four script names but exiting 2 fails" {
+@test "false-pass guard: grep -o printing the five script names but exiting 2 fails" {
     _stub_just_documented 0
     _stub grep <<'EOF'
 for _a in "$@"; do
     if [ "${_a}" = '^Usage: [a-z]*\.sh' ]; then
-        printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\n'
+        printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\nUsage: enter.sh\n'
         exit 2
     fi
 done
@@ -209,31 +214,31 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'failed (exit 2)'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
-@test "false-pass guard: sort printing the four script names but exiting 1 fails" {
+@test "false-pass guard: sort printing the five script names but exiting 1 fails" {
     _stub_just_documented 0
     _stub sort <<'EOF'
-printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\n'
+printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\nUsage: enter.sh\n'
 exit 1
 EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'sort -u failed (exit 1)'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
-@test "false-pass guard: wc printing 4 but exiting 1 fails" {
+@test "false-pass guard: wc printing 5 but exiting 1 fails" {
     _stub_just_documented 0
     _stub wc <<'EOF'
-printf '4\n'
+printf '5\n'
 exit 1
 EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'wc -l failed (exit 1)'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 @test "false-pass guard: wc printing a word instead of a count fails before the comparison" {
@@ -245,7 +250,7 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial "wc -l printed 'four', which is not a count"
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 @test "false-pass guard: timeout printing the documented recipe list but exiting 1 fails" {
@@ -259,7 +264,7 @@ EOF
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'exited 1 - what it printed does not count'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 @test "false-pass guard: a just box help that never returns is killed and fails" {
@@ -274,6 +279,7 @@ fi
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -283,7 +289,7 @@ EOF
     VERIFY_TIMEOUT=1 PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
     assert_output --partial 'did not finish within 1s (timeout)'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 # --- Degenerate counts must not read like a pass -----------------------------
@@ -301,6 +307,7 @@ EOF
     _stub just <<'EOF'
 if [ "${1:-}" = box ]; then
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -316,6 +323,7 @@ EOF
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n'
     exit 0
 fi
@@ -338,6 +346,7 @@ fi
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -346,11 +355,11 @@ EOF
     } | _stub just
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
-    assert_output --partial 'prints 3 distinct script usage(s), expected 4'
-    refute_output --partial 'four-usages'
+    assert_output --partial 'prints 3 distinct script usage(s), expected 5'
+    refute_output --partial 'five-usages'
 }
 
-@test "degenerate: four Usage lines from ONE script are not four script usages" {
+@test "degenerate: five Usage lines from ONE script are not five script usages" {
     {
         cat <<'EOF'
 if [ "${1:-}" = box ] && [ "${2:-}" = help ]; then
@@ -358,11 +367,13 @@ if [ "${1:-}" = box ] && [ "${2:-}" = help ]; then
     printf 'Usage: assemble.sh [--dry-run]\n'
     printf 'Usage: assemble.sh [-h]\n'
     printf 'Usage: assemble.sh [--help]\n'
+    printf 'Usage: assemble.sh [--home PATH]\n'
     exit 0
 fi
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -371,8 +382,8 @@ EOF
     } | _stub just
     PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
     assert_failure 1
-    assert_output --partial 'prints 1 distinct script usage(s), expected 4'
-    refute_output --partial 'four-usages'
+    assert_output --partial 'prints 1 distinct script usage(s), expected 5'
+    refute_output --partial 'five-usages'
 }
 
 @test "degenerate: just box help exiting 0 with no Usage line fails" {
@@ -385,6 +396,7 @@ fi
 if [ "${1:-}" = box ]; then
     printf 'Available recipes:\n'
     printf '    assemble *args # x\n    bench *args # x\n    default # x\n'
+    printf '    enter *args # x\n'
     printf '    help # x\n    setup *args # x\n    status *args # x\n'
     exit 0
 fi
@@ -409,7 +421,7 @@ EOF
     assert_failure 3
     assert_output --partial '[UNAVAILABLE]'
     assert_output --partial 'just not found on PATH'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 @test "unavailable: a missing wc is reported and exits non-zero, never skipped" {
@@ -423,7 +435,7 @@ EOF
     assert_failure 3
     assert_output --partial '[UNAVAILABLE]'
     assert_output --partial 'wc not found on PATH'
-    refute_output --partial 'four-usages'
+    refute_output --partial 'five-usages'
 }
 
 # --- CLI contract ------------------------------------------------------------
@@ -450,5 +462,5 @@ EOF
 @test "cli: --list prints the registered item ids" {
     run "${UI_SH}" --list
     assert_success
-    assert_line --partial '1.1  just box lists six verbs'
+    assert_line --partial '1.1  just box lists seven verbs'
 }

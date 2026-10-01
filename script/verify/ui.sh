@@ -9,9 +9,9 @@
 #   is covered by test/unit/verify_ui_spec.bats.
 #
 # ITEMS
-#   1.1  `just box` lists the six box verbs and `just box help` prints the
-#        usage of the four box scripts (assemble.sh, bench.sh, setup.sh,
-#        status.sh), each exactly once.
+#   1.1  `just box` lists the seven box verbs and `just box help` prints the
+#        usage of the five box scripts (assemble.sh, bench.sh, setup.sh,
+#        status.sh, enter.sh), each exactly once.
 #
 # WHY IT IS WRITTEN THIS WAY
 #   An acceptance check that can read green while its own machinery failed
@@ -73,7 +73,7 @@ set -uo pipefail
 SCRIPT_NAME="ui.sh"
 
 # Seconds any single `just` invocation may take before it is killed. `just
-# box help` runs four scripts, so this is generous; it exists to turn a hang
+# box help` runs five scripts, so this is generous; it exists to turn a hang
 # into a reported failure instead of a stuck acceptance run.
 VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-120}"
 
@@ -81,11 +81,11 @@ EXIT_FAIL=1
 EXIT_USAGE=2
 EXIT_UNAVAILABLE=3
 
-# The six verbs `just box` must list (doc/acceptance.md M3 item 1.1).
-RECIPES_EXPECTED=(assemble bench default help setup status)
+# The seven verbs `just box` must list (doc/acceptance.md M3 item 1.1).
+RECIPES_EXPECTED=(assemble bench default enter help setup status)
 
-# The four scripts `just box help` must print a usage line for, once each.
-USAGES_EXPECTED=(assemble.sh bench.sh setup.sh status.sh)
+# The five scripts `just box help` must print a usage line for, once each.
+USAGES_EXPECTED=(assemble.sh bench.sh setup.sh status.sh enter.sh)
 
 # --- Paths -------------------------------------------------------------------
 # Resolved with parameter expansion and the `cd`/`pwd` builtins only: an
@@ -168,7 +168,7 @@ _item_fn() {
 
 _item_title() {
     case "$1" in
-        1.1) printf '%s\n' "just box lists six verbs; just box help prints four script usages" ;;
+        1.1) printf '%s\n' "just box lists seven verbs; just box help prints five script usages" ;;
         *)   return 1 ;;
     esac
 }
@@ -321,7 +321,7 @@ _check_recipe_list() {
 }
 
 # Check the distinct `Usage: <script>.sh` names of `just box help` ($1):
-# exactly the four box scripts, once each.
+# exactly the five box scripts, once each.
 _check_usage_names() {
     local _names="$1"
     local _name _count=0
@@ -347,8 +347,8 @@ _check_usage_names() {
     return 0
 }
 
-# Item 1.1: `just box` lists the six verbs; `just box help` prints the usage
-# of the four box scripts, once each.
+# Item 1.1: `just box` lists the seven verbs; `just box help` prints the usage
+# of the five box scripts, once each.
 _item_1_1() {
     local _box_out="" _help_out="" _usage_lines="" _names="" _n=""
 
@@ -357,7 +357,7 @@ _item_1_1() {
     _check_recipe_list "${_box_out}" || return 1
 
     # `just box help` is checked for its own exit status BEFORE its output is
-    # counted: a just that prints four Usage lines and then exits 1 is not a
+    # counted: a just that prints five Usage lines and then exits 1 is not a
     # pass (doc/acceptance.md M3 item 1.1 says so in prose).
     _just_capture _help_out box help || return 1
 
@@ -383,7 +383,7 @@ _item_1_1() {
     fi
     _check_usage_names "${_sorted}" || return 1
 
-    printf 'four-usages\n'
+    printf 'five-usages\n'
     return 0
 }
 

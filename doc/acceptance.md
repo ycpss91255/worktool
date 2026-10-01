@@ -572,24 +572,26 @@ rc=0
 規則:入口一律 `just` —— 產品功能是 `just box` / `just test`,驗收本身是 `just verify`;5 是實機(distrobox 原生 + 開終端主觀);文件與外部證據由 `just verify evidence` 用上面列出的驗收工具(gh / jq / awk / grep / sed / find)查。
 
 - [ ] 1. 使用者介面:box namespace 多了 bench / setup / status
-  - [ ] 1.1 `just box` 列出六個動作;`just box help` 依序印四支腳本的 usage
+  - [ ] 1.1 `just box` 列出七個動作;`just box help` 依序印五支腳本的 usage
     - 預期看到資訊
       ```text
       Available recipes:
           assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini).
           bench *args    # Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
           default        # List the box verbs.
-          help           # Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh --help). [alias: h]
+          enter *args    # Enter the box (args: --box NAME, --distrobox PATH, --timeout SECONDS, -- CMD..., --help).
+          help           # Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh, enter.sh --help). [alias: h]
           setup *args    # Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --box <name>, --dry-run, --help).
           status *args   # Show the auto-enter decisions in force, their sources and the managed blocks (args: --help).
       Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
       Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
       Usage: status.sh
-      four-usages
+      Usage: enter.sh [--box NAME] [--distrobox PATH] [--timeout SECONDS] [-- CMD...]
+      five-usages
       rc=0
       ```
-      (usage 第一行可能因終端寬度換行只顯示前半;`four-usages` = 斷言四支不同腳本各有 usage。腳本的進度與失敗原因走 stderr,上面只列 stdout 加最後一行 `echo rc=$?`)
+      (usage 第一行可能因終端寬度換行只顯示前半;`five-usages` = 斷言五支不同腳本各有 usage。腳本的進度與失敗原因走 stderr,上面只列 stdout 加最後一行 `echo rc=$?`)
     - 驗收方式
       ```bash
       just verify ui 1.1; echo rc=$?
