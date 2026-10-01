@@ -20,6 +20,14 @@ _resolve() {
     run just --justfile "${REPO_ROOT}/.agents/script/research/justfile.research" model "$@"
 }
 
+@test "agy model rejects a failed models command even with a valid model in stdout" {
+    printf '#!/bin/sh\necho gemini-3.10-flash-high\nexit 7\n' > "${BATS_TEST_TMPDIR}/bin/agy"
+    _resolve
+    assert_failure
+    assert_output --partial 'agy models failed'
+    refute_line 'gemini-3.10-flash-high'
+}
+
 @test "agy model selects the highest numeric Gemini flash-high version" {
     printf '%s\tDisplay name\n' gemini-3.9-flash-high gemini-3.8-flash-high \
         gemini-3.10-flash-high gemini-4.0-pro-high gemini-4.0-flash-low \

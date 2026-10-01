@@ -20,8 +20,12 @@ main() {
         printf 'Usage: agy-model.sh [--help]\nResolve the latest Gemini flash-high model from agy models.\n' >&2
         return 0
     fi
-    local model
-    model="$(agy models | awk '$1 ~ /^gemini-[0-9]+([.][0-9]+)*-flash-high$/ { print $1 }' | sort -V | tail -n 1)"
+    local model models
+    if ! models="$(agy models)"; then
+        log_error 'agy-model.sh: agy models failed'
+        return 1
+    fi
+    model="$(printf '%s\n' "${models}" | awk '$1 ~ /^gemini-[0-9]+([.][0-9]+)*-flash-high$/ { print $1 }' | sort -V | tail -n 1)"
     if [[ -z "${model}" ]]; then
         log_error 'agy-model.sh: no Gemini flash-high model available'
         return 1
