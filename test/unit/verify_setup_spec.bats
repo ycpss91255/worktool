@@ -49,26 +49,8 @@
 #       3.6's states answer `runnable`, each with rc=0 and stderr=0
 #     _config_write logs the write without writing -> `status` rebuilds the
 #       same four decisions from its defaults
-#     ONLY the tmux-host path overwrites its file -> every tmux-INSIDE item
-#       (3.1, 3.2, 3.3, 3.5, 3.6) still passes word for word, and 3.7 is the
-#       one that fails. That pair is the measure of the gap 3.7 closes:
-#       before it, section 3 printed `tmux.conf=intact` on six items while
-#       no item ever asked the product to WRITE ~/.tmux.conf.
-#     ONLY `_apply_no_terminal` empties its files instead of stripping the
-#       block -> 3.1 to 3.7 ALL still pass, because no item of theirs ever
-#       passes `--terminal none` to the product. They reach the other
-#       removal path, `_apply_disable`. That pair is the measure of the gap
-#       3.8 closes; the degraded product's own removal lines, both block
-#       counts (1 then 0) and both `status` `absent` verdicts are word for
-#       word the ones a correct run prints.
-#     ONLY the `_block_remove` call INSIDE `_apply_ghostty` - the one the
-#       tmux-INSIDE branch makes to take out the block an earlier
-#       `--tmux host` run left - empties its file instead of stripping the
-#       block -> 3.1 to 3.8 ALL still pass. 3.2, 3.5 and 3.6 run that very
-#       branch but never reach the call, because their ~/.tmux.conf holds
-#       no block for it to remove; 3.3 and 3.7 reach `_apply_disable` and
-#       3.8 reaches `_apply_no_terminal` instead. That pair is the measure
-#       of the gap 3.9 closes.
+#     `_apply_no_terminal` empties the Ghostty config -> the removed block
+#       count still passes, but the seeded user content is lost.
 #
 #   Those are caught by seeding the managed files with the user's own
 #   content before setup runs, by reading the state file back, by pinning
@@ -151,7 +133,6 @@ _stub_just_plausible() {
         'printf "./script/box/setup.sh \"\$@\"\n" >&2' \
         'printf "[INFO] auto-enter: yes (default)\n" >&2' \
         'printf "[INFO] terminal: ghostty (default)\n" >&2' \
-        'printf "[INFO] tmux: inside (default)\n" >&2' \
         'printf "[INFO] box: dev (default)\n" >&2' \
         'printf "config: /throwaway/.config/worktool/config\n"' \
         'printf "distrobox: /usr/local/bin/distrobox (recorded in a managed block: runnable)\n"' \
@@ -211,7 +192,7 @@ _stub_grep_command_then_no_match() {
 for a in "\$@"; do
   case "\$a" in
     '^command')
-      printf "command = 'x' enter dev -- tmux new -A -s main\n"
+      printf "command = 'x' enter dev\n"
       exit 1
       ;;
   esac
@@ -268,8 +249,8 @@ esac
 
 _dbx="$(command -v distrobox)"
 case "${MODE}" in
-    bare-name) _cmd="command = distrobox enter dev -- tmux new -A -s main" ;;
-    *) _cmd="command = '${_dbx}' enter dev -- tmux new -A -s main" ;;
+    bare-name) _cmd="command = distrobox enter dev" ;;
+    *) _cmd="command = '${_dbx}' enter dev" ;;
 esac
 
 _dry=0
@@ -292,7 +273,6 @@ printf './script/box/setup.sh "$@"\n' >&2
 _log "auto-enter: ${_auto} (${_src})"
 _log "terminal: ghostty (default)"
 _log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
-_log "tmux: inside (default)"
 _log "box: dev (default)"
 [ "${_auto}" = yes ] \
     && _log "distrobox: ${_dbx} (absolute path written into the managed command)"
@@ -494,7 +474,7 @@ EOF
     _stub_just_setup_writing bare-name
     run "${VERIFY}" 3.1
     assert_failure
-    assert_output --partial "-- tmux new -A -s main)', found 0"
+    assert_output --partial "enter dev)', found 0"
     refute_output --partial "3.1 PASS"
 }
 
@@ -563,8 +543,8 @@ EOF
     _stub_just_setup_writing bare-name
     run "${VERIFY}" 3.2
     assert_failure
-    assert_output --partial "command = distrobox enter dev -- tmux new -A -s main"
-    assert_output --partial "-- tmux new -A -s main', found 0"
+    assert_output --partial "command = distrobox enter dev"
+    assert_output --partial "enter dev', found 0"
     refute_output --partial "3.2 PASS"
 }
 
@@ -592,8 +572,8 @@ EOF
     assert_failure
     # The degraded product really did run and really did write the right
     # block; only the user's lines are missing.
-    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev -- tmux new -A -s main)"
-    assert_line "command = '<D>' enter dev -- tmux new -A -s main"
+    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    assert_line "command = '<D>' enter dev"
     assert_line "ghostty: <H>/.config/ghostty/config (managed block: present)"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
@@ -666,7 +646,7 @@ EOF
 set -u
 _cfg="${XDG_CONFIG_HOME:-${HOME}/.config}"
 _dbx="$(command -v distrobox)"
-_cmd="command = '${_dbx}' enter dev -- tmux new -A -s main"
+_cmd="command = '${_dbx}' enter dev"
 _log() { printf '[INFO] %s\n' "$1" >&2; }
 mkdir -p "${_cfg}/worktool" "${_cfg}/ghostty"
 case "$*" in
@@ -674,7 +654,6 @@ case "$*" in
         _log "auto-enter: no (user)"
         _log "terminal: ghostty (default)"
         _log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
-        _log "tmux: inside (default)"
         _log "box: dev (default)"
         _log "distrobox: ${_dbx} (absolute path written into the managed command)"
         printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
@@ -804,7 +783,7 @@ EOF
     assert_failure
     # The refusal half is untouched, and the block really was written.
     assert_line "user-content after-refusal: ghostty=intact tmux.conf=intact"
-    assert_line "command = '<D>' enter dev -- tmux new -A -s main"
+    assert_line "command = '<D>' enter dev"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
     refute_output --partial "3.5 PASS"
@@ -901,9 +880,6 @@ EOF
 }
 
 # --- 3.7 ----------------------------------------------------------------------
-# The item that closes the gap: section 3 printed `tmux.conf=intact` on every
-# item while no item ever asked the product to WRITE ~/.tmux.conf.
-
 @test "3.8: a just that prints a plausible setup but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.8
@@ -972,9 +948,6 @@ EOF
 
 # --- 3.9 ----------------------------------------------------------------------
 # The item that closes the last removal call site that can lose a user file:
-# the `_block_remove "${_tmux_conf}"` INSIDE `_apply_ghostty`, taken when the
-# user switches from `--tmux host` back to `--tmux inside`.
-
 @test "realbox: an item in the group is refused without the explicit opt-in" {
     run bash -c "source '${VERIFY}'; _realbox_guard 5.1"
     assert_failure

@@ -7,69 +7,9 @@
 # here: A FAILURE MUST NEVER READ AS A PASS. This script is that logic,
 # moved into the repo where the test tier can prove it bites.
 #
-# Covered items (identical output lines, identical judgements):
-#   3.1  dry-run prints the decisions, writes NOTHING, and the managed
-#        command names a QUOTED ABSOLUTE distrobox path (#175)
-#   3.2  a real write: state file + ghostty managed block, then `status`
-#   3.3  --auto-enter no removes the block and reports each removal
-#   3.4  bad input is refused by the script, no file is created, and a
-#        corrupt state file is refused whatever its source
-#   3.5  no distrobox on PATH -> setup refuses and writes nothing;
-#        --distrobox <path> names the executable to record
-#   3.6  the four remaining states of the `distrobox:` line of `status`
-#   3.7  the `--tmux host` path: the ONE path that writes ~/.tmux.conf
-#   3.8  the `--terminal none` path: the OTHER removal path, the one a
-#        machine without ghostty takes by default
-#   3.9  `--tmux host` then `--tmux inside`: the THIRD removal call site,
-#        the one inside `_apply_ghostty` itself
-#
-# WHY 3.7 EXISTS
-#   3.1-3.6 all run the tmux-INSIDE path, which never writes ~/.tmux.conf -
-#   so every `tmux.conf=intact` they print is about a file the product only
-#   ever opened to look for a block to remove. A regression that overwrote
-#   the whole file on the tmux-HOST path passed all six of them. 3.7 runs
-#   that path: the block has to land IN ~/.tmux.conf, the user's own lines
-#   have to survive the write AND the removal, and `status` has to report
-#   the block on both sides.
-#
-# WHY 3.8 EXISTS
-#   `--terminal none` never appeared in any acceptance item, yet
-#   `_apply_no_terminal` in script/box/setup.sh REMOVES the managed block
-#   from BOTH managed files. 3.3 and 3.7 only ever reach the other removal
-#   path, `_apply_disable` (`--auto-enter no`), so a degradation confined to
-#   `_apply_no_terminal` - removal that empties the whole file instead of
-#   stripping the block - left lint, every unit case, the integration tier
-#   and items 3.1 to 3.7 green while destroying both files on the real
-#   machine. The path is not obscure either: enter_terminal_detect returns
-#   `none` whenever there is no ghostty executable on PATH and no ghostty
-#   config directory, so a machine without ghostty takes it BY DEFAULT.
-#   3.8 stages both managed blocks with `--terminal ghostty --tmux host`
-#   and then runs `--terminal none` over them.
-#
-# WHY 3.9 EXISTS
-#   There is a THIRD place that removes a managed block, and it is not a
-#   removal path at all from the outside: `_apply_ghostty` itself calls
-#   `_block_remove "${_tmux_conf}"` on its tmux-INSIDE branch, to take out
-#   the block an earlier `--tmux host` run left behind. That is the switch
-#   BACK - the user tried tmux on the host, did not like it, and ran
-#   `just box setup --tmux inside`.
-#
-#   Items 3.2, 3.5 and 3.6 all take that branch, but none of them ever
-#   reaches the removal: their ~/.tmux.conf holds no block, so
-#   `_block_remove` returns on its first line. 3.3 and 3.7 exercise
-#   `_apply_disable`, 3.8 exercises `_apply_no_terminal` - two other,
-#   independent pieces of removal code. Degrade ONLY this call site so it
-#   empties ~/.tmux.conf instead of stripping its block and items 3.1 to
-#   3.8 all stay green, lint stays green, every unit case stays green, and
-#   the integration case that runs exactly this transition only asked for
-#   `managed block: absent`, which an emptied file satisfies too.
-#
-#   3.9 stages the pair with `--terminal ghostty --tmux host`, measures
-#   that BOTH blocks are really there, then runs `--terminal ghostty
-#   --tmux inside` over them: the ghostty block is rewritten with the
-#   inside body, the ~/.tmux.conf block is removed and reported, and the
-#   user's own ~/.tmux.conf lines must be exactly what is left of that
-#   file.
+# Items 3.1-3.6 cover dry-run, direct entry, disable, refusal, explicit
+# distrobox and the status states. 3.7 checks distrobox.conf isolation;
+# 3.8 checks terminal none; 3.9 checks config.ghostty migration.
 #
 # Every item runs against a THROWAWAY HOME under its own mktemp directory,
 # so the maintainer's real configuration is never read or written, and the
@@ -203,16 +143,6 @@ DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 # is the whole of issue #175, and it lives in the TEXT - no exit code and
 # no file count can see a regression back to the bare name.
 MANAGED_CMD="command = '<D>' enter dev"
-
-# The two bodies the `--tmux host` pair writes (items 3.7, 3.8 and 3.9). tmux
-# runs `default-command` through /bin/sh, so the path goes in double-quoted
-# inside tmux's own fully-literal single quotes (issue #175 round 1). 3.8
-# stages the same pair and then names both bodies again in its removal
-# lines: `--terminal none` reports the block it took out of each file; 3.9
-# stages it once more and names the tmux.conf body in the ONE removal line
-# the switch back to `--tmux inside` prints.
-MANAGED_HOST_CMD="command = tmux new -A -s main"
-MANAGED_TMUX_CONF_BODY="set -g default-command '\"<D>\" enter dev'"
 
 # The line `_apply_no_terminal` logs instead of writing a profile (item
 # 3.8). The BARE `distrobox` in it is deliberate and is pinned here as
@@ -1250,7 +1180,7 @@ _item_3_6() {
 
     # (2) an older setup's bare name (this version refuses to write one,
     # so the only way to reach the state is to stage it by hand).
-    sed -i "s|^command = .*|command = 'distrobox' enter dev -- tmux new -A -s main|" \
+    sed -i "s|^command = .*|command = 'distrobox' enter dev|" \
         "${ITEM_H}/.config/ghostty/config" || {
         _fail "3.6: cannot stage the bare-name managed block"
         return 1
