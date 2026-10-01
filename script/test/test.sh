@@ -152,6 +152,7 @@ _required_specs() {
                 unit/adr/0008_spec.bats \
                 unit/adr/0009_spec.bats \
                 unit/adr/0010_spec.bats \
+                unit/adr/0011_spec.bats \
                 unit/adr/0012_spec.bats \
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \

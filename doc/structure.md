@@ -54,7 +54,7 @@ worktool/
 │   │   ├── commit_email_spec.bats  lib/commit_email.sh:noreply 通過、一般 email 失敗、noreply@github.com committer 不豁免 author、偽造日期／web-flow committer 不能繞過、範圍輸入狀態矩陣(事件用到的欄位缺值即擋、另一事件的欄位忽略)與實際檢查的 commit 集合、git log 往返(#234)
 │   │   ├── milestone_gate_yml_spec.bats  milestone-gate.yml 的觸發事件、權限、只跑 main 的可信 checkout、status context 名稱、job 不與 context 同名(文字層級)
 │   │   ├── adr_spec.bats         所有 invariant ADR 的資料驅動格式守門:四節非空、引用 spec 存在、待補揭露
-│   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔:0004、0005、0006、0007、0008、0009、0010、0012、0013)
+│   │   ├── adr/                  各 ADR 特有的語意斷言(依 ADR 編號分檔:0004、0005、0006、0007、0008、0009、0010、0011、0012、0013)
 │   │   │   ├── 0004_spec.bats   ADR 0004 的討論、引用案例、writer、狀態鍵例外與 contract 對齊
 │   │   │   ├── 0007_spec.bats   ADR 0007 的機制引用、精確案例名、退出碼文件與 contract 索引守門(#205)
 │   │   │   ├── 0008_spec.bats  不變量 5 的 issue、just 命令模型連結、引用案例與介面語意守門
@@ -342,7 +342,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`adr_spec`、`adr/` 底下每份 ADR spec、`contract_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`adr_spec`、`adr/` 底下每份 ADR spec（含 `0011_spec.bats` 的 host 依賴最小語意斷言）、`contract_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;matrix:`enforce_milestone_gate_approval_spec`、`enforce_no_attribution_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
