@@ -1042,6 +1042,32 @@ _item_3_4() {
         rm -f "${ITEM_H}/.config/${_rel}" || return 1
     done
 
+    local _case _file _copy
+    for _case in distrobox/distrobox.conf ghostty/config ghostty/config+config.ghostty; do
+        _file="${ITEM_H}/.config/${_case%%+*}"
+        mkdir -p "${_file%/*}" || return 1
+        printf '%s\n%s\n%s\n' "${VERIFY_BLOCK_BEGIN}" '# existing body' "${VERIFY_BLOCK_END}" >"${_file}" || return 1
+        if [[ "${_case}" == *+* ]]; then
+            cp "${_file}" "${ITEM_H}/.config/ghostty/config.ghostty" || return 1
+        else
+            _copy="$(cat "${_file}")" || return 1
+            printf '%s\n' "${_copy}" >>"${_file}" || return 1
+        fi
+        cp -a "${ITEM_H}" "${ITEM_T}/before" || return 1
+        _run_norm "${_env[@]}" just box setup --dry-run || return 1
+        [[ "${LAST_RC}" -eq 1 ]] || _bad=1
+        _run_norm "${_env[@]}" just box setup || return 1
+        [[ "${LAST_RC}" -eq 1 ]] || _bad=1
+        diff -r "${ITEM_T}/before" "${ITEM_H}" || return 1
+        if [[ "${_case}" != *+* ]]; then
+            _run_norm "${_env[@]}" just box status || return 1
+            [[ "${LAST_RC}" -eq 0 && "${LAST_OUT}" == *'managed block: MALFORMED'* ]] || _bad=1
+        fi
+        printf 'multiple-refused=%s unchanged=yes\n' "${_case}"
+        rm -rf "${ITEM_T}/before" || return 1
+        rm -f "${_file}" "${ITEM_H}/.config/ghostty/config.ghostty" || return 1
+    done
+
     if [[ "${_bogus_rc}" -ne 2 ]]; then
         _fail "3.4: just box setup --bogus exited ${_bogus_rc}, expected 2 (the script refuses an unknown option)"
         _bad=1

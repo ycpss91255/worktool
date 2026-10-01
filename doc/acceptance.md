@@ -749,13 +749,14 @@ rc=0
       just verify setup 3.3; echo rc=$?
       ```
       預期 `rc=0`；先量區塊確實存在，再判斷移除，並比對使用者內容。
-  - [ ] 3.4 錯誤輸入 exit 2、不建檔；壞掉的 terminal 設定不論 default／user 來源都 exit 1；受管標記損壞時 dry-run 與實際 setup 都拒絕、整個 HOME 不變，status 報 MALFORMED（PR #232、#351）
+  - [ ] 3.4 錯誤輸入 exit 2、不建檔；壞掉的 terminal 設定不論 default／user 來源都 exit 1；受管標記損壞或多個區塊時 dry-run 與實際 setup 都拒絕、整個 HOME 不變，status 報 MALFORMED（PR #232、#351）
     - 預期看到資訊：unknown option `--bogus`、`rc=2`、`files=0`；兩次 `invalid value 'sideways' for terminal (expected ghostty|none)` 與 `rc=1`。逐檔印 `malformed-refused=distrobox/distrobox.conf unchanged=yes`、`malformed-refused=ghostty/config unchanged=yes`、`malformed-refused=ghostty/config.ghostty unchanged=yes`；各檔 status 是 `managed block: MALFORMED - BEGIN at line 1 has no END; fix or remove the markers, then re-run: just box setup`。
     - 驗收方式
       ```bash
       just verify setup 3.4; echo rc=$?
       ```
       預期 `rc=0`；拒絕後以 HOME 全目錄比對確認沒有部分寫入。
+      同檔兩個區塊（distrobox.conf、Ghostty legacy）與 Ghostty 兩檔各一個區塊都必須拒絕，不再折疊成一個；印 `multiple-refused=<檔案> unchanged=yes`。同檔重複區塊 status 報 MALFORMED；跨檔各一個區塊由 setup 的總數驗證拒絕。
   - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
     - 預期看到資訊
       ```text

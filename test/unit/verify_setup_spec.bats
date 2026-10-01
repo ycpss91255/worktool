@@ -1092,3 +1092,11 @@ EOF
     assert_line "malformed-refused=ghostty/config unchanged=yes"
     assert_line "malformed-refused=ghostty/config.ghostty unchanged=yes"
 }
+
+@test "3.4: multiple blocks are refused rather than collapsed" {
+    run "${VERIFY}" 3.4
+    assert_success
+    assert_line "multiple-refused=distrobox/distrobox.conf unchanged=yes"
+    assert_line "multiple-refused=ghostty/config unchanged=yes"
+    assert_line "multiple-refused=ghostty/config+config.ghostty unchanged=yes"
+}
