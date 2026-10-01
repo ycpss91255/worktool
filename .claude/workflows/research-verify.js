@@ -1,6 +1,6 @@
 export const meta = {
   name: 'research-verify',
-  description: 'Research one question with agy (gemini), verify every cited source with codex, sample sources with a claude agent, synthesize, and record bounded zh-TW comments on the issue; never substitutes another model when agy fails',
+  description: 'Research with agy, verify sources independently and record the synthesis on the issue.',
   whenToUse: 'Any fact-finding the maintainer wants researched (agy finds, claude and codex verify). Pass args {repo, repoDir, issue, question, context?, sources?, timeoutMin?}.',
   phases: [
     { title: 'Research', detail: 'agent: draw the run nonce from /dev/urandom; agent: agy headless with a hard timeout, retry once; failure is returned, never substituted (structured)' },
@@ -83,12 +83,14 @@ const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const SOURCES = checkSources(A.sources)
 const CONTEXT = checkContext(A.context)
+const RUN_ID = `research #${A.issue}`
+log(RUN_ID)
 const NONCE_RE = /^[0-9a-f]{16}$/
 const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
 phase('Research')
-const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
+const nonce = await agent(NONCE, { label: `${RUN_ID} nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
 if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
 const RUN = nonce.nonce
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/research-${A.issue}-${RUN}`
@@ -262,15 +264,15 @@ const COMMENT_URL = new RegExp(`^https://github\\.com/${REPO.replace(/\./g, '\\.
 const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
 const stop = (status, codex, claims, detail, synthesis = null) => ({ issue: A.issue, status, codex, claims, comment: '', synthesis, detail })
 
-const res = await agent(RESEARCH(), { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
+const res = await agent(RESEARCH(), { label: `${RUN_ID} agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
 if (res && res.status === 'bad-source') return stop('sources-invalid', 'skipped', 0, res.detail)
 if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }
 log(`#${A.issue}: agy ok after ${res.attempts} attempt(s): ${res.detail}`)
 
 phase('Verify')
-const codex = await agent(CODEX_STEP(), { label: `codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+const codex = await agent(CODEX_STEP(), { label: `${RUN_ID} codex-verify:#${A.issue}`, phase: 'Verify', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
 if (!codex || codex.status !== 'ok') return stop('verify-failed', (codex && codex.status) || 'no-output', 0, (codex && codex.detail) || 'codex returned no output')
-const claude = await agent(CLAIM_CHECK, { label: `claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' })
+const claude = await agent(CLAIM_CHECK, { label: `${RUN_ID} claude-verify:#${A.issue}`, phase: 'Verify', schema: CLAIMS_SCHEMA, agentType: 'general-purpose' })
 // Fail closed: codex must have output and claude must have sampled sources, or nothing is concluded.
 const claims = (claude && Array.isArray(claude.claims) && claude.claims.every(claimOk)) ? claude.claims : []
 const codexState = (codex && codex.status) || 'no-output'
@@ -278,15 +280,15 @@ log(`#${A.issue}: claude checked ${claims.length} claim(s); codex ${codexState}`
 if (!claims.length || codexState !== 'ok') return stop('verify-failed', codexState, claims.length, `claude claims: ${claims.length}; codex: ${codexState}${codex && codex.detail ? ` (${codex.detail})` : ''}`)
 
 phase('Synthesize')
-const s = await agent(SYNTH(claims), { label: `synthesize:#${A.issue}`, phase: 'Synthesize', schema: SYNTH_SCHEMA, agentType: 'general-purpose' })
+const s = await agent(SYNTH(claims), { label: `${RUN_ID} synthesize:#${A.issue}`, phase: 'Synthesize', schema: SYNTH_SCHEMA, agentType: 'general-purpose' })
 if (!synthOk(s)) return stop('synthesize-failed', 'ok', claims.length, 'synthesis missing or malformed', s || null)
 
 phase('Record')
 const recordText = `${renderConclusion(s, res.attempts)}\n===CLAIMS-${RUN}===\n${renderClaims(claims)}`
-const rec = await agent(RECORD_SPLIT(recordText), { label: `record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
+const rec = await agent(RECORD_SPLIT(recordText), { label: `${RUN_ID} record:#${A.issue}`, phase: 'Record', schema: RECORD_SCHEMA, agentType: 'general-purpose' })
 const url = rec ? rec.url : undefined
 // Fail closed (#243): no answer counts as dirty; the extra lines are the detail.
-const chk = await agent(REPO_CHECK, { label: `repo-check:#${A.issue}`, phase: 'Record', schema: REPO_CHECK_SCHEMA, agentType: 'general-purpose' })
+const chk = await agent(REPO_CHECK, { label: `${RUN_ID} repo-check:#${A.issue}`, phase: 'Record', schema: REPO_CHECK_SCHEMA, agentType: 'general-purpose' })
 const extra = (chk && isList(chk.extra)) ? chk.extra : ['repo-check returned no list']
 const status = extra.length ? 'repo-dirty' : (checkCommentUrl(url) ? 'recorded' : 'record-failed')
 return { issue: A.issue, status, codex: 'ok', claims: claims.length, comment: checkCommentUrl(url) ? url : '', synthesis: s, detail: extra.length ? `repoDir changed during the run: ${extra.join(' | ')}` : (checkCommentUrl(url) ? '' : `record URL is not a comment on ${REPO}#${A.issue}: ${JSON.stringify(url)}`) }

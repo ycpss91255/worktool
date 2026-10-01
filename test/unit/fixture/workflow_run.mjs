@@ -38,6 +38,7 @@ const replies = JSON.parse(repliesJson)
 const calls = []
 const ran = []
 const workflowCalls = []
+const logs = []
 
 // Check the body before each shell launch, as registered PreToolUse hooks do.
 const checkHooks = (cmd) => {
@@ -87,8 +88,9 @@ const withStdout = (value, stdout) => {
 
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
-  calls.push({ label, schema: opts.schema || null, prompt })
-  if (mode === 'exec-stage-checks' && label.startsWith(process.env.PL_STAGE === 'Implement' ? 'implement:' : 'fix:')) {
+  const role = label.replace(/^\S+ #[0-9]+ /, '')
+  calls.push({ label, role, schema: opts.schema || null, prompt })
+  if (mode === 'exec-stage-checks' && role.startsWith(process.env.PL_STAGE === 'Implement' ? 'implement:' : 'fix:')) {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
     if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed') {
@@ -96,10 +98,10 @@ const agent = async (prompt, opts = {}) => {
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
-  if (mode === 'exec-record' && !label.startsWith('record:')) return reply(label)
-  if (!['exec', 'exec-hooks', 'exec-record'].includes(mode) && !(mode === 'exec-stage-checks' && label.startsWith('stage-check:'))) return reply(label)
+  if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
+  if (!['exec', 'exec-hooks', 'exec-record'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
   const { ok, stdout } = play(prompt)
-  return ok ? withStdout(reply(label), stdout) : null
+  return ok ? withStdout(reply(role), stdout) : null
 }
 const parallel = async (fns) => Promise.all(fns.map(f => f()))
 const workflow = async (options, workflowArgs) => {
@@ -111,10 +113,10 @@ const AsyncFunction = (async () => {}).constructor
 const runWorkflow = async (path, workflowArgs) => {
   const src = readFileSync(path, 'utf8').replace(/^export const meta/m, 'const meta')
   const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', src)
-  return body(workflowArgs, agent, parallel, workflow, () => {}, () => {})
+  return body(workflowArgs, agent, parallel, workflow, () => {}, message => logs.push(message))
 }
 
-const out = { result: null, error: null, calls, workflowCalls, ran }
+const out = { result: null, error: null, calls, workflowCalls, ran, logs }
 try {
   out.result = await runWorkflow(script, JSON.parse(argsJson))
 } catch (e) {

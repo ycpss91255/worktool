@@ -1,6 +1,6 @@
 export const meta = {
   name: 'pr-loop',
-  description: 'One sub-issue -> one PR: selected implementer (codex by default) uses TDD in its own worktree, waits for CI, the other side reviews, then fixes and re-reviews up to maxRounds; never merges',
+  description: 'Drive one issue through implementation, CI and independent review without merging.',
   whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
@@ -46,6 +46,8 @@ if (IMPLEMENTER !== 'codex' && IMPLEMENTER !== 'claude') throw new Error(`pr-loo
 if (codexArg === 'off' && IMPLEMENTER === 'codex') throw new Error('pr-loop: args.codex "off" cannot use implementer "codex"; use implementer: "claude"')
 const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
 if (!Number.isInteger(MAX) || MAX < 0) throw new Error(`pr-loop: args.maxRounds must be a non-negative integer, got ${JSON.stringify(A.maxRounds)}`)
+const RUN_ID = `pr-loop #${A.issue}`
+log(RUN_ID)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
@@ -182,7 +184,7 @@ jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$r
 }`
   const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
 Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
-    label: `stage-check:${stage}:#${pr}`,
+    label: `${RUN_ID} stage-check:${stage}:#${pr}`,
     schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
     agentType: 'general-purpose',
   })
@@ -207,32 +209,32 @@ ${TDD_IMPLEMENT_RULES}
 Act directly as Claude; do not invoke codex or delegate implementation.
 Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}.
 TASK (issue #${A.issue}): ${A.task}
-For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
+For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
   if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
   phase('Review')
   const reviewed = await agent(`${GUARDRAILS}
 ${SKILL_LOAD.claude}
 ${TDD_REVIEW_RULES}
-You are a separate Claude reviewer, not the editor. Review only the complete diff in ${WT}: git diff origin/main...HEAD and any uncommitted diff. Do not run codex or a full-context review. Apply all required fixes in this worktree with TDD for behaviour changes; append independent commits without rewriting pushed history. Run ${GATES} blocking in the foreground after fixes. Do not push or open a PR. Return verdict mergeable only when every required fix is applied and gates pass; otherwise return blocked with concrete blocking items.`, { label: `review:#${A.issue}:light`, phase: 'Review', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+You are a separate Claude reviewer, not the editor. Review only the complete diff in ${WT}: git diff origin/main...HEAD and any uncommitted diff. Do not run codex or a full-context review. Apply all required fixes in this worktree with TDD for behaviour changes; append independent commits without rewriting pushed history. Run ${GATES} blocking in the foreground after fixes. Do not push or open a PR. Return verdict mergeable only when every required fix is applied and gates pass; otherwise return blocked with concrete blocking items.`, { label: `${RUN_ID} review:#${A.issue}:light`, phase: 'Review', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
-In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
+In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
   phase('Locate')
-  const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+  const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
   const checked = await checkStage(loc.pr, 'Implement')
   if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
-  const ci = await agent(CI(loc.pr), { label: `ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
 phase('Implement')
-await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
+await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
 
 phase('Locate')
-const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
@@ -242,19 +244,19 @@ sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
-let ci = await agent(CI(pr), { label: `ci:#${pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
 
 if (!CODEX) {
-  await agent(NOCODEX(pr), { label: `nocodex:#${pr}`, phase: 'Codex', agentType: 'general-purpose' })
+  await agent(NOCODEX(pr), { label: `${RUN_ID} nocodex:#${pr}`, phase: 'Codex', agentType: 'general-purpose' })
   return result({ pr, sha, ciState: 'green', codexVerdict: 'off', rounds: 0, blockingLeft: [] })
 }
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
   const reviewByClaude = IMPLEMENTER === 'codex'
-  const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+  const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
   verdict = c.verdict
   blocking = c.blocking || []
@@ -266,10 +268,10 @@ for (;;) {
   const fixBrief = IMPLEMENTER === 'codex'
     ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
-  await agent(fixBrief, { label: `fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  await agent(fixBrief, { label: `${RUN_ID} fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
   const checked = await checkStage(pr, 'Fix', sha)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
-  ci = await agent(CI(pr), { label: `ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
 }

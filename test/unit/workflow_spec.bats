@@ -51,16 +51,16 @@ setup() {
     run _pl_run
     assert_success
     run jq -cr '[
-        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/n")),
-        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/.scratch/n"))
+        (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("/work/../worktree/n")),
+        (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("/work/../worktree/.scratch/n"))
     ]' <<<"${output}"
     assert_output '[true,true]'
 
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     run jq -cr '[
-        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7-0123456789abcdef")),
-        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("[ -z \"$before\" ] && mkdir -p")),
+        (.calls[] | select(.role | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7-0123456789abcdef")),
+        (.calls[] | select(.role | startswith("agy:")) | .prompt | contains("[ -z \"$before\" ] && mkdir -p")),
         (.calls[-1].prompt | contains("git -C '\''/w'\'' status --porcelain --untracked-files=all -- .")),
         (.calls[-1].prompt | contains(":(exclude)") | not)
     ]' <<<"${output}"
@@ -147,7 +147,7 @@ _meta_skeleton() {
     for mode in full light; do
         run _pl_run "{\"mode\":\"${mode}\"}"
         assert_success
-        run jq -cr '[(.calls | map(select(.label | startswith("locate:"))) | length), (.calls[] | select(.label | startswith("locate:")) | .schema.required), ([.calls[].prompt | scan("Closes #283")] | length)]' <<<"${output}"
+        run jq -cr '[(.calls | map(select(.role | startswith("locate:"))) | length), (.calls[] | select(.role | startswith("locate:")) | .schema.required), ([.calls[].prompt | scan("Closes #283")] | length)]' <<<"${output}"
         assert_output '[1,["pr","sha"],1]'
     done
 }
@@ -165,7 +165,7 @@ _meta_skeleton() {
     run _pl_run '{"mode":"full"}'
     assert_success
     assert_output "${default}"
-    run jq -cr '[.error, .result.codexVerdict, (.calls[] | select(.label | startswith("review:")) | .schema.properties.verdict.enum)]' <<<"${output}"
+    run jq -cr '[.error, .result.codexVerdict, (.calls[] | select(.role | startswith("review:")) | .schema.properties.verdict.enum)]' <<<"${output}"
     assert_output '[null,"mergeable",["mergeable","blocked","no-output"]]'
 }
 
@@ -176,7 +176,7 @@ _meta_skeleton() {
             run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" \
                 '{"verdict":"no-output","blocking":[],"nonBlocking":[],"answer":""}'
             assert_success
-            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.role | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
             assert_output '[null,true,true,0,0]'
         done
     done
@@ -188,7 +188,7 @@ _meta_skeleton() {
         for implementer in codex claude; do
             run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" 'null'
             assert_success
-            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.role | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
             assert_output '[null,true,true,0,0]'
         done
     done
@@ -292,55 +292,55 @@ _pl_blocked_run() {
 @test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
     run _pl_run
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n -o /work/../worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n -o /work/../worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
 @test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
     run _pl_run
     assert_success
-    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/../worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    run jq -cr '(.calls[] | select(.role | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/../worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
     assert_output 'true'
 }
 
 @test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
     run _pl_run '{"implementer":"claude"}'
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
 @test "pr-loop (node): Fix rounds return to the selected implementer" {
     run _pl_blocked_run codex
     assert_success
-    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n")' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n")' <<<"${output}"
     assert_output 'true'
 
     run _pl_blocked_run claude
     assert_success
-    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C")' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C")' <<<"${output}"
     assert_output 'false'
 }
 
 @test "pr-loop (node): each implementer loads its TDD instructions for Implement and Fix" {
     run _pl_run
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("implement:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("implement:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("fix:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | (.prompt | split("brief:\n")[1]) | [contains("read .agents/skills/tdd/SKILL.md first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 
     run _pl_run '{"implementer":"claude"}'
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("implement:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("implement:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 
     run _pl_blocked_run claude
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("fix:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | .prompt | [contains("use the Skill tool to load the tdd skill first and follow it"), contains("issue 驗收 section as the approved behaviour list"), contains("do not ask the maintainer"), contains("each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit"), contains("Never put a batch of tests in one commit")]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 }
 
@@ -349,7 +349,7 @@ _pl_blocked_run() {
     for implementer in codex claude; do
         run _pl_run "{\"implementer\":\"${implementer}\"}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("implement:")) | .prompt |
             contains("just test <tier> <spec> [--filter]"),
             contains("before pushing run just test lint and just test changed"),
             contains("Never run a whole tier locally; CI runs every tier"),
@@ -359,7 +359,7 @@ _pl_blocked_run() {
 
         run _pl_blocked_run "${implementer}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("fix:")) | .prompt |
             contains("just test <tier> <spec> [--filter]"),
             contains("before pushing run just test lint and just test changed"),
             contains("Never run a whole tier locally; CI runs every tier"),
@@ -374,7 +374,7 @@ _pl_blocked_run() {
     for implementer in codex claude; do
         run _pl_run "{\"implementer\":\"${implementer}\"}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("implement:")) | .prompt |
             contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
             contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
             contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
@@ -383,7 +383,7 @@ _pl_blocked_run() {
 
         run _pl_blocked_run "${implementer}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("fix:")) | .prompt |
             contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
             contains("The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease"),
             contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
@@ -397,14 +397,14 @@ _pl_blocked_run() {
     for implementer in codex claude; do
         run _pl_run "{\"implementer\":\"${implementer}\"}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("implement:")) | .prompt |
             contains("End the final paragraph of every commit message with Refs: #283"),
             contains("For multiple issues, use one Refs: #<issue> line per issue")] | all' <<<"${output}"
         assert_success
         assert_output 'true'
         run _pl_blocked_run "${implementer}"
         assert_success
-        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+        run jq -e '[.calls[] | select(.role | startswith("fix:")) | .prompt |
             contains("End the final paragraph of every commit message with Refs: #283"),
             contains("For multiple issues, use one Refs: #<issue> line per issue"),
             (contains("with no trailer lines") | not)] | all' <<<"${output}"
@@ -418,7 +418,7 @@ _pl_blocked_run() {
     for implementer in codex claude; do
         run _pl_run "{\"implementer\":\"${implementer}\"}"
         assert_success
-        run jq -cr '.calls[] | select(.label | startswith("review:")) | .prompt | [contains("commit history is vertical slices"), contains("tests verify behaviour through the public interface"), contains("Structure- or implementation-detail tests are blocking")]' <<<"${output}"
+        run jq -cr '.calls[] | select(.role | startswith("review:")) | .prompt | [contains("commit history is vertical slices"), contains("tests verify behaviour through the public interface"), contains("Structure- or implementation-detail tests are blocking")]' <<<"${output}"
         assert_output '[true,true,true]'
     done
 }
@@ -426,24 +426,24 @@ _pl_blocked_run() {
 @test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
     run _pl_run
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
     assert_output '[true,true,true,true,true,true]'
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
     assert_output '[true,true,true,true,true,true]'
 }
 
 @test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
     run _pl_run
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
     assert_output '[true,true,true,true,true]'
 }
 
@@ -462,7 +462,7 @@ _pl_blocked_run() {
 
     run _pl_run '{"implementer":"codex","codex":"on"}'
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Review PR #7") and (contains("Run ONE codex re-verification") | not)), ([.calls[] | select(.label | startswith("nocodex:"))] | length)]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Review PR #7") and (contains("Run ONE codex re-verification") | not)), ([.calls[] | select(.role | startswith("nocodex:"))] | length)]' <<<"${output}"
     assert_output '[null,true,0]'
 }
 
@@ -492,7 +492,7 @@ _pl_blocked_run() {
     refute [ "$(_pl_scope_rc "${output}")" = "0" ]
     refute [ -s "${WORK}/scope-r1.md" ]
     # the prompt tells the agent to stop the round instead of reviewing without the scope
-    run jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("review:")) | .prompt' <<<"${output}"
     assert_output --partial "讀取 issue #238 失敗,本輪未完成"
 }
 
@@ -728,7 +728,7 @@ _rv_with() {
 @test "research-verify #311: agy brief prioritizes Ubuntu Canonical and ROS precedents" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
-    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("agy:")) | .prompt' <<<"${output}"
     assert_output --partial '前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充'
 }
 
@@ -755,9 +755,9 @@ _rv_with() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     local json="${output}"
-    run jq -r '[.calls[].label | select(startswith("codex-verify:") or startswith("claude-verify:"))] | .[]' <<<"${json}"
+    run jq -r '[.calls[].role | select(startswith("codex-verify:") or startswith("claude-verify:"))] | .[]' <<<"${json}"
     assert_output "$(printf '%s\n' 'codex-verify:#7' 'claude-verify:#7')"
-    run jq -r '.calls[] | select(.label | startswith("claude-verify:")) | .prompt' <<<"${json}"
+    run jq -r '.calls[] | select(.role | startswith("claude-verify:")) | .prompt' <<<"${json}"
     assert_output --partial 'Read codex'
     assert_output --partial 'Sample a subset of cited primary sources'
     assert_output --partial 'at least one'
@@ -774,7 +774,7 @@ _rv_with() {
     json="${output}"
     run jq -r '.result.status' <<<"${json}"
     assert_output recorded
-    run jq -r '.calls[] | select(.label | startswith("synthesize:")) | .prompt' <<<"${json}"
+    run jq -r '.calls[] | select(.role | startswith("synthesize:")) | .prompt' <<<"${json}"
     assert_output --partial 'disagreements'
     assert_output --partial 'Never choose a side'
     refute_output --partial 'a claim any verifier refutes goes to'
@@ -853,7 +853,7 @@ _rv_err() {
     run _rv_err '.'
     assert_output "null"
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","context":"ctx-9"}' "$(_rv_ok_replies)"
-    run jq -r '.error, ((.calls[] | select(.label | startswith("agy:")) | .prompt) | contains("背景:ctx-9"))' <<<"${output}"
+    run jq -r '.error, ((.calls[] | select(.role | startswith("agy:")) | .prompt) | contains("背景:ctx-9"))' <<<"${output}"
     assert_output "$(printf '%s\n' null true)"
 }
 
@@ -879,7 +879,7 @@ _rv_err() {
 # The source check command the Research prompt tells the agent to run first.
 _rv_src_check() {
     _rv_run "$(jq -cn --args '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:$ARGS.positional}' "$@")" "$(_rv_ok_replies)" \
-        | jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' | grep -o 'cd / && for f in [^`]*'
+        | jq -r '.calls[] | select(.role | startswith("agy:")) | .prompt' | grep -o 'cd / && for f in [^`]*'
 }
 
 @test "research-verify (node): Research checks every source exists and is readable before agy, and says bad-source" {
@@ -894,11 +894,11 @@ _rv_src_check() {
     assert_failure 3
     assert_output "research-verify: args.sources: not readable: ${d}/missing"
     run _rv_run "$(jq -cn --arg s "${d}/f 1" '{repo:"o/r",repoDir:"/w",issue:7,question:"q",sources:[$s]}')" "$(_rv_ok_replies)"
-    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("agy:")) | .prompt' <<<"${output}"
     assert_output --partial 'return status "bad-source"'
     # no sources: no check step
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
-    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt | contains("cd / && for f in")' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("agy:")) | .prompt | contains("cd / && for f in")' <<<"${output}"
     assert_output "false"
 }
 
@@ -1284,7 +1284,7 @@ EOF
 @test "research-verify (node): the claude verifier's schema demands at least one claim" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
-    run jq -r '.calls[] | select(.label | startswith("claude-verify:")) | .schema.properties.claims.minItems' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("claude-verify:")) | .schema.properties.claims.minItems' <<<"${output}"
     assert_output "1"
 }
 
@@ -1304,7 +1304,7 @@ EOF
         val="${key_val#*=}"
         run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" "${key}" "${val}")"
         assert_success
-        run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("synthesize:") or startswith("record:"))] | length)' <<<"${output}"
+        run jq -r '.result.status, .result.comment, ([.calls[].role | select(startswith("synthesize:") or startswith("record:"))] | length)' <<<"${output}"
         assert_output "$(printf '%s\n' verify-failed '' 0)"
     done
 }
@@ -1324,7 +1324,7 @@ EOF
                '{"verified":[],"refuted":[],"needsExperiment":[],"recommendation":"r","parameters":[]}'; do
         run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_with "${ok}" 'synthesize:' "${val}")"
         assert_success
-        run jq -r '.result.status, .result.comment, ([.calls[].label | select(startswith("record:"))] | length)' <<<"${output}"
+        run jq -r '.result.status, .result.comment, ([.calls[].role | select(startswith("record:"))] | length)' <<<"${output}"
         assert_output "$(printf '%s\n' synthesize-failed '' 0)"
     done
 }
@@ -1368,7 +1368,7 @@ _codex_rel_answer() {
         "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
     assert_success
     local prompt
-    prompt="$(jq -r '.calls[] | select(.label | startswith("review:")) | .prompt' <<<"${output}")"
+    prompt="$(jq -r '.calls[] | select(.role | startswith("review:")) | .prompt' <<<"${output}")"
     span="$(jq -rn --arg p "${prompt}" '$p | [match("`(cd [^`]*> answer-r1\\.md)`").captures[0].string][0]')"
     assert [ -n "${span}" ]
     mkdir -p "${scratch}"
@@ -1660,11 +1660,11 @@ _rv_assert_fails_closed() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     local json="${output}"
-    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
+    run jq -r '[.calls[] | select(.role | startswith("nonce:") | not) | .role | sub(":.*"; ":")] | join(" ")' <<<"${json}"
     assert_output "agy: codex-verify: claude-verify: synthesize: record: repo-check:"
-    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7-0123456789abcdef/\"") | not) | .label] | length' <<<"${json}"
+    run jq -r '[.calls[] | select(.role | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7-0123456789abcdef/\"") | not) | .role] | length' <<<"${json}"
     assert_output "0"
-    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
+    run jq -r '[.calls[] | select(.role | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .role] | length' <<<"${json}"
     assert_output "0"
 }
 
@@ -1677,7 +1677,7 @@ _rv_assert_fails_closed() {
     run jq -r '.calls[1].prompt | [match("`([^`]*)`"; "g").captures[0].string][0]' <<<"${json}"
     assert_output --regexp "^cd '/w' && before=\\\$\\(git -C '/w' status --porcelain --untracked-files=all -- \\.\\) && \\[ -z \"\\\$before\" \\] && mkdir -p "
     assert_output --partial '> status-before.txt'
-    run jq -r '.calls[-1].label, .calls[-1].prompt' <<<"${json}"
+    run jq -r '.calls[-1].role, .calls[-1].prompt' <<<"${json}"
     assert_output --partial "repo-check:#7"
     assert_output --partial "git -C '/w' status --porcelain --untracked-files=all -- . > status-after.txt"
     run grep -c "schema: REPO_CHECK_SCHEMA" "${RESEARCH}"
@@ -1771,7 +1771,7 @@ _rv_assert_fails_closed() {
 @test "pr-loop (node): light uses separate Claude editors and reviewers without codex (#310)" {
     run _pl_run '{"mode":"light","codex":"off"}'
     assert_success
-    run jq -cr '[.error, [.calls[].label], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
+    run jq -cr '[.error, [.calls[].role], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
     assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
 }
 
@@ -1823,7 +1823,7 @@ _pl_stage_run() {
         run _pl_stage_run "${impl}"
         assert_success
         local json="${output}"
-        run jq -cr '[.result.codexVerdict, .result.rounds, ([.calls[].label | select(startswith("review:"))] | length), ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        run jq -cr '[.result.codexVerdict, .result.rounds, ([.calls[].role | select(startswith("review:"))] | length), ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
         assert_output '["blocked",1,1,1]'
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial 'git status: ?? pending.txt'
@@ -1839,7 +1839,7 @@ _pl_stage_run() {
         run _pl_stage_run "${impl}" unpushed
         assert_success
         local json="${output}"
-        run jq -cr '[.result.codexVerdict, ([.calls[].label | select(startswith("review:"))] | length), ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        run jq -cr '[.result.codexVerdict, ([.calls[].role | select(startswith("review:"))] | length), ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
         assert_output '["blocked",1,1]'
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial 'git status: (clean)'
@@ -1857,7 +1857,7 @@ _pl_stage_run() {
         run _pl_stage_run "${impl}" unchanged
         assert_success
         local json="${output}"
-        run jq -cr '[.result.codexVerdict, ([.calls[].label | select(startswith("review:"))] | length), ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        run jq -cr '[.result.codexVerdict, ([.calls[].role | select(startswith("review:"))] | length), ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
         assert_output '["blocked",1,1]'
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial "PR head: ${PL_BEFORE}; before: ${PL_BEFORE}"
@@ -1878,7 +1878,7 @@ _pl_stage_run() {
             "${replies}" exec-stage-checks
         assert_success
         json="${output}"
-        run jq -cr '[.result.ciState, ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        run jq -cr '[.result.ciState, ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
         assert_output '["none",0]'
         run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
         assert_output --partial 'Implement check failed:'
@@ -1903,8 +1903,8 @@ _pl_stage_run() {
         run _pl_stage_run "${impl}" pushed
         assert_success
         run jq -cr '[.error, .result.ciState, .result.rounds, .result.blockingLeft,
-            ([.calls[].label | select(startswith("review:"))] | length),
-            ([.calls[].label | select(startswith("ci:"))] | length), [.ran[].rc]]' <<<"${output}"
+            ([.calls[].role | select(startswith("review:"))] | length),
+            ([.calls[].role | select(startswith("ci:"))] | length), [.ran[].rc]]' <<<"${output}"
         assert_output '[null,"green",1,["broken"],2,2,[0,0]]'
         rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
     done
@@ -1924,7 +1924,7 @@ _pl_stage_run() {
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
         '{"implement:":{"status":"failed","reason":"commit: noreply identity is missing"}}'
     assert_success
-    run jq -cr '[.result.blockingLeft, [.calls[].label], (.calls[0].schema.required | index("reason") != null)]' <<<"${output}"
+    run jq -cr '[.result.blockingLeft, [.calls[].role], (.calls[0].schema.required | index("reason") != null)]' <<<"${output}"
     assert_output '[["light editing did not complete: commit: noreply identity is missing"],["implement:#331"],true]'
 }
 
@@ -1932,7 +1932,7 @@ _pl_stage_run() {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
     assert_success
-    run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
+    run jq -cr '[.error, [.calls[].role], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
 }
 
@@ -1955,14 +1955,14 @@ _discuss_replies() {
 @test "discuss: first answers are independent and receive the approved context" {
     _discuss_run "$(_discuss_replies)"
     local json="${output}"
-    run jq -cr '[.error, [.calls[] | select(.label | test("^(claude|codex):")) |
+    run jq -cr '[.error, [.calls[] | select(.role | test("^(claude|codex):")) |
         [(.prompt | contains("Approved premise")), (.prompt | contains("private answer"))]]]' <<<"${json}"
     assert_output '[null,[[true,false],[true,false]]]'
 }
 
 @test "discuss: agreement stops after one round" {
     _discuss_run "$(_discuss_replies)"
-    run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.label | startswith("compare:"))] | length)]' <<<"${output}"
+    run jq -cr '[.result.status, .result.rounds, ([.calls[] | select(.role | startswith("compare:"))] | length)]' <<<"${output}"
     assert_output '["agreed",1,1]'
 }
 
@@ -1973,7 +1973,7 @@ _discuss_replies() {
         ."compare:".basis=["Existing usage follows #212, #319 and PR #311"]')"
     _discuss_run "${replies}"
     run jq -cr '[.error,.result.status,.result.rounds,.result.comment,
-        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+        ([.calls[] | select(.role == "record:")] | length)]' <<<"${output}"
     assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
 }
 
@@ -1991,7 +1991,7 @@ _discuss_replies() {
         ."codex:".reasons=["Avoid 清單是自己的建議，不是文件規則"]')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,.result.comment,
-        [.calls[] | select(.label | startswith("repair:")) | [.label,
+        [.calls[] | select(.role | startswith("repair:")) | [.role,
             (.prompt | contains("Avoid 清單是自己的建議，不是文件規則")),
             (.prompt | contains("grep:<pattern> in <path> -> N 筆")),
             (.prompt | contains("Only correct the format")),
@@ -2005,7 +2005,7 @@ _discuss_replies() {
         ."compare:".basis=["Trust this conclusion"]')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,.result.comment,
-        [.calls[] | select(.label | startswith("repair:")) | [.label,
+        [.calls[] | select(.role | startswith("repair:")) | [.role,
             (.prompt | contains("Trust this conclusion")),
             (.prompt | contains("grep:<pattern> in <path> -> N 筆")),
             (.prompt | contains("Only correct the format"))]]]' <<<"${output}"
@@ -2019,16 +2019,16 @@ _discuss_replies() {
         ."repair:claude:".reasons=["Still unsupported judgment"]')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,.result.failed_reasons,
-        ([.calls[] | select(.label | startswith("repair:"))] | length),
-        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+        ([.calls[] | select(.role | startswith("repair:"))] | length),
+        ([.calls[] | select(.role | test("^(compare|record):"))] | length)]' <<<"${output}"
     assert_output '["answer-failed",[{"agent":"claude","reason_index":1,"reason":"Still unsupported judgment"}],1,0]'
     replies="$(_discuss_replies | jq '{"repair:compare:": ."compare:"} + . |
         ."compare:".basis=["Initial unsupported basis"] |
         ."repair:compare:".basis=["doc/contract.md:1", "Still unsupported basis"]')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,.result.failed_basis,
-        ([.calls[] | select(.label | startswith("repair:"))] | length),
-        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+        ([.calls[] | select(.role | startswith("repair:"))] | length),
+        ([.calls[] | select(.role == "record:")] | length)]' <<<"${output}"
     assert_output '["compare-failed",[{"basis_index":2,"basis":"Still unsupported basis"}],1,0]'
 }
 
@@ -2039,7 +2039,7 @@ _discuss_replies() {
     _discuss_run "${replies}"
     json="${output}"
     run jq -cr '[.result.status, .result.claude.notes, .result.codex.notes,
-        ([.calls[] | select(.label | test("^(claude|codex):")) |
+        ([.calls[] | select(.role | test("^(claude|codex):")) |
             (.schema.required | index("notes") != null) and (.schema.properties.notes.items.type == "string") and
             (.prompt | contains("Put judgments in reasons with evidence; put explanations and execution records in notes"))] | all)]' <<<"${json}"
     assert_output "[\"agreed\",[\"\`開發盒\`、\`dev 容器\` 目前找不到用法（grep 無結果）\"],[\"Avoid 清單是自己的建議，不是文件規則\",\"rc=0、輸出檔路徑、沒有要停的容器\"],true]"
@@ -2052,9 +2052,9 @@ _discuss_replies() {
         ."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,
-        ([.calls[] | select(.label | test("^(compare|claude|codex):")) |
+        ([.calls[] | select(.role | test("^(compare|claude|codex):")) |
             (.prompt | test("grep 無結果|Avoid 清單|rc=0、輸出檔路徑") | not)] | all),
-        (.calls[] | select(.label == "record:") | .prompt |
+        (.calls[] | select(.role == "record:") | .prompt |
             contains("## Claude 說明與執行紀錄\n- `開發盒`、`dev 容器` 目前找不到用法（grep 無結果）") and
             contains("## codex 說明與執行紀錄\n- Avoid 清單是自己的建議，不是文件規則\n- rc=0、輸出檔路徑、沒有要停的容器"))]' <<<"${output}"
     assert_output '["diverged",true,true]'
@@ -2068,13 +2068,13 @@ _discuss_replies() {
     _discuss_run "${replies}"
     local json="${output}"
     run jq -cr '[.result.status, .result.failed_reasons,
-        ([.calls[] | select(.label | test("^(claude|codex|compare):")) |
+        ([.calls[] | select(.role | test("^(claude|codex|compare):")) |
             (.prompt | contains("grep:<pattern> in <path> -> N 筆"))] | all)]' <<<"${json}"
     assert_output '["agreed",null,true]'
     _discuss_run "$(jq '."codex:".reasons=["Avoid 清單是自己的建議，不是文件規則"] |
         ."codex:".notes=["rc=0、輸出檔路徑、沒有要停的容器"]' <<<"${replies}")"
     run jq -cr '[.result.status, .result.failed_reasons,
-        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+        ([.calls[] | select(.role | test("^(compare|record):"))] | length)]' <<<"${output}"
     assert_output '["answer-failed",[{"agent":"codex","reason_index":1,"reason":"Avoid 清單是自己的建議，不是文件規則"}],0]'
 }
 
@@ -2084,7 +2084,7 @@ _discuss_replies() {
         ."codex:".reasons += ["Trust Codex", "No supporting evidence"]')"
     _discuss_run "${replies}"
     run jq -cr '[.result.status,.result.rounds,.result.failed_reasons,
-        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+        ([.calls[] | select(.role | test("^(compare|record):"))] | length)]' <<<"${output}"
     assert_output '["answer-failed",1,[{"agent":"claude","reason_index":2,"reason":"Trust Claude"},{"agent":"codex","reason_index":2,"reason":"Trust Codex"},{"agent":"codex","reason_index":3,"reason":"No supporting evidence"}],0]'
 }
 
@@ -2092,8 +2092,8 @@ _discuss_replies() {
     local replies
     replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
     _discuss_run "${replies}"
-    run jq -cr '[.result.status,.result.rounds,([.calls[] | select(.label | test("^(claude|codex):"))] | length),
-        ([.calls[] | select(.label | test("^(claude|codex):r[23]")) | (.prompt | contains("Choose storage"))] | all)]' <<<"${output}"
+    run jq -cr '[.result.status,.result.rounds,([.calls[] | select(.role | test("^(claude|codex):"))] | length),
+        ([.calls[] | select(.role | test("^(claude|codex):r[23]")) | (.prompt | contains("Choose storage"))] | all)]' <<<"${output}"
     assert_output '["diverged",3,6,true]'
 }
 
@@ -2164,14 +2164,14 @@ _discuss_replies() {
     run jq -cr '[.result.status,.result.rounds,.result.ask_maintainer]' <<<"${output}"
     assert_output '["derived",1,[]]'
     _discuss_run "$(jq '."compare:".basis=["Trust me"]' <<<"${replies}")"
-    run jq -cr '[.result.status,([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    run jq -cr '[.result.status,([.calls[] | select(.role == "record:")] | length)]' <<<"${output}"
     assert_output '["compare-failed",0]'
 }
 
 @test "pr-loop CI fixes explicitly run only changed unit specs locally (#326)" {
     run _pl_run
     assert_success
-    run jq -r '.calls[] | select(.label == "ci:#7") | .prompt' <<<"${output}"
+    run jq -r '.calls[] | select(.role == "ci:#7") | .prompt' <<<"${output}"
     assert_output --partial 'Locally run only just test lint and changed unit specs'
     assert_output --partial 'Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally'
 }
@@ -2212,7 +2212,7 @@ _scratch_assert_isolated() {
         if [ "${nonce}" = "${other}" ]; then other=fedcba9876543210; fi
         scratch="${BATS_TEST_TMPDIR}/repo/../worktree/.scratch/${template%%-verify}-${issue}-${nonce}"
         run jq -cr --arg s "${scratch}" --arg other "${other}" '[.error,.result.status,
-            ([.calls[] | select(.label | startswith("nonce:") | not) |
+            ([.calls[] | select(.role | startswith("nonce:") | not) |
                 (.prompt | contains($s)) and (.prompt | contains($other) | not)] | all)]'             "${BATS_TEST_TMPDIR}/${nonce}.json"
         assert_output "[null,\"${expected_status}\",true]"
         run cat "${scratch}/posted.md"
@@ -2232,4 +2232,74 @@ _scratch_assert_isolated() {
     run _scratch_parallel_run research-verify 7 "$(_rv_ok_replies)"
     assert_success
     _scratch_assert_isolated research-verify 7 recorded
+}
+
+@test "run identifier: pr-loop logs the issue first and prefixes every agent label (#313)" {
+    local extra json
+    for extra in '{"issue":313}' '{"issue":319,"mode":"light"}' '{"issue":129,"codex":"off","implementer":"claude"}'; do
+        run _pl_run "${extra}"
+        assert_success
+        json="${output}"
+        run jq -e --arg id "pr-loop #$(jq -r '.issue' <<<"${extra}")" '
+            .error == null and .logs[0] == $id and (.calls | length > 0)
+            and ([.calls[].label | startswith($id + " ")] | all)' <<<"${json}"
+        assert_success
+    done
+    for extra in codex claude; do
+        run _pl_blocked_run "${extra}"
+        assert_success
+        run jq -e '.error == null and .logs[0] == "pr-loop #283"
+            and ([.calls[].label | startswith("pr-loop #283 ")] | all)
+            and ([.calls[].role | startswith("fix:")] | any)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "run identifier: fanout logs the issue list before its child workflows (#313)" {
+    local issues json
+    for issues in '[215,264]' '[319]'; do
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+            "$(jq -cn --arg dir "${REPO_ROOT}" --argjson issues "${issues}" \
+                '{repo:"o/r",repoDir:$dir,items:[$issues[] | {issue:.,branch:"b",name:"n",task:"t"}]}')" '{}'
+        assert_success
+        json="${output}"
+        run jq -e --argjson issues "${issues}" '
+            .error == null and .logs[0] == ("fanout " + ($issues | map(tostring) | join("+")))
+            and [.workflowCalls[].args.issue] == $issues
+            and ([.calls[].label | test("^pr-loop #[0-9]+ ")] | all)' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "run identifier: research logs the issue first and prefixes every agent label (#313)" {
+    local issue json
+    for issue in 129 313; do
+        run _rv_run "{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":${issue},\"question\":\"q\"}" \
+            "$(_rv_ok_replies | jq --arg url "https://github.com/o/r/issues/${issue}#issuecomment-1" '.["record:"].url = $url')"
+        assert_success
+        json="${output}"
+        run jq -e --arg id "research #${issue}" '
+            .error == null and .result.status == "recorded" and .logs[0] == $id
+            and (.calls | length > 0) and ([.calls[].label | startswith($id + " ")] | all)' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "run identifier: discuss logs the issue first and prefixes normal and repair agent labels (#313)" {
+    local issue replies json
+    for issue in 319 313; do
+        replies="$(_discuss_replies | jq --arg url "https://github.com/o/r/issues/${issue}#issuecomment-1" '
+            .["record:"].url = $url | .["repair:codex:"] = .["codex:"]
+            | .["repair:compare:"] = .["compare:"]
+            | .["codex:"].reasons = ["uncited"] | .["compare:"].basis = ["uncited"]')"
+        DISCUSS_ARGS="{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":${issue},\"question\":\"q\"}" \
+            _discuss_run "${replies}"
+        json="${output}"
+        run jq -e --arg id "discuss #${issue}" '
+            .error == null and .result.status == "agreed" and .logs[0] == $id
+            and ([.calls[].label | startswith($id + " ")] | all)
+            and ([.calls[].role | startswith("repair:codex:")] | any)
+            and ([.calls[].role | startswith("repair:compare:")] | any)' <<<"${json}"
+        assert_success
+    done
 }
