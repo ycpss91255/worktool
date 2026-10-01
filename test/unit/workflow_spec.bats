@@ -1897,7 +1897,7 @@ _discuss_replies() {
         ([.calls[] | select(.label | test("^(claude|codex):")) |
             (.schema.required | index("notes") != null) and (.schema.properties.notes.items.type == "string") and
             (.prompt | contains("Put judgments in reasons with evidence; put explanations and execution records in notes"))] | all)]' <<<"${json}"
-    assert_output '["agreed",["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"],["Avoid 清單是自己的建議，不是文件規則","rc=0、輸出檔路徑、沒有要停的容器"],true]'
+    assert_output "[\"agreed\",[\"\`開發盒\`、\`dev 容器\` 目前找不到用法（grep 無結果）\"],[\"Avoid 清單是自己的建議，不是文件規則\",\"rc=0、輸出檔路徑、沒有要停的容器\"],true]"
 }
 
 @test "discuss: real notes stay out of comparison and appear in separate comment sections (#340)" {
