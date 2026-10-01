@@ -150,8 +150,8 @@ _dispatched() {
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint '--ci-unit test/unit/setup_spec.bats' \
-        '--ci-integration test/integration/setup_spec.bats')"
+        --ci-lint '--ci-unit test/unit/setup_spec.bats')"
+    assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
 @test "test.sh --changed fails open when a mapped spec is missing" {
