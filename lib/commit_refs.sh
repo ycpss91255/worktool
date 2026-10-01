@@ -34,8 +34,14 @@ _commit_refs_has_footer() {
 }
 
 commit_refs_check_commits() {
-    local _repo="$1" _tmp _sha _committer _message _bad=0 _n=0
+    local _repo="$1" _tmp _sha _committer _message _enforcing _bad=0 _n=0 _rc
     shift
+    _enforcing="$(git -C "${_repo}" log --format=%H --reverse --diff-filter=A -- lib/commit_refs.sh)" || return 1
+    _enforcing="${_enforcing%%$'\n'*}"
+    if [[ -z "${_enforcing}" ]]; then
+        log_error 'Cannot find enforcing commit for lib/commit_refs.sh; fetch full history (fail closed).'
+        return 1
+    fi
     _tmp="$(mktemp)" || return 1
     if ! git -C "${_repo}" log --no-merges -z --format='%H%x00%ce%x00%B' "$@" -- > "${_tmp}"; then
         rm -f -- "${_tmp}"
@@ -43,6 +49,16 @@ commit_refs_check_commits() {
     fi
     while IFS= read -r -d '' _sha && IFS= read -r -d '' _committer && IFS= read -r -d '' _message; do
         _n=$((_n + 1))
+        _rc=0
+        git -C "${_repo}" merge-base --is-ancestor "${_enforcing}" "${_sha}" || _rc=$?
+        if ((_rc == 1)); then
+            log_info "${_sha} skipped: does not descend from enforcing commit ${_enforcing}."
+            continue
+        elif ((_rc != 0)); then
+            rm -f -- "${_tmp}"
+            log_error "Cannot establish ancestry for ${_sha} (fail closed)."
+            return 1
+        fi
         [[ "${_committer}" == 'noreply@github.com' ]] && continue
         _commit_refs_has_footer "${_message}" && continue
         log_error "${_sha} missing Refs: #<number> in the final paragraph."

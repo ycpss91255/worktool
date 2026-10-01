@@ -17,6 +17,29 @@ _commit_refs() {
     git -C "${REPO}" commit -q --allow-empty -F "${BATS_TEST_TMPDIR}/message"
 }
 
+_introduce_refs_rule() {
+    mkdir -p "${REPO}/lib"
+    cp "${LIB_DIR}/commit_refs.sh" "${REPO}/lib/commit_refs.sh"
+    git -C "${REPO}" add lib/commit_refs.sh
+    _commit_refs $'Introduce footer check\n\nRefs: #312'
+}
+
+@test "pre-rule commits without footers are skipped by ancestry" {
+    _commit_refs 'old work without footer'
+    local _old
+    _old="$(git -C "${REPO}" rev-parse HEAD)"
+    _introduce_refs_rule
+    git -C "${REPO}" switch -q -c old-topic "${_old}"
+    _commit_refs 'work on a branch that never adopted the rule'
+    local _topic
+    _topic="$(git -C "${REPO}" rev-parse HEAD)"
+    git -C "${REPO}" switch -q main
+    run commit_refs_check_commits "${REPO}" "${_old}" "${_topic}"
+    assert_success
+    assert_output --partial "${_old} skipped: does not descend from enforcing commit"
+    assert_output --partial "${_topic} skipped: does not descend from enforcing commit"
+}
+
 @test "a commit without a Refs footer fails with its SHA" {
     _commit_refs 'missing footer'
     local _sha
