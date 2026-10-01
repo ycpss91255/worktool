@@ -108,6 +108,55 @@ _checks_per_promise() {
     done
 }
 
+@test "invariant 2 links to its merged ADR 0005" {
+    run grep -E '^2\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0005](adr/0005-invariant-single-source.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0005-invariant-single-source.md" ]
+}
+
+@test "invariant 3 links to its merged ADR 0006" {
+    run grep -E '^3\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0006](adr/0006-invariant-host-box-separation.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0006-invariant-host-box-separation.md" ]
+}
+
+@test "invariant 5 links to its merged ADR 0008" {
+    run grep -E '^5\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0008](adr/0008-invariant-minimal-interface.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0008-invariant-minimal-interface.md" ]
+}
+
+@test "invariant 7 links to its merged ADR 0010" {
+    run grep -E '^7\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0010](adr/0010-invariant-black-box-verifiable.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0010-invariant-black-box-verifiable.md" ]
+}
+
+@test "invariant 8 links to its merged ADR 0011" {
+    run grep -E '^8\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0011](adr/0011-invariant-minimal-host-deps.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0011-invariant-minimal-host-deps.md" ]
+}
+
+@test "invariant 9 links to its merged ADR 0012" {
+    run grep -E '^9\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0012](adr/0012-invariant-platform-neutral.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0012-invariant-platform-neutral.md" ]
+}
+
+@test "invariant 10 links to its merged ADR 0013" {
+    run grep -E '^10\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0013](adr/0013-invariant-compatibility.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0013-invariant-compatibility.md" ]
+}
+
 @test "every relative link in doc/contract.md resolves to an existing file" {
     local target found=0
     while IFS= read -r target; do
