@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "TRANSCRIPT_PATH",
+  "cwd": "/workspace",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "codex 修正已推上去（`4adef9a`）：ghostty、system-real 映像都補 parallel，本機 lint、unit、integration 綠。PR #285 CI 重跑中，Monitor 盯著。"
+}
