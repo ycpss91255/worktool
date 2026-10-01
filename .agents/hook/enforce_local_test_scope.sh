@@ -18,8 +18,26 @@ _heavy_test() {
     [[ "${_words[0]:-}" == just || "${_words[0]:-}" == */just ]] || return 1
     [[ "${_words[1]:-}" == test ]] || return 1
     case "${_words[2]:-}" in
+        "") return 0 ;;
+        unit) _has_spec "${_words[@]:3}" || return 0 ;;
         matrix|integration|system|system-real|acceptance) return 0 ;;
     esac
+    return 1
+}
+
+_has_spec() {
+    local _arg _filter=''
+    for _arg in "$@"; do
+        if [[ -n "${_filter}" ]]; then
+            _filter=''
+            continue
+        fi
+        case "${_arg}" in
+            --filter) _filter=1 ;;
+            --filter=*|-*) ;;
+            */*.bats) return 0 ;;
+        esac
+    done
     return 1
 }
 

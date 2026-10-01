@@ -11,3 +11,10 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     assert_output --partial 'lint'
     assert_output --partial 'unit spec'
 }
+
+@test "bare tests and whole unit tiers are blocked through shell wrappers" {
+    _check "bash -c 'just test unit --filter example'"
+    assert_failure 2
+    _check "eval 'just test'"
+    assert_failure 2
+}
