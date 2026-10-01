@@ -186,7 +186,10 @@ Return its stdout verbatim in evidence, even when it contains errors. Do not inf
     agentType: 'general-purpose',
   })
   let state
-  try { state = JSON.parse(checked.evidence) } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
+  try {
+    state = JSON.parse(checked.evidence)
+    if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('invalid evidence')
+  } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
   const valid = ['status', 'localHead', 'remoteHead', 'prHead', 'errors'].every(k => typeof state[k] === 'string')
   const ok = valid && !state.errors && !state.status && !!state.localHead &&
     state.localHead === state.remoteHead && state.localHead === state.prHead &&
