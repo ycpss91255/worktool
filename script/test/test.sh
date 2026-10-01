@@ -700,7 +700,7 @@ MAP
 _mapped_specs() {
     local _path="$1" _pattern _spec
     while IFS='|' read -r _pattern _spec; do
-        if [[ "${_path}" == ${_pattern} ]]; then
+        if [[ "${_path}" == "${_pattern}" ]]; then
             printf '%s\n' "${_spec}"
         fi
     done < <(_changed_path_map)
@@ -711,9 +711,9 @@ _add_changed_spec() {
     [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
         || return 1
     _tier="${BASH_REMATCH[1]}"
-    local -n _specs="_${_tier}"
-    _specs+=("${_path}")
-    unset -n _specs
+    local -n _tier_specs="_${_tier}"
+    _tier_specs+=("${_path}")
+    unset -n _tier_specs
 }
 
 _is_test_infrastructure() {
@@ -752,15 +752,15 @@ _run_changed() {
     rm -f "${_list}"
     _run_host_step lint ""
     for _tier in unit matrix integration system acceptance; do
-        local -n _specs="_${_tier}"
+        local -n _selected_specs="_${_tier}"
         if [[ "${_all_tiers}" -eq 1 ]]; then
             _run_host_step "${_tier}" ""
         elif [[ "${_tier}" == unit && "${_full_unit}" -eq 1 ]]; then
             _run_host_step unit ""
-        elif [[ "${#_specs[@]}" -gt 0 ]]; then
-            _run_host_step "${_tier}" "" "${_specs[@]}"
+        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
+            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
         fi
-        unset -n _specs
+        unset -n _selected_specs
     done
     [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
 }
