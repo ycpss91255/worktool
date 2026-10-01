@@ -1603,6 +1603,15 @@ _rv_assert_fails_closed() {
     assert_output '[null,"light"]'
 }
 
+@test "pr-loop (node): light failed editing includes the step and reason (#331)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
+        '{"implement:":{"status":"failed","reason":"commit: noreply identity is missing"}}'
+    assert_success
+    run jq -cr '[.result.blockingLeft, [.calls[].label], (.calls[0].schema.required | index("reason") != null)]' <<<"${output}"
+    assert_output '[["light editing did not complete: commit: noreply identity is missing"],["implement:#331"],true]'
+}
+
 @test "pr-loop (node): light stops before review when editing fails (#310)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
