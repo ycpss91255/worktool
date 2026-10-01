@@ -106,6 +106,20 @@ _dispatched() {
     assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
+@test "test.sh --changed leaves Dockerfile.system-real verification to CI" {
+    mkdir -p "${TEMP_REPO}/dockerfile"
+    printf 'FROM scratch\n' >"${TEMP_REPO}/dockerfile/Dockerfile.system-real"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/dockerfile/Dockerfile.system-real"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
+}
+
 @test "test.sh --changed maps a changed library to its spec" {
     mkdir -p "${TEMP_REPO}/lib"
     printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
