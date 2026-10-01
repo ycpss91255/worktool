@@ -189,7 +189,8 @@ Return its stdout verbatim in evidence, even when it contains errors. Do not inf
   try { state = JSON.parse(checked.evidence) } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
   const valid = ['status', 'localHead', 'remoteHead', 'prHead', 'errors'].every(k => typeof state[k] === 'string')
   const ok = valid && !state.errors && !state.status && !!state.localHead &&
-    state.localHead === state.remoteHead && state.localHead === state.prHead
+    state.localHead === state.remoteHead && state.localHead === state.prHead &&
+    (!before || state.prHead !== before)
   return { ok, sha: state.prHead, detail: `${stage} check failed: ${state.errors || ''}git status: ${state.status || '(clean)'}; local HEAD: ${state.localHead}; remote HEAD: ${state.remoteHead}; PR head: ${state.prHead}; before: ${before || '(Implement)'}` }
 }
 
