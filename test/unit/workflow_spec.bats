@@ -1900,6 +1900,21 @@ _discuss_replies() {
     assert_output '["agreed",["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"],["Avoid 清單是自己的建議，不是文件規則","rc=0、輸出檔路徑、沒有要停的容器"],true]'
 }
 
+@test "discuss: real notes stay out of comparison and appear in separate comment sections (#340)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |
+        ."codex:".notes=["Avoid 清單是自己的建議，不是文件規則", "rc=0、輸出檔路徑、沒有要停的容器"] |
+        ."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,
+        ([.calls[] | select(.label | test("^(compare|claude|codex):")) |
+            (.prompt | test("grep 無結果|Avoid 清單|rc=0、輸出檔路徑") | not)] | all),
+        (.calls[] | select(.label == "record:") | .prompt |
+            contains("## Claude 說明與執行紀錄\n- `開發盒`、`dev 容器` 目前找不到用法（grep 無結果）") and
+            contains("## codex 說明與執行紀錄\n- Avoid 清單是自己的建議，不是文件規則\n- rc=0、輸出檔路徑、沒有要停的容器"))]' <<<"${output}"
+    assert_output '["diverged",true,true]'
+}
+
 @test "discuss: uncited reasons fail with the side, one-based position and original text (#335)" {
     local replies
     replies="$(_discuss_replies | jq '."claude:".reasons += ["Trust Claude"] |

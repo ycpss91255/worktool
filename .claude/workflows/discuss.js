@@ -66,6 +66,7 @@ const cited = b => typeof b === 'string' && /https:\/\/github\.com\/[A-Za-z0-9_.
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(cited) && Array.isArray(x.notes) && Array.isArray(x.risks)
 const failedReasons = (agent, x) => Array.isArray(x?.reasons)
   ? x.reasons.flatMap((reason, i) => cited(reason) ? [] : [{ agent, reason_index: i + 1, reason }]) : []
+const judgments = ({ answer, reasons, risks }) => ({ answer, reasons, risks })
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
 const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: 'nonce:', phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
 if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
@@ -77,16 +78,16 @@ for (let n = 1; n <= 3; n++) {
     issue: A.issue, status: 'answer-failed', rounds: n,
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
-  const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(claude)}\nCodex: ${JSON.stringify(codex)}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N or file:line). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N or file:line). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
   if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
-  prior = { claude, codex, disagreements: verdict.disagreements }
+  prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
 }
 if (result.status === 'diverged' && (!result.question.trim() || /[\r\n]/.test(result.question) || (result.question.match(/[?？]/g) || []).length > 1)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
 result.ask_maintainer = result.status === 'diverged' ? [result.question] : []
 const labels = { agreed: '一致（定案）', derived: '可由不變量／前例推出（自行定案）', diverged: '分歧（交維護者，一次一題）' }
-const text = `[claude] ${labels[result.status]}\n\n${result.conclusion}\n\n## 依據\n${result.basis.map(b => `- ${b}`).join('\n')}\n\n## Claude 判斷與依據\n${result.claude.answer}\n${result.claude.reasons.map(b => `- ${b}`).join('\n')}\n\n${result.ask_maintainer.length ? `## 維護者問題\n${result.ask_maintainer[0]}\n` : ''}\n## 分歧\n${result.disagreements.map(b => `- ${b}`).join('\n')}\n`
+const text = `[claude] ${labels[result.status]}\n\n${result.conclusion}\n\n## 依據\n${result.basis.map(b => `- ${b}`).join('\n')}\n\n## Claude 判斷與依據\n${result.claude.answer}\n${result.claude.reasons.map(b => `- ${b}`).join('\n')}\n\n## Claude 說明與執行紀錄\n${result.claude.notes.map(b => `- ${b}`).join('\n')}\n\n## codex 說明與執行紀錄\n${result.codex.notes.map(b => `- ${b}`).join('\n')}\n\n${result.ask_maintainer.length ? `## 維護者問題\n${result.ask_maintainer[0]}\n` : ''}\n## 分歧\n${result.disagreements.map(b => `- ${b}`).join('\n')}\n`
 let i = 0
 let marker
  do { marker = `${nonce.nonce}-${++i}` } while (text.includes(`===END-${marker}===`) || text.includes(`===BEGIN-${marker}===`))
