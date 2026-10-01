@@ -1915,6 +1915,24 @@ _discuss_replies() {
     assert_output '["diverged",true,true]'
 }
 
+@test "discuss: search records cite negative evidence while uncited judgments still fail (#340)" {
+    local replies
+    replies="$(_discuss_replies | jq '."claude:".reasons=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）；grep:開發盒|dev 容器 in doc/ -> 0 筆"] |
+        ."codex:".reasons=["grep:dev box in doc/ -> 2 筆"] |
+        ."compare:".basis=["grep:開發盒|dev 容器 in doc/ -> 0 筆"]')"
+    _discuss_run "${replies}"
+    local json="${output}"
+    run jq -cr '[.result.status, .result.failed_reasons,
+        ([.calls[] | select(.label | test("^(claude|codex|compare):")) |
+            (.prompt | contains("grep:<pattern> in <path> -> N 筆"))] | all)]' <<<"${json}"
+    assert_output '["agreed",null,true]'
+    _discuss_run "$(jq '."codex:".reasons=["Avoid 清單是自己的建議，不是文件規則"] |
+        ."codex:".notes=["rc=0、輸出檔路徑、沒有要停的容器"]' <<<"${replies}")"
+    run jq -cr '[.result.status, .result.failed_reasons,
+        ([.calls[] | select(.label | test("^(compare|record):"))] | length)]' <<<"${output}"
+    assert_output '["answer-failed",[{"agent":"codex","reason_index":1,"reason":"Avoid 清單是自己的建議，不是文件規則"}],0]'
+}
+
 @test "discuss: uncited reasons fail with the side, one-based position and original text (#335)" {
     local replies
     replies="$(_discuss_replies | jq '."claude:".reasons += ["Trust Claude"] |
