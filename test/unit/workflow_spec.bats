@@ -1502,3 +1502,10 @@ _rv_assert_fails_closed() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+@test "pr-loop (node): invalid mode fails before any agent (#310)" {
+    run _pl_run '{"mode":"other"}'
+    assert_success
+    run jq -cr '[(.error | contains("args.mode")), (.calls | length)]' <<<"${output}"
+    assert_output '[true,0]'
+}

@@ -35,6 +35,8 @@ const A = args || {}
 for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
   if (!A[k]) throw new Error(`pr-loop: args.${k} is required`)
 }
+const MODE = A.mode === undefined ? 'full' : A.mode
+if (MODE !== 'full' && MODE !== 'light') throw new Error(`pr-loop: args.mode must be "full" or "light", got ${JSON.stringify(A.mode)}`)
 const codexArg = A.codex === undefined ? 'on' : A.codex
 if (codexArg !== 'on' && codexArg !== 'off') throw new Error(`pr-loop: args.codex must be "on" or "off", got ${JSON.stringify(A.codex)}`)
 const IMPLEMENTER = A.implementer === undefined ? 'codex' : A.implementer
