@@ -850,7 +850,7 @@ rc=0
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機（需要 host 有 distrobox + ghostty；會建 dev 盒、獨立盒 HOME 與 user config symlink，並改動真實設定）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
+- [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
   - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
@@ -889,6 +889,8 @@ rc=0
       just verify realbox --allow-real-box 5.3; echo rc=$?
       ```
       預期 `rc=0`；本項最初就遇到既有 dev 時直接拒絕，不取得所有權。
+  PR #228 後盒 HOME 獨立且建盒後固定。5.1 用本輪 scratch 下的 `box-home`；5.2 用備份目錄下的 `box-home`，user config 連結只落在該 HOME。成功刪盒後才移除它；刪盒失敗保留盒 HOME 與備份，不碰使用者的 `~/dev-box`。產品預設 HOME 與 config 的保存／回報由 3.2 驗。
+
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
   - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check,兩邊的 check 名稱數量相等且完全不重疊
     - 預期看到資訊

@@ -31,12 +31,11 @@
 #
 # GROUP realbox
 #   These items build a real distrobox, rewrite the real ghostty / worktool
-#   configs under $XDG_CONFIG_HOME and the real ~/.tmux.conf, and comment on
+#   configs under $XDG_CONFIG_HOME and the real distrobox.conf, and comment on
 #   a GitHub issue, so:
 #     - the backup set is the WHOLE set of files `just box setup` can write,
 #       and 5.2 refuses to start when any of them cannot be backed up: the
-#       tmux decision is stored, so a state file carrying `tmux=host` makes
-#       the apply write ~/.tmux.conf whether this run asked for it or not;
+#       both Ghostty files and distrobox.conf may be changed by setup;
 #     - they refuse to run without the explicit --allow-real-box opt-in;
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
@@ -243,7 +242,9 @@ _51_cleanup() {
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
-    [[ -z "${_51_W}" ]] || rm -rf -- "${_51_W}"
+    if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
+        rm -rf -- "${_51_W}" || _crc=1
+    fi
     return "${_crc}"
 }
 
@@ -401,7 +402,7 @@ _51_body() {
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    _just box assemble >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
@@ -485,7 +486,7 @@ _52_step2_apply() {
     # something that says "this run touched assemble".
     : >"${CFGBK_B}/created-box" \
         || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    _just box assemble >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     _just box setup || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
@@ -517,7 +518,7 @@ _52_confirm_window() {
     [[ "${_ans}" == "yes" ]] \
         || { guard_fail "the new-window check was not confirmed (answered '${_ans}')"; return 1; }
     # Echo what the maintainer confirmed, so the transcript carries the same
-    # three lines doc/acceptance.md shows.
+    # two observations doc/acceptance.md requires.
     printf 'container-marker=confirmed\nfish\n'
 }
 

@@ -836,3 +836,11 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     refute_output --partial "tmux display"
     assert_line "restore-ok=1"
 }
+
+@test "5.2.2: acceptance uses an owned box HOME inside its backup" {
+    _realbox_quiet 5.2.1
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    run cat "${STATE}/calls.log"
+    assert_line "just box assemble --home $(_backup_dir)/box-home"
+}
