@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 15320221-f6f9-442e-9faa-924d66c5db63
-  modified: 2026-09-15T17:02:05.040Z
+  modified: 2026-10-01T09:40:05.746Z
 ---
 
 Maintainer directives (2026-09-16):
@@ -18,8 +18,15 @@ Maintainer directives (2026-09-16):
 - Requests to gemini must be EXPLICIT: a concrete question, and ask for cited sources.
 - codex, when it needs a lookup, should also route it to gemini (agy).
 
-**How to call agy headless:** `agy --sandbox --dangerously-skip-permissions -p "<explicit
-question>" --print-timeout 5m` (wrap in `timeout`). Plain `-p` without skip-permissions
+**Model (maintainer, 2026-10-01): agy always uses the NEWEST model** ("一律使用最新的
+模型, 現在是 3.8"). Never hard-code a version: resolve it from `agy models` each run
+(highest-version Gemini flash `high` variant; today `gemini-3.8-flash-high`) and pass
+`--model <resolved>`; if resolution fails, fail closed. Every workflow that calls agy
+uses the shared resolver (#325).
+
+**How to call agy headless:** `agy --model <newest, from agy models> --sandbox
+--dangerously-skip-permissions -p "<explicit question>" --print-timeout 5m` (wrap in
+`timeout`). Plain `-p` without skip-permissions
 gets auto-denied on tool use (headless cannot prompt) and returns nothing; --sandbox
 keeps its terminal restricted. It is SLOW (a 3m print-timeout returned partial/empty);
 allow ~5m. The plain `gemini` CLI is DEAD for this account (UNSUPPORTED_CLIENT: migrate
