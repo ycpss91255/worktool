@@ -772,7 +772,12 @@ _rv_src_check() {
     mkdir -p "${stub}"
     printf '#!/bin/sh\necho "1. agy-claim [官方文件 https://x]"\n' > "${stub}/agy"
     printf '#!/bin/sh\ncat >/dev/null\nprintf "banner\\ncodex\\ncodex-verdict-line\\ntokens used\\n5\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\n[ "$1 $2" = "issue view" ] && { echo '\''{"comments":[]}'\''; exit; }\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho "https://github.com/o/r/issues/7#issuecomment-1"\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+printf '%s\n' "$@" > "${BATS_TEST_TMPDIR}/gh.args"
+echo "https://github.com/o/r/issues/7#issuecomment-1"
+SH
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
     scratch="${dir}/../worktree/.scratch/research-7"
@@ -823,7 +828,11 @@ while [ $# -gt 0 ]; do [ "$1" = -o ] && o=$2; shift; done
 [ -f "${SHAPE}/last" ] && [ -n "${o}" ] && cp "${SHAPE}/last" "${o}"
 cat "${SHAPE}/raw"
 SH
-    printf '#!/bin/sh\n[ "$1 $2" = "issue view" ] && { echo '\''{"comments":[]}'\''; exit; }\necho https://github.com/o/r/issues/7#issuecomment-1\n' > "${stub}/gh"
+    cat > "${stub}/gh" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "issue view" ] && { echo '{"comments":[]}'; exit; }
+echo https://github.com/o/r/issues/7#issuecomment-1
+SH
     chmod +x "${stub}"/*
     PATH="${RV_OVERRIDE:+${RV_OVERRIDE}:}${stub}:${PATH}" _rv_run "$(jq -cn --arg d "$1" --argjson a "$2" '{repo:"o/r",repoDir:$d,issue:7,question:"q"} + $a')" "$(_rv_ok_replies)" exec
 }
