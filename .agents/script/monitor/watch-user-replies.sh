@@ -37,7 +37,8 @@
 #   WATCH FETCH FAILED: could not list the open issues/PRs this cycle
 # Heartbeats and fetch warnings go to STDERR.
 
-set -uo pipefail
+# Strict script: expected non-zero results are handled explicitly.
+set -euo pipefail
 
 AGENT_TAGS=('[claude]' '[codex]')
 

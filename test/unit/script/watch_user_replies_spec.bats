@@ -354,3 +354,9 @@ EOF
     assert_success
     assert_output ""
 }
+
+@test "reply watcher stops on unexpected failures inherited by sourced callers" {
+    run bash -c 'source "$1"; false; echo UNREACHABLE' _ "${SCRIPT}"
+    assert_failure 1
+    refute_output --partial "UNREACHABLE"
+}
