@@ -2011,6 +2011,22 @@ _discuss_replies() {
     done
 }
 
+@test "discuss: reports the question field after one unsuccessful repair without recording (#348)" {
+    local question replies
+    for question in '' $'Choose A?\nOr B?' 'Choose storage? Choose latency?'; do
+        replies="$(_discuss_replies | jq --arg q "${question}" '
+            ."compare:".status="diverged" | ."compare:".question="Initial storage? Initial latency?" |
+            {"repair:compare:": ."compare:"} + . | ."repair:compare:".question=$q')"
+        _discuss_run "${replies}"
+        run jq -cr --arg q "${question}" '[.result.status, .result.rounds, .result.failed_basis,
+            [.result.failed_question[] | [.field, .value == $q, (.rule | contains("single line")),
+                (.rule | contains("one decision"))]],
+            ([.calls[] | select(.role | startswith("repair:compare:"))] | length),
+            ([.calls[] | select(.role == "record:")] | length)]' <<<"${output}"
+        assert_output '["compare-failed",1,[],[["question",true,true,true]],1,0]'
+    done
+}
+
 @test "discuss: repairs an uncited answer with its original author before recording (#342)" {
     local replies
     replies="$(_discuss_replies | jq '{"repair:codex:": ."codex:"} + . |

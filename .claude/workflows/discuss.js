@@ -105,7 +105,7 @@ for (let n = 1; n <= 3; n++) {
   }
   const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `${RUN_ID} repair:compare:r${n}:${attempt}` : `${RUN_ID} compare:r${n}`, phase: 'Compare', schema: VERDICT })
   const verdict = await repairFormat(await compare(), validVerdict, x => [...failedBasis(x), ...failedQuestion(x)], compare)
-  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict) }
+  if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n, failed_basis: failedBasis(verdict), failed_question: failedQuestion(verdict) }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
   prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
