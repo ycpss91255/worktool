@@ -722,6 +722,19 @@ _rv_with() {
     assert_output "$(printf '%s\n' '[codex] 1. 來源支持主張 [官方文件 https://example.org/one]' '2. 來源不可讀，無法確認 [原始碼 https://example.org/two]')"
 }
 
+@test "research-verify #311: claude samples sources after codex verification" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    local json="${output}"
+    run jq -r '[.calls[].label | select(startswith("codex-verify:") or startswith("claude-verify:"))] | .[]' <<<"${json}"
+    assert_output "$(printf '%s\n' 'codex-verify:#7' 'claude-verify:#7')"
+    run jq -r '.calls[] | select(.label | startswith("claude-verify:")) | .prompt' <<<"${json}"
+    assert_output --partial 'Read codex'
+    assert_output --partial 'Sample a subset of cited primary sources'
+    assert_output --partial 'at least one'
+    refute_output --partial 'For EVERY numbered claim'
+}
+
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
     [[ -f "${RESEARCH}" ]]
     run head -n1 "${RESEARCH}"
@@ -911,9 +924,7 @@ _rv_src_check() {
     assert [ "${fail_line}" -lt "${verify_line}" ]
 }
 
-@test "research-verify verifies with a claude agent and codex exec in parallel, codex fed the agy text on stdin" {
-    run grep -c 'await parallel(\[' "${RESEARCH}"
-    assert_output "1"
+@test "research-verify verifies with claude samples and codex exec, codex fed the agy text on stdin" {
     run grep -c "schema: CLAIMS_SCHEMA" "${RESEARCH}"
     assert_output "1"
     run grep -c "enum: \['supported', 'refuted', 'unverifiable'\]" "${RESEARCH}"
@@ -1437,8 +1448,8 @@ _rv_assert_fails_closed() {
     assert_success
     run bash -c 'for f in "$1"/*; do case "$(head -n 1 "$f")" in "[claude]"*) ;; *) exit 1 ;; esac; done' _ "${comments}"
     assert_success
-    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 逐條驗證" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
-    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 逐條驗證' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
+    run bash -c 'head -n 1 "$1/1"; grep -m1 "第 1／4 則" "$1/1"; grep -m1 "claude 來源抽查" "$1/2"; grep -m1 "codex 逐條驗證" "$1/3"; grep -m1 "agy 原文" "$1/4"' _ "${comments}"
+    assert_output "$(printf '%s\n' '[claude] 研究結論(research-verify:agy 查資料,claude 與 codex 驗證)' '第 1／4 則' '[claude] claude 來源抽查' '[claude] codex 逐條驗證(原文)' '[claude] agy 原文')"
     PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "${replies}" exec
     assert_success
     run bash -c 'find "$1" -type f | wc -l' _ "${comments}"
