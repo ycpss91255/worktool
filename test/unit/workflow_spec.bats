@@ -1723,6 +1723,17 @@ _discuss_replies() {
     assert_output '["agreed",1,1]'
 }
 
+@test "discuss: accepts the dev box answer citing local issues and PR shorthand (#335)" {
+    local replies
+    replies="$(_discuss_replies | jq '."codex:".reasons=["Codex cited #212 and #319 to say this is only a summary of existing usage"] |
+        ."claude:".reasons=["The existing workflow is documented in doc/workflow.md:224"] |
+        ."compare:".basis=["Existing usage follows #212, #319 and PR #311"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.error,.result.status,.result.rounds,.result.comment,
+        ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
+    assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
+}
+
 @test "discuss: disagreement feeds back to both sides and stops at three rounds" {
     local replies
     replies="$(_discuss_replies | jq '."compare:"={status:"diverged",conclusion:"A versus B",basis:["doc/contract.md:1"],disagreements:["Choose storage"],question:"Choose A or B?"}')"
