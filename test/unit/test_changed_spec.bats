@@ -403,3 +403,22 @@ _selected_changed_specs() {
     assert_equal "$output" "$(printf '%s\n' \
         test/system/real_assemble_spec.bats test/system/another_spec.bats)"
 }
+
+@test "test.sh --changed selects a mapped acceptance spec once in first-seen order" {
+    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/test/acceptance"
+    printf '# example library\n' >"${TEMP_REPO}/lib/example.sh"
+    for spec in example another; do
+        printf '@test "example" { true; }\n' \
+            >"${TEMP_REPO}/test/acceptance/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/lib/example.sh"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/acceptance/example_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/acceptance/another_spec.bats"
+
+    _selected_changed_specs acceptance
+
+    assert_success
+    assert_equal "$output" "$(printf '%s\n' \
+        test/acceptance/example_spec.bats test/acceptance/another_spec.bats)"
+}
