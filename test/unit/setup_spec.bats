@@ -1177,3 +1177,31 @@ _assert_control_char_refused() {
         done
     done
 }
+
+@test "#173: config.ghostty warns only for host Ghostty versions below 1.3.0 and skips an absent executable" {
+    local _version _exe="${DBX_DIR}/ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'font-size = 14\n' >"${GHOSTTY}.ghostty"
+    for _version in 1.0.0 1.2.3 1.3.0 1.3.1 1.10.0 2.0.0; do
+        printf '#!/bin/sh\n[ "$1" = +version ] || exit 1\nprintf "Ghostty %s\\n"\n' "${_version}" >"${_exe}"
+        chmod +x "${_exe}"
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        case "${_version}" in
+            1.0.0|1.2.3)
+                assert_line "[WARN] ghostty ${_version} does not read ${GHOSTTY}.ghostty (requires 1.3.0 or newer)"
+                ;;
+            *) refute_line --partial '[WARN] ghostty' ;;
+        esac
+    done
+    rm "${_exe}"
+    PATH=/usr/bin:/bin run "${SETUP}" --terminal ghostty --distrobox "${DISTROBOX}"
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+    rm "${GHOSTTY}.ghostty"
+    printf '#!/bin/sh\nprintf "Ghostty 1.2.3\\n"\n' >"${_exe}"
+    chmod +x "${_exe}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+}

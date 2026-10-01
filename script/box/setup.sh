@@ -322,6 +322,7 @@ _resolve_all() {
     GHOSTTY_TARGET="$(enter_ghostty_target)"
     if [[ "${GHOSTTY_TARGET}" == *.ghostty ]]; then
         log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty exists)"
+        _ghostty_version_warn
     else
         log_info "ghostty config: ${GHOSTTY_TARGET} (config.ghostty absent; legacy fallback)"
     fi
@@ -331,6 +332,27 @@ _resolve_all() {
     if [[ "${AUTO_ENTER}" == "yes" && "${TERMINAL}" == "ghostty" ]]; then
         _resolve_distrobox || return 1
     fi
+}
+
+# The new filename is unreadable by Ghostty before 1.3.0. Check the host
+# executable only; its absence does not prevent configuring a profile.
+_ghostty_version_warn() {
+    local _exe _output _version _major _minor
+    _exe="$(enter_which ghostty)" || return 0
+    if ! _output="$("${_exe}" +version 2>&1)"; then
+        log_warn "could not check ghostty +version: ${_output}"
+        return 0
+    fi
+    if [[ "${_output}" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        _version="${BASH_REMATCH[0]}"
+        _major="${BASH_REMATCH[1]}" _minor="${BASH_REMATCH[2]}"
+        if (( 10#${_major} < 1 || (10#${_major} == 1 && 10#${_minor} < 3) )); then
+            log_warn "ghostty ${_version} does not read ${GHOSTTY_TARGET} (requires 1.3.0 or newer)"
+        fi
+    else
+        log_warn "could not parse ghostty +version: ${_output}"
+    fi
+    return 0
 }
 
 # Resolve the distrobox the managed command will name into DISTROBOX and
