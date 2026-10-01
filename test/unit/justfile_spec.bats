@@ -212,7 +212,7 @@ _listed_names() {
 @test "just test <verb> forwards exactly --<verb> for every tier verb and build" {
     _stub_scripts
     local _verb
-    for _verb in build lint unit integration system system-real acceptance; do
+    for _verb in build lint unit matrix integration system system-real acceptance; do
         : >"${STUB_CALLS}"
         _just test "${_verb}"
         assert_success
@@ -226,6 +226,14 @@ _listed_names() {
     _just test lint --foo bar
     assert_success
     assert_equal "$(_stub_calls)" "test.sh --lint --foo bar"
+    assert_equal "$(_last_argc)" "3"
+}
+
+@test "just test changed forwards --changed and every argument verbatim" {
+    _stub_scripts
+    _just test changed --base main
+    assert_success
+    assert_equal "$(_stub_calls)" "test.sh --changed --base main"
     assert_equal "$(_last_argc)" "3"
 }
 
@@ -489,7 +497,7 @@ _listed_names() {
     # Matrix: job name (gate, keyed on by branch protection / ci-passed) ->
     # tier. The names are the pre-existing ones.
     local _pair _gate _tier
-    for _pair in 'lint=lint' 'test-unit=unit' 'test-integration=integration' \
+    for _pair in 'lint=lint' 'test-unit=unit' 'test-matrix=matrix' 'test-integration=integration' \
         'test-system=system' 'test-acceptance=acceptance'; do
         _gate="${_pair%%=*}"
         _tier="${_pair#*=}"

@@ -8,7 +8,8 @@
 
 ## 慣例
 
-- **建立 issue**：`gh issue create -R ycpss91255/worktool --title "..." --body-file <檔> --label <標籤>`。
+- **建立 issue**：`gh issue create -R ycpss91255/worktool --title "..." --body-file <檔> --label <標籤> --milestone <M>`（不屬於任何 milestone 時拿掉 `--milestone`，改在本文寫一行 `milestone: 無`，見下一條）。
+- **milestone 表態**（#266）：新開的 issue 屬於某個 milestone 就掛對應的 M（`--milestone <名稱>` 或 `-m <名稱>`）；不屬於任何 milestone 就不掛，並在本文寫一行 `milestone: 無`。兩者必須擇一，都沒有或同時出現都會被 `enforce_issue_milestone` hook 擋下（exit 2）；包在 `bash -c`／`eval` 裡開 issue 也一樣算。hook 只看有沒有表態，不檢查名稱對不對（不存在的名稱 gh 自己會拒絕），也不替你判斷該掛哪一個；編輯既有 issue、開 PR 不受影響。
 - **讀 issue**：`gh issue view <number> -R ycpss91255/worktool --comments`；需要時用 `jq` 過濾留言，並一併抓標籤。
 - **列 issue**：`gh issue list -R ycpss91255/worktool --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`，視情況加 `--label`、`--state`、`--milestone`。
 - **留言**：`gh issue comment <number> -R ycpss91255/worktool --body-file <檔>`
@@ -53,7 +54,7 @@ GitHub 的 issue 與 PR 共用同一個編號空間，光看 `#42` 分不出是�
 
 給 `/wayfinder` 用。**map** 是一個 issue，**child** issue 是它底下的 ticket。
 
-- **Map**：一個貼 `wayfinder:map` 標籤的 issue，本文放 Notes／Decisions-so-far／Fog。`gh issue create -R ycpss91255/worktool --title "..." --body-file <檔> --label wayfinder:map`。
+- **Map**：一個貼 `wayfinder:map` 標籤的 issue，本文放 Notes／Decisions-so-far／Fog。`gh issue create -R ycpss91255/worktool --title "..." --body-file <檔> --label wayfinder:map --milestone <M>`（不屬於任何 milestone 時拿掉 `--milestone`，改在本文寫一行 `milestone: 無`）。
 - **Child ticket**：以 GitHub sub-issue 連到 map 的 issue（用 `gh api` 打 sub-issues endpoint）。sub-issue 沒開的話，把 child 加進 map 本文的 task list，並在 child 本文最上面寫 `Part of #<map>`。標籤：`wayfinder:<type>`（`research`／`prototype`／`grilling`／`task`）。被認領後，ticket 指派給負責的開發者。
 - **Blocking**：用 GitHub **原生 issue dependencies**，這是正式、UI 看得到的表示法。加一條邊：`gh api --method POST repos/ycpss91255/worktool/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`，`<blocker-db-id>` 是 blocker 的數字 **database id**（`gh api repos/ycpss91255/worktool/issues/<n> --jq .id`，_不是_ `#number` 也不是 `node_id`）。GitHub 會回報 `issue_dependencies_summary.blocked_by`（只算還開著的 blocker，這就是即時閘門）。dependencies 不可用時，退回在 child 本文最上面寫一行 `Blocked by: #<n>, #<n>`。所有 blocker 都關閉，ticket 才算解除封鎖。
 - **Frontier query**：列 map 底下還開著的 child（`gh issue list -R ycpss91255/worktool --state open`，限定在 map 的 sub-issue／task list 範圍），剔除有開著的 blocker（`issue_dependencies_summary.blocked_by > 0`，或 `Blocked by` 那行有還開著的 issue）或已有 assignee 的；依 map 順序第一個勝出。

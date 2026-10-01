@@ -96,6 +96,7 @@ RUN apk add --no-cache \
         git \
         grep coreutils \
         ncurses \
+        parallel \
         just \
         jq \
         nodejs

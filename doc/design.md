@@ -150,7 +150,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
    同儕,而是 `just test lint`。
 3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
-   **全部**(lint、unit、integration、system、acceptance、system-real,依序,遇到第一個
+   **全部**(lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個
    失敗即停);`just test unit` 只跑單元層;`just box assemble --dry-run` 只印指令、
    不執行(base ADR-00000011 §3)。
 4. **justfile 是薄轉發器**:每個 recipe 就是把 `*args` **原樣**傳給對應腳本的一行
@@ -171,7 +171,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 **root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
 
 ```just
-mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
 mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
 
 # Default: list the namespaces.
@@ -186,10 +186,11 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 
 | 指令 | 轉發到 |
 |------|--------|
-| `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
+| `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
 | `just test build [args]` | `./script/test/test.sh --build "$@"` |
 | `just test lint [args]` | `./script/test/test.sh --lint "$@"` |
 | `just test unit [args]` | `./script/test/test.sh --unit "$@"` |
+| `just test matrix [args]` | `./script/test/test.sh --matrix "$@"` |
 | `just test integration [args]` | `./script/test/test.sh --integration "$@"` |
 | `just test system [args]` | `./script/test/test.sh --system "$@"` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
@@ -250,9 +251,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    recipe 加各自的腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
-   (lint、test-unit、test-integration、test-system、test-acceptance、
+   (lint、test-unit、test-matrix、test-integration、test-system、test-acceptance、
    test-system-real、ci-passed),matrix 以 `just test <tier>` 執行(tier 為 lint /
-   unit / integration / system / acceptance),real job 以 `just test system-real`
+   unit / matrix / integration / system / acceptance),real job 以 `just test system-real`
    執行。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
