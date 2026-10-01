@@ -6,8 +6,10 @@
 #   shape the issue asks for:
 #     - the six sections, in order;
 #     - every promise ("- **...**" item) in sections 2-5 carries exactly one
-#       "驗證：" line that names how it is verified or says 待驗
-#       (invariant 7: a promise must be black-box verifiable);
+#       "驗證：" line of its own (counted per promise, so one promise with
+#       two cannot hide a neighbour with none) that names how it is
+#       verified or says 待驗 (invariant 7: a promise must be black-box
+#       verifiable);
 #     - every test file a 驗證 line cites exists (no promise leans on a
 #       spec that is not there);
 #     - the invariant index lists the ten invariants in order, each naming
@@ -37,6 +39,17 @@ _section() {
     ' "${CONTRACT}"
 }
 
+# Reads a section body on stdin; prints "<count> <promise>" for every
+# promise ("- **...**" item): how many "  - 驗證：" lines sit under it
+# before the next top-level item.
+_checks_per_promise() {
+    awk '
+        /^- / { if (on) print c, t; on = ($0 ~ /^- \*\*/); c = 0; t = $0; next }
+        on && /^  - 驗證：/ { c++ }
+        END { if (on) print c, t }
+    '
+}
+
 @test "doc/contract.md has the six sections of #201, in order" {
     run grep -E '^## [0-9]+\. ' "${CONTRACT}"
     assert_success
@@ -49,14 +62,17 @@ _section() {
     [ "${#lines[@]}" -eq 6 ]
 }
 
-@test "every promise in sections 2-5 has exactly one 驗證 line" {
-    local n promises checks
+@test "each promise in sections 2-5 carries its own single 驗證 line" {
+    # Counted per promise, not per section: a promise with two 驗證 lines
+    # must not cover for a neighbour with none.
+    local n
     for n in 2 3 4 5; do
-        promises="$(_section "${n}" | grep -cE '^- \*\*')"
-        checks="$(_section "${n}" | grep -cE '^  - 驗證：')"
-        echo "section ${n}: ${promises} promise(s), ${checks} 驗證 line(s)"
-        [ "${promises}" -ge 1 ]
-        [ "${promises}" -eq "${checks}" ]
+        run bash -c "$(declare -f _section _checks_per_promise); CONTRACT=\"\$1\" _section \"\$2\" | _checks_per_promise" _ "${CONTRACT}" "${n}"
+        assert_success
+        echo "section ${n}:"
+        echo "${output}"
+        [ "${#lines[@]}" -ge 1 ]
+        refute_line --regexp '^([^1]|1[^ ])'
     done
 }
 

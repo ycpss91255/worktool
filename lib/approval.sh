@@ -14,6 +14,9 @@
 # caller's job.
 #
 # Public API:
+#   approval_phrase
+#       -> prints the approval phrase (no newline), for a caller that must
+#          find it in text without restating it.
 #   approval_is_human_approval <author_association> <body>
 #       -> 0 when that one comment is a human approval, 1 otherwise.
 #   approval_evaluate <labels>   (comment records on stdin)
@@ -30,6 +33,10 @@
 # The phrase an approval must contain.
 _approval_phrase() {
     printf '%s' '允許合併'
+}
+
+approval_phrase() {
+    _approval_phrase
 }
 
 # 0 when the newline-separated label list $1 has `milestone-gate` exactly.
