@@ -41,10 +41,10 @@ bats_require_minimum_version 1.5.0
 _runs() {
     printf '%s\n' \
         'setup||' \
-        'setup||--auto-enter yes --terminal ghostty --tmux host --box dev --distrobox @DBX@' \
-        'setup||--auto-enter=yes --terminal=ghostty --tmux=inside --box=work --distrobox=@DBX@' \
-        'setup||--terminal none --tmux host' \
-        'setup||--dry-run --tmux host' \
+        'setup||--auto-enter yes --terminal ghostty --box dev --distrobox @DBX@' \
+        'setup||--auto-enter=yes --terminal=ghostty --box=work --distrobox=@DBX@' \
+        'setup||--terminal none' \
+        'setup||--dry-run' \
         'setup||-h' \
         'setup||--help' \
         'setup|ghostty-host|--auto-enter no' \
@@ -249,9 +249,9 @@ _script() {
 _prep() {
     case "$1" in
         '') return 0 ;;
-        ghostty-host) _script setup '--terminal ghostty --tmux host' ;;
-        ghostty-inside) _script setup '--terminal ghostty --tmux inside' ;;
-        none-host) _script setup '--terminal none --tmux host' ;;
+        ghostty-host) _script setup '--terminal ghostty' ;;
+        ghostty-inside) _script setup '--terminal ghostty' ;;
+        none-host) _script setup '--terminal none' ;;
     esac
 }
 
@@ -402,7 +402,7 @@ EOF
 @test "owner: setup, assemble and status act on the named state file (effects)" {
     _trap poison
     printf '%s\n' '# mine' 'link=.aws' >"${STATE}"
-    run "${REPO_ROOT}/script/box/setup.sh" --tmux host
+    run "${REPO_ROOT}/script/box/setup.sh"
     assert_success
     assert_line "[INFO] wrote: ${STATE}"
     run "${REPO_ROOT}/script/box/assemble.sh" --home "${BOX_HOME}"
@@ -411,20 +411,20 @@ EOF
     run "${REPO_ROOT}/script/box/status.sh"
     assert_success
     assert_line "config: ${STATE}"
-    assert_line "tmux: host (user)"
+    assert_line "terminal: none (default)"
     assert_line "link: ${BOX_HOME}/.aws -> ${HOME}/.aws (missing source)"
     assert_line "home: ${BOX_HOME} (user)"
-    run grep -cxE '# mine|link=\.aws|tmux=host|tmux\.source=user|home=.*/box-home|home\.source=user' "${STATE}"
+    run grep -cxE '# mine|link=\.aws|terminal=none|terminal\.source=default|home=.*/box-home|home\.source=user' "${STATE}"
     assert_output "6"
     _check_trap poison effects
 }
 
 @test "owner: the validators (lib/enter.sh, lib/home.sh) judge the named state file" {
     _trap poison
-    printf '%s\n' 'tmux=sideways' >"${STATE}"
+    printf '%s\n' 'terminal=sideways' >"${STATE}"
     run "${REPO_ROOT}/script/box/setup.sh"
     assert_failure 1
-    assert_line "[ERROR] ${STATE}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_line "[ERROR] ${STATE}: invalid value 'sideways' for terminal (expected ghostty|none)"
     printf '%s\n' 'home=relative' 'home.source=user' >"${STATE}"
     run "${REPO_ROOT}/script/box/assemble.sh"
     assert_failure 1

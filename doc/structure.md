@@ -30,15 +30,15 @@ worktool/
 │   └── box/             dev 盒生命週期(just box ...)
 │       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh(M3 再加 rm)
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --help)
-│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --tmux / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊(distrobox 寫已 quote 的絕對路徑;見 enter.md)
-│       ├── enter.sh             進盒包裝層(受管 command 跑它):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
+│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊 `'<distrobox>' enter <盒>`(distrobox 寫已 quote 的絕對路徑;不開 tmux、不碰 ~/.tmux.conf,#179),每次另寫 distrobox.conf 受管區塊(進盒時丟掉 TMUX / TMUX_PANE,#179);見 enter.md)
+│       ├── enter.sh             手動進盒包裝層(just box enter):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
 │       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats
 │   │   ├── manifest_spec.bats    清單驗證與欄位擷取
 │   │   ├── assemble_spec.bats    assemble 指令組裝(dry-run)+ CLI(--help / 未知選項 exit 2)
-│   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、tmux host 變體、--auto-enter no 移除並回報、--dry-run 不寫、CLI、ghostty 執行檔偵測與 distrobox 絕對路徑(#175)(暫時 HOME)
+│   │   ├── setup_spec.bats       setup.sh:預設 + 每行 log、user 覆蓋、區塊只寫一次且冪等、沒有 tmux 決策且不碰 ~/.tmux.conf(#179)、--auto-enter no 移除並回報、--dry-run 不寫、CLI、ghostty 執行檔偵測與 distrobox 絕對路徑(#175)(暫時 HOME)
 │   │   ├── enter_spec.bats       enter.sh:首次啟動偵測、進度行持續產生、host log、逾時 / 失敗 exit 1 並印 log 最後 20 行與復原方式、成功 / 失敗 / SIGINT / SIGTERM 後沒有遺留背景行程、TTY 原地覆寫、CLI(假 docker / distrobox,#180)
 │   │   ├── status_spec.bats      status.sh:設定檔與來源、受管區塊 present / absent、distrobox 是否還跑得起來(#175)、無設定檔時的預設報告、CLI(暫時 HOME)
 │   │   ├── test_sh_spec.bats     test.sh host 端 CLI:--help、未知選項、無旗標的執行順序與遇錯即停(假 docker 記錄呼叫)
@@ -73,10 +73,11 @@ worktool/
 │   ├── integration/     整合測試(bats):元件協作,在 Docker 內跑
 │   │   ├── smoke_spec.bats
 │   │   ├── assemble_spec.bats    以 mock distrobox 驗證 assemble 接線
-│   │   ├── setup_spec.bats       setup -> status 來回(暫時 HOME):host 變體、切回 inside、--auto-enter no、--dry-run、log 與報告一致、受管 command 在桌面式縮減 PATH 下可執行(#175)
-│   │   └── enter_spec.bats       首次進盒端到端:just box enter 與 setup 寫出的 ghostty command 都經過 enter.sh,顯示進度後才交給 distrobox(假 docker / distrobox,#180)
+│   │   ├── setup_spec.bats       setup -> status 來回(暫時 HOME):直接進盒且不開 tmux、--auto-enter no、--dry-run、log 與報告一致、受管 command 在桌面式縮減 PATH 下可執行(#175)
+│   │   └── enter_spec.bats       首次進盒端到端:just box enter 經過 enter.sh 顯示進度;setup 寫出的 ghostty command 直接進盒且不開 tmux(假 docker / distrobox,#180)
 │   ├── system/          系統測試(bats):真實 distrobox 端到端,分兩組
 │   │   ├── real_assemble_spec.bats  shim 組:真實 distrobox 1.8.2.5 + 假容器管理器(不需 DinD)
+│   │   ├── real_enter_env_spec.bats shim 組:真實 distrobox-enter --dry-run,setup.sh 寫的 distrobox.conf 區塊讓進盒請求不帶 host pane 的 TMUX / TMUX_PANE(#179)
 │   │   ├── real_engine_spec.bats    real-engine 組:真實 docker 引擎(DinD)建出可用 dev 盒
 │   │   └── fixture/
 │   │       └── fake_container_manager.sh  假 docker:逐一參數記錄、可注入失敗
@@ -99,7 +100,7 @@ worktool/
 │   ├── agent/           給 agent skill 讀的設定:issue-tracker.md / triage-labels.md / domain.md
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
 │       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
-│       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、盒子 HOME、ghostty -> tmux -> fish
+│       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、盒子 HOME、ghostty -> distrobox enter dev -> fish(不自動開 tmux,#179)
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
@@ -256,7 +257,7 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--help`) |
-| `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--tmux inside\|host`、`--box <名稱>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
+| `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <名稱>`、`--distrobox <路徑>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help`、`./script/box/enter.sh --help` |

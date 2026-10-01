@@ -2,12 +2,14 @@
 # status.sh - show the auto-enter decisions in force and their sources (M3, #21).
 #
 # The read side of `just box setup`: prints the ONE state file's decisions
-# (auto-enter, terminal, tmux, box), each with its source (default | user),
-# whether the worktool managed block is present in each managed file (the
-# ghostty config and ~/.tmux.conf), since issue #175 whether the distrobox
-# those blocks name can still be run, since issue #199 the state of each
-# user-config link into the box HOME (lib/link.sh), and since issue #198
-# the box HOME `just box assemble` recorded. Read-only: it never writes.
+# (auto-enter, terminal, box), each with its source (default | user),
+# whether the worktool managed block is present in the ghostty config, and
+# - since issue #175 - whether the distrobox that block names can still be
+# run, and - since issue #179 - whether distrobox.conf holds the block that
+# keeps a host tmux pane's TMUX out of the box. Read-only: it never writes. Since issue #179 there is no tmux line:
+# worktool does not manage tmux, and never looks at ~/.tmux.conf.
+# The user-config link states and the recorded box HOME follow the entry
+# report (issues #199 and #198).
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -58,10 +60,10 @@ Usage: status.sh
 Show the auto-enter decisions in force (from {state-file},
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
-~/.tmux.conf, whether the distrobox those blocks name can still be run, the
-state of each user-config link into the box HOME recorded by `just box
-assemble` (linked | missing source | blocked by existing file | not linked
-yet), and that box HOME. Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
+distrobox.conf (the block that keeps a host tmux pane's TMUX out of the
+box), whether the distrobox the ghostty block names can still be run,
+the user-config link states and the recorded box HOME.
+Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
   -h, --help   Show this help and exit.
@@ -88,10 +90,16 @@ _report_key() {
     printf '%s: %s (%s)\n' "${_key}" "${_value}" "${_source:-default}"
 }
 
-# Print `<label>: <file> (managed block: present|absent)`.
+# Print `<label>: <file> (managed block: present|absent|MALFORMED - ...)`.
+# Malformed markers are what setup.sh refuses to rewrite, so the report
+# says so rather than calling the block present.
 _report_block() {
-    local _label="$1" _file="$2" _state="absent"
-    enter_block_present "${_file}" && _state="present"
+    local _label="$1" _file="$2" _state="absent" _problem
+    if ! _problem="$(enter_block_check "${_file}")"; then
+        _state="MALFORMED - ${_problem}; fix or remove the markers, then re-run: just box setup"
+    elif enter_block_present "${_file}"; then
+        _state="present"
+    fi
     printf '%s: %s (managed block: %s)\n' "${_label}" "${_file}" "${_state}"
 }
 
@@ -118,7 +126,7 @@ _report() {
         _report_key "${_key}"
     done < <(enter_keys)
     _report_block ghostty "$(enter_ghostty_config)"
-    _report_block tmux.conf "$(enter_tmux_conf)"
+    _report_block distrobox.conf "$(enter_distrobox_conf)"
     _report_distrobox
     _report_links
     _report_home
@@ -176,8 +184,6 @@ _report_home() {
 _report_distrobox() {
     local _recorded
     _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_config)")")"
-    [[ -n "${_recorded}" ]] \
-        || _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_tmux_conf)")")"
     if [[ -n "${_recorded}" ]]; then
         _report_recorded_distrobox "${_recorded}"
         return 0

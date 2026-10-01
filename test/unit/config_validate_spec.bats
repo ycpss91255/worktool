@@ -48,7 +48,6 @@ _keys() {
     printf '%s\n' \
         'auto-enter|enter_config_check|yes|' 'auto-enter.source|enter_config_check|user|' \
         'terminal|enter_config_check|none|' 'terminal.source|enter_config_check|user|' \
-        'tmux|enter_config_check|inside|' 'tmux.source|enter_config_check|user|' \
         'box|enter_config_check|dev|' 'box.source|enter_config_check|user|' \
         "home|home_config_check|${BATS_TEST_TMPDIR}/box|home.source=user" \
         "home.source|home_config_check|user|home=${BATS_TEST_TMPDIR}/box"

@@ -47,7 +47,7 @@ worktool 的主痛點是重建成本（#200 定案 2）：換機、重灌、host
 - 已存在的盒子不會被換成另一個 HOME：`test/system/real_engine_spec.bats` 的「real engine (#198): assemble with a DIFFERENT --home is refused (exit 1) and the box keeps its HOME」；`test/integration/assemble_spec.bats` 的「#198: an existing box with a different HOME is refused: exit 1, the recreate commands, nothing changed」。
 - 預設 HOME 是 `~/<盒名>-box`，並以 `DBX_CONTAINER_CUSTOM_HOME` 交給 distrobox：`test/unit/assemble_spec.bats` 的「#198: the default box home is ~/<box>-box, logged as (default); stdout keeps the bare command」；`test/integration/assemble_spec.bats` 的「#198: the default box home reaches distrobox as DBX_CONTAINER_CUSTOM_HOME; argv is unchanged」。
 - 清單不得以 distrobox 自己的 `home=` 蓋掉盒子 HOME：`test/unit/assemble_spec.bats` 的「#198: a manifest that sets distrobox's own home= key is refused (exit 1): --home owns the box HOME」。
-- 真的 ghostty 視窗執行受管區塊的命令後，標記檔落在盒內：`test/system/real_engine_spec.bats` 的「ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish under tmux)」。這條證明 ghostty 會進盒，不證明其他終端不會。
+- 真的 ghostty 視窗執行受管區塊的命令後，標記檔落在盒內：`test/system/real_engine_spec.bats` 的「ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)」。這條證明 ghostty 會進盒，不證明其他終端不會。
 
 待補（目前沒有測試檢查，不得當作已守住）：
 
@@ -55,4 +55,4 @@ worktool 的主痛點是重建成本（#200 定案 2）：換機、重灌、host
 - 待補：沒有測試開一個非 ghostty 的終端，確認拿到的是 host shell。
 - 待補：沒有測試在盒內寫入 tool config 後，確認 host HOME 的同名檔不變、host 的設定盒內讀不到。#196 的 demo 驗證過這件事，但只是一次性的留言證據，不在 CI 裡。
 - 待補：tmux 使用盒子自己的 socket（`TMUX_TMPDIR`），由 #179 實作並補測。
-- 已知衝突（不只是缺測試）：目前 `just box setup --tmux host` 會在 host 的 `~/.tmux.conf` 寫受管區塊（`test/unit/setup_spec.bats` 的「--tmux host: ghostty runs tmux on the host and ~/.tmux.conf gets the default-command block」檢查的就是這個行為）。這是 host 上 tmux 的設定，與本性質第 3 點衝突；#179 移除 tmux 決策後才會消失，在那之前本性質第 3 點對 `--tmux host` 尚未生效（見「狀態」與「性質」）。
+- #179 已移除寫入 host tmux 設定的路徑：`test/unit/setup_spec.bats` 的「#179: ~/.tmux.conf is never written, read or cleaned, whatever the decisions」檢查各種決策下既有 `~/.tmux.conf` 原樣留下；`test/unit/setup_spec.bats` 的「#179: --tmux is no longer an option: refused as unknown, exit 2, nothing written」檢查舊選項被拒絕且不寫檔。

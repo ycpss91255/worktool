@@ -26,15 +26,15 @@ worktool 的主痛點是重建成本高（#200 定案 2）：換機、重灌、h
 
 機制：
 
-- `just box setup` 的受管區塊（`script/box/setup.sh` 的 `_block_write`／`_block_remove`，標記與讀寫在 `lib/enter.sh`）：檔案裡恰好一個、內容相同的受管區塊才算最新，此時不重寫並印出 `unchanged: <檔案> (managed block already up to date)`；否則原地取代，重複的區塊一併收斂成一個。`--auto-enter no` 移除時沒有區塊就印出 `nothing to remove`（其他移除路徑不保證有這行回報）。
+- `just box setup` 的受管區塊（`script/box/setup.sh` 的 `_block_write`／`_block_remove`，標記與讀寫在 `lib/enter.sh`）：檔案裡恰好一個、內容相同的受管區塊才算最新，此時不重寫並印出 `unchanged: <檔案> (managed block already up to date)`；合法但內容不同的單一區塊原地取代；雙區塊或其他錯誤標記由 `enter_block_check` 拒絕，重跑仍拒絕且不寫任何檔案。`--auto-enter no` 移除時沒有區塊就印出 `nothing to remove`（其他移除路徑不保證有這行回報）。
 - `just box assemble` 的狀態檔（`lib/home.sh` 的 `home_record`）：`home=`／`home.source=` 原地取代，不追加。已存在的盒子交給上游 distrobox-assemble 判斷，由它回報 `dev already exists` 並不重建。
 
 測試（每一條都是可查的檔名與案例名）：
 
 - `test/unit/setup_spec.bats` 的「the ghostty block is written exactly once and a re-run is idempotent (unchanged)」：同樣的選項跑第二次，exit 0、印出 `unchanged:`、檔案內容與第一次逐字相同、受管區塊仍只有一個。
-- `test/unit/setup_spec.bats` 的「a file that already holds two managed blocks is collapsed to exactly one, in place of the first」：已經累積兩個區塊的檔案，重跑後收斂成一個。
+- `test/unit/managed_block_spec.bats` 的「re-running setup on two managed blocks gives the same refusal and writes nothing」：ghostty config 與 distrobox.conf 已有雙區塊時，同樣選項連跑兩次都 exit 1、拒絕輸出相同；原檔逐位元組不變，不寫狀態檔或另一個受管檔。
 - `test/unit/setup_spec.bats` 的「a stored user choice persists across runs; a default key is recomputed」：第二次不帶選項重跑，沿用第一次記錄的使用者選擇。
-- `test/unit/setup_spec.bats` 的「--auto-enter no with nothing managed says so for both files」：沒有受管區塊時執行移除，兩個檔案都印出 `nothing to remove`，也不建立檔案。這是移除之後再跑一次會落入的狀態，但本案例不是真的連跑兩次。
+- `test/unit/setup_spec.bats` 的「--auto-enter no with nothing managed says so」：ghostty 沒有受管區塊時執行移除，印出 `nothing to remove`，也不建立 ghostty 設定檔。這是移除之後再跑一次會落入的狀態，但本案例不是真的連跑兩次。
 - `test/integration/assemble_spec.bats` 的「#198: a successful run records home= and home.source= in the state file, keeping the other lines」：狀態檔原本已有 `home=`／`home.source=` 時，改寫後各只有一行，其他行保留。
 - `test/integration/assemble_spec.bats` 的「#198: an existing box with the SAME HOME proceeds (distrobox leaves it alone) and records it」：以假的 distrobox 驗證盒子已存在且 HOME 相同時照常執行、不被拒絕。它只證明重跑不被擋，不證明盒子沒有重建；不重建由下一條真實引擎的案例守住。
 - `test/system/real_engine_spec.bats` 的「real engine: a second assemble.sh run exits 0 and does not duplicate the dev box」：真實 distrobox 上第二次 assemble exit 0、輸出含上游的 `dev already exists`、不含 `successfully created`、`dev` 盒子仍只有一個且可用。
