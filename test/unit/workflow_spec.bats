@@ -408,7 +408,7 @@ _pl_blocked_run() {
 @test "no template hardcodes a machine path, a session scratchpad or a session URL; repoDir is required" {
     run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
     assert_failure
-    run grep -c '^const WORKTREE_ROOT = `\${REPO_DIR}/../worktree`$' "${PR_LOOP}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${PR_LOOP}"
     assert_output "1"
     run grep -c "const REPO_DIR = A.repoDir$" "${PR_LOOP}" "${FANOUT}"
     assert_output --partial "pr-loop.js:1"
@@ -704,7 +704,7 @@ _rv_src_check() {
     assert_failure
     run grep -c "const REPO_DIR = A.repoDir$" "${RESEARCH}"
     assert_output "1"
-    run grep -c '^const WORKTREE_ROOT = `\${REPO_DIR}/../worktree`$' "${RESEARCH}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${RESEARCH}"
     assert_output "1"
     run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push|--auto' "${RESEARCH}"
     assert_failure
