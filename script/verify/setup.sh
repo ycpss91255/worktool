@@ -1328,9 +1328,13 @@ _item_3_8() {
     _require_tools env just sed grep mktemp || return 1
     _item_begin || return 1
     _seed_user_content 3.8 || return 1
+    NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return 1
     local _ghostty="${ITEM_H}/.config/ghostty/config" _before _blocks _bad=0
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
-    "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
+    "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || {
+        _fail "3.8: staging setup failed; no block to remove"
+        return 1
+    }
     _expect_user_content 3.8 after-write || _bad=1
     _before="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
     printf 'ghostty-blocks-before=%s\n' "${_before}"
