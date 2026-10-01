@@ -607,6 +607,11 @@ main() {
                 _ci="$1" ;;
             --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
+            --filter)
+                [[ $# -gt 1 ]] || _usage_error "option '--filter' requires a value"
+                shift
+                _filter="$1"
+                ;;
             --*) _usage_error "unknown option '$1'" ;;
             *) _paths+=("$1") ;;
         esac
@@ -616,7 +621,7 @@ main() {
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
     fi
-    if [[ "${#_paths[@]}" -gt 0 ]]; then
+    if [[ "${#_paths[@]}" -gt 0 || -n "${_filter}" ]]; then
         [[ "${#_steps[@]}" -le 1 ]] \
             || _usage_error "spec paths and --filter require exactly one bats tier"
         _step="${_ci:-${_steps[0]:-}}"
