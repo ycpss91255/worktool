@@ -32,7 +32,7 @@
 #   - renderer rows (what config_set writes) also change only their own
 #     element of the written bytes; behavioural rows are only "caught";
 #   - `owner` is checked over every entry point the argument parsers expose
-#     and every module in the source graph of the scripts under script/
+#     and every module in a source graph reaching lib/config.sh from script/
 #     that names a public config_* function or XDG_CONFIG_HOME in a
 #     non-comment line (test/unit/config_owner_spec.bats); modules that
 #     name neither are not checked.

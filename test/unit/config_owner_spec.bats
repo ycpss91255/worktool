@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # test/unit/config_owner_spec.bats - no module but lib/config.sh reaches
 # the state file, over every entry point the parsers expose and every module
-# in the source graph that names a public config_* function or
+# in a source graph reaching lib/config.sh that names a public config_* function or
 # XDG_CONFIG_HOME in a non-comment line (issue #199 rounds 6-10).
 #
 # What is checked, and nothing more:
@@ -26,7 +26,7 @@
 #     by the entry function (or the parser it hands "$@" to), on a test of
 #     $1 other than the case, and on positional use at the top level.
 # test/unit/config_mutation_spec plants a rogue path-builder in every module
-# of the source graph that names a public config_* function or
+# of a source graph reaching lib/config.sh that names a public config_* function or
 # XDG_CONFIG_HOME in a non-comment line, and requires these cases to catch
 # each one; modules that name neither are not checked.
 

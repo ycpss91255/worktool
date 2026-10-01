@@ -58,8 +58,8 @@ graph_modules() {
     done
 }
 
-# The owner guards check only the modules this accepts: a module of the
-# source graph that names neither a public config_* function nor
+# The owner guards first select source graphs reaching lib/config.sh,
+# then check only the modules this accepts: a module that names neither a public config_* function nor
 # XDG_CONFIG_HOME outside comments is not checked.
 graph_touches_config() {
     local _api

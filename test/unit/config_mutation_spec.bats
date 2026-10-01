@@ -16,7 +16,7 @@
 #     check is shown to reject round 5's and round 7's impure mutants.
 #     Behavioural rows (kind `behave`) claim "caught", nothing more;
 #   - the `owner` row expands to _owner_rows, one rogue path-builder per
-#     module of the source graph (every script under script/, followed
+#     module of a source graph reaching lib/config.sh (scripts under script/, followed
 #     through `source` lines by test/helper/graph.bash) that names a public
 #     config_* function or XDG_CONFIG_HOME in a non-comment line; a guard
 #     fails on such a module without a row. Modules that name neither are
@@ -88,7 +88,7 @@ _rows() {
 
 # The owner property, per module: module | mutant | cases. One row for every
 # module of the source graph (test/helper/graph.bash, from every script
-# under script/) that names a public config_* function or XDG_CONFIG_HOME in
+# under script/ whose graph reaches lib/config.sh) that names a public config_* function or XDG_CONFIG_HOME in
 # a non-comment line; a guard fails on such a module without a row, or a row
 # without such a module. Modules that name neither are not checked.
 _owner_rows() {
@@ -701,7 +701,7 @@ _drift_violations() {
 }
 
 # The owner rows' drift in tree $1: every module of the source graph of
-# every script under script/ that names a public config_* function or
+# every script under script/ whose graph reaches lib/config.sh that names a public config_* function or
 # XDG_CONFIG_HOME in a non-comment line (graph_touches_config) needs an
 # owner row, and every owner row names such a module; other modules are not
 # checked. One line per violation.
@@ -710,6 +710,7 @@ _owner_module_violations() {
     for _s in "${_tree}"/script/*/*.sh; do
         _s="${_s#"${_tree}"/}"
         _m="$(graph_modules "${_tree}" "${_s}")" || { echo "unresolved source graph of ${_s}"; continue; }
+        grep -qx 'lib/config.sh' <<<"${_m}" || continue
         _mods+="${_m}"$'\n'
     done
     _mods="$(sort -u <<<"${_mods}" | while IFS= read -r _m; do
@@ -767,6 +768,21 @@ done < <(_rows)
 @test "drift guard: every module of the source graph that names a public config_* function or XDG_CONFIG_HOME in a non-comment line has an owner row" {
     run _owner_module_violations "${REPO_ROOT}"
     assert_output ""
+}
+
+@test "owner module guard ignores isolated XDG environments but catches reachable path builders" {
+    local _tree="${BATS_TEST_TMPDIR}/tree"
+    cp -R "${CLEAN}" "${_tree}"
+    printf '%s\n' 'env XDG_CONFIG_HOME=/isolated external-command' \
+        >"${_tree}/script/test/isolated.sh"
+    run _owner_module_violations "${_tree}"
+    assert_output ""
+
+    printf '%s\n' 'source "${LIB_DIR}/config.sh"' \
+        'audit_path() { printf "%s/worktool/config\n" "${XDG_CONFIG_HOME}"; }' \
+        >"${_tree}/script/test/isolated.sh"
+    run _owner_module_violations "${_tree}"
+    assert_line 'module names the config API but has no owner row: script/test/isolated.sh'
 }
 
 @test "drift guard: a module reached only through another library is found" {
