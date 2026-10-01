@@ -259,7 +259,13 @@ Record 之前的失敗 gh 完全沒被呼叫。
 
 codex 以 `setsid nohup` 脫離執行，寫 rc 檔；每次前景等待上限 540 秒，codex 硬上限 14,400 秒。
 完成後清理掛載該 checkout 的測試 container；非零 rc 或空輸出不能當成功。
-留言以 `[claude]` 開頭，包含結論、每個判斷的 issue URL／檔案:行號依據、分歧與維護者問題；
+雙方作答分成 `answer`、`reasons`、`notes` 與 `risks`；判斷放在 `reasons` 並逐條附依據，
+說明與執行紀錄放在 `notes`，不需引用、不算判斷、不傳給比對代理或下一輪的前次答案。
+每條理由與比對依據接受完整 issue URL、本 repo 的 issue／PR 簡寫 `#<正整數>`（例如 `#212`），
+repo 相對路徑的 `檔案:行號`（例如 `doc/contract.md:1`），或搜尋紀錄 `grep:<pattern> in <路徑> -> N 筆`；
+`N` 是非負整數，`0 筆` 可引用找不到用法的反面證據（例如 `grep:開發盒|dev 容器 in doc/ -> 0 筆`）。
+每條判斷與比對依據都必須含至少一項依據；`notes` 不會豁免 `reasons` 內缺少依據的判斷。
+留言以 `[claude]` 開頭，包含結論、每個判斷的依據、分歧與維護者問題；雙方 `notes` 各列「說明與執行紀錄」一節，與判斷分開；
 codex 最終輸出由 shell 複製並逐行引用，不由 Claude 重打，發布前過濾本機路徑與署名。
 Record 分兩次前景工具呼叫：先刪除舊 `body.md` 並組文；組文成功後才執行獨立的發布指令，
 `--body-file` 使用字面絕對路徑，讓 PreToolUse hook 在發布前讀到本次完成的內文。組文失敗就停止發布。
@@ -268,3 +274,7 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 回傳 `{ issue, status, rounds, conclusion, basis, disagreements, ask_maintainer, claude, codex, comment }`。
 成功的 `status` 是 `agreed`／`derived`／`diverged`；nonce、作答、比對或留言失敗分別為
 `setup-failed`／`answer-failed`／`compare-failed`／`record-failed`，失敗不冒充定案。
+`answer-failed` 另帶 `failed_reasons`，每項為 `{ agent, reason_index, reason }`：
+`agent` 是 `claude` 或 `codex`，`reason_index` 從 1 起算，`reason` 保留未通過依據檢查的理由原文。
+雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
+而沒有可列出的未通過理由，`failed_reasons` 為空陣列。
