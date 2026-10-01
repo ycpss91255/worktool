@@ -1113,3 +1113,37 @@ _assert_control_char_refused() {
         done
     done
 }
+
+@test "#173: enable moves a legacy block to the existing new config, preserves user content and modes, and reruns unchanged" {
+    local _new="${GHOSTTY}.ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'theme = dark\n%s\ncommand = old\n%s\nfont-size = 12\n' "${BEGIN}" "${END}" >"${GHOSTTY}"
+    printf 'font-family = monospace\n' >"${_new}"
+    chmod 0640 "${GHOSTTY}"
+    chmod 0600 "${_new}"
+    cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    run "${SETUP}" --terminal ghostty --dry-run
+    assert_success
+    assert_line --partial "dry-run: would move managed block from ${GHOSTTY} to ${_new}"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    assert_equal "$(cat "${_new}")" 'font-family = monospace'
+    assert [ ! -e "${CONFIG}" ]
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] moved: ${GHOSTTY} -> ${_new} (managed block)"
+    printf 'theme = dark\nfont-size = 12\n' >"${BATS_TEST_TMPDIR}/expected"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" 640
+    assert_equal "$(stat -c '%a' "${_new}")" 600
+    cp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] unchanged: ${_new} (managed block already up to date)"
+    refute_line --partial '[INFO] moved:'
+    cmp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    run cat "${_new}"
+    assert_line --index 0 'font-family = monospace'
+    assert_line "${CMD_ENTER}"
+    assert_equal "$(_block_count "${_new}")" 1
+}

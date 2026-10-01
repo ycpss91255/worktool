@@ -446,11 +446,44 @@ _apply_enable() {
 # terminal ghostty: the ghostty block enters the box and runs nothing after
 # it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
-    # DISTROBOX was resolved (and the run refused if it could not be) in
-    # _resolve_all, before any file was touched. The body is shell source,
-    # so the path goes in as a quoted shell word.
-    _block_write "$(enter_ghostty_target)" \
-        "command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    local _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    local _other="$(enter_config_dir)/ghostty/config"
+    if [[ "${GHOSTTY_TARGET}" == "${_other}" ]]; then
+        _other+=".ghostty"
+    fi
+    if enter_block_present "${_other}"; then
+        _ghostty_move "${_other}" "${GHOSTTY_TARGET}" "${_body}"
+    else
+        _block_write "${GHOSTTY_TARGET}" "${_body}"
+    fi
+}
+
+# Prepare both contents before either write. Each replacement is atomic;
+# a failure between the replacements is reported, never silently ignored.
+_ghostty_move() {
+    local _source="$1" _target="$2" _body="$3" _stage _rc=0
+    if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
+        log_info "dry-run: would move managed block from ${_source} to ${_target}"
+        return 0
+    fi
+    if ! _stage="$(mktemp -d)"; then
+        log_error "failed to prepare move: ${_source} -> ${_target}"
+        return 1
+    fi
+    if ! enter_block_strip "${_source}" >"${_stage}/source"         || ! enter_block_compose "${_target}" "${_body}" >"${_stage}/target"; then
+        log_error "failed to prepare move: ${_source} -> ${_target}"
+        _rc=1
+    elif ! config_write_atomic "${_target}" <"${_stage}/target"; then
+        log_error "failed to write ${_target} while moving from ${_source}"
+        _rc=1
+    elif ! config_write_atomic "${_source}" <"${_stage}/source"; then
+        log_error "failed to write ${_source} after writing ${_target}; inspect both files before re-running"
+        _rc=1
+    else
+        log_info "moved: ${_source} -> ${_target} (managed block)"
+    fi
+    rm -rf -- "${_stage}" || return 1
+    return "${_rc}"
 }
 
 # terminal none: no terminal profile is written at all (doc/enter.md); the
