@@ -103,7 +103,8 @@ enter_keys() { printf '%s\n' auto-enter terminal box; }
 # --- Paths -------------------------------------------------------------------
 enter_config_dir() { config_xdg_dir; }
 enter_ghostty_target() {
-    local _legacy="$(enter_config_dir)/ghostty/config"
+    local _legacy
+    _legacy="$(enter_config_dir)/ghostty/config"
     if [[ -e "${_legacy}.ghostty" ]]; then
         printf '%s\n' "${_legacy}.ghostty"
     else

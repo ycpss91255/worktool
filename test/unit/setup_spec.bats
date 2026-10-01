@@ -1183,7 +1183,7 @@ _assert_control_char_refused() {
     mkdir -p "$(dirname -- "${GHOSTTY}")"
     printf 'font-size = 14\n' >"${GHOSTTY}.ghostty"
     for _version in 1.0.0 1.2.3 1.3.0 1.3.1 1.10.0 2.0.0; do
-        printf '#!/bin/sh\n[ "$1" = +version ] || exit 1\nprintf "Ghostty %s\\n"\n' "${_version}" >"${_exe}"
+        printf "#!/bin/sh\n[ \"\$1\" = +version ] || exit 1\nprintf \"Ghostty %s\\n\"\n" "${_version}" >"${_exe}"
         chmod +x "${_exe}"
         run "${SETUP}" --terminal ghostty
         assert_success
@@ -1209,7 +1209,7 @@ _assert_control_char_refused() {
 @test "#173: help explains config selection, validation, migration and the old host version warning" {
     run "${SETUP}" --help
     assert_success
-    assert_output --partial '$XDG_CONFIG_HOME/ghostty/config.ghostty'
+    assert_output --partial "\$XDG_CONFIG_HOME/ghostty/config.ghostty"
     assert_output --partial 'Never creates config.ghostty'
     assert_output --partial 'at most one managed block across both files'
     assert_output --partial 'moves the single block'

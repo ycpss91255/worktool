@@ -293,7 +293,8 @@ _resolve() {
 # whole run untouched.
 _blocks_check() {
     local _file _problem _rc=0 _count=0 _n
-    local _legacy="$(enter_config_dir)/ghostty/config"
+    local _legacy
+    _legacy="$(enter_config_dir)/ghostty/config"
     for _file in "$(enter_distrobox_conf)" "${_legacy}" "${_legacy}.ghostty"; do
         if ! _problem="$(enter_block_check "${_file}")"; then
             log_error "${_file}: malformed worktool managed block markers: ${_problem}; nothing was written (fix or remove the markers, then re-run: just box setup)"
@@ -479,8 +480,9 @@ _apply_enable() {
 # terminal ghostty: the ghostty block enters the box and runs nothing after
 # it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
-    local _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
-    local _other="$(enter_config_dir)/ghostty/config"
+    local _body _other
+    _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    _other="$(enter_config_dir)/ghostty/config"
     if [[ "${GHOSTTY_TARGET}" == "${_other}" ]]; then
         _other+=".ghostty"
     fi
@@ -503,7 +505,8 @@ _ghostty_move() {
         log_error "failed to prepare move: ${_source} -> ${_target}"
         return 1
     fi
-    if ! enter_block_strip "${_source}" >"${_stage}/source"         || ! enter_block_compose "${_target}" "${_body}" >"${_stage}/target"; then
+    if ! enter_block_strip "${_source}" >"${_stage}/source" \
+        || ! enter_block_compose "${_target}" "${_body}" >"${_stage}/target"; then
         log_error "failed to prepare move: ${_source} -> ${_target}"
         _rc=1
     elif ! config_write_atomic "${_target}" <"${_stage}/target"; then
@@ -540,7 +543,8 @@ _apply_disable() {
 
 # A single block may still live in the non-target file before migration.
 _ghostty_remove() {
-    local _target="${GHOSTTY_TARGET}" _other="$(enter_config_dir)/ghostty/config"
+    local _target="${GHOSTTY_TARGET}" _other
+    _other="$(enter_config_dir)/ghostty/config"
     [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
     if enter_block_present "${_other}"; then
         _block_remove "${_other}" "${1:-}"

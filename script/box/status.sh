@@ -135,7 +135,9 @@ _report() {
 # Report the selected file and any existing companion, so a block that
 # has not yet migrated and malformed markers remain visible.
 _report_ghostty() {
-    local _target="$(enter_ghostty_target)" _other="$(enter_config_dir)/ghostty/config"
+    local _target _other
+    _target="$(enter_ghostty_target)"
+    _other="$(enter_config_dir)/ghostty/config"
     [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
     _report_block ghostty "${_target}"
     if [[ -e "${_other}" ]]; then
