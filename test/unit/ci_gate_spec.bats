@@ -123,6 +123,19 @@ EOF
     assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
 }
 
+@test "a partial run skips required-spec and plan-minimum checks and warns" {
+    _make_repo_copy
+    rm "${COPY}/test/integration/assemble_spec.bats"
+
+    run "${COPY}/script/test/test.sh" --ci-integration \
+        test/integration/smoke_spec.bats --filter 'smoke'
+
+    assert_success
+    assert_output --partial '[ci] partial integration run; this does not stand for the whole tier'
+    refute_output --partial 'required spec missing'
+    refute_output --partial 'below the required specs'
+}
+
 # --- the declared required lists ---------------------------------------------
 
 @test "test.sh declares the M2 required specs of the unit tier" {
