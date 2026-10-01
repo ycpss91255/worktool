@@ -85,6 +85,13 @@ const answerWithRepair = async (name, n, prior) => repairFormat(
   (correction, attempt) => ask(name, n, prior, correction, attempt),
 )
 const judgments = ({ answer, reasons, risks }) => ({ answer, reasons, risks })
+const validQuestion = question => {
+  if (typeof question !== 'string' || !question.trim() || /[\r\n]/.test(question)) return false
+  const questions = question.split(/[?？]/)
+  if (questions.length <= 2) return true
+  return questions.length === 3 && !questions[2].trim() &&
+    /^(?:[^?？]*[。.!]\s*)*(?:還是|或是|抑或|或者|or\b|alternatively\b)/i.test(questions[1].trim())
+}
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(cited) && Array.isArray(x.disagreements) && typeof x.question === 'string'
 let prior = null
 let result
@@ -101,7 +108,7 @@ for (let n = 1; n <= 3; n++) {
   if (verdict.status !== 'diverged') break
   prior = { claude: judgments(claude), codex: judgments(codex), disagreements: verdict.disagreements }
 }
-if (result.status === 'diverged' && (!result.question.trim() || /[\r\n]/.test(result.question) || (result.question.match(/[?？]/g) || []).length > 1)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
+if (result.status === 'diverged' && !validQuestion(result.question)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
 result.ask_maintainer = result.status === 'diverged' ? [result.question] : []
 const labels = { agreed: '一致（定案）', derived: '可由不變量／前例推出（自行定案）', diverged: '分歧（交維護者，一次一題）' }
 const text = `[claude] ${labels[result.status]}\n\n${result.conclusion}\n\n## 依據\n${result.basis.map(b => `- ${b}`).join('\n')}\n\n## Claude 判斷與依據\n${result.claude.answer}\n${result.claude.reasons.map(b => `- ${b}`).join('\n')}\n\n## Claude 說明與執行紀錄\n${result.claude.notes.map(b => `- ${b}`).join('\n')}\n\n## codex 說明與執行紀錄\n${result.codex.notes.map(b => `- ${b}`).join('\n')}\n\n${result.ask_maintainer.length ? `## 維護者問題\n${result.ask_maintainer[0]}\n` : ''}\n## 分歧\n${result.disagreements.map(b => `- ${b}`).join('\n')}\n`

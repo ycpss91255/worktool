@@ -1985,6 +1985,16 @@ _discuss_replies() {
     assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
 }
 
+@test "discuss: accepts the real managed block either-or question without repair (#348)" {
+    local question replies
+    question='「受管區塊」的定義要不要寫成「只由 worktool 寫入與移除」，明示區塊內容只歸 worktool？這等於先決定 ADR 0004 待補項的歸屬。還是寫成「由 worktool 寫入與移除」，讓那個待補項維持未決？'
+    replies="$(_discuss_replies | jq --arg q "${question}" '."compare:".status="diverged" | ."compare:".question=$q')"
+    _discuss_run "${replies}"
+    run jq -ce --arg q "${question}" '[.result.status, .result.ask_maintainer == [$q],
+        .result.comment, ([.calls[] | select(.role | startswith("repair:"))] | length)]' <<<"${output}"
+    assert_output '["diverged",true,"https://github.com/o/r/issues/309#issuecomment-1",0]'
+}
+
 @test "discuss: repairs an uncited answer with its original author before recording (#342)" {
     local replies
     replies="$(_discuss_replies | jq '{"repair:codex:": ."codex:"} + . |
