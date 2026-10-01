@@ -215,7 +215,8 @@ EOF
         'matrix/enforce_milestone_gate_approval_spec.bats' \
         'matrix/enforce_main_checkout_readonly_spec.bats' \
         'matrix/enforce_no_attribution_spec.bats' \
-        'matrix/enforce_tdd_commit_spec.bats')"
+        'matrix/enforce_tdd_commit_spec.bats' \
+        'matrix/enforce_local_test_scope_spec.bats')"
 
     run _declared unit
     assert_success
