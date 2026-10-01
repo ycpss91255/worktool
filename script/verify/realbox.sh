@@ -508,17 +508,17 @@ _52_step2_apply() {
 _52_confirm_window() {
     local _ans
     printf 'Open a NEW ghostty window now and run these three lines in it:\n'
-    printf "  ls /run/.containerenv; ps -p \$fish_pid -o comm=; tmux display -p '#S'\n"
-    printf 'Expected, in order: /run/.containerenv, fish, main - with no noticeable delay.\n'
+    printf "  ls /run/.containerenv 2>/dev/null || ls /.dockerenv; ps -p \$fish_pid -o comm=\n"
+    printf 'Expected: container marker (/run/.containerenv or /.dockerenv), then fish - with no noticeable delay.\n'
     [[ -t 0 ]] \
         || { guard_fail "5.2 ends in a subjective check that needs a terminal: stdin is not a tty, so the new-window observation cannot be made here. Re-run 5.2 from an interactive shell."; return 1; }
-    printf 'Did the new window show exactly those three lines, promptly? [yes/no] '
+    printf 'Did the new window show those two lines, promptly? [yes/no] '
     IFS= read -r _ans || { guard_fail "reading the confirmation failed"; return 1; }
     [[ "${_ans}" == "yes" ]] \
         || { guard_fail "the new-window check was not confirmed (answered '${_ans}')"; return 1; }
     # Echo what the maintainer confirmed, so the transcript carries the same
     # three lines doc/acceptance.md shows.
-    printf '/run/.containerenv\nfish\nmain\n'
+    printf 'container-marker=confirmed\nfish\n'
 }
 
 # --- step 3 ------------------------------------------------------------------

@@ -828,3 +828,11 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     run cat "${HOME}/.config/distrobox/distrobox.conf"
     assert_output 'container_manager=docker'
 }
+
+@test "5.2: new-window instructions check direct fish entry without a tmux session" {
+    run "${REALBOX}" --allow-real-box 5.2
+    assert_failure
+    assert_output --partial "Expected: container marker (/run/.containerenv or /.dockerenv), then fish"
+    refute_output --partial "tmux display"
+    assert_line "restore-ok=1"
+}
