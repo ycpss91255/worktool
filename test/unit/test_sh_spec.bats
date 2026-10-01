@@ -255,6 +255,15 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
 }
 
+@test "test.sh --filter runs only matching cases" {
+    run env WORKTOOL_TEST_JOBS=2 "${TEST_SH}" --ci-unit \
+        test/unit/test_sh_spec.bats --filter '^test.sh -h is the same as --help$'
+    assert_success
+    assert_line '1..1'
+    assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
+    refute_output --partial 'test.sh --help exits 0'
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
