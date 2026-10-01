@@ -248,6 +248,8 @@ codex 以 `setsid nohup` 脫離執行，寫 rc 檔；每次前景等待上限 54
 完成後清理掛載該 checkout 的測試 container；非零 rc 或空輸出不能當成功。
 留言以 `[claude]` 開頭，包含結論、每個判斷的 issue URL／檔案:行號依據、分歧與維護者問題；
 codex 最終輸出由 shell 複製並逐行引用，不由 Claude 重打，發布前過濾本機路徑與署名。
+Record 分兩次前景工具呼叫：先刪除舊 `body.md` 並組文；組文成功後才執行獨立的發布指令，
+`--body-file` 使用字面絕對路徑，讓 PreToolUse hook 在發布前讀到本次完成的內文。組文失敗就停止發布。
 Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相同措辭的護欄。
 
 回傳 `{ issue, status, rounds, conclusion, basis, disagreements, ask_maintainer, claude, codex, comment }`。
