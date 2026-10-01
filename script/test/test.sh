@@ -755,10 +755,10 @@ _run_changed_tiers() {
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
         local -n _full_tier="_full_${_tier}"
-        if [[ "${_tier}" == integration \
+        if [[ "${_tier}" =~ ^(integration|system)$ \
             && ( "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 \
                 || "${#_selected_specs[@]}" -gt 0 ) ]]; then
-            _info "此改動由 CI 的 integration 驗證"
+            _info "此改動由 CI 的 ${_tier} 驗證"
             unset -n _selected_specs
             unset -n _full_tier
             continue
