@@ -661,6 +661,8 @@ lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
 lib/enter.sh|test/unit/enter_spec.bats
 lib/approval.sh|test/unit/approval_spec.bats
+lib/approval.sh|test/unit/hook/enforce_milestone_gate_approval_representative_spec.bats
+lib/approval.sh|test/unit/hook/approval_check_spec.bats
 lib/attribution.sh|test/unit/attribution_spec.bats
 lib/commit_attribution.sh|test/unit/commit_attribution_spec.bats
 lib/commit_email.sh|test/unit/commit_email_spec.bats
@@ -669,9 +671,17 @@ script/box/assemble.sh|test/integration/assemble_spec.bats
 script/box/assemble.sh|test/system/real_assemble_spec.bats
 script/box/bench.sh|test/unit/bench_spec.bats
 script/box/enter.sh|test/unit/enter_spec.bats
+script/box/enter.sh|test/integration/enter_spec.bats
 script/box/setup.sh|test/unit/setup_spec.bats
+script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+MAP
+    _changed_hook_path_map
+}
+
+_changed_hook_path_map() {
+    cat <<'MAP'
 .agents/hook/check_main_fresh_before_worktree.sh|test/unit/hook/check_main_fresh_before_worktree_spec.bats
 .agents/hook/enforce_codex_round_cap.sh|test/unit/hook/enforce_codex_round_cap_spec.bats
 .agents/hook/enforce_cpu_capacity.sh|test/unit/hook/enforce_cpu_capacity_spec.bats
@@ -679,12 +689,16 @@ script/box/justfile.box|test/unit/justfile_spec.bats
 .agents/hook/enforce_issue_milestone.sh|test/unit/hook/enforce_issue_milestone_spec.bats
 .agents/hook/enforce_long_job_timeout.sh|test/unit/hook/enforce_long_job_timeout_spec.bats
 .agents/hook/enforce_milestone_gate_approval.sh|test/matrix/enforce_milestone_gate_approval_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/unit/hook/enforce_milestone_gate_approval_representative_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/unit/hook/approval_check_spec.bats
 .agents/hook/enforce_no_attribution.sh|test/matrix/enforce_no_attribution_spec.bats
+.agents/hook/enforce_no_attribution.sh|test/unit/hook/enforce_no_attribution_spec.bats
 .agents/hook/enforce_no_local_paths.sh|test/unit/hook/enforce_no_local_paths_spec.bats
 .agents/hook/enforce_reply_language.sh|test/unit/hook/enforce_reply_language_spec.bats
 .agents/hook/enforce_scope_on_guard_issues.sh|test/unit/hook/enforce_scope_on_guard_issues_spec.bats
 .agents/hook/enforce_shellcheck_disable_approval.sh|test/unit/hook/enforce_shellcheck_disable_approval_spec.bats
 .agents/hook/enforce_tdd_commit.sh|test/matrix/enforce_tdd_commit_spec.bats
+.agents/hook/enforce_tdd_commit.sh|test/unit/hook/enforce_tdd_commit_representative_spec.bats
 .agents/hook/remind_main_sync.sh|test/unit/hook/remind_main_sync_spec.bats
 .agents/hook/remind_no_emoji.sh|test/unit/hook/remind_no_emoji_spec.bats
 .agents/hook/remind_workflow_tdd.sh|test/unit/hook/remind_workflow_tdd_spec.bats
@@ -707,10 +721,22 @@ _mapped_specs() {
 }
 
 _add_changed_spec() {
-    local _path="$1" _tier
+    local _path="$1" _mapped="${2:-0}" _tier
     [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
         || return 1
     _tier="${BASH_REMATCH[1]}"
+    if [[ ! -f "${REPO_ROOT}/${_path}" ]]; then
+        if [[ "${_mapped}" -eq 1 ]]; then
+            local -n _full_tier="_full_${_tier}"
+            _full_tier=1
+            unset -n _full_tier
+        fi
+        return 0
+    fi
+    case "${_path}" in
+        "test/${INTEGRATION_GHOSTTY_SPEC_REL}") _ghostty=1; return 0 ;;
+        "test/${SYSTEM_REAL_SPEC_REL}") _system_real=1; return 0 ;;
+    esac
     local -n _tier_specs="_${_tier}"
     _tier_specs+=("${_path}")
     unset -n _tier_specs
@@ -723,8 +749,32 @@ _is_test_infrastructure() {
     esac
 }
 
+_run_changed_tiers() {
+    local _tier
+    _run_host_step lint ""
+    for _tier in unit matrix integration system acceptance; do
+        local -n _selected_specs="_${_tier}"
+        local -n _full_tier="_full_${_tier}"
+        if [[ "${_all_tiers}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
+            _run_host_step "${_tier}" ""
+        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
+            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
+        fi
+        unset -n _selected_specs
+        unset -n _full_tier
+    done
+    [[ "${_ghostty}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
+        || _run_ghostty_in_container
+    [[ "${_system_real}" -eq 0 || "${_all_tiers}" -eq 1 ]] \
+        || _run_host_step system-real ""
+    [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
+}
+
 _run_changed() {
-    local _base="$1" _list _path _tier _spec _mapped _full_unit=0 _all_tiers=0
+    local _base="$1" _list _path _spec _mapped _all_tiers=0
+    local _full_unit=0 _full_matrix=0 _full_integration=0
+    local _full_system=0 _full_acceptance=0
+    local _ghostty=0 _system_real=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
@@ -746,23 +796,11 @@ _run_changed() {
         fi
         while IFS= read -r _spec; do
             [[ -n "${_spec}" ]] || continue
-            _add_changed_spec "${_spec}"
+            _add_changed_spec "${_spec}" 1
         done <<<"${_mapped}"
     done <"${_list}"
     rm -f "${_list}"
-    _run_host_step lint ""
-    for _tier in unit matrix integration system acceptance; do
-        local -n _selected_specs="_${_tier}"
-        if [[ "${_all_tiers}" -eq 1 ]]; then
-            _run_host_step "${_tier}" ""
-        elif [[ "${_tier}" == unit && "${_full_unit}" -eq 1 ]]; then
-            _run_host_step unit ""
-        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
-            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
-        fi
-        unset -n _selected_specs
-    done
-    [[ "${_all_tiers}" -eq 0 ]] || _run_host_step system-real ""
+    _run_changed_tiers
 }
 
 # Parse the WHOLE command line before running anything, so an unknown option

@@ -50,6 +50,37 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/example_spec.bats')"
 }
 
+@test "test.sh --changed skips a deleted spec" {
+    printf '@test "deleted" { true; }\n' >"${TEMP_REPO}/test/unit/deleted_spec.bats"
+    _commit_baseline
+    git -C "${TEMP_REPO}" rm -q test/unit/deleted_spec.bats
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+}
+
+@test "test.sh --changed routes dedicated specs to their runners" {
+    mkdir -p "${TEMP_REPO}/test/integration" "${TEMP_REPO}/test/system"
+    printf '@test "ghostty" { true; }\n' \
+        >"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
+    printf '@test "real engine" { true; }\n' \
+        >"${TEMP_REPO}/test/system/real_engine_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' \
+        >>"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/real_engine_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint --ci-integration-ghostty system-real-entry.sh)"
+}
+
 @test "test.sh --changed maps a changed library to its spec" {
     mkdir -p "${TEMP_REPO}/lib"
     printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
@@ -63,6 +94,54 @@ _dispatched() {
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
+}
+
+@test "test.sh --changed maps a source file to specs across tiers" {
+    mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration"
+    printf '# setup script\n' >"${TEMP_REPO}/script/box/setup.sh"
+    printf '@test "unit setup" { true; }\n' \
+        >"${TEMP_REPO}/test/unit/setup_spec.bats"
+    printf '@test "integration setup" { true; }\n' \
+        >"${TEMP_REPO}/test/integration/setup_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/box/setup.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/setup_spec.bats' \
+        '--ci-integration test/integration/setup_spec.bats')"
+}
+
+@test "test.sh --changed fails open when a mapped spec is missing" {
+    mkdir -p "${TEMP_REPO}/lib"
+    printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/lib/log.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+}
+
+@test "changed path map points only to existing specs" {
+    run bash -c '
+        source "$1/script/test/test.sh"
+        missing=0
+        while IFS="|" read -r _ spec; do
+            if [[ ! -f "$1/$spec" ]]; then
+                printf "missing mapped spec: %s\n" "$spec"
+                missing=1
+            fi
+        done < <(_changed_path_map)
+        exit "$missing"
+    ' _ "${REPO_ROOT}"
+
+    assert_success
 }
 
 @test "test.sh --changed fails open to the whole tier for an unmapped library" {
