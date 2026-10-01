@@ -9,3 +9,12 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     assert_output --partial '盒內工具的設定'
     assert_line '_Avoid_: dotfiles'
 }
+
+@test "CONTEXT.md defines user config separately from tool config" {
+    run cat "${REPO_ROOT}/CONTEXT.md"
+    assert_success
+    assert_line '**user config**:'
+    assert_output --partial '使用者自己的設定與憑證'
+    run awk '/^\*\*user config\*\*:/ { on=1; next } on { print }' "${REPO_ROOT}/CONTEXT.md"
+    assert_line '_Avoid_: dotfiles'
+}
