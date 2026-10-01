@@ -6,7 +6,7 @@
 # worktree whose commit-ish is main, not a new branch named main. DENIES
 # (permissionDecision "deny") when local main is behind origin/main, so a
 # new worktree never starts from a stale base and later needs a rebase
-# (worktool: every sub-issue works in its own .worktree/<name>, and `main`
+# (worktool: every sub-issue works in ../worktree/<name>, and `main`
 # only moves by merged PRs - see AGENTS.md git conventions). Allows when:
 #   - the command launches no worktree from main / origin/main (quoted
 #     text and heredoc bodies that mention one are data: lib/subcommand.sh)

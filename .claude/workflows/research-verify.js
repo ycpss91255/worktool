@@ -15,7 +15,7 @@ export const meta = {
 // Invoke (from any cwd) with:
 //   Workflow({ scriptPath: "<repoDir>/.claude/workflows/research-verify.js", args: {
 //     repo: "ycpss91255/worktool",     // required: owner/name for every gh call
-//     repoDir: "/path/to/worktool",     // required: local checkout; scratch files go under .worktree/.scratch/
+//     repoDir: "/path/to/worktool",     // required: local checkout; scratch files go under ../worktree/.scratch/
 //     issue: 179,                      // required: the issue that receives the ONE result comment
 //     question: "...",                 // required: the research question
 //     context: "...",                  // optional: background agy and the verifiers should know
@@ -80,9 +80,10 @@ const checkSources = (v) => {
 const QUESTION = checkQuestion(A.question)
 const REPO = A.repo
 const REPO_DIR = A.repoDir
+const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const SOURCES = checkSources(A.sources)
 const CONTEXT = checkContext(A.context)
-const SCRATCH = `${REPO_DIR}/.worktree/.scratch/research-${A.issue}`   // .worktree/ is gitignored
+const SCRATCH = `${WORKTREE_ROOT}/.scratch/research-${A.issue}`
 // POSIX single quoting: the only safe way a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
@@ -103,9 +104,9 @@ const RELPATHS = `sed -E ${sq([
 const TO = (f) => `to the path ${JSON.stringify(`${SCRATCH}/${f}`)} with the Write tool`
 // Appended to every phase prompt: the checkout is someone's working tree (#243).
 const SCRATCH_ONLY = `\nFile rule: Intermediate files (notes, drafts, logs) go ONLY under ${JSON.stringify(`${SCRATCH}/`)} (or the system temp dir); never create, edit or delete any other path under ${JSON.stringify(REPO_DIR)}, tracked or untracked. Report findings in your answer, not in files.`
-// Every untracked file, not a collapsed `?? dir/` (a change inside an untracked
-// dir must show); the run's own scratch dir is excluded.
-const GIT_STATUS = `git -C ${sq(REPO_DIR)} status --porcelain --untracked-files=all -- . ${sq(`:(exclude).worktree/.scratch/research-${A.issue}`)}`
+// Every tracked or untracked checkout change must show. Scratch is outside the
+// checkout, so the run starts only when this complete status is clean.
+const GIT_STATUS = `git -C ${sq(REPO_DIR)} status --porcelain --untracked-files=all -- .`
 // Both directions (a line that appeared AND one that vanished), and grep's
 // exit 2 (an unreadable capture) is a failure, never "no difference".
 const GREP_DIFF = (a, b, f) => `{ grep -vxF -f ${a} ${b} > ${f}; [ $? -le 1 ]; }`
@@ -173,7 +174,7 @@ ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
 const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
-${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run, as ONE command: \`cd ${sq(REPO_DIR)} && before=$(${GIT_STATUS}) && mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt && { [ -z "$before" ] || printf '%s\\n' "$before"; } > status-before.txt\`. It captures the checkout state BEFORE any write (mkdir, rm, a file) and only then saves it.
+${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run, as ONE command: \`cd ${sq(REPO_DIR)} && before=$(${GIT_STATUS}) && [ -z "$before" ] && mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt && printf '%s' "$before" > status-before.txt\`. It requires a completely clean checkout BEFORE any write (mkdir, rm, a file) and only then saves the empty baseline.
 2. Write the text between the markers below, byte for byte, ${TO('agy-prompt.txt')} (do not edit it).
 ${fence(AGY_PROMPT)}
 3. Run in the foreground (blocking): \`${CD} && timeout ${TMIN * 60 + 60} agy --sandbox --dangerously-skip-permissions -p "$(cat agy-prompt.txt)" --print-timeout ${TMIN}m > agy.md 2> agy.err; rc=$?; echo "exit=$rc"; [ "$rc" -eq 0 ] && [ -s agy.md ]\` (it exits non-zero unless agy succeeded).
@@ -224,7 +225,7 @@ ${bullets(s.parameters)}
 ### claude 逐條驗證
 ${bullets(claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —— ${c.basis}`))}
 
-agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`.worktree/.scratch/research-${A.issue}/\`)。`
+agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`../worktree/.scratch/research-${A.issue}/\`)。`
 
 const RECORD = (claudeText) => `Post the research result for issue #${A.issue} as ONE comment. Never write a "[codex]" line yourself: the codex part below is copied from codex.md by the shell, not retyped.
 1. Write the text between the markers, byte for byte, ${TO('claude.md')}.

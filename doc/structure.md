@@ -136,6 +136,10 @@ worktool/
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
 
+workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 main 的最新
+commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
+`<workspace>/worktree/.scratch/<name>`。repo checkout 內不建立 worktree 或 scratch。
+
 ## Codex hook
 
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部

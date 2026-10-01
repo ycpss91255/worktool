@@ -47,6 +47,26 @@ setup() {
     WORK="${BATS_TEST_TMPDIR}/work"
 }
 
+@test "workflows keep worktrees and scratch outside the repo checkout" {
+    run _pl_run
+    assert_success
+    run jq -cr '[
+        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/n")),
+        (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("/work/../worktree/.scratch/n"))
+    ]' <<<"${output}"
+    assert_output '[true,true]'
+
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    run jq -cr '[
+        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7")),
+        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("[ -z \"$before\" ] && mkdir -p")),
+        (.calls[-1].prompt | contains("git -C '\''/w'\'' status --porcelain --untracked-files=all -- .")),
+        (.calls[-1].prompt | contains(":(exclude)") | not)
+    ]' <<<"${output}"
+    assert_output '[true,true,true,true]'
+}
+
 # The meta block of $1: from the first line to its closing "}" line.
 _meta_block() {
     sed -n '1,/^}$/p' "$1"
@@ -236,14 +256,14 @@ _pl_blocked_run() {
 @test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
     run _pl_run
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n -o /work/.worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/.worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n -o /work/../worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.label | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.label | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
 @test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
     run _pl_run
     assert_success
-    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/.worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/.worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    run jq -cr '(.calls[] | select(.label | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/../worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
     assert_output 'true'
 }
 
@@ -257,7 +277,7 @@ _pl_blocked_run() {
 @test "pr-loop (node): Fix rounds return to the selected implementer" {
     run _pl_blocked_run codex
     assert_success
-    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/.worktree/n")' <<<"${output}"
+    run jq -r '.calls[] | select(.label | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n")' <<<"${output}"
     assert_output 'true'
 
     run _pl_blocked_run claude
@@ -301,12 +321,12 @@ _pl_blocked_run() {
 @test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
     run _pl_run
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    run jq -cr '.calls[] | select(.label | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
     assert_output '[true,true,true,true,true,true]'
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/.worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
+    run jq -cr '.calls[] | select(.label | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
     assert_output '[true,true,true,true,true,true]'
 }
 
@@ -388,7 +408,7 @@ _pl_blocked_run() {
 @test "no template hardcodes a machine path, a session scratchpad or a session URL; repoDir is required" {
     run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${PR_LOOP}" "${FANOUT}" "${REPO_ROOT}/doc/workflow.md"
     assert_failure
-    run grep -c 'REPO_DIR}/.worktree/.scratch/' "${PR_LOOP}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${PR_LOOP}"
     assert_output "1"
     run grep -c "const REPO_DIR = A.repoDir$" "${PR_LOOP}" "${FANOUT}"
     assert_output --partial "pr-loop.js:1"
@@ -679,12 +699,12 @@ _rv_src_check() {
     assert_output "1"
 }
 
-@test "research-verify keeps its files under repoDir scratch, hardcodes no machine path, and never merges or pushes" {
+@test "research-verify keeps its files outside repoDir, hardcodes no machine path, and never merges or pushes" {
     run grep -nE '/tmp/claude-|/home/[a-z]+/|claude.ai/code/session_' "${RESEARCH}"
     assert_failure
     run grep -c "const REPO_DIR = A.repoDir$" "${RESEARCH}"
     assert_output "1"
-    run grep -c 'REPO_DIR}/.worktree/.scratch/research-' "${RESEARCH}"
+    run grep -cF "const WORKTREE_ROOT = \`\${REPO_DIR}/../worktree\`" "${RESEARCH}"
     assert_output "1"
     run grep -nE 'gh pr merge|/merge|mergePullRequest|HEAD:main|git push|--auto' "${RESEARCH}"
     assert_failure
@@ -698,7 +718,7 @@ _rv_src_check() {
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/gh.args"\necho "https://github.com/o/r/issues/7#issuecomment-1"\n' "${BATS_TEST_TMPDIR}" > "${stub}/gh"
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
-    scratch="${dir}/.worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7"
     git init -q "${dir}"
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
@@ -759,16 +779,16 @@ SH
     while IFS='|' read -r name raw last expected; do
         echo "shape: ${name}"   # names the failing row in the bats report
         rm -rf "${SHAPE}" "${dir}"
-        mkdir -p "${SHAPE}" "${dir}/.worktree/.scratch/research-7"
+        mkdir -p "${SHAPE}" "${dir}/../worktree/.scratch/research-7"
         # a stale -o file of an earlier run must never be reused
-        echo STALE > "${dir}/.worktree/.scratch/research-7/codex-last.md"
+        echo STALE > "${dir}/../worktree/.scratch/research-7/codex-last.md"
         printf '%b' "${raw}" > "${SHAPE}/raw"
         [[ "${last}" == - ]] || printf '%b' "${last}" > "${SHAPE}/last"
         run _rv_run_shape "${dir}" '{}'
         assert_success
         run jq -r '.result.status' <<<"${output}"
         assert_output recorded
-        run _rv_codex_section "${dir}/.worktree/.scratch/research-7/body.md"
+        run _rv_codex_section "${dir}/../worktree/.scratch/research-7/body.md"
         assert_output "$(printf '%b' "${expected}")"
     done <<'EOF'
 single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
@@ -785,7 +805,7 @@ EOF
     local dir="${BATS_TEST_TMPDIR}/w" name raw scratch
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
-    scratch="${dir}/.worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7"
     # name | raw output (printf format); codex writes no -o file in any row
     while IFS='|' read -r name raw; do
         echo "shape: ${name}"   # names the failing row in the bats report
@@ -814,7 +834,7 @@ EOF
     local cat_fail scrub_mode raw inputs posted="${BATS_TEST_TMPDIR}/posted"
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
-    scratch="${dir}/.worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7"
     mkdir -p "${fail}"
     # cat fails on the file named by FAIL_CAT; awk run as the path filter
     # (RV_N set) then misbehaves per SCRUB_MODE: fail = full output, exit 1;
@@ -919,7 +939,7 @@ EOF
     } > "${SHAPE}/last"
     HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
     assert_success
-    body="${dir}/.worktree/.scratch/research-7/body.md"
+    body="${dir}/../worktree/.scratch/research-7/body.md"
     run _rv_codex_section "${body}"
     assert_output "$(printf '%s\n' \
         'repo file script/x.sh:3' \
@@ -1025,7 +1045,7 @@ _codex_rel_answer() {
 
 @test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
-    local scratch="${dir}/.worktree/.scratch/n1" wt="${dir}/.worktree/n1"
+    local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
     local replies='{"locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
         "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -1051,7 +1071,7 @@ _codex_rel_answer() {
     local stub="${BATS_TEST_TMPDIR}/bin" dir scratch
     mkdir -p "${stub}"
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
-    scratch="${dir}/.worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7"
     git init -q "${dir}"
     mkdir -p "${BATS_TEST_TMPDIR}/raw"
     _codex_raw_with_paths "${dir}" "${scratch}" '' > "${BATS_TEST_TMPDIR}/raw/codex.txt"
@@ -1163,7 +1183,7 @@ _rv_assert_fails_closed() {
 }
 
 @test "research-verify (node, exec): block markers never collide with the text they fence" {
-    local q scratch="${BATS_TEST_TMPDIR}/ok-ok/.worktree/.scratch/research-7"
+    local q scratch="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7"
     q='q ===END=== ===BEGIN-1=== ===END-1=== ===END-2=== end'
     run _rv_fail_case ok ok "${q}"
     assert_success
@@ -1231,24 +1251,24 @@ _rv_assert_fails_closed() {
     local json="${output}"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
     assert_output "agy: claude-verify: codex-verify: synthesize: record: repo-check:"
-    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/.worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
+    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
 }
 
-@test "research-verify: repo status is captured before Research and compared after Record (#243)" {
+@test "research-verify: requires a clean repo before Research and checks it after Record (#243)" {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     local json="${output}"
     # The first shell step captures the status BEFORE any write (mkdir, rm,
     # redirect): nothing but a cd precedes the git status call.
     run jq -r '.calls[1].prompt | [match("`([^`]*)`"; "g").captures[0].string][0]' <<<"${json}"
-    assert_output --regexp "^cd '/w' && before=\\\$\\(git -C '/w' status --porcelain --untracked-files=all -- \\. ':\\(exclude\\)\\.worktree/\\.scratch/research-7'\\) && mkdir -p "
+    assert_output --regexp "^cd '/w' && before=\\\$\\(git -C '/w' status --porcelain --untracked-files=all -- \\.\\) && \\[ -z \"\\\$before\" \\] && mkdir -p "
     assert_output --partial '> status-before.txt'
     run jq -r '.calls[-1].label, .calls[-1].prompt' <<<"${json}"
     assert_output --partial "repo-check:#7"
-    assert_output --partial "git -C '/w' status --porcelain --untracked-files=all -- . ':(exclude).worktree/.scratch/research-7' > status-after.txt"
+    assert_output --partial "git -C '/w' status --porcelain --untracked-files=all -- . > status-after.txt"
     run grep -c "schema: REPO_CHECK_SCHEMA" "${RESEARCH}"
     assert_output "1"
 }
@@ -1273,8 +1293,8 @@ _rv_assert_fails_closed() {
 @test "research-verify (node): the repo-check shell step really lists a path a phase left in repoDir (#243)" {
     local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${stub}"
-    # agy misbehaves: leaves a note in the checkout (scratch is repoDir/.worktree/.scratch/research-7)
-    printf '#!/bin/sh\ntouch ../../../stray-note.md\necho "1. claim [x]"\n' > "${stub}/agy"
+    # agy misbehaves: leaves a note in the checkout (scratch is outside repoDir)
+    printf '#!/bin/sh\ntouch "%s/stray-note.md"\necho "1. claim [x]"\n' "${dir}" > "${stub}/agy"
     printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\ntokens used\\n1\\n"\n' > "${stub}/codex"
     printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
     chmod +x "${stub}"/*
@@ -1282,45 +1302,18 @@ _rv_assert_fails_closed() {
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
     [[ -e "${dir}/stray-note.md" ]]
-    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
     assert_output "+ ?? stray-note.md"
 }
 
-@test "research-verify (node): the repo-check shell step reports a status line that disappeared, e.g. a deleted untracked file (#243)" {
-    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
-    mkdir -p "${stub}"
-    # agy misbehaves: deletes an untracked file that was there before the run
-    printf '#!/bin/sh\nrm -f ../../../old-note.md\necho "1. claim [x]"\n' > "${stub}/agy"
-    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\ntokens used\\n1\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
-    chmod +x "${stub}"/*
+@test "research-verify (node): a dirty repo stops before scratch creation and research (#301)" {
+    local dir="${BATS_TEST_TMPDIR}/dirty/repo"
     git init -q "${dir}"
     touch "${dir}/old-note.md"
-    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
-    [[ ! -e "${dir}/old-note.md" ]]
-    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
-    assert_output "- ?? old-note.md"
-}
-
-@test "research-verify (node): the repo-check shell step sees a file added inside a pre-existing untracked dir (#243)" {
-    local stub="${BATS_TEST_TMPDIR}/bin" dir="${BATS_TEST_TMPDIR}/repo"
-    mkdir -p "${stub}"
-    # agy misbehaves: adds a file next to an untracked one in an untracked dir
-    printf '#!/bin/sh\ntouch ../../../notes/new.md\necho "1. claim [x]"\n' > "${stub}/agy"
-    printf '#!/bin/sh\ncat >/dev/null\nprintf "codex\\nok\\ntokens used\\n1\\n"\n' > "${stub}/codex"
-    printf '#!/bin/sh\necho https://example.invalid/c/1\n' > "${stub}/gh"
-    chmod +x "${stub}"/*
-    git init -q "${dir}"
-    mkdir -p "${dir}/notes"
-    touch "${dir}/notes/old.md"
-    PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
-    assert_success
-    [[ -e "${dir}/notes/new.md" ]]
-    run cat "${dir}/.worktree/.scratch/research-7/status-before.txt"
-    assert_output "?? notes/old.md"
-    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
-    assert_output "+ ?? notes/new.md"
+    run jq -r '.result.status, (.ran | length)' <<<"${output}"
+    assert_output "$(printf '%s\n' agy-failed 2)"
 }
 
 @test "research-verify (node): the repo-check shell step fails closed when grep errors, e.g. an unreadable status-before.txt (#243)" {
@@ -1336,7 +1329,7 @@ _rv_assert_fails_closed() {
     assert_success
     run jq -r '.ran[-1].rc' <<<"${output}"
     refute_output "0"
-    run cat "${dir}/.worktree/.scratch/research-7/repo-extra.txt"
+    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
     assert_output --partial "repo-check failed"
 }
 
