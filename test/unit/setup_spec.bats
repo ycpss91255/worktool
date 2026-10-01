@@ -1239,6 +1239,26 @@ _assert_mode_kept() {
     _assert_mode_kept 600
 }
 
+@test "#178: distrobox.conf keeps 0644 through write, rewrite and auto-enter no" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf"
+    mkdir -p "$(dirname -- "${_conf}")"
+    printf '# user config\n' >"${_conf}"
+    chmod 0644 "${_conf}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --terminal ghostty --box other
+    assert_success
+    assert_line --partial "[INFO] wrote: ${_conf} (managed block:"
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run head -n 1 "${_conf}"
+    assert_output '# user config'
+}
+
 # 3. dry-run removal ----------------------------------------------------------
 
 @test "#178: --dry-run --auto-enter no over a managed block reports it once and leaves every file byte-identical" {
