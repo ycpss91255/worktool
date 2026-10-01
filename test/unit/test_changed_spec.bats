@@ -122,6 +122,21 @@ _dispatched() {
     assert_output --partial "此改動由 CI 的 acceptance 驗證"
 }
 
+@test "test.sh --changed leaves the real-engine spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/system"
+    printf '@test "real engine" { true; }\n' \
+        >"${TEMP_REPO}/test/system/real_engine_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/real_engine_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
+}
+
 @test "test.sh --changed leaves Dockerfile.ghostty verification to CI" {
     mkdir -p "${TEMP_REPO}/dockerfile"
     printf 'FROM scratch\n' >"${TEMP_REPO}/dockerfile/Dockerfile.ghostty"
