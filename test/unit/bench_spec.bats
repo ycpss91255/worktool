@@ -55,29 +55,39 @@
 #
 # HOW
 #   A FAKE `distrobox` sits first on PATH. It records every call (one line
-#   `$*` per call, and `$#` per call in a sibling file) and sleeps a
+#   `$*` per call, and `$#` per call in a sibling file) and takes a
 #   configurable number of milliseconds: FAKE_DBX_SLEEP_MS for every call;
 #   FAKE_DBX_SLEEP_MS_LIST instead gives the k-th call with an identical
 #   argv the k-th entry (cycling), so one metric's warmup can be slow and
 #   its runs fast, which makes the "warmup excluded" claim checkable;
-#   FAKE_DBX_SLEEP_MS_TRUE overrides the sleep for the `-- true` argv only
-#   (the enter metric), so the metrics can differ. FAKE_DBX_EXIT injects a
+#   FAKE_DBX_SLEEP_MS_TRUE overrides the time for the `-- true` argv only
+#   (the enter metric), so the metrics can differ; FAKE_DBX_MS_ENTER,
+#   FAKE_DBX_MS_SHELL and FAKE_DBX_MS_INBOX override everything for their
+#   own metric with a per-metric list (cycling like FAKE_DBX_SLEEP_MS_LIST),
+#   which is how the threshold matrix gives one metric its samples. FAKE_DBX_EXIT injects a
 #   failing enter for every call; FAKE_DBX_EXIT_SHELL only for the shell
 #   argv and FAKE_DBX_EXIT_INBOX only for the inbox argv, so "enter passes,
-#   a later metric fails" is testable. `sleep` never returns early, so a
-#   run's measured time is a hard LOWER bound on the requested sleep; upper
-#   bounds are only asserted with a wide margin (the runner may be loaded).
+#   a later metric fails" is testable.
+#
+#   Time is FAKE (issue #249): the fake distrobox never really sleeps, it
+#   ADVANCES a fake clock (FAKE_CLOCK_FILE, microseconds) by the time it was
+#   told to take, and bench.sh reads its host clock from that file through
+#   BENCH_CLOCK (its test-only clock program, see _install_fake_clock). So
+#   every host-clocked sample is EXACTLY the injected time and no verdict
+#   depends on how loaded the host running this spec is. Real wall-clock
+#   timing is left to the system-real gate (test/system/real_engine_spec.bats),
+#   which has its own load guard (exit 3, doc/adr/0003-latency-gate-inconclusive.md).
 #
 #   The fake understands the inbox argv (`-- bash -c <timer> ...`, told
 #   apart by the EPOCHREALTIME reads in the timer text): it does NOT run the
-#   timer, it sleeps like any other call and then prints the microseconds
-#   it was told to sleep (FAKE_DBX_INBOX_OUT replaces that line verbatim, to
-#   inject garbage). So the inbox numbers are INJECTED, not measured on the
-#   host: the fake's stdout is exactly what a real in-box timer prints, and
-#   the assertions on the inbox metric can be EXACT (the even-runs median
-#   case), unlike the host-clocked enter / shell metrics which only admit
-#   lower bounds. Whether the real timer prints what the fake prints is the
-#   system-real gate's business (test/system/real_engine_spec.bats).
+#   timer, it advances the fake clock like any other call and then prints
+#   the microseconds it was told to take (FAKE_DBX_INBOX_OUT replaces that
+#   line verbatim, to inject garbage). So the inbox numbers are INJECTED,
+#   not measured on the host: the fake's stdout is exactly what a real
+#   in-box timer prints. With the fake clock every metric - inbox and the
+#   host-clocked enter / shell alike - is asserted EXACTLY. Whether the real
+#   timer prints what the fake prints is the system-real gate's business
+#   (test/system/real_engine_spec.bats).
 #
 #   The quiet-host wait is driven by BENCH_PSI_FILE (bench.sh's test-only
 #   PSI path) and a FAKE `sleep` first on PATH (see _install_fake_sleep):
@@ -100,16 +110,18 @@ setup() {
     MOCKBIN="${TMP}/bin"
     export FAKE_DBX_CALLS="${TMP}/distrobox.calls"
     export FAKE_SLEEP_CALLS="${TMP}/sleep.calls"
-    # The fake distrobox still really sleeps (its sleep is a latency floor);
-    # it must not hit the fake `sleep` below, so it gets the real one.
-    FAKE_REAL_SLEEP="$(command -v sleep)"
-    export FAKE_REAL_SLEEP
+    # The host clock bench.sh reads is the fake one (issue #249): it only
+    # moves when the fake distrobox says a run took time.
+    export FAKE_CLOCK_FILE="${TMP}/clock.us"
+    export BENCH_CLOCK="${MOCKBIN}/fake-clock"
     # Every case measures on a QUIET fake PSI unless it says otherwise:
     # the host this spec runs on must never decide a unit verdict.
     export BENCH_PSI_FILE="${TMP}/cpu.pressure"
     _psi 0.00
     _install_fake_distrobox
     _install_fake_sleep
+    _install_fake_clock
+    _install_cpu_load
     PATH="${MOCKBIN}:${PATH}"
 }
 
@@ -150,6 +162,34 @@ _sleeps() {
     fi
 }
 
+# The fake clock bench.sh runs as BENCH_CLOCK: it prints the fake time in
+# microseconds (FAKE_CLOCK_FILE, started at an arbitrary epoch), which only
+# the fake distrobox advances.
+_install_fake_clock() {
+    printf '1700000000000000\n' >"${FAKE_CLOCK_FILE}"
+    cat >"${MOCKBIN}/fake-clock" <<'EOF'
+#!/usr/bin/env bash
+cat "${FAKE_CLOCK_FILE}"
+EOF
+    chmod +x "${MOCKBIN}/fake-clock"
+}
+
+# A bounded CPU worker, used only inside the test container. timeout owns
+# the process group so an interrupted fixture cannot leave a busy loop behind.
+_install_cpu_load() {
+    cat >"${MOCKBIN}/cpu-load" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+timeout "$1" bash -c 'printf "ready\n" >"$1"; while :; do :; done' _ "$2" || rc=$?
+if (( rc == 124 )); then
+    exit 0
+fi
+exit "${rc}"
+EOF
+    chmod +x "${MOCKBIN}/cpu-load"
+}
+
 # The fake distrobox described in the header.
 _install_fake_distrobox() {
     mkdir -p "${MOCKBIN}"
@@ -169,10 +209,15 @@ fi
 if [[ -n "${FAKE_DBX_SLEEP_MS_TRUE:-}" && "${_kind}" == enter ]]; then
     _ms="${FAKE_DBX_SLEEP_MS_TRUE}"
 fi
-if (( _ms > 0 )); then
-    printf -v _s '%d.%03d' $(( _ms / 1000 )) $(( _ms % 1000 ))
-    "${FAKE_REAL_SLEEP}" "${_s}"
+_kvar="FAKE_DBX_MS_${_kind^^}"
+if [[ -n "${!_kvar:-}" ]]; then
+    read -r -a _list <<<"${!_kvar}"
+    _k="$(grep -c -x -F -- "$*" "${FAKE_DBX_CALLS}")"
+    _ms="${_list[$(( (_k - 1) % ${#_list[@]} ))]}"
 fi
+# Take _ms on the FAKE clock (no real sleep: the host load never matters).
+_now="$(cat "${FAKE_CLOCK_FILE}")"
+printf '%s\n' "$(( _now + _ms * 1000 ))" >"${FAKE_CLOCK_FILE}"
 # The host turns busy DURING the batch: the FAKE_DBX_PSI_AT-th call leaves
 # a PSI of FAKE_DBX_PSI_VALUE behind (read by bench.sh after the run).
 if [[ -n "${FAKE_DBX_PSI_AT:-}" ]] \
@@ -213,25 +258,6 @@ _count_inbox_calls() {
 _metric_re() {
     local _num='[0-9]+(\.[0-9]+)?'
     printf '^%s: min=%s median=%s max=%s ms$\n' "$1" "${_num}" "${_num}" "${_num}"
-}
-
-# Print the min / median / max of metric $1 from $lines, in TENTHS of a
-# millisecond as integers (bash has no float comparison): `12.3` -> 123,
-# `12` -> 120.
-_metric_tenths() {
-    local _line _v _out=""
-    _line="$(printf '%s\n' "${lines[@]}" | grep -E "^$1: ")"
-    [[ -n "${_line}" ]] || return 1
-    for _v in "${_line#*min=}" "${_line#*median=}" "${_line#*max=}"; do
-        _v="${_v%% *}"
-        if [[ "${_v}" == *.* ]]; then
-            _v="${_v%.*}$(printf '%s' "${_v#*.}" | cut -c1)"
-        else
-            _v="${_v}0"
-        fi
-        _out+="$(( 10#${_v} )) "
-    done
-    printf '%s\n' "${_out% }"
 }
 
 # Regexp of the WHOLE --json object (no JSON parser in the test image, so
@@ -336,42 +362,29 @@ _json_object_re() {
     assert_line --index 2 --regexp "$(_metric_re inbox)"
 }
 
-# --- statistics: ordered, lower-bounded by the sleep, warmup excluded --------
+# --- statistics: exact on the fake clock, warmup excluded -------------------
 
-@test "min <= median <= max, each bounded below by the injected sleep, warmup excluded" {
-    # Per metric: the 1 warmup call sleeps 300 ms, the 3 recorded runs sleep
-    # 10 / 40 / 20 ms -> sorted 10, 20, 40. sleep is a hard lower bound, so
-    # min >= 10, median >= 20, max >= 40 (ms); the warmup is excluded, so
-    # max stays far below 300 (a 200 ms ceiling leaves a wide margin for a
-    # loaded runner). The inbox metric gets the same numbers injected.
+@test "min / median / max are the injected times, warmup excluded" {
+    # Per metric: the 1 warmup call takes 300 ms, the 3 recorded runs 10 /
+    # 40 / 20 ms -> sorted 10, 20, 40. The fake clock makes every sample
+    # exact, and the 300 ms warmup appears nowhere.
     run env FAKE_DBX_SLEEP_MS_LIST="300 10 40 20" \
         "${BENCH}" --runs 3 --warmup 1
     assert_success
-    local _name _min _med _max
-    for _name in enter shell inbox; do
-        read -r _min _med _max < <(_metric_tenths "${_name}")
-        assert [ "${_min}" -le "${_med}" ]
-        assert [ "${_med}" -le "${_max}" ]
-        assert [ "${_min}" -ge 100 ]
-        assert [ "${_med}" -ge 200 ]
-        assert [ "${_max}" -ge 400 ]
-        assert [ "${_max}" -lt 2000 ]
-    done
+    assert_line "enter: min=10.0 median=20.0 max=40.0 ms"
+    assert_line "shell: min=10.0 median=20.0 max=40.0 ms"
+    assert_line "inbox: min=10.0 median=20.0 max=40.0 ms"
 }
 
-@test "an even --runs takes the mean of the two middle samples as the median" {
-    # Runs sleep 10 / 60 / 20 / 30 ms -> sorted 10, 20, 30, 60: the median
-    # is (20 + 30) / 2 = 25 ms, so it lies strictly between the two middle
-    # samples (>= 25 by the sleep bound, and, unless the runner stalls for
-    # tens of ms, well below the 60 ms max).
+@test "host-clocked samples come from the injected BENCH_CLOCK: exact statistics, whatever the host load" {
+    # Runs take 10 / 60 / 20 / 30 ms on the fake clock -> sorted 10, 20,
+    # 30, 60: min 10.0, median (20 + 30) / 2 = 25.0, max 60.0, to the digit,
+    # for the host-clocked enter and shell metrics as well as for inbox.
     run env FAKE_DBX_SLEEP_MS_LIST="10 60 20 30" "${BENCH}" --runs 4 --warmup 0
     assert_success
-    local _min _med _max
-    read -r _min _med _max < <(_metric_tenths enter)
-    assert [ "${_min}" -ge 100 ]
-    assert [ "${_med}" -ge 250 ]
-    assert [ "${_med}" -lt "${_max}" ]
-    assert [ "${_max}" -ge 600 ]
+    assert_line "enter: min=10.0 median=25.0 max=60.0 ms"
+    assert_line "shell: min=10.0 median=25.0 max=60.0 ms"
+    assert_line "inbox: min=10.0 median=25.0 max=60.0 ms"
 }
 
 @test "an even --runs median is EXACTLY the mean of the two middle samples (inbox: injected in-box times)" {
@@ -384,28 +397,22 @@ _json_object_re() {
 }
 
 @test "the inbox metric is the in-box number, not the host round trip" {
-    # Every call sleeps 40 ms on the host (so enter / shell are >= 40 ms),
+    # Every call takes 40 ms on the host clock (so enter / shell are 40 ms),
     # but the in-box timer reports 1500 us: inbox must print 1.5 ms, i.e.
     # what the box measured, not what the host waited for.
     run env FAKE_DBX_SLEEP_MS=40 FAKE_DBX_INBOX_OUT=1500 \
         "${BENCH}" --runs 3 --warmup 0
     assert_success
     assert_line "inbox: min=1.5 median=1.5 max=1.5 ms"
-    local _min _med _max
-    read -r _min _med _max < <(_metric_tenths shell)
-    assert [ "${_min}" -ge 400 ]
+    assert_line "shell: min=40.0 median=40.0 max=40.0 ms"
 }
 
 @test "--runs 1 reports min = median = max" {
     run env FAKE_DBX_SLEEP_MS=5 "${BENCH}" --runs 1 --warmup 0
     assert_success
-    local _name _min _med _max
-    for _name in enter shell inbox; do
-        read -r _min _med _max < <(_metric_tenths "${_name}")
-        assert_equal "${_min}" "${_med}"
-        assert_equal "${_med}" "${_max}"
-        assert [ "${_min}" -ge 50 ]
-    done
+    assert_line "enter: min=5.0 median=5.0 max=5.0 ms"
+    assert_line "shell: min=5.0 median=5.0 max=5.0 ms"
+    assert_line "inbox: min=5.0 median=5.0 max=5.0 ms"
 }
 
 # --- --max-ms threshold ------------------------------------------------------
@@ -427,27 +434,125 @@ _json_object_re() {
     assert_line --index 1 --regexp "$(_metric_re shell)"
     assert_line --index 2 --regexp "$(_metric_re inbox)"
     run cat "${_err}"
-    assert_line --regexp '^\[ERROR\] shell median [0-9.]+ ms exceeds --max-ms 1$'
+    assert_line '[ERROR] shell median 30.0 ms exceeds --max-ms 1'
 }
 
 @test "--max-ms judges the shell metric only: a slow enter with a fast shell passes" {
-    # enter (`-- true`) sleeps 60 ms, shell (`-- sh -c :`) 1 ms; --max-ms 20
+    # enter (`-- true`) takes 60 ms, shell (`-- sh -c :`) 1 ms; --max-ms 20
     # sits between them, so exit 0 proves the check is on the shell median.
     run env FAKE_DBX_SLEEP_MS_TRUE=60 FAKE_DBX_SLEEP_MS=1 \
         "${BENCH}" --runs 3 --warmup 0 --max-ms 20
     assert_success
-    local _min _med _max
-    read -r _min _med _max < <(_metric_tenths enter)
-    assert [ "${_med}" -ge 600 ]
+    assert_line "enter: min=60.0 median=60.0 max=60.0 ms"
+    assert_line "shell: min=1.0 median=1.0 max=1.0 ms"
 }
 
 @test "--max-ms does not judge the inbox metric: a slow in-box time with a fast shell passes" {
-    # The in-box timer reports 90 ms while the host round trips take ~1 ms;
+    # The in-box timer reports 90 ms while the host round trips take 1 ms;
     # --max-ms 20 passes, so the gate ignores inbox.
     run env FAKE_DBX_SLEEP_MS=1 FAKE_DBX_INBOX_OUT=90000 \
         "${BENCH}" --runs 3 --warmup 0 --max-ms 20
     assert_success
     assert_line "inbox: min=90.0 median=90.0 max=90.0 ms"
+}
+
+# --- --max-ms matrix: below / equal / above x metric x odd / even runs -------
+#
+# One metric gets samples whose median sits just below, exactly at, or just
+# above --max-ms 20 (odd: 3 runs, even: 4 runs, where the median is the mean
+# of the two middle samples); the other two metrics take 1 ms. Only the
+# shell median is judged: exit 1 above the threshold, 0 at or below it; a
+# slow enter or inbox is reported exactly and never fails the run.
+
+# Print "<samples>|<median as printed>" for parity $1 (odd|even) and
+# position $2 (below|equal|above) around 20 ms.
+_matrix_samples() {
+    case "$1:$2" in
+        odd:below)  printf '5 19 30|19.0\n' ;;
+        odd:equal)  printf '5 20 30|20.0\n' ;;
+        odd:above)  printf '5 21 30|21.0\n' ;;
+        even:below) printf '5 19 20 30|19.5\n' ;;
+        even:equal) printf '5 20 20 30|20.0\n' ;;
+        even:above) printf '5 20 21 30|20.5\n' ;;
+    esac
+}
+
+# Run the whole matrix for metric $1 (enter|shell|inbox) and assert every
+# cell: the exact median line and the exit code. Optional $2 adds a short
+# CPU load pulse to each cell, so slow hosts still exercise every cell under
+# load without keeping a busy loop alive for the entire matrix.
+_run_matrix() {
+    local _metric="$1" _loaded="${2:-0}" _parity _pos _cell _samples _median _runs _want _rc _out
+    for _parity in odd even; do
+        for _pos in below equal above; do
+            _cell="$(_matrix_samples "${_parity}" "${_pos}")"
+            _samples="${_cell%%|*}"
+            _median="${_cell#*|}"
+            _runs=3
+            [[ "${_parity}" == even ]] && _runs=4
+            _want=0
+            [[ "${_metric}" == shell && "${_pos}" == above ]] && _want=1
+            rm -f "${FAKE_DBX_CALLS}"
+            if (( _loaded )); then
+                rm -f "${TMP}/load.ready"
+                "${MOCKBIN}/cpu-load" 0.15 "${TMP}/load.ready" 3>&- &
+                printf '%s\n' "$!" >"${TMP}/busy.pid"
+                timeout 2 bash -c "until [[ -f \"\$1\" ]]; do :; done" _ "${TMP}/load.ready"
+            fi
+            _rc=0
+            _out="$(env FAKE_DBX_MS_ENTER=1 FAKE_DBX_MS_SHELL=1 FAKE_DBX_MS_INBOX=1 \
+                "FAKE_DBX_MS_${_metric^^}=${_samples}" \
+                "${BENCH}" --runs "${_runs}" --warmup 0 --max-ms 20 2>&1)" || _rc=$?
+            assert_equal "${_metric} ${_parity} ${_pos} exit ${_rc}" \
+                "${_metric} ${_parity} ${_pos} exit ${_want}"
+            run printf '%s\n' "${_out}"
+            assert_line --regexp "^${_metric}: min=5\.0 median=${_median//./\\.} max=30\.0 ms$"
+            if (( _loaded )); then
+                wait "$(cat "${TMP}/busy.pid")"
+                rm "${TMP}/busy.pid"
+            fi
+        done
+    done
+}
+
+@test "matrix: the enter median below / at / above --max-ms is reported exactly and never judged (odd and even runs)" {
+    _run_matrix enter
+}
+
+@test "matrix: the shell median below or at --max-ms exits 0, above it exits 1 (odd and even runs)" {
+    _run_matrix shell
+}
+
+@test "matrix: the inbox median below / at / above --max-ms is reported exactly and never judged (odd and even runs)" {
+    _run_matrix inbox
+}
+
+# The load fixture must stop itself even if the matrix fails or is interrupted.
+@test "artificial CPU load stops on its own within a short deadline" {
+    run timeout 3 "${MOCKBIN}/cpu-load" 1 "${TMP}/load.ready"
+    assert_success
+    run cat "${TMP}/load.ready"
+    assert_output "ready"
+}
+
+# Load guard (issue #249): rerun all cells with one CPU busy loop per cell,
+# capped at 0.15 seconds each (2.7 seconds total), inside this container.
+@test "matrix under an artificial CPU load: every cell is unchanged" {
+    _run_matrix enter 1
+    _run_matrix shell 1
+    _run_matrix inbox 1
+}
+
+# End the wrapper on failure too. Its independent timeout process still
+# stops the busy worker within its short deadline if the wrapper ends early.
+teardown() {
+    local _pid
+    if [[ -f "${TMP}/busy.pid" ]]; then
+        _pid="$(cat "${TMP}/busy.pid")"
+        if kill -0 "${_pid}" 2>/dev/null; then
+            kill "${_pid}" 2>/dev/null || return 0
+        fi
+    fi
 }
 
 # --- --json ------------------------------------------------------------------
@@ -460,6 +565,8 @@ _json_object_re() {
     run cat "${_out}"
     assert_equal "${#lines[@]}" 1
     assert_output --regexp "$(_json_object_re)"
+    assert_output --partial '"enter":{"min":2.0,"median":2.0,"max":2.0}'
+    assert_output --partial '"shell":{"min":2.0,"median":2.0,"max":2.0}'
     assert_output --partial '"box":"dev"'
     assert_output --partial '"runs":3'
     assert_output --partial '"warmup":1'
@@ -653,6 +760,37 @@ _json_object_re() {
     assert_output --partial "[ERROR] inbox:"
     refute_output --regexp '^(enter|shell|inbox): min='
     assert_equal "$(_count_inbox_calls dev 'sh -c :')" "1"
+}
+
+# A test-only clock (BENCH_CLOCK) that prints $1 and exits $2.
+_bad_clock() {
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" %q\nexit %d\n' "$1" "$2" >"${MOCKBIN}/bad-clock"
+    chmod +x "${MOCKBIN}/bad-clock"
+}
+
+@test "a BENCH_CLOCK that prints something other than an integer aborts the measurement: exit 1, no metric line" {
+    _bad_clock "soon" 0
+    run env BENCH_CLOCK="${MOCKBIN}/bad-clock" "${BENCH}" --runs 2 --warmup 0
+    assert_failure 1
+    assert_line --regexp "^\[ERROR\] enter: BENCH_CLOCK .*bad-clock' printed 'soon' instead of an integer on run 1 - measurement aborted$"
+    refute_output --regexp '^(enter|shell|inbox): min='
+}
+
+@test "a BENCH_CLOCK that exits non-zero aborts the measurement: exit 1, no metric line" {
+    _bad_clock "1700000000000000" 4
+    run env BENCH_CLOCK="${MOCKBIN}/bad-clock" "${BENCH}" --runs 2 --warmup 0
+    assert_failure 1
+    assert_line --regexp "^\[ERROR\] enter: BENCH_CLOCK .*bad-clock' exited 4 on run 1 - measurement aborted$"
+    refute_output --regexp '^(enter|shell|inbox): min='
+}
+
+@test "without BENCH_CLOCK the host clock is the real one (EPOCHREALTIME): the production path still measures" {
+    run env -u BENCH_CLOCK "${BENCH}" --runs 2 --warmup 0
+    assert_success
+    assert_line --regexp "$(_metric_re enter)"
+    assert_line --regexp "$(_metric_re shell)"
+    # The fake clock was never read, so it cannot have produced the numbers.
+    assert_line "inbox: min=0.0 median=0.0 max=0.0 ms"
 }
 
 @test "distrobox missing from PATH exits 127 before measuring" {
@@ -944,6 +1082,15 @@ _resolved_psi() {
     assert_output --partial "BENCH_PSI_FILE"
     assert_output --partial "tests only"
     assert_equal "$(_sleeps)" "0"
+}
+
+@test "--help documents the test-only BENCH_CLOCK and says the real clock is EPOCHREALTIME" {
+    run "${BENCH}" --help
+    assert_success
+    assert_output --partial "BENCH_CLOCK"
+    assert_output --regexp "BENCH_CLOCK +run this program for the host clock"
+    assert_output --partial "tests only"
+    assert_output --partial "EPOCHREALTIME"
 }
 
 # --- doc/manifest.md states the system-real evidence contract ---------------
