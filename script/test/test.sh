@@ -158,6 +158,7 @@ _required_specs() {
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_no_local_paths_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
+                unit/hook/enforce_main_checkout_readonly_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_issue_milestone_spec.bats \
                 unit/hook/enforce_no_attribution_spec.bats \
@@ -178,6 +179,7 @@ _required_specs() {
         matrix)
             printf '%s\n' \
                 matrix/enforce_milestone_gate_approval_spec.bats \
+                matrix/enforce_main_checkout_readonly_spec.bats \
                 matrix/enforce_no_attribution_spec.bats \
                 matrix/enforce_tdd_commit_spec.bats
             ;;

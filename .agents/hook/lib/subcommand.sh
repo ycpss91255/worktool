@@ -599,6 +599,9 @@ _hook_strip_wrappers() {
                 # command -v / -V looks a name up; it launches nothing.
                 [[ "${_w[_i + 1]:-}" == -[vV]* ]] \
                     || _i="$(_hook_after_opts "${_i}" '' "${_w[@]}")" ;;
+            builtin)
+                [[ "${_w[_i + 1]:-}" == cd || "${_w[_i + 1]:-}" == pushd ]] \
+                    && _i=$((_i + 1)) ;;
             *)
                 [[ "${_w[_i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && _i=$((_i + 1)) ;;
         esac

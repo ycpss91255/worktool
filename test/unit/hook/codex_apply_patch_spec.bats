@@ -119,3 +119,27 @@ JSON
     run jq -s -c '.' "${_log}"
     assert_output '[{"tool_name":"Edit","tool_input":{"file_path":"old.sh","new_string":""}},{"tool_name":"Write","tool_input":{"file_path":"moved.sh","content":"echo moved\n"}},{"tool_name":"Edit","tool_input":{"file_path":"gone.sh","new_string":""}},{"tool_name":"Write","tool_input":{"file_path":"fresh.sh","content":"echo fresh\n"}}]'
 }
+
+@test "an apply_patch into a main checkout is blocked by its Edit hook" {
+    local _repo _patch _payload
+    _repo="${BATS_TEST_TMPDIR}/main-repo"
+    mkdir -p "${_repo}/.agents/hook/lib" "${_repo}/.claude"
+    git -C "${_repo}" init -q
+    cp "${HOOK_DIR}/codex_apply_patch.sh" "${HOOK_DIR}/enforce_main_checkout_readonly.sh" \
+        "${_repo}/.agents/hook/"
+    cp "${HOOK_DIR}/lib/hook_bootstrap.sh" "${HOOK_DIR}/lib/subcommand.sh" \
+        "${_repo}/.agents/hook/lib/"
+    chmod +x "${_repo}/.agents/hook/"*.sh
+    printf '%s\n' "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Edit|Write|MultiEdit|NotebookEdit\",\"hooks\":[{\"type\":\"command\",\"command\":\"\${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_main_checkout_readonly.sh\"}]}]}}" \
+        >"${_repo}/.claude/settings.json"
+    _patch="$(printf '%s\n' '*** Begin Patch' '*** Add File: blocked.txt' '+blocked' '*** End Patch')"
+    _payload="$(jq -n --arg command "${_patch}" --arg cwd "${_repo}" '{
+        cwd:$cwd, tool_name:"apply_patch", tool_input:{command:$command}
+    }')"
+
+    run bash -c 'cd "$1" && printf "%s" "$2" | "$3"' _ \
+        "${_repo}" "${_payload}" "${_repo}/.agents/hook/codex_apply_patch.sh"
+
+    assert_failure 2
+    assert_output --partial 'main checkout'
+}
