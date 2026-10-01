@@ -1205,3 +1205,16 @@ _assert_control_char_refused() {
     assert_success
     refute_line --partial '[WARN] ghostty'
 }
+
+@test "#173: help explains config selection, validation, migration and the old host version warning" {
+    run "${SETUP}" --help
+    assert_success
+    assert_output --partial '$XDG_CONFIG_HOME/ghostty/config.ghostty'
+    assert_output --partial 'Never creates config.ghostty'
+    assert_output --partial 'at most one managed block across both files'
+    assert_output --partial 'moves the single block'
+    assert_output --partial 'below 1.3.0'
+    run "${SETUP}" --help --unknown
+    assert_failure 2
+    assert_output "setup.sh: unknown option '--unknown' (see --help)"
+}

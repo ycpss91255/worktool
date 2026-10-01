@@ -79,10 +79,14 @@
 # text) refuse the whole run before anything is written, exit 1 - a
 # rewrite of such a file would lose user lines (codex round 4 on PR #232):
 #   auto-enter yes, terminal ghostty:
-#     <config dir>/ghostty/config  command = '<distrobox>' enter <box>
+#     existing <config dir>/ghostty/config.ghostty, else legacy config:
+#       command = '<distrobox>' enter <box>
 #   auto-enter yes, terminal none: no terminal profile at all, a leftover
 #     block removed.
-#   auto-enter no: the block removed, the removal reported.
+#   auto-enter no: the block removed from either file, the removal reported.
+# Both Ghostty files are validated first, with at most one block in total.
+# Never create config.ghostty; migrate a legacy block to an existing new
+# file on enable. Log the choice and warn for a host version below 1.3.0.
 #
 # Write order: the state file first, then distrobox.conf, then the profile.
 # The stored values are validated before anything is written (a corrupt
@@ -165,7 +169,14 @@ back any time with `just box status`.
 Files (all under HOME / XDG_CONFIG_HOME; a managed block is delimited by
 `# BEGIN worktool managed block ...` / `# END worktool managed block`):
   {state-file}   the state file (key=value + key.source)
-  $XDG_CONFIG_HOME/ghostty/config    managed block: command = ...
+  $XDG_CONFIG_HOME/ghostty/config.ghostty (when it exists), else ghostty/config
+                                     managed block: command = ...
+Never creates config.ghostty. Validates both files before any write:
+at most one managed block across both files; malformed markers refuse the
+whole run and name both files. Enable moves the single block to the selected
+file; disable removes it from either file. User content and modes are kept.
+The selected file and reason are logged. A host Ghostty below 1.3.0 warns
+when config.ghostty is selected; no executable means no version check.
   $XDG_CONFIG_HOME/distrobox/distrobox.conf
                                      managed block, on every run: drops
                                      TMUX / TMUX_PANE from `distrobox enter
