@@ -146,9 +146,12 @@ _registered_names() {
         if grep -Fq "/.claude/hook/${_name}" "${SETTINGS}"; then
             _count=$((_count + 1))
         fi
-        if grep -Fq "/.agents/hook/${_name}" "${CODEX_HOOKS}"; then
-            _count=$((_count + 1))
-        fi
+        local _config
+        for _config in "${CODEX_HOOKS}" "${REPO_ROOT}/.agents/hooks.json" "${REPO_ROOT}/.gemini/settings.json"; do
+            if grep -Fq "/.agents/hook/${_name}" "${_config}"; then
+                _count=$((_count + 1))
+            fi
+        done
         assert [ "${_count}" -gt 0 ]
     done
 }
