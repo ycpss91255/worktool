@@ -374,6 +374,8 @@ EOF
     _run_copy_gate --ci-integration
     assert_success
     assert_line "1..${_n}"
+    assert_output --partial '[ci]   required specs OK'
+    refute_output --partial '[ci] partial integration run'
     assert_line --partial "[ci] integration bats OK"
 }
 

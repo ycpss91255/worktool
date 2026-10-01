@@ -378,8 +378,13 @@ _verify_tap() {
 _run_bats_tier() {
     local _tier="$1" _filter="$2"
     shift 2
-    local _paths=("$@") _partial=0
-    [[ "${#_paths[@]}" -gt 0 || -n "${_filter}" ]] && _partial=1
+    local _partial=0
+    if [[ "${1:-}" == -- ]]; then
+        shift
+    elif [[ $# -gt 0 || -n "${_filter}" ]]; then
+        _partial=1
+    fi
+    local _paths=("$@")
     if [[ "${#_paths[@]}" -eq 0 ]]; then
         local _dir="${REPO_ROOT}/test/${_tier}"
         _info "Running ${_tier} bats (test/${_tier}/)"
@@ -438,13 +443,13 @@ _run_integration() {
     done
     [[ "${#_specs[@]}" -gt 0 ]] \
         || _die "no integration (default group) specs found under ${REPO_ROOT}/test/integration"
-    _run_bats_tier integration "" "${_specs[@]}"
+    _run_bats_tier integration "" -- "${_specs[@]}"
 }
 
 # Integration tier, ghostty group: exactly the ghostty spec, run in the
 # ubuntu image that carries ghostty. Same green rules as every tier.
 _run_integration_ghostty() {
-    _run_bats_tier integration-ghostty "" "${INTEGRATION_GHOSTTY_SPEC}"
+    _run_bats_tier integration-ghostty "" -- "${INTEGRATION_GHOSTTY_SPEC}"
 }
 
 # System tier, shim group: every test/system/*.bats except the real-engine
@@ -462,13 +467,13 @@ _run_system() {
     done
     [[ "${#_specs[@]}" -gt 0 ]] \
         || _die "no system (shim group) specs found under ${REPO_ROOT}/test/system"
-    _run_bats_tier system "" "${_specs[@]}"
+    _run_bats_tier system "" -- "${_specs[@]}"
 }
 
 # System tier, real-engine group: exactly the real-engine spec, run by the
 # DinD runner entry once its nested dockerd is up. Same green rules: the spec
 # must exist, run at least one case, and skip nothing.
-_run_system_real() { _run_bats_tier system-real "" "${SYSTEM_REAL_SPEC}"; }
+_run_system_real() { _run_bats_tier system-real "" -- "${SYSTEM_REAL_SPEC}"; }
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
