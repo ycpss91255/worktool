@@ -666,14 +666,14 @@ _realbox_guard() {
         return 1
     fi
     _require_tools distrobox || return 1
-    _list="$(distrobox list)"
-    _rc=$?
+    _rc=0
+    _list="$(distrobox list)" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || {
         _fail "cannot tell whether a box named '${REALBOX_NAME}' exists: distrobox list exited ${_rc}"
         return 1
     }
-    grep -q -E "(^|[[:space:]])${REALBOX_NAME}([[:space:]]|\$)" <<<"${_list}"
-    _rc=$?
+    _rc=0
+    grep -q -E "(^|[[:space:]])${REALBOX_NAME}([[:space:]]|\$)" <<<"${_list}" || _rc=$?
     case "${_rc}" in
         0)
             _fail "a box named '${REALBOX_NAME}' already exists on this machine; refusing to touch it. Remove it yourself, then re-run."
