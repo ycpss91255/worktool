@@ -211,3 +211,45 @@ Record 之前的失敗 gh 完全沒被呼叫。
   釘住 meta 在第一行且看起來是純字面量、phase 名稱、參數驗證、結構化 PR/CI/codex、CI gate、Fix 輪數、
   回傳契約、已知的 merge 指令、不寫死機器路徑 / session。文字檢查擋的是「不小心改壞」;
   流程測試以代理替身驗證 light 不呼叫 codex、不同代理分別修改與審查、非法 mode 拒絕及 full 路徑維持原樣；真實 sub-issue 的 gate 與 CI 證據留在該 PR。
+
+## discuss
+
+問維護者之前，先讓 Claude 與 codex 各自獨立回答一題。`args` = `{ repo, repoDir, issue, question, context?, premises?, references? }`：
+
+| 參數 | 必要 | 說明 |
+|------|------|------|
+| `repo` | 是 | `owner/name`；所有留言指令帶 `--repo` |
+| `repoDir` | 是 | 供只讀調查的 checkout 絕對路徑；中間檔放在同層 `worktree/.scratch/discuss-<issue>/` |
+| `issue` | 是 | 正整數；結論留言記錄到此 issue |
+| `question` | 是 | 單一待決題目 |
+| `context` | 否 | 背景與現況 |
+| `premises` | 否 | 已定案前提；雙方都收到 |
+| `references` | 否 | 相關 issue 連結、ADR 與檔案位置 |
+
+```json
+{
+  "repo": "ycpss91255/worktool",
+  "repoDir": "/path/to/worktool",
+  "issue": 309,
+  "question": "這個設計應採用哪個既有機制？",
+  "context": "請先核對現有 workflow。",
+  "premises": "不更動已定案的不變量。",
+  "references": "doc/contract.md、相關 ADR 與 issue 連結"
+}
+```
+
+以 `Workflow({ scriptPath: "<repoDir>/.claude/workflows/discuss.js", args: ... })` 呼叫。
+首輪互不看對方答案；分歧時把上一輪雙方答案與分歧點交回雙方，最多三輪，一致即停。
+結果分成「一致（定案）」、「分歧（交維護者，一次一題）」與「可由不變量／前例推出（自行定案）」。
+比對代理不得自行選邊；自行定案必須附已定案 issue、不變量或 repo 前例的依據。
+未收斂時 `ask_maintainer` 只有一題，定案時為空陣列。
+
+codex 以 `setsid nohup` 脫離執行，寫 rc 檔；每次前景等待上限 540 秒，codex 硬上限 14,400 秒。
+完成後清理掛載該 checkout 的測試 container；非零 rc 或空輸出不能當成功。
+留言以 `[claude]` 開頭，包含結論、每個判斷的 issue URL／檔案:行號依據、分歧與維護者問題；
+codex 最終輸出由 shell 複製並逐行引用，不由 Claude 重打，發布前過濾本機路徑與署名。
+Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相同措辭的護欄。
+
+回傳 `{ issue, status, rounds, conclusion, basis, disagreements, ask_maintainer, claude, codex, comment }`。
+成功的 `status` 是 `agreed`／`derived`／`diverged`；nonce、作答、比對或留言失敗分別為
+`setup-failed`／`answer-failed`／`compare-failed`／`record-failed`，失敗不冒充定案。

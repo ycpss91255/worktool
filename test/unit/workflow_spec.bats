@@ -1563,13 +1563,15 @@ _rv_assert_fails_closed() {
 
 _discuss_run() {
     local replies="${1}" mode="${2:-}"
+    local workflow_args='{"repo":"o/r","repoDir":"/w","issue":309,"question":"Choose a design","context":"Approved premise"}'
+    workflow_args="${DISCUSS_ARGS:-${workflow_args}}"
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${WF_DIR}/discuss.js" \
-        "${DISCUSS_ARGS:-{\"repo\":\"o/r\",\"repoDir\":\"/w\",\"issue\":309,\"question\":\"Choose a design\",\"context\":\"Approved premise\"}}" "${replies}" "${mode}"
+        "${workflow_args}" "${replies}" "${mode}"
     assert_success
 }
 
 _discuss_replies() {
-    jq -cn '{"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
+    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
         "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],risks:[]},
         "compare:":{status:"agreed",conclusion:"Use A",basis:["doc/contract.md:1"],disagreements:[],question:""},
         "record:":{url:"https://github.com/o/r/issues/309#issuecomment-1"}}'
@@ -1604,4 +1606,26 @@ _discuss_replies() {
     _discuss_run "${replies}"
     run jq -cr '[.result.ask_maintainer, .result.conclusion]' <<<"${output}"
     assert_output '[["Choose A or B?"],"A versus B"]'
+}
+
+@test "discuss: records conclusion and cited basis with shell copied codex text" {
+    local dir="${BATS_TEST_TMPDIR}/record/repo" scratch posted="${BATS_TEST_TMPDIR}/posted"
+    scratch="${dir}/../worktree/.scratch/discuss-309"
+    mkdir -p "${scratch}" "${BATS_TEST_TMPDIR}/bin" "${dir}"
+    printf 'Unique codex text\ndoc/contract.md:9\n/home/private/secret\nCo-Authored-By: Claude\n' > "${scratch}/codex-r1.md"
+    printf '#!/bin/sh\ncp "$7" "%s"\necho https://github.com/o/r/issues/309#issuecomment-1\n' "${posted}" > "${BATS_TEST_TMPDIR}/bin/gh"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    DISCUSS_ARGS="$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:309,question:"q"}')"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" _discuss_run "$(_discuss_replies | jq '."nonce:"={nonce:"0123456789abcdef"} | ."record:".url="<stdout>"')" exec
+    run jq -cr '[.result.status,.result.comment]' <<<"${output}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1"]'
+    run cat "${posted}"
+    assert_output --partial '[claude]'
+    assert_output --partial '一致（定案）'
+    assert_output --partial '依據'
+    assert_output --partial 'doc/contract.md:1'
+    assert_output --partial '> Unique codex text'
+    refute_output --partial 'Codex private answer'
+    refute_output --partial '/home/private'
+    refute_output --partial 'Co-Authored-By:'
 }

@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Answer', detail: 'Independent answers' },
     { title: 'Compare', detail: 'Compare evidence and conclusions' },
+    { title: 'Record', detail: 'Shell copies codex into the issue comment' },
   ],
 }
 
@@ -36,8 +37,15 @@ const ANSWER = { type: 'object', properties: {
   answer: { type: 'string' }, reasons: { type: 'array', items: { type: 'string' } },
   risks: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['answer', 'reasons', 'risks'] }
+const SOURCES = []
+const PFX = [[REPO_DIR, '.'], [SCRATCH, '<scratch>']].sort((a, b) => b[0].length - a[0].length)
+const SCRUB_LIT = String.raw`function lit(s, a, r,  o, k, p, c) { o = ""; while (a != "" && (k = index(s, a)) > 0) { o = o substr(s, 1, k - 1); p = substr(o, length(o), 1); c = substr(s, k + length(a), 1); o = o (((p !~ "[A-Za-z0-9._/-]" || (length(o) > 2 && substr(o, length(o) - 2) == "://")) && c !~ "[A-Za-z0-9._-]") ? r : a); s = substr(s, k + length(a)) } return o s }`
+const SCRUB_MASK = String.raw`function keep(o, t, s,  p) { p = substr(o, length(o), 1); return p ~ "[A-Za-z0-9._~/-]" || t == "/" || (p == "<" && t ~ "^/[A-Za-z][A-Za-z0-9]*$" && substr(s, 1, 1) == ">") } function url(o, t) { return substr(o, length(o), 1) == ":" && match(o, "[A-Za-z][A-Za-z0-9+.-]*:$") && substr(t, 1, 2) == "//" } function mask(s,  o, t, q) { o = ""; while (match(s, "/" PC "*")) { o = o substr(s, 1, RSTART - 1); t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH); q = ""; if (keep(o, t, s)) { o = o t; continue } if (url(o, t)) { if (substr(t, 1, 3) != "///") { o = o t; continue } q = "//"; t = substr(t, 3) } o = o q "<path>" } return o s }`
+const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { t = tolower($0); sub("^[[:space:]]+", "", t); sub("[[:space:]]+$", "", t); if (t ~ /^claude-session:/ || t ~ /generated with \[?claude code([^[:alnum:]]|$)/ || t ~ /^co-authored-by:/ || t ~ /^generated with/) next; for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("\\\\\\\\[A-Za-z0-9._$?-]" PC "*", "<path>"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
+const SCRUB = `${PFX.map(([p, r], i) => `RV_P${i}=${sq(p)} RV_R${i}=${sq(r)} `).join('')}RV_N=${PFX.length} awk '${SCRUB_LIT} ${SCRUB_MASK} ${SCRUB_MAIN}'`
+
 const brief = n => `Question: ${A.question}\nContext: ${A.context || ''}\nApproved premises: ${A.premises || ''}\nRelated issues / ADRs: ${A.references || ''}\nRound ${n}. Independently answer; cite every judgment with issue URLs or repo-relative file:line evidence. Read CONTEXT.md and doc/contract.md. Do not invent evidence. ${SCRATCH_ONLY}`
-const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
+const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc} and ${out}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
 setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
 Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
 timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
@@ -56,6 +64,8 @@ const VERDICT = { type: 'object', properties: {
 }, required: ['status', 'conclusion', 'basis', 'disagreements', 'question'] }
 const validAnswer = x => x && !x.error && typeof x.answer === 'string' && x.answer.trim() && Array.isArray(x.reasons) && x.reasons.length && x.reasons.every(r => typeof r === 'string' && r.trim()) && Array.isArray(x.risks)
 const validVerdict = x => x && ['agreed', 'derived', 'diverged'].includes(x.status) && typeof x.conclusion === 'string' && x.conclusion.trim() && Array.isArray(x.basis) && x.basis.length && x.basis.every(b => typeof b === 'string' && b.trim()) && Array.isArray(x.disagreements) && typeof x.question === 'string'
+const nonce = await agent('Read a run nonce with `od -An -N8 -tx1 /dev/urandom | tr -d " \n"`; return nonce only.', { label: 'nonce:', phase: 'Answer', schema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } })
+if (!nonce || !/^[0-9a-f]{16}$/.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', rounds: 0 }
 let prior = null
 let result
 for (let n = 1; n <= 3; n++) {
@@ -69,4 +79,14 @@ for (let n = 1; n <= 3; n++) {
 }
 if (result.status === 'diverged' && (!result.question.trim() || /[\r\n]/.test(result.question) || (result.question.match(/[?？]/g) || []).length > 1)) return { issue: A.issue, status: 'compare-failed', rounds: result.rounds }
 result.ask_maintainer = result.status === 'diverged' ? [result.question] : []
-return result
+const labels = { agreed: '一致（定案）', derived: '可由不變量／前例推出（自行定案）', diverged: '分歧（交維護者，一次一題）' }
+const text = `[claude] ${labels[result.status]}\n\n${result.conclusion}\n\n## 依據\n${result.basis.map(b => `- ${b}`).join('\n')}\n\n## Claude 判斷與依據\n${result.claude.answer}\n${result.claude.reasons.map(b => `- ${b}`).join('\n')}\n\n${result.ask_maintainer.length ? `## 維護者問題\n${result.ask_maintainer[0]}\n` : ''}\n## 分歧\n${result.disagreements.map(b => `- ${b}`).join('\n')}\n`
+let i = 0
+let marker
+ do { marker = `${nonce.nonce}-${++i}` } while (text.includes(`===END-${marker}===`) || text.includes(`===BEGIN-${marker}===`))
+const out = `codex-r${result.rounds}.md`
+const build = `cd ${sq(SCRATCH)} && [ -s ${sq(out)} ] && ${SCRUB} < conclusion-raw.md > conclusion.md && ${SCRUB} < ${sq(out)} > codex-clean.md && [ -s conclusion.md ] && [ -s codex-clean.md ] && { cat conclusion.md; printf '\n## codex 原文（shell 複製）\n\n'; sed 's/^/> /' codex-clean.md; } > body.md && gh issue comment ${A.issue} --repo ${sq(REPO)} --body-file body.md`
+const recorded = await agent(`${GUARDRAILS}\n${SCRATCH_ONLY}\nRecord only: comments start with [claude]. Never retype codex text: shell copies the final output, not the structured summary.\nWrite the text between the markers byte for byte to the path ${JSON.stringify(`${SCRATCH}/conclusion-raw.md`)} with the Write tool.\n===BEGIN-${marker}===\n${text}\n===END-${marker}===\nRun in the foreground: \`${build}\`. Return the printed URL.`, { label: 'record:', phase: 'Record', schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } })
+const prefix = `https://github.com/${REPO}/issues/${A.issue}#issuecomment-`
+if (!recorded || typeof recorded.url !== 'string' || !recorded.url.toLowerCase().startsWith(prefix.toLowerCase()) || !/^[0-9]+$/.test(recorded.url.slice(prefix.length))) return { ...result, status: 'record-failed', comment: '' }
+return { ...result, comment: recorded.url }
