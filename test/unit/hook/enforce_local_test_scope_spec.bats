@@ -18,3 +18,12 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     _check "eval 'just test'"
     assert_failure 2
 }
+
+@test "direct test script heavy flags cannot bypass the local scope guard" {
+    _check "eval 'bash script/test/test.sh --system-real test/system-real/example_spec.bats'"
+    assert_failure 2
+    _check 'script/test/test.sh --unit'
+    assert_failure 2
+    _check 'script/test/test.sh'
+    assert_failure 2
+}
