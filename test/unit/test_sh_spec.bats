@@ -264,6 +264,13 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     refute_output --partial 'test.sh --help exits 0'
 }
 
+@test "test.sh rejects a spec path from another tier" {
+    run "${TEST_SH}" --unit test/integration/smoke_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/smoke_spec.bats' is outside test/unit/ (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "test.sh runs under set -euo pipefail (one set line, errexit included)" {
