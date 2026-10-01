@@ -121,6 +121,7 @@ setup() {
     _install_fake_distrobox
     _install_fake_sleep
     _install_fake_clock
+    _install_cpu_load
     PATH="${MOCKBIN}:${PATH}"
 }
 
@@ -171,6 +172,22 @@ _install_fake_clock() {
 cat "${FAKE_CLOCK_FILE}"
 EOF
     chmod +x "${MOCKBIN}/fake-clock"
+}
+
+# A bounded CPU worker, used only inside the test container. timeout owns
+# the process group so an interrupted fixture cannot leave a busy loop behind.
+_install_cpu_load() {
+    cat >"${MOCKBIN}/cpu-load" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+timeout "$1" bash -c 'printf "ready\n" >"$1"; while :; do :; done' _ "$2" || rc=$?
+if (( rc == 124 )); then
+    exit 0
+fi
+exit "${rc}"
+EOF
+    chmod +x "${MOCKBIN}/cpu-load"
 }
 
 # The fake distrobox described in the header.
@@ -461,9 +478,11 @@ _matrix_samples() {
 }
 
 # Run the whole matrix for metric $1 (enter|shell|inbox) and assert every
-# cell: the exact median line and the exit code.
+# cell: the exact median line and the exit code. Optional $2 adds a short
+# CPU load pulse to each cell, so slow hosts still exercise every cell under
+# load without keeping a busy loop alive for the entire matrix.
 _run_matrix() {
-    local _metric="$1" _parity _pos _cell _samples _median _runs _want _rc _out
+    local _metric="$1" _loaded="${2:-0}" _parity _pos _cell _samples _median _runs _want _rc _out
     for _parity in odd even; do
         for _pos in below equal above; do
             _cell="$(_matrix_samples "${_parity}" "${_pos}")"
@@ -474,6 +493,12 @@ _run_matrix() {
             _want=0
             [[ "${_metric}" == shell && "${_pos}" == above ]] && _want=1
             rm -f "${FAKE_DBX_CALLS}"
+            if (( _loaded )); then
+                rm -f "${TMP}/load.ready"
+                "${MOCKBIN}/cpu-load" 0.15 "${TMP}/load.ready" 3>&- &
+                printf '%s\n' "$!" >"${TMP}/busy.pid"
+                timeout 2 bash -c "until [[ -f \"\$1\" ]]; do :; done" _ "${TMP}/load.ready"
+            fi
             _rc=0
             _out="$(env FAKE_DBX_MS_ENTER=1 FAKE_DBX_MS_SHELL=1 FAKE_DBX_MS_INBOX=1 \
                 "FAKE_DBX_MS_${_metric^^}=${_samples}" \
@@ -482,6 +507,10 @@ _run_matrix() {
                 "${_metric} ${_parity} ${_pos} exit ${_want}"
             run printf '%s\n' "${_out}"
             assert_line --regexp "^${_metric}: min=5\.0 median=${_median//./\\.} max=30\.0 ms$"
+            if (( _loaded )); then
+                wait "$(cat "${TMP}/busy.pid")"
+                rm "${TMP}/busy.pid"
+            fi
         done
     done
 }
@@ -498,31 +527,31 @@ _run_matrix() {
     _run_matrix inbox
 }
 
-# Load guard (issue #249): the verdicts come from the injected clock, so a
-# host saturated with CPU busy loops (two per CPU, run inside this very
-# container) must not change a single cell of the matrix.
-@test "matrix under an artificial CPU load: every cell is unchanged" {
-    local _n _i
-    _n="$(( $(getconf _NPROCESSORS_ONLN) * 2 ))"
-    for (( _i = 0; _i < _n; _i++ )); do
-        ( while :; do :; done ) 3>&- &
-        printf '%s\n' "$!" >>"${TMP}/busy.pids"
-    done
-    _run_matrix enter
-    _run_matrix shell
-    _run_matrix inbox
+# The load fixture must stop itself even if the matrix fails or is interrupted.
+@test "artificial CPU load stops on its own within a short deadline" {
+    run timeout 3 "${MOCKBIN}/cpu-load" 1 "${TMP}/load.ready"
+    assert_success
+    run cat "${TMP}/load.ready"
+    assert_output "ready"
 }
 
-# Stop the busy loops of the load guard (their pids are in busy.pids),
-# whatever the case's outcome. A loop that is already gone is not an error
-# worth failing the case on.
+# Load guard (issue #249): rerun all cells with one CPU busy loop per cell,
+# capped at 0.15 seconds each (2.7 seconds total), inside this container.
+@test "matrix under an artificial CPU load: every cell is unchanged" {
+    _run_matrix enter 1
+    _run_matrix shell 1
+    _run_matrix inbox 1
+}
+
+# End the wrapper on failure too. Its independent timeout process still
+# stops the busy worker within its short deadline if the wrapper ends early.
 teardown() {
-    local -a _pids=()
-    if [[ -f "${TMP}/busy.pids" ]]; then
-        mapfile -t _pids <"${TMP}/busy.pids"
-    fi
-    if (( ${#_pids[@]} > 0 )); then
-        kill "${_pids[@]}" 2>/dev/null || return 0
+    local _pid
+    if [[ -f "${TMP}/busy.pid" ]]; then
+        _pid="$(cat "${TMP}/busy.pid")"
+        if kill -0 "${_pid}" 2>/dev/null; then
+            kill "${_pid}" 2>/dev/null || return 0
+        fi
     fi
 }
 
