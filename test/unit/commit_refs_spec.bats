@@ -50,6 +50,22 @@ _introduce_refs_rule() {
     assert_output --partial 'Refs: #<number>'
 }
 
+@test "post-rule commits without footers fail even in a range containing pre-rule work" {
+    _commit_refs 'old work without footer'
+    _introduce_refs_rule
+    local _base _sha
+    _base="$(git -C "${REPO}" rev-parse HEAD)"
+    # Dates cannot exempt descendants of the enforcing commit.
+    GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' _commit_refs 'missing footer'
+    _sha="$(git -C "${REPO}" rev-parse HEAD)"
+    run commit_refs_check_commits "${REPO}" HEAD "^${_base}"
+    assert_failure 1
+    assert_output --partial "${_sha} missing Refs: #<number>"
+    run commit_refs_check_commits "${REPO}" HEAD
+    assert_failure 1
+    assert_output --partial '1 of 2 commits need a Refs: #<number> footer.'
+}
+
 @test "numeric Refs lines in the final paragraph pass, including multiple issues" {
     _commit_refs $'subject\n\nRefs: #312\nRefs: #42'
     run commit_refs_check_commits "${REPO}" HEAD

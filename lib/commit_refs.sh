@@ -48,7 +48,6 @@ commit_refs_check_commits() {
         return 1
     fi
     while IFS= read -r -d '' _sha && IFS= read -r -d '' _committer && IFS= read -r -d '' _message; do
-        _n=$((_n + 1))
         _rc=0
         git -C "${_repo}" merge-base --is-ancestor "${_enforcing}" "${_sha}" || _rc=$?
         if ((_rc == 1)); then
@@ -59,6 +58,7 @@ commit_refs_check_commits() {
             log_error "Cannot establish ancestry for ${_sha} (fail closed)."
             return 1
         fi
+        _n=$((_n + 1))
         [[ "${_committer}" == 'noreply@github.com' ]] && continue
         _commit_refs_has_footer "${_message}" && continue
         log_error "${_sha} missing Refs: #<number> in the final paragraph."
