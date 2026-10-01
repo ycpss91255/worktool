@@ -136,6 +136,13 @@ _checks_per_promise() {
     [ -f "${REPO_ROOT}/doc/adr/0010-invariant-black-box-verifiable.md" ]
 }
 
+@test "invariant 8 links to its merged ADR 0011" {
+    run grep -E '^8\. ' "${CONTRACT}"
+    assert_success
+    assert_output --partial "[ADR 0011](adr/0011-invariant-minimal-host-deps.md)"
+    [ -f "${REPO_ROOT}/doc/adr/0011-invariant-minimal-host-deps.md" ]
+}
+
 @test "every relative link in doc/contract.md resolves to an existing file" {
     local target found=0
     while IFS= read -r target; do
