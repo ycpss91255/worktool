@@ -1856,8 +1856,8 @@ _discuss_run() {
 }
 
 _discuss_replies() {
-    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],risks:[]},
-        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],risks:[]},
+    jq -cn '{"nonce:":{nonce:"0123456789abcdef"},"claude:":{answer:"Claude private answer",reasons:["doc/contract.md:1"],notes:[],risks:[]},
+        "codex:":{answer:"Codex private answer",reasons:["https://github.com/o/r/issues/1"],notes:[],risks:[]},
         "compare:":{status:"agreed",conclusion:"Use A",basis:["doc/contract.md:1"],disagreements:[],question:""},
         "record:":{url:"https://github.com/o/r/issues/309#issuecomment-1"}}'
 }
@@ -1885,6 +1885,19 @@ _discuss_replies() {
     run jq -cr '[.error,.result.status,.result.rounds,.result.comment,
         ([.calls[] | select(.label == "record:")] | length)]' <<<"${output}"
     assert_output '[null,"agreed",1,"https://github.com/o/r/issues/309#issuecomment-1",1]'
+}
+
+@test "discuss: real dev box notes need no citations and both answer prompts separate them (#340)" {
+    local replies json
+    replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |
+        ."codex:".notes=["Avoid 清單是自己的建議，不是文件規則", "rc=0、輸出檔路徑、沒有要停的容器"]')"
+    _discuss_run "${replies}"
+    json="${output}"
+    run jq -cr '[.result.status, .result.claude.notes, .result.codex.notes,
+        ([.calls[] | select(.label | test("^(claude|codex):")) |
+            (.schema.required | index("notes") != null) and (.schema.properties.notes.items.type == "string") and
+            (.prompt | contains("Put judgments in reasons with evidence; put explanations and execution records in notes"))] | all)]' <<<"${json}"
+    assert_output '["agreed",["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"],["Avoid 清單是自己的建議，不是文件規則","rc=0、輸出檔路徑、沒有要停的容器"],true]'
 }
 
 @test "discuss: uncited reasons fail with the side, one-based position and original text (#335)" {

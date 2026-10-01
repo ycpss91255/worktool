@@ -259,6 +259,8 @@ Record 之前的失敗 gh 完全沒被呼叫。
 
 codex 以 `setsid nohup` 脫離執行，寫 rc 檔；每次前景等待上限 540 秒，codex 硬上限 14,400 秒。
 完成後清理掛載該 checkout 的測試 container；非零 rc 或空輸出不能當成功。
+雙方作答分成 `answer`、`reasons`、`notes` 與 `risks`；判斷放在 `reasons` 並逐條附依據，
+說明與執行紀錄放在 `notes`，不需引用、不算判斷。
 每條理由與比對依據接受完整 issue URL、本 repo 的 issue／PR 簡寫 `#<正整數>`（例如 `#212`），
 或 repo 相對路徑的 `檔案:行號`（例如 `doc/contract.md:1`）；每條都必須含至少一項依據。
 留言以 `[claude]` 開頭，包含結論、每個判斷的依據、分歧與維護者問題；
