@@ -1909,6 +1909,19 @@ _discuss_replies() {
     assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1",[["repair:codex:r1:1",true,true,true,true]]]'
 }
 
+@test "discuss: repairs an uncited comparison before recording (#342)" {
+    local replies
+    replies="$(_discuss_replies | jq '{"repair:compare:": ."compare:"} + . |
+        ."compare:".basis=["Trust this conclusion"]')"
+    _discuss_run "${replies}"
+    run jq -cr '[.result.status,.result.comment,
+        [.calls[] | select(.label | startswith("repair:")) | [.label,
+            (.prompt | contains("Trust this conclusion")),
+            (.prompt | contains("grep:<pattern> in <path> -> N 筆")),
+            (.prompt | contains("Only correct the format"))]]]' <<<"${output}"
+    assert_output '["agreed","https://github.com/o/r/issues/309#issuecomment-1",[["repair:compare:r1:1",true,true,true]]]'
+}
+
 @test "discuss: real dev box notes need no citations and both answer prompts separate them (#340)" {
     local replies json
     replies="$(_discuss_replies | jq '."claude:".notes=["`開發盒`、`dev 容器` 目前找不到用法（grep 無結果）"] |

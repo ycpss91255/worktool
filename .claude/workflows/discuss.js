@@ -90,7 +90,9 @@ for (let n = 1; n <= 3; n++) {
     issue: A.issue, status: 'answer-failed', rounds: n,
     failed_reasons: [...failedReasons('claude', claude), ...failedReasons('codex', codex)],
   }
-  const verdict = await agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}`, { label: `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  const compare = (correction = '', attempt = 0) => agent(`${GUARDRAILS}\nCompare independently obtained answers. Never invent evidence or select a side on disagreement.\nClaude: ${JSON.stringify(judgments(claude))}\nCodex: ${JSON.stringify(judgments(codex))}\nUse agreed only for matching conclusions; derived only when cited invariants, decided issues or precedents entail the conclusion. Otherwise diverged. basis must cite each judgment (issue URL, local issue/PR shorthand #N, file:line or grep:<pattern> in <path> -> N 筆). Return exactly one maintainer question for divergence. ${SCRATCH_ONLY}${correction}`, { label: attempt ? `repair:compare:r${n}:${attempt}` : `compare:r${n}`, phase: 'Compare', schema: VERDICT })
+  const verdict = await repairFormat(await compare(), validVerdict, x =>
+    Array.isArray(x?.basis) ? x.basis.filter(b => !cited(b)) : [], compare)
   if (!validVerdict(verdict)) return { issue: A.issue, status: 'compare-failed', rounds: n }
   result = { issue: A.issue, ...verdict, claude, codex, rounds: n }
   if (verdict.status !== 'diverged') break
