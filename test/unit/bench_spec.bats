@@ -55,18 +55,25 @@
 #
 # HOW
 #   A FAKE `distrobox` sits first on PATH. It records every call (one line
-#   `$*` per call, and `$#` per call in a sibling file) and sleeps a
+#   `$*` per call, and `$#` per call in a sibling file) and takes a
 #   configurable number of milliseconds: FAKE_DBX_SLEEP_MS for every call;
 #   FAKE_DBX_SLEEP_MS_LIST instead gives the k-th call with an identical
 #   argv the k-th entry (cycling), so one metric's warmup can be slow and
 #   its runs fast, which makes the "warmup excluded" claim checkable;
-#   FAKE_DBX_SLEEP_MS_TRUE overrides the sleep for the `-- true` argv only
+#   FAKE_DBX_SLEEP_MS_TRUE overrides the time for the `-- true` argv only
 #   (the enter metric), so the metrics can differ. FAKE_DBX_EXIT injects a
 #   failing enter for every call; FAKE_DBX_EXIT_SHELL only for the shell
 #   argv and FAKE_DBX_EXIT_INBOX only for the inbox argv, so "enter passes,
-#   a later metric fails" is testable. `sleep` never returns early, so a
-#   run's measured time is a hard LOWER bound on the requested sleep; upper
-#   bounds are only asserted with a wide margin (the runner may be loaded).
+#   a later metric fails" is testable.
+#
+#   Time is FAKE (issue #249): the fake distrobox never really sleeps, it
+#   ADVANCES a fake clock (FAKE_CLOCK_FILE, microseconds) by the time it was
+#   told to take, and bench.sh reads its host clock from that file through
+#   BENCH_CLOCK (its test-only clock program, see _install_fake_clock). So
+#   every host-clocked sample is EXACTLY the injected time and no verdict
+#   depends on how loaded the host running this spec is. Real wall-clock
+#   timing is left to the system-real gate (test/system/real_engine_spec.bats),
+#   which has its own load guard (exit 3, doc/adr/0003-latency-gate-inconclusive.md).
 #
 #   The fake understands the inbox argv (`-- bash -c <timer> ...`, told
 #   apart by the EPOCHREALTIME reads in the timer text): it does NOT run the
@@ -100,16 +107,17 @@ setup() {
     MOCKBIN="${TMP}/bin"
     export FAKE_DBX_CALLS="${TMP}/distrobox.calls"
     export FAKE_SLEEP_CALLS="${TMP}/sleep.calls"
-    # The fake distrobox still really sleeps (its sleep is a latency floor);
-    # it must not hit the fake `sleep` below, so it gets the real one.
-    FAKE_REAL_SLEEP="$(command -v sleep)"
-    export FAKE_REAL_SLEEP
+    # The host clock bench.sh reads is the fake one (issue #249): it only
+    # moves when the fake distrobox says a run took time.
+    export FAKE_CLOCK_FILE="${TMP}/clock.us"
+    export BENCH_CLOCK="${MOCKBIN}/fake-clock"
     # Every case measures on a QUIET fake PSI unless it says otherwise:
     # the host this spec runs on must never decide a unit verdict.
     export BENCH_PSI_FILE="${TMP}/cpu.pressure"
     _psi 0.00
     _install_fake_distrobox
     _install_fake_sleep
+    _install_fake_clock
     PATH="${MOCKBIN}:${PATH}"
 }
 
@@ -150,6 +158,18 @@ _sleeps() {
     fi
 }
 
+# The fake clock bench.sh runs as BENCH_CLOCK: it prints the fake time in
+# microseconds (FAKE_CLOCK_FILE, started at an arbitrary epoch), which only
+# the fake distrobox advances.
+_install_fake_clock() {
+    printf '1700000000000000\n' >"${FAKE_CLOCK_FILE}"
+    cat >"${MOCKBIN}/fake-clock" <<'EOF'
+#!/usr/bin/env bash
+cat "${FAKE_CLOCK_FILE}"
+EOF
+    chmod +x "${MOCKBIN}/fake-clock"
+}
+
 # The fake distrobox described in the header.
 _install_fake_distrobox() {
     mkdir -p "${MOCKBIN}"
@@ -169,10 +189,9 @@ fi
 if [[ -n "${FAKE_DBX_SLEEP_MS_TRUE:-}" && "${_kind}" == enter ]]; then
     _ms="${FAKE_DBX_SLEEP_MS_TRUE}"
 fi
-if (( _ms > 0 )); then
-    printf -v _s '%d.%03d' $(( _ms / 1000 )) $(( _ms % 1000 ))
-    "${FAKE_REAL_SLEEP}" "${_s}"
-fi
+# Take _ms on the FAKE clock (no real sleep: the host load never matters).
+_now="$(cat "${FAKE_CLOCK_FILE}")"
+printf '%s\n' "$(( _now + _ms * 1000 ))" >"${FAKE_CLOCK_FILE}"
 # The host turns busy DURING the batch: the FAKE_DBX_PSI_AT-th call leaves
 # a PSI of FAKE_DBX_PSI_VALUE behind (read by bench.sh after the run).
 if [[ -n "${FAKE_DBX_PSI_AT:-}" ]] \
@@ -359,19 +378,15 @@ _json_object_re() {
     done
 }
 
-@test "an even --runs takes the mean of the two middle samples as the median" {
-    # Runs sleep 10 / 60 / 20 / 30 ms -> sorted 10, 20, 30, 60: the median
-    # is (20 + 30) / 2 = 25 ms, so it lies strictly between the two middle
-    # samples (>= 25 by the sleep bound, and, unless the runner stalls for
-    # tens of ms, well below the 60 ms max).
+@test "host-clocked samples come from the injected BENCH_CLOCK: exact statistics, whatever the host load" {
+    # Runs take 10 / 60 / 20 / 30 ms on the fake clock -> sorted 10, 20,
+    # 30, 60: min 10.0, median (20 + 30) / 2 = 25.0, max 60.0, to the digit,
+    # for the host-clocked enter and shell metrics as well as for inbox.
     run env FAKE_DBX_SLEEP_MS_LIST="10 60 20 30" "${BENCH}" --runs 4 --warmup 0
     assert_success
-    local _min _med _max
-    read -r _min _med _max < <(_metric_tenths enter)
-    assert [ "${_min}" -ge 100 ]
-    assert [ "${_med}" -ge 250 ]
-    assert [ "${_med}" -lt "${_max}" ]
-    assert [ "${_max}" -ge 600 ]
+    assert_line "enter: min=10.0 median=25.0 max=60.0 ms"
+    assert_line "shell: min=10.0 median=25.0 max=60.0 ms"
+    assert_line "inbox: min=10.0 median=25.0 max=60.0 ms"
 }
 
 @test "an even --runs median is EXACTLY the mean of the two middle samples (inbox: injected in-box times)" {
