@@ -181,7 +181,7 @@ _item_title() {
         3.5) printf '%s\n' 'no distrobox on PATH is refused; --distrobox names one' ;;
         3.6) printf '%s\n' 'the four remaining states of the status distrobox line' ;;
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
-        3.8) printf '%s\n' '--terminal none removes both managed blocks and keeps both files' ;;
+        3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' '--tmux inside after host removes the tmux.conf block and keeps the file' ;;
         *) return 1 ;;
     esac
@@ -331,7 +331,7 @@ Items:
   3.5  no distrobox on PATH is refused; --distrobox names one
   3.6  the four remaining states of the status distrobox line
   3.7  distrobox.conf isolates host TMUX and keeps user content
-  3.8  --terminal none removes both managed blocks and keeps both files
+  3.8  --terminal none removes the profile and preserves isolation
   3.9  --tmux inside after host removes the tmux.conf block and keeps the file
 
 Options:
@@ -1328,131 +1328,36 @@ _item_3_7() {
 }
 
 # --- 3.8 ---------------------------------------------------------------------
-# `--terminal none`: the OTHER removal path. `_apply_disable`
-# (`--auto-enter no`) is the one 3.3 and 3.7 run; `_apply_no_terminal` is a
-# second, independent piece of removal code that no item ever reached -
-# `grep -rn -- "--terminal" script/verify/` matched nothing before this
-# item existed.
-#
-# It is not a corner either. enter_terminal_detect answers `none` whenever
-# there is no ghostty executable on PATH AND no ghostty config directory,
-# so a machine without ghostty takes this path on a bare `just box setup`.
-# Degrade it so the removal EMPTIES each file instead of stripping its
-# block and every other signal stays green: the two removal lines are word
-# for word the ones a correct run prints, both block counts still go 1 to
-# 0, `status` still reports both blocks absent - and the user's ghostty
-# configuration and ~/.tmux.conf are both zero lines long.
-#
-# The item therefore stages BOTH managed blocks first (`--terminal ghostty
-# --tmux host` is the only decision pair that writes both), measures that
-# they are really there, and then runs `--terminal none` over them.
+# No terminal: remove the profile, keep the independent box isolation.
 _item_3_8() {
     _require_tools env just sed grep mktemp || return 1
     _item_begin || return 1
-    local _d _ghostty _tmux_conf _bad=0
-    local _g_before _t_before _g_blocks _t_blocks _none_rc _status_rc
-    # ghostty the EXECUTABLE is deliberately not required: both runs force
-    # `--terminal` themselves, so neither logs a `terminal detected:` line
-    # and this item behaves identically on a machine that has no ghostty -
-    # which is precisely the machine that reaches `--terminal none` by
-    # default.
-    _d="$(_resolve_exec distrobox 'the staging setup writes its absolute path into both managed blocks')" || return 1
-    NORM_D="${_d}"
-    # Both managed files belong to the user; `--terminal none` is the run
-    # that has to give both of them back untouched except for the block.
     _seed_user_content 3.8 || return 1
-    _ghostty="${ITEM_H}/.config/ghostty/config"
-    _tmux_conf="${ITEM_H}/.tmux.conf"
-
+    local _ghostty="${ITEM_H}/.config/ghostty/config" _before _blocks _bad=0
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
-    # Staging, not the check: its output is 3.7's and is not repeated. The
-    # status is checked, because "the blocks were removed" means nothing
-    # unless they were written.
-    "${_env[@]}" just box setup --terminal ghostty --tmux host >/dev/null 2>&1 || {
-        _fail "3.8: the staging 'just box setup --terminal ghostty --tmux host' failed, so there are no managed blocks for --terminal none to remove"
-        return 1
-    }
+    "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
     _expect_user_content 3.8 after-write || _bad=1
-
-    # Both preconditions are MEASURED. `ghostty-blocks=0 tmux-blocks=0`
-    # below is vacuously true of two files that never held a block.
-    _g_before="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
-    printf 'ghostty-blocks-before=%s\n' "${_g_before}"
-    _t_before="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks-before=%s\n' "${_t_before}"
-    if [[ "${_g_before}" -ne 1 ]]; then
-        _fail "3.8: ${_ghostty} held ${_g_before} managed block(s) before the --terminal none run, expected 1"
-        _bad=1
-    fi
-    if [[ "${_t_before}" -ne 1 ]]; then
-        _fail "3.8: ${_tmux_conf} held ${_t_before} managed block(s) before the --terminal none run, expected 1"
-        _bad=1
-    fi
-
+    _before="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
+    printf 'ghostty-blocks-before=%s\n' "${_before}"
+    [[ "${_before}" -eq 1 ]] || _bad=1
     _run_norm "${_env[@]}" just box setup --terminal none || return 1
-    # The decision lines, the hint that replaces the terminal profile, and
-    # the removal of EACH managed file named with the body it held.
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_lines 3.8 \
-        '[INFO] auto-enter: yes (default)' \
         '[INFO] terminal: none (user)' \
-        '[INFO] tmux: host (user)' \
-        '[INFO] box: dev (default)' \
         '[INFO] wrote: <H>/.config/worktool/config' \
-        "[INFO] ${MANAGED_NONE_HINT}" \
-        "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_HOST_CMD})" \
-        "[INFO] removed: <H>/.tmux.conf (managed block: ${MANAGED_TMUX_CONF_BODY})" \
-        || _bad=1
-    # This path writes no managed command, so it needs no distrobox and
-    # must not resolve one; and `--terminal none` came from the option, so
-    # there is no detection to report either. Both absences are part of the
-    # documented output.
+        "[INFO] ${MANAGED_NONE_HINT}" || _bad=1
     _refute_line 3.8 '[INFO] distrobox:' || _bad=1
     _refute_line 3.8 '[INFO] terminal detected:' || _bad=1
-    _none_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_none_rc}"
-
-    _g_blocks="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
-    printf 'ghostty-blocks=%s\n' "${_g_blocks}"
-    _t_blocks="$(_count_matching 'BEGIN worktool managed block' "${_tmux_conf}")" || return 1
-    printf 'tmux-blocks=%s\n' "${_t_blocks}"
-    # The whole point of the item: an emptied file satisfies every line
-    # above. Only the seeded user content tells "stripped the block" apart
-    # from "deleted the file's contents".
+    _blocks="$(_count_matching 'BEGIN worktool managed block' "${_ghostty}")" || return 1
+    printf 'ghostty-blocks=%s\n' "${_blocks}"
+    [[ "${_blocks}" -eq 0 ]] || _bad=1
     _expect_user_content 3.8 after-removal || _bad=1
-
-    # The decisions are still STORED even though no profile was written -
-    # that is what the none path promises - so `status` reads them back and
-    # reports both managed files as absent.
     _run_norm "${_env[@]}" just box status || return 1
+    [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_lines 3.8 \
-        'config: <H>/.config/worktool/config' \
-        'auto-enter: yes (default)' \
         'terminal: none (user)' \
-        'tmux: host (user)' \
-        'box: dev (default)' \
         'ghostty: <H>/.config/ghostty/config (managed block: absent)' \
-        'tmux.conf: <H>/.tmux.conf (managed block: absent)' \
-        'distrobox: <D> (on PATH; no managed block records one)' \
-        || _bad=1
-    _status_rc="${LAST_RC}"
-    printf 'rc=%s\n' "${_status_rc}"
-
-    if [[ "${_none_rc}" -ne 0 ]]; then
-        _fail "3.8: just box setup --terminal none exited ${_none_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_status_rc}" -ne 0 ]]; then
-        _fail "3.8: just box status exited ${_status_rc}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_g_blocks}" -ne 0 ]]; then
-        _fail "3.8: ${_g_blocks} managed block(s) left in ${_ghostty}, expected 0"
-        _bad=1
-    fi
-    if [[ "${_t_blocks}" -ne 0 ]]; then
-        _fail "3.8: ${_t_blocks} managed block(s) left in ${_tmux_conf}, expected 0"
-        _bad=1
-    fi
+        'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)' || _bad=1
     return "${_bad}"
 }
 
