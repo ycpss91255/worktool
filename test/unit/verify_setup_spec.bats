@@ -591,10 +591,10 @@ EOF
     _insert_before 'setup_run() {' "${_repo}/script/box/setup.sh" <<'EOF'
 _config_write() {
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
-        log_info "dry-run: would write ${CONFIG}"
+        config_log info "dry-run: would write "
         return 0
     fi
-    log_info "wrote: ${CONFIG}"
+    config_log info "wrote: "
 }
 EOF
     run "${_repo}/script/verify/setup.sh" 3.2
