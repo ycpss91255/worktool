@@ -41,3 +41,9 @@ setup() {
         assert_output --partial "${path}"
     done
 }
+@test "refuses a root that is not a Git repository" {
+    rm -rf "${ROOT}/.git"
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_failure 1
+    assert_output --partial 'not a Git repository'
+}

@@ -27,6 +27,10 @@ if [[ ! -d "${ROOT}" ]]; then
     log_error "repository not found: ${ROOT}"
     exit 1
 fi
+if ! git -C "${ROOT}" rev-parse --show-toplevel >/dev/null 2>&1; then
+    log_error "not a Git repository: ${ROOT}"
+    exit 1
+fi
 FAILED=0
 for TREE in script .agents/script; do
     [[ -d "${ROOT}/${TREE}" ]] || continue
@@ -51,7 +55,13 @@ check_artifact() {
         done
     done
 }
+PATH_LIST="$(mktemp)"
+trap 'rm -f "${PATH_LIST}"' EXIT
+if ! git -C "${ROOT}" ls-files --cached --others --exclude-standard -z > "${PATH_LIST}"; then
+    log_error "could not enumerate repository paths: ${ROOT}"
+    exit 1
+fi
 while IFS= read -r -d '' FILE; do
     check_artifact "${FILE}"
-done < <(git -C "${ROOT}" ls-files --cached --others --exclude-standard -z)
+done < "${PATH_LIST}"
 exit "${FAILED}"
