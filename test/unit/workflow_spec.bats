@@ -528,6 +528,18 @@ JS
     assert_output "true"
 }
 
+@test "milestone-fanout (node): honors custom positive concurrency and forwards implementer" {
+    local config expected
+    for config in 1 4 30; do
+        expected=$(jq -cn --argjson n "${config}" '[range(0;23;$n) | [($n), (23 - .)] | min]')
+        run _fanout_batches "{\"concurrency\":${config},\"implementer\":\"claude\"}"
+        assert_success
+        run jq -e --argjson expected "${expected}" '.error == null and .batches == $expected and [.result[].issue] == [range(1;24)] and ([.children[].args.implementer] | all(. == "claude"))' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
     replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'

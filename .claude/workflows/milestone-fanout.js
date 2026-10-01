@@ -34,7 +34,7 @@ for (const it of A.items) {
     if (!it[k]) throw new Error(`milestone-fanout: item ${JSON.stringify(it.issue || it)} lacks ${k}`)
   }
 }
-const CONCURRENCY = 10
+const CONCURRENCY = A.concurrency === undefined ? 10 : A.concurrency
 const REPO_DIR = A.repoDir
 const SCRIPT = `${REPO_DIR}/.claude/workflows/pr-loop.js`
 
