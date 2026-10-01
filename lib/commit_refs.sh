@@ -37,7 +37,7 @@ _commit_refs_has_footer() {
 }
 
 commit_refs_check_commits() {
-    local _repo="$1" _tmp _sha _committer _message _enforcing _bad=0 _n=0 _rc
+    local _repo="$1" _tmp _sha _committer _message _enforcing _bad=0 _n=0 _rc _ancestry_failed=0
     shift
     local _shallow
     _shallow="$(git -C "${_repo}" rev-parse --is-shallow-repository)" || return 1
@@ -63,9 +63,9 @@ commit_refs_check_commits() {
             log_info "${_sha} skipped: does not descend from enforcing commit ${_enforcing}."
             continue
         elif ((_rc != 0)); then
-            rm -f -- "${_tmp}"
             log_error "Cannot establish ancestry for ${_sha} (fail closed)."
-            return 1
+            _ancestry_failed=1
+            break
         fi
         _n=$((_n + 1))
         [[ "${_committer}" == 'noreply@github.com' ]] && continue
@@ -74,6 +74,7 @@ commit_refs_check_commits() {
         _bad=$((_bad + 1))
     done < "${_tmp}"
     rm -f -- "${_tmp}"
+    ((_ancestry_failed == 0)) || return 1
     if ((_bad > 0)); then
         log_error "${_bad} of ${_n} commits need a Refs: #<number> footer."
         return 1
