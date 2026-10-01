@@ -1509,3 +1509,10 @@ _rv_assert_fails_closed() {
     run jq -cr '[(.error | contains("args.mode")), (.calls | length)]' <<<"${output}"
     assert_output '[true,0]'
 }
+
+@test "pr-loop (node): light uses separate Claude editors and reviewers without codex (#310)" {
+    run _pl_run '{"mode":"light","codex":"off"}'
+    assert_success
+    run jq -cr '[.error, [.calls[].label], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
+    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","ci:#7"],false]'
+}
