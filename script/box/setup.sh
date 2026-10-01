@@ -496,13 +496,24 @@ _ghostty_move() {
 # of issue #175 is for the managed command, which a desktop session runs.
 _apply_no_terminal() {
     log_info "terminal profile: none (nothing written; enter by hand: distrobox enter ${BOX})"
-    _block_remove "$(enter_ghostty_target)"
+    _ghostty_remove
 }
 
 # auto-enter no: restore the host shell by removing the managed block,
 # reporting the file either way.
 _apply_disable() {
-    _block_remove "$(enter_ghostty_target)" report
+    _ghostty_remove report
+}
+
+# A single block may still live in the non-target file before migration.
+_ghostty_remove() {
+    local _target="${GHOSTTY_TARGET}" _other="$(enter_config_dir)/ghostty/config"
+    [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
+    if enter_block_present "${_other}"; then
+        _block_remove "${_other}" "${1:-}"
+    else
+        _block_remove "${_target}" "${1:-}"
+    fi
 }
 
 # Every run: the distrobox.conf block that keeps a caller's TMUX / TMUX_PANE

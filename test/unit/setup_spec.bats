@@ -1147,3 +1147,33 @@ _assert_control_char_refused() {
     assert_line "${CMD_ENTER}"
     assert_equal "$(_block_count "${_new}")" 1
 }
+
+@test "#173: disabling or selecting no terminal strips the block from either file and keeps both user files on rerun" {
+    local _new="${GHOSTTY}.ghostty" _file _option
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _file in "${GHOSTTY}" "${_new}"; do
+        for _option in disable none; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            printf '%s\ncommand = old\n%s\n' "${BEGIN}" "${END}" >>"${_file}"
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            assert_line --partial "[INFO] removed: ${_file}"
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            refute_line --partial '[INFO] removed:'
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+        done
+    done
+}
