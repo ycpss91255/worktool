@@ -696,6 +696,13 @@ _rv_with() {
     jq -c --arg k "$2" --argjson v "$3" '.[$k] = $v' <<<"$1"
 }
 
+@test "research-verify #311: agy brief prioritizes Ubuntu Canonical and ROS precedents" {
+    run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
+    assert_success
+    run jq -r '.calls[] | select(.label | startswith("agy:")) | .prompt' <<<"${output}"
+    assert_output --partial '前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充'
+}
+
 @test "research-verify exists, STARTS with the meta literal, and the literal is pure" {
     [[ -f "${RESEARCH}" ]]
     run head -n1 "${RESEARCH}"

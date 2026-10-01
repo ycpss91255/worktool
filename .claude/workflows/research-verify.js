@@ -169,7 +169,8 @@ const SRC_CHECK = SOURCES.length ? `cd / && for f in ${SOURCES.map(sq).join(' ')
 
 const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 問題:${QUESTION}
-${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。`
+${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。
+前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充。`
 
 const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 

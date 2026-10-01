@@ -153,7 +153,7 @@ args 範例：
    `just --justfile .agents/script/research/justfile.research model [--help]` 取得模型 ID；stdout 只輸出 ID，診斷與 help 走 stderr。
    解析成功後 agent 跑 `agy --sandbox --dangerously-skip-permissions -p <prompt> --print-timeout <m>m --model <解析結果>`，
    留言會記錄每次研究呼叫實際使用的模型名稱。
-   prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;輸出寫進 `agy.md`。
+   prompt 要求只用一手來源、每條主張標來源類型、查不到標 `UNVERIFIED`;找前例優先查 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 作補充；輸出寫進 `agy.md`。
    指令本身以 exit status 表達成敗(agy exit 0 且 `agy.md` 非空才是 0)。
    無輸出或逾時重試一次,仍失敗就回傳 `status: 'agy-failed'` 並停在這裡,**不改用其他模型或自己的知識冒充**;
    agent 回報的 `attempts` 不是 1 或 2 也算失敗。
