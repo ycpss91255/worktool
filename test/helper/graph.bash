@@ -21,14 +21,16 @@
 #                                 `config_*()` it defines) or XDG_CONFIG_HOME
 #                                 in a non-comment line
 #
-# Resolution: `${...LIB_DIR}/<x>` and `${...}/lib/<x>` are <tree>/lib/<x> -
-# the two forms the scripts and libraries use (LIB_DIR is the repo's lib/,
+# Resolution: `${...LIB_DIR}/<x>`, `${...}/lib/<x>` and script-relative
+# `${SCRIPT_DIR}/../../lib/<x>` are <tree>/lib/<x> -
+# the forms the scripts and libraries use (LIB_DIR is the repo's lib/,
 # a library's own `_<NAME>_LIB_DIR` is its directory, which is lib/).
 
 _graph_target() {
     local _a="${1#\"}"
     _a="${_a%\"}"
     case "${_a}" in
+        '${SCRIPT_DIR}/../../lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;
         '${'*'LIB_DIR}/'*) printf 'lib/%s\n' "${_a#*\}/}" ;;
         '${'*'}/lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;
         *) return 1 ;;
