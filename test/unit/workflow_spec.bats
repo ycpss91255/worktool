@@ -647,6 +647,21 @@ SH
     assert_output "$(printf '%s\n' --model gemini-3.11-flash-high)"
 }
 
+@test "research-verify reports discovery failure without invoking agy research" {
+    local dir="${BATS_TEST_TMPDIR}/repo"
+    _rv_stubs
+    _rv_stub agy 'echo called > agy-called; echo "1. claim [official https://x]"'
+    git init -q "${dir}"
+    export RV_MODEL_LIST="${BATS_TEST_TMPDIR}/models" RV_MODELS_RC=7
+    printf 'gemini-3.10-flash-high\tGemini 3.10 Flash (High)\n' > "${RV_MODEL_LIST}"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
+    assert_success
+    run jq -r '.result.status, (.calls | length)' <<<"${output}"
+    assert_output "$(printf '%s\n' agy-failed 2)"
+    assert [ ! -e "${dir}/../worktree/.scratch/research-7/agy-called" ]
+    assert [ ! -e "${BATS_TEST_TMPDIR}/gh.calls" ]
+}
+
 # Agent replies of a run where every step succeeds.
 _rv_ok_replies() {
     cat <<'JSON'
@@ -806,7 +821,7 @@ _rv_src_check() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q","sources":["/x"]}' \
         "$(_rv_with "$(_rv_ok_replies)" 'agy:' '{"status":"bad-source","attempts":0,"detail":"not readable: /x"}')"
     assert_success
-    run jq -r '.result.status, .result.detail, (.calls | length)' <<<"${output}"
+    run jq -r '.result.status, (.calls | length)' <<<"${output}"
     assert_output "$(printf '%s\n' sources-invalid 'not readable: /x' 2)"
 }
 
