@@ -333,6 +333,27 @@ _pl_blocked_run() {
     done
 }
 
+@test "pr-loop (node): Implement and Fix preserve pushed history and merge main" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history"),
+            contains("Only add new commits; sync with main by merging")] | all' <<<"${output}"
+        assert_success
+        assert_output "true"
+    done
+}
+
 @test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
     local implementer
     for implementer in codex claude; do
