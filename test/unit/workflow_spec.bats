@@ -392,6 +392,27 @@ _pl_blocked_run() {
     done
 }
 
+@test "pr-loop (node): both editors require issue footers in Implement and Fix (#312)" {
+    local implementer
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\"}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("implement:")) | .prompt |
+            contains("End the final paragraph of every commit message with Refs: #283"),
+            contains("For multiple issues, use one Refs: #<issue> line per issue")] | all' <<<"${output}"
+        assert_success
+        assert_output 'true'
+        run _pl_blocked_run "${implementer}"
+        assert_success
+        run jq -e '[.calls[] | select(.label | startswith("fix:")) | .prompt |
+            contains("End the final paragraph of every commit message with Refs: #283"),
+            contains("For multiple issues, use one Refs: #<issue> line per issue"),
+            (contains("with no trailer lines") | not)] | all' <<<"${output}"
+        assert_success
+        assert_output 'true'
+    done
+}
+
 @test "pr-loop (node): both reviewers block horizontal history and non-behaviour tests" {
     local implementer
     for implementer in codex claude; do
