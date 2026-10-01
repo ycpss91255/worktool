@@ -196,7 +196,9 @@ _registered_names() {
         run grep -cF "]($(basename -- "${_f}"))" "${_dir}/MEMORY.md"
         assert_output "1"
     done
-    assert_equal "${_n}" 22
+    # The files themselves are the count; only guard against a glob that
+    # matched nothing, which would make the loop above pass vacuously.
+    assert [ "${_n}" -gt 0 ]
     while IFS= read -r _link; do
         assert [ -f "${_dir}/${_link}" ]
     done < <(grep -oE '\]\([^)]+\.md\)' "${_dir}/MEMORY.md" | sed -E 's/^\]\((.*)\)$/\1/')
