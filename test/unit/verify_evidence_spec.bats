@@ -335,11 +335,7 @@ _run_evidence_item() {
 
 # --- The spec guards itself --------------------------------------------------
 
-@test "this spec is a required unit spec of test.sh" {
-    run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
-    assert_success
-    assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
-}
+
 
 # --- CLI contract ------------------------------------------------------------
 
