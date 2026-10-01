@@ -10,19 +10,20 @@
 #     default, and logged on stderr as `[INFO] <key>: <value> (<source>)`:
 #     auto-enter yes|no (default yes), terminal ghostty|none (default ghostty
 #     when the ghostty executable is on PATH, or a ghostty config dir exists;
-#     else none), tmux inside|host (default inside), box <name> (default dev).
+#     else none), box <name> (default dev). There is NO tmux decision
+#     (issue #179): no --tmux option, no `tmux` key, and ~/.tmux.conf is
+#     never read or written.
 #   - The decisions land in ONE state file, $XDG_CONFIG_HOME/worktool/config
 #     (default ~/.config/worktool/config): `<key>=<value>` plus
 #     `<key>.source=default|user` per key. User choices persist across runs;
 #     default keys are recomputed on every run.
 #   - auto-enter yes + terminal ghostty writes ONE managed block (begin/end
-#     marker lines) into $XDG_CONFIG_HOME/ghostty/config: tmux inside ->
-#     `command = '<distrobox>' enter <box> -- tmux new -A -s main`; tmux host
-#     -> `command = tmux new -A -s main` plus a managed block in ~/.tmux.conf
-#     (`set -g default-command '"<distrobox>" enter <box>'`). Re-runs are
-#     idempotent (the block is replaced in place, never duplicated); user
+#     marker lines) into $XDG_CONFIG_HOME/ghostty/config:
+#     `command = '<distrobox>' enter <box>` - the terminal lands in the box's
+#     own login shell (fish), with no tmux in between (issue #179). Re-runs
+#     are idempotent (the block is replaced in place, never duplicated); user
 #     content around the block is preserved.
-#   - auto-enter no removes both managed blocks and reports each removal.
+#   - auto-enter no removes the ghostty managed block and reports it.
 #   - Every file written / removed is logged; --dry-run logs what it would do
 #     and writes NOTHING (not even the state file).
 #   - The script owns its CLI: --help / -h exit 0; an unknown option or an
@@ -48,7 +49,7 @@
 #       written) instead of writing the bare name behind a warning - that
 #       bare name IS the broken configuration the real machine hit.
 #       `--distrobox <path>` serves the "configure now, install later" flow.
-#   (b) Both managed bodies are shell SOURCE, so the path is written as a
+#   (b) The managed body is shell SOURCE, so the path is written as a
 #       QUOTED shell word: an install path holding a space, a `$`, a
 #       backtick or a quote must reach the one binary and must not run
 #       anything else.
@@ -84,13 +85,10 @@ setup() {
     PATH="${DBX_DIR}:${PATH}"
     export PATH
 
-    # Issue #175 round 1: both bodies are shell source, so the path is
-    # QUOTED. ghostty runs its `command` through /bin/sh -c, hence a
-    # single-quoted word; the tmux body nests that shell command inside a
-    # tmux single-quoted value, so the inner word is double-quoted instead.
-    CMD_INSIDE="command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
-    CMD_HOST="command = tmux new -A -s main"
-    TMUX_BODY="set -g default-command '\"${DISTROBOX}\" enter dev'"
+    # Issue #175 round 1: the body is shell source, so the path is QUOTED.
+    # ghostty runs its `command` through /bin/sh -c, hence a single-quoted
+    # word. Issue #179: nothing follows `enter <box>` - no tmux.
+    CMD_ENTER="command = '${DISTROBOX}' enter dev"
 }
 
 # Install an executable stand-in for distrobox at $1. setup.sh only
@@ -124,25 +122,157 @@ _block_count() {
 
 # --- defaults + logging ------------------------------------------------------
 
-@test "defaults (no ghostty dir): yes / none / inside / dev, each logged as (default), state file written with sources" {
+@test "defaults (no ghostty dir): yes / none / dev, each logged as (default), state file written with sources, no tmux key" {
     run "${SETUP}"
     assert_success
     assert_line "[INFO] auto-enter: yes (default)"
     assert_line "[INFO] terminal: none (default)"
-    assert_line "[INFO] tmux: inside (default)"
     assert_line "[INFO] box: dev (default)"
+    refute_line --partial "tmux"
     assert_line "[INFO] wrote: ${CONFIG}"
     run cat "${CONFIG}"
     assert_line "auto-enter=yes"
     assert_line "auto-enter.source=default"
     assert_line "terminal=none"
     assert_line "terminal.source=default"
-    assert_line "tmux=inside"
-    assert_line "tmux.source=default"
+    refute_line --partial "tmux"
     assert_line "box=dev"
     assert_line "box.source=default"
     assert [ ! -e "${GHOSTTY}" ]
     assert [ ! -e "${TMUX_CONF}" ]
+}
+
+@test "#198: setup keeps the box home lines assemble recorded in the state file" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux.source=user\nhome=/srv/my box\nhome.source=user\n' >"${CONFIG}"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    run cat "${CONFIG}"
+    assert_line "tmux=host"
+    assert_line "home=/srv/my box"
+    assert_line "home.source=user"
+    assert_equal "$(grep -c '^home=' "${CONFIG}")" 1
+}
+
+# --- #199 r3-r5: setup owns only its own keys in the shared state file --
+# The state file has several writers (setup: the four decisions; assemble:
+# home / home.source; the user: link= lines). setup must update its own
+# keys in place and keep every other byte: comments, blank and
+# whitespace-only lines, link= entries (duplicates too), the box home, keys
+# a later version may add, CRLF lines, trailing blank lines and a missing
+# final newline. The matrix is setup run x EOF framing x (append: two of
+# setup's keys are new | replace-only: all of them are already there), and
+# every case compares the whole file byte-for-byte (cmp) with the file it
+# must be: `run cat` / `$(...)` drop trailing newlines and cannot see the
+# framing. Only the replace-only half can see a writer that normalises the
+# final newline (an appended key always ends the file with one); the
+# mutation spec (config_mutation_spec) proves each half fails on the
+# mutant it is meant to see.
+
+# EOF framings, one `<name>|<tail>` per line (printf %b strings).
+_framings() {
+    printf '%s\n' \
+        'nl|link=.config/foo\n' \
+        'nonl|link=.config/foo' \
+        'blanks|link=.config/foo\n\n\n' \
+        'ws|link=.config/foo\n  \t ' \
+        'crlf|# crlf note\r\nlink=.config/foo\r\n' \
+        'crlf-nonl|# crlf note\r\nlink=.config/foo\r' \
+        'crlf-blanks|link=.config/foo\r\n\r\n\r\n' \
+        'crlf-ws|link=.config/foo\r\n  \t \r'
+}
+
+# The setup runs: `<args>|<auto-enter src>|<terminal src>|<tmux src>|<box src>`
+# (what each run must leave, starting from tmux=host / box=dev by the user).
+_runs() {
+    printf '%s\n' \
+        '|yes default|none default|host user|dev user' \
+        '--terminal none --box work|yes default|none user|host user|work user' \
+        '--auto-enter no|no user|none default|host user|dev user'
+}
+
+_HEAD='# my own notes about worktool\n\nlink=~/.aws\n'
+
+# The body (printf %b) holding setup's keys: $1 auto-enter $2 its source
+# $3 terminal $4 its source (both lines left out when $1 is empty), $5 tmux
+# $6 its source, $7 box $8 its source, $9 extra lines after box.source.
+_body() {
+    local _ae=''
+    [[ -z "$1" ]] || _ae="auto-enter=$1\\nauto-enter.source=$2\\nterminal=$3\\nterminal.source=$4\\n"
+    printf '%s' "${_HEAD}${_ae}tmux=$5\\ntmux.source=$6\\nfuture-key=some value = with = inside\\nbox=$7\\nbox.source=$8\\n$9link=~/.aws\\n   \\n"
+}
+
+# Run every setup run x every framing, the input made by `_body` with
+# (\$1 = append | replace); fail naming the first case whose bytes differ.
+_matrix() {
+    local _mode="$1" _name _tail _sep _row _want _in
+    local -a _c _opts _ae _te _tm _bx
+    while IFS='|' read -r _name _tail; do
+        while IFS= read -r _row; do
+            IFS='|' read -r -a _c <<<"${_row}"
+            read -r -a _opts <<<"${_c[0]}"
+            read -r -a _ae <<<"${_c[1]}"
+            read -r -a _te <<<"${_c[2]}"
+            read -r -a _tm <<<"${_c[3]}"
+            read -r -a _bx <<<"${_c[4]}"
+            if [[ "${_mode}" == append ]]; then
+                _in="$(_body '' '' '' '' host user dev user 'box=dev\n')${_tail}"
+                _sep=''
+                [[ "${_tail}" == *'\n' ]] || _sep='\n'
+                _want="$(_body '' '' '' '' "${_tm[0]}" "${_tm[1]}" "${_bx[0]}" "${_bx[1]}" '')${_tail}${_sep}"
+                _want+="auto-enter=${_ae[0]}\\nauto-enter.source=${_ae[1]}\\nterminal=${_te[0]}\\nterminal.source=${_te[1]}\\n"
+            else
+                _in="$(_body yes default none default host user dev user 'box=dev\n')${_tail}"
+                _want="$(_body "${_ae[0]}" "${_ae[1]}" "${_te[0]}" "${_te[1]}" "${_tm[0]}" "${_tm[1]}" "${_bx[0]}" "${_bx[1]}" '')${_tail}"
+            fi
+            mkdir -p "$(dirname -- "${CONFIG}")"
+            printf '%b' "${_in}" >"${CONFIG}"
+            printf '%b' "${_want}" >"${BATS_TEST_TMPDIR}/expected"
+            "${SETUP}" "${_opts[@]}" >/dev/null 2>&1 \
+                || { echo "setup failed: ${_mode} ${_name} ${_c[0]:-<defaults>}"; return 1; }
+            cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}" \
+                || { echo "bytes differ: ${_mode} ${_name} ${_c[0]:-<defaults>}"; return 1; }
+        done < <(_runs)
+    done < <(_framings)
+}
+
+@test "#199 r4: every setup run x every EOF framing, appending two keys, keeps every foreign byte" {
+    run _matrix append
+    assert_success
+}
+
+@test "#199 r5: every setup run x every EOF framing, replace-only (all keys present), keeps every byte" {
+    run _matrix replace
+    assert_success
+}
+
+@test "#199 r4: a CRLF line of one of setup's own keys is refused (exit 1) and the file is left byte-for-byte" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\r\nterminal=none\r\nterminal.source=user\n' >"${CONFIG}"
+    cp "${CONFIG}" "${BATS_TEST_TMPDIR}/expected"
+    run "${SETUP}"
+    assert_failure 1
+    assert_output --partial "invalid value"
+    run cmp -- "${BATS_TEST_TMPDIR}/expected" "${CONFIG}"
+    assert_success
+}
+
+@test "#199 r3: a user link= line survives just box setup (the lost-entry regression)" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    run grep -x 'link=~/.aws' "${CONFIG}"
+    assert_success
+}
+
+@test "#199 r3: setup keeps the state file's mode" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'link=~/.aws\ntmux=host\ntmux.source=user\n' >"${CONFIG}"
+    chmod 0640 "${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    assert_equal "$(stat -c %a "${CONFIG}")" "640"
 }
 
 @test "terminal none with auto-enter yes says no terminal profile is managed and names the manual command" {
@@ -156,10 +286,10 @@ _block_count() {
     run "${SETUP}"
     assert_success
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
     run cat "${GHOSTTY}"
     assert_line --index 0 "${BEGIN}"
-    assert_line --index 1 "${CMD_INSIDE}"
+    assert_line --index 1 "${CMD_ENTER}"
     assert_line --index 2 "${END}"
     assert_equal "${#lines[@]}" 3
     assert [ ! -e "${TMUX_CONF}" ]
@@ -172,7 +302,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] terminal: ghostty (default)"
     assert_line "[INFO] wrote: ${_xdg}/worktool/config"
-    assert_line "[INFO] wrote: ${_xdg}/ghostty/config (managed block: ${CMD_INSIDE})"
+    assert_line "[INFO] wrote: ${_xdg}/ghostty/config (managed block: ${CMD_ENTER})"
     assert [ -f "${_xdg}/worktool/config" ]
     assert [ ! -e "${CONFIG}" ]
     assert [ ! -e "${GHOSTTY}" ]
@@ -181,27 +311,23 @@ _block_count() {
 # --- user overrides ----------------------------------------------------------
 
 @test "user overrides are logged as (user) and stored with source=user" {
-    run "${SETUP}" --auto-enter yes --terminal ghostty --tmux host --box work
+    run "${SETUP}" --auto-enter yes --terminal ghostty --box work
     assert_success
     assert_line "[INFO] auto-enter: yes (user)"
     assert_line "[INFO] terminal: ghostty (user)"
-    assert_line "[INFO] tmux: host (user)"
     assert_line "[INFO] box: work (user)"
     run cat "${CONFIG}"
     assert_line "auto-enter.source=user"
     assert_line "terminal=ghostty"
     assert_line "terminal.source=user"
-    assert_line "tmux=host"
-    assert_line "tmux.source=user"
     assert_line "box=work"
     assert_line "box.source=user"
 }
 
 @test "--key=value spelling is accepted for every value option" {
-    run "${SETUP}" --auto-enter=yes --terminal=ghostty --tmux=host --box=work
+    run "${SETUP}" --auto-enter=yes --terminal=ghostty --box=work
     assert_success
     assert_line "[INFO] terminal: ghostty (user)"
-    assert_line "[INFO] tmux: host (user)"
     assert_line "[INFO] box: work (user)"
 }
 
@@ -215,7 +341,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work -- tmux new -A -s main)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
 }
 
 # --- ghostty block: exactly once, idempotent, user content preserved ---------
@@ -225,7 +351,7 @@ _block_count() {
     printf 'theme = dark\n' >"${GHOSTTY}"
     run "${SETUP}" --terminal ghostty
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
     local _first
     _first="$(cat "${GHOSTTY}")"
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
@@ -238,7 +364,7 @@ _block_count() {
     run cat "${GHOSTTY}"
     assert_line --index 0 "theme = dark"
     assert_line --index 1 "${BEGIN}"
-    assert_line --index 2 "${CMD_INSIDE}"
+    assert_line --index 2 "${CMD_ENTER}"
     assert_line --index 3 "${END}"
     assert_equal "${#lines[@]}" 4
 }
@@ -246,95 +372,184 @@ _block_count() {
 @test "a changed decision replaces the block in place: user lines before and after it survive" {
     mkdir -p "${HOME}/.config/ghostty"
     printf 'theme = dark\n%s\n%s\n%s\nfont-size = 12\n' \
-        "${BEGIN}" "${CMD_INSIDE}" "${END}" >"${GHOSTTY}"
-    run "${SETUP}" --terminal ghostty --tmux host
+        "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
+    run "${SETUP}" --terminal ghostty --box work
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_HOST})"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
     run cat "${GHOSTTY}"
     assert_line --index 0 "theme = dark"
     assert_line --index 1 "${BEGIN}"
-    assert_line --index 2 "${CMD_HOST}"
+    assert_line --index 2 "command = '${DISTROBOX}' enter work"
     assert_line --index 3 "${END}"
     assert_line --index 4 "font-size = 12"
     assert_equal "${#lines[@]}" 5
-    refute_line "${CMD_INSIDE}"
+    refute_line "${CMD_ENTER}"
 }
 
-# --- tmux host variant -------------------------------------------------------
+# --- #179: no tmux decision, and ~/.tmux.conf is never touched --------------
+#
+# The M3 real-machine acceptance landed on the HOST: the old managed command
+# ended in `tmux new -A -s main`, distrobox shares /tmp with the host, and
+# `-A` attached to the host's tmux server. The terminal now enters the box
+# and gets its login shell; tmux is something the user starts in the box.
 
-@test "--tmux host: ghostty runs tmux on the host and ~/.tmux.conf gets the default-command block" {
-    run "${SETUP}" --terminal ghostty --tmux host
+@test "#179: the ghostty managed command enters the box and runs nothing after it (no tmux)" {
+    run "${SETUP}" --terminal ghostty
     assert_success
-    assert_line "[INFO] tmux: host (user)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_HOST})"
-    assert_line "[INFO] wrote: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
-    run cat "${TMUX_CONF}"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
+    refute_line --partial "tmux"
+    run cat "${GHOSTTY}"
+    assert_line "${CMD_ENTER}"
+    refute_line --partial "tmux"
+    refute_line --partial " -- "
+}
+
+@test "#179: --tmux is no longer an option: refused as unknown, exit 2, nothing written" {
+    run "${SETUP}" --tmux inside
+    assert_failure 2
+    assert_output "setup.sh: unknown option '--tmux' (see --help)"
+    run "${SETUP}" --tmux=host
+    assert_failure 2
+    assert_output "setup.sh: unknown option '--tmux=host' (see --help)"
+    assert [ ! -e "${CONFIG}" ]
+}
+
+@test "#179: ~/.tmux.conf is never written, read or cleaned, whatever the decisions" {
+    printf 'set -g mouse on\n%s\nset -g default-command x\n%s\n' "${BEGIN}" "${END}" >"${TMUX_CONF}"
+    chmod 0600 "${TMUX_CONF}"
+    local _before
+    _before="$(cat "${TMUX_CONF}")"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    refute_line --partial ".tmux.conf"
+    run "${SETUP}" --terminal none
+    assert_success
+    refute_line --partial ".tmux.conf"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    refute_line --partial ".tmux.conf"
+    assert_equal "$(cat "${TMUX_CONF}")" "${_before}"
+    assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "600"
+}
+
+# --- #179 (codex round 4 on PR #232): the box's tmux environment -----------
+#
+# `distrobox enter` copies the caller's environment into the box, TMUX
+# included: from a HOST tmux pane the box would get the host server's
+# socket, whatever tmux binary runs. setup.sh keeps a managed block in
+# distrobox's own user config (sourced by distrobox-enter before it copies
+# the environment) that drops TMUX / TMUX_PANE for the box - on EVERY run:
+# it is the box's isolation, not a terminal choice.
+
+@test "#179: every run writes the distrobox.conf block that drops TMUX / TMUX_PANE for the box, and logs it" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf" _body
+    _body="$(bash -c 'source "$1" && enter_distrobox_conf_body dev' _ "${REPO_ROOT}/lib/enter.sh")"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] wrote: ${_conf} (managed block: ${_body})"
+    run cat "${_conf}"
     assert_line --index 0 "${BEGIN}"
-    assert_line --index 1 "${TMUX_BODY}"
+    assert_line --index 1 "${_body}"
     assert_line --index 2 "${END}"
     assert_equal "${#lines[@]}" 3
 }
 
-@test "switching back to --tmux inside removes the ~/.tmux.conf block and reports it" {
-    run "${SETUP}" --terminal ghostty --tmux host
+@test "#179: the distrobox.conf block is kept by --terminal none and --auto-enter no, idempotent, user lines preserved" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf" _first
+    mkdir -p "$(dirname -- "${_conf}")"
+    printf 'container_manager="docker"
+' >"${_conf}"
+    run "${SETUP}" --terminal ghostty
     assert_success
-    run "${SETUP}" --tmux inside
+    _first="$(cat "${_conf}")"
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run "${SETUP}" --terminal none
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
-    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
-    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
+    assert_line "[INFO] unchanged: ${_conf} (managed block already up to date)"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line "[INFO] unchanged: ${_conf} (managed block already up to date)"
+    assert_equal "$(cat "${_conf}")" "${_first}"
+    run cat "${_conf}"
+    assert_line --index 0 'container_manager="docker"'
+}
+
+@test "#179: the distrobox.conf block names the chosen box, and follows a changed --box" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf"
+    run "${SETUP}" --box work
+    assert_success
+    run grep -c "!= 'work' ] || unset TMUX TMUX_PANE" "${_conf}"
+    assert_output "1"
+    run "${SETUP}" --box dev
+    assert_success
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run grep -c "!= 'dev' ] || unset TMUX TMUX_PANE" "${_conf}"
+    assert_output "1"
+    run grep -c "'work'" "${_conf}"
+    assert_output "0"
+}
+
+@test "#179: --dry-run reports the distrobox.conf block it would write and writes nothing" {
+    run "${SETUP}" --dry-run
+    assert_success
+    assert_line --partial "[INFO] dry-run: would write ${HOME}/.config/distrobox/distrobox.conf (managed block: "
+    assert [ ! -e "${HOME}/.config/distrobox" ]
+}
+
+@test "#179: a tmux line an earlier worktool stored is ignored, not refused, and preserved as foreign state" {
+    mkdir -p "$(dirname -- "${CONFIG}")"
+    printf 'tmux=host\ntmux.source=user\nbox=work\nbox.source=user\n' >"${CONFIG}"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] box: work (user)"
+    refute_line --partial "tmux"
+    run cat "${CONFIG}"
+    assert_line "tmux=host"
+    assert_line "tmux.source=user"
+    assert_line "box=work"
 }
 
 # --- auto-enter no: restore the host shell -----------------------------------
 
-@test "--auto-enter no removes both managed blocks, reports each, keeps user content" {
+@test "--auto-enter no removes the ghostty managed block, reports it, keeps user content" {
     mkdir -p "${HOME}/.config/ghostty"
     printf 'theme = dark\n' >"${GHOSTTY}"
-    printf 'set -g mouse on\n' >"${TMUX_CONF}"
-    run "${SETUP}" --terminal ghostty --tmux host
+    run "${SETUP}" --terminal ghostty
     assert_success
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
-    assert_equal "$(_block_count "${TMUX_CONF}")" "1"
 
     run "${SETUP}" --auto-enter no
     assert_success
     assert_line "[INFO] auto-enter: no (user)"
-    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_HOST})"
-    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
+    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_ENTER})"
     assert_equal "$(_block_count "${GHOSTTY}")" "0"
-    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
     assert_equal "$(cat "${GHOSTTY}")" "theme = dark"
-    assert_equal "$(cat "${TMUX_CONF}")" "set -g mouse on"
     run cat "${CONFIG}"
     assert_line "auto-enter=no"
     assert_line "auto-enter.source=user"
 }
 
-@test "--auto-enter no with nothing managed says so for both files" {
+@test "--auto-enter no with nothing managed says so" {
     run "${SETUP}" --auto-enter no
     assert_success
     assert_line "[INFO] nothing to remove: ${GHOSTTY} (no managed block)"
-    assert_line "[INFO] nothing to remove: ${TMUX_CONF} (no managed block)"
     assert [ ! -e "${GHOSTTY}" ]
-    assert [ ! -e "${TMUX_CONF}" ]
 }
 
 # --- dry-run -----------------------------------------------------------------
 
 @test "--dry-run logs every decision and what it would write, and writes nothing" {
     mkdir -p "${HOME}/.config/ghostty"
-    run "${SETUP}" --dry-run --tmux host
+    run "${SETUP}" --dry-run --box work
     assert_success
     assert_line "[INFO] auto-enter: yes (default)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] tmux: host (user)"
+    assert_line "[INFO] box: work (user)"
     assert_line "[INFO] dry-run: would write ${CONFIG}"
-    assert_line "[INFO] dry-run: would write ${GHOSTTY} (managed block: ${CMD_HOST})"
-    assert_line "[INFO] dry-run: would write ${TMUX_CONF} (managed block: ${TMUX_BODY})"
+    assert_line "[INFO] dry-run: would write ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
     assert [ ! -e "${CONFIG}" ]
     assert [ ! -e "${GHOSTTY}" ]
-    assert [ ! -e "${TMUX_CONF}" ]
 }
 
 @test "--dry-run --auto-enter no reports what it would remove and removes nothing" {
@@ -355,7 +570,8 @@ _block_count() {
     assert_success
     assert_output --partial "--auto-enter"
     assert_output --partial "--terminal"
-    assert_output --partial "--tmux"
+    refute_output --partial "--tmux"
+    refute_output --partial ".tmux.conf"
     assert_output --partial "--box"
     assert_output --partial "--dry-run"
     assert_output --partial "--help"
@@ -395,9 +611,6 @@ _block_count() {
     run "${SETUP}" --terminal kitty
     assert_failure 2
     assert_output "setup.sh: invalid value 'kitty' for --terminal (expected ghostty|none) (see --help)"
-    run "${SETUP}" --tmux outside
-    assert_failure 2
-    assert_output "setup.sh: invalid value 'outside' for --tmux (expected inside|host) (see --help)"
     run "${SETUP}" --box 'bad name'
     assert_failure 2
     assert_output "setup.sh: invalid value 'bad name' for --box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*) (see --help)"
@@ -413,23 +626,23 @@ _block_count() {
 
 @test "a corrupt stored value is refused with a clear error, exit 1, nothing rewritten" {
     mkdir -p "$(dirname -- "${CONFIG}")"
-    printf 'tmux=sideways\ntmux.source=user\n' >"${CONFIG}"
+    printf 'terminal=sideways\nterminal.source=user\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=sideways\ntmux.source=user')"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=sideways\nterminal.source=user')"
 }
 
 # --- #161 (2): every stored value is validated, whatever its source ----------
 
 @test "a corrupt stored value whose source is default is refused too: exit 1, no file changed" {
     mkdir -p "$(dirname -- "${CONFIG}")" "${HOME}/.config/ghostty"
-    printf 'tmux=sideways\ntmux.source=default\n' >"${CONFIG}"
+    printf 'terminal=sideways\nterminal.source=default\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
     refute_line --partial "wrote:"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=sideways\ntmux.source=default')"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=sideways\nterminal.source=default')"
     assert [ ! -e "${GHOSTTY}" ]
 }
 
@@ -444,108 +657,91 @@ _block_count() {
 
 @test "a corrupt stored source is refused: exit 1, nothing rewritten" {
     mkdir -p "$(dirname -- "${CONFIG}")"
-    printf 'tmux=host\ntmux.source=guess\n' >"${CONFIG}"
+    printf 'terminal=none\nterminal.source=guess\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=guess')"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for terminal.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=none\nterminal.source=guess')"
 }
 
 # A key that IS present with an empty value is a stored value like any other:
 # it is refused, never mistaken for an absent key (absent = default applies).
 @test "an empty stored value is refused: a present key is validated even when its value is empty" {
     mkdir -p "$(dirname -- "${CONFIG}")"
-    printf 'tmux=\ntmux.source=user\n' >"${CONFIG}"
+    printf 'terminal=\nterminal.source=user\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux (expected inside|host)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=\ntmux.source=user')"
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for terminal (expected ghostty|none)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=\nterminal.source=user')"
     printf 'box=\nbox.source=user\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
     assert_line "[ERROR] ${CONFIG}: invalid value '' for box (expected a container name: [A-Za-z0-9][A-Za-z0-9_.-]*)"
-    printf 'tmux=host\ntmux.source=\n' >"${CONFIG}"
+    printf 'terminal=none\nterminal.source=\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value '' for tmux.source (expected default|user)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=')"
+    assert_line "[ERROR] ${CONFIG}: invalid value '' for terminal.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=none\nterminal.source=')"
 }
 
 # Every LINE is validated, not just the first line per key: a corrupt
 # duplicate hiding behind a valid first occurrence is refused too.
 @test "a corrupt duplicate key is refused even when its first occurrence is valid" {
     mkdir -p "$(dirname -- "${CONFIG}")"
-    printf 'tmux=host\ntmux=sideways\ntmux.source=user\n' >"${CONFIG}"
+    printf 'terminal=none\nterminal=sideways\nterminal.source=user\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for tmux (expected inside|host)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux=sideways\ntmux.source=user')"
-    printf 'tmux=host\ntmux.source=user\ntmux.source=guess\n' >"${CONFIG}"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'sideways' for terminal (expected ghostty|none)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=none\nterminal=sideways\nterminal.source=user')"
+    printf 'terminal=none\nterminal.source=user\nterminal.source=guess\n' >"${CONFIG}"
     run "${SETUP}"
     assert_failure 1
-    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for tmux.source (expected default|user)"
-    assert_equal "$(cat "${CONFIG}")" "$(printf 'tmux=host\ntmux.source=user\ntmux.source=guess')"
+    assert_line "[ERROR] ${CONFIG}: invalid value 'guess' for terminal.source (expected default|user)"
+    assert_equal "$(cat "${CONFIG}")" "$(printf 'terminal=none\nterminal.source=user\nterminal.source=guess')"
 }
 
 # --- #161 (1): terminal none never writes a terminal profile ------------------
 
-@test "--terminal none --tmux host stores the decision but writes no ~/.tmux.conf" {
-    run "${SETUP}" --terminal none --tmux host
+@test "switching to --terminal none removes the ghostty block an earlier ghostty run left" {
+    run "${SETUP}" --terminal ghostty
     assert_success
-    assert_line "[INFO] terminal: none (user)"
-    assert_line "[INFO] tmux: host (user)"
-    assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
-    refute_line --partial "wrote: ${TMUX_CONF}"
-    assert [ ! -e "${TMUX_CONF}" ]
-    assert [ ! -e "${GHOSTTY}" ]
-    run cat "${CONFIG}"
-    assert_line "tmux=host"
-    assert_line "tmux.source=user"
-}
-
-@test "switching to --terminal none removes the ~/.tmux.conf block an earlier ghostty+host run left" {
-    run "${SETUP}" --terminal ghostty --tmux host
-    assert_success
-    assert_equal "$(_block_count "${TMUX_CONF}")" "1"
+    assert_equal "$(_block_count "${GHOSTTY}")" "1"
     run "${SETUP}" --terminal none
     assert_success
-    assert_line "[INFO] tmux: host (user)"
-    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
-    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_HOST})"
-    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
+    assert_line "[INFO] removed: ${GHOSTTY} (managed block: ${CMD_ENTER})"
     assert_equal "$(_block_count "${GHOSTTY}")" "0"
 }
 
 # --- #161 (3): exactly one managed block per file ----------------------------
 
-@test "a file that already holds two managed blocks is collapsed to exactly one, in place of the first" {
+# Issue #179 (codex round 4 on PR #232) supersedes #161's collapse: a file
+# holding more than one block has malformed markers, and a rewrite of a
+# malformed file is how user lines were lost (an orphan BEGIN swallowed the
+# rest of the file). Every malformed shape is refused before anything is
+# written; the full matrix is test/unit/managed_block_spec.bats.
+@test "a file that already holds two managed blocks is refused, not collapsed: exit 1, the file unchanged" {
     mkdir -p "${HOME}/.config/ghostty"
     printf 'theme = dark\n%s\n%s\n%s\nfont-size = 12\n%s\n%s\n%s\ntail = 1\n' \
-        "${BEGIN}" "${CMD_INSIDE}" "${END}" "${BEGIN}" "${CMD_INSIDE}" "${END}" >"${GHOSTTY}"
-    assert_equal "$(_block_count "${GHOSTTY}")" "2"
+        "${BEGIN}" "${CMD_ENTER}" "${END}" "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
+    local _before
+    _before="$(cat "${GHOSTTY}")"
     run "${SETUP}" --terminal ghostty
-    assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
-    refute_line --partial "unchanged:"
-    assert_equal "$(_block_count "${GHOSTTY}")" "1"
-    run cat "${GHOSTTY}"
-    assert_line --index 0 "theme = dark"
-    assert_line --index 1 "${BEGIN}"
-    assert_line --index 2 "${CMD_INSIDE}"
-    assert_line --index 3 "${END}"
-    assert_line --index 4 "font-size = 12"
-    assert_line --index 5 "tail = 1"
-    assert_equal "${#lines[@]}" 6
+    assert_failure 1
+    assert_line --partial "[ERROR] ${GHOSTTY}: malformed worktool managed block markers: 2 blocks (BEGIN at lines 2, 6)"
+    assert_equal "$(cat "${GHOSTTY}")" "${_before}"
+    assert [ ! -e "${CONFIG}" ]
 }
 
-@test "--auto-enter no removes every managed block a file holds" {
-    printf '%s\n%s\n%s\nset -g mouse on\n%s\n%s\n%s\n' \
-        "${BEGIN}" "${TMUX_BODY}" "${END}" "${BEGIN}" "${TMUX_BODY}" "${END}" >"${TMUX_CONF}"
+@test "--auto-enter no refuses a file with two managed blocks the same way" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf '%s\n%s\n%s\ntheme = dark\n%s\n%s\n%s\n' \
+        "${BEGIN}" "${CMD_ENTER}" "${END}" "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
+    local _before
+    _before="$(cat "${GHOSTTY}")"
     run "${SETUP}" --auto-enter no
-    assert_success
-    assert_line "[INFO] removed: ${TMUX_CONF} (managed block: ${TMUX_BODY})"
-    assert_equal "$(_block_count "${TMUX_CONF}")" "0"
-    assert_equal "$(cat "${TMUX_CONF}")" "set -g mouse on"
+    assert_failure 1
+    refute_line --partial "removed:"
+    assert_equal "$(cat "${GHOSTTY}")" "${_before}"
 }
 
 # --- #161 (non-blocking): a rewrite keeps the file mode ----------------------
@@ -567,7 +763,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] terminal: ghostty (default)"
     assert_line "[INFO] terminal detected: ghostty (ghostty executable ${_bin}/ghostty)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
 }
 
 @test "#175: the config dir alone still selects ghostty when no executable is on PATH, and the log says so" {
@@ -604,17 +800,8 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${DISTROBOX}' enter dev -- tmux new -A -s main"
-    refute_line "command = distrobox enter dev -- tmux new -A -s main"
-}
-
-@test "#175: --tmux host names the absolute distrobox path in the ~/.tmux.conf default-command too" {
-    run "${SETUP}" --terminal ghostty --tmux host
-    assert_success
-    assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
-    run cat "${TMUX_CONF}"
-    assert_line "set -g default-command '\"${DISTROBOX}\" enter dev'"
-    refute_line 'set -g default-command "distrobox enter dev"'
+    assert_line "command = '${DISTROBOX}' enter dev"
+    refute_line "command = distrobox enter dev"
 }
 
 # A distrobox reached through a symlink keeps the SYMLINK path: that is the
@@ -632,7 +819,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${_link_dir}/distrobox (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${_link_dir}/distrobox' enter dev -- tmux new -A -s main"
+    assert_line "command = '${_link_dir}/distrobox' enter dev"
     refute_line --partial "${_real}"
 }
 
@@ -651,7 +838,6 @@ _block_count() {
     refute_line --partial "wrote:"
     assert [ ! -e "${CONFIG}" ]
     assert [ ! -e "${GHOSTTY}" ]
-    assert [ ! -e "${TMUX_CONF}" ]
 }
 
 @test "#175r1: --dry-run is refused the same way (it reports what would happen, and this would fail)" {
@@ -670,7 +856,7 @@ _block_count() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (--distrobox; absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "${CMD_INSIDE}"
+    assert_line "${CMD_ENTER}"
 }
 
 @test "#175r1: --distrobox refuses a relative path, a missing file and a non-executable file, exit 2, nothing written" {
@@ -706,13 +892,12 @@ _block_count() {
     refute_line --partial "[ERROR]"
 }
 
-# --- #175 round 1 (b): the path is SHELL-QUOTED in both bodies ---------------
+# --- #175 round 1 (b): the path is SHELL-QUOTED in the body -----------------
 #
-# Both managed bodies are shell source, not argv: ghostty runs a `command`
-# without a `direct:` prefix through `/bin/sh -c`, and tmux runs
-# `default-command` the same way. An install path holding a space, a `$`, a
-# backtick or a quote would otherwise be split into words or change the
-# meaning of the command outright.
+# The managed body is shell source, not argv: ghostty runs a `command`
+# without a `direct:` prefix through `/bin/sh -c`. An install path holding a
+# space, a `$`, a backtick or a quote would otherwise be split into words or
+# change the meaning of the command outright.
 
 # Install a fake distrobox under a directory NAMED $1 and run setup against
 # it. Asserts the ghostty body quotes the path as one POSIX shell word,
@@ -726,11 +911,11 @@ _assert_ghostty_quoting() {
     run "${SETUP}" --distrobox "${_dbx}"
     assert_success
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "$(_squote "${_dbx}") enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "$(_squote "${_dbx}") enter dev"
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
     assert_success
     run cat "${_dbx}.log"
-    assert_line "enter dev -- tmux new -A -s main"
+    assert_line "enter dev"
 }
 
 # The expected POSIX single-quoted form of $1 (the test's own encoder, so a
@@ -756,53 +941,7 @@ _squote() {
     _assert_ghostty_quoting 'dir "quoted" name'
 }
 
-@test "#175r1: the ~/.tmux.conf default-command quotes the path for the shell inside tmux's own quoting" {
-    local _sentinel="${BATS_TEST_TMPDIR}/pwned-tmux"
-    local _dir="${BATS_TEST_TMPDIR}/qt/d \$(touch ${_sentinel}) \"q\"" _dbx _inner
-    mkdir -p "${_dir}"
-    _dbx="${_dir}/distrobox"
-    _fake_distrobox "${_dbx}"
-    run "${SETUP}" --terminal ghostty --distrobox "${_dbx}" --tmux host
-    assert_success
-    # tmux owns the outer single quotes (a tmux single-quoted value is fully
-    # literal: no escape, no expansion), the shell owns the inner word.
-    run cat "${TMUX_CONF}"
-    assert_line "set -g default-command '$(_dquote "${_dbx}") enter dev'"
-    # The shell half really runs that binary, and runs nothing else.
-    _inner="$(sed -n "s/^set -g default-command '\(.*\)'\$/\1/p" "${TMUX_CONF}")"
-    run env -i PATH=/usr/bin:/bin /bin/sh -c "${_inner}"
-    assert_success
-    run cat "${_dbx}.log"
-    assert_line "enter dev"
-    assert [ ! -e "${_sentinel}" ]
-}
-
-# The expected POSIX double-quoted form of $1 (the test's own encoder).
-_dquote() {
-    local _s="$1"
-    _s="${_s//\\/\\\\}"
-    _s="${_s//\`/\\\`}"
-    _s="${_s//\$/\\\$}"
-    _s="${_s//\"/\\\"}"
-    printf '"%s"\n' "${_s}"
-}
-
-# A tmux single-quoted value has no escape at all, so a path holding a
-# single quote cannot be encoded in the ~/.tmux.conf block. That is refused
-# rather than written half-broken; the ghostty-only shape still accepts it.
-@test "#175r1: --tmux host refuses a distrobox path holding a single quote instead of writing a broken tmux.conf" {
-    local _dir="${BATS_TEST_TMPDIR}/qq/it's here" _dbx
-    mkdir -p "${_dir}"
-    _dbx="${_dir}/distrobox"
-    _fake_distrobox "${_dbx}"
-    run "${SETUP}" --terminal ghostty --distrobox "${_dbx}" --tmux host
-    assert_failure 1
-    assert_line "[ERROR] distrobox: ${_dbx} holds a single quote, which cannot be encoded safely in the ~/.tmux.conf managed block (use --tmux inside, or install distrobox at a path without one); nothing was written"
-    assert [ ! -e "${TMUX_CONF}" ]
-    assert [ ! -e "${CONFIG}" ]
-}
-
-@test "#175r1: --tmux inside accepts a single quote in the path (the ghostty body can encode it)" {
+@test "#175r1: a distrobox path containing a SINGLE QUOTE is quoted and still runs as one word" {
     _assert_ghostty_quoting "it's here"
 }
 
@@ -826,10 +965,9 @@ _assert_control_char_refused() {
     assert [ -x "${_dbx}" ]
     run "${SETUP}" --distrobox "${_dbx}"
     assert_failure 1
-    assert_line "[ERROR] distrobox: ${BATS_TEST_TMPDIR}/ctl/d$2e/distrobox holds a newline or carriage return, which cannot be written into the line-based ghostty config or ~/.tmux.conf (install distrobox at a path without one); nothing was written"
+    assert_line "[ERROR] distrobox: ${BATS_TEST_TMPDIR}/ctl/d$2e/distrobox holds a newline or carriage return, which cannot be written into the line-based ghostty config (install distrobox at a path without one); nothing was written"
     assert [ ! -e "${CONFIG}" ]
     assert [ ! -e "${GHOSTTY}" ]
-    assert [ ! -e "${TMUX_CONF}" ]
 }
 
 @test "#175r2: a distrobox path holding a newline is refused before anything is written" {
@@ -863,31 +1001,476 @@ _assert_control_char_refused() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev -- tmux new -A -s main"
+    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev"
 
     # Control: this PATH has no distrobox by name.
-    run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev -- tmux new -A -s main'
+    run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev'
     assert_failure 127
 
     # The delivered command, run exactly as ghostty would run it.
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
     assert_success
     run cat "${DISTROBOX}.log"
-    assert_line "enter dev -- tmux new -A -s main"
+    assert_line "enter dev"
 }
 
 @test "rewriting an existing profile keeps its file mode" {
     mkdir -p "${HOME}/.config/ghostty"
     printf 'theme = dark\n' >"${GHOSTTY}"
     chmod 0640 "${GHOSTTY}"
-    printf 'set -g mouse on\n' >"${TMUX_CONF}"
-    chmod 0664 "${TMUX_CONF}"
-    run "${SETUP}" --terminal ghostty --tmux host
+    run "${SETUP}" --terminal ghostty
     assert_success
     assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
-    assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
     run "${SETUP}" --auto-enter no
     assert_success
     assert_equal "$(stat -c '%a' "${GHOSTTY}")" "640"
-    assert_equal "$(stat -c '%a' "${TMUX_CONF}")" "664"
 }
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+@test "setup.sh runs under set -euo pipefail (one set line, errexit included)" {
+    run grep -E '^set -[a-z]+( pipefail)?$' "${SETUP}"
+    assert_success
+    assert_output 'set -euo pipefail'
+}
+
+# lib/enter.sh enter_block_count, which _block_write reads. `grep -c` exits
+# 1 on "no match" (expected: the count is 0) and 2 on a real error, which
+# must reach the caller instead of being swallowed (codex round 1 on PR
+# #214). A `grep` stand-in first on PATH produces the error.
+@test "enter_block_count prints 0 and succeeds under errexit when no block is present" {
+    printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/cfg"
+    run bash -c 'set -euo pipefail; source "$1/enter.sh"; enter_block_count "$2"; printf "reached\n"' \
+        _ "${LIB_DIR}" "${BATS_TEST_TMPDIR}/cfg"
+    assert_success
+    assert_line --index 0 "0"
+    assert_line --index 1 "reached"
+}
+
+@test "enter_block_count returns grep's error status instead of a count" {
+    local _bin="${BATS_TEST_TMPDIR}/grepbin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 2\n' >"${_bin}/grep"
+    chmod +x "${_bin}/grep"
+    printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/cfg"
+    run bash -c 'source "$1/enter.sh"; PATH="$3:${PATH}"; enter_block_count "$2"' \
+        _ "${LIB_DIR}" "${BATS_TEST_TMPDIR}/cfg" "${_bin}"
+    assert_failure 2
+}
+
+@test "#173: selection prefers an existing config.ghostty and otherwise uses legacy without creating the new name" {
+    local _new="${GHOSTTY}.ghostty" _mode _target
+    for _mode in neither legacy new both; do
+        rm -rf "${HOME}/.config"
+        mkdir -p "$(dirname -- "${GHOSTTY}")"
+        case "${_mode}" in legacy|both) printf 'theme = dark\n' >"${GHOSTTY}" ;; esac
+        case "${_mode}" in new|both) printf 'font-size = 14\n' >"${_new}" ;; esac
+        _target="${GHOSTTY}"
+        case "${_mode}" in new|both) _target="${_new}" ;; esac
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        assert_line --partial "[INFO] ghostty config: ${_target} (config.ghostty"
+        run cat "${_target}"
+        assert_line "${CMD_ENTER}"
+        case "${_mode}" in
+            neither|legacy) assert [ ! -e "${_new}" ] ;;
+            new) assert [ ! -e "${GHOSTTY}" ] ;;
+            both) assert_equal "$(cat "${GHOSTTY}")" 'theme = dark' ;;
+        esac
+    done
+}
+
+@test "#173: invalid markers in either config or a block in each refuse every operation without writes and name both files" {
+    local _new="${GHOSTTY}.ghostty" _bad _operation
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _bad in legacy new both; do
+        for _operation in enable disable dry-run; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            case "${_bad}" in
+                legacy) printf '%s\n' "${BEGIN}" >>"${GHOSTTY}" ;;
+                new) printf '%s\n' "${END}" >>"${_new}" ;;
+                both)
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${GHOSTTY}"
+                    printf '%s\ncommand = true\n%s\n' "${BEGIN}" "${END}" >>"${_new}"
+                    ;;
+            esac
+            cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            case "${_operation}" in
+                enable) run "${SETUP}" --terminal ghostty ;;
+                disable) run "${SETUP}" --auto-enter no ;;
+                dry-run) run "${SETUP}" --terminal ghostty --dry-run ;;
+            esac
+            assert_failure 1
+            assert_output --partial "${GHOSTTY}"
+            assert_output --partial "${_new}"
+            assert_output --partial 'nothing was written'
+            cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/legacy.before"
+            cmp "${_new}" "${BATS_TEST_TMPDIR}/new.before"
+            assert [ ! -e "${CONFIG}" ]
+            assert [ ! -e "${HOME}/.config/distrobox/distrobox.conf" ]
+        done
+    done
+}
+
+@test "#173: enable moves a legacy block to the existing new config, preserves user content and modes, and reruns unchanged" {
+    local _new="${GHOSTTY}.ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'theme = dark\n%s\ncommand = old\n%s\nfont-size = 12\n' "${BEGIN}" "${END}" >"${GHOSTTY}"
+    printf 'font-family = monospace\n' >"${_new}"
+    chmod 0640 "${GHOSTTY}"
+    chmod 0600 "${_new}"
+    cp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    run "${SETUP}" --terminal ghostty --dry-run
+    assert_success
+    assert_line --partial "dry-run: would move managed block from ${GHOSTTY} to ${_new}"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/before"
+    assert_equal "$(cat "${_new}")" 'font-family = monospace'
+    assert [ ! -e "${CONFIG}" ]
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] moved: ${GHOSTTY} -> ${_new} (managed block)"
+    printf 'theme = dark\nfont-size = 12\n' >"${BATS_TEST_TMPDIR}/expected"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" 640
+    assert_equal "$(stat -c '%a' "${_new}")" 600
+    cp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] unchanged: ${_new} (managed block already up to date)"
+    refute_line --partial '[INFO] moved:'
+    cmp "${_new}" "${BATS_TEST_TMPDIR}/new.after"
+    cmp "${GHOSTTY}" "${BATS_TEST_TMPDIR}/expected"
+    run cat "${_new}"
+    assert_line --index 0 'font-family = monospace'
+    assert_line "${CMD_ENTER}"
+    assert_equal "$(_block_count "${_new}")" 1
+}
+
+@test "#173: disabling or selecting no terminal strips the block from either file and keeps both user files on rerun" {
+    local _new="${GHOSTTY}.ghostty" _file _option
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    for _file in "${GHOSTTY}" "${_new}"; do
+        for _option in disable none; do
+            printf 'theme = dark\n' >"${GHOSTTY}"
+            printf 'font-size = 14\n' >"${_new}"
+            printf '%s\ncommand = old\n%s\n' "${BEGIN}" "${END}" >>"${_file}"
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            assert_line --partial "[INFO] removed: ${_file}"
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+            if [[ "${_option}" == disable ]]; then
+                run "${SETUP}" --auto-enter no
+            else
+                run "${SETUP}" --auto-enter yes --terminal none
+            fi
+            assert_success
+            refute_line --partial '[INFO] removed:'
+            assert_equal "$(cat "${GHOSTTY}")" 'theme = dark'
+            assert_equal "$(cat "${_new}")" 'font-size = 14'
+        done
+    done
+}
+
+@test "#173: config.ghostty warns only for host Ghostty versions below 1.3.0 and skips an absent executable" {
+    local _version _exe="${DBX_DIR}/ghostty"
+    mkdir -p "$(dirname -- "${GHOSTTY}")"
+    printf 'font-size = 14\n' >"${GHOSTTY}.ghostty"
+    for _version in 1.0.0 1.2.3 1.3.0 1.3.1 1.10.0 2.0.0; do
+        printf "#!/bin/sh\n[ \"\$1\" = +version ] || exit 1\nprintf \"Ghostty %s\\n\"\n" "${_version}" >"${_exe}"
+        chmod +x "${_exe}"
+        run "${SETUP}" --terminal ghostty
+        assert_success
+        case "${_version}" in
+            1.0.0|1.2.3)
+                assert_line "[WARN] ghostty ${_version} does not read ${GHOSTTY}.ghostty (requires 1.3.0 or newer)"
+                ;;
+            *) refute_line --partial '[WARN] ghostty' ;;
+        esac
+    done
+    rm "${_exe}"
+    PATH=/usr/bin:/bin run "${SETUP}" --terminal ghostty --distrobox "${DISTROBOX}"
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+    rm "${GHOSTTY}.ghostty"
+    printf '#!/bin/sh\nprintf "Ghostty 1.2.3\\n"\n' >"${_exe}"
+    chmod +x "${_exe}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    refute_line --partial '[WARN] ghostty'
+}
+
+@test "#173: help explains config selection, validation, migration and the old host version warning" {
+    run "${SETUP}" --help
+    assert_success
+    assert_output --partial "\$XDG_CONFIG_HOME/ghostty/config.ghostty"
+    assert_output --partial 'Never creates config.ghostty'
+    assert_output --partial 'at most one managed block across both files'
+    assert_output --partial 'moves the single block'
+    assert_output --partial 'below 1.3.0'
+    run "${SETUP}" --help --unknown
+    assert_failure 2
+    assert_output "setup.sh: unknown option '--unknown' (see --help)"
+}
+
+# --- #178: the remaining uncovered setup.sh paths ----------------------------
+#
+# Five paths the M3 acceptance audit found unguarded or only partly guarded:
+# config_write_atomic failure, mode preservation, dry-run removal and
+# unchanged profiles. Multi-block refusal is covered in managed_block_spec.bats.
+# No host tmux config is managed after #179.
+#
+# Scope: this section is the unit layer of #178 only. The acceptance layer
+# (script/verify/setup.sh items, doc/acceptance.md criteria and the
+# test/unit/verify_setup_spec.bats degraded-copy cases) is tracked in #231,
+# as recorded in the #178 issue body.
+
+# Install a stand-in for command $1 (mv or mktemp) first on the returned
+# PATH directory: it exits 1 when its LAST argument is $FAIL_TARGET (mv's
+# destination) or "$FAIL_TARGET.XXXXXX" (mktemp's template), and runs the
+# real command otherwise. Prints the directory to prepend to PATH.
+_fail_bin() {
+    local _dir="${BATS_TEST_TMPDIR}/failbin" _real
+    _real="$(command -v "$1")"
+    mkdir -p "${_dir}"
+    printf '#!/usr/bin/env bash\n_real=%q\n' "${_real}" >"${_dir}/$1"
+    cat >>"${_dir}/$1" <<'STUB'
+for _a in "$@"; do _last="$_a"; done
+case "${_last:-}" in "${FAIL_TARGET}"|"${FAIL_TARGET}.XXXXXX") exit 1 ;; esac
+exec "${_real}" "$@"
+STUB
+    chmod +x "${_dir}/$1"
+    printf '%s\n' "${_dir}"
+}
+
+# Number of lines of text $2 (a run's output) exactly equal to $1. grep -c
+# already prints 0 on "no match" (exit 1); only a real error (exit >= 2)
+# is passed on to the caller.
+_count_line() {
+    local _rc=0
+    grep -cxF -- "$1" <<<"$2" || _rc=$?
+    if [[ "${_rc}" -gt 1 ]]; then
+        return "${_rc}"
+    fi
+}
+
+# _count_line itself: "no match" (grep exit 1) is a count of 0, a real grep
+# error (exit 2) must reach the caller instead of being swallowed (codex
+# round 1 on PR #227). A `grep` stand-in first on PATH produces the error.
+@test "#178: _count_line prints 0 and succeeds when no line matches" {
+    run _count_line "absent" $'one\ntwo'
+    assert_success
+    assert_output "0"
+}
+
+@test "#178: _count_line returns grep's error status instead of a count" {
+    local _bin="${BATS_TEST_TMPDIR}/grepbin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 2\n' >"${_bin}/grep"
+    chmod +x "${_bin}/grep"
+    PATH="${_bin}:${PATH}" run _count_line "one" $'one\ntwo'
+    assert_failure 2
+}
+
+# Seed the ghostty config with a user line, the current managed block (via
+# a real setup run) and a user line after it; keep a reference copy.
+_seed_managed_ghostty() {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    printf 'font-size = 12\n' >>"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+}
+
+# 1. config_write_atomic failure --------------------------------------------------
+
+@test "#178: a profile write whose rename fails is reported once, exit 1, profile byte-identical, no temp file left" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "wrote: ${GHOSTTY}"
+    # The state file is written first and stays written.
+    assert_line "[INFO] wrote: ${CONFIG}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: a profile write whose temp file cannot be created is reported once, exit 1, profile byte-identical" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
+    local _bin
+    _bin="$(_fail_bin mktemp)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: after a failed profile write, status shows the block absent and a re-run completes it" {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --terminal ghostty
+    assert_failure 1
+    run "${REPO_ROOT}/script/box/status.sh"
+    assert_success
+    assert_line "ghostty: ${GHOSTTY} (managed block: absent)"
+
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter dev)"
+    assert_equal "$(_block_count "${GHOSTTY}")" "1"
+    run "${REPO_ROOT}/script/box/status.sh"
+    assert_success
+    assert_line "ghostty: ${GHOSTTY} (managed block: present)"
+}
+
+@test "#178: a state file write that fails is reported once, exit 1, no profile touched, no temp file left" {
+    _seed_managed_ghostty
+    cp -p -- "${CONFIG}" "${BATS_TEST_TMPDIR}/config.ref"
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${CONFIG}" run "${SETUP}" --terminal ghostty --box other
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${CONFIG}" "${output}")" "1"
+    refute_line --partial "wrote:"
+    cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${CONFIG}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: a block removal that fails is reported once, exit 1, profile byte-identical, no temp file left" {
+    _seed_managed_ghostty
+    local _bin
+    _bin="$(_fail_bin mv)"
+    PATH="${_bin}:${PATH}" FAIL_TARGET="${GHOSTTY}" run "${SETUP}" --auto-enter no
+    assert_failure 1
+    assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed: ${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+# 2. config_write_atomic mode preservation ---------------------------------------------------------------
+
+# Seed the ghostty config with mode $1, then write, rewrite and remove the
+# managed block, asserting the mode after every step.
+_assert_mode_kept() {
+    mkdir -p "${HOME}/.config/ghostty"
+    printf 'theme = dark\n' >"${GHOSTTY}"
+    chmod "$1" "${GHOSTTY}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line --partial "[INFO] wrote: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+    run "${SETUP}" --terminal ghostty --box other
+    assert_success
+    assert_line --partial "[INFO] wrote: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line --partial "[INFO] removed: ${GHOSTTY} (managed block:"
+    assert_equal "$(stat -c '%a' "${GHOSTTY}")" "$1"
+}
+
+@test "#178: a 0644 ghostty config stays 0644 through write, rewrite and removal" {
+    _assert_mode_kept 644
+}
+
+@test "#178: a 0600 ghostty config stays 0600 through write, rewrite and removal" {
+    _assert_mode_kept 600
+}
+
+@test "#178: distrobox.conf keeps 0644 through write, rewrite and auto-enter no" {
+    local _conf="${HOME}/.config/distrobox/distrobox.conf"
+    mkdir -p "$(dirname -- "${_conf}")"
+    printf '# user config\n' >"${_conf}"
+    chmod 0644 "${_conf}"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --terminal ghostty --box other
+    assert_success
+    assert_line --partial "[INFO] wrote: ${_conf} (managed block:"
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_equal "$(stat -c '%a' "${_conf}")" "644"
+    assert_equal "$(_block_count "${_conf}")" "1"
+    run head -n 1 "${_conf}"
+    assert_output '# user config'
+}
+
+# 3. dry-run removal ----------------------------------------------------------
+
+@test "#178: --dry-run --auto-enter no over a managed block reports it once and leaves every file byte-identical" {
+    _seed_managed_ghostty
+    cp -p -- "${CONFIG}" "${BATS_TEST_TMPDIR}/config.ref"
+    local _inode
+    _inode="$(stat -c '%i' "${GHOSTTY}")"
+    run "${SETUP}" --dry-run --auto-enter no
+    assert_success
+    assert_equal "$(_count_line "[INFO] dry-run: would remove managed block from ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed:"
+    refute_line --partial "wrote:"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
+    assert_equal "$(stat -c '%i' "${GHOSTTY}")" "${_inode}"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
+}
+
+@test "#178: --dry-run --terminal none over a managed block reports the removal and removes nothing" {
+    _seed_managed_ghostty
+    run "${SETUP}" --dry-run --terminal none
+    assert_success
+    assert_equal "$(_count_line "[INFO] dry-run: would remove managed block from ${GHOSTTY}" "${output}")" "1"
+    refute_line --partial "removed:"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+# 4. unchanged ----------------------------------------------------------------
+
+@test "#178: a re-run with the same decisions does not rewrite the profile (no wrote line, same inode)" {
+    _seed_managed_ghostty
+    local _inode
+    _inode="$(stat -c '%i' "${GHOSTTY}")"
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_equal "$(_count_line "[INFO] unchanged: ${GHOSTTY} (managed block already up to date)" "${output}")" "1"
+    refute_line --partial "wrote: ${GHOSTTY}"
+    assert_equal "$(stat -c '%i' "${GHOSTTY}")" "${_inode}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+@test "#178: --dry-run over an up-to-date block says unchanged, not would write" {
+    _seed_managed_ghostty
+    run "${SETUP}" --dry-run --terminal ghostty
+    assert_success
+    assert_line "[INFO] unchanged: ${GHOSTTY} (managed block already up to date)"
+    refute_line --partial "would write ${GHOSTTY}"
+    cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
+}
+
+# 5. Multi-block files are refused before any write (issue #179).
+# Covered by managed_block_spec.bats: malformed markers x operation x
+# managed file, re-running setup on two managed blocks, and --dry-run refusal.

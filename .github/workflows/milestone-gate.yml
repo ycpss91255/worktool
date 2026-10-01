@@ -1,0 +1,95 @@
+name: milestone-gate
+
+# Milestone acceptance PRs (label `milestone-gate`) merge only after the
+# maintainer records an approval on the PR (issue #187). This workflow sets
+# the commit status `milestone-gate-approval` on the PR head SHA:
+#
+#   - no `milestone-gate` label          -> success (not an acceptance PR)
+#   - label + a human approval comment   -> success
+#   - label, no human approval comment   -> failure, description says what
+#                                           is missing
+#
+# The rule itself lives in lib/approval.sh (a pure bash predicate, unit
+# tested in test/unit/approval_spec.bats); this file only fetches labels and
+# comments with gh api and posts the status. It re-evaluates on every PR
+# event that can change the answer (new head SHA, label added/removed) and
+# on every PR comment created, edited or deleted.
+#
+# Trusted code only: the token holds statuses: write, so no code a PR can
+# change may run here. pull_request_target and issue_comment both run the
+# workflow file of the default branch, and the checkout is pinned to the
+# default branch (no PR head, no persisted credentials), so the sourced
+# lib/approval.sh is always main's. The PR is read only as API data: head
+# SHA, labels and comments come from gh api. A PR that changes the rule
+# therefore takes effect only after it merges. Never switch this back to
+# pull_request, and never check out or execute the PR head here.
+#
+# Known limitation: agents post with the maintainer's token, so GitHub
+# cannot tell the maintainer from an agent writing on their behalf. This
+# check stops "merged without waiting for approval", not an agent forging
+# the phrase; the agent-side hook for that is tracked in issue #190.
+#
+# ci.yml and its ci-passed aggregator are untouched; branch protection adds
+# `milestone-gate-approval` as a required check after this merges.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: milestone-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  # The job id and name must never equal the status context
+  # `milestone-gate-approval` (issue #258): a same-named check run would also
+  # satisfy or block the required check, and when concurrency cancels an
+  # older run its cancelled check run blocks an already approved PR.
+  evaluate:
+    name: evaluate-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # issue_comment also fires for plain issues; only PR comments matter.
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    steps:
+      - name: Checkout the default branch (trusted code, never the PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Evaluate approval and set commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          source lib/approval.sh
+          sha="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')" || exit 1
+          labels="$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '.[].name')" || exit 1
+          records="${RUNNER_TEMP}/comments"
+          # One NUL-terminated `<author_association>\t<body>` record per comment.
+          gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            | jq -j '.[] | .author_association + "\t" + (.body // "") + "\u0000"' \
+            > "${records}" || exit 1
+          if reason="$(approval_evaluate "${labels}" < "${records}")"; then
+            state=success
+          else
+            state=failure
+          fi
+          echo "PR #${PR_NUMBER} ${sha}: ${state} - ${reason}"
+          gh api -X POST "repos/${REPO}/statuses/${sha}" \
+            -f state="${state}" \
+            -f context=milestone-gate-approval \
+            -f description="${reason}" \
+            -f target_url="${RUN_URL}" > /dev/null || exit 1

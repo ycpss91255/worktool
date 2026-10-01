@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# .agents/hook/enforce_scope_on_guard_issues.sh - Claude Code PreToolUse
+# hook (matcher: Bash), registered in .claude/settings.json.
+#
+# Issue #238: PR #219 needed eight codex rounds because its issue never
+# said what the guard blocks and what it does not, so every round found a
+# new spelling of the same action. A guard-type issue therefore states its
+# threat model (擋 / 不擋 / 已知限制) in a "## 範圍" section up front, and
+# pr-loop hands that section to codex as the blocking scope.
+#
+# This hook DENIES (permissionDecision "deny", exit 0) a real `gh issue
+# create` launch when the issue is guard-type (_is_guard_issue, the one
+# place the rule lives) and its body has no "## 範圍" heading. The title
+# comes from --title / -t, the body from --body / -b (inline) or
+# --body-file / -F (read from disk; a relative path is resolved against the
+# tool call's cwd). A body file that cannot be read is left to gh, which
+# fails on it anyway. A body read from stdin (-F - / --body-file -) is read
+# from one of two sources on the gh launch line itself, found with quotes
+# masked and a # comment cut off: a heredoc opened on it (`gh issue create
+# ... -F - <<'EOF'`), or one file piped into it by a plain cat (`cat
+# scoped.md | gh issue create ... -F -`). A header spelled in a comment, a
+# quoted <<, another command's heredoc or any other pipe cannot stand in
+# for the real stdin.
+# 已知限制 (known limit, fail closed): any other stdin body (a printf / echo
+# pipe, a cat of several files or through a filter, 2<<, a < file, two
+# stdin launches) is not seen, so a guard issue sent that way is denied
+# EVEN WHEN its body has "## 範圍": use a heredoc, `cat <one file> |` or
+# --body-file instead.
+# Everything else passes silently; quoted text that merely mentions
+# `gh issue create` is data (lib/subcommand.sh).
+#
+# Output contract: allow = exit 0, no stdout; deny = exit 0 with the
+# permissionDecision JSON on stdout.
+
+# shellcheck source-path=SCRIPTDIR/lib
+_HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=hook_bootstrap.sh
+source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
+# shellcheck source=subcommand.sh
+source "${_HOOK_HERE}/lib/subcommand.sh"
+# shellcheck source=issue_body.sh
+source "${_HOOK_HERE}/lib/issue_body.sh"
+hook_bootstrap "enforce-scope-on-guard-issues"
+
+# _is_guard_issue <title> <body> - 0 when the issue asks for interception
+# work: a guard word in the title (whole word, any case), or a new hook /
+# gate asked for under "## What needs to be done".
+_is_guard_issue() {
+    local _title="${1,,}" _todo
+    local _words='(^|[^a-z0-9_])(hook|gate|check|filter|block|guard)s?([^a-z0-9_]|$)'
+    [[ "${_title}" =~ ${_words} || "${_title}" =~ (攔截|檢查|過濾) ]] && return 0
+    _todo="$(awk '/^## What needs to be done/{f=1;next} f&&/^## /{exit} f' <<<"${2//$'\r'/}")"
+    [[ "${_todo,,}" =~ (new|新增?)[[:space:]]*(hook|gate) ]]
+}
+
+# _has_scope <body> - 0 when the body carries a "## 範圍" heading.
+_has_scope() {
+    grep -qE '^##[[:space:]]+範圍' <<<"${1//$'\r'/}"
+}
+
+# _judge_launch <encoded gh issue create launch> <whole command> - print the
+# deny reason, or nothing.
+_judge_launch() {
+    local -a _w
+    local _i _title='' _body='' _file=''
+    read -r -a _w <<<"$1"
+    for ((_i = 0; _i < ${#_w[@]}; _i++)); do
+        case "${_w[_i]}" in
+            --title|-t) _title="$(hook_word "${_w[_i + 1]:-}")" ;;
+            --title=*) _title="$(hook_word "${_w[_i]#*=}")" ;;
+            --body|-b) _body="$(hook_word "${_w[_i + 1]:-}")" ;;
+            --body=*) _body="$(hook_word "${_w[_i]#*=}")" ;;
+            --body-file|-F) _file="$(hook_word "${_w[_i + 1]:-}")" ;;
+            --body-file=*) _file="$(hook_word "${_w[_i]#*=}")" ;;
+        esac
+    done
+    if [[ "${_file}" == "-" ]]; then
+        _body="$(hook_issue_stdin_body "$2")"
+    elif [[ -n "${_file}" ]]; then
+        _body="$(hook_read_body_file "${_file}")" || return 0
+    fi
+    _is_guard_issue "${_title}" "${_body}" || return 0
+    _has_scope "${_body}" && return 0
+    printf '%s' 'This issue asks for a guard (hook / gate / check / filter / block; 攔截 / 檢查 / 過濾) but its body has no "## 範圍" section. Add the threat model first: 擋 (what it blocks), 不擋 (what it deliberately lets through), 已知限制 (known limits). pr-loop hands that section to codex as the blocking scope (issue #238).'
+    [[ "${_file}" == "-" ]] && printf '%s' ' A stdin body (-F -) is read only from a heredoc opened on the gh issue create line itself or from "cat <one file> |" piped straight into it; any other pipe, a < file, a comment or another command is not seen (known limit: denied even when it has ## 範圍), so use one of those forms or --body-file.'
+    return 0
+}
+
+_deny() {
+    jq -n --arg m "$1" '{
+        systemMessage: $m,
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $m
+        }
+    }'
+}
+
+main() {
+    hook_read_input
+    local _cmd _sub _reason=''
+    _cmd="$(hook_command)"
+    while IFS= read -r _sub; do
+        [[ "${_sub}" =~ ^gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$) ]] || continue
+        _reason="$(_judge_launch "${_sub}" "${_cmd}")"
+        [[ -n "${_reason}" ]] && break
+    done < <(hook_subcommands_raw "${_cmd}")
+    [[ -n "${_reason}" ]] && _deny "${_reason}"
+    return 0
+}
+
+main "$@"

@@ -2,10 +2,14 @@
 # status.sh - show the auto-enter decisions in force and their sources (M3, #21).
 #
 # The read side of `just box setup`: prints the ONE state file's decisions
-# (auto-enter, terminal, tmux, box), each with its source (default | user),
-# whether the worktool managed block is present in each managed file (the
-# ghostty config and ~/.tmux.conf), and - since issue #175 - whether the
-# distrobox those blocks name can still be run. Read-only: it never writes.
+# (auto-enter, terminal, box), each with its source (default | user),
+# whether the worktool managed block is present in the ghostty config, and
+# - since issue #175 - whether the distrobox that block names can still be
+# run, and - since issue #179 - whether distrobox.conf holds the block that
+# keeps a host tmux pane's TMUX out of the box. Read-only: it never writes. Since issue #179 there is no tmux line:
+# worktool does not manage tmux, and never looks at ~/.tmux.conf.
+# The user-config link states and the recorded box HOME follow the entry
+# report (issues #199 and #198).
 #
 # The backing script of `just box status` (script/box/justfile.box forwards
 # the arguments here verbatim); it also runs on its own:
@@ -25,10 +29,14 @@
 # This script owns its option validation: an unknown option is refused with
 # `status.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`).
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -39,16 +47,22 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
+# shellcheck source=home.sh
+source "${LIB_DIR}/home.sh"
+# shellcheck source=link.sh
+source "${LIB_DIR}/link.sh"
 
 # --- Usage -------------------------------------------------------------------
 _usage() {
-    cat >&2 <<'EOF'
+    config_fill >&2 <<'EOF'
 Usage: status.sh
 
-Show the auto-enter decisions in force (from $XDG_CONFIG_HOME/worktool/config,
+Show the auto-enter decisions in force (from {state-file},
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
-~/.tmux.conf, and whether the distrobox those blocks name can still be run.
+distrobox.conf (the block that keeps a host tmux pane's TMUX out of the
+box), whether the distrobox the ghostty block names can still be run,
+the user-config link states and the recorded box HOME.
 Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
 
@@ -62,12 +76,13 @@ _usage_error() {
 
 # --- Report ------------------------------------------------------------------
 
-# Print `<key>: <value> (<source>)` for key $1 from state file $2: the stored
-# value with its stored source, or the default when the key is absent.
+# Print `<key>: <value> (<source>)` for key $1 from the state file: the
+# stored value with its stored source, or the default when the key is
+# absent.
 _report_key() {
-    local _key="$1" _config="$2" _value _source
-    _value="$(enter_config_get "${_config}" "${_key}")"
-    _source="$(enter_config_get "${_config}" "${_key}.source")"
+    local _key="$1" _value _source
+    _value="$(config_get "${_key}")"
+    _source="$(config_get "${_key}.source")"
     if [[ -z "${_value}" ]]; then
         _value="$(enter_default "${_key}")"
         _source="default"
@@ -75,10 +90,16 @@ _report_key() {
     printf '%s: %s (%s)\n' "${_key}" "${_value}" "${_source:-default}"
 }
 
-# Print `<label>: <file> (managed block: present|absent)`.
+# Print `<label>: <file> (managed block: present|absent|MALFORMED - ...)`.
+# Malformed markers are what setup.sh refuses to rewrite, so the report
+# says so rather than calling the block present.
 _report_block() {
-    local _label="$1" _file="$2" _state="absent"
-    enter_block_present "${_file}" && _state="present"
+    local _label="$1" _file="$2" _state="absent" _problem
+    if ! _problem="$(enter_block_check "${_file}")"; then
+        _state="MALFORMED - ${_problem}; fix or remove the markers, then re-run: just box setup"
+    elif enter_block_present "${_file}"; then
+        _state="present"
+    fi
     printf '%s: %s (managed block: %s)\n' "${_label}" "${_file}" "${_state}"
 }
 
@@ -86,26 +107,82 @@ _report_block() {
 # message as setup.sh): exit 1 upstream.
 _config_check() {
     local _problem
-    _problem="$(enter_config_check "$1")" && return 0
-    log_error "$1: ${_problem}"
+    if _problem="$(enter_config_check)" && _problem="$(home_config_check)"; then
+        return 0
+    fi
+    config_log error "" ": ${_problem}"
     return 1
 }
 
 _report() {
-    local _config _key
-    _config="$(enter_config_path)"
-    _config_check "${_config}" || return 1
-    if [[ -f "${_config}" ]]; then
-        printf 'config: %s\n' "${_config}"
+    local _key
+    _config_check || return 1
+    if config_exists; then
+        config_say "config: "
     else
-        printf 'config: %s (not found - defaults shown; run: just box setup)\n' "${_config}"
+        config_say "config: " " (not found - defaults shown; run: just box setup)"
     fi
     while IFS= read -r _key; do
-        _report_key "${_key}" "${_config}"
+        _report_key "${_key}"
     done < <(enter_keys)
-    _report_block ghostty "$(enter_ghostty_config)"
-    _report_block tmux.conf "$(enter_tmux_conf)"
+    _report_ghostty
+    _report_block distrobox.conf "$(enter_distrobox_conf)"
     _report_distrobox
+    _report_links
+    _report_home
+}
+
+# Report the selected file and any existing companion, so a block that
+# has not yet migrated and malformed markers remain visible.
+_report_ghostty() {
+    local _target _other
+    _target="$(enter_ghostty_target)"
+    _other="$(enter_config_dir)/ghostty/config"
+    [[ "${_target}" != "${_other}" ]] || _other+=".ghostty"
+    _report_block ghostty "${_target}"
+    if [[ -e "${_other}" ]]; then
+        _report_block ghostty "${_other}"
+    fi
+}
+
+# `link: <box home>/<path> -> $HOME/<path> (<state>)` per user-config entry
+# (issue #199), each state as lib/link.sh reads it. The box HOME is the one
+# `just box assemble` recorded in the state file (issue #198, the same
+# value _report_home prints); none recorded, or the host HOME itself: one
+# line says so.
+_report_links() {
+    local _box_home _rel _state
+    _box_home="$(config_get home)"
+    if [[ -z "${_box_home}" ]]; then
+        printf 'link: box HOME not recorded - user config not linked yet (run: just box assemble)\n'
+        return 0
+    fi
+    _box_home="$(home_normalize "${_box_home}")"
+    if [[ "${_box_home}" == "$(home_normalize "${HOME}")" ]]; then
+        printf 'link: the box HOME is the host HOME - user config already in place\n'
+        return 0
+    fi
+    while IFS= read -r _rel; do
+        case "$(link_state "${_rel}" "${_box_home}")" in
+            linked)         _state="linked" ;;
+            missing-source) _state="missing source" ;;
+            blocked)        _state="blocked by existing file" ;;
+            *)              _state="not linked yet; run: just box assemble" ;;
+        esac
+        printf 'link: %s/%s -> %s/%s (%s)\n' "${_box_home}" "${_rel}" "${HOME}" "${_rel}" "${_state}"
+    done < <(link_entries)
+}
+
+# `home: <path> (<source>)` - the box HOME `just box assemble` recorded in
+# the state file (issue #198), or that none is recorded yet.
+_report_home() {
+    local _home
+    _home="$(config_get home)"
+    if [[ -z "${_home}" ]]; then
+        printf 'home: not recorded (run: just box assemble)\n'
+        return 0
+    fi
+    printf 'home: %s (%s)\n' "${_home}" "$(config_get home.source)"
 }
 
 # `distrobox: <path> (<state>)` - the readable answer to "will the managed
@@ -118,10 +195,12 @@ _report() {
 # it reports what the next `just box setup` would resolve instead, so the
 # line is never absent.
 _report_distrobox() {
-    local _recorded
-    _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_ghostty_config)")")"
-    [[ -n "${_recorded}" ]] \
-        || _recorded="$(enter_body_distrobox "$(enter_block_body "$(enter_tmux_conf)")")"
+    local _recorded="" _file _target
+    _target="$(enter_ghostty_target)"
+    for _file in "${_target}" "$(enter_config_dir)/ghostty/config" "$(enter_config_dir)/ghostty/config.ghostty"; do
+        _recorded="$(enter_body_distrobox "$(enter_block_body "${_file}")")"
+        [[ -z "${_recorded}" ]] || break
+    done
     if [[ -n "${_recorded}" ]]; then
         _report_recorded_distrobox "${_recorded}"
         return 0

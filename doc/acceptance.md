@@ -55,7 +55,7 @@ prereq-ok
     - 預期看到資訊
       ```text
       Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
           default        # List the box verbs.
           help           # Show the box wrapper help (assemble.sh --help). [alias: h]
       ./script/test/test.sh --help
@@ -445,25 +445,55 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能達標(審核中)
 
-- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> 進盒 -> tmux/fish」鏈在 CI
-  內無頭驗證**(issue #172),分兩層:
+- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> `distrobox enter dev` -> 盒內
+  fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。終端**不自動開 tmux**(issue #179:
+  distrobox 與 host 共用 `/tmp`,舊的 `-- tmux new -A -s main` 會附著到 host 的 tmux
+  server,實機因此假成功):
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
     `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
     `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
-    `command` 恰為 `'<distrobox 絕對路徑>' enter dev -- tmux new -A -s main`
+    `command` 恰為 `'<distrobox 絕對路徑>' enter dev`,後面不接 tmux
     (issue #175:受管 command 寫**已 quote 的**絕對路徑,斷言同時 refute 裸名字
     那一行;另有一案以含空白與 `$(...)` 的安裝路徑證明 quoting 真的擋得住);
-    `--tmux host` / `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
+    `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
     之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
     斷言不是恆真。
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
     `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
-    `distrobox enter dev -- tmux new -A -s chain fish <script>`,斷言**盒內**留下
-    的標記檔顯示 fish 版本與 `tmux=yes`(runner 自己沒有 fish,所以回答的只可能
-    是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
+    `distrobox enter dev -- fish <script>`,斷言**盒內**留下的標記檔顯示 fish 版本、
+    `tmux=no`、**所用引擎的容器檔存在**(issue #179 寫的 `/run/.containerenv` 是
+    podman 的;docker 對應的是 `/.dockerenv`,distrobox 自己也以兩者之一判定在容器
+    內——斷言因此 Docker / Podman 通用:要求的是所用引擎的那一個)、寫檔的 fish 所在
+    的 **mount namespace 等於引擎回報的 dev 容器 pid 的**(不是 runner 自己的——
+    DinD runner 本身也是 docker 容器、自己也有 `/.dockerenv`,光看檔案分不出兩者),
+    且節點名等於 `docker inspect dev` 的 hostname(runner 自己沒有 fish,preflight
+    先證明,所以回答的只可能是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
     一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
     distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
     `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
+  - host 上已有 tmux server 的情境(issue #179,system-real):runner(host 端)先開
+    一個 tmux server,session 名稱就是 `main`(舊命令 `-A` 會附著的那個);(1) 把
+    `just box setup` **實際寫出的**受管 command 原樣交給真 ghostty 開窗,由 ghostty 的
+    `input` 把 payload 打進落地的 shell,斷言標記檔仍來自盒內 fish(若命令又附著到
+    host 的 server,payload 會在沒有 fish 的 runner 上跑、標記檔不會出現);(2) 盒內
+    執行 `tmux` 得到盒子自己的 server:`box/dev.ini` 設的 `TMUX_TMPDIR`
+    (`~/dev-box/.cache/tmux`)傳到盒內、server pid 與 host 的不同、其 mount
+    namespace 等於 dev 容器的(而不是 host server 的)、該行程的根目錄裡有引擎的
+    容器檔、socket 在 `TMUX_TMPDIR` 底下,盒內 `tmux ls` 不列 host 的 session、host 的
+    `tmux ls` 也不列盒內的;(3) 盒內 tmux 環境的**矩陣**(codex 第 1–4 輪,PR #232):
+    洩漏在環境——`distrobox enter` 把呼叫端的 `TMUX` / `TMUX_PANE` 帶進盒內——所以
+    修在環境(`just box setup` 寫的 distrobox.conf 受管區塊,加上盒內登入 shell 的
+    `box/tmux-env.sh` / `box/tmux-env.fish`;見 [`enter.md`](enter.md)),驗收以等價類
+    矩陣斷言:進盒路徑(受管 ghostty 命令、`distrobox enter dev`、
+    `distrobox enter dev -- <命令>`、`distrobox enter dev -- <真 tmux>`、`sh -l` /
+    `fish -l` 登入 shell)× host 狀態(沒有 host tmux / host tmux server 在跑且呼叫端
+    環境帶著它的 `TMUX`、`TMUX_PANE`)× tmux 呼叫(`tmux ls`、`tmux new`、
+    `tmux new -A -s main`、`tmux attach`),每格盒內都看不到 `TMUX` / `TMUX_PANE`、
+    盒子 server 停著時 `tmux ls` 不列任何 session、四種呼叫到的是同一個盒內 server
+    (socket 在 `TMUX_TMPDIR` 底下、行程在 dev 容器的 mount namespace、根目錄有引擎
+    的容器檔、不是 host server 的 pid),host 的 `tmux ls` 只列自己的 `main`。
+    shim 組另以真的 distrobox-enter `--dry-run` 斷言:沒有區塊時 `exec` 請求帶著
+    `--env=TMUX=`(對照),交付的 setup.sh 寫出區塊後每種進盒形狀都不帶。
   - 防卡與假陽性防護各有負向測試:盒內 payload **先寫 ready 標記再**
     `exec sleep infinity`,測試只在 ready 標記出現的前提下接受 `timeout` 的 124
     (否則是「沒進到盒子」這個不同的失敗),並以耗時上下界證明它跑滿預算才被砍;
@@ -473,7 +503,11 @@ prereq-ok
     嚴格晚於該時間戳」量出來。取樣不是返回瞬間的原子快照,但方向上只會讓案例假紅、
     不會假綠。期間沒有任何指令跑完。因此測試設定一律明寫
     `gtk-single-instance = false` 並以盒內標記檔為證。
-- 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲。
+- 人類:實機開新終端主觀順暢、開窗到提示字元無明顯延遲;host 上已有 tmux server
+  時開新終端仍在盒內(`test -e /run/.containerenv -o -e /.dockerenv` 成立——docker
+  建的盒子只有後者——且 `echo $FISH_VERSION` 有值),
+  盒內打 `tmux` 看不到 host 的 session;在 host 的 tmux pane 裡手動
+  `distrobox enter dev` 後打 `tmux`,同樣看不到 host 的 session。
 
 人類 gate 用的驗收清單(= M3 驗收 PR 的描述;逐項勾選,有差異回 PR 留言):
 

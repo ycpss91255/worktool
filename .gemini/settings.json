@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "BeforeTool": [{
+      "matcher": "run_shell_command",
+      "hooks": [{"type": "command", "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/gemini_comment.sh\""}]
+    }]
+  }
+}

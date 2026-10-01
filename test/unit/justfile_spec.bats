@@ -4,12 +4,11 @@
 # WHAT THIS PROVES
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
-#   - zero special cases: the root justfile is exactly three `mod?` lines
-#     (test, box, verify) plus a `default` that lists them - no other recipe;
-#   - action-named namespaces: script/test/justfile.test,
-#     script/box/justfile.box and script/verify/justfile.verify, each with
-#     its own `default`, `help` (alias `h`) and
-#     `set working-directory := '../..'`, so every recipe runs at
+#   - zero special cases: the root justfile is action `mod?` lines
+#     (test, box, agent) plus a `default` that lists them - no other recipe;
+#   - action-named namespaces: script/test/justfile.test and
+#     script/box/justfile.box, each with its own `default`, `help` (alias
+#     `h`) and `set working-directory := '../..'`, so every recipe runs at
 #     the repo root wherever `just` is typed;
 #   - min -> max: bare `just test` forwards to test.sh with NO argument
 #     (= everything CI runs); each verb narrows to one `--<verb>` flag;
@@ -26,11 +25,11 @@
 #   Every case runs `just` against an independent COPY of the checkout
 #   (justfile + script/ + lib/ + box/) under BATS_TEST_TMPDIR, never the
 #   real tree, and never Docker. Forwarding is proven by replacing the
-#   copy's six scripts (script/test/test.sh, script/test/selfcheck.sh,
+#   copy's seven scripts (script/test/test.sh, script/test/selfcheck.sh,
 #   script/box/assemble.sh, script/box/bench.sh, script/box/setup.sh,
-#   script/box/status.sh) with STUBS that record their argv - one %q per
-#   argument plus the argument COUNT - so a split or merged argument shows
-#   up in the record. A fake `docker` that fails loudly and records every
+#   script/box/status.sh, script/box/enter.sh) with STUBS that record their
+#   argv - one %q per argument plus the argument COUNT - so a split or
+#   merged argument shows up in the record. A fake `docker` that fails loudly and records every
 #   call sits first on PATH for the whole spec, so a regression that lets
 #   something reach the REAL test.sh shows up as a recorded docker call
 #   instead of a real build. The dry-run cases run the REAL assemble.sh
@@ -52,12 +51,9 @@ setup() {
 # Independent checkout copy at $COPY with the REAL scripts and justfiles
 # (cp -R keeps the executable bits).
 _make_repo_copy() {
-    mkdir -p "${COPY}/doc"
+    mkdir -p "${COPY}"
     cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
     cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${COPY}/"
-    # doc/evidence carries the assets script/verify/gate.sh runs, so the
-    # `verify` namespace can be exercised end to end against the copy.
-    cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
 }
 
 # A `docker` that must never be reached: records the call and fails loudly.
@@ -72,16 +68,14 @@ EOF
     chmod +x "${FAKE_BIN}/docker"
 }
 
-# Replace the copy's thirteen forwarding targets with recording stubs. Each
+# Replace the copy's seven forwarding targets with recording stubs. Each
 # stub appends `<name>[ <%q arg>...]` to $STUB_CALLS and the argument count
 # to $STUB_CALLS.argc, prints a `STUB <line>` marker and exits 0.
 _stub_scripts() {
     local _s
     for _s in script/test/test.sh script/test/selfcheck.sh \
         script/box/assemble.sh script/box/bench.sh script/box/setup.sh script/box/status.sh \
-        script/verify/ui.sh script/verify/gate.sh script/verify/setup.sh \
-        script/verify/diagram.sh script/verify/realbox.sh script/verify/evidence.sh \
-        script/verify/all.sh; do
+        script/box/enter.sh; do
         cat >"${COPY}/${_s}" <<'EOF'
 #!/usr/bin/env bash
 _me="$(basename -- "$0")"
@@ -146,7 +140,7 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is exactly three mod? lines (test, box, verify) and one default recipe" {
+@test "root justfile is three mod? lines (test, box, agent) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
@@ -155,14 +149,14 @@ _listed_names() {
     assert_equal "${#lines[@]}" 5
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
+    assert_line --index 2 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
     assert_line --index 3 "default:"
     assert_line --index 4 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
     local _m
-    for _m in script/test/justfile.test script/box/justfile.box script/verify/justfile.verify; do
+    for _m in script/test/justfile.test script/box/justfile.box; do
         assert [ -f "${REPO_ROOT}/${_m}" ]
         run grep -xE "set working-directory := '\.\./\.\.'" "${REPO_ROOT}/${_m}"
         assert_success
@@ -174,8 +168,7 @@ _listed_names() {
     # settings must not carry usage text or option lists (case-insensitive).
     run bash -c "grep -vhE '^[[:space:]]*#' \"\$@\" | grep -niE 'valid:|usage'" _ \
         "${REPO_ROOT}/justfile" \
-        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box" \
-        "${REPO_ROOT}/script/verify/justfile.verify"
+        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box"
     assert_failure
     assert_output ""
 }
@@ -185,10 +178,9 @@ _listed_names() {
 @test "just --list shows the three namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "box default test verify "
+    assert_equal "$(_listed_names)" "agent box default test "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
-    assert_line --regexp '^ +verify \.\.\. +# '
 }
 
 @test "bare just is just --list" {
@@ -199,10 +191,10 @@ _listed_names() {
     assert_output "${_expected}"
 }
 
-@test "just box lists assemble, bench, default, help (alias h), setup and status only" {
+@test "just box lists assemble, bench, default, enter, help (alias h), setup and status only" {
     _just box
     assert_success
-    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default help setup status "
+    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default enter help setup status "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     refute_output --partial "test.sh"
     assert_equal "$(_stub_calls)" ""
@@ -221,7 +213,7 @@ _listed_names() {
 @test "just test <verb> forwards exactly --<verb> for every tier verb and build" {
     _stub_scripts
     local _verb
-    for _verb in build lint unit integration system system-real acceptance; do
+    for _verb in build lint unit matrix integration system system-real acceptance; do
         : >"${STUB_CALLS}"
         _just test "${_verb}"
         assert_success
@@ -235,6 +227,14 @@ _listed_names() {
     _just test lint --foo bar
     assert_success
     assert_equal "$(_stub_calls)" "test.sh --lint --foo bar"
+    assert_equal "$(_last_argc)" "3"
+}
+
+@test "just test changed forwards --changed and every argument verbatim" {
+    _stub_scripts
+    _just test changed --base main
+    assert_success
+    assert_equal "$(_stub_calls)" "test.sh --changed --base main"
     assert_equal "$(_last_argc)" "3"
 }
 
@@ -313,23 +313,23 @@ _listed_names() {
     _stub_scripts
     _just box help
     assert_success
-    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help\nenter.sh --help')"
 
     : >"${STUB_CALLS}"
     _just box h
     assert_success
-    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help')"
+    assert_equal "$(_stub_calls)" "$(printf 'assemble.sh --help\nbench.sh --help\nsetup.sh --help\nstatus.sh --help\nenter.sh --help')"
     assert_equal "$(_last_argc)" "1"
 }
 
-# #161 (4): the docs describe the same four scripts the recipe runs.
-@test "README.md and doc/structure.md list all four scripts behind just box help, in order" {
+# #161 (4): the docs describe the same five scripts the recipe runs.
+@test "README.md and doc/structure.md list all five scripts behind just box help, in order" {
     local _doc
     for _doc in README.md doc/structure.md; do
-        run grep -E 'just box help.*assemble\.sh.*bench\.sh.*setup\.sh.*status\.sh' "${REPO_ROOT}/${_doc}"
+        run grep -E 'just box help.*assemble\.sh.*bench\.sh.*setup\.sh.*status\.sh.*enter\.sh' "${REPO_ROOT}/${_doc}"
         assert_success
     done
-    run grep -E 'just box.*assemble.*bench.*setup.*status' "${REPO_ROOT}/README.md"
+    run grep -E 'just box.*assemble.*bench.*setup.*status.*enter' "${REPO_ROOT}/README.md"
     assert_success
 }
 
@@ -341,11 +341,11 @@ _listed_names() {
     assert_equal "$(_last_argc)" "0"
 }
 
-@test "just box setup --auto-enter no --tmux host --box <name with spaces> keeps argv boundaries (argc 6)" {
+@test "just box setup --auto-enter no --terminal ghostty --box <name with spaces> keeps argv boundaries (argc 6)" {
     _stub_scripts
-    _just box setup --auto-enter no --tmux host --box "my box"
+    _just box setup --auto-enter no --terminal ghostty --box "my box"
     assert_success
-    assert_equal "$(_stub_calls)" "setup.sh --auto-enter no --tmux host --box my\\ box"
+    assert_equal "$(_stub_calls)" "setup.sh --auto-enter no --terminal ghostty --box my\\ box"
     assert_equal "$(_last_argc)" "6"
 }
 
@@ -363,126 +363,24 @@ _listed_names() {
     assert_equal "$(_last_argc)" "1"
 }
 
-# --- verify namespace: the acceptance checks of doc/acceptance.md -----------
-
-@test "just verify lists the six verify verbs, all, default and help (alias h) only" {
-    _just verify
-    assert_success
-    assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" \
-        "all default diagram evidence gate help realbox setup ui "
-    assert_output --regexp '\[alias: h\]|^ +h( |$)'
-    assert_equal "$(_stub_calls)" ""
-}
-
-@test "bare just verify says it only listed and verified nothing, names just verify all, exits 0" {
+@test "just box enter forwards to enter.sh verbatim, the in-box command after -- included (#180)" {
     _stub_scripts
-    _just verify
+    _just box enter
     assert_success
-    assert_line "NOTE: this only lists the verify groups - nothing has been verified. Run \`just verify all\` to verify every non-real-machine group (realbox needs --allow-real-box on a real host)."
-    assert_equal "$(_stub_calls)" ""
-}
-
-@test "just verify all forwards to all.sh with no argument" {
-    _stub_scripts
-    _just verify all
-    assert_success
-    assert_equal "$(_stub_calls)" "all.sh"
+    assert_equal "$(_stub_calls)" "enter.sh"
     assert_equal "$(_last_argc)" "0"
-}
-
-@test "just verify all --bogus is refused by all.sh itself (exit 2), not by the justfile" {
-    _just verify all --bogus
-    assert_failure 2
-    assert_line "all.sh: unknown option '--bogus' (see --help)"
-}
-
-@test "just verify <verb> forwards to its script with no argument" {
-    _stub_scripts
-    local _pair _verb _script
-    for _pair in 'ui=ui.sh' 'gate=gate.sh' 'diagram=diagram.sh' \
-        'realbox=realbox.sh' 'evidence=evidence.sh'; do
-        _verb="${_pair%%=*}"
-        _script="${_pair#*=}"
-        : >"${STUB_CALLS}"
-        _just verify "${_verb}"
-        assert_success
-        assert_equal "$(_stub_calls)" "${_script}"
-        assert_equal "$(_last_argc)" "0"
-    done
-}
-
-@test "just verify gate 2.4 forwards the item id as one argument (argc 1)" {
-    _stub_scripts
-    _just verify gate 2.4
-    assert_success
-    assert_equal "$(_stub_calls)" "gate.sh 2.4"
-    assert_equal "$(_last_argc)" "1"
-}
-
-@test "just verify realbox --allow-real-box 5.2.3 keeps argv boundaries (argc 2)" {
-    _stub_scripts
-    _just verify realbox --allow-real-box 5.2.3
-    assert_success
-    assert_equal "$(_stub_calls)" "realbox.sh --allow-real-box 5.2.3"
-    assert_equal "$(_last_argc)" "2"
-}
-
-@test "just verify diagram --root <path with spaces> stays one argument (argc 2)" {
-    _stub_scripts
-    _just verify diagram --root "/tmp/my repo/wt"
-    assert_success
-    assert_equal "$(_stub_calls)" "diagram.sh --root /tmp/my\\ repo/wt"
-    assert_equal "$(_last_argc)" "2"
-}
-
-@test "just verify help and just verify h forward --help to every verify script, in order" {
-    _stub_scripts
-    local _expected
-    _expected="$(printf '%s\n' 'ui.sh --help' 'gate.sh --help' 'setup.sh --help' \
-        'diagram.sh --help' 'realbox.sh --help' 'evidence.sh --help' 'all.sh --help')"
-    _just verify help
-    assert_success
-    assert_equal "$(_stub_calls)" "${_expected}"
 
     : >"${STUB_CALLS}"
-    _just verify h
+    _just box enter --box "my box" -- tmux new -A -s main
     assert_success
-    assert_equal "$(_stub_calls)" "${_expected}"
-    assert_equal "$(_last_argc)" "1"
+    assert_equal "$(_stub_calls)" "enter.sh --box my\\ box -- tmux new -A -s main"
+    assert_equal "$(_last_argc)" "8"
 }
 
-@test "just verify bogus fails with just's own recipe error, nothing runs" {
-    _stub_scripts
-    _just verify bogus
-    assert_failure 1
-    assert_output --regexp 'does not contain recipe.*bogus'
-    assert_equal "$(_stub_calls)" ""
-}
-
-@test "just verify gate --bogus is refused by gate.sh itself (exit 2), not by the justfile" {
-    _just verify gate --bogus
+@test "just box enter --bogus is refused by enter.sh itself (exit 2)" {
+    _just box enter --bogus
     assert_failure 2
-    assert_line "gate.sh: unknown option '--bogus' (see --help)"
-    refute_output --partial "valid:"
-}
-
-# --- real gate.sh through the namespace: the wiring end to end --------------
-
-@test "just verify gate 2.4 runs the real script and prints the documented six lines" {
-    _just verify gate 2.4
-    assert_success
-    assert_line 'order=BAD red=6 green=0'
-    assert_line 'wrong-order rc=1'
-    assert_line 'order=BAD red=0 green=0'
-    assert_line 'empty-red-block rc=1'
-    assert_line 'guarded-rc=7'
-    assert_line 'unguarded-rc=0'
-}
-
-@test "cd doc && just verify gate --list resolves the script at the repo root" {
-    _just_from_subdir verify gate --list
-    assert_success
-    assert_line --partial '2.4  doc '
+    assert_line "enter.sh: unknown option '--bogus' (see --help)"
 }
 
 # --- real assemble.sh, dry-run: the wiring end to end (no distrobox) ---------
@@ -600,7 +498,7 @@ _listed_names() {
     # Matrix: job name (gate, keyed on by branch protection / ci-passed) ->
     # tier. The names are the pre-existing ones.
     local _pair _gate _tier
-    for _pair in 'lint=lint' 'test-unit=unit' 'test-integration=integration' \
+    for _pair in 'lint=lint' 'test-unit=unit' 'test-matrix=matrix' 'test-integration=integration' \
         'test-system=system' 'test-acceptance=acceptance'; do
         _gate="${_pair%%=*}"
         _tier="${_pair#*=}"
@@ -614,4 +512,10 @@ _listed_names() {
     assert_line --regexp '^ +run: just test system-real$'
     # Exactly those two invocations: no gate bypasses the grammar.
     assert_equal "${#lines[@]}" 2
+}
+
+@test "just agent lists the Codex launcher without starting it" {
+    _just agent
+    assert_success
+    assert_equal "$(_listed_names)" "codex default "
 }

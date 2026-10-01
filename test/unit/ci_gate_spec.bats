@@ -87,6 +87,103 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
 }
 
+@test "a bats tier passes the configured parallel job count to bats" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/bats" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${BATS_TEST_TMPDIR}/bats.calls"
+if [[ "$1" == "--count" ]]; then
+    printf '1\n'
+else
+    printf '1..4\n'
+    printf 'ok 1 one\nok 2 two\nok 3 three\nok 4 four\n'
+fi
+EOF
+    chmod +x "${_bin}/bats"
+
+    export WORKTOOL_TEST_JOBS=3
+    PATH="${_bin}:${PATH}" _run_copy_gate --ci-integration
+    assert_success
+    run grep -F -- "--formatter tap --jobs 3 --no-parallelize-within-files -r" \
+        "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_success
+}
+
+@test "an invalid parallel job count is an argument error before bats runs" {
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\ntouch "%s/bats-ran"\n' "${BATS_TEST_TMPDIR}" >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    WORKTOOL_TEST_JOBS=0 PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+    assert_failure 2
+    assert_output "test.sh: invalid WORKTOOL_TEST_JOBS '0' (see --help)"
+    assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
+}
+
+@test "a partial run skips required-spec and plan-minimum checks and warns" {
+    _make_repo_copy
+    rm "${COPY}/test/integration/assemble_spec.bats"
+
+    run "${COPY}/script/test/test.sh" --ci-integration \
+        test/integration/smoke_spec.bats
+
+    assert_success
+    assert_output --partial '[ci] partial integration run; this does not stand for the whole tier'
+    refute_output --partial 'required spec missing'
+    refute_output --partial 'below the required specs'
+}
+
+@test "a partial filter that matches no cases fails the tier" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] unit bats OK'
+}
+
+# Newer bats exits non-zero on an empty filtered suite ("Found no tests")
+# after printing the plan 1..0; the gate must still name the zero-case miss.
+@test "a filter bats rejects as an empty suite still reports zero cases" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nprintf "1..0\\n"\nexit 1\n' >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    PATH="${_bin}:${PATH}" run "${COPY}/script/test/test.sh" --ci-unit \
+        test/unit/test_sh_spec.bats --filter 'no-such-case'
+
+    assert_failure 1
+    assert_output --partial '[ci] ERROR: unit bats ran zero cases'
+    refute_output --partial '[ci] ERROR: unit bats failed'
+}
+
+@test "an integration filter narrows the default group without running ghostty" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-integration --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: integration bats ran zero cases'
+    refute_output --partial 'a real ghostty is on PATH'
+}
+
+@test "a system filter narrows the shim group without running the real engine" {
+    _make_repo_copy
+
+    run "${COPY}/script/test/test.sh" --ci-system --filter preflight
+
+    assert_failure
+    assert_output --partial '[ci] ERROR: system bats ran zero cases'
+    refute_output --partial 'a real docker engine is live'
+}
+
 # --- the declared required lists ---------------------------------------------
 
 @test "test.sh declares the M2 required specs of the unit tier" {
@@ -103,6 +200,29 @@ EOF
     assert_line "unit/justfile_spec.bats"
     # M3: the enter-latency tool (issue #150).
     assert_line "unit/bench_spec.bats"
+    # Repo-level agent config (issue #189): layout, hooks, agent scripts.
+    assert_line "unit/agent_config_spec.bats"
+    assert_line "unit/hook/hook_bootstrap_spec.bats"
+    assert_line "unit/hook/test_must_use_docker_spec.bats"
+    assert_line "unit/script/wait_pr_ci_spec.bats"
+    assert_line "unit/script/watch_user_replies_spec.bats"
+}
+
+@test "test.sh declares the heavy hook specs in matrix instead of unit" {
+    run _declared matrix
+    assert_success
+    assert_output "$(printf '%s\n' \
+        'matrix/enforce_milestone_gate_approval_spec.bats' \
+        'matrix/enforce_main_checkout_readonly_spec.bats' \
+        'matrix/enforce_no_attribution_spec.bats' \
+        'matrix/enforce_tdd_commit_spec.bats' \
+        'matrix/enforce_local_test_scope_spec.bats')"
+
+    run _declared unit
+    assert_success
+    refute_line "unit/hook/enforce_milestone_gate_approval_spec.bats"
+    assert_line "unit/hook/enforce_milestone_gate_approval_representative_spec.bats"
+    assert_line "unit/hook/enforce_no_attribution_spec.bats"
 }
 
 @test "test.sh declares the M2 required specs of the integration tier" {
@@ -304,13 +424,17 @@ EOF
     _run_copy_gate --ci-integration
     assert_success
     assert_line "1..${_n}"
+    assert_output --partial '[ci]   required specs OK'
+    refute_output --partial '[ci] partial integration run'
     assert_line --partial "[ci] integration bats OK"
 }
 
 @test "system (shim): a normal tree passes and the plan covers every shim case" {
     _make_repo_copy
     local _n
-    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats")"
+    # Every shim spec: all of test/system/*.bats but the real-engine one.
+    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats" \
+        "${COPY}/test/system/real_enter_env_spec.bats")"
 
     _run_copy_gate --ci-system
     assert_success
@@ -355,4 +479,26 @@ EOF
     _run_copy_gate --ci-integration
     assert_failure
     assert_output --partial "[ci] ERROR: integration bats has skipped case(s)"
+}
+
+# --- errexit (issue #195) ----------------------------------------------------
+
+# `bats --count` failing is an EXPECTED non-zero the gate maps to its own
+# message and exit 1; under errexit it must not end the gate with bats'
+# status and no word of why.
+@test "a required spec bats cannot count fails the tier with exit 1 and says which one" {
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\nexit 3\n' >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+    PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+    assert_failure 1
+    assert_output --partial "acceptance required spec unreadable by bats: test/acceptance/m2_selfcheck_spec.bats"
+}
+
+@test "_verify_tap refuses an unreadable TAP stream as 'no TAP plan' (return 1) with errexit on" {
+    run bash -c 'set -euo pipefail; source "$1"; _verify_tap unit "$2" 1' \
+        _ "${TEST_SH}" "${BATS_TEST_TMPDIR}/missing.tap"
+    assert_failure 1
+    assert_output --partial "unit bats emitted no TAP plan"
 }

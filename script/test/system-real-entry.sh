@@ -50,11 +50,13 @@
 #   WORKTOOL_DOCKER_CALL_TIMEOUT    seconds per short engine query
 #                                   (`docker info` / `docker ps`; default 10)
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`);
-# failures are surfaced explicitly via _die so a nonzero exit is always
-# intentional. Exit status is the gate's status.
+# Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
+# unhandled failure stops the script at once. A non-zero status the script
+# EXPECTS is handled explicitly (`if ! cmd`, `cmd || _rc=$?`), never
+# swallowed with `|| true`, so every exit code documented here stays the
+# script's own. Exit status is the gate's status.
 
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -91,7 +93,8 @@ _die() {
 _tail_dockerd_log() {
     if [[ -f "${DOCKERD_LOG}" ]]; then
         _info "--- dockerd log (tail): ${DOCKERD_LOG}"
-        tail -n 60 "${DOCKERD_LOG}" >&2 || true
+        tail -n 60 "${DOCKERD_LOG}" >&2 \
+            || _info "(the dockerd log could not be read)"
         _info "--- end of dockerd log"
     fi
 }
@@ -223,14 +226,18 @@ _stop_dockerd() {
     [[ -n "${DOCKERD_PID}" ]] || return 0
     kill -0 "${DOCKERD_PID}" 2>/dev/null || return 0
     _info "stopping nested dockerd (pid ${DOCKERD_PID})"
-    kill -TERM "${DOCKERD_PID}" 2>/dev/null || true
+    # Refused only when the daemon exited since the probe above: nothing
+    # left to stop, and the wait below sees it gone.
+    kill -TERM "${DOCKERD_PID}" 2>/dev/null \
+        || _info "dockerd (pid ${DOCKERD_PID}) exited before SIGTERM"
     local _deadline=$(( SECONDS + DOCKERD_STOP_TIMEOUT ))
     while kill -0 "${DOCKERD_PID}" 2>/dev/null && (( SECONDS < _deadline )); do
         sleep 1
     done
     if kill -0 "${DOCKERD_PID}" 2>/dev/null; then
         _info "dockerd did not stop in ${DOCKERD_STOP_TIMEOUT}s - killing (the container dies anyway)"
-        kill -KILL "${DOCKERD_PID}" 2>/dev/null || true
+        kill -KILL "${DOCKERD_PID}" 2>/dev/null \
+            || _info "dockerd (pid ${DOCKERD_PID}) exited before SIGKILL"
     fi
 }
 
@@ -265,8 +272,10 @@ _cleanup() {
             _info "cleanup: box '${BOX_NAME}' still present - removing"
             _bounded "${DISTROBOX_RM_TIMEOUT}" \
                 env DBX_CONTAINER_MANAGER=docker distrobox rm -f "${BOX_NAME}" \
-                >/dev/null 2>&1 </dev/null || true
-            _bounded "${DOCKER_RM_TIMEOUT}" docker rm -f "${BOX_NAME}" >/dev/null 2>&1 || true
+                >/dev/null 2>&1 </dev/null \
+                || _info "cleanup: distrobox rm -f ${BOX_NAME} failed or timed out (best effort; docker rm follows)"
+            _bounded "${DOCKER_RM_TIMEOUT}" docker rm -f "${BOX_NAME}" >/dev/null 2>&1 \
+                || _info "cleanup: docker rm -f ${BOX_NAME} failed or timed out (best effort)"
         fi
         _info "cleanup: containers left in the nested daemon: $(_leftover_count)"
     fi
