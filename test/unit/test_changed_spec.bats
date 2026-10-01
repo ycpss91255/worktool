@@ -62,23 +62,19 @@ _dispatched() {
     assert_equal "$(_dispatched)" --ci-lint
 }
 
-@test "test.sh --changed routes dedicated specs to their runners" {
-    mkdir -p "${TEMP_REPO}/test/integration" "${TEMP_REPO}/test/system"
-    printf '@test "ghostty" { true; }\n' \
-        >"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
-    printf '@test "real engine" { true; }\n' \
-        >"${TEMP_REPO}/test/system/real_engine_spec.bats"
+@test "test.sh --changed leaves a changed integration spec to CI" {
+    mkdir -p "${TEMP_REPO}/test/integration"
+    printf '@test "integration" { true; }\n' \
+        >"${TEMP_REPO}/test/integration/example_spec.bats"
     _commit_baseline
-    printf '\n# changed\n' \
-        >>"${TEMP_REPO}/test/integration/ghostty_config_spec.bats"
-    printf '\n# changed\n' >>"${TEMP_REPO}/test/system/real_engine_spec.bats"
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/integration/example_spec.bats"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-integration-ghostty system-real-entry.sh)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
 @test "test.sh --changed maps a changed library to its spec" {
