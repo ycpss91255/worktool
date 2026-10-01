@@ -59,7 +59,7 @@ setup() {
     run _rv_run '{"repo":"o/r","repoDir":"/w","issue":7,"question":"q"}' "$(_rv_ok_replies)"
     assert_success
     run jq -cr '[
-        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7")),
+        (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("/w/../worktree/.scratch/research-7-0123456789abcdef")),
         (.calls[] | select(.label | startswith("agy:")) | .prompt | contains("[ -z \"$before\" ] && mkdir -p")),
         (.calls[-1].prompt | contains("git -C '\''/w'\'' status --porcelain --untracked-files=all -- .")),
         (.calls[-1].prompt | contains(":(exclude)") | not)
@@ -670,13 +670,13 @@ SH
     json="${output}"
     run jq -r '.result.status' <<<"${json}"
     assert_output recorded
-    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7/agy.args"
+    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7-0123456789abcdef/agy.args"
     assert_output "$(printf '%s\n' --model gemini-3.10-flash-high)"
     printf 'gemini-3.11-flash-high\tGemini 3.11 Flash (High)\n' > "${newest_list}"
     cmd="$(jq -r '.ran[].cmd | select(contains("timeout 960 agy"))' <<<"${json}")"
     RV_MODEL_LIST="${newest_list}" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run bash -c "${cmd}"
     assert_success
-    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7/agy.args"
+    run grep -A1 -x -- --model "${dir}/../worktree/.scratch/research-7-0123456789abcdef/agy.args"
     assert_output "$(printf '%s\n' --model gemini-3.11-flash-high)"
 }
 
@@ -691,7 +691,7 @@ SH
     assert_success
     run jq -r '.result.status, (.calls | length)' <<<"${output}"
     assert_output "$(printf '%s\n' agy-failed 2)"
-    assert [ ! -e "${dir}/../worktree/.scratch/research-7/agy-called" ]
+    assert [ ! -e "${dir}/../worktree/.scratch/research-7-0123456789abcdef/agy-called" ]
     assert [ ! -e "${BATS_TEST_TMPDIR}/gh.calls" ]
 }
 
@@ -703,7 +703,7 @@ SH
     assert_success
     run jq -r '.result.status' <<<"${output}"
     assert_output recorded
-    run grep -A1 -x 'agy 實際使用模型:' "${dir}/../worktree/.scratch/research-7/body-1.md"
+    run grep -A1 -x 'agy 實際使用模型:' "${dir}/../worktree/.scratch/research-7-0123456789abcdef/body-1.md"
     assert_output "$(printf '%s\n' 'agy 實際使用模型:' gemini-3.10-flash-high)"
 }
 
@@ -734,7 +734,7 @@ _rv_with() {
 
 @test "research-verify #311: codex opens every source and preserves its verification verbatim" {
     local dir="${BATS_TEST_TMPDIR}/repo" scratch json
-    scratch="${dir}/../worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7-0123456789abcdef"
     _rv_stubs
     _rv_stub codex 'cat > codex-input.txt; printf "codex\n[codex] 1. 來源支持主張 [官方文件 https://example.org/one]\n2. 來源不可讀，無法確認 [原始碼 https://example.org/two]\ntokens used\n5\n"'
     git init -q "${dir}"
@@ -778,7 +778,7 @@ _rv_with() {
     assert_output --partial 'disagreements'
     assert_output --partial 'Never choose a side'
     refute_output --partial 'a claim any verifier refutes goes to'
-    run cat "${dir}/../worktree/.scratch/research-7/body-1.md"
+    run cat "${dir}/../worktree/.scratch/research-7-0123456789abcdef/body-1.md"
     assert_output --partial '### 分歧（不選邊）'
     assert_output --partial 'c1 無法由來源判定'
     assert_output --partial 'codex: 官方文件未說明 https://example.org/one'
@@ -1027,7 +1027,7 @@ echo "https://github.com/o/r/issues/7#issuecomment-1"
 SH
     chmod +x "${stub}"/*
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
-    scratch="${dir}/../worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7-0123456789abcdef"
     git init -q "${dir}"
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
@@ -1092,16 +1092,16 @@ SH
     while IFS='|' read -r name raw last expected; do
         echo "shape: ${name}"   # names the failing row in the bats report
         rm -rf "${SHAPE}" "${dir}"
-        mkdir -p "${SHAPE}" "${dir}/../worktree/.scratch/research-7"
+        mkdir -p "${SHAPE}" "${dir}/../worktree/.scratch/research-7-0123456789abcdef"
         # a stale -o file of an earlier run must never be reused
-        echo STALE > "${dir}/../worktree/.scratch/research-7/codex-last.md"
+        echo STALE > "${dir}/../worktree/.scratch/research-7-0123456789abcdef/codex-last.md"
         printf '%b' "${raw}" > "${SHAPE}/raw"
         [[ "${last}" == - ]] || printf '%b' "${last}" > "${SHAPE}/last"
         run _rv_run_shape "${dir}" '{}'
         assert_success
         run jq -r '.result.status' <<<"${output}"
         assert_output recorded
-        run _rv_codex_section "${dir}/../worktree/.scratch/research-7/body-1.md"
+        run _rv_codex_section "${dir}/../worktree/.scratch/research-7-0123456789abcdef/body-1.md"
         assert_output "$(printf '%b' "${expected}")"
     done <<'EOF'
 single|banner\ncodex\nA1\ntokens used\n5\n|-|A1
@@ -1118,7 +1118,7 @@ EOF
     local dir="${BATS_TEST_TMPDIR}/w" name raw scratch
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
-    scratch="${dir}/../worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7-0123456789abcdef"
     # name | raw output (printf format); codex writes no -o file in any row
     while IFS='|' read -r name raw; do
         echo "shape: ${name}"   # names the failing row in the bats report
@@ -1147,7 +1147,7 @@ EOF
     local cat_fail scrub_mode raw inputs posted="${BATS_TEST_TMPDIR}/posted"
     SHAPE="${BATS_TEST_TMPDIR}/shape"
     export SHAPE
-    scratch="${dir}/../worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7-0123456789abcdef"
     mkdir -p "${fail}"
     # cat fails on the file named by FAIL_CAT; awk run as the path filter
     # (RV_N set) then misbehaves per SCRUB_MODE: fail = full output, exit 1;
@@ -1249,7 +1249,7 @@ EOF
     } > "${SHAPE}/last"
     HOME=/home/alice run _rv_run_shape "${dir}" "$(jq -cn --arg s "${src}" --arg r "${ref}" '{sources:[$s,$r]}')"
     assert_success
-    body="${dir}/../worktree/.scratch/research-7/body-1.md"
+    body="${dir}/../worktree/.scratch/research-7-0123456789abcdef/body-1.md"
     run _rv_codex_section "${body}"
     assert_output "$(printf '%s\n' \
         'repo file script/x.sh:3' \
@@ -1387,7 +1387,7 @@ _codex_rel_answer() {
     local stub="${BATS_TEST_TMPDIR}/bin" dir scratch
     mkdir -p "${stub}"
     dir="${BATS_TEST_TMPDIR}/dir with space/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q"
-    scratch="${dir}/../worktree/.scratch/research-7"
+    scratch="${dir}/../worktree/.scratch/research-7-0123456789abcdef"
     git init -q "${dir}"
     mkdir -p "${BATS_TEST_TMPDIR}/raw"
     _codex_raw_with_paths "${dir}" "${scratch}" '' > "${BATS_TEST_TMPDIR}/raw/codex.txt"
@@ -1468,9 +1468,11 @@ _rv_assert_fails_closed() {
 }
 
 @test "research-verify (node, exec): a small research records exactly one unnumbered comment" {
-    local body="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7/body-1.md"
+    local body nonce
     run _rv_fail_case ok ok
     assert_success
+    nonce="$(jq -r '[.calls[].prompt | scan("research-7-([0-9a-f]{16})") | .[0]][0]' <<<"${output}")"
+    body="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7-${nonce}/body-1.md"
     run jq -r '.error, .result.status, .result.comment' <<<"${output}"
     assert_output "$(printf '%s\n' null recorded 'https://github.com/o/r/issues/7#issuecomment-1')"
     run grep -c '^issue comment 7 ' "${BATS_TEST_TMPDIR}/gh.calls"
@@ -1590,10 +1592,12 @@ _rv_assert_fails_closed() {
 }
 
 @test "research-verify (node, exec): block markers never collide with the text they fence" {
-    local q scratch="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7"
+    local q scratch nonce
     q='q ===END=== ===BEGIN-1=== ===END-1=== ===END-2=== end'
     run _rv_fail_case ok ok "${q}"
     assert_success
+    nonce="$(jq -r '[.calls[].prompt | scan("research-7-([0-9a-f]{16})") | .[0]][0]' <<<"${output}")"
+    scratch="${BATS_TEST_TMPDIR}/ok-ok/../worktree/.scratch/research-7-${nonce}"
     run jq -r '.error, .result.status' <<<"${output}"
     assert_output "$(printf '%s\n' null recorded)"
     run grep -cF "${q}" "${scratch}/agy-prompt.txt" "${scratch}/codex-prompt.txt" "${scratch}/claude.md"
@@ -1658,7 +1662,7 @@ _rv_assert_fails_closed() {
     local json="${output}"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | .label | sub(":.*"; ":")] | join(" ")' <<<"${json}"
     assert_output "agy: codex-verify: claude-verify: synthesize: record: repo-check:"
-    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7/\"") | not) | .label] | length' <<<"${json}"
+    run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("Intermediate files (notes, drafts, logs) go ONLY under \"/w/../worktree/.scratch/research-7-0123456789abcdef/\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
     run jq -r '[.calls[] | select(.label | startswith("nonce:") | not) | select(.prompt | contains("never create, edit or delete any other path under \"/w\"") | not) | .label] | length' <<<"${json}"
     assert_output "0"
@@ -1709,7 +1713,7 @@ _rv_assert_fails_closed() {
     PATH="${stub}:${PATH}" run _rv_run "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,question:"q"}')" "$(_rv_ok_replies)" exec
     assert_success
     [[ -e "${dir}/stray-note.md" ]]
-    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
+    run cat "${dir}/../worktree/.scratch/research-7-0123456789abcdef/repo-extra.txt"
     assert_output "+ ?? stray-note.md"
 }
 
@@ -1736,7 +1740,7 @@ _rv_assert_fails_closed() {
     assert_success
     run jq -r '.ran[-1].rc' <<<"${output}"
     refute_output "0"
-    run cat "${dir}/../worktree/.scratch/research-7/repo-extra.txt"
+    run cat "${dir}/../worktree/.scratch/research-7-0123456789abcdef/repo-extra.txt"
     assert_output --partial "repo-check failed"
 }
 
@@ -2186,7 +2190,7 @@ printf 'https://github.com/o/r/issues/%s#issuecomment-1\n' "$3"
 SH
     chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
     for nonce in 0123456789abcdef fedcba9876543210; do
-        scratch="${dir}/../worktree/.scratch/${template}-${issue}-${nonce}"
+        scratch="${dir}/../worktree/.scratch/${template%%-verify}-${issue}-${nonce}"
         mkdir -p "${scratch}"
         printf 'Only model output %s\n' "${nonce}" > "${scratch}/codex-r1.md"
         cp "${scratch}/codex-r1.md" "${scratch}/codex.md"
@@ -2206,7 +2210,7 @@ _scratch_assert_isolated() {
     for nonce in 0123456789abcdef fedcba9876543210; do
         other=0123456789abcdef
         if [ "${nonce}" = "${other}" ]; then other=fedcba9876543210; fi
-        scratch="${BATS_TEST_TMPDIR}/repo/../worktree/.scratch/${template}-${issue}-${nonce}"
+        scratch="${BATS_TEST_TMPDIR}/repo/../worktree/.scratch/${template%%-verify}-${issue}-${nonce}"
         run jq -cr --arg s "${scratch}" --arg other "${other}" '[.error,.result.status,
             ([.calls[] | select(.label | startswith("nonce:") | not) |
                 (.prompt | contains($s)) and (.prompt | contains($other) | not)] | all)]'             "${BATS_TEST_TMPDIR}/${nonce}.json"
@@ -2222,4 +2226,10 @@ _scratch_assert_isolated() {
     run _scratch_parallel_run discuss 309 "$(_discuss_replies)"
     assert_success
     _scratch_assert_isolated discuss 309 agreed
+}
+
+@test "research-verify: concurrent same-issue runs read and publish only their own scratch files (#345)" {
+    run _scratch_parallel_run research-verify 7 "$(_rv_ok_replies)"
+    assert_success
+    _scratch_assert_isolated research-verify 7 recorded
 }

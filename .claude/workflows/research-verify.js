@@ -83,7 +83,15 @@ const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const SOURCES = checkSources(A.sources)
 const CONTEXT = checkContext(A.context)
-const SCRATCH = `${WORKTREE_ROOT}/.scratch/research-${A.issue}`
+const NONCE_RE = /^[0-9a-f]{16}$/
+const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
+const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
+
+phase('Research')
+const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
+if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
+const RUN = nonce.nonce
+const SCRATCH = `${WORKTREE_ROOT}/.scratch/research-${A.issue}-${RUN}`
 // POSIX single quoting: the only safe way a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const CD = `cd ${sq(SCRATCH)}`
@@ -114,7 +122,6 @@ const REPO_DIFF = `${GIT_STATUS} > status-after.txt && ${GREP_DIFF('status-befor
 // Fence body verbatim with markers that occur neither in it nor in REPO_DIR.
 // RUN (the run nonce) keeps markers apart across runs; n only grows during a
 // run, so no two blocks of one run share a marker.
-let RUN = ''
 let lastFence = 0
 const fence = (body) => {
   let n = lastFence + 1
@@ -149,8 +156,6 @@ const SCRUB_MASK = String.raw`function keep(o, t, s,  p) { p = substr(o, length(
 const SCRUB_MAIN = String.raw`BEGIN { n = ENVIRON["RV_N"] + 0; h = ENVIRON["HOME"]; PC = "[^][:space:]\"()<>{},;|" sprintf("%c%c", 39, 96) "]" } { t = tolower($0); sub("^[[:space:]]+", "", t); sub("[[:space:]]+$", "", t); if (t ~ /^claude-session:/ || t ~ /generated with \[?claude code([^[:alnum:]]|$)/ || t ~ /^co-authored-by:[[:space:]]*claude([^[:alnum:]]|$)/ || t ~ /^co-authored-by:.*@anthropic[.]com/) next; for (i = 0; i < n; i++) $0 = lit($0, ENVIRON["RV_P" i], ENVIRON["RV_R" i]); if (length(h) > 1) $0 = lit($0, h, "~"); gsub("/tmp/claude[-][0-9]+[^[:space:]]*", "<tmp>"); gsub("/(home|Users)/[^/[:space:]]+", "~"); gsub("\\\\\\\\[A-Za-z0-9._$?-]" PC "*", "<path>"); gsub("[A-Za-z]:\\\\" PC "*", "<path>"); print mask($0) }`
 const SCRUB = `${PFX.map(([p, r], i) => `RV_P${i}=${sq(p)} RV_R${i}=${sq(r)} `).join('')}RV_N=${PFX.length} awk '${SCRUB_LIT} ${SCRUB_MASK} ${SCRUB_MAIN}'`
 
-const NONCE_RE = /^[0-9a-f]{16}$/
-const NONCE_SCHEMA = { type: 'object', properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{16}$' } }, required: ['nonce'] }
 const AGY_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'failed', 'bad-source'] }, attempts: { type: 'integer' }, detail: { type: 'string' } }, required: ['status', 'attempts', 'detail'] }
 const CLAIMS_SCHEMA = { type: 'object', properties: { claims: { type: 'array', minItems: 1, items: { type: 'object', properties: { claim: { type: 'string' }, verdict: { type: 'string', enum: ['supported', 'refuted', 'unverifiable'] }, basis: { type: 'string' } }, required: ['claim', 'verdict', 'basis'] } } }, required: ['claims'] }
 const CODEX_SCHEMA = { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'no-output'] }, detail: { type: 'string' } }, required: ['status', 'detail'] }
@@ -173,8 +178,6 @@ const AGY_PROMPT = `請研究以下問題並以繁體中文回答。
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}來源規則:只採一手來源(官方文件、原始碼、規格、release notes、維護者的 issue/PR);每一個主張獨立一行編號,行尾以方括號標出來源類型與 URL(例如 [官方文件 https://...]、[原始碼 <repo>@<tag>:<path>]);找不到一手來源的主張標 UNVERIFIED,不要猜。最後列出你沒能查到的點。
 前例優先順序:先找 Ubuntu／Canonical 與 ROS 生態系，其他大型 repo 僅作補充。`
-
-const NONCE = `Draw the run nonce for research-verify on issue #${A.issue}. Never make one up: run \`cd / && od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'\` in the foreground and return nonce = its output exactly (16 lowercase hex digits).`
 
 const RESEARCH = () => `Run the agy research step for issue #${A.issue} (${REPO}). Never answer the question yourself and never substitute another model or your own knowledge: your only job is to run agy and report whether it produced output.
 ${SRC_CHECK ? `0. Run \`${SRC_CHECK}\`. If it exits non-zero, stop here (do not run agy): return status "bad-source", attempts 0, detail = its output.\n` : ''}1. Run, as ONE command: \`cd ${sq(REPO_DIR)} && before=$(${GIT_STATUS}) && [ -z "$before" ] && mkdir -p ${sq(SCRATCH)} && ${CD} && rm -f agy.md agy.err agy-models.txt codex.md codex-last.md codex-raw.txt body.md body-raw.md body-tmp.md claude.md status-before.txt status-after.txt repo-added.txt repo-removed.txt repo-extra.txt && printf '%s' "$before" > status-before.txt\`. It requires a completely clean checkout BEFORE any write (mkdir, rm, a file) and only then saves the empty baseline.
@@ -228,7 +231,7 @@ ${s.recommendation}
 ### 需要維護者拍板的參數
 ${bullets(s.parameters)}
 
-agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`../worktree/.scratch/research-${A.issue}/\`)。`
+agy 執行 ${attempts} 次(每次上限 ${TMIN} 分鐘;prompt 與原始輸出在 \`../worktree/.scratch/research-${A.issue}-${RUN}/\`)。`
 
 const renderClaims = (claims) => claims.map(c => `${VERDICT_ZH[c.verdict] || c.verdict}:${c.claim} —— ${c.basis}`).join('\n\n')
 const COMMENT_LIMIT = 60000
@@ -259,10 +262,6 @@ const COMMENT_URL = new RegExp(`^https://github\\.com/${REPO.replace(/\./g, '\\.
 const checkCommentUrl = (v) => typeof v === 'string' && COMMENT_URL.test(v)
 const stop = (status, codex, claims, detail, synthesis = null) => ({ issue: A.issue, status, codex, claims, comment: '', synthesis, detail })
 
-phase('Research')
-const nonce = await agent(NONCE, { label: `nonce:#${A.issue}`, phase: 'Research', schema: NONCE_SCHEMA, agentType: 'general-purpose' })
-if (!nonce || typeof nonce.nonce !== 'string' || !NONCE_RE.test(nonce.nonce)) return { issue: A.issue, status: 'setup-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: 'no valid run nonce' }
-RUN = nonce.nonce
 const res = await agent(RESEARCH(), { label: `agy:#${A.issue}`, phase: 'Research', schema: AGY_SCHEMA, agentType: 'general-purpose' })
 if (res && res.status === 'bad-source') return stop('sources-invalid', 'skipped', 0, res.detail)
 if (!agyOk(res)) return { issue: A.issue, status: 'agy-failed', codex: 'skipped', claims: 0, comment: '', synthesis: null, detail: (res && res.detail) || 'agy agent returned nothing' }

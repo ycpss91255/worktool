@@ -121,12 +121,14 @@ args 範例：
 
 ## research-verify
 
+暫存目錄以本次經驗證的 16 位十六進位 nonce 區分；resume 重用本次 nonce。同一 issue 的並行執行各自保存與讀取研究、驗證、log 及留言中間檔，互不覆蓋。
+
 維護者規則:找資料一律用 agy(gemini)查,由 claude 與 codex 做驗證(#220)。`args` = `{ repo, repoDir, issue, question, context?, sources?, timeoutMin? }`:
 
 | 參數 | 必要 | 說明 |
 |------|------|------|
 | `repo` | 是 | `owner/name`(只允許英數、`.`、`_`、`-`);gh 一律帶 `--repo` |
-| `repoDir` | 是 | 本機 main checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>/` |
+| `repoDir` | 是 | 本機 main checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>-<nonce>/` |
 | `issue` | 是 | 正整數;結論與研究明細以一則或多則留言貼到這個 issue |
 | `question` | 是 | 研究問題 |
 | `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
@@ -197,7 +199,7 @@ args 範例：
    只有 `recorded` 代表留言已發出且 repo 未被動過(`repo-dirty` 時留言可能已發出,`comment` 仍帶網址)。
 
 不寫進 repo(#243):`repoDir` 是別的 session 正在用的工作目錄。每個階段的 prompt 都附同一條規定:中間檔
-(筆記、草稿、log)只能寫在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>/`(或系統暫存),不得新增、修改、
+(筆記、草稿、log)只能寫在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>-<nonce>/`(或系統暫存),不得新增、修改、
 刪除 `repoDir` 底下其他任何追蹤或未追蹤路徑,結論寫在回覆裡而不是檔案裡。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
