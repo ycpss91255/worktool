@@ -136,6 +136,10 @@ worktool/
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
 
+workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 main 的最新
+commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
+`<workspace>/worktree/.scratch/<name>`。repo checkout 內不建立 worktree 或 scratch。
+
 ## Codex hook
 
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
@@ -184,12 +188,13 @@ Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
-| `just test unit [args]` | `./script/test/test.sh --unit [args]` |
-| `just test matrix [args]` | `./script/test/test.sh --matrix [args]` |
-| `just test integration [args]` | `./script/test/test.sh --integration [args]` |
-| `just test system [args]` | `./script/test/test.sh --system [args]` |
+| `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，再依已提交、未提交與未追蹤改動選 spec；無法判定時整層執行） |
+| `just test unit [spec...] [--filter REGEX]` | `./script/test/test.sh --unit [spec...] [--filter REGEX]` |
+| `just test matrix [spec...] [--filter REGEX]` | `./script/test/test.sh --matrix [spec...] [--filter REGEX]` |
+| `just test integration [spec...] [--filter REGEX]` | `./script/test/test.sh --integration [spec...] [--filter REGEX]` |
+| `just test system [spec...] [--filter REGEX]` | `./script/test/test.sh --system [spec...] [--filter REGEX]` |
 | `just test system-real [args]` | `./script/test/test.sh --system-real [args]` |
-| `just test acceptance [args]` | `./script/test/test.sh --acceptance [args]` |
+| `just test acceptance [spec...] [--filter REGEX]` | `./script/test/test.sh --acceptance [spec...] [--filter REGEX]` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh [args]`(`--root X` 直接透傳) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |

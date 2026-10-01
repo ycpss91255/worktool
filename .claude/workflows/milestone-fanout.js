@@ -14,7 +14,7 @@ export const meta = {
 //     maxRounds: 3,
 //     repoDir: "/path/to/worktool",   // required: local checkout
 //     items: [
-//       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "..." },
+//       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "...", gates: "just test lint, just test changed" },
 //       { issue: 150, branch: "m3/150-bench",    name: "bench", task: "..." },
 //     ]
 //   } })

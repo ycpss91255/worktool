@@ -80,7 +80,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_success
     local _flag
     for _flag in --build --lint --unit --matrix --integration --system --system-real \
-        --acceptance --help; do
+        --acceptance --changed --base --filter --help; do
         assert_output --partial "${_flag}"
     done
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
@@ -239,6 +239,61 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+}
+
+@test "test.sh --unit forwards one spec path to the container gate" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
+}
+
+@test "test.sh --unit forwards multiple spec paths in order" {
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats test/unit/ci_gate_spec.bats
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
+}
+
+@test "test.sh --filter runs only matching cases" {
+    run env WORKTOOL_TEST_JOBS=2 "${TEST_SH}" --ci-unit \
+        test/unit/test_sh_spec.bats --filter '^test.sh -h is the same as --help$'
+    assert_success
+    assert_line '1..1'
+    assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
+    refute_output --partial 'test.sh --help exits 0'
+}
+
+@test "test.sh rejects a spec path from another tier" {
+    run "${TEST_SH}" --unit test/integration/smoke_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/smoke_spec.bats' is outside test/unit/ (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a missing spec path" {
+    run "${TEST_SH}" --unit test/unit/missing_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit/missing_spec.bats' does not exist (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects a path that is not a bats spec" {
+    run "${TEST_SH}" --unit test/unit
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/unit' must end in .bats (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+}
+
+@test "test.sh rejects specs that require a dedicated tier runner" {
+    run "${TEST_SH}" --integration test/integration/ghostty_config_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/integration/ghostty_config_spec.bats' requires its dedicated runner (see --help)"
+
+    run "${TEST_SH}" --system test/system/real_engine_spec.bats
+    assert_failure 2
+    assert_output "test.sh: spec path 'test/system/real_engine_spec.bats' requires its dedicated runner (see --help)"
+    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
 # --- errexit (issue #195) ----------------------------------------------------

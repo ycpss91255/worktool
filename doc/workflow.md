@@ -36,19 +36,20 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `repo` | 是 | `owner/name`;所有 gh 指令都帶 `--repo` |
 | `issue` | 是 | 這個 PR 關閉的**唯一** sub-issue(PR 描述會有 `Closes #N`) |
 | `branch` | 是 | 從 `origin/main` 開的分支名 |
-| `name` | 是 | worktree 名稱(`.worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
+| `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
-| `gates` | 否 | 預設六道 `just test ...`;純文件可縮成 `just test lint, just test unit` |
+| `gates` | 否 | 額外 gate；預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
-| `repoDir` | 是 | 本機 checkout 路徑(不預設,換機器就換值);worktree 在 `<repoDir>/.worktree/<name>`、暫存檔在 `<repoDir>/.worktree/.scratch/<name>`(皆 gitignored) |
+| `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
 
 ## 迴圈內容
 
-1. **Implement**:agent 在自己的 worktree(`git worktree add -b <branch> .worktree/<name> origin/main`)依 TDD 做:
-   先寫測試看到 RED,再實作到 GREEN;六道 gate 在 Docker 內以 `just test <tier>` 阻塞執行;push;
+1. **Implement**:agent 在自己的 worktree(`git worktree add -b <branch> <repoDir>/../worktree/<name> origin/main`)依 TDD 做:
+   先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
+   push 前阻塞執行 `just test lint` 與 `just test changed`。本機不跑整個 tier；全部 tier 由 CI 執行；
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
 3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
@@ -62,7 +63,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
    `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
 5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
-6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge**:合併順序、rebase 衝突由主迴圈處理。
+   已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
+6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
 ## milestone-fanout
 
@@ -72,7 +74,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
-| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`，可另給 `gates` |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 使用 lint + changed 預設 |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
 | `codex` | 否 | `on`(預設)或 `off` |
@@ -101,7 +103,7 @@ args 範例：
 | 參數 | 必要 | 說明 |
 |------|------|------|
 | `repo` | 是 | `owner/name`(只允許英數、`.`、`_`、`-`);gh 一律帶 `--repo` |
-| `repoDir` | 是 | 本機 checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `<repoDir>/.worktree/.scratch/research-<issue>/`(gitignored) |
+| `repoDir` | 是 | 本機 main checkout 的絕對路徑(可含空白,不可含控制字元或反引號);prompt 與原始輸出放在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>/` |
 | `issue` | 是 | 正整數;結論以**一則**留言貼到這個 issue |
 | `question` | 是 | 研究問題 |
 | `context` | 否 | 背景說明,agy 與兩個驗證者都會拿到 |
@@ -150,8 +152,9 @@ args 範例：
    只有 gh 印出的網址是這個 issue 的留言網址(`https://github.com/<repo>/issues/<issue>#issuecomment-<n>`)才算 `recorded`,
    gh 失敗、沒輸出或輸出不是留言網址都是 `record-failed`。
    留言之後由 `repo-check` agent 再跑一次 `git -C <repoDir> status --porcelain --untracked-files=all`
-   (逐檔列出未追蹤檔,不折疊成 `?? dir/`,既有未追蹤目錄裡的新增或刪除也看得到;本次 run 的 scratch 目錄以 pathspec 排除),
-   與 Research 第一步存下的 `status-before.txt` 雙向比對(基準先存進 shell 變數,之後才 `mkdir`/`rm`/寫檔,確保擷取在任何寫入之前):多出的行記為 `+ <行>`、消失的行(例如既有未追蹤檔被刪)記為 `- <行>`;
+   (逐檔列出未追蹤檔,不折疊成 `?? dir/`),與 Research 第一步存下的空白 `status-before.txt`
+   雙向比對。Research 會先要求完整 status 為空,之後才在 checkout 外 `mkdir`/`rm`/寫檔;
+   多出的行記為 `+ <行>`,理論上不應存在的消失行仍記為 `- <行>`;
    任何一行差異、`git`/`grep` 出錯(`grep` exit 2,例如基準檔不可讀)或 agent 沒回結果,都回傳 `status: 'repo-dirty'`,
    `detail` 列出這些行,且不替你清掉(留給維護者判斷)。
 5. 回傳 `{ issue, status, codex, claims, comment, synthesis }`,`status` 為
@@ -159,7 +162,7 @@ args 範例：
    只有 `recorded` 代表留言已發出且 repo 未被動過(`repo-dirty` 時留言可能已發出,`comment` 仍帶網址)。
 
 不寫進 repo(#243):`repoDir` 是別的 session 正在用的工作目錄。每個階段的 prompt 都附同一條規定:中間檔
-(筆記、草稿、log)只能寫在 `<repoDir>/.worktree/.scratch/research-<issue>/`(或系統暫存),不得新增、修改、
+(筆記、草稿、log)只能寫在 `$(dirname <repoDir>)/worktree/.scratch/research-<issue>/`(或系統暫存),不得新增、修改、
 刪除 `repoDir` 底下其他任何追蹤或未追蹤路徑,結論寫在回覆裡而不是檔案裡。
 
 shell 安全:所有進入 shell 指令的值(scratch 路徑、`repo`)都以 POSIX 單引號包住,`repoDir` 的空白與
