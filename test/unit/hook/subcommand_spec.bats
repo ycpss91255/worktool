@@ -483,3 +483,9 @@ _scripts() {
     assert_success
     assert_output "$(printf '%s\n' 'case $x in _' 'echo ok' 'bats t' 'ls')"
 }
+
+@test "arithmetic commands do not launch expressions but following commands still launch" {
+    run hook_subcommands '(( bats = 1 )); (( x = (bats | 2) && 3 )); bats t'
+    assert_success
+    assert_output 'bats t'
+}

@@ -30,7 +30,8 @@
 #     4. an array assignment's list (`a=(x y)`) is data and becomes '_'
 #     5. the rest is split on ; && || | and newlines, on a background & (not
 #        the & of a redirection: 2>&1, &>f), and on ( and ), so the body of
-#        a subshell ( ... ) is launched like any other command
+#        a subshell ( ... ) is launched like any other command. Case
+#        patterns and arithmetic (( ... )) are data, not launches
 #     6. leading VAR=val assignments, the reserved words that open or close
 #        a compound command (if then elif else fi while until do done
 #        esac ! { }), and sudo / env / command / time / nohup / exec
@@ -736,6 +737,28 @@ _hook_case_patterns() {
     printf '%s' "${_out}"
 }
 
+# _hook_arithmetic <text> - arithmetic parentheses enclose data, not launches.
+_hook_arithmetic() {
+    local _t="$1" _out='' _i _c _depth=0
+    [[ "${_t}" == *'(('* ]] || { printf '%s' "${_t}"; return 0; }
+    for ((_i = 0; _i < ${#_t}; _i++)); do
+        _c="${_t:_i:1}"
+        if [[ "${_depth}" -eq 0 && "${_t:_i:2}" == '((' ]]; then
+            _depth=2
+            _i=$((_i + 1))
+            _out+=' '
+        elif [[ "${_depth}" -gt 0 ]]; then
+            case "${_c}" in
+                '(') _depth=$((_depth + 1)) ;;
+                ')') _depth=$((_depth - 1)) ;;
+            esac
+        else
+            _out+="${_c}"
+        fi
+    done
+    printf '%s' "${_out}"
+}
+
 # _hook_split <unquoted command> - the command with every separator of
 # header steps 4 and 5 turned into a newline.
 _hook_split() {
@@ -743,7 +766,7 @@ _hook_split() {
     while [[ "${_t}" =~ ${_re_arr} ]]; do
         _t="${_t/"${BASH_REMATCH[0]}"/=_}"
     done
-    _t="$(_hook_case_patterns "${_t}")"
+    _t="$(_hook_arithmetic "$(_hook_case_patterns "${_t}")")"
     _t="${_t//&&/$'\n'}"
     _t="${_t//||/$'\n'}"
     _t="${_t//|/$'\n'}"
