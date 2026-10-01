@@ -145,6 +145,7 @@ _required_specs() {
                 unit/milestone_gate_yml_spec.bats \
                 unit/agent_config_spec.bats \
                 unit/adr_spec.bats \
+                unit/adr/0004_spec.bats \
                 unit/adr/0005_spec.bats \
                 unit/adr/0006_spec.bats \
                 unit/adr/0007_spec.bats \
