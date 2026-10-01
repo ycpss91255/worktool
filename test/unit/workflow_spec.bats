@@ -159,15 +159,14 @@ _meta_skeleton() {
     assert_output "2"
 }
 
-@test "pr-loop parses the codex verdict structurally and never lets no-output or unparseable count as a pass" {
-    run grep -c "schema: CODEX_SCHEMA" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "enum: \['mergeable', 'blocked', 'no-output'\]" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "unparseable is not a pass" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "verdict === 'no-output'" "${PR_LOOP}"
-    assert_output "1"
+@test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
+    local default
+    default="$(_pl_run)"
+    run _pl_run '{"mode":"full"}'
+    assert_success
+    assert_output "${default}"
+    run jq -cr '[.error, .result.codexVerdict, (.calls[] | select(.label | startswith("review:")) | .schema.properties.verdict.enum)]' <<<"${output}"
+    assert_output '[null,"mergeable",["mergeable","blocked","no-output"]]'
 }
 
 @test "pr-loop codex=off path posts the quota note and never fabricates a [codex] line" {
