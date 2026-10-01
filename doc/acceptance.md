@@ -749,29 +749,13 @@ rc=0
       just verify setup 3.3; echo rc=$?
       ```
       預期 `rc=0`；先量區塊確實存在，再判斷移除，並比對使用者內容。
-  - [ ] 3.4 錯誤輸入由腳本拒絕且 HOME 內沒有任何檔案被建立;壞掉的設定檔不論來源(default / user)都被拒(exit 1)
-    - 預期看到資訊
-      ```text
-      ./script/box/setup.sh "$@"
-      setup.sh: unknown option '--bogus' (see --help)
-      error: recipe `setup` failed on line 44 with exit code 2
-      rc=2
-      files=0
-      ./script/box/status.sh "$@"
-      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for terminal (expected ghostty|none)
-      error: recipe `status` failed on line 48 with exit code 1
-      rc=1
-      ./script/box/status.sh "$@"
-      [ERROR] <H>/.config/worktool/config: invalid value 'sideways' for terminal (expected ghostty|none)
-      error: recipe `status` failed on line 48 with exit code 1
-      rc=1
-      rc=0
-      ```
-      (三個 `rc=` 分別是 `just box setup --bogus`(2)與兩次 `just box status`(1、1)自己的結束碼;最後一行的 `rc=0` 是本項 `echo rc=$?` —— 每一次都「照預期失敗」,所以整項是過的)
+  - [ ] 3.4 錯誤輸入 exit 2、不建檔；壞掉的 terminal 設定不論 default／user 來源都 exit 1；受管標記損壞時 dry-run 與實際 setup 都拒絕、整個 HOME 不變，status 報 MALFORMED（PR #232、#351）
+    - 預期看到資訊：unknown option `--bogus`、`rc=2`、`files=0`；兩次 `invalid value 'sideways' for terminal (expected ghostty|none)` 與 `rc=1`。逐檔印 `malformed-refused=distrobox/distrobox.conf unchanged=yes`、`malformed-refused=ghostty/config unchanged=yes`、`malformed-refused=ghostty/config.ghostty unchanged=yes`；各檔 status 是 `managed block: MALFORMED - BEGIN at line 1 has no END; fix or remove the markers, then re-run: just box setup`。
     - 驗收方式
       ```bash
       just verify setup 3.4; echo rc=$?
       ```
+      預期 `rc=0`；拒絕後以 HOME 全目錄比對確認沒有部分寫入。
   - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
     - 預期看到資訊
       ```text

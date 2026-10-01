@@ -990,7 +990,7 @@ _item_3_3() {
 # Bad input is refused by the script itself (exit 2) and nothing is created
 # under HOME; a corrupt state file is refused whatever source it claims.
 _item_3_4() {
-    _require_tools env just sed find wc mktemp || return 1
+    _require_tools env just sed find wc mktemp cp diff || return 1
     _item_begin || return 1
     local _bogus_rc _files _src _status_rc _bad=0
 
@@ -1018,6 +1018,28 @@ _item_3_4() {
             _fail "3.4: just box status accepted the corrupt ${_src}-sourced state file (exit ${_status_rc}, expected 1)"
             _bad=1
         fi
+    done
+
+    # Refusal must leave every file untouched, including the shared state.
+    rm -f "${ITEM_H}/.config/worktool/config" || return 1
+    local _rel _label
+    for _rel in distrobox/distrobox.conf ghostty/config ghostty/config.ghostty; do
+        mkdir -p "${ITEM_H}/.config/${_rel%/*}" || return 1
+        printf '%s\n' "${VERIFY_BLOCK_BEGIN}" 'user content' >"${ITEM_H}/.config/${_rel}" || return 1
+        cp -a "${ITEM_H}" "${ITEM_T}/before" || return 1
+        _run_norm "${_env[@]}" just box setup --dry-run || return 1
+        [[ "${LAST_RC}" -eq 1 ]] || _bad=1
+        _run_norm "${_env[@]}" just box setup || return 1
+        [[ "${LAST_RC}" -eq 1 ]] || _bad=1
+        diff -r "${ITEM_T}/before" "${ITEM_H}" || _bad=1
+        _run_norm "${_env[@]}" just box status || return 1
+        [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+        _label=ghostty
+        [[ "${_rel}" != distrobox/* ]] || _label=distrobox.conf
+        _expect_lines 3.4 "${_label}: <H>/.config/${_rel} (managed block: MALFORMED - BEGIN at line 1 has no END; fix or remove the markers, then re-run: just box setup)" || _bad=1
+        printf 'malformed-refused=%s unchanged=yes\n' "${_rel}"
+        rm -rf "${ITEM_T}/before" || return 1
+        rm -f "${ITEM_H}/.config/${_rel}" || return 1
     done
 
     if [[ "${_bogus_rc}" -ne 2 ]]; then

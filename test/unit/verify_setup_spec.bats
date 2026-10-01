@@ -1084,3 +1084,11 @@ EOF
     assert_line "legacy-blocks=0 target-blocks=1"
     assert_line "ghostty: <H>/.config/ghostty/config.ghostty (managed block: present)"
 }
+
+@test "3.4: malformed managed files are refused without writes and reported MALFORMED" {
+    run "${VERIFY}" 3.4
+    assert_success
+    assert_line "malformed-refused=distrobox/distrobox.conf unchanged=yes"
+    assert_line "malformed-refused=ghostty/config unchanged=yes"
+    assert_line "malformed-refused=ghostty/config.ghostty unchanged=yes"
+}
