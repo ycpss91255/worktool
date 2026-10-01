@@ -33,3 +33,14 @@ _commit_refs() {
     assert_success
     assert_output --partial '1 commits checked: issue footers ok.'
 }
+
+@test "merge commits are exempt from the footer rule" {
+    _commit_refs $'base\n\nRefs: #312'
+    git -C "${REPO}" switch -q -c topic
+    _commit_refs $'topic\n\nRefs: #312'
+    git -C "${REPO}" switch -q main
+    _commit_refs $'main\n\nRefs: #312'
+    git -C "${REPO}" merge -q --no-ff topic -m 'Merge topic'
+    run commit_refs_check_commits "${REPO}" HEAD
+    assert_success
+}
