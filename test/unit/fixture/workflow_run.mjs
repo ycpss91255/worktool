@@ -18,6 +18,8 @@
 // Fail closed: a Write target without a well-formed block, or the first
 // step that exits non-zero, stops the agent and it returns null (a shell
 // failure is a failed agent, never the canned reply).
+// `exec-stage-checks` plays only pr-loop stage-check agents; implementation
+// and review remain canned so the checks can inspect real test repositories.
 // `exec-hooks` also runs both publication body hooks before each shell
 // step, using the unchanged tool cwd rather than following shell `cd`.
 // A top-level reply field equal to "<stdout>" becomes the trimmed stdout of
@@ -85,7 +87,11 @@ const withStdout = (value, stdout) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   calls.push({ label, schema: opts.schema || null, prompt })
-  if (!['exec', 'exec-hooks'].includes(mode)) return reply(label)
+  if (mode === 'exec-stage-checks' && label.startsWith('fix:')) {
+    const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
+    if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
+  }
+  if (!['exec', 'exec-hooks'].includes(mode) && !(mode === 'exec-stage-checks' && label.startsWith('stage-check:'))) return reply(label)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(label), stdout) : null
 }

@@ -1603,6 +1603,54 @@ _rv_assert_fails_closed() {
     assert_output '[null,"light"]'
 }
 
+# Stage checks execute against a real repository and bare remote in Docker.
+_pl_stage_setup() {
+    local root="${BATS_TEST_TMPDIR}"
+    mkdir -p "${root}/worktree/n" "${root}/src" "${root}/bin"
+    git init -q --bare "${root}/remote"
+    git init -q "${root}/worktree/n"
+    git -C "${root}/worktree/n" config user.name Tester
+    git -C "${root}/worktree/n" config user.email '1+tester@users.noreply.github.com'
+    git -C "${root}/worktree/n" commit -qm initial --allow-empty
+    git -C "${root}/worktree/n" branch -M b
+    git -C "${root}/worktree/n" remote add origin "${root}/remote"
+    git -C "${root}/worktree/n" push -q origin b
+    PL_BEFORE="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    cat > "${root}/bin/gh" <<SH
+#!/bin/sh
+exec git --git-dir='${root}/remote' rev-parse refs/heads/b
+SH
+    chmod +x "${root}/bin/gh"
+}
+
+_pl_stage_run() {
+    local implementer="$1" action="${2:-dirty}" root="${BATS_TEST_TMPDIR}"
+    # The first review creates the requested Fix result, before the check runs.
+    local replies
+    replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
+        "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
+        "stage-check:":{evidence:"<stdout>"}}')"
+    # Simulate a Fix after Implement has passed its check.
+    PL_ACTION="${action}" PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" --arg impl "${implementer}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t",implementer:$impl,maxRounds:1}')" \
+        "${replies}" exec-stage-checks
+}
+
+@test "pr-loop (node): Fix rejects uncommitted changes before CI or another review (#331)" {
+    _pl_stage_setup
+    local impl
+    for impl in codex claude; do
+        run _pl_stage_run "${impl}"
+        assert_success
+        local json="${output}"
+        run jq -cr '[.result.codexVerdict, .result.rounds, ([.calls[].label | select(startswith("review:"))] | length), ([.calls[].label | select(startswith("ci:"))] | length)]' <<<"${json}"
+        assert_output '["blocked",1,1,1]'
+        run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
+        assert_output --partial 'git status: ?? pending.txt'
+        assert_output --partial "local HEAD: ${PL_BEFORE}"
+    done
+}
+
 @test "pr-loop (node): light failed editing includes the step and reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \

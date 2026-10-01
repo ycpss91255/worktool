@@ -169,6 +169,29 @@ const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "
 
 const result = (extra) => ({ issue: A.issue, ...extra })
 
+// Read fresh remote state rather than trusting an implementer's completion prose.
+const checkStage = async (pr, stage, before = '') => {
+  const script = `cd ${sq(WT)} &&
+errors=''
+status=$(git status --porcelain) || errors='git status failed; '
+local_head=$(git rev-parse HEAD) || errors="$errors local HEAD lookup failed; "
+remote_head=$(git ls-remote --exit-code origin ${sq(`refs/heads/${A.branch}`)}) || errors="$errors remote HEAD lookup failed; "
+remote_head=$(printf '%s' "$remote_head" | cut -f1)
+pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid) || errors="$errors PR head lookup failed; "
+jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'`
+  const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
+Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
+    label: `stage-check:${stage}:#${pr}`, phase: stage,
+    schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+    agentType: 'general-purpose',
+  })
+  let state
+  try { state = JSON.parse(checked.evidence) } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
+  const valid = ['status', 'localHead', 'remoteHead', 'prHead', 'errors'].every(k => typeof state[k] === 'string')
+  const ok = valid && !state.errors && !state.status && !!state.localHead
+  return { ok, sha: state.prHead, detail: `${stage} check failed: ${state.errors || ''}git status: ${state.status || '(clean)'}; local HEAD: ${state.localHead}; remote HEAD: ${state.remoteHead}; PR head: ${state.prHead}; before: ${before || '(Implement)'}` }
+}
+
 // Light finishes editing and independent diff review before publishing.
 if (MODE === 'light') {
   phase('Implement')
@@ -233,6 +256,8 @@ for (;;) {
     ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
   await agent(fixBrief, { label: `fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  const checked = await checkStage(pr, 'Fix', sha)
+  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
   ci = await agent(CI(pr), { label: `ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
