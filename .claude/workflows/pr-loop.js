@@ -1,9 +1,11 @@
 export const meta = {
   name: 'pr-loop',
   description: 'One sub-issue -> one PR: selected implementer (codex by default) uses TDD in its own worktree, waits for CI, the other side reviews, then fixes and re-reviews up to maxRounds; never merges',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, implementer?, gates?, codex?, maxRounds?, parent?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
+    { title: 'Review', detail: 'light: a separate Claude agent reviews only the diff and applies required fixes' },
+    { title: 'Publish', detail: 'light: lint and touched specs, push and open PR' },
     { title: 'Locate', detail: 'agent: resolve the PR number and head SHA from the branch (structured)' },
     { title: 'CI', detail: 'agent: gh pr checks --watch, fix and re-push if red (structured green/red)' },
     { title: 'Codex', detail: 'agent: full-context codex exec; posts [codex] + [claude] double-check (structured verdict)' },
@@ -35,9 +37,11 @@ const A = args || {}
 for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
   if (!A[k]) throw new Error(`pr-loop: args.${k} is required`)
 }
+const MODE = A.mode === undefined ? 'full' : A.mode
+if (MODE !== 'full' && MODE !== 'light') throw new Error(`pr-loop: args.mode must be "full" or "light", got ${JSON.stringify(A.mode)}`)
 const codexArg = A.codex === undefined ? 'on' : A.codex
 if (codexArg !== 'on' && codexArg !== 'off') throw new Error(`pr-loop: args.codex must be "on" or "off", got ${JSON.stringify(A.codex)}`)
-const IMPLEMENTER = A.implementer === undefined ? 'codex' : A.implementer
+const IMPLEMENTER = MODE === 'light' ? 'claude' : (A.implementer === undefined ? 'codex' : A.implementer)
 if (IMPLEMENTER !== 'codex' && IMPLEMENTER !== 'claude') throw new Error(`pr-loop: args.implementer must be "codex" or "claude", got ${JSON.stringify(A.implementer)}`)
 if (codexArg === 'off' && IMPLEMENTER === 'codex') throw new Error('pr-loop: args.codex "off" cannot use implementer "codex"; use implementer: "claude"')
 const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
@@ -46,7 +50,7 @@ const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
-const GATES = A.gates || 'just test lint, just test changed'
+const GATES = A.gates || (MODE === 'light' ? 'just test lint and only the touched specs with just test <tier> <spec>' : 'just test lint, just test changed')
 const PARENT = A.parent || ''
 const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
@@ -74,7 +78,9 @@ const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, s
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
 const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
 
-const LOCAL_TEST_RULES = `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and just test changed. Never run a whole tier locally; CI runs every tier.`
+const LOCAL_TEST_RULES = MODE === 'light'
+  ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Never run just test changed or a whole tier locally; CI runs every tier.`
+  : `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and just test changed. Never run a whole tier locally; CI runs every tier.`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with main by merging.`
 const COMMON_GUARDRAILS = `
 Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
@@ -162,6 +168,34 @@ ${CODEX_FIX_BRIEF(pr, round, blocking)}`
 const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "[claude] codex 暫停中(配額),待配額恢復後補複驗。" Then return "noted".`
 
 const result = (extra) => ({ issue: A.issue, ...extra })
+
+// Light finishes editing and independent diff review before publishing.
+if (MODE === 'light') {
+  phase('Implement')
+  const edited = await agent(`${GUARDRAILS}
+${SKILL_LOAD.claude}
+${TDD_IMPLEMENT_RULES}
+Act directly as Claude; do not invoke codex or delegate implementation.
+Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}.
+TASK (issue #${A.issue}): ${A.task}
+For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed.`, { label: `implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] } }, required: ['status'] }, agentType: 'general-purpose' })
+  if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['light editing did not complete'] })
+  phase('Review')
+  const reviewed = await agent(`${GUARDRAILS}
+${SKILL_LOAD.claude}
+${TDD_REVIEW_RULES}
+You are a separate Claude reviewer, not the editor. Review only the complete diff in ${WT}: git diff origin/main...HEAD and any uncommitted diff. Do not run codex or a full-context review. Apply all required fixes in this worktree with TDD for behaviour changes; append independent commits without rewriting pushed history. Run ${GATES} blocking in the foreground after fixes. Do not push or open a PR. Return verdict mergeable only when every required fix is applied and gates pass; otherwise return blocked with concrete blocking items.`, { label: `review:#${A.issue}:light`, phase: 'Review', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+  if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
+  phase('Publish')
+  await agent(`${GUARDRAILS}
+In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
+  phase('Locate')
+  const loc = await agent(LOCATE, { label: `locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+  if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
+  phase('CI')
+  const ci = await agent(CI(loc.pr), { label: `ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
+}
 
 phase('Implement')
 await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })

@@ -73,3 +73,7 @@ alias h := help
 # Show the test runner help (test.sh --help): every flag, the default order, the environment knobs.
 help:
     ./script/test/test.sh --help
+
+# Check script directory layout and repository artifacts.
+script-layout *args:
+    @./script/test/check-script-layout.sh "$@"

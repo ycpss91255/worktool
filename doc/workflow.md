@@ -1,12 +1,12 @@
 # Workflow 範本(`.claude/workflows/`)
 
 worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一方複驗 -> 修正 -> 再複驗**。
-預設 codex 實作、Claude 審查；也可切成 Claude 實作、codex 審查。CI 綠且審查方判定可合併後，才由主迴圈合併(一次一個 PR、merge commit、保留各 agent 的 commit)。
+`mode: "full"` 為預設，codex 實作、Claude 審查；也可切成 Claude 實作、codex 審查。CI 綠且審查方判定可合併後，才由主迴圈合併(一次一個 PR、merge commit、保留各 agent 的 commit)。
 這條迴圈寫成兩個可重用的 Claude Code Workflow 腳本,不再每次臨時寫;查資料另有 `research-verify.js`。
 
 | 檔案 | 用途 | 何時用 |
 |------|------|--------|
-| `pr-loop.js` | 一個 sub-issue -> 一個 PR,推到「CI 綠 + codex 可合併」 | 每一個 sub-issue |
+| `pr-loop.js` | 一個 sub-issue -> 一個 PR,推到「CI 綠 + codex 可合併」 | 每一個 sub-issue；機械式小修改用 light |
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
 | `research-verify.js` | 找資料:agy(gemini)查,claude 與 codex 並行逐條驗證,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
@@ -22,6 +22,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
   branch: "m3/150-bench",
   name: "bench",
   parent: "#5",
+  mode: "full",
   implementer: "codex",
   codex: "on",
   maxRounds: 3,
@@ -38,14 +39,29 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `branch` | 是 | 從 `origin/main` 開的分支名 |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
-| `gates` | 否 | 額外 gate；預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
+| `gates` | 否 | 額外 gate；full 預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
+| `mode` | 否 | `full`（預設）或 `light`；其他值直接 throw。light 固定由 Claude 修改與另一個 Claude 子代理審查，不呼叫 codex |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
 
-## 迴圈內容
+## light 模式
+
+機械式、只有幾行且沒有新行為的修改使用 `mode: "light"`；實質改寫使用 `full`。
+light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額暫停註記。
+
+1. 一個 Claude 子代理在獨立 worktree 直接修改並 commit，不叫 codex 實作；有行為改變時仍依 TDD 逐片 RED→GREEN。
+2. 另一個 Claude 子代理只看完整 diff，審查並套用必改，追加 commit；修改或審查未成功就停止，不發布。
+3. 阻塞執行 `just test lint` 與改到的 spec（`just test <tier> <spec> [--filter REGEX]`），不跑 `just test changed` 或完整 tier；通過後才推送、開 PR。
+4. 等 CI 全綠，失敗時在同一 worktree 修正並追加 commit、再推送；不跑 codex 複驗，也不 merge。
+
+仍遵守一個 issue 一個 PR、noreply author 與 committer、無署名、不改寫已推送 commit。
+回傳沿用 full 的欄位，`codexVerdict: "skipped"`、`rounds: 0`；以 `ciState` 與 `blockingLeft` 判斷是否完成。
+例如上述呼叫只需把 `mode` 改為 `"light"`，並以 `gates` 指定此次修改的 lint 與 spec 指令。
+
+## full 迴圈內容
 
 1. **Implement**:agent 在自己的 worktree(`git worktree add -b <branch> <repoDir>/../worktree/<name> origin/main`)依 TDD 做:
    先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
@@ -74,7 +90,8 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
-| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 使用 lint + changed 預設 |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
+| `mode` | 否 | `full`（預設）或 `light`；轉傳給每個 `pr-loop` |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
 | `codex` | 否 | `on`(預設)或 `off` |
@@ -192,7 +209,7 @@ Record 之前的失敗 gh 完全沒被呼叫。
 - 每個 agent 獨立 commit,合併不 squash(範本只 push,不 merge)。
 - codex 是靜態審查:測試證據一律由本機 gate + CI 提供;codex 暫停時不冒充,留 `[claude]` 註記。
 - 可並行的就並行:獨立的 sub-issue 用 `milestone-fanout`;有相依的用 `pr-loop` 依序。
-- 守門測試 `test/unit/workflow_spec.bats` 是**文字層級**的規約檢查(測試映像沒有 JS 引擎,不做 AST 解析):
+- 守門測試 `test/unit/workflow_spec.bats` 包含**文字層級**的規約檢查與 node 執行的流程測試:
   釘住 meta 在第一行且看起來是純字面量、phase 名稱、參數驗證、結構化 PR/CI/codex、CI gate、Fix 輪數、
-  回傳契約、已知的 merge 指令、不寫死機器路徑 / session。它擋的是「不小心改壞」,不是行為證明;
-  行為證明 = 在真實 sub-issue 上跑範本(dogfood),結果留在該 PR。
+  回傳契約、已知的 merge 指令、不寫死機器路徑 / session。文字檢查擋的是「不小心改壞」;
+  流程測試以代理替身驗證 light 不呼叫 codex、不同代理分別修改與審查、非法 mode 拒絕及 full 路徑維持原樣；真實 sub-issue 的 gate 與 CI 證據留在該 PR。

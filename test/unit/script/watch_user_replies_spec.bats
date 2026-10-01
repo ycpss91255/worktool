@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test/unit/script/watch_user_replies_spec.bats - .agents/script/watch-user-replies.sh
+# test/unit/script/watch_user_replies_spec.bats - .agents/script/monitor/watch-user-replies.sh
 #
 # The user-REPLY watcher, a Monitor companion. worktool adaptation: the
 # default state file lives in the repo, under the gitignored .agents/state/
@@ -27,7 +27,7 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 bats_require_minimum_version 1.5.0
 
 setup() {
-    SCRIPT="${REPO_ROOT}/.agents/script/watch-user-replies.sh"
+    SCRIPT="${REPO_ROOT}/.agents/script/monitor/watch-user-replies.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${STUB_DIR}"
     cat > "${STUB_DIR}/gh" <<'EOF'
