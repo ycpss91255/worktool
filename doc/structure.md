@@ -126,12 +126,14 @@ worktool/
 │   └── workflows/       Claude Code Workflow 範本(見 doc/workflow.md)
 │       ├── pr-loop.js
 │       └── milestone-fanout.js
+├── .gemini/
+│   └── settings.json    Gemini BeforeTool 留言 hook 註冊
 ├── .codex/
 │   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
-├── justfile             使用者介面入口:只有兩行 `mod?`(test / box)+ `default`(= just --list)
+├── justfile             使用者介面入口:三行 `mod?`(test / box / agent)+ `default`(= just --list)
 └── .github/workflows/
     ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
@@ -145,13 +147,35 @@ workspace 版面以 main checkout 的上一層為根:`<workspace>/src` 只放 ma
 commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存檔放在
 `<workspace>/worktree/.scratch/<name>`。repo checkout 內不建立 worktree 或 scratch。
 
-## Codex hook
+## Agent hook
 
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
 PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
 worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
-`CLAUDE_PROJECT_DIR`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
+`CLAUDE_PROJECT_DIR`。留言 guard 在 Codex command 末尾傳入 `codex`，
+Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
 所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+
+`.agents/hooks.json` 在 agy 的 `PreToolUse`／`run_command` 註冊
+`.agents/hook/agy_comment.sh`，把實測的 `toolCall.args.CommandLine`、`Cwd`
+轉成 Bash payload。`.gemini/settings.json` 在 `BeforeTool`／`run_shell_command`
+註冊 `.agents/hook/gemini_comment.sh`，沿用 `tool_input.command`。
+兩者均以 exit 2、stderr 拒絕工具，分別傳入 `agy`、`gemini`。
+四家共用 `enforce_milestone_gate_approval.sh` 的留言內容與 shell 解析，
+以及 `lib/approval.sh` 的自身標記判定；去掉前導空白後，只放行自己的
+`[claude]`、`[codex]`、`[agy]` 或 `[gemini]`，外家標記仍拒絕。
+
+2026-10-01 的 headless 實測及環境限制記在
+[#242 實測留言](https://github.com/ycpss91255/worktool/issues/242#issuecomment-5928231226)。
+Codex 在 worktree 子路徑下，即使加 bypass 與 `--no-daemon`，仍未證明本
+worktree 的新版留言 hook 被載入；不能只憑 PreToolUse 事件存在判定安全。
+因此 headless 啟動使用 `just agent codex -- <Codex 參數...>`：清掉四種
+GitHub token，使用 `.agents/state/` 下的空 HOME、GH_CONFIG_DIR 與
+XDG_CONFIG_HOME，退出刪除暫存目錄。CODEX_HOME 保留供 Codex 自己登入，
+沒有建立使用者層級設定。這隔離預設 gh 認證，仍保留網路；不是阻止同一使用者
+刻意指定原始憑證絕對路徑的 sandbox，沿用 #242／#190 的已知限制。
+原始 Codex read-only sandbox 在此主機遭 bubblewrap 拒絕，agy sandbox
+也拒絕探測命令，因此不能宣稱其 sandbox 內的憑證或網路可達性已驗證。
 
 Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
 `.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
@@ -199,6 +223,8 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | 指令 | 實際執行 |
 |------|----------|
 | `just` | `just --list`(列出命名空間) |
+| `just agent` | 列出 agent 啟動動作 |
+| `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
