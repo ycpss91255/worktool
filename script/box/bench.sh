@@ -287,11 +287,18 @@ _parse_args() {
 
 # --- Timing ------------------------------------------------------------------
 
-# Store the wall clock in microseconds in the variable named $1. No
-# subshell: a $(...) fork would add its own latency to every sample.
-# EPOCHREALTIME is "<seconds>.<6 digits>" (the radix follows the locale).
+# Store the host clock in microseconds in the variable named $1. The real
+# clock is EPOCHREALTIME ("<seconds>.<6 digits>", the radix follows the
+# locale), read with no subshell: a $(...) fork would add its own latency
+# to every sample. BENCH_CLOCK (environment, tests only, issue #249)
+# replaces it with a program that prints the time in microseconds, so the
+# unit tests decide on injected times instead of the host's load.
 _now_us() {
     local -n _ref_now="$1"
+    if [[ -n "${BENCH_CLOCK:-}" ]]; then
+        _ref_now="$("${BENCH_CLOCK}")"
+        return 0
+    fi
     local _t="${EPOCHREALTIME/,/.}"
     _ref_now=$(( 10#${_t%.*} * 1000000 + 10#${_t#*.} ))
 }
