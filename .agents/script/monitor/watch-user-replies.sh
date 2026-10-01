@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .agents/script/watch-user-replies.sh - poll a GitHub repo's OPEN issues
+# .agents/script/monitor/watch-user-replies.sh - poll a GitHub repo's OPEN issues
 # and PRs and print the maintainer's own comments that are NOT agent output.
 #
 # It answers "has the human replied to me?" and is meant to be wrapped in a
@@ -76,7 +76,7 @@ watch_replies_filter() {
 }
 
 # The repo this script lives in (.agents/script -> two levels up).
-WATCH_REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+WATCH_REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 
 # watch_default_state_file <repo> <login> - the default state file: one per
 # repo + login under ${WORKTOOL_AGENT_STATE_DIR:-<repo>/.agents/state}.

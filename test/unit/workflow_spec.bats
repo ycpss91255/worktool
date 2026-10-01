@@ -143,12 +143,13 @@ _meta_skeleton() {
 }
 
 @test "pr-loop closes exactly one issue and locates the PR by branch with a structured schema, not by parsing prose" {
-    run grep -c "Closes #\\\${A.issue}" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "schema: LOCATE_SCHEMA" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "gh pr list --repo \\\${REPO} --head \\\${A.branch}" "${PR_LOOP}"
-    assert_output "1"
+    local mode
+    for mode in full light; do
+        run _pl_run "{\"mode\":\"${mode}\"}"
+        assert_success
+        run jq -cr '[(.calls | map(select(.label | startswith("locate:"))) | length), (.calls[] | select(.label | startswith("locate:")) | .schema.required), ([.calls[].prompt | scan("Closes #283")] | length)]' <<<"${output}"
+        assert_output '[1,["pr","sha"],1]'
+    done
 }
 
 @test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
@@ -158,15 +159,39 @@ _meta_skeleton() {
     assert_output "2"
 }
 
-@test "pr-loop parses the codex verdict structurally and never lets no-output or unparseable count as a pass" {
-    run grep -c "schema: CODEX_SCHEMA" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "enum: \['mergeable', 'blocked', 'no-output'\]" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "unparseable is not a pass" "${PR_LOOP}"
-    assert_output "1"
-    run grep -c "verdict === 'no-output'" "${PR_LOOP}"
-    assert_output "1"
+@test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
+    local default
+    default="$(_pl_run '{}')"
+    run _pl_run '{"mode":"full"}'
+    assert_success
+    assert_output "${default}"
+    run jq -cr '[.error, .result.codexVerdict, (.calls[] | select(.label | startswith("review:")) | .schema.properties.verdict.enum)]' <<<"${output}"
+    assert_output '[null,"mergeable",["mergeable","blocked","no-output"]]'
+}
+
+@test "pr-loop (node): full stops without fixes when review returns no-output (#310)" {
+    local mode implementer
+    for mode in '{}' '{"mode":"full"}'; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" \
+                '{"verdict":"no-output","blocking":[],"nonBlocking":[],"answer":""}'
+            assert_success
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            assert_output '[null,true,true,0,0]'
+        done
+    done
+}
+
+@test "pr-loop (node): full stops without fixes when review returns null (#310)" {
+    local mode implementer
+    for mode in '{}' '{"mode":"full"}'; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" 'null'
+            assert_success
+            run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.label | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
+            assert_output '[null,true,true,0,0]'
+        done
+    done
 }
 
 @test "pr-loop codex=off path posts the quota note and never fabricates a [codex] line" {
@@ -228,7 +253,10 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
-    local replies='{"locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    local replies='{"implement:": {"status":"ready"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    if [[ $# -ge 2 ]]; then
+        replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
@@ -1501,4 +1529,34 @@ _rv_assert_fails_closed() {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "pr-loop (node): invalid mode fails before any agent (#310)" {
+    run _pl_run '{"mode":"other"}'
+    assert_success
+    run jq -cr '[(.error | contains("args.mode")), (.calls | length)]' <<<"${output}"
+    assert_output '[true,0]'
+}
+
+@test "pr-loop (node): light uses separate Claude editors and reviewers without codex (#310)" {
+    run _pl_run '{"mode":"light","codex":"off"}'
+    assert_success
+    run jq -cr '[.error, [.calls[].label], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
+    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","ci:#7"],false]'
+}
+
+@test "milestone-fanout (node): forwards light mode to each child (#310)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
+        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"mode\":\"light\",\"items\":[{\"issue\":310,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" '{}'
+    assert_success
+    run jq -cr '[.error, .workflowCalls[0].args.mode]' <<<"${output}"
+    assert_output '[null,"light"]'
+}
+
+@test "pr-loop (node): light stops before review when editing fails (#310)" {
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
+    assert_success
+    run jq -cr '[.error, [.calls[].label], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
+    assert_output '[null,["implement:#310"],0,1]'
 }

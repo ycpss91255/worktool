@@ -60,9 +60,9 @@ _registered_names() {
 @test "the agent scripts are executable real files" {
     local _s
     for _s in watch-user-replies.sh wait-pr-ci.sh; do
-        assert [ -f "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ ! -L "${REPO_ROOT}/.agents/script/${_s}" ]
-        assert [ -x "${REPO_ROOT}/.agents/script/${_s}" ]
+        assert [ -f "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ ! -L "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
+        assert [ -x "${REPO_ROOT}/.agents/script/monitor/${_s}" ]
     done
 }
 
@@ -225,7 +225,7 @@ _registered_names() {
 @test "the wait-pr-ci skill names only scripts this repo carries" {
     run grep -nE 'wait-pr-ci-batch|wait-tag-ci|rebase-pr' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     assert_failure 1
-    run grep -c '.claude/script/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
+    run grep -c '.claude/script/monitor/wait-pr-ci.sh' "${REPO_ROOT}/.agents/skills/wait-pr-ci/SKILL.md"
     refute_output "0"
 }
 
@@ -288,4 +288,41 @@ _registered_names() {
     run grep -nE '^- .*(heredoc|--body ")' "${REPO_ROOT}/.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md"
     assert_failure 1
     assert_output ""
+}
+
+@test "agent docs identify the contract as the sole skill layout exception with its review rationale" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E 'contract\.md.*唯一.*例外.*同一個 PR.*悄悄脫鉤' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}
+
+@test "agent docs require invariant ADRs and mechanism ADR backlinks" {
+    local doc
+    for doc in AGENTS.md doc/agent/domain.md; do
+        run grep -E '不變量.*各一份 ADR' "${REPO_ROOT}/${doc}"
+        assert_success
+        run grep -E '機制型 ADR.*依據 ADR-NNNN.*不變量' "${REPO_ROOT}/${doc}"
+        assert_success
+    done
+}
+
+@test "agent domain navigation links resolve to the contract glossary and invariant ADRs" {
+    local doc base target links
+    for doc in AGENTS.md doc/agent/domain.md; do
+        base="${REPO_ROOT}/$(dirname -- "${doc}")"
+        links=$(grep -oE '\]\([^)]+\)' "${REPO_ROOT}/${doc}" | sed -E 's/^\]\((.*)\)$/\1/')
+        for target in contract.md CONTEXT.md adr/; do
+            run grep -F "${target}" <<< "${links}"
+            assert_success
+        done
+        while IFS= read -r target; do
+            assert [ -e "${base}/${target%%#*}" ]
+        done <<< "${links}"
+    done
+    local adr
+    for adr in "${REPO_ROOT}"/doc/adr/00{04,05,06,07,08,09,10,11,12,13}-*.md; do
+        assert [ -f "${adr}" ]
+    done
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test/unit/script/wait_pr_ci_spec.bats - .agents/script/wait-pr-ci.sh
+# test/unit/script/wait_pr_ci_spec.bats - .agents/script/monitor/wait-pr-ci.sh
 #
 # The Monitor companion that polls a PR's check rollup until it settles.
 # worktool adaptation: the default filter is the one required check,
@@ -16,7 +16,7 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 
 setup() {
     bats_require_minimum_version 1.5.0
-    SCRIPT="${REPO_ROOT}/.agents/script/wait-pr-ci.sh"
+    SCRIPT="${REPO_ROOT}/.agents/script/monitor/wait-pr-ci.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${STUB_DIR}"
     FIXTURE_JSON="${BATS_TEST_TMPDIR}/gh-response.json"

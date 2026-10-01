@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-fanout',
   description: 'Fan out independent sub-issues, each through pr-loop, with at most two child workflows and test runs active; reports each PR as it finishes; never merges',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, implementer?, codex?, maxRounds?, items:[{issue,branch,name,task,gates?}]}.',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, mode?, implementer?, codex?, maxRounds?, items:[{issue,branch,name,task,gates?}]}.',
   phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches of at most two; each result is logged when its child workflow finishes' }],
 }
 
@@ -44,7 +44,7 @@ const runItem = async (item) => {
     try {
       result = await workflow({ scriptPath: SCRIPT }, {
         repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
-        implementer: IMPLEMENTER, maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
+        mode: A.mode === undefined ? 'full' : A.mode, implementer: IMPLEMENTER, maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
         issue: item.issue, branch: item.branch, name: item.name, task: item.task, gates: item.gates,
       })
     } catch (e) {
