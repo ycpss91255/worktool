@@ -165,6 +165,20 @@ _dispatched() {
     assert_output --partial "此改動由 CI 的 system-real 驗證"
 }
 
+@test "test.sh --changed leaves the system-real entry verification to CI" {
+    mkdir -p "${TEMP_REPO}/script/test"
+    printf '# entry\n' >"${TEMP_REPO}/script/test/system-real-entry.sh"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/test/system-real-entry.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 system-real 驗證"
+}
+
 @test "test.sh --changed maps a changed library to its spec" {
     mkdir -p "${TEMP_REPO}/lib"
     printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
