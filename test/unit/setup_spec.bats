@@ -1078,7 +1078,7 @@ _fail_bin() {
     local _dir="${BATS_TEST_TMPDIR}/failbin" _real
     _real="$(command -v "$1")"
     mkdir -p "${_dir}"
-    printf "#!/bin/sh\n_real='%s'\n" "${_real}" >"${_dir}/$1"
+    printf '#!/usr/bin/env bash\n_real=%q\n' "${_real}" >"${_dir}/$1"
     cat >>"${_dir}/$1" <<'STUB'
 for _a in "$@"; do _last="$_a"; done
 case "${_last:-}" in "${FAIL_TARGET}"|"${FAIL_TARGET}.XXXXXX") exit 1 ;; esac
@@ -1128,7 +1128,7 @@ _seed_managed_ghostty() {
     cp -p -- "${GHOSTTY}" "${BATS_TEST_TMPDIR}/ghostty.ref"
 }
 
-# 1. _write_atomic failure --------------------------------------------------
+# 1. config_write_atomic failure --------------------------------------------------
 
 @test "#178: a profile write whose rename fails is reported once, exit 1, profile byte-identical, no temp file left" {
     mkdir -p "${HOME}/.config/ghostty"
@@ -1143,8 +1143,8 @@ _seed_managed_ghostty() {
     # The state file is written first and stays written.
     assert_line "[INFO] wrote: ${CONFIG}"
     cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
-    run ls -A -- "${HOME}/.config/ghostty"
-    assert_output "config"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
 }
 
 @test "#178: a profile write whose temp file cannot be created is reported once, exit 1, profile byte-identical" {
@@ -1157,8 +1157,8 @@ _seed_managed_ghostty() {
     assert_failure 1
     assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
     cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
-    run ls -A -- "${HOME}/.config/ghostty"
-    assert_output "config"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
 }
 
 @test "#178: after a failed profile write, status shows the block absent and a re-run completes it" {
@@ -1174,7 +1174,7 @@ _seed_managed_ghostty() {
 
     run "${SETUP}" --terminal ghostty
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_INSIDE})"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter dev)"
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
     run "${REPO_ROOT}/script/box/status.sh"
     assert_success
@@ -1192,8 +1192,8 @@ _seed_managed_ghostty() {
     refute_line --partial "wrote:"
     cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
     cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
-    run ls -A -- "${HOME}/.config/worktool"
-    assert_output "config"
+    run find "$(dirname -- "${CONFIG}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
 }
 
 @test "#178: a block removal that fails is reported once, exit 1, profile byte-identical, no temp file left" {
@@ -1205,11 +1205,11 @@ _seed_managed_ghostty() {
     assert_equal "$(_count_line "[ERROR] failed to write ${GHOSTTY}" "${output}")" "1"
     refute_line --partial "removed: ${GHOSTTY}"
     cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
-    run ls -A -- "${HOME}/.config/ghostty"
-    assert_output "config"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
 }
 
-# 2. _copy_mode ---------------------------------------------------------------
+# 2. config_write_atomic mode preservation ---------------------------------------------------------------
 
 # Seed the ghostty config with mode $1, then write, rewrite and remove the
 # managed block, asserting the mode after every step.
@@ -1254,8 +1254,8 @@ _assert_mode_kept() {
     cmp -- "${BATS_TEST_TMPDIR}/ghostty.ref" "${GHOSTTY}"
     cmp -- "${BATS_TEST_TMPDIR}/config.ref" "${CONFIG}"
     assert_equal "$(stat -c '%i' "${GHOSTTY}")" "${_inode}"
-    run ls -A -- "${HOME}/.config/ghostty"
-    assert_output "config"
+    run find "$(dirname -- "${GHOSTTY}")" -maxdepth 1 -name 'config.??????' -print
+    assert_output ""
 }
 
 @test "#178: --dry-run --terminal none over a managed block reports the removal and removes nothing" {
