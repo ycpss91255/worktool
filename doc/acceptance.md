@@ -576,13 +576,13 @@ rc=0
     - 預期看到資訊
       ```text
       Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --help; default box/dev.ini).
+          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini).
           bench *args    # Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
           default        # List the box verbs.
           help           # Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh --help). [alias: h]
           setup *args    # Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --box <name>, --dry-run, --help).
           status *args   # Show the auto-enter decisions in force, their sources and the managed blocks (args: --help).
-      Usage: assemble.sh [--file <manifest>] [--dry-run]
+      Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
       Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
       Usage: status.sh

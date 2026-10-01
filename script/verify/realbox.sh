@@ -60,23 +60,19 @@
 # Exit codes: 0 pass, 1 a check failed, 2 the command line or the opt-in is
 # wrong (nothing ran).
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`),
-# per doc/adr/0007 - every failure below is surfaced explicitly, so a non-zero
-# exit is always intentional.
-
-# shellcheck source-path=SCRIPTDIR:SCRIPTDIR/../../lib
-set -uo pipefail
+# Expected failures are handled explicitly; checks run in conditionals so
+# their own exit codes and diagnostics decide the acceptance verdict.
+# shellcheck source-path=.
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 LIB_DIR="${REPO_ROOT}/lib"
 
-# shellcheck source=guard.sh
+# shellcheck source=lib/guard.sh
 source "${LIB_DIR}/guard.sh"
-# shellcheck source=config_backup.sh
-source "${LIB_DIR}/config_backup.sh"
-# shellcheck source=config_backup_paths.sh
+# shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
 # --- Defaults (overridable on the command line) ------------------------------

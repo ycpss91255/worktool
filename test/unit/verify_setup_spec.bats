@@ -235,10 +235,8 @@ case "${1:-}:${2:-}" in
         printf 'config: %s/worktool/config\n' "${_cfg}"
         printf 'auto-enter: yes (default)\n'
         printf 'terminal: ghostty (default)\n'
-        printf 'tmux: inside (default)\n'
         printf 'box: dev (default)\n'
         printf 'ghostty: %s/ghostty/config (managed block: present)\n' "${_cfg}"
-        printf 'tmux.conf: %s/.tmux.conf (managed block: absent)\n' "${HOME}"
         printf 'distrobox: %s (recorded in a managed block: runnable)\n' \
             "$(command -v distrobox)"
         exit 0
@@ -352,18 +350,7 @@ _insert_before() {
     rm -f "${_file}.new"
 }
 
-# Degrade the copy at $1 so that ONLY the tmux-host path overwrites its
-# managed file. The ghostty block is still replaced in place, correctly, on
-# both tmux placements; ~/.tmux.conf is written over wholesale, and the
-# report is exactly the one a correct write prints. This is the regression
-# section 3 could not see: 3.1-3.6 never take this branch.
-# Degrade the copy at $1 so that ONLY `_apply_no_terminal` - the
-# `--terminal none` removal path - empties each managed file instead of
-# stripping its block. `_apply_disable` (`--auto-enter no`, the removal
-# path 3.3 and 3.7 run) and both write paths are left exactly as they are,
-# so the degradation is invisible to every item that does not pass
-# `--terminal none`. The log lines are the ones the correct product prints,
-# in the same order, naming the same bodies.
+# Only terminal-none removal destroys the Ghostty user's content.
 _degrade_no_terminal_empties() {
     _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'EOF'
 _apply_no_terminal() {
@@ -380,15 +367,6 @@ _apply_no_terminal() {
 EOF
 }
 
-# Degrade the copy at $1 so that ONLY the `_block_remove` call INSIDE
-# `_apply_ghostty` - the one the tmux-INSIDE branch makes, to take out the
-# block an earlier `--tmux host` run wrote - empties ~/.tmux.conf instead
-# of stripping its block. Every other call site is untouched: the ghostty
-# write on both branches, the tmux.conf write on the host branch,
-# `_apply_disable` and `_apply_no_terminal` are all exactly as they ship,
-# so the degradation is invisible to every item that does not first write
-# a ~/.tmux.conf block and then switch back to `--tmux inside`. The log
-# line is the one the correct product prints, naming the same body.
 # --- Control ------------------------------------------------------------------
 
 @test "control: with every tool behaving, all nine items pass (so the failure cases below are not vacuous)" {
@@ -888,7 +866,7 @@ EOF
     refute_output --partial "3.8 PASS"
 }
 
-@test "3.8: a staging setup that exits 0 without writing the two blocks cannot pass (the removal would be vacuous)" {
+@test "3.8: a staging setup that exits 0 without writing the profile block cannot pass (the removal would be vacuous)" {
     # `--terminal none` removing nothing is indistinguishable from
     # `--terminal none` removing correctly unless the blocks were really
     # there first, so the preconditions are measured and printed.
@@ -899,7 +877,7 @@ EOF
     refute_output --partial "3.8 PASS"
 }
 
-@test "3.8: a --terminal none removal that empties the ghostty config instead of stripping their blocks cannot pass (GAP C)" {
+@test "3.8: a --terminal none removal that empties the ghostty config instead of stripping its block cannot pass (GAP C)" {
     # The degraded product really runs, really reports removing each block
     # by name, and really leaves zero blocks behind: both counts go 1 to 0
     # and `status` calls both files `absent`. It has also just deleted the
@@ -926,7 +904,7 @@ EOF
 @test "3.8 is what catches it: the same degradation leaves every other item of section 3 green" {
     # The honest measure of the gap 3.8 closes. No other item passes
     # `--terminal none` to the product, so they reach `_apply_disable` or
-    # the removal inside `_apply_ghostty` instead and this degradation is
+    # the enable path instead and this degradation is
     # invisible to all eight of them - which is exactly how a data-losing
     # `_apply_no_terminal` would have reached the maintainer's machine, on
     # the default path of any host without ghostty.

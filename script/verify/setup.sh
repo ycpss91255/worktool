@@ -73,10 +73,9 @@
 # Exit codes: 0 every requested item passed; 1 an item failed or could not
 # be run; 2 usage error.
 #
-# Exit-code-contract script: `set -uo pipefail` (no `-e`), per
-# doc/adr/0007; every non-zero exit is explicit.
-
-set -uo pipefail
+# Expected failures are handled explicitly. The item runner deliberately
+# calls each check in a conditional so it can report its own verdict.
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 # Resolved before anything else and checked here: a REPO_ROOT that silently
@@ -835,7 +834,7 @@ _item_3_2() {
     mkdir -p "${ITEM_H}/dev-box" || return 1
     printf 'acceptance credential\n' >"${ITEM_H}/.acceptance-user" || return 1
     ln -s "${ITEM_H}/.acceptance-user" "${ITEM_H}/dev-box/.acceptance-user" || return 1
-    "${_env[@]}" bash -c 'source "$1/lib/config.sh"; config_set home "$HOME/dev-box" home.source default link .acceptance-user' bash "${REPO_ROOT}" || return 1
+    "${_env[@]}" bash -c "source \"\$1/lib/config.sh\"; config_set home \"\$HOME/dev-box\" home.source default link .acceptance-user" bash "${REPO_ROOT}" || return 1
     _run_norm "${_env[@]}" just box setup || return 1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _show_norm_file "${_state}" || return 1
@@ -1312,10 +1311,14 @@ _item_3_7() {
     printf 'distrobox-blocks=%s\n' "${_blocks}"
     [[ "${_blocks}" -eq 1 ]] || _bad=1
     _check_user_content 3.7 after-write distrobox.conf "${_conf}" '# acceptance user config' 'container_manager=docker' || _bad=1
-    _run_norm env TMUX=host TMUX_PANE=pane sh -c '. "$1"; printf "TMUX=%s TMUX_PANE=%s\n" "${TMUX-unset}" "${TMUX_PANE-unset}"' sh "${_conf}" dev || return 1
+    cat >"${ITEM_T}/isolation.sh" <<'SH' || return 1
+. "$1"
+printf 'TMUX=%s TMUX_PANE=%s\n' "${TMUX-unset}" "${TMUX_PANE-unset}"
+SH
+    _run_norm env TMUX=host TMUX_PANE=pane sh "${ITEM_T}/isolation.sh" "${_conf}" dev || return 1
     _expect_lines 3.7 'TMUX=unset TMUX_PANE=unset' || _bad=1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
-    _run_norm env TMUX=host TMUX_PANE=pane sh -c '. "$1"; printf "TMUX=%s TMUX_PANE=%s\n" "${TMUX-unset}" "${TMUX_PANE-unset}"' sh "${_conf}" other || return 1
+    _run_norm env TMUX=host TMUX_PANE=pane sh "${ITEM_T}/isolation.sh" "${_conf}" other || return 1
     _expect_lines 3.7 'TMUX=host TMUX_PANE=pane' || _bad=1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
     _expect_user_content 3.7 after-write || _bad=1

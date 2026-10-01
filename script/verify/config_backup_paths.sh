@@ -1,6 +1,9 @@
 # Acceptance backup paths for the current setup contract (PR #232 / #351).
-# Sourced after lib/config_backup.sh; the manifest and byte-preserving backup
-# machinery remain shared, while the acceptance layer owns this file set.
+# The manifest and byte-preserving backup machinery remain shared, while
+# the acceptance layer owns this file set.
+# shellcheck source-path=.
+# shellcheck source=lib/config_backup.sh
+source "${REPO_ROOT}/lib/config_backup.sh"
 CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
 
