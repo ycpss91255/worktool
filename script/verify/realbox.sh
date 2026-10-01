@@ -65,7 +65,7 @@
 # per doc/adr/0007 - every failure below is surfaced explicitly, so a non-zero
 # exit is always intentional.
 
-# shellcheck source-path=SCRIPTDIR/../../lib
+# shellcheck source-path=SCRIPTDIR:SCRIPTDIR/../../lib
 set -uo pipefail
 
 # --- Paths -------------------------------------------------------------------
@@ -77,6 +77,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/guard.sh"
 # shellcheck source=config_backup.sh
 source "${LIB_DIR}/config_backup.sh"
+# shellcheck source=config_backup_paths.sh
+source "${SCRIPT_DIR}/config_backup_paths.sh"
 
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
@@ -543,7 +545,7 @@ _52_step3_restore() {
     guard_require distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
         || return 1
     cfgbk_paths || return 1
-    local _rc=0 _n _rrc
+    local _rc=0 _rrc
 
     if [[ ! -d "${CFGBK_B}" ]]; then
         printf 'no-backup=1 (%s absent; already restored, or step 1 never ran)\n' "${CFGBK_B}"
@@ -566,9 +568,7 @@ _52_step3_restore() {
     [[ "${_rrc}" -eq 0 ]] \
         || { guard_fail "just box setup --auto-enter no exited ${_rrc}"; _rc=1; }
 
-    for _n in "${CFGBK_NAMES[@]}"; do
-        cfgbk_restore_one "${_n}" || _rc=1
-    done
+    cfgbk_restore_all || _rc=1
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-ok=1\n'; else printf 'restore-ok=0\n'; fi
 
     cfgbk_report_blocks || _rc=1
