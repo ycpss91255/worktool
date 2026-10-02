@@ -2595,6 +2595,7 @@ _pl_resume_setup() {
     git -C "${root}/src" branch -M main
     git -C "${root}/src" remote add origin "${root}/remote"
     git -C "${root}/src" push -q origin main
+    git -C "${root}/src" update-ref refs/remotes/origin/acceptance HEAD
     git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
     mkdir -p "${root}/src/.claude/workflows"
     cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
@@ -2602,13 +2603,38 @@ _pl_resume_setup() {
 
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
-    replies='{"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     if [[ $# -ge 3 ]]; then
         replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
     fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" \
         "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
         "${replies}" exec-resume
+}
+
+@test "pr-loop resume: an empty branch without a PR enters implementation in its worktree (#403)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" extra json before
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    mkdir -p "${root}/bin"
+    printf '#!/bin/sh\nprintf "[]\\n"\n' > "${root}/bin/gh"
+    chmod +x "${root}/bin/gh"
+    for extra in '{"implementer":"codex"}' '{"implementer":"claude"}' '{"mode":"light"}'; do
+        PATH="${root}/bin:${PATH}" run _pl_resume_run "${extra}"
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.pr == 7 and .result.ciState == "green" and
+            ([.calls[].role | startswith("implement:")] | map(select(.)) | length) == 1 and
+            (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                contains("existing worktree") and contains("/worktree/n") and
+                (contains("git worktree add") | not)) and
+            ([.calls[].role] | index("implement:#386") < index("ci:#7"))' <<<"${json}"
+        assert_success
+        run git -C "${root}/worktree/n" rev-parse HEAD
+        assert_output "${before}"
+        run git -C "${root}/worktree/n" branch --show-current
+        assert_output b
+    done
 }
 
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
