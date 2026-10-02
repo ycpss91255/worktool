@@ -130,3 +130,13 @@ SCRIPT
     assert_success
     assert_output --partial "Worktree cleanup failed"
 }
+
+@test "native Claude successful Bash response also triggers post merge cleanup" {
+    local payload
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent",
+            tool_response:{stdout:"", stderr:"", interrupted:false, isImage:false}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "Worktree cleanup failed"
+}

@@ -659,5 +659,8 @@ gitignore 忽略的 `.agents/state/` 例外；鎖定或目錄遺失的 worktree 
 
 `remind_main_sync.sh` 同時註冊 PreToolUse 與 PostToolUse（Claude／Codex）。
 前者維持同步 main 提醒；後者在 `gh pr merge` 成功（回應的
-`exit_code: 0`）且非 `--auto`、非 help 時執行腳本的 `--apply`，回報結果。
+`exit_code: 0`，或 Claude 原生 Bash 回應的 `stdout`／`stderr` 與
+`interrupted: false`）且非 `--auto`、非 help 時執行腳本的 `--apply`，回報結果。
+[Claude 官方 hook 文件](https://code.claude.com/docs/en/hooks#posttooluse)
+定義 PostToolUse 為成功事件，原生 Bash 回應不帶 exit_code。
 失敗或缺少成功證據的工具回應不清理；清理失敗以提醒回報，不改變已完成的合併結果。

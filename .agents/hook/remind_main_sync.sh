@@ -42,11 +42,20 @@ _policy_note() {
     printf '%s' "${_note}"
 }
 
+_merge_succeeded() {
+    # PostToolUse is a success event; Claude Bash has no exit_code field.
+    jq -e '.tool_response as $r |
+        if ($r | has("exit_code")) then $r.exit_code == 0
+        else ($r.stdout | type) == "string" and
+             ($r.stderr | type) == "string" and $r.interrupted == false
+        end' <<< "${HOOK_INPUT}" >/dev/null 2>&1
+}
+
 _post_merge() {
     local command="$1" cwd report rc=0
     [[ "${command}" =~ --auto([[:space:]]|$) ]] && return 0
     [[ "${command}" =~ (^|[[:space:]])(--help|-h)([[:space:]]|$) ]] && return 0
-    [[ "$(hook_field '.tool_response.exit_code')" == 0 ]] || return 0
+    _merge_succeeded || return 0
     cwd="$(hook_field '.cwd')"
     cwd="${cwd:-${CLAUDE_PROJECT_DIR:-${HOOK_REPO_ROOT}}}"
     if ! report="$(cd -- "${cwd}" && ./.agents/script/worktree/prune-merged.sh --apply 2>&1)"; then
