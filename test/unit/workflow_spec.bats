@@ -2586,6 +2586,8 @@ _pl_resume_setup() {
     git -C "${root}/src" remote add origin "${root}/remote"
     git -C "${root}/src" push -q origin main
     git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
+    mkdir -p "${root}/src/.claude/workflows"
+    cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
 }
 
 _pl_resume_run() {
@@ -2642,4 +2644,15 @@ _pl_resume_run() {
     assert_output "${before}"
     run git -C "${root}/worktree/n" branch --show-current
     assert_output b
+}
+
+@test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
+    _pl_resume_setup
+    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
+    assert_success
+    run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
+        .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint, just test unit test/unit/workflow_spec.bats")) and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
+    assert_success
 }

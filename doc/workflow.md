@@ -126,7 +126,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
-| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`pr` 為可選接續 PR 編號，與既有 `branch` 一起轉傳；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
 | `mode` | 否 | `full`（預設）或 `light`；轉傳給每個 `pr-loop` |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
