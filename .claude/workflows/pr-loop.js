@@ -212,10 +212,15 @@ Return its stdout verbatim in evidence, even when it contains errors. Do not inf
 
 // Probe the branch before choosing fresh implementation or resume.
 const prepared = await agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
-Run this script blocking in the foreground; return stdout verbatim in state. Do not implement, push or rewrite history:
+Run this script blocking in the foreground; return stdout verbatim in state. Only recreate the named worktree if absent; never alter another worktree, implement, push or rewrite history:
 \`cd ${sq(REPO_DIR)} && {
 if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
+  if [ ! -e ${sq(WT)} ]; then
+    git worktree add ${sq(WT)} ${sq(A.branch)} || exit 1
+  fi
+  common=$(git rev-parse --path-format=absolute --git-common-dir) &&
   cd ${sq(WT)} &&
+  [ "$(git rev-parse --path-format=absolute --git-common-dir)" = "$common" ] &&
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] && printf resume
 else
   rc=$?

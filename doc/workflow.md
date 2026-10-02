@@ -71,6 +71,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 
 ## 既有分支接續
 
+本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
 指定既有 `branch` 與 `pr` 時跳過實作與開 PR，直接進入 CI／審查迴圈。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。

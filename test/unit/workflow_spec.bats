@@ -2626,3 +2626,20 @@ _pl_resume_run() {
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
 }
+
+@test "pr-loop resume: missing worktree is recreated without changing branch history (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before
+    git -C "${root}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
+    run git -C "${root}/worktree/n" branch --show-current
+    assert_output b
+}
