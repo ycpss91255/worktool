@@ -117,9 +117,10 @@ Items:
           publish the three numbers to the issue and read that exact comment
           back. Removes the box it created, on success and on interrupt.
   5.2     Ghostty window chain: back up every config `just box setup` can
-          write (the ghostty config, the worktool state file and
-          ~/.tmux.conf), apply the managed blocks, prove the user's own
-          content survived the apply, confirm a new window at the terminal,
+          write (Ghostty legacy config, config.ghostty, the worktool state file
+          and distrobox.conf), apply the managed blocks, prove the user's own
+          content survived, reload an already running Ghostty, then verify
+          the new fish mount namespace differs from the host at the terminal,
           then restore everything and remove the box.
   5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
   5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
@@ -553,7 +554,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_step2_apply() {
-    guard_require distrobox just timeout awk sha256sum grep cut readlink id || return 1
+    guard_require distrobox just timeout awk sha256sum grep cut readlink id ps || return 1
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -571,6 +572,8 @@ _52_step2_apply() {
     _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
+        || { guard_fail "cannot inventory processes before setup"; return 1; }
     _just box setup || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
     _just box status || { guard_fail "just box status failed -- run 5.2.3 to restore"; return 1; }
     printf 'setup-rc=0\n'
@@ -582,26 +585,44 @@ _52_step2_apply() {
         || { guard_fail "the apply destroyed user content -- run 5.2.3 to restore it from the backup"; return 1; }
 }
 
-# --- the one subjective check ------------------------------------------------
-
-# The chain itself is verified headlessly by the integration and system-real
-# gates (issues #172 / #175); what is left here is a human judging a real
-# window. That needs a terminal: with no tty the observation CANNOT be made,
-# so this says so and fails rather than passing a check nobody performed.
+# --- objective new-window check ---------------------------------------------
 _52_confirm_window() {
-    local _ans
-    printf 'Open a NEW ghostty window now and run these three lines in it:\n'
-    printf "  ls /run/.containerenv 2>/dev/null || ls /.dockerenv; ps -p \$fish_pid -o comm=\n"
-    printf 'Expected: container marker (/run/.containerenv or /.dockerenv), then fish - with no noticeable delay.\n'
+    local _pid
+    printf 'Ghostty already running when setup applied? Reload config (Linux default Ctrl+Shift+,).\n'
+    printf 'Reload is asynchronous: wait for evidence that config.ghostty was read (e.g. Ghostty logs),\n'
+    printf 'or start a new Ghostty process with the updated config before opening a new window.\n'
+    printf 'Never close your existing windows.\n'
+    printf 'Open a NEW ghostty window now and run: echo %s\n' "\$fish_pid"
     [[ -t 0 ]] \
-        || { guard_fail "5.2 ends in a subjective check that needs a terminal: stdin is not a tty, so the new-window observation cannot be made here. Re-run 5.2 from an interactive shell."; return 1; }
-    printf 'Did the new window show those two lines, promptly? [yes/no] '
-    IFS= read -r _ans || { guard_fail "reading the confirmation failed"; return 1; }
-    [[ "${_ans}" == "yes" ]] \
-        || { guard_fail "the new-window check was not confirmed (answered '${_ans}')"; return 1; }
-    # Echo what the maintainer confirmed, so the transcript carries the same
-    # two observations doc/acceptance.md requires.
-    printf 'container-marker=confirmed\nfish\n'
+        || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }
+    printf 'Enter the fish PID from the new window: '
+    IFS= read -r _pid || { guard_fail "reading the fish PID failed"; return 1; }
+    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
+        || { guard_fail "expected a fish PID; a typed yes is not objective evidence"; return 1; }
+    _52_window_evidence "${_pid}"
+}
+
+_52_window_evidence() {
+    local _pid="$1" _comm _host _window _before _name
+    guard_require ps readlink || return 1
+    while read -r _before _name; do
+        [[ "${_before}" != "${_pid}" ]] \
+            || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
+    done <"${CFGBK_B}/processes-before"
+    _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
+        || { guard_fail "cannot inspect fish PID ${_pid}"; return 1; }
+    [[ "${_comm}" == fish ]] \
+        || { guard_fail "PID ${_pid} is not fish"; return 1; }
+    _host="$(readlink /proc/self/ns/mnt)" \
+        || { guard_fail "cannot read host mount namespace"; return 1; }
+    _window="$(readlink "/proc/${_pid}/ns/mnt")" \
+        || { guard_fail "cannot read fish mount namespace (permissions or exited process)"; return 1; }
+    [[ "${_host}" =~ ^mnt:\[[0-9]+\]$ && "${_window}" =~ ^mnt:\[[0-9]+\]$ ]] \
+        || { guard_fail "invalid mount namespace evidence"; return 1; }
+    printf 'window-evidence: pid=%s comm=%s host=%s window=%s\n' \
+        "${_pid}" "${_comm}" "${_host}" "${_window}"
+    [[ "${_window}" != "${_host}" ]] \
+        || { guard_fail "fish remains in the host mount namespace"; return 1; }
 }
 
 # --- step 3 ------------------------------------------------------------------

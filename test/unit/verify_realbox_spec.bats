@@ -439,6 +439,118 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 
 # --- 5.2 step 1: back up -----------------------------------------------------
 
+_window_input() {
+    cat >"${STATE}/window-run" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+"${REALBOX}" --allow-real-box 5.2 || rc=$?
+printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/window-rc"
+STUB
+    chmod +x "${STATE}/window-run"
+    printf '%s\n' "$1" | script -q -c \
+        "\"${STATE}/window-run\"" /dev/null
+}
+
+@test "#362: 5.2 refuses typed yes without objective window evidence" {
+    export REALBOX
+    run _window_input yes
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "expected a fish PID"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
+_fake_window_process() {
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,comm=' ]]; then
+    printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
+    exit "${FAKE_WINDOW_BASELINE_RC:-0}"
+fi
+printf '%s\n' "${FAKE_WINDOW_COMM:-fish}"
+exit "${FAKE_WINDOW_PS_RC:-0}"
+STUB
+    mv "${STUBS}/readlink" "${STATE}/readlink"
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    /proc/self/ns/mnt) printf 'mnt:[100]\n' ;;
+    /proc/4242/ns/mnt)
+        printf '%s\n' "${FAKE_WINDOW_NS-mnt:[200]}"
+        exit "${FAKE_WINDOW_NS_RC:-0}" ;;
+    *) exec "${FAKE_STATE_DIR}/readlink" "$@" ;;
+esac
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+    export REALBOX
+}
+
+@test "#362: 5.2 refuses an existing fish process as new-window evidence" {
+    _fake_window_process
+    export FAKE_WINDOW_BASELINE='4242 fish'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish PID 4242 existed before setup"
+    assert_output --partial "restore-ok=1"
+    export FAKE_WINDOW_BASELINE_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot inventory processes before setup"
+    assert_output --partial "restore-ok=1"
+}
+
+@test "#362: 5.2 explains asynchronous reload for an already running Ghostty" {
+    export REALBOX
+    run _window_input yes
+    assert_output --partial "Ghostty already running"
+    assert_output --partial "Ctrl+Shift+,"
+    assert_output --partial "asynchronous"
+    assert_output --partial "config.ghostty"
+    assert_output --partial "start a new Ghostty process"
+    assert_output --partial "Never close your existing windows"
+    assert_output --partial "echo \$fish_pid"
+}
+
+@test "#362: realbox help names the four actual backup files" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial "Ghostty legacy config"
+    assert_output --partial "config.ghostty"
+    assert_output --partial "worktool state file"
+    assert_output --partial "distrobox.conf"
+    refute_output --partial ".tmux.conf"
+    assert_output --partial "fish mount namespace"
+}
+
+@test "#362: 5.2 passes with measured fish namespace different from host" {
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200]"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    local _mode
+    for _mode in host non-fish ps-failed namespace-failed empty malformed; do
+        unset FAKE_WINDOW_COMM FAKE_WINDOW_PS_RC FAKE_WINDOW_NS FAKE_WINDOW_NS_RC
+        case "${_mode}" in
+            host) export FAKE_WINDOW_NS='mnt:[100]' ;;
+            non-fish) export FAKE_WINDOW_COMM=sh ;;
+            ps-failed) export FAKE_WINDOW_PS_RC=1 ;;
+            namespace-failed) export FAKE_WINDOW_NS_RC=1 ;;
+            empty) export FAKE_WINDOW_NS='' ;;
+            malformed) export FAKE_WINDOW_NS='different' ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "container-marker=confirmed"
+        assert_output --partial "restore-ok=1"
+    done
+}
+
 @test "5.2.1 happy path records every file setup can write and publishes the manifest" {
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1
@@ -853,7 +965,8 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 @test "5.2: new-window instructions check direct fish entry without a tmux session" {
     run "${REALBOX}" --allow-real-box 5.2
     assert_failure
-    assert_output --partial "Expected: container marker (/run/.containerenv or /.dockerenv), then fish"
+    assert_output --partial "echo \$fish_pid"
+    assert_output --partial "Open a NEW ghostty window"
     refute_output --partial "tmux display"
     assert_line "restore-ok=1"
 }
