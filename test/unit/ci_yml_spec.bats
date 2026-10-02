@@ -56,7 +56,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 setup() {
     CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
-    LEG_JOBS=(build-image gate test-system-real)
+    LEG_JOBS=(build-image gate test-system-real verify-all)
     GATES=(lint test-unit test-matrix test-integration test-system test-acceptance)
     # gate=tier: the `just test <tier>` each gate runs (the include map).
     TIERS=(lint=lint test-unit=unit test-matrix=matrix test-integration=integration
@@ -173,7 +173,7 @@ _pull_request_types() {
 
 @test "pull_request reruns CI when the PR body is edited" {
     run _pull_request_types
-    assert_output "$(_sorted_set opened synchronize reopened edited)"
+    assert_output "$(_sorted_set opened synchronize reopened edited labeled unlabeled)"
 }
 
 # --- every leg-carrying job runs on both runners -----------------------------
@@ -187,8 +187,9 @@ _pull_request_types() {
     assert_line "commit-email"
     assert_line "commit-attribution"
     assert_line "commit-refs"
+    assert_line "verify-all"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 7
+    assert_equal "${#lines[@]}" 8
 }
 
 @test "build-image, gate and test-system-real run on the matrix runner" {
@@ -308,7 +309,7 @@ _pull_request_types() {
     local _line
     run grep -E '^ +name: worktool-test-image' "${CI_YML}"
     assert_success
-    assert_equal "${#lines[@]}" 2
+    assert_equal "${#lines[@]}" 3
     for _line in "${lines[@]}"; do
         assert_equal "${_line}" "          name: ${ARTIFACT}"
     done
@@ -344,7 +345,7 @@ _pull_request_types() {
 
 @test "--privileged is named by the test-system-real job only" {
     local _job
-    for _job in build-image gate commit-email commit-attribution commit-refs ci-passed; do
+    for _job in build-image gate verify-all commit-email commit-attribution commit-refs ci-passed; do
         run _job_block "${_job}"
         refute_output --partial '--privileged'
     done
@@ -429,7 +430,28 @@ _pull_request_types() {
     assert_output --partial "PUSH_AFTER: \${{ github.event.after }}"
     assert_output --partial "DEFAULT_REF: refs/remotes/origin/\${{ github.event.repository.default_branch }}"
     run _job_block ci-passed
-    assert_output --partial 'commit-refs]'
+    assert_output --partial 'commit-refs,'
     assert_output --partial "REFS_RESULT: \${{ needs.commit-refs.result }}"
     assert_output --partial "[ \"\${REFS_RESULT}\" = \"success\" ] || exit 1"
+}
+
+@test "milestone-gate PRs run the real just verify all entry with authenticated evidence and pinned distrobox" {
+    run _job_block verify-all
+    assert_success
+    assert_line "    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
+    assert_line '    needs: build-image'
+    assert_line --partial 'uses: actions/checkout@'
+    assert_line --partial 'uses: extractions/setup-just@'
+    assert_line --partial 'uses: actions/download-artifact@'
+    assert_line "          name: ${ARTIFACT}"
+    assert_line '        run: docker load -i /tmp/worktool-test.tar'
+    assert_line --partial 'docker cp "${container}:/usr/local/bin/." "${RUNNER_TEMP}/worktool-bin"'
+    assert_line '          TEST_IMAGE_PREBUILT: "1"'
+    assert_line '          GH_TOKEN: ${{ github.token }}'
+    assert_line '      pull-requests: read'
+    assert_line '      checks: read'
+    assert_line '      issues: read'
+    assert_line '      actions: read'
+    assert_line '        run: just verify all'
+    refute_output --partial '--allow-real-box'
 }
