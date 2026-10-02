@@ -201,6 +201,15 @@ _checks_per_promise() {
     assert_output --regexp '│   ├── contract\.md '
 }
 
+@test "the contract describes tool config placement without calling it user entry" {
+    run _section 2
+    assert_success
+    assert_output --partial "tool config 要到 M5 才開始放進盒子 HOME"
+    assert_output --partial "tool config 從 M5 起才放進盒子 HOME"
+    refute_output --regexp 'tool config[^。；，]*進盒([，。]|$)'
+    assert_output --partial "終端進盒設定（\`just box setup\`）"
+}
+
 @test "doc/structure.md describes the invariant index as naming ADR issues, not linking ADRs" {
     # The index names the issue that will write each ADR (#202-#211) until
     # those ADRs merge; the tree entries must not say it links ADR files.
