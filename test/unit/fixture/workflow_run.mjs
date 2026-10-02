@@ -99,9 +99,9 @@ const agent = async (prompt, opts = {}) => {
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
   if (role.startsWith('prepare:') && mode !== 'exec-resume') return reply(role)
-  if (mode === 'exec-resume' && !role.startsWith('prepare:')) return reply(role)
+  if (['exec-resume', 'exec-resume-push'].includes(mode) && !role.startsWith('prepare:') && !(mode === 'exec-resume-push' && /^(stage-check|push-check):/.test(role))) return reply(role)
   if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
-  if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume'].includes(mode) && !(mode === 'exec-stage-checks' && (role.startsWith('stage-check:') || role.startsWith('push-check:')))) return reply(role)
+  if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume', 'exec-resume-push'].includes(mode) && !(mode === 'exec-stage-checks' && (role.startsWith('stage-check:') || role.startsWith('push-check:')))) return reply(role)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(role), stdout) : null
 }

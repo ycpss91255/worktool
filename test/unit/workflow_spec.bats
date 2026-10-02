@@ -2722,3 +2722,24 @@ _pl_resume_run() {
     run git -C "${root}/worktree/n" rev-parse HEAD
     assert_output "${before}"
 }
+
+@test "pr-loop resume: existing PR gates and pushes local-ahead commits before CI (#396)" {
+    _pl_stage_setup
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'fix: pending' -m 'Refs: #396' --allow-empty
+    local root="${BATS_TEST_TMPDIR}" replies json
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
+        "${replies}" exec-resume-push
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+        ([.calls[].role] | index("push-check:Resume:#7") < index("ci:#7"))' <<<"${json}"
+    assert_success
+    run git --git-dir="${root}/remote" rev-parse refs/heads/b
+    local remote="${output}"
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${remote}"
+    run cat "${root}/gates"
+    assert_output $'test lint\ntest changed'
+}

@@ -323,7 +323,7 @@ const loc = RESUME ? (A.pr ? { pr: A.pr, sha: '' } : resumedPR) : await agent(LO
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
-const implemented = RESUME && A.pr ? { ok: true, sha } : await checkStage(pr, 'Implement')
+const implemented = await checkStage(pr, RESUME && A.pr ? 'Resume' : 'Implement')
 if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
 sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
