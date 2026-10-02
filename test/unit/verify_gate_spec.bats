@@ -927,3 +927,12 @@ _product_printf() { printf "$@"; }
         assert_success
     done < <(sed -n 's/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
+
+@test "single source: documented chain diagnostics equal the source-guarded fixture" {
+    local _fixture="${BATS_TEST_TMPDIR}/fixture.diag" _doc="${BATS_TEST_TMPDIR}/doc.diag"
+    _system_real_block | grep '^#' >"${_fixture}"
+    sed -n 's/^      \(# \(chain[^:]*\|hang[^:]*\|single-instance\): .*\)$/\1/p' \
+        "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
+    run diff -u "${_fixture}" "${_doc}"
+    assert_success
+}
