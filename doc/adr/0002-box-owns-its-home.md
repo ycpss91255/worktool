@@ -19,10 +19,10 @@
 
 ## 決策
 
-1. 盒子使用獨立 HOME：建盒時以 distrobox `--home` 指定（`box/` 清單的 `home=` 欄位，見上游 [distrobox-assemble.md 第 126 行](https://github.com/89luca89/distrobox/blob/1.8.2.5/docs/usage/distrobox-assemble.md)）。tool config（tmux、fish、nvim 等盒內工具的設定）只放在盒子 HOME。
-2. 路徑可指定：預設 `~/<盒名>-box`（dev 盒 = `~/dev-box`），以 `just box assemble --home <路徑>` 覆寫。distrobox 只在建盒時決定 HOME，建盒後要換只能刪盒重建；已存在的盒子給了不同的 `--home` 一律拒絕，不自動重建。以上尚未實作（目前 `just box assemble` 只有 `--dry-run`、`--file`、`--help`），將由 #198 實作，細節與驗收見該 issue。
+1. 盒子使用獨立 HOME：distrobox 建立容器時以 `--home` 指定（`box/` 清單的 `home=` 欄位，見上游 [distrobox-assemble.md 第 126 行](https://github.com/89luca89/distrobox/blob/1.8.2.5/docs/usage/distrobox-assemble.md)）。tool config（tmux、fish、nvim 等盒內工具的設定）只放在盒子 HOME。
+2. 路徑可指定：預設 `~/<盒名>-box`（dev 盒 = `~/dev-box`），以 `just box assemble --home <路徑>` 覆寫。distrobox 只在建立容器時決定 HOME，容器建立後要換只能刪盒重建；已存在的盒子給了不同的 `--home` 一律拒絕，不自動重建。以上尚未實作（目前 `just box assemble` 只有 `--dry-run`、`--file`、`--help`），將由 #198 實作，細節與驗收見該 issue。
 3. user config（`~/.ssh`、`~/.gitconfig`、`~/.gnupg`、`~/.config/gh` 等）以 symlink 從 host HOME 帶進盒子 HOME：不複製、不修改，host 那份是唯一一份；盒子 HOME 已有同名檔時不覆蓋。以上尚未實作，將由 #199 實作，細節與驗收見該 issue。
-4. `/tmp` 仍是盒內外共用，所以 tmux 要有盒子自己的 socket：建盒時在盒子設定 `TMUX_TMPDIR`，指到盒子 HOME 底下的專用目錄，盒內任何方式啟動的 tmux 都不會連到 host 的 server。以上尚未實作，將由 #179 實作，細節與驗收見該 issue。
+4. `/tmp` 仍是盒內外共用，所以 tmux 要有盒子自己的 socket：distrobox 建立容器時在盒子設定 `TMUX_TMPDIR`，指到盒子 HOME 底下的專用目錄，盒內任何方式啟動的 tmux 都不會連到 host 的 server。以上尚未實作，將由 #179 實作，細節與驗收見該 issue。
    - 補記（#179 實作，PR #232）：光有 `TMUX_TMPDIR` 不夠。`distrobox enter` 會把呼叫端的環境整批帶進盒內，從 host 的 tmux pane 進盒時盒內會繼承指向 host socket 的 `TMUX`（與 `TMUX_PANE`），而 tmux 先看 `TMUX`。洩漏在環境、不在執行檔，所以不包 tmux，改在環境建立處拿掉：`just box setup` 在 distrobox 自己的 `distrobox.conf` 維護受管區塊（`distrobox-enter` 組 `exec` 請求前 source，進該盒時 `unset TMUX TMUX_PANE`），盒內登入 shell 的 profile.d / fish conf.d 是第二道。機制、涵蓋的進盒路徑與邊界見 `doc/enter.md`「決策：終端不自動開 tmux」第 2 點。
 
 ## 影響
@@ -38,4 +38,4 @@
 
 這是共識 4 的做法。它的好處是零設定：user config 與 tool config 盒內外都直接可用，不需要連結、不需要選路徑，host 上的 GUI app 與盒內工具讀同一份設定也不需同步。
 
-否決的理由是「機制優先於紀律」：互不干擾要靠機制保證，不能靠使用者或維護者記得不在 host 裝同名工具。共用 HOME 下，干擾是否發生取決於 host 上裝了什麼，而 host 的狀態不在 worktool 的控制範圍內（遺留的 init_ubuntu 工具、發行版預裝、之後的手動安裝都算）；紀律一旦破功，症狀是設定被悄悄改掉或在 host 拿到盒子的設定，沒有任何錯誤訊號。獨立 HOME 讓「兩邊讀不同的設定」成為預設，代價（user config 要連結、HOME 路徑建盒後不可改）是一次性的，而且由 #198、#199 的腳本承擔，不落在使用者身上。
+否決的理由是「機制優先於紀律」：互不干擾要靠機制保證，不能靠使用者或維護者記得不在 host 裝同名工具。共用 HOME 下，干擾是否發生取決於 host 上裝了什麼，而 host 的狀態不在 worktool 的控制範圍內（遺留的 init_ubuntu 工具、發行版預裝、之後的手動安裝都算）；紀律一旦破功，症狀是設定被悄悄改掉或在 host 拿到盒子的設定，沒有任何錯誤訊號。獨立 HOME 讓「兩邊讀不同的設定」成為預設，代價（user config 要連結、HOME 路徑在 distrobox 建立容器後不可改）是一次性的，而且由 #198、#199 的腳本承擔，不落在使用者身上。

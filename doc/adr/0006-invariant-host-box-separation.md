@@ -13,7 +13,7 @@ worktool 只改盒子，不改 host：不是從 ghostty 開的終端拿到的是
 以下三點是 worktool 必須守住的性質。已知的例外只有一個：第 3 點對 `--tmux host` 尚未生效：`just box setup --tmux host` 目前會在 host 的 `~/.tmux.conf` 寫受管區塊，違反第 3 點，待 #179 移除 tmux 決策後才生效。除此之外三點都必須永遠成立：
 
 1. 用 ghostty 以外的方式開終端，拿到的是 host 自己的 shell，行為與沒有裝 worktool 時相同；進盒只經由 worktool 寫進 ghostty 設定的受管區塊，不經由 host 的 shell。
-2. worktool 不寫 host 的 shell 設定檔（例如 `~/.bashrc`、`~/.profile`、`~/.config/fish/`），不論是建盒、設定終端或之後任何一個 `just` 指令。
+2. worktool 不寫 host 的 shell 設定檔（例如 `~/.bashrc`、`~/.profile`、`~/.config/fish/`），不論是 assemble、設定終端或之後任何一個 `just` 指令。
 3. tool config（盒內工具的設定，例如 tmux、fish、nvim）只對盒內生效：盒內工具讀寫的是盒子自己的那一份，host 上同名的工具看不到、也改不到它；反過來，host 上的同名工具的設定也不會被盒內工具讀到。盒內工具的執行期狀態（例如 tmux 的 socket）也不得與 host 共用。
 
 適用範圍是 worktool 自己做的事。以下不在本性質內：
@@ -37,7 +37,7 @@ worktool 的主痛點是重建成本（#200 定案 2）：換機、重灌、host
 
 機制：
 
-- 獨立 HOME：[ADR 0002](0002-box-owns-its-home.md) 決策 1、2。`just box assemble` 以 `--home`（預設 `~/<盒名>-box`）建盒，已由 #198 實作。
+- 獨立 HOME：[ADR 0002](0002-box-owns-its-home.md) 決策 1、2。`just box assemble` 以 `--home`（預設 `~/<盒名>-box`）assemble 盒子，已由 #198 實作。
 - 進盒只經由 ghostty 設定的受管區塊：`script/box/setup.sh` 只寫 `$XDG_CONFIG_HOME/worktool/config`（狀態檔）、ghostty 設定的受管區塊，以及 `--tmux host` 時 `~/.tmux.conf` 的受管區塊（見下方待補最後一點），不寫 host shell 設定檔。
 - tmux 使用盒子自己的 server：ADR 0002 決策 4，尚未實作，將由 #179 實作。
 
