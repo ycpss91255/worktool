@@ -1928,7 +1928,12 @@ _pl_stage_setup() {
 #!/bin/sh
 exec git --git-dir='${root}/remote' rev-parse refs/heads/b
 SH
-    chmod +x "${root}/bin/gh"
+    cat > "${root}/bin/just" <<SH
+#!/bin/sh
+[ "\$(git --git-dir='${root}/remote' rev-parse refs/heads/b)" = '${PL_BEFORE}' ] || exit 1
+printf '%s\\n' "\$*" >> '${root}/gates'
+SH
+    chmod +x "${root}/bin/gh" "${root}/bin/just"
 }
 
 _pl_stage_run() {
@@ -1937,7 +1942,7 @@ _pl_stage_run() {
     local replies
     replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
         "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
-        "stage-check:":{evidence:"<stdout>"}}')"
+        "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
     PL_ACTION="${action}" PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" --arg impl "${implementer}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t",implementer:$impl,maxRounds:1}')" \
@@ -1960,21 +1965,26 @@ _pl_stage_run() {
     done
 }
 
-@test "pr-loop (node): Fix rejects a committed but unpushed HEAD (#331)" {
+@test "pr-loop (node): Fix gates and pushes a committed but unpushed HEAD (#396)" {
     local impl
     for impl in codex claude; do
         _pl_stage_setup
         run _pl_stage_run "${impl}" unpushed
         assert_success
         local json="${output}"
-        run jq -cr '[.result.codexVerdict, ([.calls[].role | select(startswith("review:"))] | length), ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
-        assert_output '["blocked",1,1]'
-        run jq -r '.result.blockingLeft | join("\n")' <<<"${json}"
-        assert_output --partial 'git status: (clean)'
-        assert_output --partial "remote HEAD: ${PL_BEFORE}"
-        assert_output --partial "PR head: ${PL_BEFORE}"
-        refute_output --partial "local HEAD: ${PL_BEFORE}"
+        run jq -cr '[.error, .result.ciState,
+            ([.calls[].role | select(startswith("review:"))] | length),
+            ([.calls[].role | select(startswith("ci:"))] | length)]' <<<"${json}"
+        assert_output '[null,"green",2,2]'
+        run git --git-dir="${BATS_TEST_TMPDIR}/remote" rev-parse refs/heads/b
+        local remote="${output}"
+        run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
+        assert_output "${remote}"
+        refute_output "${PL_BEFORE}"
+        run cat "${BATS_TEST_TMPDIR}/gates"
+        assert_output $'test lint\ntest changed'
         rm -rf "${BATS_TEST_TMPDIR}/worktree/n" "${BATS_TEST_TMPDIR}/remote"
+        rm "${BATS_TEST_TMPDIR}/gates"
     done
 }
 
@@ -2000,7 +2010,7 @@ _pl_stage_run() {
         local root="${BATS_TEST_TMPDIR}" replies json
         replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:":{status:"ready",reason:""},"locate:":{pr:7,sha:$sha},
             "review:":{verdict:"mergeable",blocking:[],nonBlocking:[],answer:"ok"},
-            "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"}}')"
+            "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
         PL_STAGE=Implement PL_ACTION=dirty PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
             "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
             "${replies}" exec-stage-checks
