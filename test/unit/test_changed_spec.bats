@@ -485,3 +485,82 @@ _document_change() {
         assert_output --partial "測試基礎設施變更"
     done
 }
+
+@test "test.sh --changed adds all guards when only bench changes" {
+    mkdir -p "${TEMP_REPO}/script/box"
+    printf '# bench\n' >"${TEMP_REPO}/script/box/bench.sh"
+    local _spec
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/${_spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/box/bench.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+
+    assert_success
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
+            || fail "missing guard: ${_spec}"
+    done
+}
+
+@test "just test guards forwards the shared guard selection and validates before help" {
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    mkdir -p "${TEMP_REPO}/test/unit/adr"
+    printf '@test "adr" { true; }\n' >"${TEMP_REPO}/test/unit/adr/0005_spec.bats"
+    cp "${REPO_ROOT}/script/test/justfile.test" "${TEMP_REPO}/script/test/justfile.test"
+
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards
+
+    assert_success
+    assert_equal "$(_dispatched)" '--ci-unit test/unit/config_owner_spec.bats test/unit/adr/0005_spec.bats'
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards --help --bogus
+    assert_failure 2
+    assert_output --partial "unknown option '--bogus' (see --help)"
+}
+
+@test "test.sh --guards rejects an unlisted repository-scanning spec" {
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${REPO_ROOT}"
+    assert_success
+    [[ -s "${FAKE_DOCKER_CALLS}" ]] || fail 'did not dispatch listed guards'
+    : >"${FAKE_DOCKER_CALLS}"
+
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+}
+
+@test "guard coverage catches source-directory scans in all tiers including untracked specs" {
+    local _scanner _index=0
+    for _scanner in 'find script/ lib/ -name "*.sh"' \
+        "grep -r pattern \"\${REPO_ROOT}/script\"" \
+        "for file in \"\${REPO_ROOT}\"/lib/*.sh; do :; done"; do
+        mkdir -p "${TEMP_REPO}/test/integration"
+        printf '@test "scan" {\n%s\n}\n' "${_scanner}" \
+            >"${TEMP_REPO}/test/integration/unlisted_spec.bats"
+        run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+        assert_failure
+        assert_output --partial 'repository-scanning spec missing from guard list: test/integration/unlisted_spec.bats'
+        [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+        _index=$((_index + 1))
+    done
+    assert_equal "${_index}" 3
+}
+
+@test "guard coverage reads large specs completely under pipefail" {
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+    awk 'BEGIN { for (i = 0; i < 50000; i++) print "# padding" }' \
+        >>"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+}

@@ -557,10 +557,12 @@ Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
+  --guards        Run the shared repository-wide unit guard specs.
   --changed [--base REF]
                   Always run lint, then select specs from committed,
                   uncommitted, and untracked changes since REF (default:
-                  origin/main). Runs changed unit and matrix specs only;
+                  origin/main). Source/ADR changes also run all guards;
+                  runs selected unit and matrix specs only;
                   heavier tiers are reported for CI. Unknown impact and an
                   unreadable diff are also reported for CI verification.
   --unit [SPEC...] [--filter REGEX]
@@ -838,6 +840,53 @@ _add_changed_spec() {
     unset -n _tier_specs
 }
 
+# Single source for repository-wide guards; optional files follow the checkout.
+_guard_specs() {
+    local _spec
+    for _spec in config_owner config_mutation config_validate config_graph \
+        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
+            || printf 'test/unit/%s_spec.bats\n' "${_spec}"
+    done
+    for _spec in "${REPO_ROOT}"/test/unit/adr/*_spec.bats; do
+        [[ ! -f "${_spec}" ]] || printf '%s\n' "${_spec#"${REPO_ROOT}"/}"
+    done
+}
+
+# Conservative scan signatures: tracked-file enumeration, source globs, or
+# recursive/search commands over source directories (including continuations).
+_spec_scans_repository() {
+    awk '{ line = line $0; if (sub(/\\$/, "", line)) next; print line; line = "" }
+         END { if (line != "") print line }' "$1" |
+        grep -E 'ls-files|(^|[/"[:space:]])(script|lib)/[^[:space:]]*\*|(^|[[:space:]])(find|grep|rg)([[:space:]].*)?[/"[:space:]](script|lib)/?(["[:space:]]|$)' >/dev/null
+}
+
+_validate_guard_specs() {
+    local _spec _relative _guards _missing=0
+    _guards="$(_guard_specs)"
+    while IFS= read -r -d '' _spec; do
+        _spec_scans_repository "${_spec}" || continue
+        _relative="${_spec#"${REPO_ROOT}"/}"
+        if ! grep -qxF "${_relative}" <<<"${_guards}"; then
+            _err "repository-scanning spec missing from guard list: ${_relative}"
+            _missing=1
+        fi
+    done < <(find "${REPO_ROOT}/test" -type f -name '*_spec.bats' -print0)
+    [[ "${_missing}" -eq 0 ]]
+}
+
+_add_changed_guards() {
+    case "$1" in
+        script/*|lib/*|box/*|justfile*|doc/adr/*)
+            _guards_selected=1
+            local _spec
+            while IFS= read -r _spec; do
+                _add_changed_spec "${_spec}"
+            done < <(_guard_specs)
+            ;;
+    esac
+}
+
 _is_test_infrastructure() {
     case "$1" in
         script/test/*|dockerfile/Dockerfile.*|Dockerfile|Dockerfile.*|justfile*|test/helper/*) return 0 ;;
@@ -847,6 +896,9 @@ _is_test_infrastructure() {
 
 _run_changed_tiers() {
     local _tier
+    if [[ "${_guards_selected}" -eq 1 ]]; then
+        _validate_guard_specs || _die "guard list incomplete"
+    fi
     _run_host_step lint ""
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
@@ -876,7 +928,7 @@ _run_changed() {
     local _base="$1" _list _path _spec _mapped _full_fallback=0
     local _full_unit=0 _full_matrix=0 _full_integration=0
     local _full_system=0 _full_acceptance=0
-    local _ghostty=0 _system_real=0
+    local _ghostty=0 _system_real=0 _guards_selected=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
@@ -884,6 +936,7 @@ _run_changed() {
         _full_fallback=1
     fi
     while IFS= read -r _path; do
+        _add_changed_guards "${_path}"
         if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
             _info "此改動由 CI 的 integration 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue
@@ -916,6 +969,14 @@ _run_changed() {
     _run_changed_tiers
 }
 
+_run_guards() {
+    _validate_guard_specs || _die "guard list incomplete"
+    local -a _specs=()
+    mapfile -t _specs < <(_guard_specs)
+    [[ "${#_specs[@]}" -gt 0 ]] || _die "no guard specs found"
+    _run_host_step unit "" "${_specs[@]}"
+}
+
 # Parse the WHOLE command line before running anything, so an unknown option
 # anywhere in it refuses the run as a whole. Host steps accumulate in the
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
@@ -926,7 +987,7 @@ _parse_test_args() {
             -h|--help) _help=1 ;;
             --ci-lint|--ci-unit|--ci-matrix|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
-            --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
+            --build|--lint|--guards|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
             --changed) _changed=1 ;;
             --base)
@@ -984,7 +1045,11 @@ main() {
     fi
     [[ "${#_steps[@]}" -gt 0 ]] || _steps=("${HOST_STEPS[@]}")
     for _step in "${_steps[@]}"; do
-        _run_host_step "${_step}" "${_filter}" "${_paths[@]}"
+        if [[ "${_step}" == guards ]]; then
+            _run_guards
+        else
+            _run_host_step "${_step}" "${_filter}" "${_paths[@]}"
+        fi
     done
     return 0
 }
