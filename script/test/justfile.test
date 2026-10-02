@@ -81,3 +81,7 @@ help:
 # Check script directory layout and repository artifacts.
 script-layout *args:
     @./script/test/check-script-layout.sh "$@"
+
+# Build the acceptance image and check real host tools against a uid-1001 checkout.
+verify-env *args:
+    ./script/test/verify-env.sh "$@"

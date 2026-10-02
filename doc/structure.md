@@ -247,6 +247,7 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
+| `just test verify-env [--help]` | `./script/test/verify-env.sh [args]`（建置真實驗收映像，驗證 uid 1001 bind mount 的 Git checkout 與 host 工具） |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
 | `just test guards [args]` | `./script/test/test.sh --guards [args]`（執行 `test.sh` 的共用全 repo 守門清單） |

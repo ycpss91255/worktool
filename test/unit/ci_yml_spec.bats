@@ -497,24 +497,21 @@ _trigger_branches() {
     assert_output --partial "[ \"\${REFS_RESULT}\" = \"success\" ] || exit 1"
 }
 
-@test "milestone-gate PRs run the real just verify all entry with authenticated evidence and pinned distrobox" {
+@test "milestone-gate PRs require native acceptance with read-only evidence access" {
     run _job_block verify-all
     assert_success
     assert_line "    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
     assert_line '    needs: build-image'
     assert_line --partial 'uses: actions/checkout@'
-    assert_line --partial 'uses: extractions/setup-just@'
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
     assert_line '        run: docker load -i /tmp/worktool-test.tar'
-    assert_line --partial "docker cp \"\${container}:/usr/local/bin/.\" \"\${RUNNER_TEMP}/worktool-bin\""
     assert_line '          TEST_IMAGE_PREBUILT: "1"'
     assert_line "          GH_TOKEN: \${{ github.token }}"
     assert_line '      pull-requests: read'
     assert_line '      checks: read'
     assert_line '      issues: read'
     assert_line '      actions: read'
-    assert_line '        run: just verify all'
     refute_output --partial '--allow-real-box'
 }
 
@@ -552,4 +549,11 @@ _run_aggregator() {
     run _job_block ci-passed
     assert_line "          VERIFY_REQUIRED: \${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}"
     assert_line "          VERIFY_RESULT: \${{ needs.verify-all.result }}"
+}
+
+@test "verify-all checks the real acceptance environment before handing off acceptance" {
+    run _job_block verify-all
+    assert_success
+    assert_output --partial 'run: just test verify-env'
+    assert_output --partial 'uses: extractions/setup-just@'
 }
