@@ -145,6 +145,16 @@ status 使用相同選檔規則，另列出已存在的另一檔，顯示實際�
 選用 `config.ghostty` 且 host 的 `ghostty +version` 低於 1.3.0 時印出
 `[WARN]`，因為舊版不讀此檔；找不到 ghostty 執行檔就跳過版本檢查。
 
+### 套用設定後，先重新載入再開窗（issue #362）
+
+`just box setup` 寫入、更新、搬移或移除 Ghostty 受管區塊後，會提示設定生效方式。
+Ghostty 已在執行時，必須先重新載入設定（Linux 預設快捷鍵 `Ctrl+Shift+,`）。
+重新載入是非同步的；送出請求不代表已完成，請等設定實際生效後才開新視窗，
+例如確認 Ghostty 的 journal 已記錄讀入該設定檔。也可以先啟動新的 Ghostty 行程，
+再開視窗；single-instance 模式下只開新視窗可能仍由既有行程使用舊設定。
+保留使用者原有視窗；setup 不會關閉它們。還原 host shell 後也需重新載入還原的設定。
+未改動 Ghostty 設定（`unchanged`、沒有區塊可移除或 `--dry-run`）時不印此提示。
+
 `~/.tmux.conf` 不在清單裡:worktool 不讀也不寫它(issue #179)。
 
 受管區塊以兩行標記包住,**一個檔案恰好一個**,重跑時**原地取代**(不會重複、
