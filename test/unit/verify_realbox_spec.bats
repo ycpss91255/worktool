@@ -1042,3 +1042,34 @@ EOF
     [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
     [ ! -e "${_home}/.cache/tmux/tmux-1000/default" ]
 }
+
+@test "5.3: decoy box state uses an isolated HOME and is removed" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    export VERIFY_DBX="${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    home="${HOME}/dev-box"
+    previous=""
+    for arg in "$@"; do
+        if [[ "${previous}" == --home ]]; then home="${arg}"; fi
+        previous="${arg}"
+    done
+    printf '%s\n' "${home}" >"${FAKE_STATE_DIR}/decoy-home"
+    mkdir -p "${home}/.cache/tmux"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${home}/.cache/tmux/default"
+fi
+exec "${VERIFY_DBX}" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    local _home
+    IFS= read -r _home <"${STATE}/decoy-home"
+    [ "${_home}" != "${HOME}/dev-box" ]
+    [ ! -e "${_home}" ]
+    [ ! -e "${HOME}/dev-box" ]
+    assert_line "box-state before-cleanup: home=1 tmux=1"
+    assert_line "box-state after-cleanup: home=0 tmux=0"
+}

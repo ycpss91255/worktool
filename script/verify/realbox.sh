@@ -694,6 +694,7 @@ item_52() {
 # 5.3  negative: a pre-existing `dev` box is refused, never deleted
 # =============================================================================
 _53_CREATED=0
+_53_W=""
 
 _53_cleanup() {
     local _crc=0
@@ -703,13 +704,18 @@ _53_cleanup() {
     printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] \
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
+    if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
+        _host_state_cleanup "${_53_W}" || return 1
+        _box_state_cleanup "${_53_W}/box-home" || return 1
+        rm -rf -- "${_53_W}" || _crc=1
+    fi
     return "${_crc}"
 }
 
 _53_make_decoy() {
     local _e
     guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
-        --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
+        --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}"
@@ -765,6 +771,10 @@ item_53() {
     _refuse_preexisting_box \
         "5.3 creates the decoy box itself, so rename or remove yours by hand first." \
         || return 1
+    _53_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-53.XXXXXXXX")" \
+        || { guard_fail "mktemp failed"; return 1; }
+    [[ -d "${_53_W}" ]] || { guard_fail "decoy scratch is not a directory"; return 1; }
+    _host_state_snapshot "${_53_W}" || return 1
     _53_CREATED=1
     _cleanup_push 53
     local _rc=0
