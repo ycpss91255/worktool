@@ -44,6 +44,7 @@ _policy_note() {
 _post_merge() {
     local command="$1" cwd report rc=0
     [[ "${command}" =~ --auto([[:space:]]|$) ]] && return 0
+    [[ "${command}" =~ (^|[[:space:]])(--help|-h)([[:space:]]|$) ]] && return 0
     [[ "$(hook_field '.tool_response.exit_code')" == 0 ]] || return 0
     cwd="$(hook_field '.cwd')"
     cwd="${cwd:-${CLAUDE_PROJECT_DIR:-${HOOK_REPO_ROOT}}}"

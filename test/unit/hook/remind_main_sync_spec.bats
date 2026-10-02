@@ -107,3 +107,17 @@ SCRIPT
     assert_output --partial "removed worktree: fixture"
     assert_output --partial "PostToolUse"
 }
+
+@test "post merge cleanup skips failures auto queues help and unconfirmed results" {
+    local command response payload
+    for command in 'gh pr merge 42 --merge' 'gh pr merge 42 --auto' 'gh pr merge --help'; do
+        for response in '{"exit_code":1}' '{}' '{"exit_code":0}'; do
+            [[ "${command}" == 'gh pr merge 42 --merge' && "${response}" == '{"exit_code":0}' ]] && continue
+            payload="$(hook_json "${command}" | jq --argjson response "${response}" \
+                '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent", tool_response:$response}')"
+            run_hook remind_main_sync "${payload}"
+            assert_success
+            assert_output ""
+        done
+    done
+}
