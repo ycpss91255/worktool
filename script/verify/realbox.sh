@@ -193,7 +193,9 @@ _box_state_report() {
 _box_state_cleanup() {
     local _home="$1" _rc=0
     _box_state_report before-cleanup "${_home}" || return 1
-    rm -rf -- "${_home}" || _rc=1
+    if [[ -e "${_home}" || -L "${_home}" ]]; then
+        rm -rf -- "${_home}" || _rc=1
+    fi
     _box_state_report after-cleanup "${_home}" || _rc=1
     [[ "${_rc}" -eq 0 ]] || guard_fail "box HOME state survived cleanup at ${_home}"
     return "${_rc}"
@@ -623,6 +625,11 @@ _52_remove_owned_box() {
     return 1
 }
 
+_52_cleanup_state() {
+    _52_remove_owned_box || return 1
+    _host_state_cleanup "${CFGBK_B}"
+}
+
 _52_step3_restore() {
     guard_require distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
         || return 1
@@ -655,11 +662,7 @@ _52_step3_restore() {
 
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
-    if _52_remove_owned_box; then
-        _host_state_cleanup "${CFGBK_B}" || _rc=1
-    else
-        _rc=1
-    fi
+    _52_cleanup_state || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"
