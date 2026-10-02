@@ -12,7 +12,7 @@
 #       the delivered managed block (marker lines included - they are `#`
 #       comments to ghostty) parses.
 #     - `ghostty +show-config` under XDG_CONFIG_HOME reports
-#       `command = <distrobox> enter dev` - the
+#       `command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'` - the
 #       EFFECTIVE value ghostty would run, not merely the text on disk.
 #       Since issue #175 `<distrobox>` is the ABSOLUTE path setup.sh
 #       resolved, not the bare name: a terminal the desktop starts
@@ -79,7 +79,7 @@ setup() {
     # box. The path is a single-quoted shell word (issue #175 round 1):
     # ghostty runs a `command` without a `direct:` prefix through
     # `/bin/sh -c`, so the value is shell source.
-    EXPECTED_COMMAND="'${DISTROBOX}' enter dev"
+    EXPECTED_COMMAND="'${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev'"
 }
 
 # Every ghostty call goes through here: a hard bound so a wedged ghostty
@@ -144,7 +144,7 @@ _log_lines() {
     assert_success
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${DISTROBOX}' enter work"
+    assert_line "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work'"
 }
 
 # --- #175: the command ghostty resolves names an ABSOLUTE distrobox ---------
@@ -224,7 +224,7 @@ EOF
     # The EFFECTIVE value, read back from a real ghostty ...
     run _ghostty +show-config
     assert_success
-    assert_line "command = '${_dbx}' enter dev"
+    assert_line "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${_dbx}' --box 'dev'"
     _cmd="$(printf '%s\n' "${lines[@]}" | sed -n 's/^command = //p')"
     _log_lines effective "${_cmd}"
 

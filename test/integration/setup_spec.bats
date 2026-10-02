@@ -56,7 +56,7 @@ EOF
     assert_line "ghostty: ${GHOSTTY} (managed block: present)"
     assert_line "distrobox.conf: ${HOME}/.config/distrobox/distrobox.conf (managed block: present)"
     refute_output --partial "tmux"
-    run grep -xF "command = '${DISTROBOX}' enter work" "${GHOSTTY}"
+    run grep -xF "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work'" "${GHOSTTY}"
     assert_success
     assert [ ! -e "${TMUX_CONF}" ]
 }
@@ -135,7 +135,7 @@ EOF
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev"
+    assert_equal "${_cmd}" "'${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev'"
 
     # Control: that environment really cannot reach this distrobox by name,
     # so the case below cannot pass by accident.

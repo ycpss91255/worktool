@@ -80,7 +80,7 @@
 # rewrite of such a file would lose user lines (codex round 4 on PR #232):
 #   auto-enter yes, terminal ghostty:
 #     existing <config dir>/ghostty/config.ghostty, else legacy config:
-#       command = '<distrobox>' enter <box>
+#       command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<box>'
 #   auto-enter yes, terminal none: no terminal profile at all, a leftover
 #     block removed.
 #   auto-enter no: the block removed from either file, the removal reported.
@@ -381,6 +381,10 @@ _ghostty_version_warn() {
 # failure sends anyone to run status. setup knows here that the command
 # cannot work, so it refuses and says what to do instead.
 _resolve_distrobox() {
+    if ! enter_path_single_line "${SCRIPT_DIR}/enter.sh"; then
+        log_error "wrapper: $(enter_show_control "${SCRIPT_DIR}/enter.sh") holds a newline or carriage return, which cannot be written into the line-based ghostty config (move the repo to a path without one); nothing was written"
+        return 1
+    fi
     if [[ -n "${OPT_DISTROBOX}" ]]; then
         DISTROBOX="${OPT_DISTROBOX}"
         log_info "distrobox: ${DISTROBOX} (--distrobox; absolute path written into the managed command)"
@@ -403,6 +407,14 @@ _resolve_distrobox() {
 
 # --- File actions (every one logged; --dry-run only logs) --------------------
 
+_ghostty_reload_hint() {
+    case "$1" in
+        "$(enter_config_dir)/ghostty/config"|"$(enter_config_dir)/ghostty/config.ghostty")
+            log_info "Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open."
+            ;;
+    esac
+}
+
 # Make file $1 hold exactly one managed block with body $2. The markers were
 # validated by _blocks_check before anything was written, so the file holds
 # no block or exactly one.
@@ -422,6 +434,7 @@ _block_write() {
         return 1
     fi
     log_info "wrote: ${_file} (managed block: ${_body})"
+    _ghostty_reload_hint "${_file}"
 }
 
 # Remove the managed block from file $1. With $2 = report, an absent block
@@ -443,6 +456,7 @@ _block_remove() {
         return 1
     fi
     log_info "removed: ${_file} (managed block: ${_body})"
+    _ghostty_reload_hint "${_file}"
 }
 
 # Set the resolved decisions (and their sources) in the state file IN
@@ -466,6 +480,27 @@ _config_write() {
 
 # --- Apply -------------------------------------------------------------------
 
+# Make the status remedy (re-run setup) repair a lost wrapper execute bit.
+# Refuse a missing or unrepairable target before writing managed files.
+_prepare_wrapper() {
+    local _path="${SCRIPT_DIR}/enter.sh"
+    [[ "${AUTO_ENTER}" == yes && "${TERMINAL}" == ghostty ]] || return 0
+    if [[ ! -f "${_path}" ]]; then
+        log_error "wrapper: ${_path} is missing; restore the repo, then re-run: just box setup; nothing was written"
+        return 1
+    fi
+    [[ ! -x "${_path}" ]] || return 0
+    if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
+        log_info "dry-run: would restore wrapper execute permission: ${_path}"
+        return 0
+    fi
+    if ! chmod u+x -- "${_path}"; then
+        log_error "wrapper: cannot restore execute permission: ${_path}; check repo ownership and permissions, then re-run: just box setup; no managed files were written"
+        return 1
+    fi
+    log_info "restored wrapper execute permission: ${_path}"
+}
+
 # auto-enter yes: the terminal profile (ghostty); a block that the current
 # decisions no longer need (terminal none) is removed if an earlier run
 # left it.
@@ -481,7 +516,7 @@ _apply_enable() {
 # it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
     local _body _other
-    _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    _body="command = $(enter_sh_squote "${SCRIPT_DIR}/enter.sh") --distrobox $(enter_sh_squote "${DISTROBOX}") --box $(enter_sh_squote "${BOX}")"
     _other="$(enter_config_dir)/ghostty/config"
     if [[ "${GHOSTTY_TARGET}" == "${_other}" ]]; then
         _other+=".ghostty"
@@ -517,6 +552,7 @@ _ghostty_move() {
         _rc=1
     else
         log_info "moved: ${_source} -> ${_target} (managed block)"
+        _ghostty_reload_hint "${_target}"
     fi
     rm -rf -- "${_stage}" || return 1
     return "${_rc}"
@@ -568,6 +604,7 @@ setup_run() {
         return 0
     fi
     _resolve_all || return 1
+    _prepare_wrapper || return 1
     _config_write || return 1
     _apply_box_env || return 1
     if [[ "${AUTO_ENTER}" == "yes" ]]; then
