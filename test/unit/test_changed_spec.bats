@@ -549,3 +549,14 @@ _document_change() {
     done
     assert_equal "${_index}" 3
 }
+
+@test "guard coverage reads large specs completely under pipefail" {
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+    awk 'BEGIN { for (i = 0; i < 50000; i++) print "# padding" }' \
+        >>"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+}
