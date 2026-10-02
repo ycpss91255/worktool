@@ -33,10 +33,11 @@ name: CI
 # Milestone PRs additionally require every verify-all leg to succeed;
 # other PRs and main pushes do not require that conditional job.
 #
-# --privileged is used by the test-system-real job ONLY: its runner starts a
+# The test-system-real gate uses --privileged: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
 # box. Everything it creates lives in that nested daemon and is destroyed
 # with the runner container (docker run --rm).
+# verify-all also invokes that gate through the acceptance entry.
 
 on:
   push:
@@ -141,8 +142,8 @@ jobs:
   # Real-engine system group: docker-in-docker, on both runners. Builds its
   # own runner image (dockerfile/Dockerfile.system-real, independent of the
   # shared test image) and runs it with `docker run --rm --privileged` via
-  # `just test system-real` (= test.sh --system-real). This is the ONLY job
-  # that uses --privileged (GitHub-hosted ubuntu runners, amd64 and arm64,
+  # `just test system-real` (= test.sh --system-real). This is the only job
+  # that names --privileged explicitly (GitHub-hosted ubuntu runners, amd64 and arm64,
   # allow it). Slow: image pull + apt inside the box; the runner itself
   # bounds every step, and the job is capped too.
   test-system-real:
