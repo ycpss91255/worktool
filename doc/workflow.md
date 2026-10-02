@@ -69,6 +69,11 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
 
+`pr-loop` 以 `base` 指定 milestone 驗收分支（例如 `m3/5-acceptance`）時，CI 同樣適用。
+`ci.yml` 的 PR base 篩選接受 `main` 與 `m*/*-acceptance`，所有既有 CI gates 與
+`ci-passed` 彙總照常執行；push 觸發仍限 `main`。`verify-all` 仍依 PR 的
+`milestone-gate` 標籤決定是否執行，不因 base 是驗收分支而自動啟用。
+
 ## 既有分支接續
 
 本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；若目錄已刪除但登錄仍在，只移除該路徑的殘留登錄再重建，不清理其他 worktree。已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
