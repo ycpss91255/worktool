@@ -457,3 +457,23 @@ _managed_enter() {
     run enter_fake_logs_alive
     assert_failure
 }
+
+@test "Ghostty managed command safely quotes repo and distrobox paths and enters a warm named box with one inspect" {
+    local _repo="${BATS_TEST_TMPDIR}/repo ' \" \$(touch injected)" _cmd
+    local _bin="${BATS_TEST_TMPDIR}/bin ' \" \$(touch injected)"
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${REPO_ROOT}/script/box/"{setup.sh,enter.sh,justfile.box} "${_repo}/script/box/"
+    enter_fake_install "${_bin}"
+    export FAKE_STARTED_AT='2026-10-02T00:00:00Z'
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty --box work --distrobox "${_bin}/distrobox"
+    assert_success
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    run /bin/sh -c "${_cmd}"
+    assert_success
+    assert_output "FAKE-DISTROBOX enter work"
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_output "docker inspect --type container -f {{.State.StartedAt}} work"
+    assert [ ! -e "${HOME}/.cache/worktool/work-init.log" ]
+    assert [ ! -e injected ]
+}
