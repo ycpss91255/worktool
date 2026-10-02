@@ -34,3 +34,10 @@ check_ready() {
     assert_failure 2
     assert_output --partial 'verify-all'
 }
+
+@test "failed GitHub queries block readiness with exit two" {
+    touch "${READY_FIXTURE}/fail"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'query'
+}

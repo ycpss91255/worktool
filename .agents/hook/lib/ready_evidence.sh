@@ -8,10 +8,12 @@ ready_check_comment() {
     _repo="$(_opt -R --repo)" || _repo=''
     [[ "${_sel}" =~ ^[0-9]+$ && -n "${_repo}" ]] || hook_block 'cannot resolve readiness PR (fail closed)'
     _pr="${_sel}"
-    _json="$(_gh api --repo "${_repo}" "repos/${_repo}/pulls/${_pr}")"
+    _json="$(_gh api --repo "${_repo}" "repos/${_repo}/pulls/${_pr}")" \
+        || hook_block 'PR query failed (fail closed)'
     jq -e '.labels | any(.name == "milestone-gate")' <<<"${_json}" >/dev/null || return 0
     _sha="$(jq -er '.head.sha' <<<"${_json}")"
-    _checks="$(_gh api --repo "${_repo}" "repos/${_repo}/commits/${_sha}/check-runs")"
+    _checks="$(_gh api --repo "${_repo}" "repos/${_repo}/commits/${_sha}/check-runs")" \
+        || hook_block 'verify-all query failed (fail closed)'
     if jq -e '.check_runs | any(.name == "verify-all" and .conclusion != "success")' <<<"${_checks}" >/dev/null; then
         hook_block 'verify-all on the current PR head must be success'
     fi
