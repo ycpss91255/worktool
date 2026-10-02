@@ -252,9 +252,11 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
    (lint、test-unit、test-matrix、test-integration、test-system、test-acceptance、
-   test-system-real、ci-passed),matrix 以 `just test <tier>` 執行(tier 為 lint /
+   test-system-real、ci-passed),另加 milestone 驗收 job `verify-all`。matrix 以 `just test <tier>` 執行(tier 為 lint /
    unit / matrix / integration / system / acceptance),real job 以 `just test system-real`
-   執行。
+   執行。`verify-all` 只在貼有 `milestone-gate` 標籤的 PR 以 `just verify all` 執行
+   非實機驗收(不傳 `--allow-real-box`,第 5 節留給實機驗收),兩種架構全部成功才通過
+   `ci-passed`。普通 PR 與 main push 不要求 `verify-all`,其餘必要 gate 仍須全部成功。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
 
