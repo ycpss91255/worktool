@@ -465,11 +465,10 @@ _managed_enter() {
     cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
     cp "${REPO_ROOT}/script/box/"{setup.sh,enter.sh,justfile.box} "${_repo}/script/box/"
     enter_fake_install "${_bin}"
-    export FAKE_STARTED_AT='2026-10-02T00:00:00Z'
     run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty --box work --distrobox "${_bin}/distrobox"
     assert_success
     _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
-    run /bin/sh -c "${_cmd}"
+    run env FAKE_STARTED_AT=2026-10-02T00:00:00Z /bin/sh -c "${_cmd}"
     assert_success
     assert_output "FAKE-DISTROBOX enter work"
     run cat "${FAKE_DOCKER_CALLS}"
