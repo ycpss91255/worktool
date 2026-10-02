@@ -41,6 +41,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 UI_SH="${REPO_ROOT}/script/verify/ui.sh"
 
 setup() {
+    REAL_JUST="$(command -v just)"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${FAKE_BIN}"
 }
@@ -61,16 +62,22 @@ _stub() {
     chmod +x "${FAKE_BIN}/${_name}"
 }
 
-# The five Usage lines doc/acceptance.md M3 item 1.1 publishes, as a stub
-# would print them.
+# Generate shell printf statements from real product output before stubbing.
 _usage_lines_body() {
-    cat <<'EOF'
-printf 'Usage: assemble.sh [--file <manifest>] [--dry-run]\n'
-printf 'Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]\n'
-printf 'Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]\n'
-printf 'Usage: status.sh\n'
-printf 'Usage: enter.sh [--box NAME]\n'
-EOF
+    local _help _line
+    _help="$("${REAL_JUST}" box help 2>&1)" || return 1
+    while IFS= read -r _line; do
+        [[ "${_line}" == Usage:* ]] || continue
+        printf "printf '%%s\\n' %q\n" "${_line}"
+    done <<<"${_help}"
+}
+
+_recipe_lines_body() {
+    local _list _line
+    _list="$("${REAL_JUST}" box)" || return 1
+    while IFS= read -r _line; do
+        printf "printf '%%s\\n' %q\n" "${_line}"
+    done <<<"${_list}"
 }
 
 # A `just` stub that prints exactly what the document shows and exits $1
@@ -90,15 +97,8 @@ fi
 EOF
         cat <<'EOF'
 if [ "${1:-}" = box ]; then
-    printf 'Available recipes:\n'
-    printf '    assemble *args # Assemble the dev box from its manifest.\n'
-    printf '    bench *args    # Measure the enter latency of the dev box.\n'
-    printf '    default        # List the box verbs.\n'
-    printf '    enter *args    # Enter the box.\n'
-    printf '    help           # Show every box script every help. [alias: h]\n'
-    printf '    setup *args    # Choose how a new terminal enters the box.\n'
-    printf '    status *args   # Show the auto-enter decisions in force.\n'
 EOF
+        _recipe_lines_body
         cat <<EOF
     exit ${_rc}
 fi
@@ -463,4 +463,23 @@ EOF
     run "${UI_SH}" --list
     assert_success
     assert_line --partial '1.1  just box lists seven verbs'
+}
+
+@test "single source: UI fixture usages and recipes equal real just output" {
+    local _real_help _real_list _fixture_help _fixture_list
+    run just box help
+    assert_success
+    _real_help="$(printf '%s\n' "${output}" | grep '^Usage:')"
+    run just box
+    assert_success
+    _real_list="$(printf '%s\n' "${output}" | sed 's/ *#.*//')"
+    _stub_just_documented
+    run "${FAKE_BIN}/just" box help
+    assert_success
+    _fixture_help="$(printf '%s\n' "${output}" | grep '^Usage:')"
+    assert_equal "${_fixture_help}" "${_real_help}"
+    run "${FAKE_BIN}/just" box
+    assert_success
+    _fixture_list="$(printf '%s\n' "${output}" | sed 's/ *#.*//')"
+    assert_equal "${_fixture_list}" "${_real_list}"
 }
