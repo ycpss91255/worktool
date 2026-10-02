@@ -268,7 +268,7 @@ _cleanup() {
     if [[ -n "${DOCKERD_PID}" ]] \
         && _bounded "${DOCKER_CALL_TIMEOUT}" docker info >/dev/null 2>&1; then
         if _bounded "${DOCKER_CALL_TIMEOUT}" docker ps -a --format '{{.Names}}' 2>/dev/null \
-            | grep -qx "${BOX_NAME}"; then
+            | grep -x "${BOX_NAME}" >/dev/null; then
             _info "cleanup: box '${BOX_NAME}' still present - removing"
             _bounded "${DISTROBOX_RM_TIMEOUT}" \
                 env DBX_CONTAINER_MANAGER=docker distrobox rm -f "${BOX_NAME}" \
