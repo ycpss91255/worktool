@@ -363,7 +363,7 @@ _document_change() {
 
 @test "test.sh --changed maps root documentation to existing documentation guards" {
     _document_change doc/structure.md test/unit/contract_spec.bats \
-        test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
@@ -388,4 +388,20 @@ _document_change() {
 
 @test "test.sh --changed maps README to diagram and command documentation guards" {
     _document_change README.md test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
+
+@test "test.sh --changed includes specialized guards for interface and workflow docs" {
+    local _path
+    local -a _extra
+    for _path in doc/manifest.md doc/enter.md doc/design.md doc/workflow.md; do
+        case "${_path}" in
+            doc/manifest.md) _extra=(test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
+            doc/enter.md) _extra=(test/unit/adr/0007_spec.bats) ;;
+            doc/design.md) _extra=(test/unit/adr/0008_spec.bats) ;;
+            doc/workflow.md) _extra=(test/unit/workflow_spec.bats) ;;
+        esac
+        : >"${FAKE_DOCKER_CALLS}"
+        _document_change "${_path}" test/unit/contract_spec.bats \
+            test/unit/diagram_spec.bats test/unit/justfile_spec.bats "${_extra[@]}"
+    done
 }
