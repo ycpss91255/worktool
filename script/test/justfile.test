@@ -36,7 +36,7 @@ build *args:
 lint *args:
     ./script/test/test.sh --lint "$@"
 
-# Lint plus specs selected from changes since origin/main (override with --base <ref>); unknown impact fails open.
+# Lint plus selected unit/matrix specs since origin/main (override with --base <ref>); unknown impact is reported for CI verification.
 changed *args:
     ./script/test/test.sh --changed "$@"
 
