@@ -6,8 +6,10 @@
 # No transcripts are read. Fixtures use the documented input schema.
 # Registered after #364 / PR #369 merged; settings loading enables the hook.
 # Main-session wrappers are read recursively (literal paths, depth < 16).
-# Missing/opaque wrappers, expansions, eval, xargs, launcher chains and
-# non-shell interpreters fail closed. Unchecked raw Codex mentions block,
+# When command text mentions Codex, missing/opaque wrappers, expansions,
+# eval, xargs, launcher chains and non-shell interpreters fail closed.
+# Unrelated commands pass; readable shell wrappers are still inspected.
+# Unchecked raw Codex mentions block,
 # even in plain text. PATH-only executables/custom just recipes and encoded
 # or runtime-generated calls remain outside static inspection. This is a
 # cooperating-agent guard, not an OS sandbox or agent authentication.
@@ -81,22 +83,63 @@ closed_command() {
 }
 
 inspect_wrapper() {
-    local path="$1" cwd="$2" depth="$3"
+    local path="$1" cwd="$2" depth="$3" mentions="$4"
     [[ "${path}" == /* ]] || path="${cwd}/${path}"
-    [[ -f "${path}" && -r "${path}" ]] || refuse 'Cannot read a wrapper script.'
+    if [[ ! -f "${path}" || ! -r "${path}" ]]; then
+        (( mentions == 0 )) || refuse 'Cannot read a wrapper script.'
+        return 0
+    fi
     check_command "$(cat -- "${path}")" "${cwd}" "$((depth + 1))"
 }
 
+inspect_launch() {
+    local cwd="$1" depth="$2" mentions="$3" tool path index
+    shift 3
+    local -a words=("$@")
+    tool="$(hook_word "${words[0]:-}")"
+    case "${tool##*/}" in
+        setsid|nice|stdbuf|busybox|chroot)
+            index="$(_hook_after_opts 0 nioe "${words[@]}")"
+            [[ "${tool##*/}" == chroot ]] && index=$((index + 1))
+            check_command "${words[*]:index}" "${cwd}" "$((depth + 1))"
+            return 0 ;;
+        bash|sh|dash|zsh|ksh|fish|source|.)
+            index="$(_hook_after_opts 0 oO "${words[@]}")"
+            if hook_word_has_expansion "${words[index]:-}"; then
+                (( mentions == 0 )) || refuse 'An expanded script path cannot be checked.'
+                return 0
+            fi
+            path="$(hook_word "${words[index]:-}")"
+            if [[ -z "${path}" ]]; then
+                (( mentions == 0 )) || refuse 'A shell script without a literal path cannot be checked.'
+                return 0
+            fi ;;
+        *)
+            path=''
+            [[ "${tool}" == */* || "${tool}" == *.sh ]] && path="${tool}" ;;
+    esac
+    if [[ -n "${path}" ]]; then
+        inspect_wrapper "${path}" "${cwd}" "${depth}" "${mentions}"
+    fi
+}
+
 check_command() {
-    local sub lead tool path checked=0
+    local sub lead tool path checked=0 mentions
     local cwd="$2" depth="${3:-0}"
-    (( depth < 16 )) || refuse 'Wrapper nesting exceeds the static inspection limit.'
+    mentions="$(raw_codex_count "$1")"
+    if (( depth >= 16 )); then
+        (( mentions == 0 )) || refuse 'Wrapper nesting exceeds the static inspection limit.'
+        return 0
+    fi
     local -a words
     closed_command "$1"
     while IFS= read -r sub; do
         lead="$(hook_timeout_lead "${sub}")"
         read -r -a words <<<"${sub#"${lead}"}"
-        hook_word_has_expansion "${words[0]:-}" && refuse 'An expanded executable cannot be checked.'
+        if hook_word_has_expansion "${words[0]:-}"; then
+            (( mentions == 0 )) || refuse 'An expanded executable cannot be checked.'
+            continue
+        fi
         tool="$(hook_word "${words[0]:-}")"
         if [[ "${tool}" == cd ]]; then
             path="$(hook_word "${words[1]:-}")"
@@ -109,21 +152,10 @@ check_command() {
             checked=$((checked + 1))
             continue
         fi
-        path=""
-        if [[ "$(raw_codex_count "$1")" -gt 0 ]] && hook_is_interpreter "${tool}"; then
+        if (( mentions > 0 )) && hook_is_interpreter "${tool}"; then
             refuse 'Interpreter execution cannot be checked as a shell wrapper.'
         fi
-        case "${tool##*/}" in
-            bash|sh|dash|zsh|ksh|fish|source|.)
-                hook_word_has_expansion "${words[1]:-}" && refuse 'An expanded script path cannot be checked.'
-                path="$(hook_word "${words[1]:-}")"
-                [[ -n "${path}" ]] || refuse 'A shell script without a literal path cannot be checked.' ;;
-
-            *) [[ "${tool}" == */* || "${tool}" == *.sh ]] && path="${tool}" ;;
-        esac
-        if [[ -n "${path}" ]]; then
-            inspect_wrapper "${path}" "${cwd}" "${depth}"
-        fi
+        inspect_launch "${cwd}" "${depth}" "${mentions}" "${words[@]}"
     done < <(hook_subcommands_raw "$1")
     [[ "$(raw_codex_count "$1")" -le "${checked}" ]] || refuse 'An unchecked Codex mention may hide an indirect launch.'
 }

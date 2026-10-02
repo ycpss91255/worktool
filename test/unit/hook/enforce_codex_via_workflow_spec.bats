@@ -93,13 +93,33 @@ _check() {
         'codex exec --sandbox read-only --config sandbox_mode="danger-full-access" "query"' \
         'codex exec --sandbox read-only --sandbox workspace-write "query"' \
         'eval codex exec --sandbox read-only query' \
-        "bash -c \"\$CMD\"" \
-        "\$RUN exec --sandbox read-only query" \
+        "bash -c \"\$CMD\" # codex" \
+        "\$RUN exec --sandbox read-only query # codex" \
         'xargs codex exec --sandbox read-only' \
         'python3 -c "import os; os.system(\"codex exec --sandbox read-only query\")"' \
         "codex exec --sandbox read-only query; eval \"\$CMD\"" \
-        "bash \"\$SCRIPT\"" 'bash missing.sh' 'bash -e run.sh' \
+        "bash \"\$SCRIPT\" # codex" 'bash missing.sh # codex' 'bash -e run.sh' \
         'setsid bash run.sh' 'busybox sh run.sh' 'nice bash run.sh' 'stdbuf -oL bash run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}
+
+@test "shell wrapper inspection permits unrelated scripts and opaque paths" {
+    local cmd
+    printf '%s\n' 'echo ready | awk '\''{print $1}'\''' > "${BATS_TEST_TMPDIR}/daily.sh"
+    printf '%s\n' 'bash daily.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
+    for cmd in 'bash daily.sh' './daily.sh' 'bash outer.sh' \
+        'setsid nohup bash daily.sh' 'nice bash daily.sh' \
+        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh' \
+        'bash missing.sh' './missing.sh' 'bash "$SCRIPT"' 'bash -c "$CMD"' \
+        '$RUN exec --sandbox read-only query'; do
+        _check "${cmd}"
+        assert_success
+    done
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/daily.sh"
+    for cmd in 'bash outer.sh' 'setsid nohup bash daily.sh' 'nice bash daily.sh' \
+        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh'; do
         _check "${cmd}"
         assert_equal "${status}" 2
     done
