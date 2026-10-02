@@ -428,3 +428,16 @@ _managed_enter() {
     assert_success
     assert_output "$(printf '9s\n1m00s\n3m32s')"
 }
+
+@test "Ghostty managed command reports init failure with cause log and recovery instead of entering" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '1|Error: package installation failed'
+    _managed_enter
+    assert_failure 1
+    assert_output --partial "failed: distrobox-init reported: Error: package installation failed"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Error: package installation failed"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    run enter_fake_logs_alive
+    assert_failure
+}
