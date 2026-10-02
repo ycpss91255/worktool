@@ -537,6 +537,8 @@ verify-tool-ok
 
 (`git clone` 自己會往 stderr 印 `Cloning into 'worktool'...` 之類的進度,不列在上面;判準是後面三行。`gh` 沒登入時只會少掉 `verify-tool-ok` 且整段 rc=1)
 
+完整入口依目前案例規模請預留至少一小時；維護者 2026-10-02 實跑約 65 分鐘（當時主機另有負載），耗時會隨建置快取、案例數與主機負載改變，這不是進盒延遲指標。
+
 驗收指令(維護者跑這一行;不是裸 `just verify` —— 那只會列出動作):
 
 ```bash
@@ -599,7 +601,7 @@ rc=0
 
 - [ ] 2. 自動測試:六道 gate 全綠(含 300 ms 進盒延遲 gate)
   - [ ] 2.1 裸 `just test` 跑完六層;system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
-    - 預期看到資訊(約 5-8 分鐘;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
+    - 預期看到資訊(完整入口請預留至少一小時，負載下實測約 65 分鐘（見上方說明）;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
       ```text
       ./script/verify/gate.sh "$@"
       ./script/test/test.sh
@@ -651,7 +653,8 @@ rc=0
   - [ ] 2.3 「開窗 -> 進盒 -> fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
     - 預期看到資訊(`just test` 的 integration 與 system-real 兩段,中間空一行;每段的 tier 輸出先整份收進檔案再 grep,所以「`just test` 失敗」和「grep 一行都沒對到」分得開,rc 反映的是上游 `just test` 的結果)
       ```text
-      ok 8 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
+      ok 38 the ghostty command just box setup writes enters the box directly without starting tmux
+      ok 39 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
       ok 1 preflight: a real ghostty is on PATH and reports its version
       ok 2 setup.sh writes a ghostty config that +validate-config accepts
       ok 5 +show-config follows setup.sh --box work (the box name reaches ghostty)
@@ -684,7 +687,7 @@ rc=0
       rc=0
       ```
       (`host=` 是那一輪盒子的容器 id、`fish=`、`FORWARDED_DELAY_MS=` 與 `SECOND_ELAPSED=` 是實測值,每次都不一樣,不要照字面比 —— 尤其 `SECOND_ELAPSED` 是「第二次啟動花了幾秒」,測試接受的是 0-15,上面印 `1` 只是某一輪的實測(round 11:一輪量到 `0`,照字面比會無故變紅);判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、整段 `rc=0`。任何一層出現 `not ok`,即使該層 `just test` 回 0 也算失敗;integration 紅掉時不會再跑 system-real。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`。
-      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 九個、system-real 五個 `ok` 案例(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)各出現一次、不能多也不能少;`tmux=no`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`ctrenv=` 必須是 `/run/.containerenv` 或 `/.dockerenv`，`mntns=` 必須是盒子的 mount namespace；`host=` / `fish=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`SECOND_ELAPSED=` 也是實測值,但本文件公佈了它的範圍(0-15),所以 `gate.sh` 就照 `0-15` 比 —— 只比 `[0-9]+` 的話,`SECOND_ELAPSED=999`(第二次啟動花了十六分鐘才返回,正好是本案例要否證的那件事)也會過;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
+      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 十個、system-real 五個 `ok` 案例(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)各出現一次、不能多也不能少;`tmux=no`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`ctrenv=` 必須是 `/run/.containerenv` 或 `/.dockerenv`，`mntns=` 必須是盒子的 mount namespace；`host=` / `fish=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`SECOND_ELAPSED=` 也是實測值,但本文件公佈了它的範圍(0-15),所以 `gate.sh` 就照 `0-15` 比 —— 只比 `[0-9]+` 的話,`SECOND_ELAPSED=999`(第二次啟動花了十六分鐘才返回,正好是本案例要否證的那件事)也會過;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
     - 驗收方式
       ```bash
       just verify gate 2.3; echo rc=$?

@@ -120,9 +120,10 @@ SYSTEM_REAL_PATTERN='^# (chain|chain-host|hang|single-instance)|^ok .*ghostty ch
 # DESCRIPTION rather than by `ok <n>`: bats numbers shift whenever a case is
 # added anywhere earlier in the tier, and a number is not evidence. Each
 # description must appear exactly once, and nothing else may appear - which
-# also pins the case count per tier (9 and 5). Adding a chain case means
+# also pins the case count per tier (10 and 5). Adding a chain case means
 # adding it to the document's block and to the list here; that is the point.
 INTEGRATION_CASES=(
+    "the ghostty command just box setup writes enters the box directly without starting tmux"
     "setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line"
     "preflight: a real ghostty is on PATH and reports its version"
     "setup.sh writes a ghostty config that +validate-config accepts"

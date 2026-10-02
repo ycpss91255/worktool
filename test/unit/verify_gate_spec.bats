@@ -190,7 +190,8 @@ EOF
 
 _integration_block() {
     cat <<'EOF'
-ok 8 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
+ok 38 the ghostty command just box setup writes enters the box directly without starting tmux
+ok 39 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
 ok 1 preflight: a real ghostty is on PATH and reports its version
 ok 2 setup.sh writes a ghostty config that +validate-config accepts
 ok 5 +show-config follows setup.sh --box work (the box name reaches ghostty)
@@ -611,6 +612,25 @@ EOF
 
 # --- Item 2.3: the chain evidence of the two tiers ---------------------------
 
+@test "control: item 2.3 accepts the real integration case names and its fixture matches that set" {
+    _stub_ci_tools
+    _write_tier_blocks
+    local _fixture_names="${BATS_TEST_TMPDIR}/fixture.names"
+    local _real_names="${BATS_TEST_TMPDIR}/real.names"
+    sed -n 's/^ok [0-9][0-9]* //p' "${INT_BLOCK}" | sort >"${_fixture_names}"
+    # Read declarations, without executing integration tests in the unit tier.
+    # Feed all names through the CLI so its selection and INTEGRATION_CASES
+    # must agree with the real suite, independently of the hand-written fixture.
+    sed -n 's/^@test "\(.*\)" {$/\1/p' "${REPO_ROOT}"/test/integration/*.bats \
+        | awk '{ print "ok " NR " " $0 }' >"${INT_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_success
+    grep '^ok .*ghostty' "${INT_BLOCK}" | sed 's/^ok [0-9][0-9]* //' | sort >"${_real_names}"
+    run diff -u "${_real_names}" "${_fixture_names}"
+    assert_success
+}
+
 @test "control: both tiers printing the documented lines and exiting 0 pass item 2.3" {
     _stub_ci_tools
     _stub_just_tiers 0 0
@@ -678,7 +698,7 @@ EOF
     _stub_just_blocks 0 0
     PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
     assert_failure 1
-    assert_output --partial 'is missing 9 of the 9 case(s) doc/acceptance.md lists for it'
+    assert_output --partial 'is missing 10 of the 10 case(s) doc/acceptance.md lists for it'
     assert_output --partial 'missing case: preflight: a real ghostty is on PATH and reports its version'
     assert_output --partial 'unexpected case: ghostty placeholder'
     # The system-real tier is never reached: the integration tier is red.
