@@ -297,16 +297,16 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 
 `.agents/hook/enforce_codex_via_workflow.sh` 是 Claude `PreToolUse` 的 Bash 守門：主迴圈直接執行 `codex exec`（含 `e` 縮寫）實作時，exit 2 並提示改走 `pr-loop`／`milestone-fanout`。它只檢查文字，不執行被檢查的腳本；診斷走 stderr，放行時不輸出。
 
-**啟用依賴 #364 合併。** 本 hook 已註冊於 `.claude/settings.json` 與 `.codex/hooks.json` 的 `PreToolUse` `Bash` 守門（`test/unit/agent_config_spec.bats` 要求 `.agents/hook/` 下每支 hook 都有註冊、Claude 與 Codex 的 Bash hook 一致）。Claude 以主 checkout 的設定執行 hook，因此註冊只在本 PR 合併進 `main` 後生效；以合併順序延後啟用：本 PR 必須在 #364（PR #369）合併之後才合併，避免提早阻擋驗收分支修正。在 Codex 工作階段中沒有 Claude 子 agent 身分，等同主迴圈：Codex 不得再巢狀啟動 Codex 實作，且只「提到」Codex 的指令也會被封閉規則擋下，須改用 `-F`／檔案傳遞文字。
+**啟用依賴 #364 合併。** 本 hook 已註冊於 `.claude/settings.json` 與 `.codex/hooks.json` 的 `PreToolUse` `Bash` 守門（`test/unit/agent_config_spec.bats` 要求 `.agents/hook/` 下每支 hook 都有註冊、Claude 與 Codex 的 Bash hook 一致）。載入含這些註冊的設定就會啟用，沒有執行時依賴開關；主 checkout 在本 PR 合併進 `main` 後取得註冊，以合併順序延後正式啟用：本 PR 必須在 #364（PR #369）合併之後才合併，避免提早阻擋驗收分支修正。在 Codex 工作階段中沒有 Claude 子 agent 身分，等同主迴圈：Codex 不得再巢狀啟動 Codex 實作，且只「提到」Codex 的指令也會被封閉規則擋下，須改用 `-F`／檔案傳遞文字。
 
 Workflow 子 agent 的判斷必須同時符合：
 
-- Claude hook payload 帶有效的 runtime `agent_id`；`transcript_path` 直接指向相符的 `*/subagents/agent-<id>.jsonl`，或由主 session 的 `<session>.jsonl` 定位到 `<session>/subagents/agent-<id>.jsonl`。ID 只接受英數、底線與連字號，可移除一次 `agent-` 前綴；目標必須可讀。
-- transcript 的第一則 `type: "user"`、`message.role: "user"` 任務，第一行是 `WORKTOOL_WORKFLOW_AGENT: pr-loop`、`discuss` 或 `research-verify`。content 可為字串或 text blocks。
+- Claude hook payload 帶有效的 runtime `agent_id`；`transcript_path` 直接指向相符的 `<session>/subagents/workflows/<wf_id>/agent-<id>.jsonl`（也支援 `<session>/subagents/agent-<id>.jsonl`），或由主 session 的 `<session>.jsonl` 在上述位置尋找唯一可讀的相符 transcript；多個相符檔案時拒絕。ID 只接受英數、底線與連字號，可移除一次 `agent-` 前綴。
+- transcript 的 user 訊息須為 `type: "user"`、`message.role: "user"`，content 可為字串或 text blocks。Workflow harness 的第一則 user 訊息以 `[Workflow harness — user request]` 開頭；第二則以 `[Workflow harness — computed task]` 加換行開頭，移除任務各行縮排後，其第一行必須是 `WORKTOOL_WORKFLOW_AGENT: pr-loop`、`discuss` 或 `research-verify`。也支援未包裝格式：第一則 user 任務的第一行直接提供標記。
 
 身分欄位及巢狀 transcript 目錄依據 [Claude hook 官方文件](https://code.claude.com/docs/en/hooks#common-input-fields) 與 [SubagentStop 的路徑說明](https://code.claude.com/docs/en/hooks#subagentstop)。transcript 是非同步寫入；標記尚未落盤時保守拒絕，稍後重試，不能因此豁免檢查。
 
-上述範本在會啟動 Codex 的子 agent 任務開頭提供標記；`milestone-fanout` 委派 `pr-loop`，沿用其標記。主 transcript、一般 Agent、assistant／tool 的標記、後續 user 訊息與 command 中自行加環境變數都不足以取得例外。Workflow 內允許既有 prompt 檔案替換、包裝腳本與實作命令。若 Claude 的 transcript 格式改變，身分判斷會拒絕放行，須先更新此契約及 spec。這個標記是合作式流程判斷，不是認證；惡意偽造 transcript 或刻意偽造子 agent 任務不在防護能力內。
+上述範本在會啟動 Codex 的子 agent 任務開頭提供標記；`milestone-fanout` 委派 `pr-loop`，沿用其標記。主 transcript、一般 Agent、assistant／tool 的標記、computed task 以外的後續 user 訊息與 command 中自行加環境變數都不足以取得例外。Workflow 內允許既有 prompt 檔案替換、包裝腳本與實作命令。若 Claude 的 transcript 格式改變，身分判斷會拒絕放行，須先更新此契約及 spec。這個標記是合作式流程判斷，不是認證；惡意偽造 transcript 或刻意偽造子 agent 任務不在防護能力內。
 
 主迴圈的唯讀例外使用 Codex 的明確 sandbox 參數，不接受 prompt 自稱唯讀：
 

@@ -25,21 +25,28 @@ refuse() {
 # Claude supplies agent_id only for subagent calls (hooks reference,
 # https://code.claude.com/docs/en/hooks#common-input-fields). Locate that
 # agent's transcript either directly or beside the main session transcript.
-# Require its first user task to start with a Workflow-generated marker.
+# Require the initial computed task to start with a Workflow-generated marker.
 # A marker in a main transcript, environment, assistant/tool message or
-# later user turn is insufficient. Forged payloads/transcripts are out of
+# unrelated later user turn is insufficient. Forged payloads/transcripts are out of
 # scope; missing/lagging transcripts fail closed, never grant an exception.
 workflow_task_path() {
-    local id path
+    local id path candidate found=''
     id="$(hook_field '.agent_id')"
     id="${id#agent-}"
     [[ "${id}" =~ ^[[:alnum:]_-]+$ ]] || return 1
     path="$(hook_field '.transcript_path')"
     if [[ "${path}" == */subagents/* ]]; then
-        [[ "${path}" == */subagents/agent-"${id}".jsonl ]] || return 1
+        [[ "${path}" == */subagents/agent-"${id}".jsonl ||
+           "${path}" == */subagents/workflows/*/agent-"${id}".jsonl ]] || return 1
     else
         [[ "${path}" == *.jsonl ]] || return 1
-        path="${path%.jsonl}/subagents/agent-${id}.jsonl"
+        for candidate in "${path%.jsonl}/subagents/agent-${id}.jsonl" \
+            "${path%.jsonl}"/subagents/workflows/*/"agent-${id}.jsonl"; do
+            [[ -r "${candidate}" ]] || continue
+            [[ -z "${found}" ]] || return 1
+            found="${candidate}"
+        done
+        path="${found}"
     fi
     [[ -r "${path}" ]] || return 1
     printf '%s' "${path}"
@@ -49,10 +56,17 @@ workflow_agent() {
     local path prompt
     path="$(workflow_task_path)" || return 1
     prompt="$(jq -sr '
-        [ .[] | select(.type == "user" and .message.role == "user") ][0].message.content
-        | if type == "string" then .
+        def text:
+          if type == "string" then .
           elif type == "array" then map(select(.type == "text") | .text) | join("\n")
-          else "" end' "${path}" 2>/dev/null)" || return 1
+          else "" end;
+        [ .[] | select(.type == "user" and .message.role == "user") | .message.content | text ]
+        | if (.[0] // "" | startswith("[Workflow harness — user request]")) then
+            (.[1] // "")
+            | if startswith("[Workflow harness — computed task]\n") then
+                split("\n")[1:] | map(sub("^[ \\t]+"; "")) | join("\n")
+              else "" end
+          else .[0] // "" end' "${path}" 2>/dev/null)" || return 1
     case "${prompt%%$'\n'*}" in
         'WORKTOOL_WORKFLOW_AGENT: pr-loop'|'WORKTOOL_WORKFLOW_AGENT: discuss'|'WORKTOOL_WORKFLOW_AGENT: research-verify') return 0 ;;
         *) return 1 ;;

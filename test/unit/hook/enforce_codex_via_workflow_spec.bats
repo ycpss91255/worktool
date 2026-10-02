@@ -89,22 +89,28 @@ _check() {
     done
 }
 
-@test "runtime agent identity resolves its own task from a main session transcript" {
+@test "runtime agent identity resolves the harness computed task in workflow transcripts" {
     TRANSCRIPT="${BATS_TEST_TMPDIR}/session.jsonl"
     AGENT_ID=abc
-    mkdir -p "${BATS_TEST_TMPDIR}/session/subagents"
+    local agent_path="${BATS_TEST_TMPDIR}/session/subagents/workflows/wf_77d0fdcd-b0b/agent-abc.jsonl"
+    mkdir -p "${agent_path%/*}"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${REPO_ROOT}/.claude/workflows/pr-loop.js" \
         '{"repo":"o/r","repoDir":"/repo","issue":366,"branch":"b","name":"n","task":"t"}' '{}' \
         > "${BATS_TEST_TMPDIR}/workflow.json"
-    jq -c '{type:"user",message:{role:"user",content:[{type:"text",text:.calls[0].prompt}]}}' \
-        "${BATS_TEST_TMPDIR}/workflow.json" > "${BATS_TEST_TMPDIR}/session/subagents/agent-abc.jsonl"
-    _check 'codex exec "implement"'
+    jq -c '
+        {type:"user",message:{role:"user",content:"[Workflow harness — user request] Fix issue #366"}},
+        {type:"user",message:{role:"user",content:[{type:"text",text:
+            ("[Workflow harness — computed task]\n" + (.calls[0].prompt | split("\n") | map("    " + .) | join("\n")))}]}}
+        ' "${BATS_TEST_TMPDIR}/workflow.json" > "${agent_path}"
+    _check 'codex exec --sandbox workspace-write "implement"'
+    assert_success
+    TRANSCRIPT="${agent_path}"
+    _check "codex exec --skip-git-repo-check \"\$(cat prompt-rN.txt)\""
     assert_success
     AGENT_ID=other
     _check 'codex exec "implement"'
     assert_equal "${status}" 2
-    TRANSCRIPT="${BATS_TEST_TMPDIR}/session/subagents/agent-abc.jsonl"
     AGENT_ID=""
     _check 'codex exec "implement"'
     assert_equal "${status}" 2
