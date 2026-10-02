@@ -88,3 +88,73 @@ _context() { jq -r '.hookSpecificOutput.additionalContext' <<<"${output}"; }
         "$(hook_json 'gh pr merge 42 --merge')" "${HOOK_DIR}/remind_main_sync.sh"
     assert_success
 }
+
+@test "successful PostToolUse merge runs cleanup with apply and reports removals" {
+    local project="${BATS_TEST_TMPDIR}/project"
+    mkdir -p "${project}/.agents/script/worktree"
+    cat > "${project}/.agents/script/worktree/prune-merged.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --apply ]]
+printf 'removed worktree: fixture\n' >&2
+SCRIPT
+    chmod +x "${project}/.agents/script/worktree/prune-merged.sh"
+    local payload
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq --arg cwd "${project}" '. + {hook_event_name:"PostToolUse", cwd:$cwd, tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "removed worktree: fixture"
+    assert_output --partial "PostToolUse"
+}
+
+@test "post merge cleanup skips failures auto queues help and unconfirmed results" {
+    local command response payload
+    for command in 'gh pr merge 42 --merge' 'gh pr merge 42 --auto' 'gh pr merge --help'; do
+        for response in '{"exit_code":1}' '{}' '{"exit_code":0}'; do
+            [[ "${command}" == 'gh pr merge 42 --merge' && "${response}" == '{"exit_code":0}' ]] && continue
+            payload="$(hook_json "${command}" | jq --argjson response "${response}" \
+                '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent", tool_response:$response}')"
+            run_hook remind_main_sync "${payload}"
+            assert_success
+            assert_output ""
+        done
+    done
+}
+
+@test "post merge recognizes the repository root flag before pr merge" {
+    local payload
+    payload="$(hook_json 'gh --repo ycpss91255/worktool pr merge 42 --merge' | \
+        jq '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent", tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "Worktree cleanup failed"
+}
+
+@test "native Claude successful Bash response also triggers post merge cleanup" {
+    local payload
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent",
+            tool_response:{stdout:"", stderr:"", interrupted:false, isImage:false}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "Worktree cleanup failed"
+}
+
+@test "post merge finds cleanup when tool runs from a repo subdirectory" {
+    local project="${BATS_TEST_TMPDIR}/project" payload
+    git init -q "${project}"
+    mkdir -p "${project}/nested" "${project}/.agents/script/worktree"
+    cat > "${project}/.agents/script/worktree/prune-merged.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --apply ]]
+printf 'removed worktree: nested fixture\n' >&2
+SCRIPT
+    chmod +x "${project}/.agents/script/worktree/prune-merged.sh"
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq --arg cwd "${project}/nested" '. + {hook_event_name:"PostToolUse", cwd:$cwd, tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "removed worktree: nested fixture"
+}

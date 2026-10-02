@@ -59,13 +59,18 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `branch` | 是 | 從 `origin/main` 開的分支名 |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
-| `gates` | 否 | 額外 gate；full 預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
+| `gates` | 否 | 傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
 | `mode` | 否 | `full`（預設）或 `light`；其他值直接 throw。light 固定由 Claude 修改與另一個 Claude 子代理審查，不呼叫 codex |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
+
+`pr-loop` 以 `base` 指定 milestone 驗收分支（例如 `m3/5-acceptance`）時，CI 同樣適用。
+`ci.yml` 的 PR base 篩選接受 `main` 與 `m*/*-acceptance`，所有既有 CI gates 與
+`ci-passed` 彙總照常執行；push 觸發仍限 `main`。`verify-all` 仍依 PR 的
+`milestone-gate` 標籤決定是否執行，不因 base 是驗收分支而自動啟用。
 
 ## light 模式
 
