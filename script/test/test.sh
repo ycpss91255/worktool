@@ -874,7 +874,7 @@ _run_changed() {
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
-        _info "changed-file diff unreadable; running the unit tier"
+        _info "changed-file diff unreadable; verification left to CI"
         _full_fallback=1
     fi
     while IFS= read -r _path; do

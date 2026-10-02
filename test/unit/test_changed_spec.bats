@@ -312,15 +312,17 @@ _dispatched() {
     assert_output --partial "測試基礎設施變更"
 }
 
-@test "test.sh --changed fails open when the base diff is unreadable" {
+@test "test.sh --changed leaves an unreadable base diff to CI" {
     _commit_baseline
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base missing-ref' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
-    for tier in matrix integration system system-real acceptance; do
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "changed-file diff unreadable; verification left to CI"
+    refute_output --partial "running the unit tier"
+    for tier in unit matrix integration system system-real acceptance; do
         assert_output --partial "此改動由 CI 的 ${tier} 驗證"
     done
 }
