@@ -88,15 +88,43 @@ _workflow_agent_types() {
 }
 
 @test "every workflow agent call specifies general-purpose agentType (#355)" {
-    # Main already specifies the light implementer's type. Recreate the
-    # reported omission only in a temporary copy and pin its diagnostic.
-    local regression="${BATS_TEST_TMPDIR}/pr-loop.js"
-    sed "/phase: 'Implement', schema:/s/, agentType: 'general-purpose'//" \
-        "${PR_LOOP}" > "${regression}"
-    run _workflow_agent_types "${regression}"
+    local fixture="${BATS_TEST_TMPDIR}/missing-single-line.js"
+    printf '%s\n' "await agent('fixture', prompt, { label: 'fixture' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
     assert_failure
-    assert_output "${regression}:206: missing explicit agentType"
-    printf '# regression guard: pr-loop.js:206: missing explicit agentType\n' >&3
+    assert_output "${fixture}:1: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/missing-multi-line.js"
+    cat > "${fixture}" <<'JS'
+// The diagnostic points to the call, not its options or closing line.
+
+await agent('fixture', prompt, {
+    label: 'fixture',
+    phase: 'Fixture'
+})
+JS
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:3: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/explicit-type.js"
+    printf '%s\n' "await agent('fixture', prompt, { label: 'fixture', agentType: 'general-purpose' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_success
+    assert_output ""
+
+    fixture="${BATS_TEST_TMPDIR}/non-label-options.js"
+    printf '%s\n' "await agent('fixture', prompt, { agentType: 'general-purpose' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:1: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/variable-options.js"
+    printf '%s\n' "const options = { label: 'fixture', agentType: 'general-purpose' }" \
+        "await agent('fixture', prompt, options)" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:2: missing explicit agentType"
 
     run _workflow_agent_types "${WF_DIR}"/*.js
     assert_success
