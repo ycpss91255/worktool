@@ -60,3 +60,11 @@ successful_job() {
     assert_failure 2
     assert_output --partial '目標對照'
 }
+
+@test "every milestone goal needs its own evidence and user entry row" {
+    successful_job
+    sed -i '/量測進盒延遲並達標/d' "${READY_FIXTURE}/body"
+    check_ready
+    assert_failure 2
+    assert_output --partial '量測進盒延遲並達標'
+}
