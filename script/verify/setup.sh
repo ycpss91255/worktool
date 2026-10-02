@@ -156,6 +156,10 @@ MANAGED_CMD="command = $(enter_sh_squote '<repo>/script/box/enter.sh') --distrob
 # product that quietly stopped saying what to do instead is caught.
 MANAGED_NONE_HINT="terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
 
+# A literal acceptance criterion, compared with real setup by the control
+# run; the suppressed-notice regression proves this expectation bites.
+GHOSTTY_RELOAD_HINT="[INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open."
+
 # The markers that delimit the managed block, spelled out here rather than
 # sourced from lib/enter.sh: enter.sh is the code under test, so a degraded
 # stripper must not get to answer the question "what did the user have?".
@@ -784,6 +788,7 @@ _item_3_2() {
         '[INFO] distrobox: <D> (absolute path written into the managed command)' \
         '[INFO] wrote: <H>/.config/worktool/config' \
         "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
+        "${GHOSTTY_RELOAD_HINT}" \
         || _bad=1
     _setup_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_setup_rc}"

@@ -1087,3 +1087,14 @@ FRAG
     _expected="$(bash -c 'source "$1"; printf "%s\n" "$MANAGED_CMD"' bash "${VERIFY}")"
     assert_equal "${_expected}" "${_actual}"
 }
+
+@test "single source: a setup missing the real Ghostty reload notice is refused" {
+    local _repo
+    _repo="$(_repo_copy)"
+    _insert_before 'setup_run() {' "${_repo}/script/box/setup.sh" <<'FRAG'
+_ghostty_reload_hint() { return 0; }
+FRAG
+    run "${_repo}/script/verify/setup.sh" 3.2
+    assert_failure
+    assert_output --partial "expected exactly one line equal to '[INFO] Ghostty config changed:"
+}

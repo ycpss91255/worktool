@@ -743,6 +743,7 @@ rc=0
       just verify setup 3.1; echo rc=$?
       ```
   - [ ] 3.2 寫入後由 status 與檔案全文確認直接進盒、distrobox.conf 隔離區塊；狀態檔由共用 config 介面保存，沒有 tmux 決策（PR #232、#228）
+    - 寫入後還要出現 Ghostty reload 提示；完整文字以 `script/box/setup.sh` 的 `_ghostty_reload_hint` 為來源，由真實產品 control 與移除提示的負例守住。
     - 預期看到資訊：`command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
     - 驗收方式
       ```bash
