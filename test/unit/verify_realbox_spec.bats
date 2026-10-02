@@ -75,7 +75,7 @@ setup() {
 
     local _t
     # Resolve the real tools BEFORE PATH changes; the shim execs these.
-    for _t in "${REALBOX_SHIMMED_TOOLS[@]}"; do
+    for _t in just "${REALBOX_SHIMMED_TOOLS[@]}"; do
         command -v -- "${_t}" >"${STATE}/real/${_t}"
     done
     for _t in "${REALBOX_FAKED_TOOLS[@]}"; do
@@ -864,4 +864,24 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_success
     run cat "${STATE}/calls.log"
     assert_line "just box assemble --home $(_backup_dir)/box-home"
+}
+
+@test "single source: acceptance backup paths equal every file real setup writes" {
+    local _home="${BATS_TEST_TMPDIR}/product-home" _actual _expected _name
+    local _just
+    _just="$(cat "${STATE}/real/just")"
+    mkdir -p "${_home}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    mkdir -p "${_home}/.config/ghostty"
+    : >"${_home}/.config/ghostty/config.ghostty"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    _actual="$(find "${_home}" -type f | sort)"
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    CFGBK_C="${_home}/.config"
+    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
+    assert_equal "${_expected}" "${_actual}"
 }
