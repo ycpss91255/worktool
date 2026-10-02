@@ -9,8 +9,8 @@
 #     progress, saves the host log and hands over to distrobox;
 #   - the command `just box setup` writes into the ghostty profile, run the
 #     way ghostty runs it (`/bin/sh -c` under a desktop session's reduced
-#     PATH, where only the fake engine is added), enters the box directly
-#     without starting tmux (issue #179).
+#     PATH, where only the fake engine is added), reports cold-init progress
+#     through the wrapper and enters without starting tmux (issues #179, #360).
 #
 # The engine and distrobox are fakes (test/helper/enter_fake.bash); HOME is
 # a throwaway directory.

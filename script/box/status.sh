@@ -5,7 +5,8 @@
 # (auto-enter, terminal, box), each with its source (default | user),
 # whether the worktool managed block is present in the ghostty config, and
 # - since issue #175 - whether the distrobox that block names can still be
-# run, and - since issue #179 - whether distrobox.conf holds the block that
+# run, and - since issue #360 - whether the wrapper target still exists
+# and is executable; since issue #179, whether distrobox.conf holds the block that
 # keeps a host tmux pane's TMUX out of the box. Read-only: it never writes. Since issue #179 there is no tmux line:
 # worktool does not manage tmux, and never looks at ~/.tmux.conf.
 # The user-config link states and the recorded box HOME follow the entry
