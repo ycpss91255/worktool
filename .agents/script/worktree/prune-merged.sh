@@ -21,9 +21,26 @@ COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="$(dirname -- "${COMMON}")"
 WORKTREE_ROOT="$(dirname -- "${MAIN}")/worktree"
 git fetch origin >&2
+merged_head() {
+    local head="$1" ref
+    while IFS= read -r ref; do
+        case "${ref}" in
+            refs/remotes/origin/main) ;;
+            refs/remotes/origin/m[0-9]*/[0-9]*-acceptance)
+                [[ "${ref}" =~ ^refs/remotes/origin/m[0-9]+/[0-9]+-acceptance$ ]] || continue ;;
+            *) continue ;;
+        esac
+        if git merge-base --is-ancestor "${head}" "${ref}"; then
+            return 0
+        fi
+    done <<< "${REMOTE_REFS}"
+    return 1
+}
+
+REMOTE_REFS="$(git for-each-ref --format='%(refname)' refs/remotes/origin)"
 prune_tree() {
     local tree="$1" branch
-    if ! git merge-base --is-ancestor "$(git -C "${tree}" rev-parse HEAD)" origin/main; then
+    if ! merged_head "$(git -C "${tree}" rev-parse HEAD)"; then
         if [[ -z "$(git for-each-ref --contains="$(git -C "${tree}" rev-parse HEAD)" --format='%(refname)' refs/remotes/origin)" ]]; then
             log_info "kept ${tree}: unpushed commits; not merged"
         else

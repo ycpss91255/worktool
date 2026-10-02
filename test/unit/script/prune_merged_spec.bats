@@ -85,3 +85,13 @@ prune() {
     [ -d "${MAIN}/.git" ]
     [ -d "${FIXTURE}/outside" ]
 }
+
+@test "fetches acceptance branch and removes its merged detached worktree" {
+    git -C "${TREE}" commit -qm accepted --allow-empty
+    git -C "${TREE}" push -q origin HEAD:refs/heads/m3/5-acceptance
+    git -C "${TREE}" checkout -q --detach
+    git -C "${MAIN}" update-ref -d refs/remotes/origin/m3/5-acceptance
+    prune --apply
+    assert_success
+    [ ! -e "${TREE}" ]
+}
