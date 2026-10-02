@@ -1900,7 +1900,7 @@ _rv_assert_fails_closed() {
     run _pl_run '{"mode":"light","codex":"off"}'
     assert_success
     run jq -cr '[.error, [.calls[].role], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
-    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
+    assert_output '[null,["prepare:b","implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
 }
 
 @test "milestone-fanout (node): forwards light mode to each child (#310)" {
@@ -2052,7 +2052,7 @@ _pl_stage_run() {
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
         '{"implement:":{"status":"failed","reason":"commit: noreply identity is missing"}}'
     assert_success
-    run jq -cr '[.result.blockingLeft, [.calls[].role], (.calls[0].schema.required | index("reason") != null)]' <<<"${output}"
+    run jq -cr '[.result.blockingLeft, [.calls[].role | select(startswith("prepare:") | not)], (.calls[] | select(.role | startswith("implement:")) | .schema.required | index("reason") != null)]' <<<"${output}"
     assert_output '[["light editing did not complete: commit: noreply identity is missing"],["implement:#331"],true]'
 }
 
@@ -2060,7 +2060,7 @@ _pl_stage_run() {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
     assert_success
-    run jq -cr '[.error, [.calls[].role], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
+    run jq -cr '[.error, [.calls[].role | select(startswith("prepare:") | not)], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
 }
 
@@ -2572,4 +2572,143 @@ _scratch_assert_isolated() {
             assert_success
         done
     done
+}
+
+# Resume probes run against real branches/worktrees; CI/review are agent stand-ins.
+_pl_resume_setup() {
+    local root="${BATS_TEST_TMPDIR}"
+    git init -q --bare "${root}/remote"
+    git init -q "${root}/src"
+    git -C "${root}/src" config user.name Tester
+    git -C "${root}/src" config user.email '1+tester@users.noreply.github.com'
+    git -C "${root}/src" commit -qm initial --allow-empty
+    git -C "${root}/src" branch -M main
+    git -C "${root}/src" remote add origin "${root}/remote"
+    git -C "${root}/src" push -q origin main
+    git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
+    mkdir -p "${root}/src/.claude/workflows"
+    cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
+}
+
+_pl_resume_run() {
+    local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
+    replies='{"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    if [[ $# -ge 3 ]]; then
+        replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
+    fi
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" \
+        "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
+        "${replies}" exec-resume
+}
+
+@test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
+    _pl_resume_setup
+    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    assert_success
+    local json="${output}"
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | test("^(implement|publish|locate):")] | any | not) and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("base acceptance")) and
+        (.calls[] | select(.role | startswith("review:")) | .prompt | contains("origin/acceptance...HEAD"))' <<<"${json}"
+    assert_success
+    run git -C "${BATS_TEST_TMPDIR}/worktree/n" branch --show-current
+    assert_output b
+}
+
+@test "pr-loop resume: unpublished local commits pass gates and publish before CI (#386)" {
+    _pl_resume_setup
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    local before json
+    before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
+    run _pl_resume_run '{"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | startswith("implement:")] | any | not) and
+        (.calls[] | select(.role | startswith("publish:")) | .prompt |
+            contains("run just test lint, just test unit test/unit/workflow_spec.bats") and
+            contains("git push -u origin b") and contains("--base acceptance --head b") and
+            contains("Refs: #386") and contains("noreply") and contains("[codex]"))' <<<"${json}"
+    assert_success
+    run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
+}
+
+@test "pr-loop resume: light requires independent diff review before publishing pending commits (#386)" {
+    _pl_resume_setup
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    local review json extra
+    for extra in '{"mode":"light"}' '{"mode":"light","pr":7}'; do
+        for review in '{"verdict":"mergeable"}' '{"verdict":"blocked","blocking":["required fix"]}' null; do
+            run _pl_resume_run "${extra}" "${PR_LOOP}" "${review}"
+            assert_success
+            json="${output}"
+            run jq -e --argjson review "${review}" '.error == null and
+                ([.calls[].role | startswith("implement:")] | any | not) and
+                ([.calls[].role] | index("review:#386:light")) != null and
+                (if $review.verdict == "mergeable" then
+                    .result.ciState == "green" and .result.blockingLeft == [] and
+                    ([.calls[].role] | index("review:#386:light") < index("ci:#7")) and
+                    ([.calls[].role] | if index("publish:#386:resume") == null then true
+                        else index("review:#386:light") < index("publish:#386:resume") end)
+                else .result.ciState == "none" and (.result.blockingLeft | length) > 0 and
+                    ([.calls[].role | test("^(publish|ci):")] | any | not) end)' <<<"${json}"
+            assert_success
+        done
+    done
+}
+
+@test "pr-loop resume: missing worktree is recreated without changing branch history (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before
+    git -C "${root}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
+    run git -C "${root}/worktree/n" branch --show-current
+    assert_output b
+}
+
+@test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
+    _pl_resume_setup
+    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
+    assert_success
+    run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
+        .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint, just test unit test/unit/workflow_spec.bats")) and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop resume: CI success cannot bypass the published HEAD guard (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
+        "${replies}" exec-resume
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        (.result.blockingLeft[0] | contains("local HEAD: unpushed")) and
+        ([.calls[].role | startswith("review:")] | any | not)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop resume: a deleted worktree with stale registration can be recreated (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    rm -rf "${root}/worktree/n"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "mergeable"' <<<"${output}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
 }
