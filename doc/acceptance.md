@@ -36,16 +36,15 @@ prereq-ok
 
 ### 驗收項目
 
+recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`script/test/justfile.test` 為唯一來源；執行各項的 `just` 指令讀取現行清單。help 範例由 `verify_ui_spec.bats` 與真實 help 逐行比對。
+
 規則:0-4 是 worktool 動作,一律 `just`;5 用 gh / git 查外部證據;6 用 grep 查文件;7 選做(distrobox 原生指令)。
 
 - [ ] 0. 使用者介面:`just` 是唯一入口
   - [ ] 0.1 裸 `just` 只列 namespaces(test、box),沒有頂層動作
     - 預期看到資訊
       ```text
-      Available recipes:
-          default  # Default: list the namespaces.
-          box ...  # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
-          test ... # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|integration|system|system-real|acceptance|selfcheck])
+      （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       ```
     - 驗收方式
       ```bash
@@ -54,14 +53,11 @@ prereq-ok
   - [ ] 0.2 namespace 清單與 help 都來自底層腳本
     - 預期看到資訊
       ```text
-      Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
-          default        # List the box verbs.
-          help           # Show the box wrapper help (assemble.sh --help). [alias: h]
+      （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       ./script/test/test.sh --help
       Usage: test.sh [OPTION...]
       ./script/box/assemble.sh --help
-      Usage: assemble.sh [--file <manifest>] [--dry-run]
+      Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       ```
     - 驗收方式
       ```bash
@@ -577,19 +573,12 @@ rc=0
   - [ ] 1.1 `just box` 列出七個動作;`just box help` 依序印五支腳本的 usage
     - 預期看到資訊
       ```text
-      Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini).
-          bench *args    # Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
-          default        # List the box verbs.
-          enter *args    # Enter the box (args: --box NAME, --distrobox PATH, --timeout SECONDS, -- CMD..., --help).
-          help           # Show every box script's help (assemble.sh, bench.sh, setup.sh, status.sh, enter.sh --help). [alias: h]
-          setup *args    # Choose how a new terminal enters the box (args: --auto-enter yes|no, --terminal ghostty|none, --box <name>, --dry-run, --help).
-          status *args   # Show the auto-enter decisions in force, their sources and the managed blocks (args: --help).
+      （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
       Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
       Usage: status.sh
-      Usage: enter.sh [--box NAME] [--distrobox PATH] [--timeout SECONDS] [-- CMD...]
+      Usage: enter.sh [--box <name>] [--distrobox <path>] [--timeout <seconds>]
       five-usages
       rc=0
       ```

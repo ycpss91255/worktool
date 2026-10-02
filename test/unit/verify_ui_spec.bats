@@ -483,3 +483,17 @@ EOF
     _fixture_list="$(printf '%s\n' "${output}" | sed 's/ *#.*//')"
     assert_equal "${_fixture_list}" "${_real_list}"
 }
+
+@test "single source: documented Usage lines occur in real product help" {
+    local _help _line
+    run just box help
+    assert_success
+    _help="${output}"
+    run just test help
+    assert_success
+    _help+=$'\n'"${output}"
+    while IFS= read -r _line; do
+        run grep -Fx "${_line}" <<<"${_help}"
+        assert_success
+    done < <(sed -n 's/^ *\(Usage: .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
+}
