@@ -840,3 +840,21 @@ EOF
     assert_line --partial '2.3  ci  '
     assert_line --partial '2.4  doc '
 }
+
+@test "single source: system-real cases match declarations, gate selection and document" {
+    _stub_ci_tools
+    _write_tier_blocks
+    local _real="${BATS_TEST_TMPDIR}/real.names" _fixture="${BATS_TEST_TMPDIR}/fixture.names"
+    sed -n 's/^@test "\(ghostty chain.*\)" {$/\1/p' \
+        "${REPO_ROOT}"/test/system/*.bats | sort >"${_real}"
+    sed -n 's/^ok [0-9][0-9]* //p' "${SYS_BLOCK}" | sort >"${_fixture}"
+    run diff -u "${_real}" "${_fixture}"
+    assert_success
+    sed -n 's/^      ok [0-9][0-9]* \(ghostty chain.*\)$/\1/p' \
+        "${REPO_ROOT}/doc/acceptance.md" | sort >"${_fixture}"
+    run diff -u "${_real}" "${_fixture}"
+    assert_success
+    _stub_just_blocks
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_success
+}
