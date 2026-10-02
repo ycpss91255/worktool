@@ -407,6 +407,14 @@ _resolve_distrobox() {
 
 # --- File actions (every one logged; --dry-run only logs) --------------------
 
+_ghostty_reload_hint() {
+    case "$1" in
+        "$(enter_config_dir)/ghostty/config"|"$(enter_config_dir)/ghostty/config.ghostty")
+            log_info "Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open."
+            ;;
+    esac
+}
+
 # Make file $1 hold exactly one managed block with body $2. The markers were
 # validated by _blocks_check before anything was written, so the file holds
 # no block or exactly one.
@@ -426,6 +434,7 @@ _block_write() {
         return 1
     fi
     log_info "wrote: ${_file} (managed block: ${_body})"
+    _ghostty_reload_hint "${_file}"
 }
 
 # Remove the managed block from file $1. With $2 = report, an absent block
@@ -447,6 +456,7 @@ _block_remove() {
         return 1
     fi
     log_info "removed: ${_file} (managed block: ${_body})"
+    _ghostty_reload_hint "${_file}"
 }
 
 # Set the resolved decisions (and their sources) in the state file IN
@@ -542,6 +552,7 @@ _ghostty_move() {
         _rc=1
     else
         log_info "moved: ${_source} -> ${_target} (managed block)"
+        _ghostty_reload_hint "${_target}"
     fi
     rm -rf -- "${_stage}" || return 1
     return "${_rc}"

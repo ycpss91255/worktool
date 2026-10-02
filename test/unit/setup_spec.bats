@@ -122,6 +122,38 @@ _block_count() {
 
 # --- defaults + logging ------------------------------------------------------
 
+@test "#362: setup explains how to activate changed Ghostty config before opening a window" {
+    local hint="[INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open."
+    run "${SETUP}" --terminal ghostty
+    assert_success
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: ${CMD_ENTER})"
+    assert_line "${hint}"
+    run "${SETUP}"
+    assert_success
+    refute_line "${hint}"
+    run "${SETUP}" --box work --dry-run
+    assert_success
+    refute_line "${hint}"
+    run "${SETUP}" --box work
+    assert_success
+    assert_line "${hint}"
+    printf 'font-size = 14\n' >"${GHOSTTY}.ghostty"
+    run "${SETUP}"
+    assert_success
+    assert_line "[INFO] moved: ${GHOSTTY} -> ${GHOSTTY}.ghostty (managed block)"
+    assert_line "${hint}"
+    run "${SETUP}" --auto-enter no
+    assert_success
+    assert_line --partial "[INFO] removed: ${GHOSTTY}.ghostty"
+    assert_line "${hint}"
+    run "${SETUP}"
+    assert_success
+    refute_line "${hint}"
+    run "${SETUP}" --terminal none
+    assert_success
+    refute_line "${hint}"
+}
+
 @test "defaults (no ghostty dir): yes / none / dev, each logged as (default), state file written with sources, no tmux key" {
     run "${SETUP}"
     assert_success
