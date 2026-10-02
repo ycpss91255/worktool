@@ -140,3 +140,21 @@ SCRIPT
     assert_success
     assert_output --partial "Worktree cleanup failed"
 }
+
+@test "post merge finds cleanup when tool runs from a repo subdirectory" {
+    local project="${BATS_TEST_TMPDIR}/project" payload
+    git init -q "${project}"
+    mkdir -p "${project}/nested" "${project}/.agents/script/worktree"
+    cat > "${project}/.agents/script/worktree/prune-merged.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --apply ]]
+printf 'removed worktree: nested fixture\n' >&2
+SCRIPT
+    chmod +x "${project}/.agents/script/worktree/prune-merged.sh"
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq --arg cwd "${project}/nested" '. + {hook_event_name:"PostToolUse", cwd:$cwd, tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "removed worktree: nested fixture"
+}

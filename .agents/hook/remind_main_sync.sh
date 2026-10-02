@@ -52,13 +52,14 @@ _merge_succeeded() {
 }
 
 _post_merge() {
-    local command="$1" cwd report rc=0
+    local command="$1" cwd root report rc=0
     [[ "${command}" =~ --auto([[:space:]]|$) ]] && return 0
     [[ "${command}" =~ (^|[[:space:]])(--help|-h)([[:space:]]|$) ]] && return 0
     _merge_succeeded || return 0
     cwd="$(hook_field '.cwd')"
     cwd="${cwd:-${CLAUDE_PROJECT_DIR:-${HOOK_REPO_ROOT}}}"
-    if ! report="$(cd -- "${cwd}" && ./.agents/script/worktree/prune-merged.sh --apply 2>&1)"; then
+    root="$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null)" || root="${cwd}"
+    if ! report="$(cd -- "${root}" && ./.agents/script/worktree/prune-merged.sh --apply 2>&1)"; then
         rc=1
     fi
     printf '%s\n' "${report}" >&2
