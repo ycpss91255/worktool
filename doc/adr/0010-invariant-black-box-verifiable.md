@@ -46,7 +46,7 @@
 
 待補：
 
-- 系統層與 integration 層的案例（test/system/real_engine_spec.bats、test/integration/assemble_spec.bats、test/integration/setup_spec.bats）直接呼叫交付的 `script/box/*.sh`，不經 `just box ...`。被驗的是交付原檔，但入口不是使用者的入口；待補一條從 `just box assemble` 在真實引擎上建盒的案例。
+- 系統層與 integration 層的案例（test/system/real_engine_spec.bats、test/integration/assemble_spec.bats、test/integration/setup_spec.bats）直接呼叫交付的 `script/box/*.sh`，不經 `just box ...`。被驗的是交付原檔，但入口不是使用者的入口；待補一條從 `just box assemble` 在真實引擎上 assemble 盒子的案例。
 - 驗收層 test/acceptance/m2_selfcheck_spec.bats 直接呼叫 `selfcheck.sh`，不經 `just test selfcheck`。待補。
 - CI 的建 image 步驟（`build-image` job）直接執行 `docker build`，不經 `just test build`；兩邊目前是同一個 Dockerfile，但沒有測試盯著它們一致。待補。
 - 對外承諾的清單（`doc/contract.md`，#201）尚未進 main；也還沒有機械檢查確認「每一條承諾都對應到至少一個從 `just` 執行的驗收」。待補。

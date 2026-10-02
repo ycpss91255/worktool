@@ -10,7 +10,7 @@
 
 ## 性質
 
-1. **盒子定義只有一份。** dev 盒的名稱、映像與套件只寫在 `box/dev.ini`。建盒直接讀這份檔案，不從它產生、也不另外手寫一份同樣內容的定義（例如另一份清單、腳本裡的套件列表）。
+1. **盒子定義只有一份。** dev 盒的名稱、映像與套件只寫在 `box/dev.ini`。assemble 直接讀這份檔案，不從它產生、也不另外手寫一份同樣內容的定義（例如另一份清單、腳本裡的套件列表）。
 2. **tool config 只有一份。** tool config（盒內工具的設定，例如 tmux、fish、nvim）只在 repo 內放一份；重建之後盒子裡的 tool config 由這一份而來，不另外維護一份會與它分開修改的版本。
 3. **適用範圍。** 本條只管「同一個事實有幾份來源」。user config（`~/.ssh`、金鑰、token）不在 repo 內，不屬本條；tool config 怎麼從 repo 放進盒子 HOME、盒子 HOME 放在哪裡，是機制，由其他 ADR 決定（盒子 HOME 見 ADR 0002）。
 4. 測試裡寫死的期望值（例如斷言映像是 `ubuntu:26.04`）不算第二份定義：它們與 `box/dev.ini` 不一致時測試會變紅，作用是發現漂移，而不是提供另一個來源。
@@ -25,11 +25,11 @@ worktool 的核心承諾是「驅動裝好之後，一個指令建好 worktool �
 
 ## 目前由哪些機制或測試守住
 
-機制：`box/dev.ini` 是原生的 distrobox-assemble 檔案（`doc/manifest.md`），`script/box/assemble.sh` 的預設清單就是它，建盒時原封不動交給 `distrobox assemble create --file`，中間沒有轉換出來的第二份。
+機制：`box/dev.ini` 是原生的 distrobox-assemble 檔案（`doc/manifest.md`），`script/box/assemble.sh` 的預設清單就是它，assemble 時原封不動交給 `distrobox assemble create --file`，中間沒有轉換出來的第二份。
 
-測試（只證明「建盒讀的是 `box/dev.ini`」與「一份清單只定義一個盒子」，**不**證明 repo 裡沒有別的定義）：
+測試（只證明「assemble 讀的是 `box/dev.ini`」與「一份清單只定義一個盒子」，**不**證明 repo 裡沒有別的定義）：
 
-- `test/unit/assemble_spec.bats`「dry-run with the default manifest emits box/dev.ini」：不給 `--file` 時，建盒指令用的就是 `box/dev.ini`。
+- `test/unit/assemble_spec.bats`「dry-run with the default manifest emits box/dev.ini」：不給 `--file` 時，assemble 指令用的就是 `box/dev.ini`。
 - `test/unit/assemble_spec.bats`「#198: the default box home follows the manifest's box name」：預設盒子 HOME 的路徑由清單裡的盒名推出，不另寫一份盒名。
 - `test/unit/justfile_spec.bats`「just box assemble --dry-run prints distrobox assemble create --file box/dev.ini via the real script」：經 `just` 進來也是同一份清單。
 - `test/unit/manifest_spec.bats`「a multi-section manifest is rejected (single box only)」：一份清單只能定義一個盒子。

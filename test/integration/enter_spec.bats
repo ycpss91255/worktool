@@ -9,8 +9,8 @@
 #     progress, saves the host log and hands over to distrobox;
 #   - the command `just box setup` writes into the ghostty profile, run the
 #     way ghostty runs it (`/bin/sh -c` under a desktop session's reduced
-#     PATH, where only the fake engine is added), enters the box directly
-#     without starting tmux (issue #179).
+#     PATH, where only the fake engine is added), reports cold-init progress
+#     through the wrapper and enters without starting tmux (issues #179, #360).
 #
 # The engine and distrobox are fakes (test/helper/enter_fake.bash); HOME is
 # a throwaway directory.
@@ -69,7 +69,7 @@ teardown() {
 }
 
 @test "the ghostty command just box setup writes enters the box directly without starting tmux" {
-    run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --distrobox "${DISTROBOX}"
+    run just box setup --terminal ghostty --distrobox "${DISTROBOX}"
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
@@ -82,8 +82,12 @@ teardown() {
         FAKE_DOCKER_CALLS="${FAKE_DOCKER_CALLS}" FAKE_DISTROBOX_CALLS="${FAKE_DISTROBOX_CALLS}" \
         /bin/sh -c "${_cmd}"
     assert_success
-    assert_output "FAKE-DISTROBOX enter dev"
-    assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
+    assert_line "FAKE-DISTROBOX enter dev"
+    assert_output --partial "full init log: ${HOME}/.cache/worktool/dev-init.log"
+    assert_line --regexp 'first launch: Installing basic packages.*[0-9]+s elapsed'
+    assert_line --partial "initialisation complete after"
+    run cat "${FAKE_DISTROBOX_CALLS}"
+    assert_output "enter dev"
     run enter_fake_logs_alive
     assert_failure
 }

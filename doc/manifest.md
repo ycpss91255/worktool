@@ -26,7 +26,7 @@ worktool 的盒子清單**就是一個原生的 distrobox-assemble 檔案**(INI 
 [dev]
 image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
-additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
+additional_flags="--env TMUX_TMPDIR"
 init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"
 init_hooks=echo <box/tmux-env.sh 的 base64> | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh
 init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | base64 -d >/etc/fish/conf.d/worktool-tmux.fish && chmod 0644 /etc/fish/conf.d/worktool-tmux.fish
@@ -41,8 +41,12 @@ plugin)留在 M5。
 `additional_flags` 與 `init_hooks` 是 **M3(issue #179)** 加的**盒內 tmux 隔離**:
 distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid>/default`)
 因此盒內外共用,盒內打 `tmux` 會連到 host 的 server。`additional_flags` 以
-`--env` 設**容器環境變數** `TMUX_TMPDIR`(`${HOME}` 在建盒時展開,目錄在 #196 的
-盒子 HOME `~/dev-box` 底下),盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
+`--env TMUX_TMPDIR` 設**容器環境變數**,由引擎繼承 assemble 傳入的值。
+assemble 依實際盒子 HOME 決定 `TMUX_TMPDIR=<盒子 HOME>/.cache/tmux`(#361),
+與 `DBX_CONTAINER_CUSTOM_HOME` 使用同一個解析結果;自訂 `--home` 或已記錄的 HOME
+都跟著變。路徑只在 assemble 決定,清單不另寫盒名或 HOME,也不產生第二份清單
+(ADR 0005)。請經 `just box assemble` 建盒,讓這兩個環境值一起傳入。
+盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
 盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
 `--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
 —— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`;`mkdir -p -m 0700` 只管它**新建**的目錄,所以之後再明確 `chown` 成盒內使用者、`chmod 0700`,已存在但權限或擁有者不對的目錄在下次盒子啟動時會被改正(codex 第 1–4 輪的非阻擋項)。從 host 的 tmux pane
@@ -141,7 +145,7 @@ M2 的 assemble 包裝器(`script/box/assemble.sh`)在動作前會驗證清單,�
      shell 跳脫**(`printf '%q'`),因此含有空白、`;` 或 `$()` 的路徑會被表示成
      單一安全參數,直接複製貼上即可忠實重跑,不會被再次拆分或解讀。
 5. **連結 user config 進盒子 HOME**(issue #199,[ADR 0002](adr/0002-box-owns-its-home.md)
-   決策 3):distrobox 建盒**成功之後**才做,試跑模式與建盒失敗時都不做。詳見下方
+   決策 3):distrobox 建立容器**成功之後**才做,試跑模式與 distrobox 建立容器失敗時都不做。詳見下方
    「user config 連結」。
 
 包裝器**絕不在 host 上安裝任何東西、也不需要 root**;副作用只有呼叫 distrobox
@@ -152,7 +156,7 @@ user config 的 symlink(見下兩節)。選項:
 
 ### 盒子的 HOME(`--home`,issue #198)
 
-盒子有自己的 HOME(決定見 #196)。distrobox **只在建盒時**決定 HOME,之後要換只能
+盒子有自己的 HOME(決定見 #196)。distrobox **只在建立容器時**決定 HOME,之後要換只能
 刪盒重建,所以:
 
 - **解析順序**(與 `just box setup` 相同):`--home <路徑>`(`user`)> 設定檔裡
@@ -178,7 +182,7 @@ user config 的 symlink(見下兩節)。選項:
   同名行一併收掉,沒有就附加),其他行逐字保留,`just box setup` 也只改它自己的 key;
   `just box status` 最後一行顯示它。dry-run 不寫。
 - **已存在的盒子換 HOME 一律拒絕**:真正執行前向 container manager 查詢同名盒子
-  建盒時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
+  distrobox 建立容器時的 HOME(`<manager> inspect` 讀 distrobox 交給 init 的 `--home` 參數;manager
   與 distrobox 的選法相同:`DBX_CONTAINER_MANAGER`(非空)優先,其次是 distrobox
   設定檔(`distrobox.conf`、`~/.distroboxrc` 等,依 distrobox 的讀取順序,取最後一個
   `container_manager=`;只讀不 source,接受引號與行尾 `# 註解`;讀不成 manager 名稱的
@@ -206,7 +210,7 @@ user config 的 symlink(見下兩節)。選項:
 ### user config 連結(issue #199)
 
 盒子有自己的 HOME 之後,盒內的 git、gh、ssh 找不到 host 的 user config,所以
-`script/box/assemble.sh` 在建盒成功後,以 `lib/link.sh` 把 user config 用
+`script/box/assemble.sh` 在 distrobox 建立容器成功後,以 `lib/link.sh` 把 user config 用
 **symlink** 帶進盒子 HOME:
 
 - 每一項是 `<盒子 HOME>/<路徑> -> $HOME/<路徑>` 的**絕對路徑** symlink。distrobox
@@ -253,7 +257,7 @@ just box assemble --dry-run --file box/other.ini
 just box assemble
 just box assemble --file box/other.ini
 
-# 指定盒子的 HOME(預設 ~/dev-box;建盒後不可改)
+# 指定盒子的 HOME(預設 ~/dev-box;distrobox 建立容器後不可改)
 just box assemble --home /data/dev-box
 
 # 說明(由腳本印出)
@@ -447,7 +451,9 @@ issue #129),不再延後到 M5。
     取自清單)、`--home` / `--home=` 為 `user`、結尾 `/` 去掉、設定檔的 user 紀錄
     優先於預設而 default 紀錄會重新推導;缺參數 / 相對路徑 / 空字串 / `/` / 含換行
     皆 exit 2 且什麼都不跑;設定檔裡壞掉的 `home` 與清單自帶 `home=` 皆 exit 1;
-    dry-run 的 STDOUT 指令行不變、不寫設定檔。
+    dry-run 的 STDOUT 指令行不變、不寫設定檔。#361 再驗證自訂 HOME(含空白)
+    的 create 環境帶 `TMUX_TMPDIR=<盒子 HOME>/.cache/tmux`,覆蓋 host 傳入的值;
+    清單只宣告 `--env TMUX_TMPDIR`。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
 - 整合(`test/integration/assemble_spec.bats`):
@@ -456,7 +462,7 @@ issue #129),不再延後到 M5。
     `assemble create --file <解析後的清單>` 呼叫 distrobox;另外斷言「從 repo 以外
     執行會傳入解析後的絕對路徑」以及「清單無效時(缺 image、image 引號不成對)
     完全不呼叫 distrobox 且以非零結束」。證明包裝器到 distrobox 的接線。
-    M3(issue #198)再加一支假 `docker`(`inspect` 回答既有盒子建盒時的
+    M3(issue #198)再加一支假 `docker`(`inspect` 回答既有盒子由 distrobox 建立容器時的
     `--home`):盒子 HOME 以 `DBX_CONTAINER_CUSTOM_HOME` 交給 distrobox(argv 不變、
     環境裡原有的值被蓋掉)、成功後記進設定檔且保留其他行、distrobox 失敗不記;既有
     盒子 HOME 不同(含沒給 `--home` 的舊盒)時 exit 1、印刪盒重建指令、不呼叫
@@ -612,7 +618,8 @@ issue #129),不再延後到 M5。
     tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
     tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
     打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
-    (`TMUX_TMPDIR` 傳到盒內、pid 與 host server 不同、mount namespace 等於 dev
+    (`TMUX_TMPDIR` 傳到盒內,值與真實 socket 均在自訂 `BOX_HOME` 底下(#361),
+    host HOME 下的預設 `dev-box/.cache/tmux` 目錄不存在;pid 與 host server 不同、mount namespace 等於 dev
     容器、該行程的根目錄裡有引擎的容器檔、socket 在 `TMUX_TMPDIR` 底下、兩邊的
     `tmux ls` 互不列出對方的 session);第三案(codex 第 1 輪,PR #232)在 host
     tmux server 的**新視窗(真的 host pane)**裡執行 `distrobox enter dev`,先斷言盒內
@@ -751,7 +758,7 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 |------|--------------|------|------|------|------|
 | 自動化全綠(lint + unit + integration + system + system-real + acceptance) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
 | 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | main(#146 合併後;審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
-| 真實可用盒(`script/box/assemble.sh` 真建盒 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(M2 時 8 案例;M3 加 bench gate 兩案例與 tmux / fish 兩案例後為 12):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
+| 真實可用盒(`script/box/assemble.sh` 真的 assemble 盒子 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(M2 時 8 案例;M3 加 bench gate 兩案例與 tmux / fish 兩案例後為 12):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -831,7 +838,7 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
     repo 印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
     `[ci] acceptance bats OK`。
   - `just test system-real`:先看到 `[system-real] dockerd ready after Ns` 與
-    `[system-real] engine 29.8.0 ...`,接著 `1..12` 且 12 項全 `ok`(建盒、第一次 enter
+    `[system-real] engine 29.8.0 ...`,接著 `1..12` 且 12 項全 `ok`(assemble、第一次 enter
     完成初始化後 `rg --version`、`fzf --version`、`tmux -V`、`fish --version`、以 fish
     量的進盒延遲 gate 與其負向案例、冪等、`distrobox rm`),結尾
     `[ci] system-real bats OK`、`[system-real] cleanup: containers left in the nested

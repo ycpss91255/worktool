@@ -47,6 +47,90 @@ setup() {
     WORK="${BATS_TEST_TMPDIR}/work"
 }
 
+# Textual guard for the templates' literal agent options. Fail closed if
+# a call no longer ends with the expected options object.
+_workflow_agent_types() {
+    awk '
+        FNR == 1 {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", file, start
+                failed = 1
+                start = 0
+            }
+            file = FILENAME
+        }
+        /(^|[^[:alnum:]_$])agent[[:space:]]*\(/ {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            start = FNR
+            call = ""
+        }
+        start { call = call " " $0 }
+        start && /\}\)[[:space:]]*$/ {
+            options = call
+            if (!sub(/^.*,[[:space:]]*\{[[:space:]]*label:/, "label:", options) ||
+                options !~ /agentType:[[:space:]]*['\''"]general-purpose['\''"]/) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            start = 0
+        }
+        END {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            exit failed
+        }
+    ' "$@"
+}
+
+@test "every workflow agent call specifies general-purpose agentType (#355)" {
+    local fixture="${BATS_TEST_TMPDIR}/missing-single-line.js"
+    printf '%s\n' "await agent('fixture', prompt, { label: 'fixture' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:1: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/missing-multi-line.js"
+    cat > "${fixture}" <<'JS'
+// The diagnostic points to the call, not its options or closing line.
+
+await agent('fixture', prompt, {
+    label: 'fixture',
+    phase: 'Fixture'
+})
+JS
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:3: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/explicit-type.js"
+    printf '%s\n' "await agent('fixture', prompt, { label: 'fixture', agentType: 'general-purpose' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_success
+    assert_output ""
+
+    fixture="${BATS_TEST_TMPDIR}/non-label-options.js"
+    printf '%s\n' "await agent('fixture', prompt, { agentType: 'general-purpose' })" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:1: missing explicit agentType"
+
+    fixture="${BATS_TEST_TMPDIR}/variable-options.js"
+    printf '%s\n' "const options = { label: 'fixture', agentType: 'general-purpose' }" \
+        "await agent('fixture', prompt, options)" > "${fixture}"
+    run _workflow_agent_types "${fixture}"
+    assert_failure
+    assert_output "${fixture}:2: missing explicit agentType"
+
+    run _workflow_agent_types "${WF_DIR}"/*.js
+    assert_success
+    assert_output ""
+}
+
 @test "workflows keep worktrees and scratch outside the repo checkout" {
     run _pl_run
     assert_success
@@ -2343,5 +2427,75 @@ _scratch_assert_isolated() {
             and ([.calls[].role | startswith("repair:codex:")] | any)
             and ([.calls[].role | startswith("repair:compare:")] | any)' <<<"${json}"
         assert_success
+    done
+}
+
+@test "pr-loop: branches and opens PRs against the selected base in every mode (#364)" {
+    local base mode implementer extra json
+    for base in main m3/5-acceptance; do
+        for mode in full light; do
+            for implementer in codex claude; do
+                extra="$(jq -cn --arg b "${base}" --arg m "${mode}" --arg i "${implementer}" \
+                    '{mode:$m,implementer:$i} + (if $b == "main" then {} else {base:$b} end)')"
+                run _pl_run "${extra}"
+                assert_success
+                json="${output}"
+                run jq -e --arg b "${base}" '
+                    .error == null and .result.ciState == "green" and
+                    (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                        contains("git worktree add -b b /work/../worktree/n origin/" + $b)) and
+                    (.calls[] | select(.role | test("^(implement|publish):")) | .prompt |
+                        select(contains("gh pr create")) | contains("--base " + $b + " --head b")) and
+                    ([.calls[].prompt | test("gh pr merge|mergePullRequest|HEAD:main")] | any | not)
+                ' <<<"${json}"
+                assert_success
+            done
+        done
+    done
+}
+
+@test "pr-loop: CI and independent review use the selected base (#364)" {
+    local mode implementer json
+    for mode in full light; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --arg m "${mode}" --arg i "${implementer}" \
+                '{mode:$m,implementer:$i,base:"m3/5-acceptance"}')"
+            assert_success
+            json="${output}"
+            run jq -e '
+                .error == null and .result.ciState == "green" and
+                (.calls[] | select(.role | startswith("locate:")) | .prompt |
+                    contains("--base m3/5-acceptance")) and
+                (.calls[] | select(.role | startswith("ci:")) | .prompt |
+                    contains("base m3/5-acceptance") and contains("baseRefName") and
+                    contains("mismatch") and contains("return state \"red\"")) and
+                (.calls[] | select(.role | startswith("review:")) | .prompt |
+                    contains("origin/m3/5-acceptance...HEAD")) and
+                ([.calls[].prompt | contains("origin/main") or contains("sync with main by merging")] | any | not) and
+                (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                    if contains("before pushing run just test lint and just test changed") then
+                        contains("just test changed --base origin/m3/5-acceptance")
+                    else true end)
+            ' <<<"${json}"
+            assert_success
+        done
+    done
+}
+
+@test "milestone-fanout: forwards its selected base to every child, defaulting to main (#364)" {
+    local base mode extra json
+    for base in main m3/5-acceptance; do
+        for mode in full light; do
+            extra="$(jq -cn --arg b "${base}" --arg m "${mode}" \
+                '{mode:$m} + (if $b == "main" then {} else {base:$b} end)')"
+            run _fanout_batches "${extra}"
+            assert_success
+            json="${output}"
+            run jq -e --arg b "${base}" '
+                .error == null and (.result | length == 23) and
+                ([.children[].args.base == $b] | all)
+            ' <<<"${json}"
+            assert_success
+        done
     done
 }

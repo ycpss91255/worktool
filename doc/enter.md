@@ -37,13 +37,15 @@ host 的 `/tmp` 掛進盒內(`--volume /tmp:/tmp`),tmux 的預設 socket
 CI 沒抓到,因為測試環境沒有既有的 host tmux server。維護者定案(2026-09-29
 grilling)的目標行為:
 
-1. **開終端**:`ghostty -> '<distrobox>' enter dev -> 盒內 fish`(盒內使用者的登入
+1. **開終端**:`ghostty -> enter.sh wrapper -> '<distrobox>' enter dev -> 盒內 fish`(盒內使用者的登入
    shell)。不自動啟動、不自動附著 tmux;**沒有**任何 tmux 相關的決策或選項
    (`--tmux inside|host` 移除,setup 不再寫 `tmux` 這個 key,舊 key 保留為非受管資料)。
 2. **盒內自己開 tmux**:得到**盒子自己的 tmux server**,永遠不連到 host 的 server
-   或 session。機制在建盒時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
-   變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(建盒時展開;在 #196 的盒子 HOME
-   底下),盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
+   或 session。機制在 distrobox 建立容器時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
+   變數 `TMUX_TMPDIR`,以 `--env TMUX_TMPDIR` 繼承 assemble 傳入的值。
+   assemble 用實際盒子 HOME 決定 `<盒子 HOME>/.cache/tmux`(#361),
+   自訂 `--home` 或已記錄的 HOME 都適用;清單不另寫盒名或 HOME(ADR 0005)。
+   盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
    都繼承它;`init_hooks` 在每次盒子啟動時以盒內使用者身分建立該目錄(mode
    0700),並在之後明確 `chown` 成盒內使用者、`chmod 0700`(`mkdir -p -m` 不會改正
    已存在目錄的權限與擁有者)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能
@@ -107,7 +109,7 @@ grilling)的目標行為:
 | 選項 | 值 | 預設 | 意義 |
 |------|----|------|------|
 | `--auto-enter` | `yes` \| `no` | `yes` | 要不要自動進盒。`no` = 還原 host shell:移除受管區塊,並印出移除了什麼 |
-| `--terminal` | `ghostty` \| `none` | PATH 上有 **ghostty 執行檔** -> `ghostty`;否則 `$XDG_CONFIG_HOME/ghostty` 或 `~/.config/ghostty` 存在 -> `ghostty`;都沒有才 `none`(見下方「偵測 ghostty:看執行檔,不是看設定目錄」) | 要管理哪個終端的 profile。`ghostty` = 受管 command `'<distrobox>' enter <盒>`,得到盒內的登入 shell(fish),後面不接 tmux;`<distrobox>` 是 setup 當下解析出的**絕對路徑**,且已 quote(見下方「受管 command 寫絕對路徑」與「受管 command 的 shell quoting」)。`none` = 不寫任何終端 profile(決策照樣存進設定檔;log 會告訴你手動進盒的指令) |
+| `--terminal` | `ghostty` \| `none` | PATH 上有 **ghostty 執行檔** -> `ghostty`;否則 `$XDG_CONFIG_HOME/ghostty` 或 `~/.config/ghostty` 存在 -> `ghostty`;都沒有才 `none`(見下方「偵測 ghostty:看執行檔,不是看設定目錄」) | 要管理哪個終端的 profile。`ghostty` = 受管 command `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<盒>'`,得到盒內的登入 shell(fish),後面不接 tmux;`<distrobox>` 是 setup 當下解析出的**絕對路徑**,且已 quote(見下方「受管 command 寫絕對路徑」與「受管 command 的 shell quoting」)。`none` = 不寫任何終端 profile(決策照樣存進設定檔;log 會告訴你手動進盒的指令) |
 | `--box` | 容器名(`[A-Za-z0-9][A-Za-z0-9_.-]*`) | `dev` | 要進哪個盒 |
 | `--distrobox` | 絕對路徑的可執行檔 | PATH 上解析到的那一個 | 要寫進受管 command 的 distrobox。PATH 上找不到、又沒給這個選項時,整次執行被拒絕(見下方「受管 command 寫絕對路徑」) |
 | `--dry-run` | — | — | 印出每個決策與每個會寫 / 會移除的檔案,**什麼都不寫**(連設定檔都不寫) |
@@ -126,7 +128,7 @@ exit 2。
 | 檔案 | 內容 |
 |------|------|
 | `$XDG_CONFIG_HOME/worktool/config`(預設 `~/.config/worktool/config`) | **單一設定檔**:每個決策一行 `key=value` 加一行 `key.source=default\|user`(`auto-enter`、`terminal`、`box`);另有 assemble 寫的 `home` / `home.source` 與使用者的 `link=`。讀寫一律經過 `lib/config.sh`,setup 只就地更新自己的 key,其他行逐位元組保留 |
-| `$XDG_CONFIG_HOME/ghostty/config.ghostty`（已存在時），否則 legacy `ghostty/config` | 受管區塊:`command = '<distrobox>' enter <盒>` |
+| `$XDG_CONFIG_HOME/ghostty/config.ghostty`（已存在時），否則 legacy `ghostty/config` | 受管區塊:`command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<盒>'` |
 | `$XDG_CONFIG_HOME/distrobox/distrobox.conf` | 受管區塊(**每次**都寫,`--auto-enter no` 也保留):進 `<盒>` 時 `unset TMUX TMUX_PANE` 的一行 shell,`distrobox-enter` 組 `exec` 請求前 source 它(issue #179,見上方「決策」第 2 點) |
 
 Ghostty 選檔規則（#173）：`config.ghostty` 已存在就用它，否則用 legacy
@@ -142,6 +144,16 @@ setup 以 `[INFO] ghostty config: <檔案> (config.ghostty exists)` 或
 status 使用相同選檔規則，另列出已存在的另一檔，顯示實際區塊所在位置。
 選用 `config.ghostty` 且 host 的 `ghostty +version` 低於 1.3.0 時印出
 `[WARN]`，因為舊版不讀此檔；找不到 ghostty 執行檔就跳過版本檢查。
+
+### 套用設定後，先重新載入再開窗（issue #362）
+
+`just box setup` 寫入、更新、搬移或移除 Ghostty 受管區塊後，會提示設定生效方式。
+Ghostty 已在執行時，必須先重新載入設定（Linux 預設快捷鍵 `Ctrl+Shift+,`）。
+重新載入是非同步的；送出請求不代表已完成，請等設定實際生效後才開新視窗，
+例如確認 Ghostty 的 journal 已記錄讀入該設定檔。也可以先啟動新的 Ghostty 行程，
+再開視窗；single-instance 模式下只開新視窗可能仍由既有行程使用舊設定。
+保留使用者原有視窗；setup 不會關閉它們。還原 host shell 後也需重新載入還原的設定。
+未改動 Ghostty 設定（`unchanged`、沒有區塊可移除或 `--dry-run`）時不印此提示。
 
 `~/.tmux.conf` 不在清單裡:worktool 不讀也不寫它(issue #179)。
 
@@ -160,7 +172,7 @@ was written (fix or remove the markers, then re-run: just box setup)`;
 
 ```text
 # BEGIN worktool managed block (just box setup; do not edit)
-command = '/home/me/.local/bin/distrobox' enter dev
+command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'dev'
 # END worktool managed block
 ```
 
@@ -233,10 +245,13 @@ flatpak)。原因是乾淨機器:剛用 PPA 裝好 `/usr/bin/ghostty`、還沒�
 受管 body 是 **shell 原始碼**,不是 argv:ghostty 的 `command` 沒有 `direct:` 前綴時
 交給 `/bin/sh -c`。所以路徑一律寫成**已 quote 的 shell word**,安裝路徑含空白或
 shell 特殊字元(`$`、反引號、`"`、`\`、`'`)時才不會被拆成多個 word、也不會改變
-命令語意:`command = '<路徑>' enter <盒>`——單引號是唯一對任意字元都安全的 POSIX
+命令語意:`command = '<repo>/script/box/enter.sh' --distrobox '<路徑>' --box '<盒>'`——單引號是唯一對任意字元都安全的 POSIX
 形式;路徑裡的單引號以 `'\''` 收尾再接回。
 
-### 路徑含換行一律拒絕(issue #175 round 2)
+### 路徑含換行一律拒絕(issues #175 round 2／#360)
+
+此限制同時適用於 distrobox 路徑與 repo 內 wrapper 路徑；repo 路徑含換行時，
+setup 在寫入任何設定前拒絕執行，請先搬到不含換行的路徑。
 
 shell quoting 能把**任何**文字變成一個合法的 word,但受管檔案是**逐行**
 格式:ghostty 一行一個 key。所以路徑裡只要有換行(LF)或
@@ -268,7 +283,7 @@ $ just box setup
 [INFO] ghostty config: /home/me/.config/ghostty/config.ghostty (config.ghostty exists)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/.local/bin/distrobox' enter dev)
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'dev')
 ```
 
 再跑一次是冪等的(區塊已是最新就不重寫):
@@ -295,7 +310,7 @@ $ just box setup --box work
 [INFO] box: work (user)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter work)
+[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 沒有支援的終端(`terminal: none`):
@@ -331,7 +346,7 @@ $ echo $?
 $ just box setup --distrobox /opt/distrobox/bin/distrobox
 ...
 [INFO] distrobox: /opt/distrobox/bin/distrobox (--distrobox; absolute path written into the managed command)
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/opt/distrobox/bin/distrobox' enter dev)
+[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box 'dev')
 ```
 
 還原 host shell(印出還原了什麼;`--auto-enter no` 不寫受管 command,所以不需要
@@ -344,7 +359,7 @@ $ just box setup --auto-enter no
 [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
 [INFO] box: work (user)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] removed: /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter work)
+[INFO] removed: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 沒東西可還原時也會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config (no managed block)`。
@@ -360,7 +375,7 @@ $ just box setup --dry-run --box work
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] dry-run: would write /home/me/.config/worktool/config
 [INFO] dry-run: would write /home/me/.config/distrobox/distrobox.conf (managed block: for _worktool_a in "$@"; do ... 'work') unset TMUX TMUX_PANE; ...)
-[INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = '/home/me/.local/bin/distrobox' enter work)
+[INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 查目前生效的決策(印到 stdout,沒有 log 標籤,可直接 grep):
@@ -373,6 +388,7 @@ terminal: ghostty (default)
 box: work (user)
 ghostty: /home/me/.config/ghostty/config (managed block: present)
 distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
+wrapper: /home/me/worktool/script/box/enter.sh (recorded in a managed block: runnable)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
 link: /home/me/dev-box/.ssh -> /home/me/.ssh (linked)
 link: /home/me/dev-box/.gitconfig -> /home/me/.gitconfig (linked)
@@ -423,7 +439,14 @@ link: the box HOME is the host HOME - user config already in place
 後面照樣列出預設值(全部 `(default)`)、ghostty 的區塊狀態與 `distrobox:` 那行,
 報告永遠不會是空的。
 
-## 首次啟動的進度(just box enter,issue #180)
+受管命令也記錄 repo 內 wrapper 的絕對路徑。`just box status` 會列出
+`wrapper: <路徑> (recorded in a managed block: runnable)`；若 repo 搬走、
+wrapper 被刪除或不再可執行，會顯示 `NOT RUNNABLE` 與修復指令
+`just box setup`。請在 repo 的新位置重跑 setup，更新受管命令。
+wrapper 遺失時需先還原 repo；執行權限遺失時，setup 會恢復執行權限並印 log，
+`--dry-run` 只報告、不改權限。無法恢復時，setup 拒絕寫入受管檔案並說明原因與下一步。
+
+## 首次啟動的進度(Ghostty 與 just box enter,issues #180／#360)
 
 盒子第一次 `distrobox enter` 時,distrobox-init 會在盒內安裝基本套件與
 `additional_packages`(實機約 3.5 分鐘)。distrobox 本身在這段期間只印兩行靜態
@@ -433,8 +456,11 @@ link: the box HOME is the host HOME - user config already in place
 
 所以 worktool 在**進盒包裝層** `script/box/enter.sh`(`just box enter`)處理,不改
 distrobox。可手動執行 `just box enter`;它最後
-`exec <distrobox> enter <盒> [-- <指令>...]`。依 issue #179,
-`just box setup` 寫出的終端受管 command 直接跑 `distrobox enter <盒>`。
+`exec <distrobox> enter <盒> [-- <指令>...]`。依 issues #179／#180／#360,
+`just box setup` 寫出的終端受管 command 呼叫 repo 內 wrapper 的絕對路徑,明確傳入
+已引用的 distrobox 絕對路徑與盒名。wrapper 最後進盒內 fish,不自動開 tmux。
+wrapper 仍呼叫 distrobox enter,因此 distrobox.conf 的受管區塊繼續清除
+TMUX／TMUX_PANE。首次進度、log 與逾時也適用於 Ghostty 自動進盒。
 
 ### 選項
 
@@ -467,7 +493,9 @@ distrobox。可手動執行 `just box enter`;它最後
    `exec distrobox enter`。
 4. **失敗或逾時**:distrobox-init 印出 `Error:` 行、容器中途停了、`docker start`
    失敗、背景的 `docker logs -f` 提早結束(Docker 錯誤、權限、連線中斷;訊息帶它的
-   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
+   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式。
+   stdin 是終端時，先清理 log follower，再等待 Enter 才 exit 1，讓 Ghostty 視窗保留診斷；
+   非互動呼叫直接 exit 1。
    **不停止、不刪除盒子**(刪盒是使用者的決定;逾時時盒子可能還在裝,訊息會給
    `docker logs -f <盒>`)。
 5. **清理**:背景的 `docker logs -f` 是唯一的背景行程,成功、失敗、逾時、Ctrl-C
@@ -571,8 +599,8 @@ host tmux server 的部分在 system-real):
   拒絕(不再寫任何檔案),以及安裝路徑含空白 / `$(...)` / 雙引號時,把**真 ghostty
   回報的生效值**丟進 `/bin/sh -c` 仍只會執行那一個執行檔(sentinel 檔不存在)。
 - 系統:`test/system/real_assemble_spec.bats` —— 真 distrobox 把 `box/dev.ini` 解成
-  的 create 請求帶 `--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(在 image 之前,
-  是 docker 的容器環境)與建立該目錄的 `--init-hooks`;
+  的 create 請求帶 `--env TMUX_TMPDIR`(在 image 之前,
+  是 docker 的容器環境,值由 assemble 依盒子 HOME 傳入)與建立該目錄的 `--init-hooks`;
   `test/system/real_enter_env_spec.bats` —— 真的 distrobox-enter(`--dry-run`,印出
   它會送出的 `exec` 請求):對照案例先證明沒有 distrobox.conf 區塊時請求裡**有**
   host pane 的 `--env=TMUX=` / `--env=TMUX_PANE=`;交付的 setup.sh 寫出區塊後,

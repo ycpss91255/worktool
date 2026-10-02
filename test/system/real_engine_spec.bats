@@ -20,7 +20,7 @@
 #   dev -- fish --version` succeed and print a version, and echo those
 #   versions into the TAP stream as evidence.
 #
-#   M3 (issue #179): the terminal runs `'<distrobox>' enter dev` and nothing
+#   M3 (issues #179, #360): the terminal runs the enter.sh wrapper and nothing
 #   after it - no tmux. distrobox shares /tmp with the host, so the old
 #   `-- tmux new -A -s main` attached to a HOST tmux server whenever one
 #   was running, and the user got a host shell that looked like the box.
@@ -765,7 +765,7 @@ _desktop_path() {
 
 @test "ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH" {
     local _setup="${REPO_ROOT}/script/box/setup.sh"
-    local _gui_path _prog _ghostty_config
+    local _gui_path _prog _ghostty_config _command
     _gui_path="$(_desktop_path "${BATS_FILE_TMPDIR}/desktop-bin")"
 
     # (1) The control: from that PATH, `distrobox` by name does not exist.
@@ -784,10 +784,11 @@ _desktop_path() {
     _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
-    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev" \
+    _command="$(enter_block_body "${_ghostty_config}")"
+    run grep -qxF "command = $(enter_sh_squote "${REPO_ROOT}/script/box/enter.sh") --distrobox $(enter_sh_squote "${_prog}") --box 'dev'" \
         "${_ghostty_config}"
     assert_success
-    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev"
+    _log_lines setup-command "${_command}"
 
     # (3) The same distrobox program in the chain shape that ends by
     # itself, run by a real
@@ -795,7 +796,7 @@ _desktop_path() {
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
-        "$(enter_sh_squote "${_prog}") enter dev -- fish $(_chain_script)"
+        "${_command#command = } -- fish $(_chain_script)"
     run env PATH="${_gui_path}" \
         timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
     [[ "${status}" -eq 0 ]] || _diag
@@ -864,7 +865,7 @@ _host_tmux_pid() {
     assert_success
     _file="$(enter_ghostty_target)"
     _body="$(enter_block_body "${_file}")"
-    [[ "${_body}" == "command = "*" enter dev" ]] \
+    [[ "${_body}" == "command = "*" --box 'dev'" ]] \
         || fail "setup.sh wrote an unexpected managed body: '${_body}'"
     _log_lines setup-command "${_body}"
 
@@ -893,11 +894,13 @@ _host_tmux_pid() {
     _host_tmux_up
     _host_pid="$(_host_tmux_pid)"
 
-    # The box's own TMUX_TMPDIR (box/dev.ini) reaches every process in it.
+    # #361: assemble used a custom --home, so both the environment and
+    # the real socket must follow it while retaining #179 server isolation.
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- printenv TMUX_TMPDIR </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_line "${HOME}/dev-box/.cache/tmux"
+    assert_line "${BOX_HOME}/.cache/tmux"
+    assert [ ! -e "${HOME}/dev-box/.cache/tmux" ]
 
     # A plain `tmux`, as a user would type it, inside the box.
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh -c \
@@ -911,7 +914,7 @@ _host_tmux_pid() {
     _box_pid="${lines[0]%% *}"
     _box_sock="${lines[0]#* }"
     # Its socket is under the box's own directory, not the shared /tmp.
-    assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
+    assert_equal "${_box_sock}" "${BOX_HOME}/.cache/tmux/tmux-$(id -u)/default"
 
     # A different server process from the host's ...
     [[ "${_box_pid}" =~ ^[0-9]+$ && "${_box_pid}" != "${_host_pid}" ]] \
@@ -985,7 +988,7 @@ _host_tmux_pid() {
 #   session the box made.
 
 # The socket of the box's own server (box/dev.ini TMUX_TMPDIR).
-_box_sock() { printf '%s/dev-box/.cache/tmux/tmux-%s/default\n' "${HOME}" "$(id -u)"; }
+_box_sock() { printf '%s/.cache/tmux/tmux-%s/default\n' "${BOX_HOME}" "$(id -u)"; }
 
 # The in-box probe e1/e2/e3/e5 run: $1 is the cell tag. It prints the
 # tmux environment it got and how many tmux processes already run in its
@@ -1162,7 +1165,7 @@ _run_cell() {
             local _file _body _res="${HOME}/matrix-${_tag}.txt"
             _file="$(enter_ghostty_target)"
             _body="$(enter_block_body "${_file}")"
-            [[ "${_body}" == "command = "*" enter dev" ]] \
+            [[ "${_body}" == "command = "*" --box 'dev'" ]] \
                 || fail "setup.sh wrote an unexpected managed body: '${_body}'"
             rm -f "${_res}"
             _write_ghostty_config "${_body#command = }"
@@ -1257,7 +1260,7 @@ _e4_cell() {
 # them (codex rounds 1-4 on PR #232). The hook now sets owner and mode
 # explicitly after mkdir, so a restart repairs them.
 @test "#179: a box restart resets an existing TMUX_TMPDIR to the box user and mode 0700" {
-    local _dir="${HOME}/dev-box/.cache/tmux"
+    local _dir="${BOX_HOME}/.cache/tmux"
     assert [ -d "${_dir}" ]
     chmod 0755 "${_dir}"
     chown 1:1 "${_dir}"
