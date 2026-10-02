@@ -24,12 +24,14 @@ name: CI
 # instead of reusing the name as the tier. Branch protection keys on the
 # single `ci-passed` aggregator, not on the per-leg names.
 #
-# Every leg is REQUIRED: the `ci-passed` aggregator fails unless every
+# Every test leg is REQUIRED: the `ci-passed` aggregator fails unless every
 # leg-carrying job finished with `success` - for a matrix job that result
 # is green only when every one of its legs is; a skipped, cancelled or
 # missing leg does not read as green. (Inside each bats gate, test.sh
 # likewise fails on a missing or emptied required spec, on skipped cases
 # and on zero cases.)
+# Milestone PRs additionally require every verify-all leg to succeed;
+# other PRs and main pushes do not require that conditional job.
 #
 # --privileged is used by the test-system-real job ONLY: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
@@ -309,7 +311,7 @@ jobs:
 
   # Single required status: green only if every build-image leg AND every
   # matrix gate leg AND every real-engine leg AND all commit policy jobs
-  # succeeded. `needs` on a matrix
+  # succeeded, plus verify-all on milestone-gate PRs. `needs` on a matrix
   # job covers all of its legs, and its `result` is `success` only when
   # every leg is. `if: always()` makes it run even when a leg failed or was
   # skipped, so that state is reported as a failure rather than as "no
@@ -328,6 +330,7 @@ jobs:
           EMAIL_RESULT: ${{ needs.commit-email.result }}
           ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
           REFS_RESULT: ${{ needs.commit-refs.result }}
+          VERIFY_REQUIRED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}
           VERIFY_RESULT: ${{ needs.verify-all.result }}
         run: |
           echo "build-image (both runners): ${BUILD_RESULT}"
@@ -342,5 +345,7 @@ jobs:
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
           [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
           [ "${REFS_RESULT}" = "success" ] || exit 1
-          echo "verify-all (both runners): ${VERIFY_RESULT}"
-          [ "${VERIFY_RESULT}" = "success" ] || exit 1
+          echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
+          if [ "${VERIFY_REQUIRED}" = "true" ]; then
+            [ "${VERIFY_RESULT}" = "success" ] || exit 1
+          fi

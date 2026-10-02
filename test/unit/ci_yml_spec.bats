@@ -27,8 +27,9 @@
 #     carry the runner, so the two build legs cannot collide and every gate
 #     loads its own arch's image;
 #   - job names carry the runner so a check reads "lint (ubuntu-24.04-arm)";
-#   - ci-passed `needs` every other job (so every matrix leg of each) and
-#     verifies each one's result is `success`, under `if: always()`;
+#   - ci-passed `needs` every other job (so every matrix leg of each), under
+#     `if: always()`, and requires success; verify-all is required only on
+#     milestone-gate PRs. Its shell is executed against a result table;
 #   - `--privileged` is mentioned by the test-system-real job only;
 #   - the commit-email job (issue #234) checks out the full history,
 #     sources lib/commit_email.sh, picks the range with commit_email_range
@@ -171,7 +172,7 @@ _pull_request_types() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "pull_request reruns CI when the PR body is edited" {
+@test "pull_request reruns CI when the PR body or labels change" {
     run _pull_request_types
     assert_output "$(_sorted_set opened synchronize reopened edited labeled unlabeled)"
 }
@@ -192,7 +193,7 @@ _pull_request_types() {
     assert_equal "${#lines[@]}" 8
 }
 
-@test "build-image, gate and test-system-real run on the matrix runner" {
+@test "build-image, gate, test-system-real and verify-all run on the matrix runner" {
     local _job
     for _job in "${LEG_JOBS[@]}"; do
         run _job_block "${_job}"
@@ -202,7 +203,7 @@ _pull_request_types() {
     done
 }
 
-@test "build-image, gate and test-system-real name both runners in their runner dimension" {
+@test "build-image, gate, test-system-real and verify-all name both runners in their runner dimension" {
     local _job _runner
     for _job in "${LEG_JOBS[@]}"; do
         run _job_block "${_job}"
@@ -327,7 +328,7 @@ _pull_request_types() {
     done < <(_needed_ids)
 }
 
-@test "ci-passed verifies every needed job's result is success" {
+@test "ci-passed checks every needed job's result against success" {
     local _job _n
     _n="$(_needed_ids | wc -l)"
     run _job_block ci-passed
@@ -335,8 +336,7 @@ _pull_request_types() {
     while IFS= read -r _job; do
         assert_line --regexp "needs\.${_job}\.result"
     done < <(_needed_ids)
-    # One `= "success" || exit 1` check per needed job: nothing else is
-    # accepted as green.
+    # One success check per dependency; the verify-all check is conditional.
     run grep -cE '^ +\[ "\$\{[A-Z_]+\}" = "success" \] \|\| exit 1$' "${CI_YML}"
     assert_output "${_n}"
 }
@@ -454,4 +454,40 @@ _pull_request_types() {
     assert_line '      actions: read'
     assert_line '        run: just verify all'
     refute_output --partial '--allow-real-box'
+}
+
+# Execute the checked-in aggregator shell with resolved Actions inputs.
+_run_aggregator() {
+    local _script
+    _script="$(_job_block ci-passed | awk '
+        /^        run: \|$/ { script = 1; next }
+        script { print substr($0, 11) }
+    ')"
+    env BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
+        EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success \
+        "VERIFY_REQUIRED=$1" "VERIFY_RESULT=$2" "${3:-GATE_RESULT=success}" \
+        bash -eo pipefail -c "${_script}"
+}
+
+@test "ci-passed requires verify success only for milestone-gate PRs and never waives other gates" {
+    local _required _result _gate
+    run _run_aggregator false skipped
+    assert_success
+    for _required in true false; do
+        for _result in success failure skipped cancelled ''; do
+            run _run_aggregator "${_required}" "${_result}"
+            if [[ "${_required}" == true && "${_result}" != success ]]; then
+                assert_failure
+            else
+                assert_success
+            fi
+        done
+    done
+    for _gate in BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS; do
+        run _run_aggregator false skipped "${_gate}_RESULT=failure"
+        assert_failure
+    done
+    run _job_block ci-passed
+    assert_line "          VERIFY_REQUIRED: \${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}"
+    assert_line '          VERIFY_RESULT: ${{ needs.verify-all.result }}'
 }
