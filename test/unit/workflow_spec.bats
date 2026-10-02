@@ -47,6 +47,62 @@ setup() {
     WORK="${BATS_TEST_TMPDIR}/work"
 }
 
+# Textual guard for the templates' literal agent options. Fail closed if
+# a call no longer ends with the expected options object.
+_workflow_agent_types() {
+    awk '
+        FNR == 1 {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", file, start
+                failed = 1
+                start = 0
+            }
+            file = FILENAME
+        }
+        /(^|[^[:alnum:]_$])agent[[:space:]]*\(/ {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            start = FNR
+            call = ""
+        }
+        start { call = call " " $0 }
+        start && /\}\)[[:space:]]*$/ {
+            options = call
+            if (!sub(/^.*,[[:space:]]*\{[[:space:]]*label:/, "label:", options) ||
+                options !~ /agentType:[[:space:]]*['\''"]general-purpose['\''"]/) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            start = 0
+        }
+        END {
+            if (start) {
+                printf "%s:%d: missing explicit agentType\n", FILENAME, start
+                failed = 1
+            }
+            exit failed
+        }
+    ' "$@"
+}
+
+@test "every workflow agent call specifies general-purpose agentType (#355)" {
+    # Main already specifies the light implementer's type. Recreate the
+    # reported omission only in a temporary copy and pin its diagnostic.
+    local regression="${BATS_TEST_TMPDIR}/pr-loop.js"
+    sed "/phase: 'Implement', schema:/s/, agentType: 'general-purpose'//" \
+        "${PR_LOOP}" > "${regression}"
+    run _workflow_agent_types "${regression}"
+    assert_failure
+    assert_output "${regression}:206: missing explicit agentType"
+    printf '# regression guard: pr-loop.js:206: missing explicit agentType\n' >&3
+
+    run _workflow_agent_types "${WF_DIR}"/*.js
+    assert_success
+    assert_output ""
+}
+
 @test "workflows keep worktrees and scratch outside the repo checkout" {
     run _pl_run
     assert_success
