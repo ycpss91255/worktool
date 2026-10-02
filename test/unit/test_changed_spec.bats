@@ -504,3 +504,18 @@ _document_change() {
             || fail "missing guard: ${_spec}"
     done
 }
+
+@test "just test guards forwards the shared guard selection and validates before help" {
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    mkdir -p "${TEMP_REPO}/test/unit/adr"
+    printf '@test "adr" { true; }\n' >"${TEMP_REPO}/test/unit/adr/0005_spec.bats"
+    cp "${REPO_ROOT}/script/test/justfile.test" "${TEMP_REPO}/script/test/justfile.test"
+
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards
+
+    assert_success
+    assert_equal "$(_dispatched)" '--ci-unit test/unit/config_owner_spec.bats test/unit/adr/0005_spec.bats'
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards --help --bogus
+    assert_failure 2
+    assert_output --partial "unknown option '--bogus' (see --help)"
+}

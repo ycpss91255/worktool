@@ -557,10 +557,12 @@ Options (each selects one step; several may be given and run in the order
 given):
   --build         (Re)build the test image (worktool-test:local).
   --lint          ShellCheck over every *.sh and *.bats, in the container.
+  --guards        Run the shared repository-wide unit guard specs.
   --changed [--base REF]
                   Always run lint, then select specs from committed,
                   uncommitted, and untracked changes since REF (default:
-                  origin/main). Runs changed unit and matrix specs only;
+                  origin/main). Source/ADR changes also run all guards;
+                  runs selected unit and matrix specs only;
                   heavier tiers are reported for CI. Unknown impact and an
                   unreadable diff are also reported for CI verification.
   --unit [SPEC...] [--filter REGEX]
@@ -941,6 +943,13 @@ _run_changed() {
     _run_changed_tiers
 }
 
+_run_guards() {
+    local -a _specs=()
+    mapfile -t _specs < <(_guard_specs)
+    [[ "${#_specs[@]}" -gt 0 ]] || _die "no guard specs found"
+    _run_host_step unit "" "${_specs[@]}"
+}
+
 # Parse the WHOLE command line before running anything, so an unknown option
 # anywhere in it refuses the run as a whole. Host steps accumulate in the
 # order given (none = HOST_STEPS); an internal --ci-* flag selects the
@@ -951,7 +960,7 @@ _parse_test_args() {
             -h|--help) _help=1 ;;
             --ci-lint|--ci-unit|--ci-matrix|--ci-integration|--ci-integration-ghostty|--ci-system|--ci-system-real|--ci-acceptance)
                 _ci="$1" ;;
-            --build|--lint|--unit|--matrix|--integration|--system|--system-real|--acceptance)
+            --build|--lint|--guards|--unit|--matrix|--integration|--system|--system-real|--acceptance)
                 _steps+=("${1#--}") ;;
             --changed) _changed=1 ;;
             --base)
@@ -1009,7 +1018,11 @@ main() {
     fi
     [[ "${#_steps[@]}" -gt 0 ]] || _steps=("${HOST_STEPS[@]}")
     for _step in "${_steps[@]}"; do
-        _run_host_step "${_step}" "${_filter}" "${_paths[@]}"
+        if [[ "${_step}" == guards ]]; then
+            _run_guards
+        else
+            _run_host_step "${_step}" "${_filter}" "${_paths[@]}"
+        fi
     done
     return 0
 }

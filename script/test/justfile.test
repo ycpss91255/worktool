@@ -40,6 +40,10 @@ lint *args:
 changed *args:
     ./script/test/test.sh --changed "$@"
 
+# Shared repository-wide unit guards, inside the test container.
+guards *args:
+    ./script/test/test.sh --guards "$@"
+
 # Unit bats (test/unit/).
 unit *args:
     ./script/test/test.sh --unit "$@"
