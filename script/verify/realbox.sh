@@ -592,8 +592,26 @@ _52_confirm_window() {
     IFS= read -r _pid || { guard_fail "reading the fish PID failed"; return 1; }
     [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
         || { guard_fail "expected a fish PID; a typed yes is not objective evidence"; return 1; }
-    guard_fail "no objective window evidence for fish PID ${_pid}"
-    return 1
+    _52_window_evidence "${_pid}"
+}
+
+_52_window_evidence() {
+    local _pid="$1" _comm _host _window
+    guard_require ps readlink || return 1
+    _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
+        || { guard_fail "cannot inspect fish PID ${_pid}"; return 1; }
+    [[ "${_comm}" == fish ]] \
+        || { guard_fail "PID ${_pid} is not fish"; return 1; }
+    _host="$(readlink /proc/self/ns/mnt)" \
+        || { guard_fail "cannot read host mount namespace"; return 1; }
+    _window="$(readlink "/proc/${_pid}/ns/mnt")" \
+        || { guard_fail "cannot read fish mount namespace (permissions or exited process)"; return 1; }
+    [[ "${_host}" =~ ^mnt:\[[0-9]+\]$ && "${_window}" =~ ^mnt:\[[0-9]+\]$ ]] \
+        || { guard_fail "invalid mount namespace evidence"; return 1; }
+    printf 'window-evidence: pid=%s comm=%s host=%s window=%s\n' \
+        "${_pid}" "${_comm}" "${_host}" "${_window}"
+    [[ "${_window}" != "${_host}" ]] \
+        || { guard_fail "fish remains in the host mount namespace"; return 1; }
 }
 
 # --- step 3 ------------------------------------------------------------------

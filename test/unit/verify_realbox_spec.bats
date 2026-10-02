@@ -454,6 +454,54 @@ _window_input() {
     assert_output --partial "backup-removed=1"
 }
 
+_fake_window_process() {
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${FAKE_WINDOW_COMM:-fish}"
+exit "${FAKE_WINDOW_PS_RC:-0}"
+STUB
+    mv "${STUBS}/readlink" "${STATE}/readlink"
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    /proc/self/ns/mnt) printf 'mnt:[100]\n' ;;
+    /proc/4242/ns/mnt)
+        printf '%s\n' "${FAKE_WINDOW_NS:-mnt:[200]}"
+        exit "${FAKE_WINDOW_NS_RC:-0}" ;;
+    *) exec "${FAKE_STATE_DIR}/readlink" "$@" ;;
+esac
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+    export REALBOX
+}
+
+@test "#362: 5.2 passes with measured fish namespace different from host" {
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200]"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    local _mode
+    for _mode in host non-fish ps-failed namespace-failed empty malformed; do
+        unset FAKE_WINDOW_COMM FAKE_WINDOW_PS_RC FAKE_WINDOW_NS FAKE_WINDOW_NS_RC
+        case "${_mode}" in
+            host) export FAKE_WINDOW_NS='mnt:[100]' ;;
+            non-fish) export FAKE_WINDOW_COMM=sh ;;
+            ps-failed) export FAKE_WINDOW_PS_RC=1 ;;
+            namespace-failed) export FAKE_WINDOW_NS_RC=1 ;;
+            empty) export FAKE_WINDOW_NS='' ;;
+            malformed) export FAKE_WINDOW_NS='different' ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "container-marker=confirmed"
+        assert_output --partial "restore-ok=1"
+    done
+}
+
 @test "5.2.1 happy path records every file setup can write and publishes the manifest" {
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1
