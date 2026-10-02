@@ -2,7 +2,7 @@
 # Readiness policy, sourced by the hook; no shell options changed here.
 
 ready_check_comment() {
-    [[ "$1" =~ (就緒|請驗收|待維護者驗收|ready[[:space:]]+for[[:space:]]+(review|acceptance)) ]] || return 0
+    [[ "$1" =~ (就緒|已備妥|請(維護者)?驗收|待維護者驗收|[Rr]eady[[:space:]]+for[[:space:]]+(review|acceptance)) ]] || return 0
     local _repo _pr _json _sha _checks _target
     _target="$(ready_target)" || exit 2
     read -r _repo _pr <<<"${_target}"

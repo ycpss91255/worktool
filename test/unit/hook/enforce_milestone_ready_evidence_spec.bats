@@ -105,3 +105,10 @@ STUB
     assert_success
     assert_line '.agents/hook/lib/ready_evidence.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats'
 }
+
+@test "asking the maintainer to accept a prepared PR also requires evidence" {
+    printf '[claude] 已備妥，請維護者驗收\n' >"${READY_FIXTURE}/body"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'verify-all'
+}
