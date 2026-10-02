@@ -24,8 +24,12 @@ worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一�
 測試 fixture 依 2026-10-02 查閱的官方文件欄位建立，並非擷取實際執行輸入。
 
 主 session 的唯讀例外只接受字面 `codex exec --sandbox read-only`（含 `e`、`-s` 等形式）。
-未知選項、sandbox 覆寫、shell 展開、eval／xargs、不透明 launcher 與非 shell 直譯器採封閉拒絕。
-包裝腳本只讀取不執行，遞迴深度上限 16；缺檔或不可判讀也拒絕。
+Codex 呼叫的未知選項與 sandbox 覆寫仍拒絕。
+依 #384，指令文字（含 heredoc 與 `bash -c` 字串）提到 codex 時，才對 shell 展開、
+eval／xargs、不透明 launcher、非 shell 直譯器與不可讀包裝腳本採封閉拒絕。
+未提到 codex 的 awk、jq、python、背景 launcher、xargs、just 與 docker 日常指令放行。
+包裝腳本只讀取不執行，仍遞迴檢查 `bash <路徑>`、`./x.sh` 與 launcher 後的腳本；
+`bash -c` 檢查字串內容，不把 `-c` 當檔案路徑。靜態遞迴檢查上限為 16 層。
 未被結構化檢查核對的 Codex 原始文字會觸發拒絕，單純提到 Codex 也可能被擋。
 僅透過 PATH 解析的自訂執行檔、自訂 just recipe、編碼或執行時才組出的呼叫不在靜態檢查範圍；
 此 hook 是合作 agent 的規則護欄，不是作業系統 sandbox，也不驗證 agent 身分真偽。
