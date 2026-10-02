@@ -193,7 +193,9 @@ _pull_request_types() {
     assert_equal "${#lines[@]}" 8
 }
 
-@test "build-image, gate, test-system-real and verify-all run on the matrix runner" {
+# ADR 0012 cites the next two case names verbatim as guards; keep them.
+# LEG_JOBS also covers verify-all, so both cases guard it too.
+@test "build-image, gate and test-system-real run on the matrix runner" {
     local _job
     for _job in "${LEG_JOBS[@]}"; do
         run _job_block "${_job}"
@@ -203,7 +205,7 @@ _pull_request_types() {
     done
 }
 
-@test "build-image, gate, test-system-real and verify-all name both runners in their runner dimension" {
+@test "build-image, gate and test-system-real name both runners in their runner dimension" {
     local _job _runner
     for _job in "${LEG_JOBS[@]}"; do
         run _job_block "${_job}"
@@ -328,7 +330,7 @@ _pull_request_types() {
     done < <(_needed_ids)
 }
 
-@test "ci-passed checks every needed job's result against success" {
+@test "ci-passed verifies every needed job's result is success" {
     local _job _n
     _n="$(_needed_ids | wc -l)"
     run _job_block ci-passed
