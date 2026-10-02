@@ -63,3 +63,22 @@ _check() {
     _check 'bash read.sh'
     assert_success
 }
+
+@test "indirect and opaque launches fail closed despite read-only claims" {
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
+    for cmd in \
+        "codex exec --sandbox read-only \"\$PROMPT\"" \
+        'codex exec --sandbox read-only --config sandbox_mode="danger-full-access" "query"' \
+        'codex exec --sandbox read-only --sandbox workspace-write "query"' \
+        'eval codex exec --sandbox read-only query' \
+        "bash -c \"\$CMD\"" \
+        "\$RUN exec --sandbox read-only query" \
+        'xargs codex exec --sandbox read-only' \
+        'python3 -c "import os; os.system(\"codex exec --sandbox read-only query\")"' \
+        "codex exec --sandbox read-only query; eval \"\$CMD\"" \
+        "bash \"\$SCRIPT\"" 'bash missing.sh' 'bash -e run.sh' \
+        'setsid bash run.sh' 'busybox sh run.sh' 'nice bash run.sh' 'stdbuf -oL bash run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}

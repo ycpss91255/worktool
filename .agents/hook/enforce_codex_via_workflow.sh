@@ -60,6 +60,12 @@ raw_codex_count() {
     printf '%s' "${count}"
 }
 
+closed_command() {
+    local text="$1" re='(^|[^[:alnum:]_.-])(eval|xargs|setsid|busybox|nice|stdbuf|chroot)([^[:alnum:]_.-]|$)'
+    [[ "${text}" =~ ${re} ]] && refuse 'Indirect execution cannot be checked statically.'
+    return 0
+}
+
 inspect_wrapper() {
     local path="$1" cwd="$2" depth="$3"
     [[ "${path}" == /* ]] || path="${cwd}/${path}"
@@ -72,9 +78,11 @@ check_command() {
     local cwd="$2" depth="${3:-0}"
     (( depth < 16 )) || refuse 'Wrapper nesting exceeds the static inspection limit.'
     local -a words
+    closed_command "$1"
     while IFS= read -r sub; do
         lead="$(hook_timeout_lead "${sub}")"
         read -r -a words <<<"${sub#"${lead}"}"
+        hook_word_has_expansion "${words[0]:-}" && refuse 'An expanded executable cannot be checked.'
         tool="$(hook_word "${words[0]:-}")"
         if [[ "${tool}" == cd ]]; then
             path="$(hook_word "${words[1]:-}")"
@@ -88,6 +96,7 @@ check_command() {
             continue
         fi
         path=""
+        hook_is_interpreter "${tool}" && refuse 'Interpreter execution cannot be checked as a shell wrapper.'
         case "${tool##*/}" in
             bash|sh|dash|zsh|ksh|fish|source|.)
                 hook_word_has_expansion "${words[1]:-}" && refuse 'An expanded script path cannot be checked.'
