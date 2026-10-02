@@ -41,8 +41,8 @@ grilling)的目標行為:
    shell)。不自動啟動、不自動附著 tmux;**沒有**任何 tmux 相關的決策或選項
    (`--tmux inside|host` 移除,setup 不再寫 `tmux` 這個 key,舊 key 保留為非受管資料)。
 2. **盒內自己開 tmux**:得到**盒子自己的 tmux server**,永遠不連到 host 的 server
-   或 session。機制在建盒時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
-   變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(建盒時展開;在 #196 的盒子 HOME
+   或 session。機制在 distrobox 建立容器時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
+   變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(distrobox 建立容器時展開;在 #196 的盒子 HOME
    底下),盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
    都繼承它;`init_hooks` 在每次盒子啟動時以盒內使用者身分建立該目錄(mode
    0700),並在之後明確 `chown` 成盒內使用者、`chmod 0700`(`mkdir -p -m` 不會改正

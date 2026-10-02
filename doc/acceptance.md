@@ -425,7 +425,7 @@ prereq-ok
       ```
 
 - [ ] 7. 選做:真實主機(需 host 有 distrobox;host 沒裝可略過 —— 1.5 已在 Docker 內做等價的真實盒驗證)
-  - [ ] 7.1 一鍵建盒、進盒可用、冪等、可清理
+  - [ ] 7.1 一鍵 assemble、進盒可用、冪等、可清理
     - 預期看到資訊
       ```text
       ripgrep 15.x.x ...

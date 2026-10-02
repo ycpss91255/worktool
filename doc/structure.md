@@ -273,7 +273,7 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 `distrobox assemble create --file box/dev.ini`;
 `just box assemble --dry-run --file /tmp/a.ini` 對 `/tmp/a.ini` 做驗證(壞清單會以
 exit 1 印出 `[ERROR] manifest missing required key 'image' ...`);
-`just box assemble` 真的建盒。
+`just box assemble` 真的 assemble 盒子。
 
 `just box setup` / `just box status` 的例子與每個決策的 `[INFO]` log 見
 [`enter.md`](enter.md)「進盒設定」。
