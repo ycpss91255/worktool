@@ -20,7 +20,7 @@
 #   dev -- fish --version` succeed and print a version, and echo those
 #   versions into the TAP stream as evidence.
 #
-#   M3 (issue #179): the terminal runs `'<distrobox>' enter dev` and nothing
+#   M3 (issues #179, #360): the terminal runs the enter.sh wrapper and nothing
 #   after it - no tmux. distrobox shares /tmp with the host, so the old
 #   `-- tmux new -A -s main` attached to a HOST tmux server whenever one
 #   was running, and the user got a host shell that looked like the box.
@@ -765,7 +765,7 @@ _desktop_path() {
 
 @test "ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH" {
     local _setup="${REPO_ROOT}/script/box/setup.sh"
-    local _gui_path _prog _ghostty_config
+    local _gui_path _prog _ghostty_config _command
     _gui_path="$(_desktop_path "${BATS_FILE_TMPDIR}/desktop-bin")"
 
     # (1) The control: from that PATH, `distrobox` by name does not exist.
@@ -784,10 +784,11 @@ _desktop_path() {
     _prog="$(enter_body_distrobox "$(enter_block_body "${_ghostty_config}")")"
     [[ "${_prog}" == /* && -x "${_prog}" ]] \
         || fail "setup.sh wrote a command whose program is not an absolute executable: '${_prog}'"
-    run grep -qxF "command = $(enter_sh_squote "${_prog}") enter dev" \
+    _command="$(enter_block_body "${_ghostty_config}")"
+    run grep -qxF "command = $(enter_sh_squote "${REPO_ROOT}/script/box/enter.sh") --distrobox $(enter_sh_squote "${_prog}") --box 'dev'" \
         "${_ghostty_config}"
     assert_success
-    _log_lines setup-command "command = $(enter_sh_squote "${_prog}") enter dev"
+    _log_lines setup-command "${_command}"
 
     # (3) The same distrobox program in the chain shape that ends by
     # itself, run by a real
@@ -795,7 +796,7 @@ _desktop_path() {
     rm -f "$(_chain_marker)"
     _write_chain_script
     _write_ghostty_config \
-        "$(enter_sh_squote "${_prog}") enter dev -- fish $(_chain_script)"
+        "${_command#command = } -- fish $(_chain_script)"
     run env PATH="${_gui_path}" \
         timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" xvfb-run -a ghostty </dev/null
     [[ "${status}" -eq 0 ]] || _diag
@@ -864,7 +865,7 @@ _host_tmux_pid() {
     assert_success
     _file="$(enter_ghostty_target)"
     _body="$(enter_block_body "${_file}")"
-    [[ "${_body}" == "command = "*" enter dev" ]] \
+    [[ "${_body}" == "command = "*" --box 'dev'" ]] \
         || fail "setup.sh wrote an unexpected managed body: '${_body}'"
     _log_lines setup-command "${_body}"
 
@@ -1164,7 +1165,7 @@ _run_cell() {
             local _file _body _res="${HOME}/matrix-${_tag}.txt"
             _file="$(enter_ghostty_target)"
             _body="$(enter_block_body "${_file}")"
-            [[ "${_body}" == "command = "*" enter dev" ]] \
+            [[ "${_body}" == "command = "*" --box 'dev'" ]] \
                 || fail "setup.sh wrote an unexpected managed body: '${_body}'"
             rm -f "${_res}"
             _write_ghostty_config "${_body#command = }"

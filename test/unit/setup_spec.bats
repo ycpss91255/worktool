@@ -19,7 +19,7 @@
 #     default keys are recomputed on every run.
 #   - auto-enter yes + terminal ghostty writes ONE managed block (begin/end
 #     marker lines) into $XDG_CONFIG_HOME/ghostty/config:
-#     `command = '<distrobox>' enter <box>` - the terminal lands in the box's
+#     `command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<box>'` - the terminal lands in the box's
 #     own login shell (fish), with no tmux in between (issue #179). Re-runs
 #     are idempotent (the block is replaced in place, never duplicated); user
 #     content around the block is preserved.
@@ -88,7 +88,7 @@ setup() {
     # Issue #175 round 1: the body is shell source, so the path is QUOTED.
     # ghostty runs its `command` through /bin/sh -c, hence a single-quoted
     # word. Issue #179: nothing follows `enter <box>` - no tmux.
-    CMD_ENTER="command = '${DISTROBOX}' enter dev"
+    CMD_ENTER="command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev'"
 }
 
 # Install an executable stand-in for distrobox at $1. setup.sh only
@@ -341,7 +341,7 @@ _matrix() {
     assert_success
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] terminal: ghostty (default)"
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work')"
 }
 
 # --- ghostty block: exactly once, idempotent, user content preserved ---------
@@ -375,12 +375,12 @@ _matrix() {
         "${BEGIN}" "${CMD_ENTER}" "${END}" >"${GHOSTTY}"
     run "${SETUP}" --terminal ghostty --box work
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work')"
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
     run cat "${GHOSTTY}"
     assert_line --index 0 "theme = dark"
     assert_line --index 1 "${BEGIN}"
-    assert_line --index 2 "command = '${DISTROBOX}' enter work"
+    assert_line --index 2 "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work'"
     assert_line --index 3 "${END}"
     assert_line --index 4 "font-size = 12"
     assert_equal "${#lines[@]}" 5
@@ -547,7 +547,7 @@ _matrix() {
     assert_line "[INFO] terminal: ghostty (default)"
     assert_line "[INFO] box: work (user)"
     assert_line "[INFO] dry-run: would write ${CONFIG}"
-    assert_line "[INFO] dry-run: would write ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter work)"
+    assert_line "[INFO] dry-run: would write ${GHOSTTY} (managed block: command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'work')"
     assert [ ! -e "${CONFIG}" ]
     assert [ ! -e "${GHOSTTY}" ]
 }
@@ -800,7 +800,7 @@ _matrix() {
     assert_success
     assert_line "[INFO] distrobox: ${DISTROBOX} (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${DISTROBOX}' enter dev"
+    assert_line "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev'"
     refute_line "command = distrobox enter dev"
 }
 
@@ -819,7 +819,7 @@ _matrix() {
     assert_success
     assert_line "[INFO] distrobox: ${_link_dir}/distrobox (absolute path written into the managed command)"
     run cat "${GHOSTTY}"
-    assert_line "command = '${_link_dir}/distrobox' enter dev"
+    assert_line "command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${_link_dir}/distrobox' --box 'dev'"
     refute_line --partial "${_real}"
 }
 
@@ -911,7 +911,7 @@ _assert_ghostty_quoting() {
     run "${SETUP}" --distrobox "${_dbx}"
     assert_success
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "$(_squote "${_dbx}") enter dev"
+    assert_equal "${_cmd}" "$(_squote "${REPO_ROOT}/script/box/enter.sh") --distrobox $(_squote "${_dbx}") --box 'dev'"
     run env -i PATH=/usr/bin:/bin /bin/sh -c "${_cmd}"
     assert_success
     run cat "${_dbx}.log"
@@ -1001,7 +1001,7 @@ _assert_control_char_refused() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${GHOSTTY}")"
-    assert_equal "${_cmd}" "'${DISTROBOX}' enter dev"
+    assert_equal "${_cmd}" "'${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev'"
 
     # Control: this PATH has no distrobox by name.
     run -127 env -i PATH=/usr/bin:/bin /bin/sh -c 'distrobox enter dev'
@@ -1335,7 +1335,7 @@ _seed_managed_ghostty() {
 
     run "${SETUP}" --terminal ghostty
     assert_success
-    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${DISTROBOX}' enter dev)"
+    assert_line "[INFO] wrote: ${GHOSTTY} (managed block: command = '${REPO_ROOT}/script/box/enter.sh' --distrobox '${DISTROBOX}' --box 'dev')"
     assert_equal "$(_block_count "${GHOSTTY}")" "1"
     run "${REPO_ROOT}/script/box/status.sh"
     assert_success
@@ -1474,3 +1474,16 @@ _assert_mode_kept() {
 # 5. Multi-block files are refused before any write (issue #179).
 # Covered by managed_block_spec.bats: malformed markers x operation x
 # managed file, re-running setup on two managed blocks, and --dry-run refusal.
+
+@test "setup refuses a wrapper repo path with a newline before writing any managed files" {
+    local _repo="${BATS_TEST_TMPDIR}/repo"$'\n'"moved"
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${SETUP}" "${REPO_ROOT}/script/box/enter.sh" "${REPO_ROOT}/script/box/justfile.box" "${_repo}/script/box/"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty
+    assert_failure 1
+    assert_output --partial "wrapper:"
+    assert_output --partial "holds a newline or carriage return"
+    assert [ ! -e "${CONFIG}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+}
