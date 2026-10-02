@@ -140,18 +140,19 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is three mod? lines (test, box, agent) and one default recipe" {
+@test "root justfile is four mod? lines (test, box, agent, worktree) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
     run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
     assert_success
-    assert_equal "${#lines[@]}" 5
+    assert_equal "${#lines[@]}" 6
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
     assert_line --index 2 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 3 "default:"
-    assert_line --index 4 --regexp '^[[:space:]]+@just --list$'
+    assert_line --index 3 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
+    assert_line --index 4 "default:"
+    assert_line --index 5 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
