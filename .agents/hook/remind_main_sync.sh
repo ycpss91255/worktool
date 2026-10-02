@@ -19,7 +19,8 @@
 # Only a real subcommand triggers it: launches are parsed first, so
 # a commit message mentioning `gh pr merge` stays silent.
 #
-# Exit: always 0 (reminder JSON on stdout when it fires).
+# PostToolUse runs cleanup only on confirmed successful immediate merges.
+# Exit: always 0 (advisory JSON on stdout when it fires).
 
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -71,7 +72,7 @@ main() {
     [[ -z "${_cmd}" ]] && return 0
     _clean=''
     while IFS= read -r _sub; do
-        [[ "${_sub}" =~ ^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || continue
+        [[ "${_sub}" =~ ^gh([[:space:]]+(--repo|-R)[[:space:]]+[^[:space:]]+)?[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || continue
         _clean="${_sub}"
         break
     done < <(hook_subcommands "${_cmd}")

@@ -77,7 +77,7 @@ prune_tree() {
         if git -C "${MAIN}" branch -d -- "${branch}" >&2; then
             log_info "removed branch: ${branch}"
         else
-            log_warn "kept branch ${branch}: git -C "${MAIN}" branch -d refused"
+            log_warn "kept branch ${branch}: git branch -d refused"
         fi
     fi
 }

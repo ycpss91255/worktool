@@ -121,3 +121,12 @@ SCRIPT
         done
     done
 }
+
+@test "post merge recognizes the repository root flag before pr merge" {
+    local payload
+    payload="$(hook_json 'gh --repo ycpss91255/worktool pr merge 42 --merge' | \
+        jq '. + {hook_event_name:"PostToolUse", cwd:"/nonexistent", tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "Worktree cleanup failed"
+}
