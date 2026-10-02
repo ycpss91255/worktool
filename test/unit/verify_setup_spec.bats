@@ -85,9 +85,8 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     VERIFY="${REPO_ROOT}/script/verify/setup.sh"
-    # Shared quoting/defaults, independently checked against real setup below.
-    source "${REPO_ROOT}/lib/enter.sh"
-    MANAGED_EXPECTED="command = $(enter_sh_squote '<repo>/script/box/enter.sh') --distrobox $(enter_sh_squote '<D>') --box $(enter_sh_squote "$(enter_default box)")"
+    # Literal criterion: quoting/defaults belong to the code under test.
+    MANAGED_EXPECTED="command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'"
     STUB="${BATS_TEST_TMPDIR}/stub"
     LINKS="${BATS_TEST_TMPDIR}/links"
     mkdir -p "${STUB}" "${LINKS}"
@@ -989,6 +988,17 @@ FRAG
     assert_success
     assert_line "home: <H>/dev-box (default)"
     assert_line "link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)"
+}
+
+@test "3.1: product quoting regression cannot redefine the acceptance command" {
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_sh_squote() { printf '%s\n' "$1"; }
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.1
+    assert_failure 1
+    refute_output --partial "3.1 PASS"
 }
 
 @test "single source: managed expectation equals the real setup dry-run command" {

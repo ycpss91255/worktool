@@ -145,9 +145,9 @@ LAST_RC=0  # the exit status of the last command _run_norm ran
 LAST_OUT="" # the normalised text _run_norm last printed, so it can be JUDGED
 DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 
-# Use the product's quoting and default, and guard this composition against
-# the real setup dry-run in verify_setup_spec.bats.
-MANAGED_CMD="command = $(enter_sh_squote '<repo>/script/box/enter.sh') --distrobox $(enter_sh_squote '<D>') --box $(enter_sh_squote "$(enter_default box)")"
+# Pin the acceptance command independently of the product under test.
+# The real setup dry-run guard detects drift without redefining this criterion.
+MANAGED_CMD="command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'"
 
 # The line `_apply_no_terminal` logs instead of writing a profile (item
 # 3.8). The BARE `distrobox` in it is deliberate and is pinned here as

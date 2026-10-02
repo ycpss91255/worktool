@@ -886,30 +886,74 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_equal "${_expected}" "${_actual}"
 }
 
+# Inject measurements at the public clock/tool seam; never source bench.sh.
+_install_bench_samples() {
+    local _bin="${BATS_TEST_TMPDIR}/bench-bin" _sample
+    mkdir -p "${_bin}"
+    export BENCH_SAMPLE_DIR="${_bin}"
+    printf '0\n' >"${_bin}/clock"
+    printf '0\n' >"${_bin}/calls"
+    : >"${_bin}/samples"
+    for _sample in "$@"; do
+        awk -v n="${_sample}" 'BEGIN {printf "%.0f\n", n*1000}' >>"${_bin}/samples"
+    done
+    cat >"${_bin}/clock.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${BENCH_SAMPLE_DIR}/clock"
+EOF
+    cat >"${_bin}/distrobox" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+read -r _clock <"${BENCH_SAMPLE_DIR}/clock"
+read -r _calls <"${BENCH_SAMPLE_DIR}/calls"
+mapfile -t _samples <"${BENCH_SAMPLE_DIR}/samples"
+_us="${_samples[_calls % 3]}"
+printf '%s\n' "$((_clock + _us))" >"${BENCH_SAMPLE_DIR}/clock"
+printf '%s\n' "$((_calls + 1))" >"${BENCH_SAMPLE_DIR}/calls"
+if [[ "$*" == *bench-inbox* ]]; then printf '%s\n' "${_us}"; fi
+EOF
+    chmod +x "${_bin}/clock.sh" "${_bin}/distrobox"
+}
+
 _assert_product_bench_sample() {
-    local output=""
-    local _line="$1" _metric _min _median _max _kind _limit
+    local _line="$1" _min _median _max _kind=INFO _limit=999999
     local _metric_re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
     local _notice_re='^\[(INFO|ERROR)\] shell median ([0-9]+(\.[0-9]+)?) ms (within|exceeds) --max-ms ([0-9]+)$'
     if [[ "${_line}" =~ ${_metric_re} ]]; then
-        _metric="${BASH_REMATCH[1]}"
         _min="${BASH_REMATCH[2]}" _median="${BASH_REMATCH[4]}" _max="${BASH_REMATCH[6]}"
-        run bash -c 'source "$1"; _print_text "$2" "$3" "$4" "$5"' _ \
-            "${REPO_ROOT}/script/box/bench.sh" "${_metric}" \
-            "$(awk -v n="${_min}" 'BEGIN {printf "%.0f", n*1000}')" \
-            "$(awk -v n="${_median}" 'BEGIN {printf "%.0f", n*1000}')" \
-            "$(awk -v n="${_max}" 'BEGIN {printf "%.0f", n*1000}')"
-        assert_success
     elif [[ "${_line}" =~ ${_notice_re} ]]; then
         _kind="${BASH_REMATCH[1]}" _median="${BASH_REMATCH[2]}" _limit="${BASH_REMATCH[5]}"
-        run bash -c 'source "$1"; OPT_MAX_MS="$2"; _check_threshold "$3"' _ \
-            "${REPO_ROOT}/script/box/bench.sh" "${_limit}" \
-            "$(awk -v n="${_median}" 'BEGIN {printf "%.0f", n*1000}')"
-        if [[ "${_kind}" == INFO ]]; then assert_success; else assert_failure 1; fi
+        _min="${_median}" _max="${_median}"
     else
         fail "unrecognised bench sample: ${_line}"
+        return 1
     fi
-    assert_equal "${output}" "${_line}"
+    _install_bench_samples "${_min}" "${_median}" "${_max}"
+    local _bin="${BENCH_SAMPLE_DIR}"
+    run env PATH="${_bin}:/usr/local/bin:/usr/bin:/bin" BENCH_CLOCK="${_bin}/clock.sh" \
+        BENCH_PSI_FILE="${_bin}/absent-psi" "${REPO_ROOT}/script/box/bench.sh" \
+        --runs 3 --warmup 0 --max-ms "${_limit}"
+    if [[ "${_kind}" == INFO ]]; then
+        assert_success || return 1
+    else
+        assert_failure 1 || return 1
+    fi
+    assert_line "${_line}"
+}
+
+@test "single source: bench guard catches a CLI that prints failure but exits zero" {
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >"${_repo}/script/box/bench.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+exit 0
+EOF
+    REPO_ROOT="${_repo}" run _assert_product_bench_sample \
+        '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+    assert_failure
 }
 
 @test "single source: bench fixture and documented samples match real product formatting" {

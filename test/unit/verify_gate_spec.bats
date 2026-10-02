@@ -71,6 +71,9 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+# shellcheck source=test/helper/diagnostics.bash
+source "${BATS_TEST_DIRNAME}/../helper/diagnostics.bash"
+
 GATE_SH="${REPO_ROOT}/script/verify/gate.sh"
 
 setup() {
@@ -204,28 +207,25 @@ EOF
 }
 
 _system_real_block() {
-    cat <<'EOF'
-ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)
-# chain: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
-# chain-in-box: marker mntns=mnt:[1234] == dev container; host=ca83e9d035cd == docker inspect dev hostname
-ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)
-# hang-ready: hang-ready fish=4.2.1 host=ca83e9d035cd
-# hang: in-box command started, then timed out after 45s (budget 45s, status 124)
-ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
-# single-instance: PRIMARY=up
-# single-instance: SECOND_RC=0
-# single-instance: SECOND_ELAPSED=1
-# single-instance: STARTED_AT_RETURN=1
-# single-instance: FORWARDED_STARTED=yes
-# single-instance: FORWARDED_AFTER_RETURN=yes
-# single-instance: FORWARDED_DELAY_MS=319
-# single-instance: RUNNING_COMMANDS=2
-# single-instance: PRIMARY_WRAPPER_ALIVE=yes
-# single-instance: COMMAND_FINISHED=no
-ok 15 ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)
-# chain-desktop-path: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
-ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
-EOF
+    local _marker _ready
+    _marker="$(diagnostic_chain_marker 4.2.1 /run/.containerenv 'mnt:[1234]' no ca83e9d035cd)"
+    _ready="$(diagnostic_ready_marker 4.2.1 ca83e9d035cd)"
+    {
+        printf '%s\n' 'ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)'
+        diagnostic_lines chain "${_marker}" >/dev/null
+        diagnostic_in_box chain 'mnt:[1234]' ca83e9d035cd >/dev/null
+        printf '%s\n' "ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)"
+        diagnostic_lines hang-ready "${_ready}" >/dev/null
+        diagnostic_hang 45 45 124 >/dev/null
+        printf '%s\n' 'ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging'
+        diagnostic_lines single-instance PRIMARY=up SECOND_RC=0 SECOND_ELAPSED=1 \
+            STARTED_AT_RETURN=1 FORWARDED_STARTED=yes FORWARDED_AFTER_RETURN=yes \
+            FORWARDED_DELAY_MS=319 RUNNING_COMMANDS=2 PRIMARY_WRAPPER_ALIVE=yes \
+            COMMAND_FINISHED=no >/dev/null
+        printf '%s\n' 'ok 15 ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)'
+        diagnostic_lines chain-desktop-path "${_marker}" >/dev/null
+        printf '%s\n' "ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH"
+    } 3>&1
 }
 
 # Write both blocks in their documented (passing) form. INT_BLOCK and
@@ -859,73 +859,30 @@ EOF
     assert_success
 }
 
-@test "single source: diagnostic criteria agree with real system assertions" {
-    local _src="${REPO_ROOT}/test/system/real_engine_spec.bats"
-    local _array="${BATS_TEST_TMPDIR}/criteria.sh" _line _pat _expected=() _actual=()
-    sed -n '/^SYSTEM_REAL_CRITERIA=(/,/^)/p' "${GATE_SH}" >"${_array}"
-    # The array file is generated above from the trusted gate source.
-    # shellcheck source=/dev/null
-    source "${_array}"
-    while IFS= read -r _line; do
-        [[ "${_line}" == *assert_line* ]] || continue
-        _pat="${_line#*\'}"
-        _pat="${_pat%\'*}"
-        if [[ "${_line}" == *--regexp* ]]; then
-            _expected+=("^# single-instance: ${_pat#^}")
-        else
-            _expected+=("^# single-instance: ${_pat}$")
-        fi
-    done < <(sed -n '/^@test "ghostty chain: with gtk-single-instance on,/,/^}/p' "${_src}")
-    for _pat in "${SYSTEM_REAL_CRITERIA[@]}"; do
-        [[ "${_pat}" == '^# single-instance: '* ]] && _actual+=("${_pat}")
-    done
-    assert_equal "${_actual[*]}" "${_expected[*]}"
-    _pat="$(sed -n "s/^CHAIN_OK='\(.*\)'$/\1/p" "${_src}")"
-    assert_equal "${SYSTEM_REAL_CRITERIA[0]}" "^# chain: ${_pat#^}"
-    assert_equal "${SYSTEM_REAL_CRITERIA[14]}" "^# chain-desktop-path: ${_pat#^}"
-    _pat="$(sed -n "s/.*assert_line --regexp '\(\^hang-ready .*\)'$/\1/p" "${_src}")"
-    assert_equal "${SYSTEM_REAL_CRITERIA[2]}" "^# hang-ready: ${_pat#^}"
+@test "single source: diagnostic criteria accept producer output and reject a broken judgement via CLI" {
+    _stub_ci_tools
+    _write_tier_blocks
+    _stub_just_blocks
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_success
+    sed -i 's/COMMAND_FINISHED=no/COMMAND_FINISHED=yes/' "${SYS_BLOCK}"
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    refute_output --partial '2.3 PASS'
 }
 
-# Forward a product printf format and its values without interpreting shell code.
-_product_printf() {
-    awk -v fmt="$1" -v a="$2" -v b="$3" -v c="${4:-}" -v d="${5:-}" -v e="${6:-}" \
-        'BEGIN {printf fmt, a, b, c, d, e}'
-}
-
-@test "single source: chain diagnostic fixture lines use the real producer templates" {
-    local _src="${REPO_ROOT}/test/system/real_engine_spec.bats" _fmt _line _out
-    local _logger="${BATS_TEST_TMPDIR}/logger.sh"
+@test "single source: chain diagnostics use the shared producer without reading spec code" {
+    # Public evidence formatter, also used by the real system suite.
+    # shellcheck source=test/helper/diagnostics.bash
+    source "${REPO_ROOT}/test/helper/diagnostics.bash"
+    local _out _line
     _system_real_block >"${SYS_BLOCK}"
-    _fmt="$(sed -n "s/^printf '\(inbox-ok .*\)' .*/\1/p" "${_src}")"
-    _out="$(_product_printf "${_fmt}" '4.2.1' '/run/.containerenv' 'mnt:[1234]' no ca83e9d035cd)"
-    run grep -Fx "# chain: ${_out}" "${SYS_BLOCK}"
-    assert_success
-    run grep -Fx "# chain-desktop-path: ${_out}" "${SYS_BLOCK}"
-    assert_success
-    _fmt="$(sed -n "s/^printf '\(hang-ready .*\)' .*/\1/p" "${_src}")"
-    _out="$(_product_printf "${_fmt}" '4.2.1' ca83e9d035cd)"
-    run grep -Fx "# hang-ready: ${_out}" "${SYS_BLOCK}"
-    assert_success
-    # Read the real logger and producer arguments; run only formatting with
-    # sample measurements. No system case, engine or window is run.
-    sed -n '/^_log_lines() {/,/^}/p' "${_src}" >"${_logger}"
-    _out="$(
-        # shellcheck source=/dev/null
-        source "${_logger}"
-        _marker_ns='mnt:[1234]' _marker_host=ca83e9d035cd
-        _elapsed=45 _hang_status=124
-        export GHOSTTY_HANG_TIMEOUT=45
-        set -- chain
-        while IFS= read -r _line; do
-            _line="${_line#* _log_lines }"
-            eval "set -- ${_line}"
-            _log_lines "$@" 3>&1
-        done < <(
-            grep -E '^    _log_lines ("[^"]+-in-box"|hang )' "${_src}"
-        )
-    )"
-    _out="$(printf '%s\n' "${_out}" | grep '^# ')"
+    _out="$( {
+        diagnostic_lines chain "$(diagnostic_chain_marker 4.2.1 /run/.containerenv 'mnt:[1234]' no ca83e9d035cd)"
+        diagnostic_in_box chain 'mnt:[1234]' ca83e9d035cd
+        diagnostic_lines hang-ready "$(diagnostic_ready_marker 4.2.1 ca83e9d035cd)"
+        diagnostic_hang 45 45 124
+    } 3>&1 >/dev/null)"
     while IFS= read -r _line; do
         run grep -Fx "${_line}" "${SYS_BLOCK}"
         assert_success
