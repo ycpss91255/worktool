@@ -36,7 +36,10 @@
 # `[INFO] box home: <path> (default|user)`, handed to distrobox as
 # DBX_CONTAINER_CUSTOM_HOME (distrobox-create's documented variable, so the
 # dry-run command line stays the same), and recorded in
-# the state file (lib/config.sh) after a successful run. An EXISTING box whose
+# the state file (lib/config.sh) after a successful run. The same resolved
+# HOME supplies TMUX_TMPDIR=<box HOME>/.cache/tmux to the create environment;
+# the manifest forwards it into the container with --env (#361).
+# An EXISTING box whose
 # HOME differs is refused - exit 1, nothing changed, the remove-and-recreate
 # commands printed - because only a new box can take a new HOME; worktool
 # never removes a box by itself. When the container manager distrobox would
@@ -288,7 +291,8 @@ _assemble_exec() {
     _check_existing_box || return 1
     log_info "assembling box from ${_resolved}"
     local _rc=0
-    DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" "${_cmd[@]}" || _rc=$?
+    DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
+        TMUX_TMPDIR="${BOX_HOME}/.cache/tmux" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then
         config_log error "failed to record the box home in "
