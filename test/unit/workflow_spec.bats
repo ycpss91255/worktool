@@ -2430,6 +2430,36 @@ _scratch_assert_isolated() {
     done
 }
 
+@test "doc/workflow.md requires milestone acceptance hand-off evidence from real user entries" {
+    run sed -n '/^## milestone 驗收 PR 交出前檢查清單$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial 'milestone-gate'
+    assert_output --partial 'verify-all'
+    assert_output --partial 'just verify all'
+    assert_output --partial '全部成功'
+    assert_output --partial '| milestone 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |'
+    assert_output --partial '每個目標'
+    assert_output --partial '第 5 節'
+    assert_output --partial '--allow-real-box'
+    assert_output --partial '備份與還原'
+    assert_output --partial '貼出輸出'
+    assert_output --partial '無法安全執行'
+    assert_output --partial '維護者'
+}
+
+@test "CI acceptance tracking keeps issue 363 open until runner RED and GREEN evidence exists" {
+    run sed -n '/^### CI job 驗收追蹤(#363)$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial 'Refs #363'
+    assert_output --partial '#363 保持開啟'
+    assert_output --partial '#157'
+    assert_output --partial 'F1'
+    assert_output --partial 'GitHub runner'
+    assert_output --partial 'RED'
+    assert_output --partial 'GREEN'
+    assert_output --partial 'skipped'
+}
+
 @test "pr-loop: branches and opens PRs against the selected base in every mode (#364)" {
     local base mode implementer extra json
     for base in main m3/5-acceptance; do
