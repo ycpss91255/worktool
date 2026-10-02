@@ -18,6 +18,9 @@ mod? box 'script/box/justfile.box'
 # Agent launch without GitHub authentication (headless fallback).
 mod? agent 'script/agent/justfile.agent'
 
+# Cleanup merged linked worktrees (dry-run by default).
+mod? worktree '.agents/script/worktree/justfile.worktree'
+
 # Default: list the namespaces.
 default:
     @just --list
