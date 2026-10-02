@@ -2052,7 +2052,7 @@ _pl_stage_run() {
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
         '{"implement:":{"status":"failed","reason":"commit: noreply identity is missing"}}'
     assert_success
-    run jq -cr '[.result.blockingLeft, [.calls[].role], (.calls[0].schema.required | index("reason") != null)]' <<<"${output}"
+    run jq -cr '[.result.blockingLeft, [.calls[].role | select(startswith("prepare:") | not)], (.calls[] | select(.role | startswith("implement:")) | .schema.required | index("reason") != null)]' <<<"${output}"
     assert_output '[["light editing did not complete: commit: noreply identity is missing"],["implement:#331"],true]'
 }
 
@@ -2060,7 +2060,7 @@ _pl_stage_run() {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
     assert_success
-    run jq -cr '[.error, [.calls[].role], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
+    run jq -cr '[.error, [.calls[].role | select(startswith("prepare:") | not)], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
 }
 
@@ -2572,4 +2572,38 @@ _scratch_assert_isolated() {
             assert_success
         done
     done
+}
+
+# Resume probes run against real branches/worktrees; CI/review are agent stand-ins.
+_pl_resume_setup() {
+    local root="${BATS_TEST_TMPDIR}"
+    git init -q --bare "${root}/remote"
+    git init -q "${root}/src"
+    git -C "${root}/src" config user.name Tester
+    git -C "${root}/src" config user.email '1+tester@users.noreply.github.com'
+    git -C "${root}/src" commit -qm initial --allow-empty
+    git -C "${root}/src" branch -M main
+    git -C "${root}/src" remote add origin "${root}/remote"
+    git -C "${root}/src" push -q origin main
+    git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
+}
+
+_pl_resume_run() {
+    local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
+    replies='{"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}"         "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')"         "${replies}" exec-resume
+}
+
+@test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
+    _pl_resume_setup
+    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit workflow_spec.bats"}'
+    assert_success
+    local json="${output}"
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | test("^(implement|publish|locate|stage-check):")] | any | not) and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("base acceptance")) and
+        (.calls[] | select(.role | startswith("review:")) | .prompt | contains("origin/acceptance...HEAD"))' <<<"${json}"
+    assert_success
+    run git -C "${BATS_TEST_TMPDIR}/worktree/n" branch --show-current
+    assert_output b
 }

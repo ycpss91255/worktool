@@ -56,7 +56,9 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;所有 gh 指令都帶 `--repo` |
 | `issue` | 是 | 這個 PR 關閉的**唯一** sub-issue(PR 描述會有 `Closes #N`) |
-| `branch` | 是 | 從 `origin/main` 開的分支名 |
+| `branch` | 是 | 從 `origin/<base>` 開的分支名；本機分支已存在時接續，跳過實作 |
+| `pr` | 否 | 接續用的既有 PR 正整數編號；直接進入 CI 與獨立審查，不重開 PR |
+| `base` | 否 | PR 目標分支，預設 `main` |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
 | `gates` | 否 | 傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
@@ -66,6 +68,13 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
+
+## 既有 PR 接續
+
+指定既有 `branch` 與 `pr` 時跳過實作與開 PR，直接進入 CI／審查迴圈。
+CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
+本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
+同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## light 模式
 
