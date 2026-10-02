@@ -132,3 +132,14 @@ prune() {
     [ -d "${TREE}" ]
     [ ! -e "${FIXTURE}/worktree/other" ]
 }
+
+@test "deleted remote acceptance branches cannot authorize cleanup" {
+    git -C "${TREE}" commit -qm feature --allow-empty
+    git -C "${TREE}" push -qu origin topic
+    git -C "${TREE}" push -q origin HEAD:refs/heads/m3/5-acceptance
+    git --git-dir="${FIXTURE}/remote" update-ref -d refs/heads/m3/5-acceptance
+    prune --apply
+    assert_success
+    assert_output --partial "not merged"
+    [ -d "${TREE}" ]
+}

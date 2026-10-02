@@ -20,7 +20,7 @@ fi
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="$(dirname -- "${COMMON}")"
 WORKTREE_ROOT="$(dirname -- "${MAIN}")/worktree"
-git -C "${MAIN}" fetch origin >&2
+git -C "${MAIN}" fetch --prune origin >&2
 merged_head() {
     local head="$1" ref
     while IFS= read -r ref; do
