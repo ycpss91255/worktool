@@ -10,6 +10,14 @@ FROM worktool-ghostty:local
 # time measures gates. GNU shell/file tools and git come from Ubuntu/Ghostty.
 # hadolint ignore=DL3008
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    mkdir -p -m 755 /etc/apt/keyrings && \
+    curl -fsSL -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+        https://cli.github.com/packages/githubcli-archive-keyring.gpg && \
+    chmod 644 /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         docker.io \
         gh \
@@ -19,6 +27,15 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=distrobox /usr/local/bin/distrobox* /usr/local/bin/
+
+# Check capabilities rather than a version number: evidence 6.1 needs both
+# JSON output and the name/bucket fields. Every native CI architecture runs
+# this check and the real-tool spec through just test verify-env.
+RUN gh pr checks --repo ycpss91255/worktool --help > /tmp/gh-checks-help && \
+    grep -F -- '--json' /tmp/gh-checks-help && \
+    grep -F -- 'bucket' /tmp/gh-checks-help && \
+    grep -F -- 'name' /tmp/gh-checks-help && \
+    rm /tmp/gh-checks-help
 
 # Fail the image build if a real host tool cannot execute, before acceptance.
 RUN docker --version && \
