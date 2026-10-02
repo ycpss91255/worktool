@@ -626,6 +626,13 @@ _52_remove_owned_box() {
 }
 
 _52_cleanup_state() {
+    if [[ ! -e "${CFGBK_B}/created-box" ]]; then
+        _52_remove_owned_box || return 1
+        # Separate invocations allow user-owned state to appear after backup.
+        # Without an assemble marker, none of it belongs to this run.
+        _host_state_report "${CFGBK_B}" untouched
+        return $?
+    fi
     _52_remove_owned_box || return 1
     _host_state_cleanup "${CFGBK_B}"
 }

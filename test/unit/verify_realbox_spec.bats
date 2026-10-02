@@ -1075,13 +1075,28 @@ STUB
     assert_line "box-state after-cleanup: home=0 tmux=0"
 }
 
-@test "5.2.3: host state is checked even when this run never created a box" {
+@test "5.2.3: host state added after backup is preserved when this run never created a box" {
     _realbox_quiet 5.2.1
-    mkdir -p "${HOME}/dev-box/.cache/tmux"
+    local _home="${HOME}/dev-box"
+    _seed_box dev
+    mkdir -p "${_home}/.cache/tmux"
+    printf 'user config\n' >"${_home}/.profile"
+    printf 'user history\n' >"${_home}/.history"
+    ln -s .profile "${_home}/profile-link"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/user"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    assert_output --partial "already exists -- refusing"
+    [ ! -e "$(_backup_dir)/created-box" ]
     run "${REALBOX}" --allow-real-box 5.2.3
     assert_success
     assert_output --partial 'dev-untouched=1'
-    assert_line 'host-state before-cleanup: new=3'
-    assert_line 'host-state after-cleanup: new=0'
-    [ ! -e "${HOME}/dev-box" ]
+    assert_line 'host-state untouched: new=7'
+    refute_output --partial 'host-state after-cleanup:'
+    assert_equal "$(cat "${_home}/.profile")" 'user config'
+    assert_equal "$(cat "${_home}/.history")" 'user history'
+    assert_equal "$(readlink "${_home}/profile-link")" '.profile'
+    [ -S "${_home}/.cache/tmux/user" ]
+    assert_equal "$(cat "${STATE}/boxes")" dev
 }
