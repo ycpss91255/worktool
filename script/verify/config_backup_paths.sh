@@ -1,6 +1,7 @@
 # Acceptance backup paths for the current setup contract (PR #232 / #351).
 # The manifest and byte-preserving backup machinery remain shared, while
-# the acceptance layer owns this file set.
+# the acceptance layer owns this file set. verify_realbox_spec.bats compares
+# it with the files written by real setup in both Ghostty target states.
 # shellcheck source-path=.
 # shellcheck source=lib/config_backup.sh
 source "${REPO_ROOT}/lib/config_backup.sh"

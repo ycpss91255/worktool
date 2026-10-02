@@ -85,6 +85,8 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     VERIFY="${REPO_ROOT}/script/verify/setup.sh"
+    # Literal criterion: quoting/defaults belong to the code under test.
+    MANAGED_EXPECTED="command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'"
     STUB="${BATS_TEST_TMPDIR}/stub"
     LINKS="${BATS_TEST_TMPDIR}/links"
     mkdir -p "${STUB}" "${LINKS}"
@@ -219,93 +221,10 @@ _stub_mktemp_dir_then_fail() {
 #   no-block   the default run writes a ghostty config with NO managed block,
 #              while the removal run still reports removing one
 _stub_just_setup_writing() {
-    cat >"${STUB}/just" <<EOF
-#!/usr/bin/env bash
-# A box setup that behaves correctly everywhere a status code or a file count
-# can look, and lies in its text. MODE=$1
-set -u
-MODE=$1
-EOF
-    cat >>"${STUB}/just" <<'EOF'
-_cfg="${XDG_CONFIG_HOME:-${HOME}/.config}"
-_log() { printf '[INFO] %s\n' "$1" >&2; }
-
-case "${1:-}:${2:-}" in
-    box:status)
-        printf 'config: %s/worktool/config\n' "${_cfg}"
-        printf 'auto-enter: yes (default)\n'
-        printf 'terminal: ghostty (default)\n'
-        printf 'box: dev (default)\n'
-        printf 'ghostty: %s/ghostty/config (managed block: present)\n' "${_cfg}"
-        printf 'distrobox: %s (recorded in a managed block: runnable)\n' \
-            "$(command -v distrobox)"
-        exit 0
-        ;;
-    box:setup) ;;
-    *) exit 0 ;;
-esac
-
-_dbx="$(command -v distrobox)"
-case "${MODE}" in
-    bare-name) _cmd="command = distrobox enter dev" ;;
-    *) _cmd="command = '${_dbx}' enter dev" ;;
-esac
-
-_dry=0
-_auto=yes
-_src=default
-shift 2
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --dry-run) _dry=1 ;;
-        --auto-enter)
-            shift
-            _auto="${1:-yes}"
-            _src=user
-            ;;
-    esac
-    shift
-done
-
-printf './script/box/setup.sh "$@"\n' >&2
-_log "auto-enter: ${_auto} (${_src})"
-_log "terminal: ghostty (default)"
-_log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
-_log "box: dev (default)"
-[ "${_auto}" = yes ] \
-    && _log "distrobox: ${_dbx} (absolute path written into the managed command)"
-
-if [ "${_dry}" = 1 ]; then
-    _log "dry-run: would write ${_cfg}/worktool/config"
-    _log "dry-run: would write ${_cfg}/ghostty/config (managed block: ${_cmd})"
-    exit 0
-fi
-
-mkdir -p "${_cfg}/worktool" "${_cfg}/ghostty"
-printf 'auto-enter=%s\nauto-enter.source=%s\n' "${_auto}" "${_src}" \
-    >"${_cfg}/worktool/config"
-_log "wrote: ${_cfg}/worktool/config"
-
-if [ "${_auto}" = yes ]; then
-    if [ "${MODE}" = no-block ]; then
-        # The config is written, and it holds no managed block at all.
-        printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
-    else
-        {
-            printf '# BEGIN worktool managed block (just box setup; do not edit)\n'
-            printf '%s\n' "${_cmd}"
-            printf '# END worktool managed block\n'
-        } >"${_cfg}/ghostty/config"
-    fi
-    _log "wrote: ${_cfg}/ghostty/config (managed block: ${_cmd})"
-else
-    printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
-    _log "removed: ${_cfg}/ghostty/config (managed block: ${_cmd})"
-    _log "nothing to remove: ${HOME}/.tmux.conf (no managed block)"
-fi
-exit 0
-EOF
-    chmod +x "${STUB}/just"
+    export VERIFY_REAL_JUST="${REAL_JUST}" VERIFY_PRODUCT_LIB="${REPO_ROOT}/lib/enter.sh"
+    export VERIFY_CORRUPTION="$1"
+    _stub just '#!/usr/bin/env bash' 'set -euo pipefail' \
+        "exec bash $(printf '%q' "${BATS_TEST_DIRNAME}/fixture/verify_setup_just.sh") \"\$@\""
 }
 
 # --- The degraded-product copies ---------------------------------------------
@@ -452,7 +371,7 @@ EOF
     _stub_just_setup_writing bare-name
     run "${VERIFY}" 3.1
     assert_failure
-    assert_output --partial "enter dev)', found 0"
+    assert_output --partial "${MANAGED_EXPECTED})', found 0"
     refute_output --partial "3.1 PASS"
 }
 
@@ -522,7 +441,7 @@ EOF
     run "${VERIFY}" 3.2
     assert_failure
     assert_output --partial "command = distrobox enter dev"
-    assert_output --partial "enter dev', found 0"
+    assert_output --partial "${MANAGED_EXPECTED}', found 0"
     refute_output --partial "3.2 PASS"
 }
 
@@ -550,8 +469,8 @@ EOF
     assert_failure
     # The degraded product really did run and really did write the right
     # block; only the user's lines are missing.
-    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
-    assert_line "command = '<D>' enter dev"
+    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
+    assert_line "${MANAGED_EXPECTED}"
     assert_line "ghostty: <H>/.config/ghostty/config (managed block: present)"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
@@ -761,7 +680,7 @@ EOF
     assert_failure
     # The refusal half is untouched, and the block really was written.
     assert_line "user-content after-refusal: ghostty=intact tmux.conf=intact"
-    assert_line "command = '<D>' enter dev"
+    assert_line "${MANAGED_EXPECTED}"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
     refute_output --partial "3.5 PASS"
@@ -889,7 +808,7 @@ EOF
     run "${_repo}/script/verify/setup.sh" 3.8
     assert_failure
     assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
-    assert_line "[INFO] removed: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    assert_line "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
     assert_line "ghostty-blocks-before=1"
     assert_line "ghostty-blocks=0"
     assert_line "ghostty: <H>/.config/ghostty/config (managed block: absent)"
@@ -981,7 +900,7 @@ EOF
 @test "3.1: main direct-entry dry-run passes without a tmux decision" {
     run "${VERIFY}" 3.1
     assert_success
-    assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
     refute_output --partial "[INFO] tmux:"
 }
 
@@ -1010,7 +929,7 @@ EOF
 @test "3.5: explicit distrobox path writes direct-entry command" {
     run "${VERIFY}" 3.5
     assert_success
-    assert_line "command = '<D>' enter dev"
+    assert_line "${MANAGED_EXPECTED}"
 }
 
 @test "3.7: distrobox isolation block is checked and host tmux config stays untouched" {
@@ -1069,4 +988,63 @@ FRAG
     assert_success
     assert_line "home: <H>/dev-box (default)"
     assert_line "link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)"
+}
+
+@test "3.1: product quoting regression cannot redefine the acceptance command" {
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >>"${_repo}/lib/enter.sh" <<'EOF'
+enter_sh_squote() { printf '%s\n' "$1"; }
+EOF
+    run "${_repo}/script/verify/setup.sh" 3.1
+    assert_failure 1
+    refute_output --partial "3.1 PASS"
+}
+
+@test "single source: a setup missing the real Ghostty reload notice is refused" {
+    local _repo
+    _repo="$(_repo_copy)"
+    _insert_before 'setup_run() {' "${_repo}/script/box/setup.sh" <<'FRAG'
+_ghostty_reload_hint() { return 0; }
+FRAG
+    run "${_repo}/script/verify/setup.sh" 3.2
+    assert_failure
+    assert_output --partial "expected exactly one line equal to '[INFO] Ghostty config changed:"
+}
+
+@test "single source: documented setup product lines occur in the real verification run" {
+    _stub ghostty '#!/bin/sh' 'echo Ghostty 1.2.0'
+    local _real _line _doc="${BATS_TEST_TMPDIR}/setup-doc"
+    run "${VERIFY}"
+    assert_success
+    _real="${output}"
+    sed -n '/^## M3 /,/^## M4 /p' "${REPO_ROOT}/doc/acceptance.md" \
+        | sed -n '/^- \[ \] 3\. /,/^- \[ \] 4\./p' >"${_doc}"
+    while IFS= read -r _line; do
+        [[ "${_line}" == 'command = ...' ]] && continue
+        case "${_line}" in
+            '[INFO] '*|'[ERROR] '*|'[WARN] '*|'command = '*|'ghostty: '*|\
+                'distrobox: '*|'distrobox.conf: '*|'terminal: '*|'home: '*|'link: '*) ;;
+            *) continue ;;
+        esac
+        _line="${_line//<版本>/1.2.0}"
+        printf '# documented product line: %s\n' "${_line}" >&3
+        run grep -Fx "${_line}" <<<"${_real}"
+        assert_success
+    done < <(awk '
+        /^      / { sub(/^      /, ""); print }
+        { n=split($0, fields, "`"); for (i=2; i<=n; i+=2) print fields[i] }
+    ' "${_doc}")
+}
+
+@test "single source: setup fixture starts with real product output before corruption" {
+    local _home="${BATS_TEST_TMPDIR}/fixture-home" _fixture
+    mkdir -p "${_home}"
+    _stub_just_setup_writing normal
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" "${STUB}/just" box setup --dry-run
+    assert_success
+    _fixture="${output}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" "${REAL_JUST}" box setup --dry-run
+    assert_success
+    assert_equal "${_fixture}" "${output}"
 }

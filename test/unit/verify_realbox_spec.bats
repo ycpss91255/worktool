@@ -75,7 +75,7 @@ setup() {
 
     local _t
     # Resolve the real tools BEFORE PATH changes; the shim execs these.
-    for _t in "${REALBOX_SHIMMED_TOOLS[@]}"; do
+    for _t in just "${REALBOX_SHIMMED_TOOLS[@]}"; do
         command -v -- "${_t}" >"${STATE}/real/${_t}"
     done
     for _t in "${REALBOX_FAKED_TOOLS[@]}"; do
@@ -864,4 +864,127 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_success
     run cat "${STATE}/calls.log"
     assert_line "just box assemble --home $(_backup_dir)/box-home"
+}
+
+@test "single source: acceptance backup paths equal every file real setup writes" {
+    local _home="${BATS_TEST_TMPDIR}/product-home" _actual _expected _name
+    local _just
+    _just="$(cat "${STATE}/real/just")"
+    mkdir -p "${_home}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    mkdir -p "${_home}/.config/ghostty"
+    : >"${_home}/.config/ghostty/config.ghostty"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    _actual="$(find "${_home}" -type f | sort)"
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    CFGBK_C="${_home}/.config"
+    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
+    assert_equal "${_expected}" "${_actual}"
+}
+
+# Inject measurements at the public clock/tool seam; never source bench.sh.
+_install_bench_samples() {
+    local _bin="${BATS_TEST_TMPDIR}/bench-bin" _sample
+    mkdir -p "${_bin}"
+    export BENCH_SAMPLE_DIR="${_bin}"
+    printf '0\n' >"${_bin}/clock"
+    printf '0\n' >"${_bin}/calls"
+    : >"${_bin}/samples"
+    for _sample in "$@"; do
+        awk -v n="${_sample}" 'BEGIN {printf "%.0f\n", n*1000}' >>"${_bin}/samples"
+    done
+    cat >"${_bin}/clock.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${BENCH_SAMPLE_DIR}/clock"
+EOF
+    cat >"${_bin}/distrobox" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+read -r _clock <"${BENCH_SAMPLE_DIR}/clock"
+read -r _calls <"${BENCH_SAMPLE_DIR}/calls"
+mapfile -t _samples <"${BENCH_SAMPLE_DIR}/samples"
+_us="${_samples[_calls % 3]}"
+printf '%s\n' "$((_clock + _us))" >"${BENCH_SAMPLE_DIR}/clock"
+printf '%s\n' "$((_calls + 1))" >"${BENCH_SAMPLE_DIR}/calls"
+if [[ "$*" == *bench-inbox* ]]; then printf '%s\n' "${_us}"; fi
+EOF
+    chmod +x "${_bin}/clock.sh" "${_bin}/distrobox"
+}
+
+_assert_product_bench_sample() {
+    local _line="$1" _min _median _max _kind=INFO _limit=999999
+    local _metric_re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
+    local _notice_re='^\[(INFO|ERROR)\] shell median ([0-9]+(\.[0-9]+)?) ms (within|exceeds) --max-ms ([0-9]+)$'
+    if [[ "${_line}" =~ ${_metric_re} ]]; then
+        _min="${BASH_REMATCH[2]}" _median="${BASH_REMATCH[4]}" _max="${BASH_REMATCH[6]}"
+    elif [[ "${_line}" =~ ${_notice_re} ]]; then
+        _kind="${BASH_REMATCH[1]}" _median="${BASH_REMATCH[2]}" _limit="${BASH_REMATCH[5]}"
+        _min="${_median}" _max="${_median}"
+    else
+        fail "unrecognised bench sample: ${_line}"
+        return 1
+    fi
+    _install_bench_samples "${_min}" "${_median}" "${_max}"
+    local _bin="${BENCH_SAMPLE_DIR}"
+    run env PATH="${_bin}:/usr/local/bin:/usr/bin:/bin" BENCH_CLOCK="${_bin}/clock.sh" \
+        BENCH_PSI_FILE="${_bin}/absent-psi" "${REPO_ROOT}/script/box/bench.sh" \
+        --runs 3 --warmup 0 --max-ms "${_limit}"
+    if [[ "${_kind}" == INFO ]]; then
+        assert_success || return 1
+    else
+        assert_failure 1 || return 1
+    fi
+    assert_line "${_line}"
+}
+
+@test "single source: bench guard catches a CLI that prints failure but exits zero" {
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >"${_repo}/script/box/bench.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+exit 0
+EOF
+    REPO_ROOT="${_repo}" run _assert_product_bench_sample \
+        '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+    assert_failure
+}
+
+@test "single source: bench fixture and documented samples match real product formatting" {
+    local _fixture _line
+    run "${STUBS}/just" box bench
+    assert_success
+    _fixture="${output}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done <<<"${_fixture}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done < <(
+        sed -n -e 's/^ *# bench\(-gate\)\?: //p' \
+            -e 's/^ *\(\(enter\|shell\|inbox\): min=.*\)$/\1/p' \
+            -e 's/^ *\(\[INFO\] shell median .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md"
+    )
+}
+
+@test "single source: realbox product output stubs agree with real dry-runs and status" {
+    local _just _verb _real _line _args=()
+    _just="$(cat "${STATE}/real/just")"
+    for _verb in assemble setup status; do
+        _args=()
+        [[ "${_verb}" == status ]] || _args=(--dry-run)
+        run "${_just}" box "${_verb}" "${_args[@]}"
+        assert_success
+        _real="${output}"
+        run "${STUBS}/just" box "${_verb}" "${_args[@]}"
+        assert_success
+        local _fixture="${output}"
+        while IFS= read -r _line; do
+            printf '# product stub line: %s\n' "${_line}" >&3
+            run grep -Fx "${_line}" <<<"${_real}"
+            assert_success
+        done <<<"${_fixture}"
+    done
 }

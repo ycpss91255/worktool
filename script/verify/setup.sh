@@ -142,11 +142,9 @@ LAST_RC=0  # the exit status of the last command _run_norm ran
 LAST_OUT="" # the normalised text _run_norm last printed, so it can be JUDGED
 DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 
-# The managed command doc/acceptance.md publishes, in its normalised form.
-# Items 3.1, 3.2, 3.3 and 3.9 all name it: a quoted ABSOLUTE distrobox path
-# is the whole of issue #175, and it lives in the TEXT - no exit code and
-# no file count can see a regression back to the bare name.
-MANAGED_CMD="command = '<D>' enter dev"
+# Pin the acceptance command independently of the product under test.
+# The real setup dry-run guard detects drift without redefining this criterion.
+MANAGED_CMD="command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'"
 
 # The line `_apply_no_terminal` logs instead of writing a profile (item
 # 3.8). The BARE `distrobox` in it is deliberate and is pinned here as
@@ -155,6 +153,10 @@ MANAGED_CMD="command = '<D>' enter dev"
 # place #175 does not ask for an absolute path. Pinned as a whole line so a
 # product that quietly stopped saying what to do instead is caught.
 MANAGED_NONE_HINT="terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
+
+# A literal acceptance criterion, compared with real setup by the control
+# run; the suppressed-notice regression proves this expectation bites.
+GHOSTTY_RELOAD_HINT="[INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open."
 
 # The markers that delimit the managed block, spelled out here rather than
 # sourced from lib/enter.sh: enter.sh is the code under test, so a degraded
@@ -361,7 +363,7 @@ _item_begin() {
 # lines match doc/acceptance.md wherever ghostty and distrobox are
 # installed. Reads stdin, writes stdout.
 _norm() {
-    local _script=()
+    local _script=(-e "s|${REPO_ROOT}|<repo>|g")
     [[ -n "${NORM_G}" ]] && _script+=(-e "s|${NORM_G}|<G>|g")
     [[ -n "${NORM_D}" ]] && _script+=(-e "s|${NORM_D}|<D>|g")
     [[ -n "${NORM_H}" ]] && _script+=(-e "s|${NORM_H}|<H>|g")
@@ -784,6 +786,7 @@ _item_3_2() {
         '[INFO] distrobox: <D> (absolute path written into the managed command)' \
         '[INFO] wrote: <H>/.config/worktool/config' \
         "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" \
+        "${GHOSTTY_RELOAD_HINT}" \
         || _bad=1
     _setup_rc="${LAST_RC}"
     printf 'rc=%s\n' "${_setup_rc}"
@@ -1094,7 +1097,7 @@ _item_3_5() {
         if [[ "${_grc}" -eq 0 ]]; then
             _cmd_norm="$(_norm_line "${_cmd}")" || return 1
             printf '%s\n' "${_cmd_norm}"
-            if [[ "${_cmd_norm}" != "command = '<D>' enter dev" ]]; then
+            if [[ "${_cmd_norm}" != "${MANAGED_CMD}" ]]; then
                 _fail "3.5: the managed command is '${_cmd_norm}', not the quoted absolute distrobox path #175 requires"
                 _bad=1
             fi
