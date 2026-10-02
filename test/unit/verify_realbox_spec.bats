@@ -957,7 +957,8 @@ STUB
 @test "5.2: new-window instructions check direct fish entry without a tmux session" {
     run "${REALBOX}" --allow-real-box 5.2
     assert_failure
-    assert_output --partial "Expected: container marker (/run/.containerenv or /.dockerenv), then fish"
+    assert_output --partial 'echo $fish_pid'
+    assert_output --partial "Open a NEW ghostty window"
     refute_output --partial "tmux display"
     assert_line "restore-ok=1"
 }
