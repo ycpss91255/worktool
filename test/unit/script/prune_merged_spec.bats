@@ -46,6 +46,19 @@ merge_topic() {
     git -C "${MAIN}" show-ref --verify refs/heads/topic
 }
 
+@test "removes a clean detached worktree already merged into origin main" {
+    merge_topic
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" origin/main
+    prune
+    assert_success
+    assert_output --partial "${detached}"
+    [ -d "${detached}" ]
+    prune --apply
+    assert_success
+    [ ! -e "${detached}" ]
+}
+
 @test "apply deletes merged clean worktree and its local branch" {
     merge_topic
     prune --apply
