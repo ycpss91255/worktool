@@ -85,6 +85,9 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
     VERIFY="${REPO_ROOT}/script/verify/setup.sh"
+    # Shared quoting/defaults, independently checked against real setup below.
+    source "${REPO_ROOT}/lib/enter.sh"
+    MANAGED_EXPECTED="command = $(enter_sh_squote '<repo>/script/box/enter.sh') --distrobox $(enter_sh_squote '<D>') --box $(enter_sh_squote "$(enter_default box)")"
     STUB="${BATS_TEST_TMPDIR}/stub"
     LINKS="${BATS_TEST_TMPDIR}/links"
     mkdir -p "${STUB}" "${LINKS}"
@@ -219,6 +222,8 @@ _stub_mktemp_dir_then_fail() {
 #   no-block   the default run writes a ghostty config with NO managed block,
 #              while the removal run still reports removing one
 _stub_just_setup_writing() {
+    export VERIFY_PRODUCT_LIB="${REPO_ROOT}/lib/enter.sh"
+    export VERIFY_PRODUCT_WRAPPER="${REPO_ROOT}/script/box/enter.sh"
     cat >"${STUB}/just" <<EOF
 #!/usr/bin/env bash
 # A box setup that behaves correctly everywhere a status code or a file count
@@ -248,7 +253,7 @@ esac
 _dbx="$(command -v distrobox)"
 case "${MODE}" in
     bare-name) _cmd="command = distrobox enter dev" ;;
-    *) _cmd="command = '${_dbx}' enter dev" ;;
+    *) _cmd="$(source "${VERIFY_PRODUCT_LIB}"; printf 'command = %s --distrobox %s --box %s' "$(enter_sh_squote "${VERIFY_PRODUCT_WRAPPER}")" "$(enter_sh_squote "${_dbx}")" "$(enter_sh_squote "$(enter_default box)")")" ;;
 esac
 
 _dry=0
@@ -452,7 +457,7 @@ EOF
     _stub_just_setup_writing bare-name
     run "${VERIFY}" 3.1
     assert_failure
-    assert_output --partial "enter dev)', found 0"
+    assert_output --partial "${MANAGED_EXPECTED})', found 0"
     refute_output --partial "3.1 PASS"
 }
 
@@ -522,7 +527,7 @@ EOF
     run "${VERIFY}" 3.2
     assert_failure
     assert_output --partial "command = distrobox enter dev"
-    assert_output --partial "enter dev', found 0"
+    assert_output --partial "${MANAGED_EXPECTED}', found 0"
     refute_output --partial "3.2 PASS"
 }
 
@@ -550,8 +555,8 @@ EOF
     assert_failure
     # The degraded product really did run and really did write the right
     # block; only the user's lines are missing.
-    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
-    assert_line "command = '<D>' enter dev"
+    assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
+    assert_line "${MANAGED_EXPECTED}"
     assert_line "ghostty: <H>/.config/ghostty/config (managed block: present)"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
@@ -761,7 +766,7 @@ EOF
     assert_failure
     # The refusal half is untouched, and the block really was written.
     assert_line "user-content after-refusal: ghostty=intact tmux.conf=intact"
-    assert_line "command = '<D>' enter dev"
+    assert_line "${MANAGED_EXPECTED}"
     assert_line "user-content after-write: ghostty=LOST tmux.conf=intact"
     assert_output --partial "lost the user's own content"
     refute_output --partial "3.5 PASS"
@@ -889,7 +894,7 @@ EOF
     run "${_repo}/script/verify/setup.sh" 3.8
     assert_failure
     assert_line "[INFO] terminal profile: none (nothing written; enter by hand: distrobox enter dev)"
-    assert_line "[INFO] removed: <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    assert_line "[INFO] removed: <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
     assert_line "ghostty-blocks-before=1"
     assert_line "ghostty-blocks=0"
     assert_line "ghostty: <H>/.config/ghostty/config (managed block: absent)"
@@ -981,7 +986,7 @@ EOF
 @test "3.1: main direct-entry dry-run passes without a tmux decision" {
     run "${VERIFY}" 3.1
     assert_success
-    assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)"
+    assert_line "[INFO] dry-run: would write <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
     refute_output --partial "[INFO] tmux:"
 }
 
@@ -1010,7 +1015,7 @@ EOF
 @test "3.5: explicit distrobox path writes direct-entry command" {
     run "${VERIFY}" 3.5
     assert_success
-    assert_line "command = '<D>' enter dev"
+    assert_line "${MANAGED_EXPECTED}"
 }
 
 @test "3.7: distrobox isolation block is checked and host tmux config stays untouched" {
@@ -1069,4 +1074,16 @@ FRAG
     assert_success
     assert_line "home: <H>/dev-box (default)"
     assert_line "link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)"
+}
+
+@test "single source: managed expectation equals the real setup dry-run command" {
+    local _home="${BATS_TEST_TMPDIR}/oracle" _actual _expected
+    mkdir -p "${_home}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" just box setup --dry-run
+    assert_success
+    _actual="$(printf '%s\n' "${output}" | sed -n 's/.*(managed block: \(command = .*\))$/\1/p')"
+    _actual="${_actual//"${REPO_ROOT}"/<repo>}"
+    _actual="${_actual//"$(command -v distrobox)"/<D>}"
+    _expected="$(bash -c 'source "$1"; printf "%s\n" "$MANAGED_CMD"' bash "${VERIFY}")"
+    assert_equal "${_expected}" "${_actual}"
 }

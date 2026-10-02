@@ -719,6 +719,8 @@ rc=0
 
   PR #232 後不再有 tmux 決策，也不碰 host 的 `~/.tmux.conf`；`tmux.conf=intact` 在所有項目都表示它未被改動。3.7 改驗 distrobox.conf 的隔離區塊；3.8 驗 terminal none 的移除；3.9 改驗 PR #351 的 Ghostty 單區塊搬移。其餘項目保留寫入／移除兩側的使用者內容判準。#178 的五條 setup 路徑單元案例已由 PR #227 交付，新增驗收範圍留在 #231。
 
+  `<repo>` 是 checkout 的絕對路徑；`<D>` 是 distrobox 絕對路徑。受管 command 使用產品的 shell quoting 與預設盒名，來源比對由 `verify_setup_spec.bats` 守住。
+
   - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
       ```text
@@ -729,7 +731,7 @@ rc=0
       [INFO] box: dev (default)
       [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] dry-run: would write <H>/.config/worktool/config
-      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<D>' enter dev)
+      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev')
       rc=0
       files 2->2
       user-content after-dry-run: ghostty=intact tmux.conf=intact
@@ -741,7 +743,7 @@ rc=0
       just verify setup 3.1; echo rc=$?
       ```
   - [ ] 3.2 寫入後由 status 與檔案全文確認直接進盒、distrobox.conf 隔離區塊；狀態檔由共用 config 介面保存，沒有 tmux 決策（PR #232、#228）
-    - 預期看到資訊：`command = '<D>' enter dev`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
+    - 預期看到資訊：`command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
     - 驗收方式
       ```bash
       just verify setup 3.2; echo rc=$?
@@ -777,7 +779,7 @@ rc=0
       files 2->2
       user-content after-refusal: ghostty=intact tmux.conf=intact
       rc=0
-      command = '<D>' enter dev
+      command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'
       user-content after-write: ghostty=intact tmux.conf=intact
       rc=0
       ```
@@ -825,7 +827,7 @@ rc=0
       ```
       預期 `rc=0`。先量既有區塊，再確認移除及使用者全文不變；不寫終端 command 仍保留 distrobox.conf。
   - [ ] 3.9 `config.ghostty` 存在時成為目標；legacy config 的單一區塊搬過去，兩個檔案的使用者內容保留（PR #351）
-    - 預期看到資訊：`[INFO] ghostty config: <H>/.config/ghostty/config.ghostty (config.ghostty exists)`、`[INFO] moved: <H>/.config/ghostty/config -> <H>/.config/ghostty/config.ghostty (managed block)`、`legacy-blocks=0 target-blocks=1`。status 分別報新檔 `present`、舊檔 `absent`；目標 command 是 `command = '<D>' enter dev`。
+    - 預期看到資訊：`[INFO] ghostty config: <H>/.config/ghostty/config.ghostty (config.ghostty exists)`、`[INFO] moved: <H>/.config/ghostty/config -> <H>/.config/ghostty/config.ghostty (managed block)`、`legacy-blocks=0 target-blocks=1`。status 分別報新檔 `present`、舊檔 `absent`；目標 command 是 `command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`。
     - 驗收方式
       ```bash
       just verify setup 3.9; echo rc=$?

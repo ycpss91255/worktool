@@ -98,6 +98,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 # shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source=enter.sh
+source "${LIB_DIR}/enter.sh"
 
 # --- Item registry -----------------------------------------------------------
 # Every item belongs to exactly one group, and the group decides what the
@@ -142,11 +144,9 @@ LAST_RC=0  # the exit status of the last command _run_norm ran
 LAST_OUT="" # the normalised text _run_norm last printed, so it can be JUDGED
 DISTROBOX_LINES_SEEN=() # 3.6: the `distrobox:` line each case actually got
 
-# The managed command doc/acceptance.md publishes, in its normalised form.
-# Items 3.1, 3.2, 3.3 and 3.9 all name it: a quoted ABSOLUTE distrobox path
-# is the whole of issue #175, and it lives in the TEXT - no exit code and
-# no file count can see a regression back to the bare name.
-MANAGED_CMD="command = '<D>' enter dev"
+# Use the product's quoting and default, and guard this composition against
+# the real setup dry-run in verify_setup_spec.bats.
+MANAGED_CMD="command = $(enter_sh_squote '<repo>/script/box/enter.sh') --distrobox $(enter_sh_squote '<D>') --box $(enter_sh_squote "$(enter_default box)")"
 
 # The line `_apply_no_terminal` logs instead of writing a profile (item
 # 3.8). The BARE `distrobox` in it is deliberate and is pinned here as
@@ -361,7 +361,7 @@ _item_begin() {
 # lines match doc/acceptance.md wherever ghostty and distrobox are
 # installed. Reads stdin, writes stdout.
 _norm() {
-    local _script=()
+    local _script=(-e "s|${REPO_ROOT}|<repo>|g")
     [[ -n "${NORM_G}" ]] && _script+=(-e "s|${NORM_G}|<G>|g")
     [[ -n "${NORM_D}" ]] && _script+=(-e "s|${NORM_D}|<D>|g")
     [[ -n "${NORM_H}" ]] && _script+=(-e "s|${NORM_H}|<H>|g")
@@ -1094,7 +1094,7 @@ _item_3_5() {
         if [[ "${_grc}" -eq 0 ]]; then
             _cmd_norm="$(_norm_line "${_cmd}")" || return 1
             printf '%s\n' "${_cmd_norm}"
-            if [[ "${_cmd_norm}" != "command = '<D>' enter dev" ]]; then
+            if [[ "${_cmd_norm}" != "${MANAGED_CMD}" ]]; then
                 _fail "3.5: the managed command is '${_cmd_norm}', not the quoted absolute distrobox path #175 requires"
                 _bad=1
             fi
