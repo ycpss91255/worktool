@@ -3,8 +3,8 @@ load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
 _check() {
-    run_hook enforce_codex_via_workflow "$(jq -n --arg c "$1" --arg cwd "${BATS_TEST_TMPDIR}" --arg t "${TRANSCRIPT:-}" \
-        '{tool_name:"Bash",cwd:$cwd,transcript_path:$t,tool_input:{command:$c}}')"
+    run_hook enforce_codex_via_workflow "$(jq -n --arg c "$1" --arg cwd "${BATS_TEST_TMPDIR}" --arg t "${TRANSCRIPT:-}" --arg a "${AGENT_ID:-}" \
+        '{tool_name:"Bash",cwd:$cwd,transcript_path:$t,agent_id:$a,tool_input:{command:$c}}')"
 }
 
 @test "main loop implementation launches are refused with workflow guidance" {
@@ -27,6 +27,7 @@ _check() {
 @test "only workflow-marked subagent transcripts allow implementation" {
     mkdir -p "${BATS_TEST_TMPDIR}/subagents"
     TRANSCRIPT="${BATS_TEST_TMPDIR}/subagents/agent-abc.jsonl"
+    AGENT_ID=abc
     for workflow in pr-loop discuss research-verify; do
         jq -n -c --arg p "WORKTOOL_WORKFLOW_AGENT: ${workflow}" \
             '{type:"user",message:{role:"user",content:$p}}' > "${TRANSCRIPT}"
@@ -40,6 +41,7 @@ _check() {
     assert_equal "${status}" 2
     jq -n -c '{type:"user",message:{role:"user",content:"WORKTOOL_WORKFLOW_AGENT: pr-loop"}}' > "${TRANSCRIPT}"
     TRANSCRIPT="${BATS_TEST_TMPDIR}/main.jsonl"
+    AGENT_ID=""
     cp "${BATS_TEST_TMPDIR}/subagents/agent-abc.jsonl" "${TRANSCRIPT}"
     _check 'codex exec "implement"'
     assert_equal "${status}" 2
@@ -56,15 +58,15 @@ _check() {
 
 @test "indirect and uncheckable launches fail closed even with a read-only claim" {
     for cmd in \
-        'codex exec --sandbox read-only "$PROMPT"' \
+        "codex exec --sandbox read-only \"\$PROMPT\"" \
         'codex exec --sandbox read-only --config sandbox_mode="danger-full-access" "query"' \
         'codex exec --sandbox read-only --sandbox workspace-write "query"' \
         'eval codex exec --sandbox read-only query' \
-        'bash -c "$CMD"' \
-        '$RUN exec --sandbox read-only query' \
+        "bash -c \"\$CMD\"" \
+        "\$RUN exec --sandbox read-only query" \
         'xargs codex exec --sandbox read-only' \
         'python3 -c "import os; os.system(\"codex exec --sandbox read-only query\")"' \
-        'codex exec --sandbox read-only "query"; eval "$CMD"'; do
+        "codex exec --sandbox read-only \"query\"; eval \"\$CMD\""; do
         _check "${cmd}"
         assert_equal "${status}" 2
     done
@@ -73,7 +75,7 @@ _check() {
 @test "sourced and parameterized wrapper launches cannot escape inspection" {
     printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
     printf '%s\n' 'source run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
-    for cmd in 'source run.sh' '. run.sh' 'bash outer.sh' 'bash "$SCRIPT"' 'bash missing.sh' 'bash -e run.sh'; do
+    for cmd in 'source run.sh' '. run.sh' 'bash outer.sh' "bash \"\$SCRIPT\"" 'bash missing.sh' 'bash -e run.sh'; do
         _check "${cmd}"
         assert_equal "${status}" 2
     done
@@ -85,4 +87,25 @@ _check() {
         _check "${cmd}"
         assert_equal "${status}" 2
     done
+}
+
+@test "runtime agent identity resolves its own task from a main session transcript" {
+    TRANSCRIPT="${BATS_TEST_TMPDIR}/session.jsonl"
+    AGENT_ID=abc
+    mkdir -p "${BATS_TEST_TMPDIR}/session/subagents"
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${REPO_ROOT}/.claude/workflows/pr-loop.js" \
+        '{"repo":"o/r","repoDir":"/repo","issue":366,"branch":"b","name":"n","task":"t"}' '{}' \
+        > "${BATS_TEST_TMPDIR}/workflow.json"
+    jq -c '{type:"user",message:{role:"user",content:[{type:"text",text:.calls[0].prompt}]}}' \
+        "${BATS_TEST_TMPDIR}/workflow.json" > "${BATS_TEST_TMPDIR}/session/subagents/agent-abc.jsonl"
+    _check 'codex exec "implement"'
+    assert_success
+    AGENT_ID=other
+    _check 'codex exec "implement"'
+    assert_equal "${status}" 2
+    TRANSCRIPT="${BATS_TEST_TMPDIR}/session/subagents/agent-abc.jsonl"
+    AGENT_ID=""
+    _check 'codex exec "implement"'
+    assert_equal "${status}" 2
 }

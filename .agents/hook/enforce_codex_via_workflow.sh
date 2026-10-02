@@ -22,15 +22,32 @@ refuse() {
     hook_block "$1" 'Use pr-loop / milestone-fanout for implementation.'
 }
 
-# Workflow agents carry a marker at the START of their first user task.
-# Claude supplies transcript_path; require its subagents/agent-*.jsonl shape
-# as well. A main transcript, ordinary Agent, environment assignment or
-# marker in an assistant/tool message is insufficient. Templates emit the
-# marker; this does not authenticate a hostile process forging transcripts.
+# Claude supplies agent_id only for subagent calls (hooks reference,
+# https://code.claude.com/docs/en/hooks#common-input-fields). Locate that
+# agent's transcript either directly or beside the main session transcript.
+# Require its first user task to start with a Workflow-generated marker.
+# A marker in a main transcript, environment, assistant/tool message or
+# later user turn is insufficient. Forged payloads/transcripts are out of
+# scope; missing/lagging transcripts fail closed, never grant an exception.
+workflow_task_path() {
+    local id path
+    id="$(hook_field '.agent_id')"
+    id="${id#agent-}"
+    [[ "${id}" =~ ^[[:alnum:]_-]+$ ]] || return 1
+    path="$(hook_field '.transcript_path')"
+    if [[ "${path}" == */subagents/* ]]; then
+        [[ "${path}" == */subagents/agent-"${id}".jsonl ]] || return 1
+    else
+        [[ "${path}" == *.jsonl ]] || return 1
+        path="${path%.jsonl}/subagents/agent-${id}.jsonl"
+    fi
+    [[ -r "${path}" ]] || return 1
+    printf '%s' "${path}"
+}
+
 workflow_agent() {
     local path prompt
-    path="$(hook_field '.transcript_path')"
-    [[ "${path}" == */subagents/agent-*.jsonl && -r "${path}" ]] || return 1
+    path="$(workflow_task_path)" || return 1
     prompt="$(jq -sr '
         [ .[] | select(.type == "user" and .message.role == "user") ][0].message.content
         | if type == "string" then .

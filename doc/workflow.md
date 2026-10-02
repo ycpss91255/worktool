@@ -308,8 +308,10 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 
 Workflow 子 agent 的判斷必須同時符合：
 
-- Claude hook payload 的 `transcript_path` 指向可讀的 `*/subagents/agent-*.jsonl`。
+- Claude hook payload 帶有效的 runtime `agent_id`；`transcript_path` 直接指向相符的 `*/subagents/agent-<id>.jsonl`，或由主 session 的 `<session>.jsonl` 定位到 `<session>/subagents/agent-<id>.jsonl`。ID 只接受英數、底線與連字號，可移除一次 `agent-` 前綴；目標必須可讀。
 - transcript 的第一則 `type: "user"`、`message.role: "user"` 任務，第一行是 `WORKTOOL_WORKFLOW_AGENT: pr-loop`、`discuss` 或 `research-verify`。content 可為字串或 text blocks。
+
+身分欄位及巢狀 transcript 目錄依據 [Claude hook 官方文件](https://code.claude.com/docs/en/hooks#common-input-fields) 與 [SubagentStop 的路徑說明](https://code.claude.com/docs/en/hooks#subagentstop)。transcript 是非同步寫入；標記尚未落盤時保守拒絕，稍後重試，不能因此豁免檢查。
 
 上述範本在會啟動 Codex 的子 agent 任務開頭提供標記；`milestone-fanout` 委派 `pr-loop`，沿用其標記。主 transcript、一般 Agent、assistant／tool 的標記、後續 user 訊息與 command 中自行加環境變數都不足以取得例外。Workflow 內允許既有 prompt 檔案替換、包裝腳本與實作命令。若 Claude 的 transcript 格式改變，身分判斷會拒絕放行，須先更新此契約及 spec。這個標記是合作式流程判斷，不是認證；惡意偽造 transcript 或刻意偽造子 agent 任務不在防護能力內。
 
@@ -320,7 +322,7 @@ codex exec --sandbox read-only "請核對這項主張"
 codex e -s read-only "請比較方案"
 ```
 
-`--sandbox=read-only`／`-sread-only` 亦可。允許的附加選項只有 `--skip-git-repo-check`、`--json`、`--ephemeral`、`-C`／`--cd`、`-o`／`--output-last-message`、`-m`／`--model`（後三組需字面值）。未知選項、config／profile 覆寫、寫入 sandbox 與 shell 展開均拒絕；`--` 之後視為 prompt。`-o` 是唯讀分析結果的輸出，並非允許修改產品檔案。
+`--sandbox=read-only`／`-sread-only` 亦可。允許的附加選項只有 `--skip-git-repo-check`、`--json`、`--ephemeral`、`-C`／`--cd`、`-o`／`--output-last-message`、`-m`／`--model`（後三組需字面值）。未知選項、config／profile 覆寫、寫入 sandbox 與 shell 展開均拒絕；`--` 之後視為 prompt。`-o` 是 Codex CLI 寫入分析結果的輸出路徑；唯讀 sandbox 約束 agent 執行，並不阻止 CLI 寫入這個明確指定的結果檔。
 
 主迴圈的 `bash run.sh`、直接路徑執行、`source`／`.` 與巢狀腳本，依 payload cwd 及字面 `cd` 解析路徑、遞迴檢查；讀不到、參數不明或巢狀達 16 層就拒絕。`eval`、`xargs`、`setsid`／`busybox`／`nice`／`stdbuf`／`chroot` 等不透明 launcher、展開的 executable／腳本路徑及非 shell interpreter 都拒絕。封閉規則另核對原始文字的 Codex 提及數，未被結構化檢查涵蓋的提及會拒絕，因此 echo、註解或 prompt 只「提到」Codex 也可能被擋；長資料改放檔案，以字面參數傳遞。這些保守拒絕只適用主迴圈，不適用已辨識的 Workflow 子 agent。
 
