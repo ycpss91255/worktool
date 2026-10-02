@@ -14,7 +14,18 @@ for ARG in "$@"; do
     esac
 done
 if [[ "${HELP}" == 1 ]]; then
-    printf 'Usage: prune-merged.sh [--apply] [--help]\nDry-run by default; --apply removes merged, clean linked worktrees.\n' >&2
+    cat >&2 <<'HELP'
+Usage: prune-merged.sh [--apply] [--help]
+
+Fetch origin and list merged, clean linked worktrees under the sibling
+worktree/ directory. HEAD must be an ancestor of origin/main or a remote
+m<number>/<issue>-acceptance branch. Ignored .agents/state/ is exempt
+from cleanliness checks; all other changes prevent deletion.
+
+  --apply     Remove eligible worktrees and use git branch -d for branches.
+  -h, --help  Show help after validating every argument.
+Default: dry-run paths on stdout; all retention reasons on stderr.
+HELP
     exit 0
 fi
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"

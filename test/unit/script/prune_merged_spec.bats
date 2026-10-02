@@ -143,3 +143,14 @@ prune() {
     assert_output --partial "not merged"
     [ -d "${TREE}" ]
 }
+
+@test "just forwards arguments and script help explains the cleanup contract" {
+    run just --justfile "${REPO_ROOT}/justfile" worktree prune-merged --help --bogus
+    assert_failure
+    assert_output --partial "prune-merged.sh: unknown option '--bogus' (see --help)"
+    refute_output --partial "Usage:"
+    run just --justfile "${REPO_ROOT}/justfile" worktree prune-merged --help
+    assert_success
+    assert_output --partial "origin/main"
+    assert_output --partial ".agents/state/"
+}
