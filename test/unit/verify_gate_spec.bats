@@ -882,3 +882,36 @@ EOF
     assert_equal "${SYSTEM_REAL_CRITERIA[0]}" "^# chain: ${_pat#^}"
     assert_equal "${SYSTEM_REAL_CRITERIA[14]}" "^# chain-desktop-path: ${_pat#^}"
 }
+
+# Forward a product printf format and its values without interpreting shell code.
+_product_printf() { printf "$@"; }
+
+@test "single source: chain diagnostic fixture lines use the real producer templates" {
+    local _src="${REPO_ROOT}/test/system/real_engine_spec.bats" _fmt _line _out
+    _system_real_block >"${SYS_BLOCK}"
+    _fmt="$(sed -n "s/^printf '\(inbox-ok .*\)' .*/\1/p" "${_src}")"
+    _out="$(_product_printf "${_fmt}" '4.2.1' '/run/.containerenv' 'mnt:[1234]' no ca83e9d035cd)"
+    run grep -Fx "# chain: ${_out}" "${SYS_BLOCK}"
+    assert_success
+    run grep -Fx "# chain-desktop-path: ${_out}" "${SYS_BLOCK}"
+    assert_success
+    _fmt="$(sed -n "s/^printf '\(hang-ready .*\)' .*/\1/p" "${_src}")"
+    _out="$(_product_printf "${_fmt}" '4.2.1' ca83e9d035cd)"
+    run grep -Fx "# hang-ready: ${_out}" "${SYS_BLOCK}"
+    assert_success
+    # Evaluate only trusted producer calls, with sample measurements and a
+    # logger that returns data. No system case, engine or window is run.
+    _out="$(
+        _log_lines() { printf '# %s: %s\n' "$1" "$2"; }
+        _marker_ns='mnt:[1234]' _marker_host=ca83e9d035cd
+        _elapsed=45 GHOSTTY_HANG_TIMEOUT=45 _hang_status=124
+        set -- chain
+        while IFS= read -r _line; do eval "${_line}"; done < <(
+            grep -E '^    _log_lines ("\$1-in-box"|hang )' "${_src}"
+        )
+    )"
+    while IFS= read -r _line; do
+        run grep -Fx "${_line}" "${SYS_BLOCK}"
+        assert_success
+    done <<<"${_out}"
+}
