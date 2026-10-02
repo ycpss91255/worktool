@@ -68,7 +68,10 @@ prune_tree() {
         return 0
     fi
     branch="$(git -C "${tree}" symbolic-ref -q --short HEAD)" || branch=''
-    git -C "${MAIN}" worktree remove -- "${tree}"
+    if ! git -C "${MAIN}" worktree remove -- "${tree}" >&2; then
+        log_warn "kept ${tree}: git worktree remove refused"
+        return 0
+    fi
     log_info "removed worktree: ${tree}"
     if [[ -n "${branch}" ]]; then
         if git -C "${MAIN}" branch -d -- "${branch}" >&2; then
@@ -79,17 +82,28 @@ prune_tree() {
     fi
 }
 
+consider_tree() {
+    if [[ "${TREE}" == "${MAIN}" ]]; then
+        log_info "kept ${TREE}: main checkout"
+    elif [[ "${TREE}" != "${WORKTREE_ROOT}/"* ]]; then
+        log_info "kept ${TREE}: outside sibling worktree/"
+    elif [[ "${LOCKED}" == 1 ]]; then
+        log_info "kept ${TREE}: locked"
+    elif [[ ! -d "${TREE}" ]]; then
+        log_info "kept ${TREE}: missing worktree directory"
+    else
+        prune_tree "${TREE}"
+    fi
+}
+
+TREE='' LOCKED=0
+LIST="$(mktemp)"
+trap 'rm -f -- "${LIST}"' EXIT
+git -C "${MAIN}" worktree list --porcelain -z > "${LIST}"
 while IFS= read -r -d '' FIELD; do
     case "${FIELD}" in
-        worktree\ *)
-            TREE="${FIELD#worktree }"
-            if [[ "${TREE}" == "${MAIN}" ]]; then
-                log_info "kept ${TREE}: main checkout"
-            elif [[ "${TREE}" == "${WORKTREE_ROOT}/"* ]]; then
-                prune_tree "${TREE}"
-            else
-                log_info "kept ${TREE}: outside sibling worktree/"
-            fi
-            ;;
+        worktree\ *) TREE="${FIELD#worktree }"; LOCKED=0 ;;
+        locked|locked\ *) LOCKED=1 ;;
+        '') consider_tree ;;
     esac
-done < <(git -C "${MAIN}" worktree list --porcelain -z)
+done < "${LIST}"

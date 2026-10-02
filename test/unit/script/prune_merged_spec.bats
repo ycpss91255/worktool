@@ -122,3 +122,13 @@ prune() {
     run git -C "${MAIN}" show-ref --verify refs/heads/topic
     assert_failure
 }
+
+@test "keeps locked worktrees with an explanation and continues cleanup" {
+    git -C "${MAIN}" worktree lock "${TREE}" --reason retained
+    git -C "${MAIN}" worktree add -qb other "${FIXTURE}/worktree/other"
+    prune --apply
+    assert_success
+    assert_output --partial "locked"
+    [ -d "${TREE}" ]
+    [ ! -e "${FIXTURE}/worktree/other" ]
+}
