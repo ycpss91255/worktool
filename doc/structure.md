@@ -107,7 +107,8 @@ worktool/
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
 │   │   │                enforce_main_checkout_readonly、
-│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
+│   │   │                enforce_codex_round_cap、enforce_codex_via_workflow(主 session 派工限制與 agent_id 子代理例外,#366)、
+│   │   │                enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
 │   │   │                enforce_tdd_commit(git commit 前依暫存區檢查 TDD 的測試與垂直切片,#268)、

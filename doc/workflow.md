@@ -10,6 +10,26 @@ worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一�
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
 | `research-verify.js` | 找資料:agy(gemini)查,codex 逐條開來源核對、claude 抽查與整合,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
+## 主迴圈的 Codex 派工限制（#366）
+
+`enforce_codex_via_workflow.sh` 在 Claude 與 Codex 的 PreToolUse Bash 註冊。
+#364（PR #369）已合併，提供 base 分支支援；本 hook 隨設定載入立即啟用。
+主 session 直接派 Codex 實作（含 `bash run.sh`、巢狀或 sourced 包裝腳本）會拒絕，
+並提示改走 pr-loop／milestone-fanout。
+
+身分依據是 [Claude Code hook 輸入契約](https://code.claude.com/docs/en/hooks#common-input-fields)：
+子 agent 的工具呼叫帶 `agent_id`，主 session 沒有。依 PR #372 收尾決議，
+任何非空字串 `agent_id` 都放行，包含一般子 agent 與 Workflow agent；
+不靠 `agent_type`、環境標記或 transcript 格式判斷。空值或錯誤型別不構成例外。
+測試 fixture 依 2026-10-02 查閱的官方文件欄位建立，並非擷取實際執行輸入。
+
+主 session 的唯讀例外只接受字面 `codex exec --sandbox read-only`（含 `e`、`-s` 等形式）。
+未知選項、sandbox 覆寫、shell 展開、eval／xargs、不透明 launcher 與非 shell 直譯器採封閉拒絕。
+包裝腳本只讀取不執行，遞迴深度上限 16；缺檔或不可判讀也拒絕。
+未被結構化檢查核對的 Codex 原始文字會觸發拒絕，單純提到 Codex 也可能被擋。
+僅透過 PATH 解析的自訂執行檔、自訂 just recipe、編碼或執行時才組出的呼叫不在靜態檢查範圍；
+此 hook 是合作 agent 的規則護欄，不是作業系統 sandbox，也不驗證 agent 身分真偽。
+
 ## 呼叫方式
 
 從任何 cwd 以 `scriptPath` 呼叫(不需要把腳本裝進 session 的專案目錄):

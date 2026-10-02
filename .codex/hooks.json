@@ -46,6 +46,10 @@
           },
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_codex_via_workflow.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_scope_on_guard_issues.sh\""
           },
           {

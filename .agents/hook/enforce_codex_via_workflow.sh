@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# Claude PreToolUse Bash hook: allow = 0, refuse = 2.
+# Claude/Codex PreToolUse Bash hook: allow = 0, refuse = 2.
+# Claude Code supplies agent_id only on subagent tool calls; any nonempty
+# string ID permits execution (including Workflow agents), per PR #372.
+# Source checked 2026-10-02: https://code.claude.com/docs/en/hooks#common-input-fields
+# No transcripts are read. Fixtures use the documented input schema.
+# Registered after #364 / PR #369 merged; settings loading enables the hook.
+# Main-session wrappers are read recursively (literal paths, depth < 16).
+# Missing/opaque wrappers, expansions, eval, xargs, launcher chains and
+# non-shell interpreters fail closed. Unchecked raw Codex mentions block,
+# even in plain text. PATH-only executables/custom just recipes and encoded
+# or runtime-generated calls remain outside static inspection. This is a
+# cooperating-agent guard, not an OS sandbox or agent authentication.
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
@@ -18,7 +29,8 @@ refuse() {
 # No transcript or environment markers are consulted. Empty/invalid IDs
 # grant no exception; this cooperating-agent guard cannot authenticate input.
 subagent_call() {
-    jq -e '.agent_id | type == "string" and length > 0'         <<<"${HOOK_INPUT}" >/dev/null 2>&1
+    jq -e '.agent_id | type == "string" and length > 0' \
+        <<<"${HOOK_INPUT}" >/dev/null 2>&1
 }
 
 # Only the explicit read-only sandbox is a main-loop exception. Unknown
