@@ -37,7 +37,9 @@
 #
 # The backing script of `just box enter` (script/box/justfile.box forwards
 # the arguments here verbatim); the managed terminal command calls it by
-# its absolute path, with an absolute --distrobox (issue #175):
+# its quoted absolute repo path, with explicit --distrobox and --box
+# (issues #175, #360). It enters the box login shell without automatic tmux;
+# distrobox.conf still drops TMUX/TMUX_PANE before distrobox enters (#179):
 #
 #   ./script/box/enter.sh                          # enter the default box
 #   ./script/box/enter.sh --box work -- fish       # enter work, run fish

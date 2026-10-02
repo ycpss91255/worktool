@@ -80,7 +80,7 @@
 # rewrite of such a file would lose user lines (codex round 4 on PR #232):
 #   auto-enter yes, terminal ghostty:
 #     existing <config dir>/ghostty/config.ghostty, else legacy config:
-#       command = '<distrobox>' enter <box>
+#       command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<box>'
 #   auto-enter yes, terminal none: no terminal profile at all, a leftover
 #     block removed.
 #   auto-enter no: the block removed from either file, the removal reported.
@@ -481,7 +481,7 @@ _apply_enable() {
 # it - the box's login shell answers (issue #179: no tmux).
 _apply_ghostty() {
     local _body _other
-    _body="command = $(enter_sh_squote "${DISTROBOX}") enter ${BOX}"
+    _body="command = $(enter_sh_squote "${SCRIPT_DIR}/enter.sh") --distrobox $(enter_sh_squote "${DISTROBOX}") --box $(enter_sh_squote "${BOX}")"
     _other="$(enter_config_dir)/ghostty/config"
     if [[ "${GHOSTTY_TARGET}" == "${_other}" ]]; then
         _other+=".ghostty"

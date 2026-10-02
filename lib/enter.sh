@@ -54,7 +54,7 @@
 #   enter_first_word <s>      -> the first shell word of $s, decoded
 #   enter_after_first_word <s>-> $s minus its first (setup-encoded) word
 #   enter_body_distrobox <b>  -> the distrobox a managed block body names
-#                                (through the enter.sh wrapper, issue #180)
+#                                (through the enter.sh wrapper, issues #180, #360)
 #   enter_path_single_line <p>-> 0 when $p holds no newline / carriage return
 #   enter_show_control <s>    -> $s with LF / CR shown as `\n` / `\r`
 #
@@ -284,7 +284,8 @@ enter_after_first_word() {
 
 # The distrobox program recorded in ghostty managed-block body $1, or
 # nothing when the body names none. setup.sh writes one body:
-#   command = '<distrobox>' enter <box>
+#   command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<box>'
+# Legacy direct-distrobox bodies are also decoded.
 # The shapes an earlier worktool wrote (`... -- tmux new -A -s main`
 # after it, an unquoted path) are still decoded, so a block a user already
 # has keeps reporting. status.sh reads this back to say whether that path
