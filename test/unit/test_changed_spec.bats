@@ -519,3 +519,17 @@ _document_change() {
     assert_failure 2
     assert_output --partial "unknown option '--bogus' (see --help)"
 }
+
+@test "test.sh --guards rejects an unlisted repository-scanning spec" {
+    run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${REPO_ROOT}"
+    assert_success
+
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -f "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+}

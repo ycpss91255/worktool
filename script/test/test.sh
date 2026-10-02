@@ -853,9 +853,32 @@ _guard_specs() {
     done
 }
 
+# Conservative scan signatures: tracked-file enumeration, source globs, or
+# recursive/search commands over source directories (including continuations).
+_spec_scans_repository() {
+    awk '{ line = line $0; if (sub(/\\$/, "", line)) next; print line; line = "" }
+         END { if (line != "") print line }' "$1" |
+        grep -Eq 'ls-files|/(script|lib)/[^[:space:]]*\*|(^|[[:space:]])(find|grep|rg)[[:space:]].*/(script|lib)(["[:space:]]|$)'
+}
+
+_validate_guard_specs() {
+    local _spec _relative _guards _missing=0
+    _guards="$(_guard_specs)"
+    while IFS= read -r -d '' _spec; do
+        _spec_scans_repository "${_spec}" || continue
+        _relative="${_spec#"${REPO_ROOT}"/}"
+        if ! grep -qxF "${_relative}" <<<"${_guards}"; then
+            _err "repository-scanning spec missing from guard list: ${_relative}"
+            _missing=1
+        fi
+    done < <(find "${REPO_ROOT}/test" -type f -name '*_spec.bats' -print0)
+    [[ "${_missing}" -eq 0 ]]
+}
+
 _add_changed_guards() {
     case "$1" in
         script/*|lib/*|box/*|justfile*|doc/adr/*)
+            _guards_selected=1
             local _spec
             while IFS= read -r _spec; do
                 _add_changed_spec "${_spec}"
@@ -873,6 +896,9 @@ _is_test_infrastructure() {
 
 _run_changed_tiers() {
     local _tier
+    if [[ "${_guards_selected}" -eq 1 ]]; then
+        _validate_guard_specs || _die "guard list incomplete"
+    fi
     _run_host_step lint ""
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
@@ -902,7 +928,7 @@ _run_changed() {
     local _base="$1" _list _path _spec _mapped _full_fallback=0
     local _full_unit=0 _full_matrix=0 _full_integration=0
     local _full_system=0 _full_acceptance=0
-    local _ghostty=0 _system_real=0
+    local _ghostty=0 _system_real=0 _guards_selected=0
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
@@ -944,6 +970,7 @@ _run_changed() {
 }
 
 _run_guards() {
+    _validate_guard_specs || _die "guard list incomplete"
     local -a _specs=()
     mapfile -t _specs < <(_guard_specs)
     [[ "${#_specs[@]}" -gt 0 ]] || _die "no guard specs found"
