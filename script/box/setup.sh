@@ -381,6 +381,10 @@ _ghostty_version_warn() {
 # failure sends anyone to run status. setup knows here that the command
 # cannot work, so it refuses and says what to do instead.
 _resolve_distrobox() {
+    if ! enter_path_single_line "${SCRIPT_DIR}/enter.sh"; then
+        log_error "wrapper: $(enter_show_control "${SCRIPT_DIR}/enter.sh") holds a newline or carriage return, which cannot be written into the line-based ghostty config (move the repo to a path without one); nothing was written"
+        return 1
+    fi
     if [[ -n "${OPT_DISTROBOX}" ]]; then
         DISTROBOX="${OPT_DISTROBOX}"
         log_info "distrobox: ${DISTROBOX} (--distrobox; absolute path written into the managed command)"

@@ -236,7 +236,10 @@ shell 特殊字元(`$`、反引號、`"`、`\`、`'`)時才不會被拆成多個
 命令語意:`command = '<repo>/script/box/enter.sh' --distrobox '<路徑>' --box '<盒>'`——單引號是唯一對任意字元都安全的 POSIX
 形式;路徑裡的單引號以 `'\''` 收尾再接回。
 
-### 路徑含換行一律拒絕(issue #175 round 2)
+### 路徑含換行一律拒絕(issues #175 round 2／#360)
+
+此限制同時適用於 distrobox 路徑與 repo 內 wrapper 路徑；repo 路徑含換行時，
+setup 在寫入任何設定前拒絕執行，請先搬到不含換行的路徑。
 
 shell quoting 能把**任何**文字變成一個合法的 word,但受管檔案是**逐行**
 格式:ghostty 一行一個 key。所以路徑裡只要有換行(LF)或

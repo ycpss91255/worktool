@@ -1474,3 +1474,16 @@ _assert_mode_kept() {
 # 5. Multi-block files are refused before any write (issue #179).
 # Covered by managed_block_spec.bats: malformed markers x operation x
 # managed file, re-running setup on two managed blocks, and --dry-run refusal.
+
+@test "setup refuses a wrapper repo path with a newline before writing any managed files" {
+    local _repo="${BATS_TEST_TMPDIR}/repo"$'\n'"moved"
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${SETUP}" "${REPO_ROOT}/script/box/enter.sh" "${REPO_ROOT}/script/box/justfile.box" "${_repo}/script/box/"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty
+    assert_failure 1
+    assert_output --partial "wrapper:"
+    assert_output --partial "holds a newline or carriage return"
+    assert [ ! -e "${CONFIG}" ]
+    assert [ ! -e "${GHOSTTY}" ]
+}
