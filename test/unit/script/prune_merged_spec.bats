@@ -113,3 +113,12 @@ prune() {
     assert_success
     [ ! -e "${TREE}" ]
 }
+
+@test "cleanup can remove its invoking worktree and still delete the branch" {
+    run bash -c 'cd "$1"; bash "$2" --apply' _ "${TREE}" \
+        "${REPO_ROOT}/.agents/script/worktree/prune-merged.sh"
+    assert_success
+    [ ! -e "${TREE}" ]
+    run git -C "${MAIN}" show-ref --verify refs/heads/topic
+    assert_failure
+}

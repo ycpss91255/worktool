@@ -20,7 +20,7 @@ fi
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="$(dirname -- "${COMMON}")"
 WORKTREE_ROOT="$(dirname -- "${MAIN}")/worktree"
-git fetch origin >&2
+git -C "${MAIN}" fetch origin >&2
 merged_head() {
     local head="$1" ref
     while IFS= read -r ref; do
@@ -30,7 +30,7 @@ merged_head() {
                 [[ "${ref}" =~ ^refs/remotes/origin/m[0-9]+/[0-9]+-acceptance$ ]] || continue ;;
             *) continue ;;
         esac
-        if git merge-base --is-ancestor "${head}" "${ref}"; then
+        if git -C "${MAIN}" merge-base --is-ancestor "${head}" "${ref}"; then
             return 0
         fi
     done <<< "${REMOTE_REFS}"
@@ -48,11 +48,11 @@ tree_clean() {
     done <<< "${status}"
 }
 
-REMOTE_REFS="$(git for-each-ref --format='%(refname)' refs/remotes/origin)"
+REMOTE_REFS="$(git -C "${MAIN}" for-each-ref --format='%(refname)' refs/remotes/origin)"
 prune_tree() {
     local tree="$1" branch
     if ! merged_head "$(git -C "${tree}" rev-parse HEAD)"; then
-        if [[ -z "$(git for-each-ref --contains="$(git -C "${tree}" rev-parse HEAD)" --format='%(refname)' refs/remotes/origin)" ]]; then
+        if [[ -z "$(git -C "${MAIN}" for-each-ref --contains="$(git -C "${tree}" rev-parse HEAD)" --format='%(refname)' refs/remotes/origin)" ]]; then
             log_info "kept ${tree}: unpushed commits; not merged"
         else
             log_info "kept ${tree}: not merged"
@@ -68,13 +68,13 @@ prune_tree() {
         return 0
     fi
     branch="$(git -C "${tree}" symbolic-ref -q --short HEAD)" || branch=''
-    git worktree remove -- "${tree}"
+    git -C "${MAIN}" worktree remove -- "${tree}"
     log_info "removed worktree: ${tree}"
     if [[ -n "${branch}" ]]; then
-        if git branch -d -- "${branch}" >&2; then
+        if git -C "${MAIN}" branch -d -- "${branch}" >&2; then
             log_info "removed branch: ${branch}"
         else
-            log_warn "kept branch ${branch}: git branch -d refused"
+            log_warn "kept branch ${branch}: git -C "${MAIN}" branch -d refused"
         fi
     fi
 }
@@ -92,4 +92,4 @@ while IFS= read -r -d '' FIELD; do
             fi
             ;;
     esac
-done < <(git worktree list --porcelain -z)
+done < <(git -C "${MAIN}" worktree list --porcelain -z)
