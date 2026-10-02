@@ -52,6 +52,28 @@ _check() {
     assert_success
 }
 
+@test "everyday command matrix without codex is allowed" {
+    local cmd failures=0
+    printf '%s\n' '#!/usr/bin/env bash' "echo ready | awk '{print \$1}'" > "${BATS_TEST_TMPDIR}/daily.sh"
+    for cmd in \
+        "echo a | awk '{print \$1}'" \
+        "jq -r '.name' data.json" \
+        "python3 -c 'print(1)'" \
+        "gh pr checks 383 --repo ycpss91255/worktool | awk '{print \$1}'" \
+        'setsid nohup bash daily.sh' \
+        'printf "%s\\n" a | xargs echo' \
+        "bash -c 'echo ready'" \
+        'just test unit test/unit/agent_config_spec.bats' \
+        'docker ps --format "{{.ID}}"'; do
+        _check "${cmd}"
+        if [[ "${status}" -ne 0 ]]; then
+            printf 'Unexpected refusal: %s\n%s\n' "${cmd}" "${output}" >&2
+            failures=$((failures + 1))
+        fi
+    done
+    assert_equal "${failures}" 0
+}
+
 @test "shell wrappers cannot hide implementation but preserve read-only queries" {
     printf '%s\n' '#!/usr/bin/env bash' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
     printf '%s\n' '#!/usr/bin/env bash' 'bash run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
@@ -71,14 +93,53 @@ _check() {
         'codex exec --sandbox read-only --config sandbox_mode="danger-full-access" "query"' \
         'codex exec --sandbox read-only --sandbox workspace-write "query"' \
         'eval codex exec --sandbox read-only query' \
-        "bash -c \"\$CMD\"" \
-        "\$RUN exec --sandbox read-only query" \
+        "bash -c \"\$CMD\" # codex" \
+        "\$RUN exec --sandbox read-only query # codex" \
         'xargs codex exec --sandbox read-only' \
         'python3 -c "import os; os.system(\"codex exec --sandbox read-only query\")"' \
         "codex exec --sandbox read-only query; eval \"\$CMD\"" \
-        "bash \"\$SCRIPT\"" 'bash missing.sh' 'bash -e run.sh' \
+        "bash \"\$SCRIPT\" # codex" 'bash missing.sh # codex' 'bash -e run.sh' \
         'setsid bash run.sh' 'busybox sh run.sh' 'nice bash run.sh' 'stdbuf -oL bash run.sh'; do
         _check "${cmd}"
         assert_equal "${status}" 2
     done
+}
+
+@test "shell wrapper inspection permits unrelated scripts and opaque paths" {
+    local cmd
+    printf '%s\n' "echo ready | awk '{print \$1}'" > "${BATS_TEST_TMPDIR}/daily.sh"
+    printf '%s\n' 'bash daily.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
+    for cmd in 'bash daily.sh' './daily.sh' 'bash outer.sh' \
+        'setsid nohup bash daily.sh' 'nice bash daily.sh' \
+        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh' \
+        'bash missing.sh' './missing.sh' "bash \"\$SCRIPT\"" "bash -c \"\$CMD\"" \
+        "\$RUN exec --sandbox read-only query"; do
+        _check "${cmd}"
+        assert_success
+    done
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/daily.sh"
+    for cmd in 'bash outer.sh' 'setsid nohup bash daily.sh' 'nice bash daily.sh' \
+        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh' \
+        'xargs bash daily.sh' 'printf x | xargs bash daily.sh' \
+        'xargs ./daily.sh' 'xargs -n 1 bash daily.sh' \
+        'xargs --max-args=1 bash daily.sh' 'xargs --max-args 1 bash daily.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}
+
+@test "launcher chains inspect quoted script paths and bash command strings" {
+    local cmd
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/quoted script.sh"
+    for cmd in "setsid nohup bash 'quoted script.sh'" \
+        "nice -n 5 bash -c 'bash \"quoted script.sh\"'" \
+        "setsid nohup bash -c 'bash \"quoted script.sh\"'" \
+        "stdbuf -oL bash 'quoted script.sh'"; do
+        _check "${cmd}"
+        printf 'Checked launcher: %s\n' "${cmd}" >&2
+        assert_equal "${status}" 2
+    done
+    printf '%s\n' 'echo ready' > "${BATS_TEST_TMPDIR}/quoted script.sh"
+    _check "setsid nohup bash -c 'bash \"quoted script.sh\"'"
+    assert_success
 }
