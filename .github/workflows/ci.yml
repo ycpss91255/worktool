@@ -3,8 +3,10 @@ name: CI
 # worktool CI: lint + unit + matrix + integration + system (shim group) + acceptance
 # in the shared test image, plus system-real (real-engine group) in its own
 # docker-in-docker runner. All inside Docker. Runs on push and pull_request
-# to main. Dedicated jobs check new-commit email addresses (issue #234) and
-# attribution lines in commit messages and pull request bodies (issue #271).
+# to main, plus pull_request to milestone acceptance branches matching
+# m*/*-acceptance (issue #389). Dedicated jobs check new-commit email
+# addresses (issue #234) and attribution lines in commit messages and
+# pull request bodies (issue #271).
 #
 # Every leg-carrying job runs on BOTH architectures (issue #149, decision B
 # of #148): the `runner` matrix dimension is ubuntu-latest (amd64) and
@@ -24,24 +26,27 @@ name: CI
 # instead of reusing the name as the tier. Branch protection keys on the
 # single `ci-passed` aggregator, not on the per-leg names.
 #
-# Every leg is REQUIRED: the `ci-passed` aggregator fails unless every
+# Every test leg is REQUIRED: the `ci-passed` aggregator fails unless every
 # leg-carrying job finished with `success` - for a matrix job that result
 # is green only when every one of its legs is; a skipped, cancelled or
 # missing leg does not read as green. (Inside each bats gate, test.sh
 # likewise fails on a missing or emptied required spec, on skipped cases
 # and on zero cases.)
+# Milestone PRs additionally require every verify-all leg to succeed;
+# other PRs and main pushes do not require that conditional job.
 #
-# --privileged is used by the test-system-real job ONLY: its runner starts a
+# The test-system-real gate uses --privileged: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
 # box. Everything it creates lives in that nested daemon and is destroyed
 # with the runner container (docker run --rm).
+# verify-all also invokes that gate through the acceptance entry.
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, edited]
+    branches: [main, 'm*/*-acceptance']
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -139,8 +144,8 @@ jobs:
   # Real-engine system group: docker-in-docker, on both runners. Builds its
   # own runner image (dockerfile/Dockerfile.system-real, independent of the
   # shared test image) and runs it with `docker run --rm --privileged` via
-  # `just test system-real` (= test.sh --system-real). This is the ONLY job
-  # that uses --privileged (GitHub-hosted ubuntu runners, amd64 and arm64,
+  # `just test system-real` (= test.sh --system-real). This is the only job
+  # that names --privileged explicitly (GitHub-hosted ubuntu runners, amd64 and arm64,
   # allow it). Slow: image pull + apt inside the box; the runner itself
   # bounds every step, and the job is capped too.
   test-system-real:
@@ -160,6 +165,55 @@ jobs:
 
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
         run: just test system-real
+
+  # Milestone acceptance runs the checkout's real entry, not verify stubs.
+  # `all` excludes section 5 (realbox); it drives Docker gates itself.
+  verify-all:
+    name: verify-all (${{ matrix.runner }})
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    needs: build-image
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      issues: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download test image (${{ matrix.runner }})
+        uses: actions/download-artifact@v4
+        with:
+          name: worktool-test-image-${{ matrix.runner }}
+          path: /tmp
+
+      - name: Load test image
+        run: docker load -i /tmp/worktool-test.tar
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Expose pinned distrobox for setup acceptance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/worktool-bin"
+          container="$(docker create worktool-test:local)"
+          trap 'docker rm "${container}" >/dev/null' EXIT
+          docker cp "${container}:/usr/local/bin/." "${RUNNER_TEMP}/worktool-bin"
+          echo "${RUNNER_TEMP}/worktool-bin" >> "${GITHUB_PATH}"
+
+      - name: Verify non-real-machine acceptance
+        env:
+          TEST_IMAGE_PREBUILT: "1"
+          GH_TOKEN: ${{ github.token }}
+        run: just verify all
 
   # Commit email (issue #234): the repo is public, so every new commit must
   # carry a GitHub noreply author email and a noreply (or GitHub's own
@@ -260,7 +314,7 @@ jobs:
 
   # Single required status: green only if every build-image leg AND every
   # matrix gate leg AND every real-engine leg AND all commit policy jobs
-  # succeeded. `needs` on a matrix
+  # succeeded, plus verify-all on milestone-gate PRs. `needs` on a matrix
   # job covers all of its legs, and its `result` is `success` only when
   # every leg is. `if: always()` makes it run even when a leg failed or was
   # skipped, so that state is reported as a failure rather than as "no
@@ -268,7 +322,7 @@ jobs:
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs]
+    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs, verify-all]
     if: always()
     steps:
       - name: Verify every leg succeeded
@@ -279,6 +333,8 @@ jobs:
           EMAIL_RESULT: ${{ needs.commit-email.result }}
           ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
           REFS_RESULT: ${{ needs.commit-refs.result }}
+          VERIFY_REQUIRED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}
+          VERIFY_RESULT: ${{ needs.verify-all.result }}
         run: |
           echo "build-image (both runners): ${BUILD_RESULT}"
           echo "gate (6 gates x both runners): ${GATE_RESULT}"
@@ -292,3 +348,7 @@ jobs:
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
           [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
           [ "${REFS_RESULT}" = "success" ] || exit 1
+          echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
+          if [ "${VERIFY_REQUIRED}" = "true" ]; then
+            [ "${VERIFY_RESULT}" = "success" ] || exit 1
+          fi

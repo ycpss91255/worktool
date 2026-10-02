@@ -38,11 +38,19 @@
           },
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_milestone_ready_evidence.sh\" codex"
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_main_checkout_readonly.sh\""
           },
           {
             "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_codex_round_cap.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_codex_via_workflow.sh\""
           },
           {
             "type": "command",
@@ -68,6 +76,17 @@
           {
             "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/codex_apply_patch.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/remind_main_sync.sh\""
           }
         ]
       }

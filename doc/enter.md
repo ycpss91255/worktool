@@ -634,6 +634,11 @@ host tmux server 的部分在 system-real):
   獨立 HOME 之前,盒子的 `$HOME` 就是 host HOME,所以同一個檔案;斷言綁的是盒子的
   `$HOME`,#198 之後自動跟著換)。另一案把既有的 `TMUX_TMPDIR` 改成 mode 755、
   擁有者 1:1,重啟盒子後斷言回到 700 與盒內使用者。
+- 延遲 gate(#374):`just box bench` 在隔離的暫存設定中執行 setup,讀取真正寫出的
+  受管 command,再透過 `enter.sh` wrapper 執行 enter / shell / inbox 各指標的
+  payload。enter 與 shell 在 host 計時,包含 wrapper 與首次啟動檢查;inbox
+  仍只計盒內 shell 啟動。setup 準備不計時、不更動使用者設定。CI system-real
+  以 `fish -c exit` 的 shell median 與 300 ms 門檻判定,指標與 gate 不變。
 - 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。

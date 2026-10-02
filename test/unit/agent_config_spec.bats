@@ -100,8 +100,10 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_gh_body_file.sh" \
         "PreToolUse|Bash|${_p}/enforce_no_local_paths.sh" \
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
+        "PreToolUse|Bash|${_p}/enforce_milestone_ready_evidence.sh" \
         "PreToolUse|Bash|${_p}/enforce_main_checkout_readonly.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
+        "PreToolUse|Bash|${_p}/enforce_codex_via_workflow.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
         "PreToolUse|Bash|${_p}/enforce_tdd_commit.sh" \
         "PreToolUse|Bash|${_p}/enforce_issue_milestone.sh" \
@@ -112,7 +114,8 @@ _registered_names() {
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
         "UserPromptSubmit||${_p}/remind_no_emoji.sh" \
-        "Stop||${_p}/enforce_reply_language.sh")"
+        "Stop||${_p}/enforce_reply_language.sh" \
+        "PostToolUse|Bash|${_p}/remind_main_sync.sh")"
 }
 
 @test "codex registers every Claude PreToolUse Bash hook" {
