@@ -107,7 +107,8 @@ worktool/
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
 │   │   │                enforce_main_checkout_readonly、
-│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
+│   │   │                enforce_codex_round_cap、enforce_codex_via_workflow(主 session 派工限制與 agent_id 子代理例外,#366)、
+│   │   │                enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
 │   │   │                enforce_tdd_commit(git commit 前依暫存區檢查 TDD 的測試與垂直切片,#268)、
@@ -136,7 +137,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:三行 `mod?`(test / box / agent)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -403,10 +404,17 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
 跑 lint、test-unit、test-matrix、test-integration、test-system、test-acceptance(共用測試
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
-`docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
-分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
-**且** `test-system-real`、`commit-email`、`commit-attribution`、`commit-refs` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
-失敗。上述每個 job 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
+`docker run --rm --privileged`,上限 40 分鐘)。貼有 `milestone-gate` 標籤的 PR
+另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
+不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
+`just test system-real`,因此 `verify-all` 也間接使用 `--privileged`。
+PR 的 labeled / unlabeled 事件會重新計算 CI。
+
+`ci-passed` 要求映像建置、每個 matrix gate、`test-system-real`、`commit-email`、
+`commit-attribution`、`commit-refs` 都 `success`;這些必要 gate 被 skip、取消或缺席
+一律視為失敗。只有 `milestone-gate` PR 額外要求 `verify-all` 全部成功;
+普通 PR 與 main push 的 `verify-all` 預期 skipped,不列為必要 gate。
+映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR

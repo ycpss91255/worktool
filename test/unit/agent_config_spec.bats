@@ -102,6 +102,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
         "PreToolUse|Bash|${_p}/enforce_main_checkout_readonly.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
+        "PreToolUse|Bash|${_p}/enforce_codex_via_workflow.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
         "PreToolUse|Bash|${_p}/enforce_tdd_commit.sh" \
         "PreToolUse|Bash|${_p}/enforce_issue_milestone.sh" \

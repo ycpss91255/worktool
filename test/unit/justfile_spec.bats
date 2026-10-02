@@ -510,8 +510,10 @@ _listed_names() {
     assert_success
     assert_line --regexp '^ +run: just test \$\{\{ matrix\.tier \}\}$'
     assert_line --regexp '^ +run: just test system-real$'
-    # Exactly those two invocations: no gate bypasses the grammar.
-    assert_equal "${#lines[@]}" 2
+    # Milestone acceptance (verify-all) drives the gates through just verify.
+    assert_line --regexp '^ +run: just verify all$'
+    # Exactly those three invocations: no gate bypasses the grammar.
+    assert_equal "${#lines[@]}" 3
 }
 
 @test "just agent lists the Codex launcher without starting it" {
