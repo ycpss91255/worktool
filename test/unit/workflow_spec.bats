@@ -2429,3 +2429,27 @@ _scratch_assert_isolated() {
         assert_success
     done
 }
+
+@test "pr-loop: branches and opens PRs against the selected base in every mode (#364)" {
+    local base mode implementer extra json
+    for base in main m3/5-acceptance; do
+        for mode in full light; do
+            for implementer in codex claude; do
+                extra="$(jq -cn --arg b "${base}" --arg m "${mode}" --arg i "${implementer}" \
+                    '{mode:$m,implementer:$i} + (if $b == "main" then {} else {base:$b} end)')"
+                run _pl_run "${extra}"
+                assert_success
+                json="${output}"
+                run jq -e --arg b "${base}" '
+                    .error == null and .result.ciState == "green" and
+                    (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                        contains("git worktree add -b b /work/../worktree/n origin/" + $b)) and
+                    (.calls[] | select(.role | test("^(implement|publish):")) | .prompt |
+                        select(contains("gh pr create")) | contains("--base " + $b + " --head b")) and
+                    ([.calls[].prompt | test("gh pr merge|mergePullRequest|HEAD:main")] | any | not)
+                ' <<<"${json}"
+                assert_success
+            done
+        done
+    done
+}

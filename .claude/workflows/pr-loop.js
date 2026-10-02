@@ -1,9 +1,9 @@
 export const meta = {
   name: 'pr-loop',
   description: 'Drive one issue through implementation, CI and independent review without merging.',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, base?, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
-    { title: 'Implement', detail: 'agent: worktree off origin/main, TDD RED->GREEN, Docker gates, push, open PR' },
+    { title: 'Implement', detail: 'agent: worktree off origin/<base>, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Review', detail: 'light: a separate Claude agent reviews only the diff and applies required fixes' },
     { title: 'Publish', detail: 'light: lint and touched specs, push and open PR' },
     { title: 'Locate', detail: 'agent: resolve the PR number and head SHA from the branch (structured)' },
@@ -20,9 +20,10 @@ export const meta = {
 //     repo: "ycpss91255/worktool",     // required: owner/name for every gh call
 //     repoDir: "/path/to/worktool",     // required: the local checkout the worktrees hang off
 //     issue: 150,                      // required: the ONE sub-issue this PR closes
-//     branch: "m3/150-bench",          // required: branch off origin/main
+//     branch: "m3/150-bench",          // required: branch off origin/<base>
 //     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
+//     base: "main",                   // optional: target branch, including acceptance branches
 //     gates: "just test lint, ...",    // optional extra gates; default = lint + changed
 //     codex: "on" | "off",             // optional: default "on"; "off" = quota paused
 //     maxRounds: 3,                    // optional: number of Fix rounds allowed (0 = review once, never fix)
@@ -48,6 +49,7 @@ const MAX = A.maxRounds === undefined ? 3 : A.maxRounds
 if (!Number.isInteger(MAX) || MAX < 0) throw new Error(`pr-loop: args.maxRounds must be a non-negative integer, got ${JSON.stringify(A.maxRounds)}`)
 const RUN_ID = `pr-loop #${A.issue}`
 log(RUN_ID)
+const BASE = A.base === undefined ? 'main' : A.base
 const REPO = A.repo
 const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
@@ -97,12 +99,12 @@ const CODEX_RULES = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author an
 const RULES = GUARDRAILS
 
 const IMPLEMENT_TASK = `TASK (issue #${A.issue}): ${A.task}
-When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
+When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
 const IMPLEMENT = `${RULES}
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
-Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}. Work ONLY there.
+Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE} && cd ${WT}. Work ONLY there.
 ${IMPLEMENT_TASK}. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const CODEX_IMPLEMENT_BRIEF = `${CODEX_RULES}
@@ -120,7 +122,7 @@ const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for i
 
 ${CODEX_RULES}
 
-First run: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main.
+First run: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}.
 ${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
@@ -207,7 +209,7 @@ if (MODE === 'light') {
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
 Act directly as Claude; do not invoke codex or delegate implementation.
-Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/main && cd ${WT}.
+Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE} && cd ${WT}.
 TASK (issue #${A.issue}): ${A.task}
 For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
   if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
@@ -219,7 +221,7 @@ You are a separate Claude reviewer, not the editor. Review only the complete dif
   if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
-In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base main --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
+In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
   phase('Locate')
   const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
