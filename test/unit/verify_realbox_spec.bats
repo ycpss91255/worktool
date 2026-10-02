@@ -439,6 +439,21 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 
 # --- 5.2 step 1: back up -----------------------------------------------------
 
+_window_input() {
+    printf '%s\n' "$1" | script -q -c \
+        '"$REALBOX" --allow-real-box 5.2; printf "%s\n" "$?" >"$FAKE_STATE_DIR/window-rc"' /dev/null
+}
+
+@test "#362: 5.2 refuses typed yes without objective window evidence" {
+    export REALBOX
+    run _window_input yes
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "expected a fish PID"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "5.2.1 happy path records every file setup can write and publishes the manifest" {
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1

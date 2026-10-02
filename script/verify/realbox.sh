@@ -582,26 +582,18 @@ _52_step2_apply() {
         || { guard_fail "the apply destroyed user content -- run 5.2.3 to restore it from the backup"; return 1; }
 }
 
-# --- the one subjective check ------------------------------------------------
-
-# The chain itself is verified headlessly by the integration and system-real
-# gates (issues #172 / #175); what is left here is a human judging a real
-# window. That needs a terminal: with no tty the observation CANNOT be made,
-# so this says so and fails rather than passing a check nobody performed.
+# --- objective new-window check ---------------------------------------------
 _52_confirm_window() {
-    local _ans
-    printf 'Open a NEW ghostty window now and run these three lines in it:\n'
-    printf "  ls /run/.containerenv 2>/dev/null || ls /.dockerenv; ps -p \$fish_pid -o comm=\n"
-    printf 'Expected: container marker (/run/.containerenv or /.dockerenv), then fish - with no noticeable delay.\n'
+    local _pid
+    printf 'Open a NEW ghostty window now and run: echo $fish_pid\n'
     [[ -t 0 ]] \
-        || { guard_fail "5.2 ends in a subjective check that needs a terminal: stdin is not a tty, so the new-window observation cannot be made here. Re-run 5.2 from an interactive shell."; return 1; }
-    printf 'Did the new window show those two lines, promptly? [yes/no] '
-    IFS= read -r _ans || { guard_fail "reading the confirmation failed"; return 1; }
-    [[ "${_ans}" == "yes" ]] \
-        || { guard_fail "the new-window check was not confirmed (answered '${_ans}')"; return 1; }
-    # Echo what the maintainer confirmed, so the transcript carries the same
-    # two observations doc/acceptance.md requires.
-    printf 'container-marker=confirmed\nfish\n'
+        || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }
+    printf 'Enter the fish PID from the new window: '
+    IFS= read -r _pid || { guard_fail "reading the fish PID failed"; return 1; }
+    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
+        || { guard_fail "expected a fish PID; a typed yes is not objective evidence"; return 1; }
+    guard_fail "no objective window evidence for fish PID ${_pid}"
+    return 1
 }
 
 # --- step 3 ------------------------------------------------------------------
