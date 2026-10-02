@@ -507,6 +507,17 @@ STUB
     assert_output --partial 'echo $fish_pid'
 }
 
+@test "#362: realbox help names the four actual backup files" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial "Ghostty legacy config"
+    assert_output --partial "config.ghostty"
+    assert_output --partial "worktool state file"
+    assert_output --partial "distrobox.conf"
+    refute_output --partial "~/.tmux.conf"
+    assert_output --partial "fish mount namespace"
+}
+
 @test "#362: 5.2 passes with measured fish namespace different from host" {
     _fake_window_process
     run _window_input 4242

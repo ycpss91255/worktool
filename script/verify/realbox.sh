@@ -117,9 +117,10 @@ Items:
           publish the three numbers to the issue and read that exact comment
           back. Removes the box it created, on success and on interrupt.
   5.2     Ghostty window chain: back up every config `just box setup` can
-          write (the ghostty config, the worktool state file and
-          ~/.tmux.conf), apply the managed blocks, prove the user's own
-          content survived the apply, confirm a new window at the terminal,
+          write (Ghostty legacy config, config.ghostty, the worktool state file
+          and distrobox.conf), apply the managed blocks, prove the user's own
+          content survived, reload an already running Ghostty, then verify
+          the new fish mount namespace differs from the host at the terminal,
           then restore everything and remove the box.
   5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
   5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
