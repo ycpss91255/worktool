@@ -1016,3 +1016,29 @@ EOF
     assert_line "host-state after-cleanup: new=0"
     [ ! -e "${HOME}/dev-box" ]
 }
+
+@test "5.2.3: host already has dev-box and its user data survives cleanup" {
+    local _home="${HOME}/dev-box"
+    mkdir -p "${_home}/.cache/tmux/tmux-1000"
+    printf 'user data\n' >"${_home}/notes"
+    chmod 600 "${_home}/notes"
+    ln -s notes "${_home}/notes-link"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/user"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "host-state baseline: present=1"
+    _realbox_quiet 5.2.2
+    printf 'updated user data\n' >"${_home}/notes"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/default"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line "host-state before-cleanup: new=1"
+    assert_line "host-state after-cleanup: new=0"
+    assert_equal "$(cat "${_home}/notes")" "updated user data"
+    assert_equal "$(stat -c %a "${_home}/notes")" "600"
+    assert_equal "$(readlink "${_home}/notes-link")" "notes"
+    [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
+    [ ! -e "${_home}/.cache/tmux/tmux-1000/default" ]
+}

@@ -208,7 +208,10 @@ _host_state_list() {
 }
 
 _host_state_snapshot() {
+    local _present=0
     guard_require find sort cmp || return 1
+    [[ ! -e "${HOME}/${BOX}-box" && ! -L "${HOME}/${BOX}-box" ]] || _present=1
+    printf 'host-state baseline: present=%s\n' "${_present}"
     _host_state_list | sort -z >"$1/host-state-baseline" \
         || { guard_fail "cannot inventory host default HOME"; return 1; }
 }
