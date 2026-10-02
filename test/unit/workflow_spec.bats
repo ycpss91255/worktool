@@ -2593,12 +2593,14 @@ _pl_resume_setup() {
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
     replies='{"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
-    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}"         "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')"         "${replies}" exec-resume
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" \
+        "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
+        "${replies}" exec-resume
 }
 
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
-    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit workflow_spec.bats"}'
+    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
     assert_success
     local json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
@@ -2661,10 +2663,25 @@ _pl_resume_run() {
     _pl_resume_setup
     local root="${BATS_TEST_TMPDIR}"
     local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
-    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}"         "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')"         "${replies}" exec-resume
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
+        "${replies}" exec-resume
     assert_success
     run jq -e '.error == null and .result.codexVerdict == "blocked" and
         (.result.blockingLeft[0] | contains("local HEAD: unpushed")) and
         ([.calls[].role | startswith("review:")] | any | not)' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop resume: a deleted worktree with stale registration can be recreated (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    rm -rf "${root}/worktree/n"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "mergeable"' <<<"${output}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
 }

@@ -216,6 +216,14 @@ Run this script blocking in the foreground; return stdout verbatim in state. Onl
 \`cd ${sq(REPO_DIR)} && {
 if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   if [ ! -e ${sq(WT)} ]; then
+    registered=$(git worktree list --porcelain) || exit 1
+    target=$(realpath -m ${sq(WT)}) || exit 1
+    if printf '%s\\n' "$registered" | grep -Fxq "worktree $target"; then
+      git worktree remove --force ${sq(WT)} >&2 || exit 1
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] || exit 1
+    fi
     git worktree add ${sq(WT)} ${sq(A.branch)} >&2 || exit 1
   fi
   common=$(git rev-parse --path-format=absolute --git-common-dir) &&
