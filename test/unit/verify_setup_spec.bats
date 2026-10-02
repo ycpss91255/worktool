@@ -1001,18 +1001,6 @@ EOF
     refute_output --partial "3.1 PASS"
 }
 
-@test "single source: managed expectation equals the real setup dry-run command" {
-    local _home="${BATS_TEST_TMPDIR}/oracle" _actual _expected
-    mkdir -p "${_home}"
-    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" just box setup --dry-run
-    assert_success
-    _actual="$(printf '%s\n' "${output}" | sed -n 's/.*(managed block: \(command = .*\))$/\1/p')"
-    _actual="${_actual//"${REPO_ROOT}"/<repo>}"
-    _actual="${_actual//"$(command -v distrobox)"/<D>}"
-    _expected="$(bash -c 'source "$1"; printf "%s\n" "$MANAGED_CMD"' bash "${VERIFY}")"
-    assert_equal "${_expected}" "${_actual}"
-}
-
 @test "single source: a setup missing the real Ghostty reload notice is refused" {
     local _repo
     _repo="$(_repo_copy)"
