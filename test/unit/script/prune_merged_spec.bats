@@ -38,3 +38,12 @@ prune() {
     run git -C "${MAIN}" show-ref --verify refs/heads/topic
     assert_failure
 }
+
+@test "keeps unmerged pushed commits and explains why on stderr" {
+    git -C "${TREE}" commit -qm feature --allow-empty
+    git -C "${TREE}" push -qu origin topic
+    prune --apply
+    assert_success
+    assert_output --partial "not merged"
+    [ -d "${TREE}" ]
+}

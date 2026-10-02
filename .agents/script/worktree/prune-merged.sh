@@ -23,6 +23,10 @@ WORKTREE_ROOT="$(dirname -- "${MAIN}")/worktree"
 git fetch origin >&2
 prune_tree() {
     local tree="$1" branch
+    if ! git merge-base --is-ancestor "$(git -C "${tree}" rev-parse HEAD)" origin/main; then
+        log_info "kept ${tree}: not merged"
+        return 0
+    fi
     if [[ "${APPLY}" == 0 ]]; then
         printf '%s\n' "${tree}"
         return 0
