@@ -2453,3 +2453,31 @@ _scratch_assert_isolated() {
         done
     done
 }
+
+@test "pr-loop: CI and independent review use the selected base (#364)" {
+    local mode implementer json
+    for mode in full light; do
+        for implementer in codex claude; do
+            run _pl_run "$(jq -cn --arg m "${mode}" --arg i "${implementer}" \
+                '{mode:$m,implementer:$i,base:"m3/5-acceptance"}')"
+            assert_success
+            json="${output}"
+            run jq -e '
+                .error == null and .result.ciState == "green" and
+                (.calls[] | select(.role | startswith("locate:")) | .prompt |
+                    contains("--base m3/5-acceptance")) and
+                (.calls[] | select(.role | startswith("ci:")) | .prompt |
+                    contains("base m3/5-acceptance") and contains("baseRefName") and
+                    contains("mismatch") and contains("return state \"red\"")) and
+                (.calls[] | select(.role | startswith("review:")) | .prompt |
+                    contains("origin/m3/5-acceptance...HEAD")) and
+                ([.calls[].prompt | contains("origin/main") or contains("sync with main by merging")] | any | not) and
+                (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                    if contains("before pushing run just test lint and just test changed") then
+                        contains("just test changed --base origin/m3/5-acceptance")
+                    else true end)
+            ' <<<"${json}"
+            assert_success
+        done
+    done
+}
