@@ -427,11 +427,28 @@ EOF
 }
 
 @test "owner: the validators (lib/enter.sh, lib/home.sh) judge the named state file" {
+    local _env="${BATS_TEST_TMPDIR}/producer.bash"
+    # Force a later write beyond pipe capacity: an early-closing reader
+    # must fail the producer, regardless of how the processes are scheduled.
+    cat >"${_env}" <<'BASH'
+printf() {
+    if [[ "$*" == '%s\n auto-enter terminal box' ]]; then
+        touch "${BATS_TEST_TMPDIR}/injected"
+        builtin printf '%s\n' auto-enter terminal
+        builtin printf '%1048576s\n' box
+    else
+        builtin printf "$@"
+    fi
+}
+BASH
     _trap poison
     printf '%s\n' 'terminal=sideways' >"${STATE}"
-    run "${REPO_ROOT}/script/box/setup.sh"
+    BASH_ENV="${_env}" run just --justfile "${REPO_ROOT}/justfile" box setup
+    [[ -f "${BATS_TEST_TMPDIR}/injected" ]]
     assert_failure 1
     assert_line "[ERROR] ${STATE}: invalid value 'sideways' for terminal (expected ghostty|none)"
+    run cat "${STATE}"
+    assert_output 'terminal=sideways'
     printf '%s\n' 'home=relative' 'home.source=user' >"${STATE}"
     run "${REPO_ROOT}/script/box/assemble.sh"
     assert_failure 1

@@ -426,7 +426,8 @@ enter_value_ok() {
 # 0 when $1 is a key the state file may hold: a decision key or its
 # `<key>.source` companion.
 enter_key_known() {
-    enter_keys | grep -qxF -- "${1%.source}"
+    # Drain the producer so an early match cannot cause SIGPIPE under pipefail.
+    enter_keys | grep -xF -- "${1%.source}" >/dev/null
 }
 
 # Validate state file $1 LINE BY LINE: every line whose key is known must
