@@ -14,14 +14,16 @@ case "$*" in
     *'pr view 7'*'statusCheckRollup'*) jq '{headRefOid: "head123",statusCheckRollup: [.check_runs[] | .status |= ascii_upcase | .conclusion |= ascii_upcase]}' "${READY_FIXTURE}/checks" ;;
     *'pr view 7'*) cat "${READY_FIXTURE}/pr" ;;
     *'/commits/head123/check-runs'*) cat "${READY_FIXTURE}/checks" ;;
+    *'repos/ycpss91255/worktool/issues/'*) cat "${READY_FIXTURE}/target" ;;
     *'issue view 5'*) cat "${READY_FIXTURE}/issue" ;;
     *) exit 1 ;;
 esac
 STUB
     chmod +x "${READY_FIXTURE}/bin/gh"
     export PATH="${READY_FIXTURE}/bin:${PATH}"
+    printf '%s' '{"number":7,"pull_request":{}}' >"${READY_FIXTURE}/target"
     printf '%s' '{"labels":[{"name":"milestone-gate"}],"headRefOid":"head123","body":"Closes #5"}' >"${READY_FIXTURE}/pr"
-    printf '%s' '{"check_runs":[{"name":"verify-all","status":"completed","conclusion":"failure"}]}' >"${READY_FIXTURE}/checks"
+    printf '%s' '{"check_runs":[{"name":"verify-all (ubuntu-latest)","status":"completed","conclusion":"failure"},{"name":"verify-all (ubuntu-24.04-arm)","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
     printf '%s' '{"body":"目標: 開終端即在盒內;量測進盒延遲並達標。"}' >"${READY_FIXTURE}/issue"
     printf '[claude] 就緒，請驗收\n\n## 目標對照\n\n| 目標 | 測試或驗收項目 | 使用者入口 |\n|---|---|---|\n| 開終端即在盒內 | setup spec | 開啟 Ghostty |\n| 量測進盒延遲並達標 | gate 2.3 | just box bench |\n' >"${READY_FIXTURE}/body"
 }
@@ -51,7 +53,7 @@ check_ready() {
 }
 
 successful_job() {
-    printf '%s' '{"check_runs":[{"name":"verify-all","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
+    printf '%s' '{"check_runs":[{"name":"verify-all (ubuntu-latest)","status":"completed","conclusion":"success"},{"name":"verify-all (ubuntu-24.04-arm)","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
 }
 
 @test "successful verify-all does not replace a goal trace table" {
@@ -100,15 +102,52 @@ STUB
     assert_success
 }
 
-@test "readiness hook changes select its public interface spec in CI" {
-    run bash -c 'source "$1"; _changed_path_map' _ "${REPO_ROOT}/script/test/test.sh"
-    assert_success
-    assert_line '.agents/hook/lib/ready_evidence.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats'
-}
-
 @test "asking the maintainer to accept a prepared PR also requires evidence" {
     printf '[claude] 已備妥，請維護者驗收\n' >"${READY_FIXTURE}/body"
     check_ready
     assert_failure 2
     assert_output --partial 'verify-all'
+}
+
+@test "both real verify-all matrix legs must complete successfully" {
+    successful_job
+    check_ready
+    assert_success
+    for runner in ubuntu-latest ubuntu-24.04-arm; do
+        successful_job
+        jq --arg name "verify-all (${runner})" '.check_runs |= map(select(.name != $name))' \
+            "${READY_FIXTURE}/checks" >"${READY_FIXTURE}/next"
+        mv "${READY_FIXTURE}/next" "${READY_FIXTURE}/checks"
+        check_ready
+        assert_failure 2
+        successful_job
+        jq --arg name "verify-all (${runner})" \
+            '(.check_runs[] | select(.name == $name)).conclusion = "failure"' \
+            "${READY_FIXTURE}/checks" >"${READY_FIXTURE}/next"
+        mv "${READY_FIXTURE}/next" "${READY_FIXTURE}/checks"
+        check_ready
+        assert_failure 2
+        successful_job
+        jq --arg name "verify-all (${runner})" \
+            '(.check_runs[] | select(.name == $name)).status = "in_progress"' \
+            "${READY_FIXTURE}/checks" >"${READY_FIXTURE}/next"
+        mv "${READY_FIXTURE}/next" "${READY_FIXTURE}/checks"
+        check_ready
+        assert_failure 2
+    done
+}
+
+@test "readiness words in confirmed plain issue comments are allowed" {
+    printf '%s' '{"number":365}' >"${READY_FIXTURE}/target"
+    printf '[claude] PR #373 尚未就緒\n' >"${READY_FIXTURE}/body"
+    run_hook enforce_milestone_ready_evidence "$(hook_json "gh issue comment 365 --repo ycpss91255/worktool --body-file ${READY_FIXTURE}/body")"
+    assert_success
+    jq -n --rawfile body "${READY_FIXTURE}/body" '{body:$body}' >"${READY_FIXTURE}/input"
+    run_hook enforce_milestone_ready_evidence "$(hook_json "gh api repos/ycpss91255/worktool/issues/365/comments --input ${READY_FIXTURE}/input")"
+    assert_success
+    assert [ "$(awk '/pr view/ {n++} END {print n+0}' "${READY_FIXTURE}/calls")" -eq 0 ]
+    touch "${READY_FIXTURE}/fail"
+    run_hook enforce_milestone_ready_evidence "$(hook_json "gh issue comment 365 --repo ycpss91255/worktool --body-file ${READY_FIXTURE}/body")"
+    assert_failure 2
+    assert_output --partial 'query'
 }

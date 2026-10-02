@@ -342,3 +342,19 @@ _dispatched() {
         '--ci-unit test/unit/hook/enforce_local_test_scope_spec.bats' \
         '--ci-matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/another_spec.bats')"
 }
+
+@test "test.sh --changed dispatches readiness evidence hook spec" {
+    mkdir -p "${TEMP_REPO}/.agents/hook/lib" "${TEMP_REPO}/test/unit/hook"
+    printf '# readiness policy\n' >"${TEMP_REPO}/.agents/hook/lib/ready_evidence.sh"
+    printf '@test "readiness evidence" { true; }\n' \
+        >"${TEMP_REPO}/test/unit/hook/enforce_milestone_ready_evidence_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/.agents/hook/lib/ready_evidence.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/hook/enforce_milestone_ready_evidence_spec.bats')"
+}

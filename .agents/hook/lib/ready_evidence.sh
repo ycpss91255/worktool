@@ -6,6 +6,7 @@ ready_check_comment() {
     local _repo _pr _json _sha _checks _target
     _target="$(ready_target)" || exit 2
     read -r _repo _pr <<<"${_target}"
+    ready_is_pr "${_repo}" "${_pr}" || return 0
     _json="$(_gh pr view "${_pr}" --repo "${_repo}" --json labels,headRefOid,body)" \
         || hook_block 'PR query failed (fail closed)'
     if ! jq -e '.labels | type == "array"' <<<"${_json}" >/dev/null; then
@@ -17,8 +18,9 @@ ready_check_comment() {
     _checks="$(_gh pr view "${_pr}" --repo "${_repo}" --json headRefOid,statusCheckRollup)" \
         || hook_block 'verify-all query failed (fail closed)'
     if ! jq -e --arg sha "${_sha}" '.headRefOid == $sha and
-        ([.statusCheckRollup[] | select(.name == "verify-all")] |
-        length > 0 and all(.status == "COMPLETED" and .conclusion == "SUCCESS"))' <<<"${_checks}" >/dev/null; then
+        ([.statusCheckRollup[] | select((.name? // "") | startswith("verify-all ("))] |
+        (map(.name) | unique | contains(["verify-all (ubuntu-latest)", "verify-all (ubuntu-24.04-arm)"]))
+        and all(.status == "COMPLETED" and .conclusion == "SUCCESS"))' <<<"${_checks}" >/dev/null; then
         hook_block 'verify-all on the current PR head must be success (missing or not successful)'
     fi
     ready_require_table "$1"
@@ -61,4 +63,18 @@ ready_target() {
     _repo="$(_opt -R --repo)" || _repo='ycpss91255/worktool'
     [[ -n "${_sel}" ]] || hook_block 'cannot resolve readiness PR (fail closed)'
     printf '%s %s\n' "${_repo}" "${_sel}"
+}
+
+ready_is_pr() {
+    local _json
+    # PR selectors can be branch names or URLs; issue targets are numeric.
+    if [[ "$(_sub)" != issue\ * && "$(_sub)" != api ]]; then
+        return 0
+    fi
+    _json="$(_gh api "repos/$1/issues/$2")" \
+        || hook_block 'issue target query failed (fail closed)'
+    if ! jq -e 'type == "object" and (.number | type == "number")' <<<"${_json}" >/dev/null; then
+        hook_block 'issue target query is malformed (fail closed)'
+    fi
+    jq -e 'has("pull_request")' <<<"${_json}" >/dev/null
 }
