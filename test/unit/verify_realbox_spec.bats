@@ -458,6 +458,10 @@ _fake_window_process() {
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == '-e -o pid=,comm=' ]]; then
+    printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
+    exit "${FAKE_WINDOW_BASELINE_RC:-0}"
+fi
 printf '%s\n' "${FAKE_WINDOW_COMM:-fish}"
 exit "${FAKE_WINDOW_PS_RC:-0}"
 STUB
@@ -475,6 +479,20 @@ esac
 STUB
     chmod +x "${STUBS}/ps" "${STUBS}/readlink"
     export REALBOX
+}
+
+@test "#362: 5.2 refuses an existing fish process as new-window evidence" {
+    _fake_window_process
+    export FAKE_WINDOW_BASELINE='4242 fish'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish PID 4242 existed before setup"
+    assert_output --partial "restore-ok=1"
+    export FAKE_WINDOW_BASELINE_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot inventory processes before setup"
+    assert_output --partial "restore-ok=1"
 }
 
 @test "#362: 5.2 passes with measured fish namespace different from host" {

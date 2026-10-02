@@ -553,7 +553,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_step2_apply() {
-    guard_require distrobox just timeout awk sha256sum grep cut readlink id || return 1
+    guard_require distrobox just timeout awk sha256sum grep cut readlink id ps || return 1
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -571,6 +571,8 @@ _52_step2_apply() {
     _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
+        || { guard_fail "cannot inventory processes before setup"; return 1; }
     _just box setup || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
     _just box status || { guard_fail "just box status failed -- run 5.2.3 to restore"; return 1; }
     printf 'setup-rc=0\n'
@@ -596,8 +598,12 @@ _52_confirm_window() {
 }
 
 _52_window_evidence() {
-    local _pid="$1" _comm _host _window
+    local _pid="$1" _comm _host _window _before _name
     guard_require ps readlink || return 1
+    while read -r _before _name; do
+        [[ "${_before}" != "${_pid}" ]] \
+            || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
+    done <"${CFGBK_B}/processes-before"
     _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
         || { guard_fail "cannot inspect fish PID ${_pid}"; return 1; }
     [[ "${_comm}" == fish ]] \
