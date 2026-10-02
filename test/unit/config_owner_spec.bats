@@ -65,7 +65,11 @@ _runs() {
         'enter||--box=dev --distrobox=@DBX@ --timeout=30' \
         'enter|ghostty-inside|' \
         'enter||-h' \
-        'enter||--help'
+        'enter||--help' \
+        'bench||--box dev --runs 1 --warmup 0 --max-ms 300 --max-wait 1 --shell true --json' \
+        'bench||--box=dev --runs=1 --warmup=0 --max-ms=300 --max-wait=1 --shell=true' \
+        'bench||-h' \
+        'bench||--help'
 }
 
 # The verbs of script/box/justfile.box, one per line.
@@ -298,12 +302,11 @@ _owner_runs() {
         _runs | grep -q "^${_v}|" || _missing+=" ${_v}"
     done < <(_verbs)
     [[ -z "${_missing}" ]] || fail "verbs missing from the table:${_missing}"
-    # The guard sees the verbs it should: setup, assemble and status reach
-    # the state file; bench does not.
+    # Bench now reaches the state file through setup's managed command.
     run _verbs
     assert_line setup
     _reaches_config setup
-    ! _reaches_config bench || fail "bench is expected not to reach the state file"
+    _reaches_config bench || fail "bench is expected to reach the state file"
 }
 
 @test "drift guard: every option of every parser is used by some row" {
