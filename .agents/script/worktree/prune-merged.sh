@@ -27,6 +27,10 @@ prune_tree() {
         log_info "kept ${tree}: not merged"
         return 0
     fi
+    if [[ -n "$(git -C "${tree}" status --porcelain --untracked-files=all)" ]]; then
+        log_info "kept ${tree}: uncommitted changes"
+        return 0
+    fi
     if [[ "${APPLY}" == 0 ]]; then
         printf '%s\n' "${tree}"
         return 0

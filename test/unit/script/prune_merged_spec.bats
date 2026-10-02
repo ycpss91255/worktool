@@ -47,3 +47,22 @@ prune() {
     assert_output --partial "not merged"
     [ -d "${TREE}" ]
 }
+
+@test "keeps tracked staged and untracked changes" {
+    local change
+    for change in tracked staged untracked; do
+        case "${change}" in
+            tracked) printf 'changed\n' >> "${TREE}/.gitignore" ;;
+            staged) git -C "${TREE}" add .gitignore ;;
+            untracked)
+                git -C "${TREE}" restore --staged .gitignore
+                git -C "${TREE}" restore .gitignore
+                printf 'unsaved\n' > "${TREE}/notes"
+                ;;
+        esac
+        prune --apply
+        assert_success
+        assert_output --partial "uncommitted changes"
+        [ -d "${TREE}" ]
+    done
+}
