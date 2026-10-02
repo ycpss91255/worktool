@@ -5,7 +5,7 @@
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
 #   - zero special cases: the root justfile is action `mod?` lines
-#     (test, box, agent) plus a `default` that lists them - no other recipe;
+#     (test, box, verify, agent, worktree) plus a `default` that lists them - no other recipe;
 #   - action-named namespaces: script/test/justfile.test and
 #     script/box/justfile.box, each with its own `default`, `help` (alias
 #     `h`) and `set working-directory := '../..'`, so every recipe runs at
@@ -54,6 +54,8 @@ _make_repo_copy() {
     mkdir -p "${COPY}"
     cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
     cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${COPY}/"
+    mkdir -p "${COPY}/.agents/script"
+    cp -R "${REPO_ROOT}/.agents/script/worktree" "${COPY}/.agents/script/"
 }
 
 # A `docker` that must never be reached: records the call and fails loudly.
@@ -140,19 +142,20 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is four mod? lines (test, box, agent, verify) and one default recipe" {
+@test "root justfile is five mod? lines (test, box, verify, agent, worktree) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
     run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
     assert_success
-    assert_equal "${#lines[@]}" 6
+    assert_equal "${#lines[@]}" 7
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
     assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
-    assert_line --index 4 "default:"
-    assert_line --index 5 --regexp '^[[:space:]]+@just --list$'
+    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
+    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
+    assert_line --index 5 "default:"
+    assert_line --index 6 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
@@ -177,10 +180,10 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the four namespaces and default, nothing else" {
+@test "just --list shows the five namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default test verify "
+    assert_equal "$(_listed_names)" "agent box default test verify worktree "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
     assert_line --regexp '^ +verify \.\.\. +# '
@@ -513,8 +516,10 @@ _listed_names() {
     assert_success
     assert_line --regexp '^ +run: just test \$\{\{ matrix\.tier \}\}$'
     assert_line --regexp '^ +run: just test system-real$'
-    # Exactly those two invocations: no gate bypasses the grammar.
-    assert_equal "${#lines[@]}" 2
+    # Milestone acceptance (verify-all) drives the gates through just verify.
+    assert_line --regexp '^ +run: just verify all$'
+    # Exactly those three invocations: no gate bypasses the grammar.
+    assert_equal "${#lines[@]}" 3
 }
 
 @test "just agent lists the Codex launcher without starting it" {

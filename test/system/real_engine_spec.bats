@@ -383,8 +383,8 @@ BENCH_SHELL='fish -c exit'
 # INFO lines (bench.sh names the timed command per metric).
 _assert_fish_timed() {
     local _warmup="$1" _runs="$2"
-    assert_line --regexp "^\[INFO\] shell: ${_warmup} warmup \+ ${_runs} run\(s\) of 'distrobox enter dev -- ${BENCH_SHELL}' done$"
-    assert_line --regexp "^\[INFO\] inbox: ${_warmup} warmup \+ ${_runs} run\(s\) of 'distrobox enter dev -- bash -c <timer> bench-inbox ${BENCH_SHELL}' done$"
+    assert_line --regexp "^\[INFO\] shell: ${_warmup} warmup \+ ${_runs} run\(s\) of '.*[/]script/box/enter[.]sh' --distrobox '[^']+' --box 'dev' -- ${BENCH_SHELL}' done$"
+    assert_line --regexp "^\[INFO\] inbox: ${_warmup} warmup \+ ${_runs} run\(s\) of '.*[/]script/box/enter[.]sh' --distrobox '[^']+' --box 'dev' -- bash -c <timer> bench-inbox ${BENCH_SHELL}' done$"
     refute_line --regexp "^\[INFO\] (shell|inbox): .* sh -c :' done$"
 }
 

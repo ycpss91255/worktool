@@ -10,6 +10,30 @@ worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一�
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
 | `research-verify.js` | 找資料:agy(gemini)查,codex 逐條開來源核對、claude 抽查與整合,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
+## 主迴圈的 Codex 派工限制（#366）
+
+`enforce_codex_via_workflow.sh` 在 Claude 與 Codex 的 PreToolUse Bash 註冊。
+#364（PR #369）已合併，提供 base 分支支援；本 hook 隨設定載入立即啟用。
+主 session 直接派 Codex 實作（含 `bash run.sh`、巢狀或 sourced 包裝腳本）會拒絕，
+並提示改走 pr-loop／milestone-fanout。
+
+身分依據是 [Claude Code hook 輸入契約](https://code.claude.com/docs/en/hooks#common-input-fields)：
+子 agent 的工具呼叫帶 `agent_id`，主 session 沒有。依 PR #372 收尾決議，
+任何非空字串 `agent_id` 都放行，包含一般子 agent 與 Workflow agent；
+不靠 `agent_type`、環境標記或 transcript 格式判斷。空值或錯誤型別不構成例外。
+測試 fixture 依 2026-10-02 查閱的官方文件欄位建立，並非擷取實際執行輸入。
+
+主 session 的唯讀例外只接受字面 `codex exec --sandbox read-only`（含 `e`、`-s` 等形式）。
+Codex 呼叫的未知選項與 sandbox 覆寫仍拒絕。
+依 #384，指令文字（含 heredoc 與 `bash -c` 字串）提到 codex 時，才對 shell 展開、
+eval／xargs、不透明 launcher、非 shell 直譯器與不可讀包裝腳本採封閉拒絕。
+未提到 codex 的 awk、jq、python、背景 launcher、xargs、just 與 docker 日常指令放行。
+包裝腳本只讀取不執行，仍遞迴檢查 `bash <路徑>`、`./x.sh` 與 launcher 後的腳本；
+`bash -c` 檢查字串內容，不把 `-c` 當檔案路徑。靜態遞迴檢查上限為 16 層。
+未被結構化檢查核對的 Codex 原始文字會觸發拒絕，單純提到 Codex 也可能被擋。
+僅透過 PATH 解析的自訂執行檔、自訂 just recipe、編碼或執行時才組出的呼叫不在靜態檢查範圍；
+此 hook 是合作 agent 的規則護欄，不是作業系統 sandbox，也不驗證 agent 身分真偽。
+
 ## 呼叫方式
 
 從任何 cwd 以 `scriptPath` 呼叫(不需要把腳本裝進 session 的專案目錄):
@@ -36,16 +60,34 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;所有 gh 指令都帶 `--repo` |
 | `issue` | 是 | 這個 PR 關閉的**唯一** sub-issue(PR 描述會有 `Closes #N`) |
-| `branch` | 是 | 從 `origin/main` 開的分支名 |
+| `branch` | 是 | 從 `origin/<base>` 開的分支名；本機分支已存在時接續，跳過實作 |
+| `pr` | 否 | 接續用的既有 PR 正整數編號；直接進入 CI 與獨立審查，不重開 PR |
+| `base` | 否 | PR 目標分支，預設 `main` |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
-| `gates` | 否 | 額外 gate；full 預設為推送前執行 `just test lint` 與 `just test changed`，不得用它要求本機跑整個 tier |
+| `gates` | 否 | 傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
 | `mode` | 否 | `full`（預設）或 `light`；其他值直接 throw。light 固定由 Claude 修改與另一個 Claude 子代理審查，不呼叫 codex |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
 | `maxRounds` | 否 | 允許的 Fix 輪數(非負整數,預設 3;`0` = 只複驗一次、不修);用完就回報 `blockingLeft` 交主迴圈處理 |
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
+
+`pr-loop` 以 `base` 指定 milestone 驗收分支（例如 `m3/5-acceptance`）時，CI 同樣適用。
+`ci.yml` 的 PR base 篩選接受 `main` 與 `m*/*-acceptance`，所有既有 CI gates 與
+`ci-passed` 彙總照常執行；push 觸發仍限 `main`。`verify-all` 仍依 PR 的
+`milestone-gate` 標籤決定是否執行，不因 base 是驗收分支而自動啟用。
+
+## 既有分支接續
+
+本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；若目錄已刪除但登錄仍在，只移除該路徑的殘留登錄再重建，不清理其他 worktree。已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
+指定既有 `branch` 與 `pr` 時跳過實作與開 PR，直接進入 CI／審查迴圈。
+CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
+本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
+未傳 `pr` 時先查是否已有相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有 commit 或查詢失敗則停止。
+CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR head 相同，未通過就停止，不相信 CI agent 的完成敘述。
+接續 light 模式跳過實作，但在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
+同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## light 模式
 
@@ -94,7 +136,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
-| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
+| `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`pr` 為可選接續 PR 編號，與既有 `branch` 一起轉傳；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
 | `mode` | 否 | `full`（預設）或 `light`；轉傳給每個 `pr-loop` |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
 | `parent` | 否 | 每個 PR 的 `Part of` 參照 |
@@ -118,6 +160,24 @@ args 範例：
   ]
 }
 ```
+
+## milestone 驗收 PR 交出前檢查清單
+
+交給維護者驗收前，agent 必須逐項完成並在 PR 說明附上證據：
+
+- [ ] 驗收 PR 已貼 `milestone-gate`，目前 head 的 CI 全部成功，包含兩種架構的 `verify-all` 與彙總 `ci-passed`；附上成功 run 的連結。CI 的 `verify-all` 實跑 `just verify all`，只涵蓋非實機項目，不含需要 `--allow-real-box` 的第 5 節。普通 PR 不要求這個 job。
+- [ ] milestone 每個目標都對應至少一個從使用者實際入口出發的測試或驗收項目；在 PR 說明列出下表，每列填入可查證的測試位置、驗收編號與輸出或 CI 連結。入口應是使用者會啟動的命令或操作，例如 setup 寫出的命令或正在執行的 Ghostty；只驗腳本接線或 stub 成功，不能當作目標已達成的證據。
+- [ ] 第 5 節實機項目中，agent 能在 host 上安全執行、有備份與還原流程的項目，交出前先跑一次並貼出輸出與還原結果。無法安全執行的項目，列出原因與待維護者實跑的命令，不宣稱通過。
+
+| milestone 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
+|----------------|----------------|----------------|------|
+| 逐項填入目標 | 命令或操作 | spec／驗收編號 | 輸出或 CI 連結 |
+
+這份清單是交出前的責任；就緒留言的自動檢查另由 #365 處理。milestone 驗收 PR 的合併仍須維護者在該 PR 留下核准紀錄。
+
+### CI job 驗收追蹤(#363)
+
+#363 的 CI job 驗收需附 GitHub runner 的兩份實跑證據：目前 #157 head 重現 F1 的 RED，以及修正後 head 的 GREEN（兩種架構的 `verify-all` 全部成功）。證據齊全前，CI 變更 PR 使用 `Refs #363`，#363 保持開啟。普通 PR 的 `verify-all` 為 skipped、本機 spec 通過或 workflow 接線正確，都不能代替這兩份證據。
 
 ## research-verify
 
@@ -292,3 +352,27 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 作答的 `failed_reasons` 同樣回報修復後內容；若修復代理未回傳內容，則保留原始未通過條目。
 雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
 而沒有可列出的未通過理由，`failed_reasons` 為空陣列。
+
+## 交出 milestone 驗收 PR
+
+宣告「就緒」、「請驗收」或「待維護者驗收」之前，先確認驗收 PR 目前 head 的
+`verify-all` job 已完成且結論為 `success`，並在留言附上成功 job 的連結。
+一般產品 CI 的綠燈不能取代這個 job；head 更新後要等新 head 的結果。
+
+留言須以自己的 agent 標記開頭，包含 `## 目標對照` 段落與三欄表格：
+
+| 目標 | 測試或驗收項目 | 使用者入口 |
+|---|---|---|
+| milestone issue 的目標原文 | 對應 spec 或驗收項目 | 使用者實際命令或操作 |
+
+milestone issue 取自 PR 說明第一個 `Closes #N`（也接受 `Fixes`、`Resolves`）參照，
+因此驗收 PR 必須把 milestone issue 放在關閉參照的第一筆。
+目標來源支援 `目標:`／`目標：` 單行（以分號分隔）及 `## 目標` 的逐行清單。
+每個目標各一列，目標欄填原文（可略末尾句號），驗證項目與入口欄都不能空白或只填 `-`。
+驗證應從使用者入口出發；表格只能檢查證據是否齊備，不能取代實際驗證。
+
+Claude 與 Codex 的 `enforce_milestone_ready_evidence.sh` 在留言送出前檢查上述條件。
+缺 job、未成功、查詢失敗、無法辨識 milestone 或目標、缺表或漏列目標均拒絕。
+命令解析共用 approval hook 的封閉規則；shell 展開、間接執行與無法靜態辨識的
+API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 approval hook 的已知限制。
+人類核准與合併仍走既有 milestone gate。

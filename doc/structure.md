@@ -107,7 +107,8 @@ worktool/
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
 │   │   │                enforce_main_checkout_readonly、
-│   │   │                enforce_codex_round_cap、enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
+│   │   │                enforce_codex_round_cap、enforce_codex_via_workflow(主 session 派工限制與 agent_id 子代理例外,#366)、
+│   │   │                enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
 │   │   │                enforce_cpu_capacity(Workflow 或背景 Agent 啟動前檢查 CPU 壓力與測試容器數,#244)、
 │   │   │                enforce_tdd_commit(git commit 前依暫存區檢查 TDD 的測試與垂直切片,#268)、
@@ -116,6 +117,8 @@ worktool/
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh、issue_body.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/monitor/  agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
+│   ├── script/worktree/ prune-merged.sh：先 fetch origin；預設 dry-run，--apply 才清除已合併且乾淨的 linked worktree（#392）
+│   │                    justfile.worktree 提供 just worktree prune-merged，參數原樣轉發
 │   ├── skills/          agent skill 的實體檔:i-have-adhd(#191)+ 工程類 skill(tdd、triage、wait-pr-ci ...,#189)
 │   └── memory/          agent memory 的實體檔 + MEMORY.md 索引
 ├── .claude/
@@ -136,7 +139,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:三行 `mod?`(test / box / agent)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -246,7 +249,8 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
-| `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，只執行改到的 unit 與 matrix spec；無法判定時 fail open 跑完整 unit；integration、system、system-real、acceptance 與需建映像的驗證只提示交由 CI） |
+| `just test guards [args]` | `./script/test/test.sh --guards [args]`（執行 `test.sh` 的共用全 repo 守門清單） |
+| `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，執行改到或映射到的 unit 與 matrix spec；改到 `script/`、`lib/`、`box/`、`justfile*`、`doc/adr/` 時加跑整份守門清單；無法判定影響、缺少映射 spec、測試基礎設施變更或無法讀取 diff 時，列出檔名（若可取得）與原因，提示交由 CI 驗證；integration、system、system-real、acceptance 與需建映像的驗證只提示交由 CI） |
 | `just test unit [spec...] [--filter REGEX]` | `./script/test/test.sh --unit [spec...] [--filter REGEX]` |
 | `just test matrix [spec...] [--filter REGEX]` | `./script/test/test.sh --matrix [spec...] [--filter REGEX]` |
 | `just test integration [spec...] [--filter REGEX]` | `./script/test/test.sh --integration [spec...] [--filter REGEX]` |
@@ -403,10 +407,17 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
 跑 lint、test-unit、test-matrix、test-integration、test-system、test-acceptance(共用測試
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
-`docker run --rm --privileged`;**唯一**使用 `--privileged` 的 job,上限 40
-分鐘),並以 `ci-passed` 彙總 job 收斂:只有映像建置成功**且**每個 matrix gate
-**且** `test-system-real`、`commit-email`、`commit-attribution`、`commit-refs` 都 `success` 才綠;被 skip、取消或缺席的 gate 一律視為
-失敗。上述每個 job 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
+`docker run --rm --privileged`,上限 40 分鐘)。貼有 `milestone-gate` 標籤的 PR
+另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
+不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
+`just test system-real`,因此 `verify-all` 也間接使用 `--privileged`。
+PR 的 labeled / unlabeled 事件會重新計算 CI。
+
+`ci-passed` 要求映像建置、每個 matrix gate、`test-system-real`、`commit-email`、
+`commit-attribution`、`commit-refs` 都 `success`;這些必要 gate 被 skip、取消或缺席
+一律視為失敗。只有 `milestone-gate` PR 額外要求 `verify-all` 全部成功;
+普通 PR 與 main push 的 `verify-all` 預期 skipped,不列為必要 gate。
+映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
@@ -634,3 +645,26 @@ tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、`test-matrix
 `just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
 branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
+
+
+### 已合併 worktree 清理（#392）
+
+`just worktree prune-merged [--apply] [--help]` 對主 checkout 同層的
+`worktree/` 下 linked worktree 執行清理；主 checkout 與範圍外目錄一律保留。
+預設 stdout 列出候選路徑，`--apply` 才移除。腳本先 `git fetch --prune origin`，
+只接受 HEAD 是 `origin/main` 或遠端 `m<數字>/<issue>-acceptance`
+驗收分支祖先的項目。
+清理前也要求 HEAD reflog 記錄的 worktree 建立點是 HEAD 的嚴格祖先，
+證明建立後已有 commit；零 commit 的新分支與 detached worktree 一律保留，
+缺少建立點紀錄時也保留。未提交、未追蹤與被忽略的檔案都阻止清理，僅被
+gitignore 忽略的 `.agents/state/` 例外；鎖定或目錄遺失的 worktree 也保留。
+有分支時只用 `git branch -d`，拒絕刪除的分支保留。每個保留原因與刪除結果
+寫到 stderr；參數錯誤 exit 2，完整驗證參數後才處理 `--help`。
+
+`remind_main_sync.sh` 同時註冊 PreToolUse 與 PostToolUse（Claude／Codex）。
+前者維持同步 main 提醒；後者在 `gh pr merge` 成功（回應的
+`exit_code: 0`，或 Claude 原生 Bash 回應的 `stdout`／`stderr` 與
+`interrupted: false`）且非 `--auto`、非 help 時執行腳本的 `--apply`，回報結果。
+[Claude 官方 hook 文件](https://code.claude.com/docs/en/hooks#posttooluse)
+定義 PostToolUse 為成功事件，原生 Bash 回應不帶 exit_code。
+失敗或缺少成功證據的工具回應不清理；清理失敗以提醒回報，不改變已完成的合併結果。

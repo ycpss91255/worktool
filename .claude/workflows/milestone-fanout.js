@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-fanout',
   description: 'Run independent issues through pr-loop concurrently and report results without merging.',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, base?, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,gates?}]}.',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, base?, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,pr?,gates?}]}.',
   phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches bounded by concurrency; each result is logged when its child workflow finishes' }],
 }
 
@@ -51,7 +51,7 @@ const runItem = async (item) => {
       result = await workflow({ scriptPath: SCRIPT }, {
         repo: A.repo, repoDir: REPO_DIR, base: A.base === undefined ? 'main' : A.base, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
         mode: A.mode === undefined ? 'full' : A.mode, implementer: IMPLEMENTER, maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
-        issue: item.issue, branch: item.branch, name: item.name, task: item.task, gates: item.gates,
+        issue: item.issue, branch: item.branch, name: item.name, task: item.task, pr: item.pr, gates: item.gates,
       })
     } catch (e) {
       result = { issue: item.issue, pr: 0, sha: '', ciState: 'error', codexVerdict: 'error', rounds: 0, blockingLeft: [String((e && e.message) || e)] }
