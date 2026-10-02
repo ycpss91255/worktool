@@ -158,14 +158,14 @@ ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
 ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (review round ${round})", with no attribution or session trailer lines); push. Post a PR comment starting with "[codex] 採納第 ${round} 輪:" listing what changed per item. Do NOT merge. Return the commit SHA and a one-line-per-item summary.`
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (review round ${round})", with no attribution or session trailer lines); push. Post a PR comment starting with "[codex] 採納第 ${round} 輪:" listing what changed per item. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
@@ -181,16 +181,44 @@ const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "
 
 const result = (extra) => ({ issue: A.issue, ...extra })
 
+// Publish only a clean fast-forward; recheck all guards after the gates.
+const pushAhead = async (pr, stage) => {
+  const guards = `status=$(git status --porcelain) && [ -z "$status" ] &&
+  [ "$(git branch --show-current)" = ${sq(A.branch)} ] &&
+  git fetch origin ${sq(A.branch)} >&2 &&
+  git merge-base --is-ancestor FETCH_HEAD HEAD`
+  const gates = MODE === 'light' && !A.gates ? '' : `${GATES.split(',').map(g => g.trim()).join(' && ')} &&`
+  return agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
+Local HEAD is ahead. Run ${GATES} blocking in the foreground before pushing. Verify every unpublished commit has noreply author/committer, Refs: #${A.issue}, and no attribution trailers before running the script. Any failed gate or guard is blocking. Never force push or rewrite history. Run this script only after all gates pass:
+\`cd ${sq(WT)} && ${guards} &&
+${gates}
+${guards} && git push origin ${sq(A.branch)} >&2\`
+Return status pushed only if the script succeeds; otherwise failed.`, {
+    label: `${RUN_ID} push-check:${stage}:#${pr}`,
+    schema: { type: 'object', properties: { status: { type: 'string', enum: ['pushed', 'failed'] } }, required: ['status'] },
+    agentType: 'general-purpose',
+  })
+}
+
 // Read fresh remote state rather than trusting an implementer's completion prose.
-const checkStage = async (pr, stage, before = '') => {
+const checkStage = async (pr, stage, before = '', repair = true) => {
   const script = `cd ${sq(WT)} && {
 errors=''
 status=$(git status --porcelain) || errors='git status failed; '
 local_head=$(git rev-parse HEAD) || errors="$errors local HEAD lookup failed; "
 remote_head=$(git ls-remote --exit-code origin ${sq(`refs/heads/${A.branch}`)}) || errors="$errors remote HEAD lookup failed; "
 remote_head=$(printf '%s' "$remote_head" | cut -f1)
+ahead=false
+if [ \"$local_head\" != \"$remote_head\" ] && [ -z \"$errors$status\" ]; then
+  if git fetch origin ${sq(A.branch)} >&2; then
+    if git merge-base --is-ancestor "$remote_head" HEAD; then ahead=true
+    elif ! git merge-base --is-ancestor HEAD "$remote_head"; then errors="$errors history diverged; "
+    fi
+  else errors="$errors remote history fetch failed; "
+  fi
+fi
 pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid) || errors="$errors PR head lookup failed; "
-jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" '{status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'
+jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" --argjson ahead "$ahead" '{ahead:$ahead,status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'
 }`
   const checked = await agent(`Run this script blocking in the foreground, without editing, committing or pushing: \`${script}\`.
 Return its stdout verbatim in evidence, even when it contains errors. Do not infer success from the prior agent's report.`, {
@@ -204,6 +232,10 @@ Return its stdout verbatim in evidence, even when it contains errors. Do not inf
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('invalid evidence')
   } catch { return { ok: false, detail: `${stage} check failed: no valid script evidence; git status and HEAD comparison unavailable` } }
   const valid = ['status', 'localHead', 'remoteHead', 'prHead', 'errors'].every(k => typeof state[k] === 'string')
+  if (valid && !state.errors && !state.status && state.ahead === true && repair && ['Fix', 'Resume'].includes(stage)) {
+    const pushed = await pushAhead(pr, stage)
+    if (pushed && pushed.status === 'pushed') return checkStage(pr, stage, before, false)
+  }
   const ok = valid && !state.errors && !state.status && !!state.localHead &&
     state.localHead === state.remoteHead && state.localHead === state.prHead &&
     (!before || state.prHead !== before)
@@ -296,7 +328,7 @@ const loc = RESUME ? (A.pr ? { pr: A.pr, sha: '' } : resumedPR) : await agent(LO
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
-const implemented = RESUME && A.pr ? { ok: true, sha } : await checkStage(pr, 'Implement')
+const implemented = await checkStage(pr, RESUME && A.pr ? 'Resume' : 'Implement')
 if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
 sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
@@ -306,7 +338,7 @@ let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
 if (RESUME) {
-  const checked = await checkStage(pr, 'Resume')
+  const checked = await checkStage(pr, 'Resume', '', false)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
   sha = checked.sha
 }

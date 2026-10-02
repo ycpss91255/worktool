@@ -90,18 +90,27 @@ const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, schema: opts.schema || null, prompt })
+  if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
+    const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
+    execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix: CI repair', '-m', 'Refs: #396', '--allow-empty'])
+    return { ...reply(role), sha: execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD']).toString().trim() }
+  }
   if (mode === 'exec-stage-checks' && role.startsWith(process.env.PL_STAGE === 'Implement' ? 'implement:' : 'fix:')) {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
-    if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed') {
+    if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed' || process.env.PL_ACTION === 'diverged') {
       execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix', '--allow-empty'])
+    }
+    if (process.env.PL_ACTION === 'diverged') {
+      const remote = execFileSync('git', ['-C', wt, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD^', '-m', 'remote change']).toString().trim()
+      execFileSync('git', ['-C', wt, 'push', '-q', 'origin', `${remote}:b`])
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
   if (role.startsWith('prepare:') && mode !== 'exec-resume') return reply(role)
-  if (mode === 'exec-resume' && !role.startsWith('prepare:')) return reply(role)
+  if (['exec-resume', 'exec-resume-push'].includes(mode) && !role.startsWith('prepare:') && !(mode === 'exec-resume-push' && /^(stage-check|push-check):/.test(role))) return reply(role)
   if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
-  if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
+  if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume', 'exec-resume-push'].includes(mode) && !(mode === 'exec-stage-checks' && (role.startsWith('stage-check:') || role.startsWith('push-check:')))) return reply(role)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(role), stdout) : null
 }
