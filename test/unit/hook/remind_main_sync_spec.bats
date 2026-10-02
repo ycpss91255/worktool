@@ -88,3 +88,22 @@ _context() { jq -r '.hookSpecificOutput.additionalContext' <<<"${output}"; }
         "$(hook_json 'gh pr merge 42 --merge')" "${HOOK_DIR}/remind_main_sync.sh"
     assert_success
 }
+
+@test "successful PostToolUse merge runs cleanup with apply and reports removals" {
+    local project="${BATS_TEST_TMPDIR}/project"
+    mkdir -p "${project}/.agents/script/worktree"
+    cat > "${project}/.agents/script/worktree/prune-merged.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --apply ]]
+printf 'removed worktree: fixture\n' >&2
+SCRIPT
+    chmod +x "${project}/.agents/script/worktree/prune-merged.sh"
+    local payload
+    payload="$(hook_json 'gh pr merge 42 --repo ycpss91255/worktool --merge' | \
+        jq --arg cwd "${project}" '. + {hook_event_name:"PostToolUse", cwd:$cwd, tool_response:{exit_code:0}}')"
+    run_hook remind_main_sync "${payload}"
+    assert_success
+    assert_output --partial "removed worktree: fixture"
+    assert_output --partial "PostToolUse"
+}

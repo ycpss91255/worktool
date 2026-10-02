@@ -79,6 +79,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/remind_main_sync.sh\""
+          }
+        ]
+      }
     ]
   }
 }

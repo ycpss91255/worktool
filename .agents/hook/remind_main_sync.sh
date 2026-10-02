@@ -41,6 +41,28 @@ _policy_note() {
     printf '%s' "${_note}"
 }
 
+_post_merge() {
+    local command="$1" cwd report rc=0
+    [[ "${command}" =~ --auto([[:space:]]|$) ]] && return 0
+    [[ "$(hook_field '.tool_response.exit_code')" == 0 ]] || return 0
+    cwd="$(hook_field '.cwd')"
+    cwd="${cwd:-${CLAUDE_PROJECT_DIR:-${HOOK_REPO_ROOT}}}"
+    if ! report="$(cd -- "${cwd}" && ./.agents/script/worktree/prune-merged.sh --apply 2>&1)"; then
+        rc=1
+    fi
+    printf '%s\n' "${report}" >&2
+    if [[ "${rc}" == 1 ]]; then
+        report="Worktree cleanup failed: ${report}"
+    fi
+    if ! jq -n --arg m "${report}" '{
+        systemMessage: $m,
+        hookSpecificOutput: {hookEventName:"PostToolUse", additionalContext:$m}
+    }'; then
+        printf '[hook:%s] cannot emit cleanup report\n' "${HOOK_NAME}" >&2
+    fi
+    return 0
+}
+
 main() {
     hook_read_input
     local _cmd _clean _sub _variant _msg
@@ -53,6 +75,11 @@ main() {
         break
     done < <(hook_subcommands "${_cmd}")
     [[ -n "${_clean}" ]] || return 0
+
+    if [[ "$(hook_field '.hook_event_name')" == PostToolUse ]]; then
+        _post_merge "${_clean}"
+        return 0
+    fi
 
     if [[ "${_clean}" =~ --auto([[:space:]]|$) ]]; then
         _variant=queued
