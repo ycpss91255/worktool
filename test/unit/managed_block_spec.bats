@@ -60,7 +60,8 @@ setup() {
 # dbxconf) for box dev.
 _current_body() {
     case "$1" in
-        ghostty) printf "command = '%s' enter dev\n" "${DISTROBOX}" ;;
+        ghostty) printf "command = %s --distrobox %s --box 'dev'\n" \
+            "$(enter_sh_squote "${REPO_ROOT}/script/box/enter.sh")" "$(enter_sh_squote "${DISTROBOX}")" ;;
         dbxconf) enter_distrobox_conf_body dev ;;
     esac
 }
