@@ -133,6 +133,7 @@ _check() {
         "setsid nohup bash -c 'bash \"quoted script.sh\"'" \
         "stdbuf -oL bash 'quoted script.sh'"; do
         _check "${cmd}"
+        printf 'Checked launcher: %s\n' "${cmd}" >&2
         assert_equal "${status}" 2
     done
     printf '%s\n' 'echo ready' > "${BATS_TEST_TMPDIR}/quoted script.sh"

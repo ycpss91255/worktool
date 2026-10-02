@@ -94,6 +94,7 @@ inspect_wrapper() {
 
 inspect_launch() {
     local cwd="$1" depth="$2" mentions="$3" tool path index sub
+    local _HOOK_RAW=1
     shift 3
     local -a words=("$@")
     tool="$(hook_word "${words[0]:-}")"
@@ -106,7 +107,7 @@ inspect_launch() {
             while IFS= read -r sub; do
                 read -r -a words <<<"${sub}"
                 inspect_launch "${cwd}" "$((depth + 1))" "${mentions}" "${words[@]}"
-            done < <(_hook_subcommands_enc "${words[*]:index}")
+            done < <(_hook_emit "$(_hook_strip_wrappers "${words[*]:index}")")
             return 0 ;;
         bash|sh|dash|zsh|ksh|fish|source|.)
             index="$(_hook_after_opts 0 oO "${words[@]}")"
