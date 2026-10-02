@@ -2637,6 +2637,28 @@ _pl_resume_run() {
     done
 }
 
+@test "pr-loop resume: implementation retains diagnosis and points its brief at state (#403)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" extra json
+    mkdir -p "${root}/bin" "${root}/worktree/n/.agents/state"
+    printf '#!/bin/sh\nprintf "[]\\n"\n' > "${root}/bin/gh"
+    chmod +x "${root}/bin/gh"
+    printf 'existing diagnosis\n' > "${root}/worktree/n/.agents/state/diagnosis.md"
+    for extra in '{"implementer":"codex"}' '{"implementer":"claude"}' '{"mode":"light"}'; do
+        PATH="${root}/bin:${PATH}" run _pl_resume_run "${extra}"
+        assert_success
+        json="${output}"
+        run jq -e --arg state "${root}/src/../worktree/n/.agents/state/" '
+            .error == null and .result.pr == 7 and
+            (.calls[] | select(.role | startswith("implement:")) | .prompt |
+                (if contains("brief:\n") then split("brief:\n")[1] else . end) |
+                contains($state) and contains("diagnosis") and contains("Preserve"))' <<<"${json}"
+        assert_success
+        run cat "${root}/worktree/n/.agents/state/diagnosis.md"
+        assert_output 'existing diagnosis'
+    done
+}
+
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
     run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'

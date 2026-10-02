@@ -279,7 +279,9 @@ fi
 if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
 const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP
-const IMPLEMENT_CONTEXT = prepared.state === 'implement' ? 'Continue implementation in the existing worktree.' : ''
+const IMPLEMENT_CONTEXT = prepared.state === 'implement'
+  ? `Continue implementation in the existing worktree. Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
+  : ''
 if (A.pr && !RESUME) return result({ pr: A.pr, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['resume PR requires an existing branch'] })
 
 const reviewLight = async () => {
