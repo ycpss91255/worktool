@@ -468,7 +468,7 @@ set -euo pipefail
 case "$*" in
     /proc/self/ns/mnt) printf 'mnt:[100]\n' ;;
     /proc/4242/ns/mnt)
-        printf '%s\n' "${FAKE_WINDOW_NS:-mnt:[200]}"
+        printf '%s\n' "${FAKE_WINDOW_NS-mnt:[200]}"
         exit "${FAKE_WINDOW_NS_RC:-0}" ;;
     *) exec "${FAKE_STATE_DIR}/readlink" "$@" ;;
 esac
