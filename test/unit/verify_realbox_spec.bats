@@ -924,3 +924,23 @@ _assert_product_bench_sample() {
             -e 's/^ *\(\[INFO\] shell median .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md"
     )
 }
+
+@test "single source: realbox product output stubs agree with real dry-runs and status" {
+    local _just _verb _real _line _args=()
+    _just="$(cat "${STATE}/real/just")"
+    for _verb in assemble setup status; do
+        _args=()
+        [[ "${_verb}" == status ]] || _args=(--dry-run)
+        run "${_just}" box "${_verb}" "${_args[@]}"
+        assert_success
+        _real="${output}"
+        run "${STUBS}/just" box "${_verb}" "${_args[@]}"
+        assert_success
+        local _fixture="${output}"
+        while IFS= read -r _line; do
+            printf '# product stub line: %s\n' "${_line}" >&3
+            run grep -Fx "${_line}" <<<"${_real}"
+            assert_success
+        done <<<"${_fixture}"
+    done
+}
