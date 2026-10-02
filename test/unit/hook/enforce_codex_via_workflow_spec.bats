@@ -51,3 +51,15 @@ _check() {
     _check 'git status --short'
     assert_success
 }
+
+@test "shell wrappers cannot hide implementation but preserve read-only queries" {
+    printf '%s\n' '#!/usr/bin/env bash' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'bash run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
+    for cmd in 'bash run.sh' './run.sh' 'bash outer.sh' 'cd . && bash run.sh' 'source run.sh' '. run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+    printf '%s\n' 'codex exec --sandbox read-only "query"' > "${BATS_TEST_TMPDIR}/read.sh"
+    _check 'bash read.sh'
+    assert_success
+}

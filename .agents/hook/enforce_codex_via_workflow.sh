@@ -60,16 +60,44 @@ raw_codex_count() {
     printf '%s' "${count}"
 }
 
+inspect_wrapper() {
+    local path="$1" cwd="$2" depth="$3"
+    [[ "${path}" == /* ]] || path="${cwd}/${path}"
+    [[ -f "${path}" && -r "${path}" ]] || refuse 'Cannot read a wrapper script.'
+    check_command "$(cat -- "${path}")" "${cwd}" "$((depth + 1))"
+}
+
 check_command() {
-    local sub lead tool checked=0
+    local sub lead tool path checked=0
+    local cwd="$2" depth="${3:-0}"
+    (( depth < 16 )) || refuse 'Wrapper nesting exceeds the static inspection limit.'
     local -a words
     while IFS= read -r sub; do
         lead="$(hook_timeout_lead "${sub}")"
         read -r -a words <<<"${sub#"${lead}"}"
         tool="$(hook_word "${words[0]:-}")"
+        if [[ "${tool}" == cd ]]; then
+            path="$(hook_word "${words[1]:-}")"
+            [[ "${path}" == /* ]] || path="${cwd}/${path}"
+            cwd="${path}"
+            continue
+        fi
         if [[ "${tool##*/}" == codex ]]; then
             readonly_launch "${words[@]}" || refuse 'Main-loop codex execution must go through a Workflow.'
             checked=$((checked + 1))
+            continue
+        fi
+        path=""
+        case "${tool##*/}" in
+            bash|sh|dash|zsh|ksh|fish|source|.)
+                hook_word_has_expansion "${words[1]:-}" && refuse 'An expanded script path cannot be checked.'
+                path="$(hook_word "${words[1]:-}")"
+                [[ -n "${path}" ]] || refuse 'A shell script without a literal path cannot be checked.' ;;
+
+            *) [[ "${tool}" == */* || "${tool}" == *.sh ]] && path="${tool}" ;;
+        esac
+        if [[ -n "${path}" ]]; then
+            inspect_wrapper "${path}" "${cwd}" "${depth}"
         fi
     done < <(hook_subcommands_raw "$1")
     [[ "$(raw_codex_count "$1")" -le "${checked}" ]] || refuse 'An unchecked Codex mention may hide an indirect launch.'
@@ -77,5 +105,5 @@ check_command() {
 
 hook_read_input
 subagent_call && hook_allow
-check_command "$(hook_command)"
+check_command "$(hook_command)" "$(hook_field '.cwd')"
 hook_allow
