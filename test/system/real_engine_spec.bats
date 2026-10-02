@@ -893,11 +893,13 @@ _host_tmux_pid() {
     _host_tmux_up
     _host_pid="$(_host_tmux_pid)"
 
-    # The box's own TMUX_TMPDIR (box/dev.ini) reaches every process in it.
+    # #361: assemble used a custom --home, so both the environment and
+    # the real socket must follow it while retaining #179 server isolation.
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- printenv TMUX_TMPDIR </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_line "${HOME}/dev-box/.cache/tmux"
+    assert_line "${BOX_HOME}/.cache/tmux"
+    assert [ ! -e "${HOME}/dev-box/.cache/tmux" ]
 
     # A plain `tmux`, as a user would type it, inside the box.
     run timeout "${ENTER_TIMEOUT}" distrobox enter dev -- sh -c \
@@ -911,7 +913,7 @@ _host_tmux_pid() {
     _box_pid="${lines[0]%% *}"
     _box_sock="${lines[0]#* }"
     # Its socket is under the box's own directory, not the shared /tmp.
-    assert_equal "${_box_sock}" "${HOME}/dev-box/.cache/tmux/tmux-$(id -u)/default"
+    assert_equal "${_box_sock}" "${BOX_HOME}/.cache/tmux/tmux-$(id -u)/default"
 
     # A different server process from the host's ...
     [[ "${_box_pid}" =~ ^[0-9]+$ && "${_box_pid}" != "${_host_pid}" ]] \
@@ -985,7 +987,7 @@ _host_tmux_pid() {
 #   session the box made.
 
 # The socket of the box's own server (box/dev.ini TMUX_TMPDIR).
-_box_sock() { printf '%s/dev-box/.cache/tmux/tmux-%s/default\n' "${HOME}" "$(id -u)"; }
+_box_sock() { printf '%s/.cache/tmux/tmux-%s/default\n' "${BOX_HOME}" "$(id -u)"; }
 
 # The in-box probe e1/e2/e3/e5 run: $1 is the cell tag. It prints the
 # tmux environment it got and how many tmux processes already run in its
@@ -1257,7 +1259,7 @@ _e4_cell() {
 # them (codex rounds 1-4 on PR #232). The hook now sets owner and mode
 # explicitly after mkdir, so a restart repairs them.
 @test "#179: a box restart resets an existing TMUX_TMPDIR to the box user and mode 0700" {
-    local _dir="${HOME}/dev-box/.cache/tmux"
+    local _dir="${BOX_HOME}/.cache/tmux"
     assert [ -d "${_dir}" ]
     chmod 0755 "${_dir}"
     chown 1:1 "${_dir}"
