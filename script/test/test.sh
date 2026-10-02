@@ -727,6 +727,8 @@ MAP
 
 _changed_doc_path_map() {
     cat <<'MAP'
+README*|test/unit/diagram_spec.bats
+README*|test/unit/justfile_spec.bats
 doc/diagram/*|test/unit/diagram_spec.bats
 doc/adr/*.md|test/unit/adr_spec.bats
 doc/adr/*.md|test/unit/adr/0004_spec.bats

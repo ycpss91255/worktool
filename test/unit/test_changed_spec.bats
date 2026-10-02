@@ -385,3 +385,7 @@ _document_change() {
 @test "test.sh --changed maps diagrams to the diagram guard" {
     _document_change doc/diagram/flow.drawio.svg test/unit/diagram_spec.bats
 }
+
+@test "test.sh --changed maps README to diagram and command documentation guards" {
+    _document_change README.md test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
