@@ -2446,3 +2446,16 @@ _scratch_assert_isolated() {
     assert_output --partial '無法安全執行'
     assert_output --partial '維護者'
 }
+
+@test "CI acceptance tracking keeps issue 363 open until runner RED and GREEN evidence exists" {
+    run sed -n '/^### CI job 驗收追蹤(#363)$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial 'Refs #363'
+    assert_output --partial '#363 保持開啟'
+    assert_output --partial '#157'
+    assert_output --partial 'F1'
+    assert_output --partial 'GitHub runner'
+    assert_output --partial 'RED'
+    assert_output --partial 'GREEN'
+    assert_output --partial 'skipped'
+}

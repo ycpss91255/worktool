@@ -66,6 +66,30 @@ setup() {
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
 }
 
+@test "CI reference docs describe verify-all conditional gating and indirect privileged execution" {
+    run sed -n '/^## CI$/,/^### /p' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    assert_output --partial 'verify-all'
+    assert_output --partial 'milestone-gate'
+    assert_output --partial 'just verify all'
+    assert_output --partial "間接使用 \`--privileged\`"
+    assert_output --partial '普通 PR 與 main push'
+    refute_output --partial "**唯一**使用 \`--privileged\`"
+
+    run grep 'ci.yml .*GitHub Actions' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    assert_output --partial 'verify-all'
+    assert_output --partial 'milestone-gate'
+
+    run sed -n '/^3\. CI(/,/^4\./p' "${REPO_ROOT}/doc/design.md"
+    assert_success
+    assert_output --partial 'verify-all'
+    assert_output --partial 'just verify all'
+    assert_output --partial 'milestone-gate'
+    assert_output --partial 'ci-passed'
+    assert_output --partial '普通 PR 與 main push'
+}
+
 # Print the non-comment lines of job $1 (from `  <id>:` under `jobs:` up to
 # the next job key).
 _job_block() {

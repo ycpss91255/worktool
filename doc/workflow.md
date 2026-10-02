@@ -133,6 +133,10 @@ args 範例：
 
 這份清單是交出前的責任；就緒留言的自動檢查另由 #365 處理。milestone 驗收 PR 的合併仍須維護者在該 PR 留下核准紀錄。
 
+### CI job 驗收追蹤(#363)
+
+#363 的 CI job 驗收需附 GitHub runner 的兩份實跑證據：目前 #157 head 重現 F1 的 RED，以及修正後 head 的 GREEN（兩種架構的 `verify-all` 全部成功）。證據齊全前，CI 變更 PR 使用 `Refs #363`，#363 保持開啟。普通 PR 的 `verify-all` 為 skipped、本機 spec 通過或 workflow 接線正確，都不能代替這兩份證據。
+
 ## research-verify
 
 暫存目錄以本次經驗證的 16 位十六進位 nonce 區分；resume 重用本次 nonce。同一 issue 的並行執行各自保存與讀取研究、驗證、log 及留言中間檔，互不覆蓋。
