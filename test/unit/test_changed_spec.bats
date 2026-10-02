@@ -35,6 +35,24 @@ _dispatched() {
         "${FAKE_DOCKER_CALLS}"
 }
 
+@test "changed documentation consistently leaves unknown impact verification to CI" {
+    run just --justfile "${REPO_ROOT}/script/test/justfile.test" --list
+    assert_success
+    assert_line --regexp 'changed .*unknown impact.*CI'
+    refute_output --partial 'fails open'
+
+    run sed -n '/^| `just test changed /p' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    assert_output --regexp '無法判定.*交由 CI'
+    refute_output --partial '完整 unit'
+
+    run sed -n '/^6\. /p' "${REPO_ROOT}/doc/adr/0014-local-tests-changed-only.md"
+    assert_success
+    assert_output --regexp '無法判定.*交由 CI'
+    assert_output --partial '#376'
+    refute_output --partial 'fail open'
+}
+
 @test "test.sh --changed runs a changed spec itself after lint" {
     printf '@test "example" { true; }\n' >"${TEMP_REPO}/test/unit/example_spec.bats"
     _commit_baseline
