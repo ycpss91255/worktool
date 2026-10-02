@@ -60,7 +60,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 |------|------|------|
 | `repo` | 是 | `owner/name`;所有 gh 指令都帶 `--repo` |
 | `issue` | 是 | 這個 PR 關閉的**唯一** sub-issue(PR 描述會有 `Closes #N`) |
-| `branch` | 是 | 從 `origin/<base>` 開的分支名；本機分支已存在時接續，跳過實作 |
+| `branch` | 是 | 從 `origin/<base>` 開的分支名；本機分支已存在時接續，依 commit 與 PR 狀態決定是否進入實作 |
 | `pr` | 否 | 接續用的既有 PR 正整數編號；直接進入 CI 與獨立審查，不重開 PR |
 | `base` | 否 | PR 目標分支，預設 `main` |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
@@ -84,9 +84,10 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 指定既有 `branch` 與 `pr` 時跳過實作與開 PR，直接進入 CI／審查迴圈。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
-未傳 `pr` 時先查是否已有相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有 commit 或查詢失敗則停止。
+未傳 `pr` 且相對 `origin/<base>` 沒有新增 commit 時，以結構化查詢確認是否已有相同分支與 base 的開啟 PR；沒有 PR 就在原 worktree 進入實作，不另建分支或 worktree。保留 `.agents/state/` 的既有診斷，實作 brief 明確指出該目錄，要求先讀診斷並將測試證據留在其中。查詢失敗或回傳格式無效則停止。
+有既有 commit 時接續發布：先查相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有未推送 commit 或查詢失敗則停止。
 CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR head 相同，未通過就停止，不相信 CI agent 的完成敘述。
-接續 light 模式跳過實作，但在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
+接續 light 模式在有 commit 或 PR 時跳過實作；空分支且無 PR 時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## light 模式
