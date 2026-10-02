@@ -54,7 +54,7 @@ _check() {
 
 @test "everyday command matrix without codex is allowed" {
     local cmd failures=0
-    printf '%s\n' '#!/usr/bin/env bash' 'echo ready | awk '\''{print $1}'\''' > "${BATS_TEST_TMPDIR}/daily.sh"
+    printf '%s\n' '#!/usr/bin/env bash' "echo ready | awk '{print \$1}'" > "${BATS_TEST_TMPDIR}/daily.sh"
     for cmd in \
         "echo a | awk '{print \$1}'" \
         "jq -r '.name' data.json" \
@@ -107,13 +107,13 @@ _check() {
 
 @test "shell wrapper inspection permits unrelated scripts and opaque paths" {
     local cmd
-    printf '%s\n' 'echo ready | awk '\''{print $1}'\''' > "${BATS_TEST_TMPDIR}/daily.sh"
+    printf '%s\n' "echo ready | awk '{print \$1}'" > "${BATS_TEST_TMPDIR}/daily.sh"
     printf '%s\n' 'bash daily.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
     for cmd in 'bash daily.sh' './daily.sh' 'bash outer.sh' \
         'setsid nohup bash daily.sh' 'nice bash daily.sh' \
         'stdbuf -oL bash daily.sh' 'busybox sh daily.sh' \
-        'bash missing.sh' './missing.sh' 'bash "$SCRIPT"' 'bash -c "$CMD"' \
-        '$RUN exec --sandbox read-only query'; do
+        'bash missing.sh' './missing.sh' "bash \"\$SCRIPT\"" "bash -c \"\$CMD\"" \
+        "\$RUN exec --sandbox read-only query"; do
         _check "${cmd}"
         assert_success
     done
