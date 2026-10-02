@@ -117,6 +117,8 @@ worktool/
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh、issue_body.sh);hook 以自身位置 source,不碰 repo 的 lib/
 │   ├── script/monitor/  agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
+│   ├── script/worktree/ prune-merged.sh：先 fetch origin；預設 dry-run，--apply 才清除已合併且乾淨的 linked worktree（#392）
+│   │                    justfile.worktree 提供 just worktree prune-merged，參數原樣轉發
 │   ├── skills/          agent skill 的實體檔:i-have-adhd(#191)+ 工程類 skill(tdd、triage、wait-pr-ci ...,#189)
 │   └── memory/          agent memory 的實體檔 + MEMORY.md 索引
 ├── .claude/
@@ -642,3 +644,20 @@ tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、`test-matrix
 `just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
 branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
+
+
+### 已合併 worktree 清理（#392）
+
+`just worktree prune-merged [--apply] [--help]` 對主 checkout 同層的
+`worktree/` 下 linked worktree 執行清理；主 checkout 與範圍外目錄一律保留。
+預設 stdout 列出候選路徑，`--apply` 才移除。腳本先 `git fetch origin`，
+只接受 HEAD 是 `origin/main` 或遠端 `m<數字>/<issue>-acceptance`
+驗收分支祖先的項目。未提交、未追蹤與被忽略的檔案都阻止清理，僅被
+gitignore 忽略的 `.agents/state/` 例外；鎖定或目錄遺失的 worktree 也保留。
+有分支時只用 `git branch -d`，拒絕刪除的分支保留。每個保留原因與刪除結果
+寫到 stderr；參數錯誤 exit 2，完整驗證參數後才處理 `--help`。
+
+`remind_main_sync.sh` 同時註冊 PreToolUse 與 PostToolUse（Claude／Codex）。
+前者維持同步 main 提醒；後者在 `gh pr merge` 成功（回應的
+`exit_code: 0`）且非 `--auto`、非 help 時執行腳本的 `--apply`，回報結果。
+失敗或缺少成功證據的工具回應不清理；清理失敗以提醒回報，不改變已完成的合併結果。
