@@ -52,7 +52,7 @@ const checkHooks = (cmd) => {
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
-  return k === undefined ? null : replies[k]
+  return k === undefined ? (label.startsWith('prepare:') ? { state: 'new' } : null) : replies[k]
 }
 
 // Play the prompt's steps; returns { ok, stdout } of the last step run.
@@ -98,8 +98,10 @@ const agent = async (prompt, opts = {}) => {
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
+  if (role.startsWith('prepare:') && mode !== 'exec-resume') return reply(role)
+  if (mode === 'exec-resume' && !role.startsWith('prepare:')) return reply(role)
   if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
-  if (!['exec', 'exec-hooks', 'exec-record'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
+  if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)
   const { ok, stdout } = play(prompt)
   return ok ? withStdout(reply(role), stdout) : null
 }

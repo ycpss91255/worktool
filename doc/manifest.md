@@ -316,11 +316,18 @@ just box bench --help                   # 說明(由腳本印出)
 `--runs` 次(記錄),對記錄到的樣本算 min / median / max(偶數個樣本的中位數取中間
 兩個的平均):
 
+#374 起,bench 在暫存的 `XDG_CONFIG_HOME` 中執行真正的 setup,讀取其寫出的
+Ghostty 受管 `command`,以 shell 執行該命令再附加各指標的 `-- <payload>`。
+受管 command 經 `script/box/enter.sh` wrapper,包含首次啟動檢查與 distrobox
+絕對路徑;不再直接量裸 `distrobox enter`。setup 與讀設定的準備工作不計時,
+暫存設定隨即清除,使用者設定不變。unit 會比對 setup 寫出的命令與 bench
+實際執行的 shell source,不一致即失敗。
+
 | 指標 | 實際執行的指令 | 量的是什麼 |
 |------|----------------|------------|
-| `enter` | `distrobox enter <box> -- true` | distrobox 包裝層 + 容器引擎的一次來回(進盒的固定成本);host 端計時 |
-| `shell` | `distrobox enter <box> -- <shell>`(預設 `sh -c :`;system-real gate 用 `fish -c exit`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲;host 端計時 |
-| `inbox` | `distrobox enter <box> -- bash -c '<timer>' bench-inbox <shell>` | **只有 shell 的啟動**,在**盒內**計時:`<timer>` 是一行 bash,在盒內讀兩次自己的 `EPOCHREALTIME`、中間跑 `<shell>`(以 `"$@"` 收到、參數邊界不變,stdout 丟棄),把差值(微秒、一個整數)印在 stdout 最後一行、以 `<shell>` 的結束碼結束;bench.sh 解析那個數字,所以 enter 的來回**不在**這個數字裡(shell − inbox 約等於 enter)。timer 印出的不是整數(例如盒內 bash 太舊沒有 `EPOCHREALTIME`)視同量測失敗 |
+| `enter` | `<受管 command> -- true` | 終端 shell + enter.sh wrapper + distrobox + 容器引擎的一次來回(進盒的固定成本);host 端計時 |
+| `shell` | `<受管 command> -- <shell>`(預設 `sh -c :`;system-real gate 用 `fish -c exit`) | 同上再加一個 shell 的啟動,也就是使用者「進盒拿到提示字元」感受到的總延遲;host 端計時 |
+| `inbox` | `<受管 command> -- bash -c '<timer>' bench-inbox <shell>` | **只有 shell 的啟動**,在**盒內**計時:`<timer>` 是一行 bash,在盒內讀兩次自己的 `EPOCHREALTIME`、中間跑 `<shell>`(以 `"$@"` 收到、參數邊界不變,stdout 丟棄),把差值(微秒、一個整數)印在 stdout 最後一行、以 `<shell>` 的結束碼結束;bench.sh 解析那個數字,所以 enter 的來回**不在**這個數字裡(shell − inbox 約等於 enter)。timer 印出的不是整數(例如盒內 bash 太舊沒有 `EPOCHREALTIME`)視同量測失敗 |
 
 輸出(STDOUT,機器可讀;診斷一律走 STDERR):
 
@@ -586,10 +593,10 @@ issue #129),不再延後到 M5。
     fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
     `enter: ...` / `shell: ...` / `inbox: ...` 三行指標存在(`inbox` 那行只有 timer
     真的在盒內跑過並印出整數才會出現)、bench.sh 的兩行 INFO 都釘在 fish:
-    `[INFO] shell: ... of 'distrobox enter dev -- fish -c exit' done`
+    `[INFO] shell: ... of '<受管 command> -- fish -c exit' done`
     與
-    `[INFO] inbox: ... of 'distrobox enter dev -- bash -c <timer> bench-inbox fish -c exit' done`
-    都存在(前者證明 host 端量的是 fish,後者證明盒內 timer 也真的啟動了 fish),且
+    `[INFO] inbox: ... of '<受管 command> -- bash -c <timer> bench-inbox fish -c exit' done`
+    都存在(其中 `<受管 command>` 必須是 setup 寫出的 enter.sh wrapper 命令;前者證明 host 端量的是 fish,後者證明盒內 timer 也真的啟動了 fish),且
     不得出現任何 `sh -c :` 的 INFO 行(spec 的 `_assert_fish_timed`;只釘 shell 那行
     證明不了盒內 timer 跑的是什麼)、`[INFO] shell median ... within --max-ms 300`
     判定行存在,並把數字印進 TAP log 當證據;再以 `--runs 1 --warmup 0 --shell

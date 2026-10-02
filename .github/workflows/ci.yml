@@ -3,8 +3,10 @@ name: CI
 # worktool CI: lint + unit + matrix + integration + system (shim group) + acceptance
 # in the shared test image, plus system-real (real-engine group) in its own
 # docker-in-docker runner. All inside Docker. Runs on push and pull_request
-# to main. Dedicated jobs check new-commit email addresses (issue #234) and
-# attribution lines in commit messages and pull request bodies (issue #271).
+# to main, plus pull_request to milestone acceptance branches matching
+# m*/*-acceptance (issue #389). Dedicated jobs check new-commit email
+# addresses (issue #234) and attribution lines in commit messages and
+# pull request bodies (issue #271).
 #
 # Every leg-carrying job runs on BOTH architectures (issue #149, decision B
 # of #148): the `runner` matrix dimension is ubuntu-latest (amd64) and
@@ -43,7 +45,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'm*/*-acceptance']
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 permissions:

@@ -35,6 +35,24 @@ _dispatched() {
         "${FAKE_DOCKER_CALLS}"
 }
 
+@test "changed documentation consistently leaves unknown impact verification to CI" {
+    run just --justfile "${REPO_ROOT}/script/test/justfile.test" --list
+    assert_success
+    assert_line --regexp 'changed .*unknown impact.*CI'
+    refute_output --partial 'fails open'
+
+    run sed -n '/^| `just test changed /p' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    assert_output --regexp '無法判定.*交由 CI'
+    refute_output --partial '完整 unit'
+
+    run sed -n '/^6\. /p' "${REPO_ROOT}/doc/adr/0014-local-tests-changed-only.md"
+    assert_success
+    assert_output --regexp '無法判定.*交由 CI'
+    assert_output --partial '#376'
+    refute_output --partial 'fail open'
+}
+
 @test "test.sh --changed runs a changed spec itself after lint" {
     printf '@test "example" { true; }\n' >"${TEMP_REPO}/test/unit/example_spec.bats"
     _commit_baseline
@@ -79,7 +97,7 @@ _dispatched() {
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit \
+        --ci-lint \
         '--ci-matrix test/matrix/example_spec.bats')"
 }
 
@@ -231,7 +249,7 @@ _dispatched() {
     assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
-@test "test.sh --changed fails open when a mapped spec is missing" {
+@test "test.sh --changed leaves missing mapped specs to CI and names the source" {
     mkdir -p "${TEMP_REPO}/lib"
     printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
     _commit_baseline
@@ -241,7 +259,11 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 unit 驗證"
+    assert_output --partial "lib/log.sh"
+    assert_output --partial "test/unit/log_spec.bats"
+    assert_output --partial "對應 spec 不存在"
 }
 
 @test "changed path map points only to existing specs" {
@@ -260,43 +282,65 @@ _dispatched() {
     assert_success
 }
 
-@test "test.sh --changed fails open to the whole tier for an unmapped library" {
+@test "test.sh --changed leaves unmapped files to CI and names each file" {
     _commit_baseline
     mkdir -p "${TEMP_REPO}/lib"
     printf '# library\n' >"${TEMP_REPO}/lib/unmapped.sh"
+    mkdir -p "${TEMP_REPO}/doc/research"
+    printf '# notes\n' >"${TEMP_REPO}/doc/research/notes.md"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 unit 驗證"
+    assert_output --partial "lib/unmapped.sh"
+    assert_output --partial "doc/research/notes.md"
+    assert_output --partial "沒有對應 spec"
 }
 
-@test "test.sh --changed fails open only to unit for test infrastructure" {
-    mkdir -p "${TEMP_REPO}/test/helper"
-    printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
+@test "test.sh --changed leaves test infrastructure to CI with filenames and reasons" {
+    local -a _paths=(test/helper/common.bash script/test/test.sh
+        dockerfile/Dockerfile.test Dockerfile justfile script/test/justfile.test)
+    local _path
+    for _path in "${_paths[@]}"; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+        touch "${TEMP_REPO}/${_path}"
+    done
+    printf '@test "example" { true; }\n' >"${TEMP_REPO}/test/unit/example_spec.bats"
     _commit_baseline
-    printf '\n# changed\n' >>"${TEMP_REPO}/test/helper/common.bash"
+    for _path in "${_paths[@]}"; do
+        printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+    done
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/unit/example_spec.bats"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
-    for tier in matrix integration system system-real acceptance; do
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/example_spec.bats')"
+    for tier in unit matrix integration system system-real acceptance; do
         assert_output --partial "此改動由 CI 的 ${tier} 驗證"
     done
+    for _path in "${_paths[@]}"; do
+        assert_output --partial "${_path}"
+    done
+    assert_output --partial "測試基礎設施變更"
 }
 
-@test "test.sh --changed fails open when the base diff is unreadable" {
+@test "test.sh --changed leaves an unreadable base diff to CI" {
     _commit_baseline
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base missing-ref' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
-    for tier in matrix integration system system-real acceptance; do
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "changed-file diff unreadable; verification left to CI"
+    refute_output --partial "running the unit tier"
+    for tier in unit matrix integration system system-real acceptance; do
         assert_output --partial "此改動由 CI 的 ${tier} 驗證"
     done
 }
@@ -341,4 +385,182 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint \
         '--ci-unit test/unit/hook/enforce_local_test_scope_spec.bats' \
         '--ci-matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/another_spec.bats')"
+}
+
+@test "test.sh --changed dispatches readiness evidence hook spec" {
+    mkdir -p "${TEMP_REPO}/.agents/hook/lib" "${TEMP_REPO}/test/unit/hook"
+    printf '# readiness policy\n' >"${TEMP_REPO}/.agents/hook/lib/ready_evidence.sh"
+    printf '@test "readiness evidence" { true; }\n' \
+        >"${TEMP_REPO}/test/unit/hook/enforce_milestone_ready_evidence_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/.agents/hook/lib/ready_evidence.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/hook/enforce_milestone_ready_evidence_spec.bats')"
+}
+
+_document_change() {
+    local _path="$1"
+    shift
+    mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+    printf '# document\n' >"${TEMP_REPO}/${_path}"
+    local _spec
+    for _spec in "$@"; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_spec}")"
+        printf '@test "guard" { true; }\n' >"${TEMP_REPO}/${_spec}"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint "--ci-unit $*")"
+}
+
+@test "test.sh --changed maps root documentation to existing documentation guards" {
+    _document_change doc/structure.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
+}
+
+@test "test.sh --changed maps ADR documents to shared and individual guards" {
+    local -a _specs=(test/unit/adr_spec.bats)
+    local _number
+    for _number in 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013; do
+        _specs+=("test/unit/adr/${_number}_spec.bats")
+    done
+    _document_change doc/adr/0004-invariant-user-content.md "${_specs[@]}"
+}
+
+@test "test.sh --changed maps the contract to its invariant index guards" {
+    _document_change doc/contract.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/adr/0004_spec.bats test/unit/adr/0007_spec.bats \
+        test/unit/adr/0009_spec.bats
+}
+
+@test "test.sh --changed maps diagrams to the diagram guard" {
+    _document_change doc/diagram/flow.drawio.svg test/unit/diagram_spec.bats
+}
+
+@test "test.sh --changed maps README to diagram and command documentation guards" {
+    _document_change README.md test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
+
+@test "test.sh --changed includes specialized guards for interface and workflow docs" {
+    local _path
+    local -a _extra
+    for _path in doc/manifest.md doc/enter.md doc/design.md doc/workflow.md; do
+        case "${_path}" in
+            doc/manifest.md) _extra=(test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
+            doc/enter.md) _extra=(test/unit/adr/0007_spec.bats) ;;
+            doc/design.md) _extra=(test/unit/adr/0008_spec.bats) ;;
+            doc/workflow.md) _extra=(test/unit/workflow_spec.bats) ;;
+        esac
+        : >"${FAKE_DOCKER_CALLS}"
+        _document_change "${_path}" test/unit/contract_spec.bats \
+            test/unit/diagram_spec.bats test/unit/justfile_spec.bats "${_extra[@]}"
+    done
+}
+
+@test "test.sh --changed names dedicated runner infrastructure left to CI" {
+    local _path _tier
+    for _path in dockerfile/Dockerfile.ghostty dockerfile/Dockerfile.system-real \
+        script/test/system-real-entry.sh; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+        printf '# runner\n' >"${TEMP_REPO}/${_path}"
+        _commit_baseline
+        printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+            _ "${TEMP_REPO}"
+        assert_success
+        assert_equal "$(_dispatched)" --ci-lint
+        _tier=system-real
+        [[ "${_path}" != dockerfile/Dockerfile.ghostty ]] || _tier=integration
+        assert_output --partial "此改動由 CI 的 ${_tier} 驗證：${_path}"
+        assert_output --partial "測試基礎設施變更"
+    done
+}
+
+@test "test.sh --changed adds all guards when only bench changes" {
+    mkdir -p "${TEMP_REPO}/script/box"
+    printf '# bench\n' >"${TEMP_REPO}/script/box/bench.sh"
+    local _spec
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/${_spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/box/bench.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+
+    assert_success
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
+            || fail "missing guard: ${_spec}"
+    done
+}
+
+@test "just test guards forwards the shared guard selection and validates before help" {
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    mkdir -p "${TEMP_REPO}/test/unit/adr"
+    printf '@test "adr" { true; }\n' >"${TEMP_REPO}/test/unit/adr/0005_spec.bats"
+    cp "${REPO_ROOT}/script/test/justfile.test" "${TEMP_REPO}/script/test/justfile.test"
+
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards
+
+    assert_success
+    assert_equal "$(_dispatched)" '--ci-unit test/unit/config_owner_spec.bats test/unit/adr/0005_spec.bats'
+    run just --justfile "${TEMP_REPO}/script/test/justfile.test" guards --help --bogus
+    assert_failure 2
+    assert_output --partial "unknown option '--bogus' (see --help)"
+}
+
+@test "test.sh --guards rejects an unlisted repository-scanning spec" {
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${REPO_ROOT}"
+    assert_success
+    [[ -s "${FAKE_DOCKER_CALLS}" ]] || fail 'did not dispatch listed guards'
+    : >"${FAKE_DOCKER_CALLS}"
+
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+}
+
+@test "guard coverage catches source-directory scans in all tiers including untracked specs" {
+    local _scanner _index=0
+    for _scanner in 'find script/ lib/ -name "*.sh"' \
+        "grep -r pattern \"\${REPO_ROOT}/script\"" \
+        "for file in \"\${REPO_ROOT}\"/lib/*.sh; do :; done"; do
+        mkdir -p "${TEMP_REPO}/test/integration"
+        printf '@test "scan" {\n%s\n}\n' "${_scanner}" \
+            >"${TEMP_REPO}/test/integration/unlisted_spec.bats"
+        run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+        assert_failure
+        assert_output --partial 'repository-scanning spec missing from guard list: test/integration/unlisted_spec.bats'
+        [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+        _index=$((_index + 1))
+    done
+    assert_equal "${_index}" 3
+}
+
+@test "guard coverage reads large specs completely under pipefail" {
+    printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+    awk 'BEGIN { for (i = 0; i < 50000; i++) print "# padding" }' \
+        >>"${TEMP_REPO}/test/unit/unlisted_spec.bats"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
+
+    assert_failure
+    assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
 }

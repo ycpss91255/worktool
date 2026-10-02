@@ -19,7 +19,8 @@
 # Only a real subcommand triggers it: launches are parsed first, so
 # a commit message mentioning `gh pr merge` stays silent.
 #
-# Exit: always 0 (reminder JSON on stdout when it fires).
+# PostToolUse runs cleanup only on confirmed successful immediate merges.
+# Exit: always 0 (advisory JSON on stdout when it fires).
 
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -41,6 +42,39 @@ _policy_note() {
     printf '%s' "${_note}"
 }
 
+_merge_succeeded() {
+    # PostToolUse is a success event; Claude Bash has no exit_code field.
+    jq -e '.tool_response as $r |
+        if ($r | has("exit_code")) then $r.exit_code == 0
+        else ($r.stdout | type) == "string" and
+             ($r.stderr | type) == "string" and $r.interrupted == false
+        end' <<< "${HOOK_INPUT}" >/dev/null 2>&1
+}
+
+_post_merge() {
+    local command="$1" cwd root report rc=0
+    [[ "${command}" =~ --auto([[:space:]]|$) ]] && return 0
+    [[ "${command}" =~ (^|[[:space:]])(--help|-h)([[:space:]]|$) ]] && return 0
+    _merge_succeeded || return 0
+    cwd="$(hook_field '.cwd')"
+    cwd="${cwd:-${CLAUDE_PROJECT_DIR:-${HOOK_REPO_ROOT}}}"
+    root="$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null)" || root="${cwd}"
+    if ! report="$(cd -- "${root}" && ./.agents/script/worktree/prune-merged.sh --apply 2>&1)"; then
+        rc=1
+    fi
+    printf '%s\n' "${report}" >&2
+    if [[ "${rc}" == 1 ]]; then
+        report="Worktree cleanup failed: ${report}"
+    fi
+    if ! jq -n --arg m "${report}" '{
+        systemMessage: $m,
+        hookSpecificOutput: {hookEventName:"PostToolUse", additionalContext:$m}
+    }'; then
+        printf '[hook:%s] cannot emit cleanup report\n' "${HOOK_NAME}" >&2
+    fi
+    return 0
+}
+
 main() {
     hook_read_input
     local _cmd _clean _sub _variant _msg
@@ -48,11 +82,16 @@ main() {
     [[ -z "${_cmd}" ]] && return 0
     _clean=''
     while IFS= read -r _sub; do
-        [[ "${_sub}" =~ ^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || continue
+        [[ "${_sub}" =~ ^gh([[:space:]]+(--repo|-R)[[:space:]]+[^[:space:]]+)?[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]] || continue
         _clean="${_sub}"
         break
     done < <(hook_subcommands "${_cmd}")
     [[ -n "${_clean}" ]] || return 0
+
+    if [[ "$(hook_field '.hook_event_name')" == PostToolUse ]]; then
+        _post_merge "${_clean}"
+        return 0
+    fi
 
     if [[ "${_clean}" =~ --auto([[:space:]]|$) ]]; then
         _variant=queued
