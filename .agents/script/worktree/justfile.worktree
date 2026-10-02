@@ -1,0 +1,10 @@
+set working-directory := '../../..'
+set positional-arguments
+
+# List worktree actions.
+default:
+    @just --justfile '{{source_file()}}' --list
+
+# Prune merged clean linked worktrees (default dry-run; --apply, --help).
+prune-merged *args:
+    ./.agents/script/worktree/prune-merged.sh "$@"
