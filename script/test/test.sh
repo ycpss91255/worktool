@@ -560,8 +560,8 @@ given):
                   Always run lint, then select specs from committed,
                   uncommitted, and untracked changes since REF (default:
                   origin/main). Runs changed unit and matrix specs only;
-                  heavier tiers are reported for CI. Unknown impact or an
-                  unreadable diff runs the whole unit tier only.
+                  heavier tiers are reported for CI. Unknown impact and an
+                  unreadable diff are also reported for CI verification.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
   --matrix [SPEC...] [--filter REGEX]
@@ -844,28 +844,15 @@ _run_changed_tiers() {
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
         local -n _full_tier="_full_${_tier}"
-        if [[ "${_tier}" != unit \
-            && ( "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
-            if [[ "${_tier}" == matrix && "${#_selected_specs[@]}" -gt 0 ]]; then
+        if [[ "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
+            _info "此改動由 CI 的 ${_tier} 驗證"
+        fi
+        if [[ "${#_selected_specs[@]}" -gt 0 ]]; then
+            if [[ "${_tier}" == unit || "${_tier}" == matrix ]]; then
                 _run_host_step "${_tier}" "" "${_selected_specs[@]}"
             else
                 _info "此改動由 CI 的 ${_tier} 驗證"
             fi
-            unset -n _selected_specs
-            unset -n _full_tier
-            continue
-        fi
-        if [[ "${_tier}" =~ ^(integration|system|acceptance)$ \
-            && "${#_selected_specs[@]}" -gt 0 ]]; then
-            _info "此改動由 CI 的 ${_tier} 驗證"
-            unset -n _selected_specs
-            unset -n _full_tier
-            continue
-        fi
-        if [[ "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
-            _run_host_step "${_tier}" ""
-        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
-            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
         fi
         unset -n _selected_specs
         unset -n _full_tier
@@ -908,6 +895,7 @@ _run_changed() {
         fi
         _mapped="$(_mapped_specs "${_path}")"
         if [[ -z "${_mapped}" ]]; then
+            _info "此改動由 CI 的 unit 驗證：${_path}（沒有對應 spec）"
             _full_unit=1
             continue
         fi

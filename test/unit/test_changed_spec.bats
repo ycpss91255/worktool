@@ -260,16 +260,22 @@ _dispatched() {
     assert_success
 }
 
-@test "test.sh --changed fails open to the whole tier for an unmapped library" {
+@test "test.sh --changed leaves unmapped files to CI and names each file" {
     _commit_baseline
     mkdir -p "${TEMP_REPO}/lib"
     printf '# library\n' >"${TEMP_REPO}/lib/unmapped.sh"
+    mkdir -p "${TEMP_REPO}/doc/research"
+    printf '# notes\n' >"${TEMP_REPO}/doc/research/notes.md"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 unit 驗證"
+    assert_output --partial "lib/unmapped.sh"
+    assert_output --partial "doc/research/notes.md"
+    assert_output --partial "沒有對應 spec"
 }
 
 @test "test.sh --changed fails open only to unit for test infrastructure" {
