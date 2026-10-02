@@ -168,6 +168,8 @@ jobs:
 
   # Milestone acceptance runs the checkout's real entry, not verify stubs.
   # `all` excludes section 5 (realbox); it drives Docker gates itself.
+  # The native Ghostty image supplies the same real terminal as integration;
+  # the verify image adds host tools and the shared image's pinned distrobox.
   verify-all:
     name: verify-all (${{ matrix.runner }})
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
@@ -197,23 +199,24 @@ jobs:
       - name: Load test image
         run: docker load -i /tmp/worktool-test.tar
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Build native Ghostty image
+        run: docker build -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .
 
-      - name: Expose pinned distrobox for setup acceptance
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/worktool-bin"
-          container="$(docker create worktool-test:local)"
-          trap 'docker rm "${container}" >/dev/null' EXIT
-          docker cp "${container}:/usr/local/bin/." "${RUNNER_TEMP}/worktool-bin"
-          echo "${RUNNER_TEMP}/worktool-bin" >> "${GITHUB_PATH}"
+      - name: Build acceptance environment
+        run: docker build -t worktool-verify:local -f dockerfile/Dockerfile.verify .
 
       - name: Verify non-real-machine acceptance
         env:
           TEST_IMAGE_PREBUILT: "1"
           GH_TOKEN: ${{ github.token }}
-        run: just verify all
+        # Docker gates mount the checkout through the runner's daemon, so
+        # its absolute path must be identical inside and outside this container.
+        run: |
+          set -euo pipefail
+          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}:${PWD}" -w "${PWD}" \
+            worktool-verify:local -c 'just verify all'
 
   # Commit email (issue #234): the repo is public, so every new commit must
   # carry a GitHub noreply author email and a noreply (or GitHub's own
