@@ -453,6 +453,16 @@ _pl_blocked_run() {
     done
 }
 
+@test "doc/workflow.md documents gates as a complete replacement with explicit lint responsibility (#385)" {
+    run grep "^| \`gates\` |" "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '完整取代預設推送前 gate'
+    assert_output --partial "呼叫者須自行包含 \`just test lint\`"
+    assert_output --partial '僅省略時採用預設'
+    assert_output --partial "\`just test lint\` 與 \`just test changed\`"
+    refute_output --partial '額外 gate'
+}
+
 @test "workflows: custom gates are the only pre-push gate in every role (#385)" {
     local template mode implementer args json
     local gate='just test unit test/unit/workflow_spec.bats'
