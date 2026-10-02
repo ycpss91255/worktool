@@ -222,95 +222,11 @@ _stub_mktemp_dir_then_fail() {
 #   no-block   the default run writes a ghostty config with NO managed block,
 #              while the removal run still reports removing one
 _stub_just_setup_writing() {
-    export VERIFY_PRODUCT_LIB="${REPO_ROOT}/lib/enter.sh"
-    export VERIFY_PRODUCT_WRAPPER="${REPO_ROOT}/script/box/enter.sh"
-    cat >"${STUB}/just" <<EOF
-#!/usr/bin/env bash
-# A box setup that behaves correctly everywhere a status code or a file count
-# can look, and lies in its text. MODE=$1
-set -u
-MODE=$1
-EOF
-    cat >>"${STUB}/just" <<'EOF'
-_cfg="${XDG_CONFIG_HOME:-${HOME}/.config}"
-_log() { printf '[INFO] %s\n' "$1" >&2; }
-
-case "${1:-}:${2:-}" in
-    box:status)
-        printf 'config: %s/worktool/config\n' "${_cfg}"
-        printf 'auto-enter: yes (default)\n'
-        printf 'terminal: ghostty (default)\n'
-        printf 'box: dev (default)\n'
-        printf 'ghostty: %s/ghostty/config (managed block: present)\n' "${_cfg}"
-        printf 'distrobox: %s (recorded in a managed block: runnable)\n' \
-            "$(command -v distrobox)"
-        exit 0
-        ;;
-    box:setup) ;;
-    *) exit 0 ;;
-esac
-
-_dbx="$(command -v distrobox)"
-case "${MODE}" in
-    bare-name) _cmd="command = distrobox enter dev" ;;
-    *) _cmd="$(source "${VERIFY_PRODUCT_LIB}"; printf 'command = %s --distrobox %s --box %s' "$(enter_sh_squote "${VERIFY_PRODUCT_WRAPPER}")" "$(enter_sh_squote "${_dbx}")" "$(enter_sh_squote "$(enter_default box)")")" ;;
-esac
-
-_dry=0
-_auto=yes
-_src=default
-shift 2
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --dry-run) _dry=1 ;;
-        --auto-enter)
-            shift
-            _auto="${1:-yes}"
-            _src=user
-            ;;
-    esac
-    shift
-done
-
-printf './script/box/setup.sh "$@"\n' >&2
-_log "auto-enter: ${_auto} (${_src})"
-_log "terminal: ghostty (default)"
-_log "terminal detected: ghostty (ghostty executable $(command -v ghostty))"
-_log "box: dev (default)"
-[ "${_auto}" = yes ] \
-    && _log "distrobox: ${_dbx} (absolute path written into the managed command)"
-
-if [ "${_dry}" = 1 ]; then
-    _log "dry-run: would write ${_cfg}/worktool/config"
-    _log "dry-run: would write ${_cfg}/ghostty/config (managed block: ${_cmd})"
-    exit 0
-fi
-
-mkdir -p "${_cfg}/worktool" "${_cfg}/ghostty"
-printf 'auto-enter=%s\nauto-enter.source=%s\n' "${_auto}" "${_src}" \
-    >"${_cfg}/worktool/config"
-_log "wrote: ${_cfg}/worktool/config"
-
-if [ "${_auto}" = yes ]; then
-    if [ "${MODE}" = no-block ]; then
-        # The config is written, and it holds no managed block at all.
-        printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
-    else
-        {
-            printf '# BEGIN worktool managed block (just box setup; do not edit)\n'
-            printf '%s\n' "${_cmd}"
-            printf '# END worktool managed block\n'
-        } >"${_cfg}/ghostty/config"
-    fi
-    _log "wrote: ${_cfg}/ghostty/config (managed block: ${_cmd})"
-else
-    printf 'font-size = 12\n' >"${_cfg}/ghostty/config"
-    _log "removed: ${_cfg}/ghostty/config (managed block: ${_cmd})"
-    _log "nothing to remove: ${HOME}/.tmux.conf (no managed block)"
-fi
-exit 0
-EOF
-    chmod +x "${STUB}/just"
+    export VERIFY_REAL_JUST="${REAL_JUST}" VERIFY_PRODUCT_LIB="${REPO_ROOT}/lib/enter.sh"
+    export VERIFY_CORRUPTION="$1"
+    _stub just '#!/usr/bin/env bash' 'set -euo pipefail' \
+        'exec bash "${VERIFY_CORRUPT_FIXTURE}" "$@"'
+    export VERIFY_CORRUPT_FIXTURE="${BATS_TEST_DIRNAME}/fixture/verify_setup_just.sh"
 }
 
 # --- The degraded-product copies ---------------------------------------------
@@ -1122,4 +1038,16 @@ FRAG
         /^      / { sub(/^      /, ""); print }
         { n=split($0, fields, "`"); for (i=2; i<=n; i+=2) print fields[i] }
     ' "${_doc}")
+}
+
+@test "single source: setup fixture starts with real product output before corruption" {
+    local _home="${BATS_TEST_TMPDIR}/fixture-home" _fixture
+    mkdir -p "${_home}"
+    _stub_just_setup_writing normal
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" "${STUB}/just" box setup --dry-run
+    assert_success
+    _fixture="${output}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" "${REAL_JUST}" box setup --dry-run
+    assert_success
+    assert_equal "${_fixture}" "${output}"
 }
