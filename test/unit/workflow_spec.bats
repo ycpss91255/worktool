@@ -2590,7 +2590,7 @@ _pl_resume_setup() {
 
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
-    replies='{"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}"         "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')"         "${replies}" exec-resume
 }
 
@@ -2606,4 +2606,23 @@ _pl_resume_run() {
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" branch --show-current
     assert_output b
+}
+
+@test "pr-loop resume: unpublished local commits pass gates and publish before CI (#386)" {
+    _pl_resume_setup
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    local before json
+    before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
+    run _pl_resume_run '{"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
+        ([.calls[].role | startswith("implement:")] | any | not) and
+        (.calls[] | select(.role | startswith("publish:")) | .prompt |
+            contains("run just test lint, just test unit test/unit/workflow_spec.bats") and
+            contains("git push -u origin b") and contains("--base acceptance --head b") and
+            contains("Refs: #386") and contains("noreply") and contains("[codex]"))' <<<"${json}"
+    assert_success
+    run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
 }

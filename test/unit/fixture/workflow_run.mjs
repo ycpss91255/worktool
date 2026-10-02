@@ -83,7 +83,7 @@ const play = (prompt) => {
 
 const withStdout = (value, stdout) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, v === '<stdout>' ? stdout : v === '<json>' ? JSON.parse(stdout) : v]))
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, v === '<stdout>' ? stdout : v]))
 }
 
 const agent = async (prompt, opts = {}) => {
@@ -98,6 +98,7 @@ const agent = async (prompt, opts = {}) => {
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }
+  if (role.startsWith('prepare:') && mode !== 'exec-resume') return reply(role)
   if (mode === 'exec-resume' && !role.startsWith('prepare:')) return reply(role)
   if (mode === 'exec-record' && !role.startsWith('record:')) return reply(role)
   if (!['exec', 'exec-hooks', 'exec-record', 'exec-resume'].includes(mode) && !(mode === 'exec-stage-checks' && role.startsWith('stage-check:'))) return reply(role)

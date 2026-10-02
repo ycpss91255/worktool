@@ -261,8 +261,16 @@ if (!RESUME) {
   await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
 }
 
+let resumedPR
+if (RESUME && !A.pr) {
+  phase('Publish')
+  resumedPR = await agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
+Resume the committed work in ${WT} on ${A.branch}; skip implementation. Require a clean worktree and inspect git log. Locate an existing open PR by branch and base ${BASE} first; reuse it rather than opening a duplicate. If none exists, require unpublished commits (compare origin/${A.branch}..HEAD, or origin/${BASE}..HEAD when the remote branch is absent). No unpublished commits or any lookup failure is blocking; return pr 0, sha "" without pushing.
+Before publishing, run ${GATES} blocking in the foreground. Check every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Only when green, git push -u origin ${A.branch}; then gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>.
+Body starts with ${IMPLEMENTER === 'codex' ? '[codex]' : '[claude]'} and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,不跑 codex 複驗' : CODEX ? 'codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+}
 phase('Locate')
-const loc = RESUME && A.pr ? { pr: A.pr, sha: '' } : await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+const loc = RESUME ? (A.pr ? { pr: A.pr, sha: '' } : resumedPR) : await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
 if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'none', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
 const pr = loc.pr
 let sha = loc.sha
@@ -275,6 +283,8 @@ phase('CI')
 let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
+
+if (MODE === 'light') return result({ pr, sha, ciState: 'green', codexVerdict: 'skipped', rounds: 0, blockingLeft: [] })
 
 if (!CODEX) {
   await agent(NOCODEX(pr), { label: `${RUN_ID} nocodex:#${pr}`, phase: 'Codex', agentType: 'general-purpose' })

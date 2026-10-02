@@ -69,11 +69,13 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
 
-## 既有 PR 接續
+## 既有分支接續
 
 指定既有 `branch` 與 `pr` 時跳過實作與開 PR，直接進入 CI／審查迴圈。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
+未傳 `pr` 時先查是否已有相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有 commit 或查詢失敗則停止。
+接續 light 模式仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## light 模式
