@@ -53,3 +53,19 @@ _check() {
     _check 'git status --short'
     assert_success
 }
+
+@test "indirect and uncheckable launches fail closed even with a read-only claim" {
+    for cmd in \
+        'codex exec --sandbox read-only "$PROMPT"' \
+        'codex exec --sandbox read-only --config sandbox_mode="danger-full-access" "query"' \
+        'codex exec --sandbox read-only --sandbox workspace-write "query"' \
+        'eval codex exec --sandbox read-only query' \
+        'bash -c "$CMD"' \
+        '$RUN exec --sandbox read-only query' \
+        'xargs codex exec --sandbox read-only' \
+        'python3 -c "import os; os.system(\"codex exec --sandbox read-only query\")"' \
+        'codex exec --sandbox read-only "query"; eval "$CMD"'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}

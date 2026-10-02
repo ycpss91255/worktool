@@ -40,7 +40,10 @@ workflow_agent() {
 readonly_launch() {
     local word value sandbox='' i positional=0
     local -a args=()
-    for word in "$@"; do args+=("$(hook_word "${word}")"); done
+    for word in "$@"; do
+        hook_word_has_expansion "${word}" && return 1
+        args+=("$(hook_word "${word}")")
+    done
     [[ "${args[1]:-}" == exec || "${args[1]:-}" == e ]] || return 1
     for ((i = 2; i < ${#args[@]}; i++)); do
         word="${args[i]}"
@@ -62,14 +65,38 @@ readonly_launch() {
     [[ -n "${sandbox}" && "${positional}" -le 1 ]]
 }
 
+# Raw-text backstop: launches hidden in inline code/data are not credited
+# as checked. As in the approval hook, mere mentions can also be refused.
+raw_codex_count() {
+    local rc=0 count
+    count="$(grep -oE "(^|[^[:alnum:]_.-])codex([[:space:]\"']|$)" <<<"$1" | wc -l)" || rc=$?
+    (( rc <= 1 )) || refuse 'Cannot count Codex mentions.'
+    printf '%s' "${count}"
+}
+
+closed_command() {
+    local text="$1" re='(^|[^[:alnum:]_.-])(eval|xargs)([^[:alnum:]_.-]|$)'
+    [[ "${text}" =~ ${re} ]] && refuse 'Indirect execution cannot be checked statically.'
+    return 0
+}
+
+inspect_wrapper() {
+    local path="$1" cwd="$2" depth="$3"
+    [[ "${path}" == /* ]] || path="${cwd}/${path}"
+    [[ -f "${path}" && -r "${path}" ]] || refuse 'Cannot read a wrapper script.'
+    check_command "$(cat -- "${path}")" "${cwd}" "$((depth + 1))"
+}
+
 check_command() {
-    local sub lead tool path
+    local sub lead tool path checked=0
     local cwd="$2" depth="${3:-0}"
     (( depth < 16 )) || refuse 'Wrapper nesting exceeds the static inspection limit.'
     local -a words
+    closed_command "$1"
     while IFS= read -r sub; do
         lead="$(hook_timeout_lead "${sub}")"
         read -r -a words <<<"${sub#"${lead}"}"
+        hook_word_has_expansion "${words[0]:-}" && refuse 'An expanded executable cannot be checked.'
         tool="$(hook_word "${words[0]:-}")"
         if [[ "${tool}" == cd ]]; then
             path="$(hook_word "${words[1]:-}")"
@@ -79,19 +106,20 @@ check_command() {
         fi
         if [[ "${tool##*/}" == codex ]]; then
             readonly_launch "${words[@]}" || refuse 'Main-loop codex execution must go through a Workflow.'
+            checked=$((checked + 1))
             continue
         fi
         path=""
+        hook_is_interpreter "${tool}" && refuse 'Interpreter execution cannot be checked as a shell wrapper.'
         case "${tool##*/}" in
             bash|sh|dash|zsh|ksh|fish) path="$(hook_word "${words[1]:-}")" ;;
             *) [[ "${tool}" == */* || "${tool}" == *.sh ]] && path="${tool}" ;;
         esac
         if [[ -n "${path}" ]]; then
-            [[ "${path}" == /* ]] || path="${cwd}/${path}"
-            [[ -f "${path}" && -r "${path}" ]] || refuse 'Cannot read a wrapper script.'
-            check_command "$(cat -- "${path}")" "${cwd}" "$((depth + 1))"
+            inspect_wrapper "${path}" "${cwd}" "${depth}"
         fi
     done < <(hook_subcommands_raw "$1")
+    [[ "$(raw_codex_count "$1")" -le "${checked}" ]] || refuse 'An unchecked Codex mention may hide an indirect launch.'
 }
 
 hook_read_input
