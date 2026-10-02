@@ -42,3 +42,12 @@ _check() {
     _check 'codex exec "implement"'
     assert_equal "${status}" 2
 }
+
+@test "main loop read-only sandbox queries pass without subagent identity" {
+    for cmd in 'codex exec --sandbox read-only "research"' 'codex e -s read-only "discuss"' 'codex exec --sandbox=read-only -o answer.md "verify"'; do
+        _check "${cmd}"
+        assert_success
+    done
+    _check 'git status --short'
+    assert_success
+}
