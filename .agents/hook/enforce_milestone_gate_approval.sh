@@ -864,6 +864,8 @@ main() {
     hook_allow
 }
 
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 _AGENT="${1:-claude}"
 case "${_AGENT}" in claude|codex|agy|gemini) ;; *) hook_block "unknown agent '${_AGENT}'" ;; esac
 main
