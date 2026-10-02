@@ -1098,3 +1098,28 @@ FRAG
     assert_failure
     assert_output --partial "expected exactly one line equal to '[INFO] Ghostty config changed:"
 }
+
+@test "single source: documented setup product lines occur in the real verification run" {
+    _stub ghostty '#!/bin/sh' 'echo Ghostty 1.2.0'
+    local _real _line _doc="${BATS_TEST_TMPDIR}/setup-doc"
+    run "${VERIFY}"
+    assert_success
+    _real="${output}"
+    sed -n '/^## M3 /,/^## M4 /p' "${REPO_ROOT}/doc/acceptance.md" \
+        | sed -n '/^- \[ \] 3\. /,/^- \[ \] 4\./p' >"${_doc}"
+    while IFS= read -r _line; do
+        [[ "${_line}" == 'command = ...' ]] && continue
+        case "${_line}" in
+            '[INFO] '*|'[ERROR] '*|'[WARN] '*|'command = '*|'ghostty: '*|\
+                'distrobox: '*|'distrobox.conf: '*|'terminal: '*|'home: '*|'link: '*) ;;
+            *) continue ;;
+        esac
+        _line="${_line//<版本>/1.2.0}"
+        printf '# documented product line: %s\n' "${_line}" >&3
+        run grep -Fx "${_line}" <<<"${_real}"
+        assert_success
+    done < <(awk '
+        /^      / { sub(/^      /, ""); print }
+        { n=split($0, fields, "`"); for (i=2; i<=n; i+=2) print fields[i] }
+    ' "${_doc}")
+}
