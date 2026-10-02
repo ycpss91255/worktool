@@ -497,7 +497,7 @@ _trigger_branches() {
     assert_output --partial "[ \"\${REFS_RESULT}\" = \"success\" ] || exit 1"
 }
 
-@test "milestone-gate PRs run real acceptance with every host tool in a native Ghostty environment" {
+@test "milestone-gate PRs require native acceptance with read-only evidence access" {
     run _job_block verify-all
     assert_success
     assert_line "    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
@@ -506,30 +506,13 @@ _trigger_branches() {
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
     assert_line '        run: docker load -i /tmp/worktool-test.tar'
-    assert_line '        run: docker build -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .'
-    assert_line '        run: docker build -t worktool-verify:local -f dockerfile/Dockerfile.verify .'
     assert_line '          TEST_IMAGE_PREBUILT: "1"'
     assert_line "          GH_TOKEN: \${{ github.token }}"
     assert_line '      pull-requests: read'
     assert_line '      checks: read'
     assert_line '      issues: read'
     assert_line '      actions: read'
-    assert_line "          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI \\"
-    assert_line "            -v /var/run/docker.sock:/var/run/docker.sock \\"
-    assert_line "            -v \"\${PWD}:\${PWD}\" -w \"\${PWD}\" \\"
-    assert_line "            worktool-verify:local -c 'just verify all'"
     refute_output --partial '--allow-real-box'
-
-    run cat "${REPO_ROOT}/dockerfile/Dockerfile.verify"
-    assert_success
-    assert_line 'FROM worktool-test:local AS distrobox'
-    assert_line 'FROM worktool-ghostty:local'
-    assert_line 'COPY --from=distrobox /usr/local/bin/distrobox* /usr/local/bin/'
-    for _tool in docker.io gh jq just time; do
-        assert_line "        ${_tool} \\"
-    done
-    assert_line "    ghostty +version && \\"
-    assert_line '    distrobox --version'
 }
 
 # Execute the checked-in aggregator shell with resolved Actions inputs.
@@ -566,4 +549,11 @@ _run_aggregator() {
     run _job_block ci-passed
     assert_line "          VERIFY_REQUIRED: \${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}"
     assert_line "          VERIFY_RESULT: \${{ needs.verify-all.result }}"
+}
+
+@test "verify-all checks the real acceptance environment before handing off acceptance" {
+    run _job_block verify-all
+    assert_success
+    assert_output --partial 'run: just test verify-env'
+    assert_output --partial 'uses: extractions/setup-just@'
 }

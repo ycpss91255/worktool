@@ -28,3 +28,7 @@ RUN docker --version && \
     /usr/bin/time --version && \
     ghostty +version && \
     distrobox --version
+
+# The runner owns the bind-mounted checkout; root drives Docker gates here.
+# Trust only the selected working directory, including its linked metadata.
+ENTRYPOINT ["/bin/bash", "-c", "git config --global --add safe.directory \"$PWD\" && exec /bin/bash \"$@\"", "--"]

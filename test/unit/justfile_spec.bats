@@ -515,8 +515,9 @@ _listed_names() {
     assert_line --regexp '^ +run: just test system-real$'
     # Milestone acceptance drives just verify inside the real-tool container.
     assert_line --regexp "^ +worktool-verify:local -c 'just verify all'$"
-    # Exactly those three invocations: no gate bypasses the grammar.
-    assert_equal "${#lines[@]}" 3
+    assert_line --regexp '^ +run: just test verify-env$'
+    # Exactly those four invocations: no gate bypasses the grammar.
+    assert_equal "${#lines[@]}" 4
 }
 
 @test "just agent lists the Codex launcher without starting it" {

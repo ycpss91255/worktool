@@ -199,11 +199,13 @@ jobs:
       - name: Load test image
         run: docker load -i /tmp/worktool-test.tar
 
-      - name: Build native Ghostty image
-        run: docker build -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .
+      - name: Install just
+        uses: extractions/setup-just@v2
 
-      - name: Build acceptance environment
-        run: docker build -t worktool-verify:local -f dockerfile/Dockerfile.verify .
+      - name: Build and test acceptance environment
+        env:
+          TEST_IMAGE_PREBUILT: "1"
+        run: just test verify-env
 
       - name: Verify non-real-machine acceptance
         env:
