@@ -49,14 +49,20 @@ merged_head() {
 }
 
 tree_clean() {
-    local status line
-    status="$(git -C "$1" status --porcelain --ignored --untracked-files=all)" || return 1
-    while IFS= read -r line; do
-        case "${line}" in
-            ''|'!! .agents/state/'*) ;;
-            *) return 1 ;;
+    local status_file entry clean=0
+    status_file="$(mktemp)" || return 1
+    if ! git -C "$1" status --porcelain -z --ignored --untracked-files=all > "${status_file}"; then
+        rm -f -- "${status_file}"
+        return 1
+    fi
+    while IFS= read -r -d '' entry; do
+        case "${entry}" in
+            '!! .agents/state/'*) ;;
+            *) clean=1; break ;;
         esac
-    done <<< "${status}"
+    done < "${status_file}"
+    rm -f -- "${status_file}" || return 1
+    return "${clean}"
 }
 
 REMOTE_REFS="$(git -C "${MAIN}" for-each-ref --format='%(refname)' refs/remotes/origin)"

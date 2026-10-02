@@ -154,3 +154,12 @@ prune() {
     assert_output --partial "origin/main"
     assert_output --partial ".agents/state/"
 }
+
+@test "ignored state exemption handles quoted and newline filenames" {
+    mkdir -p "${TREE}/.agents/state"
+    printf state > "${TREE}/.agents/state/中文"
+    printf state > "${TREE}/.agents/state/"$'line\nbreak'
+    prune --apply
+    assert_success
+    [ ! -e "${TREE}" ]
+}
