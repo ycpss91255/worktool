@@ -23,7 +23,25 @@ prune() {
         "${REPO_ROOT}/.agents/script/worktree/prune-merged.sh" "$@"
 }
 
+merge_topic() {
+    git -C "${TREE}" commit -qm feature --allow-empty
+    git -C "${MAIN}" merge -q --ff-only topic
+    git -C "${MAIN}" push -q origin main
+}
+
+@test "keeps newly created zero-commit branch and detached worktrees" {
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" origin/main
+    prune --apply
+    assert_success
+    [ -d "${TREE}" ]
+    [ -d "${detached}" ]
+    git -C "${MAIN}" show-ref --verify refs/heads/topic
+    assert_output --partial "no commits since worktree creation"
+}
+
 @test "dry-run lists merged clean worktree without deleting it" {
+    merge_topic
     prune
     assert_success
     assert_output --partial "${TREE}"
@@ -32,6 +50,7 @@ prune() {
 }
 
 @test "apply deletes merged clean worktree and its local branch" {
+    merge_topic
     prune --apply
     assert_success
     [ ! -e "${TREE}" ]
@@ -49,6 +68,7 @@ prune() {
 }
 
 @test "keeps tracked staged and untracked changes" {
+    merge_topic
     local change
     for change in tracked staged untracked; do
         case "${change}" in
@@ -115,6 +135,7 @@ prune() {
 }
 
 @test "cleanup can remove its invoking worktree and still delete the branch" {
+    merge_topic
     run bash -c 'cd "$1"; bash "$2" --apply' _ "${TREE}" \
         "${REPO_ROOT}/.agents/script/worktree/prune-merged.sh"
     assert_success
@@ -126,6 +147,9 @@ prune() {
 @test "keeps locked worktrees with an explanation and continues cleanup" {
     git -C "${MAIN}" worktree lock "${TREE}" --reason retained
     git -C "${MAIN}" worktree add -qb other "${FIXTURE}/worktree/other"
+    git -C "${FIXTURE}/worktree/other" commit -qm other --allow-empty
+    git -C "${MAIN}" merge -q --ff-only other
+    git -C "${MAIN}" push -q origin main
     prune --apply
     assert_success
     assert_output --partial "locked"
@@ -156,6 +180,7 @@ prune() {
 }
 
 @test "ignored state exemption handles quoted and newline filenames" {
+    merge_topic
     mkdir -p "${TREE}/.agents/state"
     printf state > "${TREE}/.agents/state/中文"
     printf state > "${TREE}/.agents/state/"$'line\nbreak'

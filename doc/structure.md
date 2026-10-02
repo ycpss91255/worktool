@@ -652,7 +652,10 @@ branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = �
 `worktree/` 下 linked worktree 執行清理；主 checkout 與範圍外目錄一律保留。
 預設 stdout 列出候選路徑，`--apply` 才移除。腳本先 `git fetch --prune origin`，
 只接受 HEAD 是 `origin/main` 或遠端 `m<數字>/<issue>-acceptance`
-驗收分支祖先的項目。未提交、未追蹤與被忽略的檔案都阻止清理，僅被
+驗收分支祖先的項目。
+清理前也要求 HEAD reflog 記錄的 worktree 建立點是 HEAD 的嚴格祖先，
+證明建立後已有 commit；零 commit 的新分支與 detached worktree 一律保留，
+缺少建立點紀錄時也保留。未提交、未追蹤與被忽略的檔案都阻止清理，僅被
 gitignore 忽略的 `.agents/state/` 例外；鎖定或目錄遺失的 worktree 也保留。
 有分支時只用 `git branch -d`，拒絕刪除的分支保留。每個保留原因與刪除結果
 寫到 stderr；參數錯誤 exit 2，完整驗證參數後才處理 `--help`。

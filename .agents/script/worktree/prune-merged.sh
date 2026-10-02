@@ -19,7 +19,9 @@ Usage: prune-merged.sh [--apply] [--help]
 
 Fetch origin and list merged, clean linked worktrees under the sibling
 worktree/ directory. HEAD must be an ancestor of origin/main or a remote
-m<number>/<issue>-acceptance branch. Ignored .agents/state/ is exempt
+m<number>/<issue>-acceptance branch, with commits after the worktree's
+creation point recorded in its HEAD reflog. Missing creation evidence
+keeps the worktree. Ignored .agents/state/ is exempt
 from cleanliness checks; all other changes prevent deletion.
 
   --apply     Remove eligible worktrees and use git branch -d for branches.
@@ -66,9 +68,21 @@ tree_clean() {
 }
 
 REMOTE_REFS="$(git -C "${MAIN}" for-each-ref --format='%(refname)' refs/remotes/origin)"
+has_worktree_commits() {
+    local tree="$1" head="$2" creation
+    creation="$(git -C "${tree}" reflog show --format='%H' HEAD | tail -n 1)" || return 1
+    [[ -n "${creation}" && "${head}" != "${creation}" ]] || return 1
+    git -C "${MAIN}" merge-base --is-ancestor "${creation}" "${head}"
+}
+
 prune_tree() {
-    local tree="$1" branch
-    if ! merged_head "$(git -C "${tree}" rev-parse HEAD)"; then
+    local tree="$1" branch head
+    head="$(git -C "${tree}" rev-parse HEAD)"
+    if ! has_worktree_commits "${tree}" "${head}"; then
+        log_info "kept ${tree}: no commits since worktree creation or missing creation evidence"
+        return 0
+    fi
+    if ! merged_head "${head}"; then
         if [[ -z "$(git -C "${MAIN}" for-each-ref --contains="$(git -C "${tree}" rev-parse HEAD)" --format='%(refname)' refs/remotes/origin)" ]]; then
             log_info "kept ${tree}: unpushed commits; not merged"
         else
