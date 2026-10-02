@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude PreToolUse Bash hook. Allow = 0; refuse = 2, diagnostics on stderr.
-# Registration is deferred until #364 merges; see doc/workflow.md.
+# Registered for Claude and Codex Bash; merges only after #364 (doc/workflow.md).
 # This is a cooperating-agent guard, not an operating-system sandbox.
 # Main-loop shell wrappers are recursively inspected without executing them
 # (literal paths, depth < 16); missing/opaque wrappers fail closed. eval,

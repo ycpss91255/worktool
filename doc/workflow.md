@@ -297,14 +297,7 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 
 `.agents/hook/enforce_codex_via_workflow.sh` 是 Claude `PreToolUse` 的 Bash 守門：主迴圈直接執行 `codex exec`（含 `e` 縮寫）實作時，exit 2 並提示改走 `pr-loop`／`milestone-fanout`。它只檢查文字，不執行被檢查的腳本；診斷走 stderr，放行時不輸出。
 
-**啟用依賴 #364 合併。** 本 PR 完成時 #364 尚未合併，所以 `.claude/settings.json` **尚未註冊**本 hook，不會提早阻擋驗收分支修正。#364 合併後，在既有 `PreToolUse` 的 `matcher: "Bash"` hooks 陣列加入下列項目；`.claude/hook` 已是指向 `.agents/hook` 的相對 symlink，無須另建檔案：
-
-```json
-{
-  "type": "command",
-  "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_codex_via_workflow.sh"
-}
-```
+**啟用依賴 #364 合併。** 本 hook 已註冊於 `.claude/settings.json` 與 `.codex/hooks.json` 的 `PreToolUse` `Bash` 守門（`test/unit/agent_config_spec.bats` 要求 `.agents/hook/` 下每支 hook 都有註冊、Claude 與 Codex 的 Bash hook 一致）。Claude 以主 checkout 的設定執行 hook，因此註冊只在本 PR 合併進 `main` 後生效；以合併順序延後啟用：本 PR 必須在 #364（PR #369）合併之後才合併，避免提早阻擋驗收分支修正。在 Codex 工作階段中沒有 Claude 子 agent 身分，等同主迴圈：Codex 不得再巢狀啟動 Codex 實作，且只「提到」Codex 的指令也會被封閉規則擋下，須改用 `-F`／檔案傳遞文字。
 
 Workflow 子 agent 的判斷必須同時符合：
 

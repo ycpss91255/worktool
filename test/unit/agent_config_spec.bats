@@ -106,6 +106,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_tdd_commit.sh" \
         "PreToolUse|Bash|${_p}/enforce_issue_milestone.sh" \
         "PreToolUse|Bash|${_p}/enforce_no_attribution.sh" \
+        "PreToolUse|Bash|${_p}/enforce_codex_via_workflow.sh" \
         "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
         "PreToolUse|Edit|Write|MultiEdit|NotebookEdit|${_p}/enforce_main_checkout_readonly.sh" \
         "PreToolUse|Workflow|Agent|${_p}/enforce_cpu_capacity.sh" \
