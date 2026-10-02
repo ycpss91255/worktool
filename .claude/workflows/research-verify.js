@@ -197,7 +197,8 @@ const CODEX_PROMPT = `你是 codex。stdin 是 agy(gemini)針對下列問題的�
 問題:${QUESTION}
 ${CONTEXT ? `背景:${CONTEXT}\n` : ''}${SRC_NOTE}`
 
-const CODEX_STEP = () => `Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
+const CODEX_STEP = () => `WORKTOOL_WORKFLOW_AGENT: research-verify
+Run ONE codex verification of agy's research (issue #${A.issue}, ${REPO}). Never write a "[codex]" line yourself and never edit codex's words; you only run codex and report whether it produced output.
 1. Write the text between the markers, byte for byte, ${TO('codex-prompt.txt')}.
 ${fence(CODEX_PROMPT)}
 2. Run in the foreground: \`${CD} && rm -f codex-last.md && cat agy.md | timeout 600 codex exec --skip-git-repo-check -o codex-last.md "$(cat codex-prompt.txt)" > codex-raw.txt 2>&1\`; then extract codex's final answer only (never the transcript) and rewrite local working-directory paths repo-relative with exactly: \`${CD} && rm -f body.md && { ${CODEX_ANSWER('codex-last.md', 'codex-raw.txt')}; } | ${RELPATHS} > codex.md && [ -s codex.md ]\`.

@@ -23,3 +23,24 @@ _check() {
         assert_equal "${status}" 2
     done
 }
+
+@test "only workflow-marked subagent transcripts allow implementation" {
+    mkdir -p "${BATS_TEST_TMPDIR}/subagents"
+    TRANSCRIPT="${BATS_TEST_TMPDIR}/subagents/agent-abc.jsonl"
+    for workflow in pr-loop discuss research-verify; do
+        jq -n -c --arg p "WORKTOOL_WORKFLOW_AGENT: ${workflow}" \
+            '{type:"user",message:{role:"user",content:$p}}' > "${TRANSCRIPT}"
+        _check 'bash run.sh'
+        assert_success
+        _check 'codex exec "implement"'
+        assert_success
+    done
+    printf '%s\n' '{"type":"user","message":{"role":"user","content":"ordinary Agent"}}' > "${TRANSCRIPT}"
+    _check 'codex exec "implement"'
+    assert_equal "${status}" 2
+    jq -n -c '{type:"user",message:{role:"user",content:"WORKTOOL_WORKFLOW_AGENT: pr-loop"}}' > "${TRANSCRIPT}"
+    TRANSCRIPT="${BATS_TEST_TMPDIR}/main.jsonl"
+    cp "${BATS_TEST_TMPDIR}/subagents/agent-abc.jsonl" "${TRANSCRIPT}"
+    _check 'codex exec "implement"'
+    assert_equal "${status}" 2
+}

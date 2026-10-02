@@ -34,7 +34,7 @@ const CODEX_WAIT_SECONDS = 540
 const FORMAT_REPAIR_LIMIT = 1
 const sq = s => `'${String(s).replace(/'/g, `'\\''`)}'`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with main by merging.`
-const COMMON_GUARDRAILS = `
+const COMMON_GUARDRAILS = `WORKTOOL_WORKFLOW_AGENT: discuss
 Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${REPO_DIR}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR.`
 const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. Never write a "[codex]" line yourself.`
 const SCRATCH_ONLY = `Read only: never change the checkout. Intermediate files go ONLY under ${JSON.stringify(SCRATCH)}. Do not publish comments; the Record phase owns publication.`
