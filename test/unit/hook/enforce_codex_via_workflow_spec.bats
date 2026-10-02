@@ -69,3 +69,12 @@ _check() {
         assert_equal "${status}" 2
     done
 }
+
+@test "sourced and parameterized wrapper launches cannot escape inspection" {
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
+    printf '%s\n' 'source run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
+    for cmd in 'source run.sh' '. run.sh' 'bash outer.sh' 'bash "$SCRIPT"' 'bash missing.sh' 'bash -e run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}

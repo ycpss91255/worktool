@@ -112,7 +112,11 @@ check_command() {
         path=""
         hook_is_interpreter "${tool}" && refuse 'Interpreter execution cannot be checked as a shell wrapper.'
         case "${tool##*/}" in
-            bash|sh|dash|zsh|ksh|fish) path="$(hook_word "${words[1]:-}")" ;;
+            bash|sh|dash|zsh|ksh|fish|source|.)
+                hook_word_has_expansion "${words[1]:-}" && refuse 'An expanded script path cannot be checked.'
+                path="$(hook_word "${words[1]:-}")"
+                [[ -n "${path}" ]] || refuse 'A shell script without a literal path cannot be checked.' ;;
+
             *) [[ "${tool}" == */* || "${tool}" == *.sh ]] && path="${tool}" ;;
         esac
         if [[ -n "${path}" ]]; then
