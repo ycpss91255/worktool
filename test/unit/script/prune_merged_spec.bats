@@ -95,3 +95,21 @@ prune() {
     assert_success
     [ ! -e "${TREE}" ]
 }
+
+@test "only ignored agent state is exempt from cleanliness checks" {
+    printf 'cache/\n' >> "${TREE}/.gitignore"
+    git -C "${TREE}" add .gitignore
+    git -C "${TREE}" commit -qm ignore
+    git -C "${TREE}" push -q origin HEAD:main
+    mkdir -p "${TREE}/cache" "${TREE}/.agents/state"
+    printf state > "${TREE}/.agents/state/runtime"
+    printf cache > "${TREE}/cache/data"
+    prune --apply
+    assert_success
+    assert_output --partial "uncommitted changes"
+    [ -d "${TREE}" ]
+    rm -r "${TREE}/cache"
+    prune --apply
+    assert_success
+    [ ! -e "${TREE}" ]
+}

@@ -37,6 +37,17 @@ merged_head() {
     return 1
 }
 
+tree_clean() {
+    local status line
+    status="$(git -C "$1" status --porcelain --ignored --untracked-files=all)" || return 1
+    while IFS= read -r line; do
+        case "${line}" in
+            ''|'!! .agents/state/'*) ;;
+            *) return 1 ;;
+        esac
+    done <<< "${status}"
+}
+
 REMOTE_REFS="$(git for-each-ref --format='%(refname)' refs/remotes/origin)"
 prune_tree() {
     local tree="$1" branch
@@ -48,7 +59,7 @@ prune_tree() {
         fi
         return 0
     fi
-    if [[ -n "$(git -C "${tree}" status --porcelain --untracked-files=all)" ]]; then
+    if ! tree_clean "${tree}"; then
         log_info "kept ${tree}: uncommitted changes"
         return 0
     fi
