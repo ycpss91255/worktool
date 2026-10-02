@@ -521,8 +521,10 @@ _document_change() {
 }
 
 @test "test.sh --guards rejects an unlisted repository-scanning spec" {
-    run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${REPO_ROOT}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${REPO_ROOT}"
     assert_success
+    [[ -s "${FAKE_DOCKER_CALLS}" ]] || fail 'did not dispatch listed guards'
+    : >"${FAKE_DOCKER_CALLS}"
 
     printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/config_owner_spec.bats"
     printf '@test "scan" { git ls-files; }\n' >"${TEMP_REPO}/test/unit/unlisted_spec.bats"
@@ -531,7 +533,7 @@ _document_change() {
 
     assert_failure
     assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
-    [[ ! -f "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
 }
 
 @test "guard coverage catches source-directory scans in all tiers including untracked specs" {
@@ -542,9 +544,10 @@ _document_change() {
         mkdir -p "${TEMP_REPO}/test/integration"
         printf '@test "scan" {\n%s\n}\n' "${_scanner}" \
             >"${TEMP_REPO}/test/integration/unlisted_spec.bats"
-        run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${TEMP_REPO}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
         assert_failure
         assert_output --partial 'repository-scanning spec missing from guard list: test/integration/unlisted_spec.bats'
+        [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
         _index=$((_index + 1))
     done
     assert_equal "${_index}" 3
@@ -555,8 +558,9 @@ _document_change() {
     awk 'BEGIN { for (i = 0; i < 50000; i++) print "# padding" }' \
         >>"${TEMP_REPO}/test/unit/unlisted_spec.bats"
 
-    run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${TEMP_REPO}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --guards' _ "${TEMP_REPO}"
 
     assert_failure
     assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
+    [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
 }
