@@ -838,6 +838,30 @@ _add_changed_spec() {
     unset -n _tier_specs
 }
 
+# Single source for repository-wide guards; optional files follow the checkout.
+_guard_specs() {
+    local _spec
+    for _spec in config_owner config_mutation config_validate config_graph \
+        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
+            || printf 'test/unit/%s_spec.bats\n' "${_spec}"
+    done
+    for _spec in "${REPO_ROOT}"/test/unit/adr/*_spec.bats; do
+        [[ ! -f "${_spec}" ]] || printf '%s\n' "${_spec#"${REPO_ROOT}"/}"
+    done
+}
+
+_add_changed_guards() {
+    case "$1" in
+        script/*|lib/*|box/*|justfile*|doc/adr/*)
+            local _spec
+            while IFS= read -r _spec; do
+                _add_changed_spec "${_spec}"
+            done < <(_guard_specs)
+            ;;
+    esac
+}
+
 _is_test_infrastructure() {
     case "$1" in
         script/test/*|dockerfile/Dockerfile.*|Dockerfile|Dockerfile.*|justfile*|test/helper/*) return 0 ;;
@@ -884,6 +908,7 @@ _run_changed() {
         _full_fallback=1
     fi
     while IFS= read -r _path; do
+        _add_changed_guards "${_path}"
         if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
             _info "此改動由 CI 的 integration 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue

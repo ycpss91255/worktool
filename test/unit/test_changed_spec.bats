@@ -485,3 +485,22 @@ _document_change() {
         assert_output --partial "測試基礎設施變更"
     done
 }
+
+@test "test.sh --changed adds all guards when only bench changes" {
+    mkdir -p "${TEMP_REPO}/script/box"
+    printf '# bench\n' >"${TEMP_REPO}/script/box/bench.sh"
+    local _spec
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/${_spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/box/bench.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+
+    assert_success
+    for _spec in config_owner config_mutation config_validate config_graph; do
+        [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
+            || fail "missing guard: ${_spec}"
+    done
+}
