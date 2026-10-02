@@ -613,7 +613,6 @@ _52_remove_owned_box() {
     fi
     if _drop_owned_box; then
         printf 'dev-gone=1\n'
-        _host_state_cleanup "${CFGBK_B}" || return 1
         _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         rm -f -- "${CFGBK_B}/created-box" \
             || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
@@ -656,7 +655,11 @@ _52_step3_restore() {
 
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
-    _52_remove_owned_box || _rc=1
+    if _52_remove_owned_box; then
+        _host_state_cleanup "${CFGBK_B}" || _rc=1
+    else
+        _rc=1
+    fi
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"

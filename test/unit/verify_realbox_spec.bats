@@ -1073,3 +1073,14 @@ STUB
     assert_line "box-state before-cleanup: home=1 tmux=1"
     assert_line "box-state after-cleanup: home=0 tmux=0"
 }
+
+@test "5.2.3: host state is checked even when this run never created a box" {
+    _realbox_quiet 5.2.1
+    mkdir -p "${HOME}/dev-box/.cache/tmux"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_output --partial 'dev-untouched=1'
+    assert_line 'host-state before-cleanup: new=3'
+    assert_line 'host-state after-cleanup: new=0'
+    [ ! -e "${HOME}/dev-box" ]
+}
