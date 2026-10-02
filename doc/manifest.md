@@ -26,7 +26,7 @@ worktool 的盒子清單**就是一個原生的 distrobox-assemble 檔案**(INI 
 [dev]
 image=ubuntu:26.04
 additional_packages="ripgrep fzf tmux fish"
-additional_flags="--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
+additional_flags="--env TMUX_TMPDIR"
 init_hooks=setpriv --reuid="${container_user_uid}" --regid="${container_user_gid}" --clear-groups mkdir -p -m 0700 "${TMUX_TMPDIR}" && chown "${container_user_uid}:${container_user_gid}" "${TMUX_TMPDIR}" && chmod 0700 "${TMUX_TMPDIR}"
 init_hooks=echo <box/tmux-env.sh 的 base64> | base64 -d >/etc/profile.d/worktool-tmux.sh && chmod 0644 /etc/profile.d/worktool-tmux.sh
 init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | base64 -d >/etc/fish/conf.d/worktool-tmux.fish && chmod 0644 /etc/fish/conf.d/worktool-tmux.fish
@@ -41,8 +41,12 @@ plugin)留在 M5。
 `additional_flags` 與 `init_hooks` 是 **M3(issue #179)** 加的**盒內 tmux 隔離**:
 distrobox 把 host 的 `/tmp` 掛進盒內,tmux 的預設 socket(`/tmp/tmux-<uid>/default`)
 因此盒內外共用,盒內打 `tmux` 會連到 host 的 server。`additional_flags` 以
-`--env` 設**容器環境變數** `TMUX_TMPDIR`(`${HOME}` 在 distrobox 建立容器時展開,目錄在 #196 的
-盒子 HOME `~/dev-box` 底下),盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
+`--env TMUX_TMPDIR` 設**容器環境變數**,由引擎繼承 assemble 傳入的值。
+assemble 依實際盒子 HOME 決定 `TMUX_TMPDIR=<盒子 HOME>/.cache/tmux`(#361),
+與 `DBX_CONTAINER_CUSTOM_HOME` 使用同一個解析結果;自訂 `--home` 或已記錄的 HOME
+都跟著變。路徑只在 assemble 決定,清單不另寫盒名或 HOME,也不產生第二份清單
+(ADR 0005)。請經 `just box assemble` 建盒,讓這兩個環境值一起傳入。
+盒內任何方式啟動的 tmux 都繼承;`init_hooks` 在每次
 盒子啟動時以盒內使用者身分(`setpriv` 切到 distrobox-init 收到的 `--user` /
 `--group`,即 `container_user_uid` / `container_user_gid`)建立該目錄、mode 0700
 —— tmux 不會自己建它,目錄不存在時會**無聲**退回 `/tmp`;`mkdir -p -m 0700` 只管它**新建**的目錄,所以之後再明確 `chown` 成盒內使用者、`chmod 0700`,已存在但權限或擁有者不對的目錄在下次盒子啟動時會被改正(codex 第 1–4 輪的非阻擋項)。從 host 的 tmux pane
@@ -447,7 +451,9 @@ issue #129),不再延後到 M5。
     取自清單)、`--home` / `--home=` 為 `user`、結尾 `/` 去掉、設定檔的 user 紀錄
     優先於預設而 default 紀錄會重新推導;缺參數 / 相對路徑 / 空字串 / `/` / 含換行
     皆 exit 2 且什麼都不跑;設定檔裡壞掉的 `home` 與清單自帶 `home=` 皆 exit 1;
-    dry-run 的 STDOUT 指令行不變、不寫設定檔。
+    dry-run 的 STDOUT 指令行不變、不寫設定檔。#361 再驗證自訂 HOME(含空白)
+    的 create 環境帶 `TMUX_TMPDIR=<盒子 HOME>/.cache/tmux`,覆蓋 host 傳入的值;
+    清單只宣告 `--env TMUX_TMPDIR`。
   - **不證明什麼**:distrobox 是否真的會被呼叫、以及它如何解讀清單 —— 那是整合層與
     系統層的事;bench 的數字是否真實 —— 那是 real-engine 組的事。
 - 整合(`test/integration/assemble_spec.bats`):
@@ -612,7 +618,8 @@ issue #129),不再延後到 M5。
     tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
     tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
     打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
-    (`TMUX_TMPDIR` 傳到盒內、pid 與 host server 不同、mount namespace 等於 dev
+    (`TMUX_TMPDIR` 傳到盒內,值與真實 socket 均在自訂 `BOX_HOME` 底下(#361),
+    host HOME 下的預設 `dev-box/.cache/tmux` 目錄不存在;pid 與 host server 不同、mount namespace 等於 dev
     容器、該行程的根目錄裡有引擎的容器檔、socket 在 `TMUX_TMPDIR` 底下、兩邊的
     `tmux ls` 互不列出對方的 session);第三案(codex 第 1 輪,PR #232)在 host
     tmux server 的**新視窗(真的 host pane)**裡執行 `distrobox enter dev`,先斷言盒內

@@ -316,6 +316,34 @@ _write_config() {
     assert [ ! -e "${CONFIG}" ]
 }
 
+@test "#361: a custom --home supplies the container TMUX_TMPDIR under that HOME" {
+    local _box_home="${TMP}/custom box-home"
+    # No existing box: only the distrobox create environment is observed.
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    ps) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+    cat >"${MOCKBIN}/distrobox" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Read the native manifest's engine flags as distrobox-assemble does.
+source <(sed -n '/^additional_flags=/p' "$4")
+printf 'flags=%s\nTMUX_TMPDIR=%s\nHOME=%s\n' \
+    "${additional_flags}" "${TMUX_TMPDIR-}" "${DBX_CONTAINER_CUSTOM_HOME}"
+EOF
+    chmod +x "${MOCKBIN}/docker" "${MOCKBIN}/distrobox"
+    run env DBX_CONTAINER_MANAGER=docker TMUX_TMPDIR=/tmp/host-tmux \
+        "${ASSEMBLE}" --home "${_box_home}"
+    assert_success
+    assert_line "flags=--env TMUX_TMPDIR"
+    assert_line "TMUX_TMPDIR=${_box_home}/.cache/tmux"
+    assert_line "HOME=${_box_home}"
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "assemble.sh runs under set -euo pipefail (one set line, errexit included)" {

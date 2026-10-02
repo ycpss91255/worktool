@@ -208,16 +208,16 @@ _trim() {
     _load_argv "${_create}"
 
     # A container env (before the image, so it is docker's, not
-    # distrobox-init's), under the box's own directory - ${HOME} expanded
-    # at create time, never the shared /tmp.
+    # distrobox-init's), forwarded from assemble's environment. Its value
+    # under the actual box HOME is checked by real_engine_spec.bats.
     local _ep_i _env_i _found=""
     _ep_i="$(_index_of --entrypoint)"
     for _env_i in "${!ARGV[@]}"; do
         [[ "${_env_i}" -lt "${_ep_i}" && "${ARGV[${_env_i}]}" == "--env" ]] || continue
-        [[ "${ARGV[$((_env_i + 1))]}" == TMUX_TMPDIR=* ]] || continue
+        [[ "${ARGV[$((_env_i + 1))]}" == TMUX_TMPDIR ]] || continue
         _found="${ARGV[$((_env_i + 1))]}"
     done
-    assert_equal "${_found}" "TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux"
+    assert_equal "${_found}" "TMUX_TMPDIR"
 
     # The init hook goes to distrobox-init (after the image) as the words
     # after its `--`, which distrobox-init evals as the box's root on every
