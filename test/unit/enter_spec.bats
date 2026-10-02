@@ -41,7 +41,7 @@ setup() {
     ENTER="${REPO_ROOT}/script/box/enter.sh"
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
-    unset XDG_CACHE_HOME WORKTOOL_INIT_TIMEOUT WORKTOOL_INIT_INTERVAL
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME WORKTOOL_INIT_TIMEOUT WORKTOOL_INIT_INTERVAL
     mkdir -p "${HOME}"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     enter_fake_install "${FAKE_BIN}"
@@ -79,6 +79,30 @@ _long_init_script() {
 # Run the wrapper with a 1 s progress interval.
 _enter() {
     WORKTOOL_INIT_INTERVAL=1 run "${ENTER}" "$@"
+}
+
+# Exercise exactly the shell command Ghostty receives from the public setup.
+_managed_enter() {
+    run just box setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    local _cmd
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    WORKTOOL_INIT_INTERVAL=1 run /bin/sh -c "${_cmd}"
+}
+
+@test "Ghostty managed command keeps reporting cold-init stages and elapsed time before entering without tmux" {
+    _long_init_script
+    _managed_enter
+    assert_success
+    assert_output --partial "full init log: ${INIT_LOG}"
+    local _n
+    _n="$(grep -c 'first launch: Installing basic packages.*elapsed' <<<"${output}")"
+    assert [ "${_n}" -ge 3 ]
+    assert_line --partial "elapsed - Unpacking pkg-"
+    assert_line --partial "initialisation complete after"
+    assert_line "FAKE-DISTROBOX enter dev"
+    run cat "${FAKE_DISTROBOX_CALLS}"
+    assert_output "enter dev"
 }
 
 @test "this spec is a required unit spec of test.sh" {
@@ -403,4 +427,101 @@ _enter() {
     run bash -c 'source "$1"; _fmt_duration 9; _fmt_duration 60; _fmt_duration 212' _ "${ENTER}"
     assert_success
     assert_output "$(printf '9s\n1m00s\n3m32s')"
+}
+
+@test "Ghostty managed command reports init failure with cause log and recovery instead of entering" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '1|Error: package installation failed'
+    _managed_enter
+    assert_failure 1
+    assert_output --partial "failed: distrobox-init reported: Error: package installation failed"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Error: package installation failed"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    run enter_fake_logs_alive
+    assert_failure
+}
+
+# A PTY models the desktop terminal; release Enter only after diagnostics
+# are visible and record whether the setup-written command is still alive.
+_managed_enter_tty() {
+    run just box setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    local _cmd _transcript="${BATS_TEST_TMPDIR}/terminal.output"
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    export MANAGED_COMMAND="${_cmd}" TERMINAL_RESULT="${BATS_TEST_TMPDIR}/terminal.result"
+    export TERMINAL_HELD="${BATS_TEST_TMPDIR}/terminal.held"
+    WORKTOOL_INIT_INTERVAL=1 run bash -c '
+        {
+            for ((i=0; i<100; i++)); do
+                if grep -q "then open a new terminal" "$1"; then
+                    sleep 1
+                    if [[ ! -e "${TERMINAL_RESULT}" ]]; then
+                        printf held >"${TERMINAL_HELD}"
+                    fi
+                    break
+                fi
+                sleep 0.1
+            done
+            printf "\n"
+        } | timeout 15 script -q -c '\''/bin/sh -c "$MANAGED_COMMAND"; rc=$?; printf "%s" "$rc" >"$TERMINAL_RESULT"'\'' /dev/null >"$1" 2>&1
+        cat "$1"
+    ' _ "${_transcript}"
+    assert_success
+    assert_output --partial "init log: ${INIT_LOG}"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    assert_output --partial "Press Enter to close this terminal"
+    assert [ -f "${TERMINAL_HELD}" ]
+    assert_equal "$(cat "${TERMINAL_RESULT}")" 1
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    if enter_fake_logs_alive; then
+        fail "the log follower survived the terminal failure"
+    fi
+}
+
+@test "Ghostty setup-written command keeps init failure diagnostics visible until Enter on a terminal" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '1|Error: package installation failed'
+    _managed_enter_tty
+    assert_output --partial "failed: distrobox-init reported: Error: package installation failed"
+}
+
+@test "Ghostty setup-written command keeps timeout diagnostics visible until Enter on a terminal" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    WORKTOOL_INIT_TIMEOUT=3 _managed_enter_tty
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+}
+
+@test "Ghostty managed command times out with ongoing progress log and recovery" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    WORKTOOL_INIT_TIMEOUT=3 _managed_enter
+    assert_failure 1
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Unpacking stuck-pkg"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    local _n
+    _n="$(grep -c 'first launch: Installing basic packages.*elapsed' <<<"${output}")"
+    assert [ "${_n}" -ge 2 ]
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    run enter_fake_logs_alive
+    assert_failure
+}
+
+@test "Ghostty managed command safely quotes repo and distrobox paths and enters a warm named box with one inspect" {
+    local _repo="${BATS_TEST_TMPDIR}/repo ' \" \$(touch injected)" _cmd
+    local _bin="${BATS_TEST_TMPDIR}/bin ' \" \$(touch injected)"
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${REPO_ROOT}/script/box/"{setup.sh,enter.sh,justfile.box} "${_repo}/script/box/"
+    enter_fake_install "${_bin}"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty --box work --distrobox "${_bin}/distrobox"
+    assert_success
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    run env FAKE_STARTED_AT=2026-10-02T00:00:00Z /bin/sh -c "${_cmd}"
+    assert_success
+    assert_output "FAKE-DISTROBOX enter work"
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_output "docker inspect --type container -f {{.State.StartedAt}} work"
+    assert [ ! -e "${HOME}/.cache/worktool/work-init.log" ]
+    assert [ ! -e injected ]
 }
