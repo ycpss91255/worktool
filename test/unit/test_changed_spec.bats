@@ -381,3 +381,7 @@ _document_change() {
         test/unit/adr/0004_spec.bats test/unit/adr/0007_spec.bats \
         test/unit/adr/0009_spec.bats
 }
+
+@test "test.sh --changed maps diagrams to the diagram guard" {
+    _document_change doc/diagram/flow.drawio.svg test/unit/diagram_spec.bats
+}
