@@ -124,3 +124,18 @@ _check() {
         assert_equal "${status}" 2
     done
 }
+
+@test "launcher chains inspect quoted script paths and bash command strings" {
+    local cmd
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/quoted script.sh"
+    for cmd in "setsid nohup bash 'quoted script.sh'" \
+        "nice -n 5 bash -c 'bash \"quoted script.sh\"'" \
+        "setsid nohup bash -c 'bash \"quoted script.sh\"'" \
+        "stdbuf -oL bash 'quoted script.sh'"; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+    printf '%s\n' 'echo ready' > "${BATS_TEST_TMPDIR}/quoted script.sh"
+    _check "setsid nohup bash -c 'bash \"quoted script.sh\"'"
+    assert_success
+}

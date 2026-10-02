@@ -93,15 +93,20 @@ inspect_wrapper() {
 }
 
 inspect_launch() {
-    local cwd="$1" depth="$2" mentions="$3" tool path index
+    local cwd="$1" depth="$2" mentions="$3" tool path index sub
     shift 3
     local -a words=("$@")
     tool="$(hook_word "${words[0]:-}")"
     case "${tool##*/}" in
         setsid|nice|stdbuf|busybox|chroot)
+            (( depth < 16 )) || return 0
             index="$(_hook_after_opts 0 nioe "${words[@]}")"
             [[ "${tool##*/}" == chroot ]] && index=$((index + 1))
-            check_command "${words[*]:index}" "${cwd}" "$((depth + 1))"
+            # Words are already encoded: preserve quotes and expansion markers.
+            while IFS= read -r sub; do
+                read -r -a words <<<"${sub}"
+                inspect_launch "${cwd}" "$((depth + 1))" "${mentions}" "${words[@]}"
+            done < <(_hook_subcommands_enc "${words[*]:index}")
             return 0 ;;
         bash|sh|dash|zsh|ksh|fish|source|.)
             index="$(_hook_after_opts 0 oO "${words[@]}")"
