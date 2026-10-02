@@ -35,6 +35,33 @@ workflow_agent() {
     esac
 }
 
+# Only the explicit read-only sandbox is a main-loop exception. Unknown
+# options and configuration overrides cannot silently grant write access.
+readonly_launch() {
+    local word value sandbox='' i positional=0
+    local -a args=()
+    for word in "$@"; do args+=("$(hook_word "${word}")"); done
+    [[ "${args[1]:-}" == exec || "${args[1]:-}" == e ]] || return 1
+    for ((i = 2; i < ${#args[@]}; i++)); do
+        word="${args[i]}"
+        case "${word}" in
+            --sandbox|-s)
+                i=$((i + 1)); value="${args[i]:-}"
+                [[ "${value}" == read-only ]] || return 1
+                sandbox=1 ;;
+            --sandbox=read-only|-sread-only) sandbox=1 ;;
+            --skip-git-repo-check|--json|--ephemeral) ;;
+            -C|--cd|-o|--output-last-message|-m|--model)
+                i=$((i + 1)); [[ -n "${args[i]:-}" ]] || return 1 ;;
+            --) break ;;
+            -) positional=$((positional + 1)) ;;
+            -*) return 1 ;;
+            *) positional=$((positional + 1)) ;;
+        esac
+    done
+    [[ -n "${sandbox}" && "${positional}" -le 1 ]]
+}
+
 check_command() {
     local sub lead tool path
     local cwd="$2" depth="${3:-0}"
@@ -51,7 +78,8 @@ check_command() {
             continue
         fi
         if [[ "${tool##*/}" == codex ]]; then
-            refuse 'Main-loop codex execution must go through a Workflow.'
+            readonly_launch "${words[@]}" || refuse 'Main-loop codex execution must go through a Workflow.'
+            continue
         fi
         path=""
         case "${tool##*/}" in
