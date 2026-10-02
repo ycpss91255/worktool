@@ -5,7 +5,7 @@
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
 #   - zero special cases: the root justfile is action `mod?` lines
-#     (test, box, agent) plus a `default` that lists them - no other recipe;
+#     (test, box, agent, worktree) plus a `default` that lists them - no other recipe;
 #   - action-named namespaces: script/test/justfile.test and
 #     script/box/justfile.box, each with its own `default`, `help` (alias
 #     `h`) and `set working-directory := '../..'`, so every recipe runs at
@@ -54,6 +54,8 @@ _make_repo_copy() {
     mkdir -p "${COPY}"
     cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
     cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${COPY}/"
+    mkdir -p "${COPY}/.agents/script"
+    cp -R "${REPO_ROOT}/.agents/script/worktree" "${COPY}/.agents/script/"
 }
 
 # A `docker` that must never be reached: records the call and fails loudly.
@@ -176,10 +178,10 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the three namespaces and default, nothing else" {
+@test "just --list shows the four namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default test "
+    assert_equal "$(_listed_names)" "agent box default test worktree "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
 }
