@@ -280,7 +280,7 @@ _with_entry() {
 }
 
 @test "_cleanup removes a matching box when docker ps writes beyond pipe capacity after the match" {
-    FAKE_DEV=1 FAKE_MODE=stream-ps _with_entry _cleanup none 3
+    FAKE_DEV=1 FAKE_MODE=stream-ps _with_entry _cleanup live 3
     assert_failure 3
     assert_output --partial "cleanup: box 'dev' still present - removing"
     run cat "${FAKE_LOG}"
