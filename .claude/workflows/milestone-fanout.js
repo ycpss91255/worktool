@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-fanout',
   description: 'Run independent issues through pr-loop concurrently and report results without merging.',
-  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,gates?}]}.',
+  whenToUse: 'Start of a milestone wave when several sub-issues are independent. Pass args {repo, repoDir, parent, base?, mode?, implementer?, codex?, maxRounds?, concurrency?, items:[{issue,branch,name,task,gates?}]}.',
   phases: [{ title: 'Fan-out', detail: 'pr-loop items run in batches bounded by concurrency; each result is logged when its child workflow finishes' }],
 }
 
@@ -10,6 +10,7 @@ export const meta = {
 //   Workflow({ scriptPath: "<repoDir>/.claude/workflows/milestone-fanout.js", args: {
 //     repo: "ycpss91255/worktool",
 //     parent: "#5",
+//     base: "main",                  // optional: target branch for every child PR
 //     codex: "on" | "off",
 //     maxRounds: 3,
 //     concurrency: 4,                // optional positive integer; limits implementation work
@@ -48,7 +49,7 @@ const runItem = async (item) => {
     let result
     try {
       result = await workflow({ scriptPath: SCRIPT }, {
-        repo: A.repo, repoDir: REPO_DIR, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
+        repo: A.repo, repoDir: REPO_DIR, base: A.base === undefined ? 'main' : A.base, parent: A.parent || '', codex: A.codex === undefined ? 'on' : A.codex,
         mode: A.mode === undefined ? 'full' : A.mode, implementer: IMPLEMENTER, maxRounds: A.maxRounds === undefined ? 3 : A.maxRounds,
         issue: item.issue, branch: item.branch, name: item.name, task: item.task, gates: item.gates,
       })

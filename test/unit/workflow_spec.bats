@@ -2481,3 +2481,21 @@ _scratch_assert_isolated() {
         done
     done
 }
+
+@test "milestone-fanout: forwards its selected base to every child, defaulting to main (#364)" {
+    local base mode extra json
+    for base in main m3/5-acceptance; do
+        for mode in full light; do
+            extra="$(jq -cn --arg b "${base}" --arg m "${mode}" \
+                '{mode:$m} + (if $b == "main" then {} else {base:$b} end)')"
+            run _fanout_batches "${extra}"
+            assert_success
+            json="${output}"
+            run jq -e --arg b "${base}" '
+                .error == null and (.result | length == 23) and
+                ([.children[].args.base == $b] | all)
+            ' <<<"${json}"
+            assert_success
+        done
+    done
+}
