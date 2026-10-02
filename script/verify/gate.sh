@@ -160,7 +160,7 @@ SYSTEM_REAL_CASES=(
 # published without a bound and stay shape-only.
 INTEGRATION_CRITERIA=()
 SYSTEM_REAL_CRITERIA=(
-    '^# chain: inbox-ok fish=[0-9]+(\.[0-9]+)+ ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=[^[:space:]]+$'
+    '^# chain: inbox-ok fish=[0-9]+\.[0-9]+[^ ]* ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
     '^# chain-in-box: marker mntns=mnt:\[[0-9]+\] == dev container; host=[^[:space:]]+ == docker inspect dev hostname$'
     '^# hang-ready: hang-ready fish=[0-9]+(\.[0-9]+)+ host=[^[:space:]]+$'
     '^# hang: in-box command started, then timed out after [0-9]+s \(budget [0-9]+s, status 124\)$'
@@ -170,11 +170,11 @@ SYSTEM_REAL_CRITERIA=(
     '^# single-instance: STARTED_AT_RETURN=1$'
     '^# single-instance: FORWARDED_STARTED=yes$'
     '^# single-instance: FORWARDED_AFTER_RETURN=yes$'
-    '^# single-instance: FORWARDED_DELAY_MS=[0-9]+$'
+    '^# single-instance: FORWARDED_DELAY_MS=[1-9][0-9]*$'
     '^# single-instance: RUNNING_COMMANDS=2$'
     '^# single-instance: PRIMARY_WRAPPER_ALIVE=yes$'
     '^# single-instance: COMMAND_FINISHED=no$'
-    '^# chain-desktop-path: inbox-ok fish=[0-9]+(\.[0-9]+)+ ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=[^[:space:]]+$'
+    '^# chain-desktop-path: inbox-ok fish=[0-9]+\.[0-9]+[^ ]* ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
 )
 
 # Lines whose ORDER the document turns into a judgement. The hang case only

@@ -858,3 +858,27 @@ EOF
     PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
     assert_success
 }
+
+@test "single source: diagnostic criteria agree with real system assertions" {
+    local _src="${REPO_ROOT}/test/system/real_engine_spec.bats"
+    local _array="${BATS_TEST_TMPDIR}/criteria.sh" _line _pat _expected=() _actual=()
+    sed -n '/^SYSTEM_REAL_CRITERIA=(/,/^)/p' "${GATE_SH}" >"${_array}"
+    source "${_array}"
+    while IFS= read -r _line; do
+        [[ "${_line}" == *assert_line* ]] || continue
+        _pat="${_line#*\'}"
+        _pat="${_pat%\'*}"
+        if [[ "${_line}" == *--regexp* ]]; then
+            _expected+=("^# single-instance: ${_pat#^}")
+        else
+            _expected+=("^# single-instance: ${_pat}$")
+        fi
+    done < <(sed -n '/^@test "ghostty chain: with gtk-single-instance on,/,/^}/p' "${_src}")
+    for _pat in "${SYSTEM_REAL_CRITERIA[@]}"; do
+        [[ "${_pat}" == '^# single-instance: '* ]] && _actual+=("${_pat}")
+    done
+    assert_equal "${_actual[*]}" "${_expected[*]}"
+    _pat="$(sed -n "s/^CHAIN_OK='\(.*\)'$/\1/p" "${_src}")"
+    assert_equal "${SYSTEM_REAL_CRITERIA[0]}" "^# chain: ${_pat#^}"
+    assert_equal "${SYSTEM_REAL_CRITERIA[14]}" "^# chain-desktop-path: ${_pat#^}"
+}
