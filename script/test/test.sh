@@ -173,6 +173,7 @@ _required_specs() {
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_no_local_paths_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
+                unit/hook/enforce_milestone_ready_evidence_spec.bats \
                 unit/hook/enforce_main_checkout_readonly_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_issue_milestone_spec.bats \

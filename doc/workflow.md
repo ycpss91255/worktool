@@ -292,3 +292,27 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 作答的 `failed_reasons` 同樣回報修復後內容；若修復代理未回傳內容，則保留原始未通過條目。
 雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
 而沒有可列出的未通過理由，`failed_reasons` 為空陣列。
+
+## 交出 milestone 驗收 PR
+
+宣告「就緒」、「請驗收」或「待維護者驗收」之前，先確認驗收 PR 目前 head 的
+`verify-all` job 已完成且結論為 `success`，並在留言附上成功 job 的連結。
+一般產品 CI 的綠燈不能取代這個 job；head 更新後要等新 head 的結果。
+
+留言須以自己的 agent 標記開頭，包含 `## 目標對照` 段落與三欄表格：
+
+| 目標 | 測試或驗收項目 | 使用者入口 |
+|---|---|---|
+| milestone issue 的目標原文 | 對應 spec 或驗收項目 | 使用者實際命令或操作 |
+
+milestone issue 取自 PR 說明第一個 `Closes #N`（也接受 `Fixes`、`Resolves`）參照，
+因此驗收 PR 必須把 milestone issue 放在關閉參照的第一筆。
+目標來源支援 `目標:`／`目標：` 單行（以分號分隔）及 `## 目標` 的逐行清單。
+每個目標各一列，目標欄填原文（可略末尾句號），驗證項目與入口欄都不能空白或只填 `-`。
+驗證應從使用者入口出發；表格只能檢查證據是否齊備，不能取代實際驗證。
+
+Claude 與 Codex 的 `enforce_milestone_ready_evidence.sh` 在留言送出前檢查上述條件。
+缺 job、未成功、查詢失敗、無法辨識 milestone 或目標、缺表或漏列目標均拒絕。
+命令解析共用 approval hook 的封閉規則；shell 展開、間接執行與無法靜態辨識的
+API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 approval hook 的已知限制。
+人類核准與合併仍走既有 milestone gate。

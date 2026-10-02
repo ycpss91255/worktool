@@ -68,3 +68,26 @@ successful_job() {
     assert_failure 2
     assert_output --partial '量測進盒延遲並達標'
 }
+
+@test "both registered agent hooks allow complete successful readiness evidence" {
+    successful_job
+    cat >"${READY_FIXTURE}/bin/git" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'rev-parse --show-toplevel' ]] || exit 1
+printf '%s\n' "${REPO_ROOT}"
+STUB
+    chmod +x "${READY_FIXTURE}/bin/git"
+    local _config _command _agent
+    for _agent in claude codex; do
+        _config="${REPO_ROOT}/.${_agent}/hooks.json"
+        [[ "${_agent}" != claude ]] || _config="${REPO_ROOT}/.claude/settings.json"
+        _command="$(jq -r '.hooks.PreToolUse[] | .hooks[] | .command | select(contains("enforce_milestone_ready_evidence.sh"))' "${_config}")"
+        assert [ -n "${_command}" ]
+        sed -i "s/^\[.*\]/[${_agent}]/" "${READY_FIXTURE}/body"
+        run bash -c 'export CLAUDE_PROJECT_DIR="$1"; cd "$1"; printf "%s" "$2" | bash -c "$3"' _ \
+            "${REPO_ROOT}" "$(hook_json "gh pr comment 7 --repo ycpss91255/worktool --body-file ${READY_FIXTURE}/body")" "${_command}"
+        assert_success
+        assert_output ''
+    done
+}
