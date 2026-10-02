@@ -1018,6 +1018,34 @@ EOF
     [ ! -e "${HOME}/dev-box" ]
 }
 
+@test "5.2.3: retry after failed host cleanup removes owned leftovers before deleting the backup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    local _home="${HOME}/dev-box" _backup
+    _backup="$(_backup_dir)"
+    mkdir -p "${_home}"
+    printf 'owned state\n' >"${_home}/leftover"
+    SHIM_RM_ON="-f -- ${_home}/leftover" SHIM_RM_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line "host-state after-cleanup: new=2"
+    assert_output --partial 'fix the errors above and re-run 5.2.3'
+    refute_output --partial 'backup-removed=1'
+    [ -d "${_backup}" ]
+    [ -f "${_home}/leftover" ]
+    [ ! -s "${STATE}/boxes" ]
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    refute_output --partial 'dev-untouched=1'
+    refute_output --partial 'host-state untouched:'
+    assert_line "host-state before-cleanup: new=2"
+    assert_line "host-state after-cleanup: new=0"
+    assert_line 'backup-removed=1'
+    [ ! -e "${_home}" ]
+    [ ! -e "${_backup}" ]
+}
+
 @test "5.2.3: host already has dev-box and its user data survives cleanup" {
     local _home="${HOME}/dev-box"
     mkdir -p "${_home}/.cache/tmux/tmux-1000"

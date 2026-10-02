@@ -616,8 +616,6 @@ _52_remove_owned_box() {
     if _drop_owned_box; then
         printf 'dev-gone=1\n'
         _box_state_cleanup "${CFGBK_B}/box-home" || return 1
-        rm -f -- "${CFGBK_B}/created-box" \
-            || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
         return 0
     fi
     printf 'dev-gone=0\n'
@@ -634,7 +632,10 @@ _52_cleanup_state() {
         return $?
     fi
     _52_remove_owned_box || return 1
-    _host_state_cleanup "${CFGBK_B}"
+    _host_state_cleanup "${CFGBK_B}" || return 1
+    # Keep ownership across retries until all owned state is clean.
+    rm -f -- "${CFGBK_B}/created-box" \
+        || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 
 _52_step3_restore() {
