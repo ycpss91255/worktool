@@ -21,12 +21,30 @@ COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="$(dirname -- "${COMMON}")"
 WORKTREE_ROOT="$(dirname -- "${MAIN}")/worktree"
 git fetch origin >&2
+prune_tree() {
+    local tree="$1" branch
+    if [[ "${APPLY}" == 0 ]]; then
+        printf '%s\n' "${tree}"
+        return 0
+    fi
+    branch="$(git -C "${tree}" symbolic-ref -q --short HEAD)" || branch=''
+    git worktree remove -- "${tree}"
+    log_info "removed worktree: ${tree}"
+    if [[ -n "${branch}" ]]; then
+        if git branch -d -- "${branch}" >&2; then
+            log_info "removed branch: ${branch}"
+        else
+            log_warn "kept branch ${branch}: git branch -d refused"
+        fi
+    fi
+}
+
 while IFS= read -r -d '' FIELD; do
     case "${FIELD}" in
         worktree\ *)
             TREE="${FIELD#worktree }"
             if [[ "${TREE}" == "${WORKTREE_ROOT}/"* ]]; then
-                printf '%s\n' "${TREE}"
+                prune_tree "${TREE}"
             fi
             ;;
     esac

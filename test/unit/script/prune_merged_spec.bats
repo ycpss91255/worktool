@@ -30,3 +30,11 @@ prune() {
     [ -d "${TREE}" ]
     git -C "${MAIN}" show-ref --verify refs/heads/topic
 }
+
+@test "apply deletes merged clean worktree and its local branch" {
+    prune --apply
+    assert_success
+    [ ! -e "${TREE}" ]
+    run git -C "${MAIN}" show-ref --verify refs/heads/topic
+    assert_failure
+}
