@@ -499,20 +499,21 @@ _write_fixture_wording_moved() {
 
 # --- #179: no tmux between the terminal and the box's fish -------------------
 #
-# The terminal runs `distrobox enter dev` and lands in the box's fish; it
-# starts no tmux (the old `-- tmux new -A -s main` attached to a HOST tmux
-# server whenever one was running). The diagrams are the single source of
-# truth for that chain, so they must not draw ghostty -> tmux -> fish.
+# The terminal runs the enter.sh wrapper (#360), which runs `distrobox enter
+# dev` and lands in the box's fish; it starts no tmux (the old
+# `-- tmux new -A -s main` attached to a HOST tmux server whenever one was
+# running). The diagrams are the single source of truth for that chain, so
+# they must not draw ghostty -> tmux -> fish.
 # Scoped to the cells of the chain, like the #163 guard.
 
-@test "#179 architecture diagram: the terminal chain is ghostty -> distrobox enter dev -> fish, no tmux cell" {
+@test "#179 architecture diagram: the terminal chain is ghostty -> enter.sh wrapper -> fish, no tmux cell" {
     local _f
     _f="$(_svg architecture)"
     run _cell_label_lines "${_f}" t_enter
     assert_success
-    assert_output "distrobox enter dev"
+    assert_output "enter.sh wrapper"
     run _source_cell "${_f}" t_enter
-    assert_output --partial "value=&quot;distrobox enter dev&quot;"
+    assert_output --partial "value=&quot;enter.sh wrapper&quot;"
     # Both edges of the chain go through t_enter.
     run _source_cell "${_f}" e_t1
     assert_output --partial "source=&quot;t_ghostty&quot;"
@@ -529,10 +530,10 @@ _write_fixture_wording_moved() {
     refute_output --regexp "由 tmux 帶起"
 }
 
-@test "#179 flow diagram: the enter node names distrobox enter dev -> fish, no tmux" {
+@test "#179 flow diagram: the enter node names enter.sh -> distrobox enter dev -> fish, no tmux" {
     run _cell_label_lines "$(_svg flow)" f_enter
     assert_success
-    assert_line --index 2 "→ distrobox enter dev → fish"
+    assert_line --index 2 "→ enter.sh → distrobox enter dev → fish"
     refute_output --partial "tmux"
 }
 
