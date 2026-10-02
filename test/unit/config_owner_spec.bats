@@ -402,6 +402,10 @@ EOF
     _owner_runs enter
 }
 
+@test "owner: every bench row leaves the default state file untouched" {
+    _owner_runs bench
+}
+
 @test "owner: setup, assemble and status act on the named state file (effects)" {
     _trap poison
     printf '%s\n' '# mine' 'link=.aws' >"${STATE}"

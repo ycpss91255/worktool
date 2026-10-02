@@ -99,7 +99,8 @@ _owner_rows() {
         "lib/home.sh|owner_home|${_ow} assemble row" \
         "script/box/setup.sh|owner_setup_restore|${_ow} setup row" \
         "script/box/assemble.sh|owner_assemble_existing|${_ow} assemble row" \
-        "script/box/status.sh|owner_status|${_ow} status row"
+        "script/box/status.sh|owner_status|${_ow} status row" \
+        "script/box/bench.sh|owner_bench|${_ow} bench row"
 }
 
 # --- mutants: each prints the code to add, first line `#> <file>` (append)
@@ -549,6 +550,18 @@ _mut_owner_status() {
     cat <<'EOF'
 eval "$(declare -f _report_home | sed '1s/^_report_home /_mut_rh_real /')"
 _report_home() { local _p=worktool; cat -- "$(config_xdg_dir)/${_p}/config"; _mut_rh_real "$@"; }
+EOF
+}
+
+_mut_owner_bench() {
+    printf '#^ script/box/bench.sh\n'
+    cat <<'EOF'
+eval "$(declare -f _managed_command | sed '1s/^_managed_command /_mut_mc_real /')"
+_managed_command() {
+    local _p=worktool
+    cat -- "$(config_xdg_dir)/${_p}/config" >&2
+    _mut_mc_real "$@"
+}
 EOF
 }
 
