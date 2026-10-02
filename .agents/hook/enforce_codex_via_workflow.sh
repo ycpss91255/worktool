@@ -74,7 +74,9 @@ raw_codex_count() {
 
 closed_command() {
     local text="$1" re='(^|[^[:alnum:]_.-])(eval|xargs|setsid|busybox|nice|stdbuf|chroot)([^[:alnum:]_.-]|$)'
-    [[ "${text}" =~ ${re} ]] && refuse 'Indirect execution cannot be checked statically.'
+    if [[ "$(raw_codex_count "${text}")" -gt 0 && "${text}" =~ ${re} ]]; then
+        refuse 'Indirect execution cannot be checked statically.'
+    fi
     return 0
 }
 
@@ -108,7 +110,9 @@ check_command() {
             continue
         fi
         path=""
-        hook_is_interpreter "${tool}" && refuse 'Interpreter execution cannot be checked as a shell wrapper.'
+        if [[ "$(raw_codex_count "$1")" -gt 0 ]] && hook_is_interpreter "${tool}"; then
+            refuse 'Interpreter execution cannot be checked as a shell wrapper.'
+        fi
         case "${tool##*/}" in
             bash|sh|dash|zsh|ksh|fish|source|.)
                 hook_word_has_expansion "${words[1]:-}" && refuse 'An expanded script path cannot be checked.'

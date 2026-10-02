@@ -52,6 +52,28 @@ _check() {
     assert_success
 }
 
+@test "everyday command matrix without codex is allowed" {
+    local cmd failures=0
+    printf '%s\n' '#!/usr/bin/env bash' 'echo ready | awk '\''{print $1}'\''' > "${BATS_TEST_TMPDIR}/daily.sh"
+    for cmd in \
+        "echo a | awk '{print \$1}'" \
+        "jq -r '.name' data.json" \
+        "python3 -c 'print(1)'" \
+        "gh pr checks 383 --repo ycpss91255/worktool | awk '{print \$1}'" \
+        'setsid nohup bash daily.sh' \
+        'printf "%s\\n" a | xargs echo' \
+        "bash -c 'echo ready'" \
+        'just test unit test/unit/agent_config_spec.bats' \
+        'docker ps --format "{{.ID}}"'; do
+        _check "${cmd}"
+        if [[ "${status}" -ne 0 ]]; then
+            printf 'Unexpected refusal: %s\n%s\n' "${cmd}" "${output}" >&2
+            failures=$((failures + 1))
+        fi
+    done
+    assert_equal "${failures}" 0
+}
+
 @test "shell wrappers cannot hide implementation but preserve read-only queries" {
     printf '%s\n' '#!/usr/bin/env bash' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
     printf '%s\n' '#!/usr/bin/env bash' 'bash run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
