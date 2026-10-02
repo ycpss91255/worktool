@@ -1003,3 +1003,16 @@ EOF
     assert_line "box-state after-cleanup: home=0 tmux=0"
     [ ! -e "${_home}" ]
 }
+
+@test "5.2.3: new host default socket state is checked before and after cleanup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    mkdir -p "${HOME}/dev-box/.cache/tmux/tmux-1000"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${HOME}/dev-box/.cache/tmux/tmux-1000/default"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line "host-state before-cleanup: new=5"
+    assert_line "host-state after-cleanup: new=0"
+    [ ! -e "${HOME}/dev-box" ]
+}

@@ -199,6 +199,64 @@ _box_state_cleanup() {
     return "${_rc}"
 }
 
+# Keep a NUL-delimited inventory: filenames and sockets need no text parsing.
+_host_state_list() {
+    local _path="${HOME}/${BOX}-box"
+    if [[ -e "${_path}" || -L "${_path}" ]]; then
+        find "${_path}" -depth -print0 || return 1
+    fi
+}
+
+_host_state_snapshot() {
+    guard_require find sort cmp || return 1
+    _host_state_list | sort -z >"$1/host-state-baseline" \
+        || { guard_fail "cannot inventory host default HOME"; return 1; }
+}
+
+_host_state_new() {
+    local _dir="$1" _path
+    local -A _existing=()
+    [[ -f "${_dir}/host-state-baseline" ]] \
+        || { guard_fail "no host state baseline; refusing to delete user data"; return 1; }
+    while IFS= read -r -d '' _path; do
+        _existing["${_path}"]=1
+    done <"${_dir}/host-state-baseline"
+    _host_state_list >"${_dir}/host-state-current" \
+        || { guard_fail "cannot inspect host default HOME"; return 1; }
+    : >"${_dir}/host-state-new" || return 1
+    while IFS= read -r -d '' _path; do
+        [[ -n "${_existing[${_path}]+present}" ]] && continue
+        printf '%s\0' "${_path}" >>"${_dir}/host-state-new" || return 1
+    done <"${_dir}/host-state-current"
+}
+
+_host_state_report() {
+    local _dir="$1" _when="$2" _path _n=0
+    _host_state_new "${_dir}" || return 1
+    while IFS= read -r -d '' _path; do _n=$((_n + 1)); done <"${_dir}/host-state-new"
+    printf 'host-state %s: new=%s\n' "${_when}" "${_n}"
+    [[ "${_when}" != after-cleanup || "${_n}" -eq 0 ]]
+}
+
+_host_state_cleanup() {
+    local _dir="$1" _path _rc=0
+    _host_state_report "${_dir}" before-cleanup || return 1
+    # Depth order removes children first; never recursively remove a directory
+    # that could contain pre-existing user data. Symlinks are never followed.
+    while IFS= read -r -d '' _path; do
+        if [[ -d "${_path}" && ! -L "${_path}" ]]; then
+            rmdir -- "${_path}" || _rc=1
+        else
+            rm -f -- "${_path}" || _rc=1
+        fi
+    done <"${_dir}/host-state-new"
+    _host_state_report "${_dir}" after-cleanup || _rc=1
+    sort -z "${_dir}/host-state-current" >"${_dir}/host-state-after" || return 1
+    cmp -s "${_dir}/host-state-baseline" "${_dir}/host-state-after" || _rc=1
+    [[ "${_rc}" -eq 0 ]] || guard_fail "host default HOME did not return to its baseline"
+    return "${_rc}"
+}
+
 # --- Cleanup stack -----------------------------------------------------------
 # Items push a token; the token is run either explicitly (normal path) or by
 # the EXIT / INT / TERM / HUP trap (interrupt path), in reverse order. A
@@ -259,6 +317,7 @@ _51_cleanup() {
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
+        _host_state_cleanup "${_51_W}" || return 1
         _box_state_cleanup "${_51_W}/box-home" || return 1
         rm -rf -- "${_51_W}" || _crc=1
     fi
@@ -453,6 +512,7 @@ item_51() {
         || { guard_fail "mktemp returned '${_51_W}', which is not a directory"; return 1; }
 
     _51_CREATED=0
+    _host_state_snapshot "${_51_W}" || return 1
     _cleanup_push 51
     local _rc=0
     _51_body || _rc=1
@@ -477,7 +537,7 @@ _52_step1_backup() {
     # that fails or is interrupted removes its own half-written backup.
     _cleanup_push 52-abort-backup
     local _rc=0
-    if cfgbk_backup_body; then
+    if _host_state_snapshot "${CFGBK_B}" && cfgbk_backup_body; then
         _cleanup_drop
     else
         _cleanup_pop_run
@@ -550,6 +610,7 @@ _52_remove_owned_box() {
     fi
     if _drop_owned_box; then
         printf 'dev-gone=1\n'
+        _host_state_cleanup "${CFGBK_B}" || return 1
         _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         rm -f -- "${CFGBK_B}/created-box" \
             || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
