@@ -93,15 +93,20 @@ inspect_wrapper() {
 }
 
 inspect_launch() {
-    local cwd="$1" depth="$2" mentions="$3" tool path index sub
+    local cwd="$1" depth="$2" mentions="$3" tool path index sub value_opts=nioe
     local _HOOK_RAW=1
+    local _HOOK_LONG_VALUE_OPTS="${_HOOK_LONG_VALUE_OPTS}"
     shift 3
     local -a words=("$@")
     tool="$(hook_word "${words[0]:-}")"
     case "${tool##*/}" in
-        setsid|nice|stdbuf|busybox|chroot)
+        setsid|nice|stdbuf|busybox|chroot|xargs)
             (( depth < 16 )) || return 0
-            index="$(_hook_after_opts 0 nioe "${words[@]}")"
+            if [[ "${tool##*/}" == xargs ]]; then
+                value_opts=aEILnPsd
+                _HOOK_LONG_VALUE_OPTS+=' --arg-file --eof --replace --max-lines --max-args --max-procs --max-chars --delimiter --process-slot-var '
+            fi
+            index="$(_hook_after_opts 0 "${value_opts}" "${words[@]}")"
             [[ "${tool##*/}" == chroot ]] && index=$((index + 1))
             # Words are already encoded: preserve quotes and expansion markers.
             while IFS= read -r sub; do

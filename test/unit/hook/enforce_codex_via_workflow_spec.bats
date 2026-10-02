@@ -119,7 +119,10 @@ _check() {
     done
     printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/daily.sh"
     for cmd in 'bash outer.sh' 'setsid nohup bash daily.sh' 'nice bash daily.sh' \
-        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh'; do
+        'stdbuf -oL bash daily.sh' 'busybox sh daily.sh' \
+        'xargs bash daily.sh' 'printf x | xargs bash daily.sh' \
+        'xargs ./daily.sh' 'xargs -n 1 bash daily.sh' \
+        'xargs --max-args=1 bash daily.sh' 'xargs --max-args 1 bash daily.sh'; do
         _check "${cmd}"
         assert_equal "${status}" 2
     done
