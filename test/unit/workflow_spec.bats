@@ -2593,6 +2593,9 @@ _pl_resume_setup() {
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
     replies='{"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    if [[ $# -ge 3 ]]; then
+        replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" \
         "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
         "${replies}" exec-resume
@@ -2629,6 +2632,30 @@ _pl_resume_run() {
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
+}
+
+@test "pr-loop resume: light requires independent diff review before publishing pending commits (#386)" {
+    _pl_resume_setup
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
+    local review json extra
+    for extra in '{"mode":"light"}' '{"mode":"light","pr":7}'; do
+        for review in '{"verdict":"mergeable"}' '{"verdict":"blocked","blocking":["required fix"]}' null; do
+            run _pl_resume_run "${extra}" "${PR_LOOP}" "${review}"
+            assert_success
+            json="${output}"
+            run jq -e --argjson review "${review}" '.error == null and
+                ([.calls[].role | startswith("implement:")] | any | not) and
+                ([.calls[].role] | index("review:#386:light")) != null and
+                (if $review.verdict == "mergeable" then
+                    .result.ciState == "green" and .result.blockingLeft == [] and
+                    ([.calls[].role] | index("review:#386:light") < index("ci:#7")) and
+                    ([.calls[].role] | if index("publish:#386:resume") == null then true
+                        else index("review:#386:light") < index("publish:#386:resume") end)
+                else .result.ciState == "none" and (.result.blockingLeft | length) > 0 and
+                    ([.calls[].role | test("^(publish|ci):")] | any | not) end)' <<<"${json}"
+            assert_success
+        done
+    done
 }
 
 @test "pr-loop resume: missing worktree is recreated without changing branch history (#386)" {
