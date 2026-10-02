@@ -2602,7 +2602,7 @@ _pl_resume_run() {
     assert_success
     local json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
-        ([.calls[].role | test("^(implement|publish|locate|stage-check):")] | any | not) and
+        ([.calls[].role | test("^(implement|publish|locate):")] | any | not) and
         (.calls[] | select(.role == "ci:#7") | .prompt | contains("base acceptance")) and
         (.calls[] | select(.role | startswith("review:")) | .prompt | contains("origin/acceptance...HEAD"))' <<<"${json}"
     assert_success
@@ -2654,5 +2654,17 @@ _pl_resume_run() {
         .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
         (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint, just test unit test/unit/workflow_spec.bats")) and
         ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop resume: CI success cannot bypass the published HEAD guard (#386)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}"         "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')"         "${replies}" exec-resume
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        (.result.blockingLeft[0] | contains("local HEAD: unpushed")) and
+        ([.calls[].role | startswith("review:")] | any | not)' <<<"${output}"
     assert_success
 }
