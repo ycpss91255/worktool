@@ -231,7 +231,7 @@ _dispatched() {
     assert_output --partial "此改動由 CI 的 integration 驗證"
 }
 
-@test "test.sh --changed fails open when a mapped spec is missing" {
+@test "test.sh --changed leaves missing mapped specs to CI and names the source" {
     mkdir -p "${TEMP_REPO}/lib"
     printf '# log library\n' >"${TEMP_REPO}/lib/log.sh"
     _commit_baseline
@@ -241,7 +241,11 @@ _dispatched() {
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
+    assert_equal "$(_dispatched)" --ci-lint
+    assert_output --partial "此改動由 CI 的 unit 驗證"
+    assert_output --partial "lib/log.sh"
+    assert_output --partial "test/unit/log_spec.bats"
+    assert_output --partial "對應 spec 不存在"
 }
 
 @test "changed path map points only to existing specs" {

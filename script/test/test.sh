@@ -803,12 +803,13 @@ _mapped_specs() {
 }
 
 _add_changed_spec() {
-    local _path="$1" _mapped="${2:-0}" _tier
+    local _path="$1" _mapped="${2:-0}" _source="${3:-$1}" _tier
     [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
         || return 1
     _tier="${BASH_REMATCH[1]}"
     if [[ ! -f "${REPO_ROOT}/${_path}" ]]; then
         if [[ "${_mapped}" -eq 1 ]]; then
+            _info "此改動由 CI 的 ${_tier} 驗證：${_source}（對應 spec 不存在：${_path}）"
             local -n _full_tier="_full_${_tier}"
             _full_tier=1
             unset -n _full_tier
@@ -901,7 +902,7 @@ _run_changed() {
         fi
         while IFS= read -r _spec; do
             [[ -n "${_spec}" ]] || continue
-            _add_changed_spec "${_spec}" 1
+            _add_changed_spec "${_spec}" 1 "${_path}"
         done <<<"${_mapped}"
     done <"${_list}"
     rm -f "${_list}"
