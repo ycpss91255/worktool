@@ -1900,7 +1900,7 @@ _rv_assert_fails_closed() {
     run _pl_run '{"mode":"light","codex":"off"}'
     assert_success
     run jq -cr '[.error, [.calls[].role], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
-    assert_output '[null,["implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
+    assert_output '[null,["prepare:b","implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
 }
 
 @test "milestone-fanout (node): forwards light mode to each child (#310)" {
