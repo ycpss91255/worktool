@@ -2458,6 +2458,8 @@ _scratch_assert_isolated() {
     assert_output --partial 'RED'
     assert_output --partial 'GREEN'
     assert_output --partial 'skipped'
+}
+
 @test "pr-loop: branches and opens PRs against the selected base in every mode (#364)" {
     local base mode implementer extra json
     for base in main m3/5-acceptance; do
