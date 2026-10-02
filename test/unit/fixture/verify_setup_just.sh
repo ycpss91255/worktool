@@ -11,6 +11,7 @@ if [[ "${1:-}:${2:-}" == box:setup && -f "${_cfg}" ]]; then
     case "${VERIFY_CORRUPTION}" in
         bare-name) sed -i 's|^command = .*|command = distrobox enter dev|' "${_cfg}" ;;
         no-block)
+            # shellcheck source=lib/enter.sh
             source "${VERIFY_PRODUCT_LIB}"
             enter_block_strip "${_cfg}" >"${_out}.stripped"
             cp -- "${_out}.stripped" "${_cfg}"

@@ -863,6 +863,8 @@ EOF
     local _src="${REPO_ROOT}/test/system/real_engine_spec.bats"
     local _array="${BATS_TEST_TMPDIR}/criteria.sh" _line _pat _expected=() _actual=()
     sed -n '/^SYSTEM_REAL_CRITERIA=(/,/^)/p' "${GATE_SH}" >"${_array}"
+    # The array file is generated above from the trusted gate source.
+    # shellcheck source=/dev/null
     source "${_array}"
     while IFS= read -r _line; do
         [[ "${_line}" == *assert_line* ]] || continue
@@ -884,7 +886,10 @@ EOF
 }
 
 # Forward a product printf format and its values without interpreting shell code.
-_product_printf() { printf "$@"; }
+_product_printf() {
+    awk -v fmt="$1" -v a="$2" -v b="$3" -v c="${4:-}" -v d="${5:-}" -v e="${6:-}" \
+        'BEGIN {printf fmt, a, b, c, d, e}'
+}
 
 @test "single source: chain diagnostic fixture lines use the real producer templates" {
     local _src="${REPO_ROOT}/test/system/real_engine_spec.bats" _fmt _line _out
@@ -904,10 +909,15 @@ _product_printf() { printf "$@"; }
     _out="$(
         _log_lines() { printf '# %s: %s\n' "$1" "$2"; }
         _marker_ns='mnt:[1234]' _marker_host=ca83e9d035cd
-        _elapsed=45 GHOSTTY_HANG_TIMEOUT=45 _hang_status=124
+        _elapsed=45 _hang_status=124
+        export GHOSTTY_HANG_TIMEOUT=45
         set -- chain
-        while IFS= read -r _line; do eval "${_line}"; done < <(
-            grep -E '^    _log_lines ("\$1-in-box"|hang )' "${_src}"
+        while IFS= read -r _line; do
+            _line="${_line#* _log_lines }"
+            eval "set -- ${_line}"
+            _log_lines "$@"
+        done < <(
+            grep -E '^    _log_lines ("[^"]+-in-box"|hang )' "${_src}"
         )
     )"
     while IFS= read -r _line; do

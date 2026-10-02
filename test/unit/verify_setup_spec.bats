@@ -225,8 +225,7 @@ _stub_just_setup_writing() {
     export VERIFY_REAL_JUST="${REAL_JUST}" VERIFY_PRODUCT_LIB="${REPO_ROOT}/lib/enter.sh"
     export VERIFY_CORRUPTION="$1"
     _stub just '#!/usr/bin/env bash' 'set -euo pipefail' \
-        'exec bash "${VERIFY_CORRUPT_FIXTURE}" "$@"'
-    export VERIFY_CORRUPT_FIXTURE="${BATS_TEST_DIRNAME}/fixture/verify_setup_just.sh"
+        "exec bash $(printf '%q' "${BATS_TEST_DIRNAME}/fixture/verify_setup_just.sh") \"\$@\""
 }
 
 # --- The degraded-product copies ---------------------------------------------

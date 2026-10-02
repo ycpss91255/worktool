@@ -98,6 +98,7 @@ LIB_DIR="${REPO_ROOT}/lib"
 # shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
 

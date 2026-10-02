@@ -887,6 +887,7 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 }
 
 _assert_product_bench_sample() {
+    local output=""
     local _line="$1" _metric _min _median _max _kind _limit
     local _metric_re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
     local _notice_re='^\[(INFO|ERROR)\] shell median ([0-9]+(\.[0-9]+)?) ms (within|exceeds) --max-ms ([0-9]+)$'
