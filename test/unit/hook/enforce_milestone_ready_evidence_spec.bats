@@ -48,3 +48,15 @@ check_ready() {
     assert_failure 2
     assert_output --partial 'verify-all'
 }
+
+successful_job() {
+    printf '%s' '{"check_runs":[{"name":"verify-all","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
+}
+
+@test "successful verify-all does not replace a goal trace table" {
+    successful_job
+    printf '[claude] 待維護者驗收\n' >"${READY_FIXTURE}/body"
+    check_ready
+    assert_failure 2
+    assert_output --partial '目標對照'
+}

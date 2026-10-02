@@ -18,4 +18,10 @@ ready_check_comment() {
         length > 0 and all(.status == "completed" and .conclusion == "success")' <<<"${_checks}" >/dev/null; then
         hook_block 'verify-all on the current PR head must be success (missing or not successful)'
     fi
+    ready_require_table "$1"
+}
+
+ready_require_table() {
+    [[ "$1" =~ (^|$'\n')##[[:space:]]+目標對照($|$'\n') && "$1" == *'| 目標 |'* ]] \
+        || hook_block '缺少目標對照段落與表格'
 }
