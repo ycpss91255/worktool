@@ -722,6 +722,15 @@ script/box/status.sh|test/unit/status_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
+    _changed_doc_path_map
+}
+
+_changed_doc_path_map() {
+    cat <<'MAP'
+doc/*.md|test/unit/contract_spec.bats
+doc/*.md|test/unit/diagram_spec.bats
+doc/*.md|test/unit/justfile_spec.bats
+MAP
 }
 
 _changed_hook_path_map() {
@@ -760,7 +769,11 @@ MAP
 _mapped_specs() {
     local _path="$1" _pattern _spec
     while IFS='|' read -r _pattern _spec; do
-        if [[ "${_path}" == "${_pattern}" ]]; then
+        # Root documentation guards do not apply to nested ADRs or diagrams.
+        if [[ "${_pattern}" == 'doc/*.md' && "${_path%/*}" != doc ]]; then
+            continue
+        fi
+        if [[ "${_path}" == ${_pattern} ]]; then
             printf '%s\n' "${_spec}"
         fi
     done < <(_changed_path_map)

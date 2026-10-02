@@ -342,3 +342,26 @@ _dispatched() {
         '--ci-unit test/unit/hook/enforce_local_test_scope_spec.bats' \
         '--ci-matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/another_spec.bats')"
 }
+
+_document_change() {
+    local _path="$1"
+    shift
+    mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+    printf '# document\n' >"${TEMP_REPO}/${_path}"
+    local _spec
+    for _spec in "$@"; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_spec}")"
+        printf '@test "guard" { true; }\n' >"${TEMP_REPO}/${_spec}"
+    done
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint "--ci-unit $*")"
+}
+
+@test "test.sh --changed maps root documentation to existing documentation guards" {
+    _document_change doc/structure.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
