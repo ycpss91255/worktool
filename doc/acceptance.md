@@ -67,12 +67,10 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 0.3 錯誤輸入不跑任何東西:未知動作 just 報錯 exit 1;未知選項腳本報錯 exit 2
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      error: justfile does not contain recipe `test bogus`
       rc=1
-      ./script/box/assemble.sh "$@"
-      assemble.sh: unknown option '--bogus' (see --help)
-      error: recipe `assemble` failed on line 32 with exit code 2
       rc=2
       ```
     - 驗收方式
@@ -84,25 +82,21 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 1. 自動測試:四層 gate 全綠
   - [ ] 1.1 lint:ShellCheck 零違規
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --lint "$@"
-      [ci]   found 21 script(s)
-      [ci] ShellCheck OK
       rc=0
       ```
     - 驗收方式
       ```bash
       just test lint; echo rc=$?
       ```
-  - [ ] 1.2 單元:8 個必要 spec、135 案例全 ok、無 skip
+  - [ ] 1.2 單元:現行必要 spec 與案例全 ok、無 skip
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --unit "$@"
-      [ci]   required specs OK (135 case(s) declared by 8 file(s))
-      1..135
       ok 1 ...
-      ...(135 行全部 ok;沒有 not ok、沒有 # skip)
-      [ci] unit bats OK
       rc=0
       ```
     - 驗收方式
@@ -111,12 +105,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 1.3 整合:mock distrobox 逐參數記錄,無效清單絕不呼叫 distrobox
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --integration "$@"
-      [ci]   required specs OK (10 case(s) declared by 2 file(s))
-      1..10
-      ...(全部 ok)
-      [ci] integration bats OK
       rc=0
       ```
     - 驗收方式
@@ -125,12 +116,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 1.4 系統 shim:真實 distrobox 1.8.2.5 + 假 container manager
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --system "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] system bats OK
       rc=0
       ```
     - 驗收方式
@@ -139,27 +127,17 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 1.5 系統 real-engine(docker-in-docker):真的建出可用 dev 盒;host docker 前後不變
     - 預期看到資訊(約 2-4 分鐘)
+      輸出格式與清單直接讀取 [script/test/system-real-entry.sh](../script/test/system-real-entry.sh)、[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --system-real "$@"
-      [system-real] dockerd ready after 1s
-      [system-real] engine 29.8.0 driver=overlayfs cgroup=cgroupfs/2
-      [ci]   required specs OK (12 case(s) declared by 1 file(s))
-      1..12
       ok 1 preflight: a real docker engine is live inside the runner
-      ...
       ok 5 real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version
       ok 6 real engine: distrobox enter dev -- fzf --version prints a version
-      # tmux: tmux 3.x
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
-      # fish: fish, version 4.x
       ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
-      ...
       ok 11 real engine: a second assemble.sh run exits 0 and does not duplicate the dev box
       ok 12 real engine: distrobox rm -f dev removes the box from the engine
-      [ci] system-real bats OK
-      [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
-      host unchanged
       ```
     - 驗收方式
       ```bash
@@ -169,12 +147,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 1.6 交付驗收:直接執行交付的 selfcheck(含負向案例)
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/test.sh --acceptance "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] acceptance bats OK
       rc=0
       ```
     - 驗收方式
@@ -183,21 +158,11 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
 
 - [ ] 2. 交付自檢
-  - [ ] 2.1 正常 repo:9 個 PASS、ALL PASS、rc=0
+  - [ ] 2.1 正常 repo:所有檢查 PASS、ALL PASS、rc=0
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/selfcheck.sh](../script/test/selfcheck.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/selfcheck.sh "$@"
-      [INFO] self-checking /<clone 路徑>
-      PASS 3a
-      PASS 3b
-      PASS reject no-image.ini
-      PASS reject blank-name.ini
-      PASS reject blank-image.ini
-      PASS reject spaced-image.ini
-      PASS reject single-quoted-image.ini
-      PASS reject unbalanced-quote-image.ini
-      PASS reject multi.ini
-      ALL PASS
       rc=0
       ```
     - 驗收方式
@@ -206,15 +171,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 2.2 壞掉的 repo:FAIL + SOME FAILED、rc=1(自檢不是空判定)
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/selfcheck.sh](../script/test/selfcheck.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/test/selfcheck.sh "$@"
-      [INFO] self-checking /tmp/wt-bad
-      FAIL 3a: rc=1 stdout='' stderr='[ERROR] manifest missing required key 'image' in section [dev]: box/dev.ini'
-      FAIL 3b: rc=1 stdout='' stderr='[ERROR] manifest missing required key 'image' in section [dev]: /tmp/wt-bad/box/dev.ini'
-      PASS reject no-image.ini
-      ...(其餘 6 行 PASS reject ...)
-      SOME FAILED
-      error: recipe `selfcheck` failed on line 61 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -226,9 +185,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 3. assemble 手動抽驗(dry-run 不執行 distrobox;STDOUT 只印指令、診斷走 STDERR)
   - [ ] 3.1 repo 根目錄 dry-run:印出指令、rc=0
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      distrobox assemble create --file box/dev.ini
       rc=0
       ```
     - 驗收方式
@@ -237,9 +196,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.2 從子目錄執行:結果與 3.1 相同(recipe 以 repo 根為工作目錄)
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      distrobox assemble create --file box/dev.ini
       rc=0
       ```
     - 驗收方式
@@ -248,10 +207,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.3 缺 image:[ERROR]、rc=1、STDOUT 沒有 distrobox 指令
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      [ERROR] manifest missing required key 'image' in section [dev]: /tmp/a.ini
-      error: recipe `assemble` failed on line 32 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -260,10 +218,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.4 單引號包空白 `image='   '`:視為空值拒絕
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      [ERROR] manifest missing required key 'image' in section [dev]: /tmp/c.ini
-      error: recipe `assemble` failed on line 32 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -272,10 +229,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.5 不成對引號:專屬訊息 unbalanced quote(不是誤報缺 image)
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      [ERROR] manifest image value has an unbalanced quote: 'ubuntu:26.04" (section [dev]): /tmp/b.ini
-      error: recipe `assemble` failed on line 32 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -284,10 +240,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.6 多區段:M2 只支援單一盒
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      [ERROR] manifest declares multiple sections; worktool supports a single box: /tmp/d.ini
-      error: recipe `assemble` failed on line 32 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -296,10 +251,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 3.7 image 在區段之前:區段外的 key 不算數
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      ./script/box/assemble.sh "$@"
-      [ERROR] manifest missing required key 'image' in section [dev]: /tmp/e.ini
-      error: recipe `assemble` failed on line 32 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -310,9 +264,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 4. gate 防漏(必要 spec 被刪/清空不會因同層還有別的 spec 而綠燈)
   - [ ] 4.1 刪掉必要 spec:該層失敗並指名檔案
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      [ci] ERROR: integration required spec missing: test/integration/assemble_spec.bats
-      error: recipe `integration` failed on line 45 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -322,9 +276,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 4.2 清空必要 spec(0 案例):該層失敗並指名檔案
     - 預期看到資訊
+      輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
+
       ```text
-      [ci] ERROR: integration required spec defines zero cases: test/integration/assemble_spec.bats
-      error: recipe `integration` failed on line 45 with exit code 1
       rc=1
       ```
     - 驗收方式
@@ -595,8 +549,8 @@ rc=0
       ./script/verify/gate.sh "$@"
       ./script/test/test.sh
       [ci] ShellCheck OK
-      [ci]   required specs OK (585 case(s) declared by 21 file(s))
-      ...(unit 585 / integration 20 / integration-ghostty 12 / system 6 / acceptance 6 / system-real 18,每層 1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
+      （required specs OK 的案例與檔案數直接由 script/test/test.sh 掃描現行 declarations）
+      ...(每層的 N 由來源掃描取得，1..N 全部 ok,各以 `[ci] <tier> bats OK` 結尾;沒有 not ok、沒有 # skip)
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
       ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
       # bench: enter: min=91.1 median=93.8 max=102.0 ms
@@ -868,7 +822,7 @@ rc=0
       just verify realbox --allow-real-box 5.1; echo rc=$?
       ```
   - [ ] 5.2 開終端即在盒內 fish，主觀無明顯延遲；一次呼叫依序備份、套用、確認新視窗、還原。中斷後單獨跑 5.2.3 還原。
-    - 預期看到資訊：`backup-covers=4/4`；每個 manifest key（`ghostty`、`ghostty-modern`、`worktool`、`distrobox-conf`）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
+    - 預期看到資訊：`backup-covers=4/4`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
       `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
       還原成功依序印 `restore-rc=0`、`restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。
     - 驗收方式

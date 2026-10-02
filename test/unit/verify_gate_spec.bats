@@ -936,3 +936,11 @@ _product_printf() { printf "$@"; }
     run diff -u "${_fixture}" "${_doc}"
     assert_success
 }
+
+@test "single source: historical runner transcripts reference live sources instead of snapshots" {
+    local _doc="${BATS_TEST_TMPDIR}/historical-output"
+    sed -n '/^## M2 /,/^## M3 /p' "${REPO_ROOT}/doc/acceptance.md" \
+        | awk '/^ *```text/ {text=1; next} /^ *```/ {text=0} text {print}' >"${_doc}"
+    run grep -E '\[ci\]|\[system-real\]|\[INFO\]|\[ERROR\]|^ *(PASS|FAIL)|^ *distrobox assemble|^ *assemble.sh:' "${_doc}"
+    assert_failure 1
+}
