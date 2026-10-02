@@ -99,3 +99,9 @@ STUB
     run_hook enforce_milestone_ready_evidence "$(hook_json "gh api repos/ycpss91255/worktool/issues/7/comments --input ${READY_FIXTURE}/input")"
     assert_success
 }
+
+@test "readiness hook changes select its public interface spec in CI" {
+    run bash -c 'source "$1"; _changed_path_map' _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    assert_line '.agents/hook/lib/ready_evidence.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats'
+}
