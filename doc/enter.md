@@ -42,8 +42,10 @@ grilling)的目標行為:
    (`--tmux inside|host` 移除,setup 不再寫 `tmux` 這個 key,舊 key 保留為非受管資料)。
 2. **盒內自己開 tmux**:得到**盒子自己的 tmux server**,永遠不連到 host 的 server
    或 session。機制在 distrobox 建立容器時就定好:`box/dev.ini` 以 `additional_flags` 設容器環境
-   變數 `TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(distrobox 建立容器時展開;在 #196 的盒子 HOME
-   底下),盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
+   變數 `TMUX_TMPDIR`,以 `--env TMUX_TMPDIR` 繼承 assemble 傳入的值。
+   assemble 用實際盒子 HOME 決定 `<盒子 HOME>/.cache/tmux`(#361),
+   自訂 `--home` 或已記錄的 HOME 都適用;清單不另寫盒名或 HOME(ADR 0005)。
+   盒內**任何方式**啟動的 tmux(互動 shell、`distrobox enter dev -- tmux`)
    都繼承它;`init_hooks` 在每次盒子啟動時以盒內使用者身分建立該目錄(mode
    0700),並在之後明確 `chown` 成盒內使用者、`chmod 0700`(`mkdir -p -m` 不會改正
    已存在目錄的權限與擁有者)——目錄不存在時 tmux 會**無聲**退回 `/tmp`,所以不能
@@ -587,8 +589,8 @@ host tmux server 的部分在 system-real):
   拒絕(不再寫任何檔案),以及安裝路徑含空白 / `$(...)` / 雙引號時,把**真 ghostty
   回報的生效值**丟進 `/bin/sh -c` 仍只會執行那一個執行檔(sentinel 檔不存在)。
 - 系統:`test/system/real_assemble_spec.bats` —— 真 distrobox 把 `box/dev.ini` 解成
-  的 create 請求帶 `--env TMUX_TMPDIR=${HOME}/dev-box/.cache/tmux`(在 image 之前,
-  是 docker 的容器環境)與建立該目錄的 `--init-hooks`;
+  的 create 請求帶 `--env TMUX_TMPDIR`(在 image 之前,
+  是 docker 的容器環境,值由 assemble 依盒子 HOME 傳入)與建立該目錄的 `--init-hooks`;
   `test/system/real_enter_env_spec.bats` —— 真的 distrobox-enter(`--dry-run`,印出
   它會送出的 `exec` 請求):對照案例先證明沒有 distrobox.conf 區塊時請求裡**有**
   host pane 的 `--env=TMUX=` / `--env=TMUX_PANE=`;交付的 setup.sh 寫出區塊後,
