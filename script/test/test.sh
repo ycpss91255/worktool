@@ -858,7 +858,7 @@ _guard_specs() {
 _spec_scans_repository() {
     awk '{ line = line $0; if (sub(/\\$/, "", line)) next; print line; line = "" }
          END { if (line != "") print line }' "$1" |
-        grep -Eq 'ls-files|/(script|lib)/[^[:space:]]*\*|(^|[[:space:]])(find|grep|rg)[[:space:]].*/(script|lib)(["[:space:]]|$)'
+        grep -Eq 'ls-files|(^|[/"[:space:]])(script|lib)/[^[:space:]]*\*|(^|[[:space:]])(find|grep|rg)([[:space:]].*)?[/"[:space:]](script|lib)/?(["[:space:]]|$)'
 }
 
 _validate_guard_specs() {

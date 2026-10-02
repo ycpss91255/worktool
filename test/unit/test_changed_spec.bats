@@ -533,3 +533,19 @@ _document_change() {
     assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
     [[ ! -f "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
 }
+
+@test "guard coverage catches source-directory scans in all tiers including untracked specs" {
+    local _scanner _index=0
+    for _scanner in 'find script/ lib/ -name "*.sh"' \
+        'grep -r pattern "${REPO_ROOT}/script"' \
+        'for file in "${REPO_ROOT}"/lib/*.sh; do :; done'; do
+        mkdir -p "${TEMP_REPO}/test/integration"
+        printf '@test "scan" {\n%s\n}\n' "${_scanner}" \
+            >"${TEMP_REPO}/test/integration/unlisted_spec.bats"
+        run bash -c 'source "$1/script/test/test.sh"; _validate_guard_specs' _ "${TEMP_REPO}"
+        assert_failure
+        assert_output --partial 'repository-scanning spec missing from guard list: test/integration/unlisted_spec.bats'
+        _index=$((_index + 1))
+    done
+    assert_equal "${_index}" 3
+}
