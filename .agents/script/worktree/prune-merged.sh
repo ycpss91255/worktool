@@ -55,8 +55,12 @@ while IFS= read -r -d '' FIELD; do
     case "${FIELD}" in
         worktree\ *)
             TREE="${FIELD#worktree }"
-            if [[ "${TREE}" == "${WORKTREE_ROOT}/"* ]]; then
+            if [[ "${TREE}" == "${MAIN}" ]]; then
+                log_info "kept ${TREE}: main checkout"
+            elif [[ "${TREE}" == "${WORKTREE_ROOT}/"* ]]; then
                 prune_tree "${TREE}"
+            else
+                log_info "kept ${TREE}: outside sibling worktree/"
             fi
             ;;
     esac

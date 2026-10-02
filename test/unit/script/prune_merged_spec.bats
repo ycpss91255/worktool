@@ -75,3 +75,13 @@ prune() {
     assert_output --partial "unpushed commits"
     [ -d "${TREE}" ]
 }
+
+@test "explains retention of main checkout and worktrees outside sibling directory" {
+    git -C "${MAIN}" worktree add -qb outside "${FIXTURE}/outside"
+    prune --apply
+    assert_success
+    assert_output --partial "main checkout"
+    assert_output --partial "outside sibling worktree/"
+    [ -d "${MAIN}/.git" ]
+    [ -d "${FIXTURE}/outside" ]
+}
