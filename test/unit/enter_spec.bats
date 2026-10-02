@@ -441,3 +441,19 @@ _managed_enter() {
     run enter_fake_logs_alive
     assert_failure
 }
+
+@test "Ghostty managed command times out with ongoing progress log and recovery" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    WORKTOOL_INIT_TIMEOUT=3 _managed_enter
+    assert_failure 1
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Unpacking stuck-pkg"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    local _n
+    _n="$(grep -c 'first launch: Installing basic packages.*elapsed' <<<"${output}")"
+    assert [ "${_n}" -ge 2 ]
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    run enter_fake_logs_alive
+    assert_failure
+}
