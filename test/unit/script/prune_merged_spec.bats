@@ -29,13 +29,10 @@ merge_topic() {
     git -C "${MAIN}" push -q origin main
 }
 
-@test "keeps newly created zero-commit branch and detached worktrees" {
-    local detached="${FIXTURE}/worktree/detached"
-    git -C "${MAIN}" worktree add -q --detach "${detached}" origin/main
+@test "keeps newly created zero-commit branch worktree" {
     prune --apply
     assert_success
     [ -d "${TREE}" ]
-    [ -d "${detached}" ]
     git -C "${MAIN}" show-ref --verify refs/heads/topic
     assert_output --partial "no commits since worktree creation"
 }
@@ -47,6 +44,19 @@ merge_topic() {
     assert_output --partial "${TREE}"
     [ -d "${TREE}" ]
     git -C "${MAIN}" show-ref --verify refs/heads/topic
+}
+
+@test "removes a clean detached worktree already merged into origin main" {
+    merge_topic
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" origin/main
+    prune
+    assert_success
+    assert_output --partial "${detached}"
+    [ -d "${detached}" ]
+    prune --apply
+    assert_success
+    [ ! -e "${detached}" ]
 }
 
 @test "apply deletes merged clean worktree and its local branch" {
@@ -65,6 +75,17 @@ merge_topic() {
     assert_success
     assert_output --partial "not merged"
     [ -d "${TREE}" ]
+}
+
+@test "keeps a newly created detached worktree whose HEAD is not merged" {
+    git -C "${TREE}" commit -qm feature --allow-empty
+    git -C "${TREE}" push -qu origin topic
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" topic
+    prune --apply
+    assert_success
+    assert_output --partial "kept ${detached}: not merged"
+    [ -d "${detached}" ]
 }
 
 @test "keeps tracked staged and untracked changes" {
@@ -109,10 +130,12 @@ merge_topic() {
 @test "fetches acceptance branch and removes its merged detached worktree" {
     git -C "${TREE}" commit -qm accepted --allow-empty
     git -C "${TREE}" push -q origin HEAD:refs/heads/m3/5-acceptance
-    git -C "${TREE}" checkout -q --detach
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" topic
     git -C "${MAIN}" update-ref -d refs/remotes/origin/m3/5-acceptance
     prune --apply
     assert_success
+    [ ! -e "${detached}" ]
     [ ! -e "${TREE}" ]
 }
 

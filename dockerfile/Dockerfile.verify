@@ -1,0 +1,34 @@
+# Non-real-machine acceptance environment (#363), built on each native runner
+# after loading worktool-test:local and building Dockerfile.ghostty.
+# Keep the real Ghostty used by integration and reuse the checksum-verified
+# distrobox scripts from the test image rather than pinning a second copy.
+FROM worktool-test:local AS distrobox
+FROM worktool-ghostty:local
+
+# Docker CLI uses the runner's socket; no daemon runs in this container.
+# gh + jq read acceptance evidence; just drives the actual user entry;
+# time measures gates. GNU shell/file tools and git come from Ubuntu/Ghostty.
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        docker.io \
+        gh \
+        jq \
+        just \
+        time \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=distrobox /usr/local/bin/distrobox* /usr/local/bin/
+
+# Fail the image build if a real host tool cannot execute, before acceptance.
+RUN docker --version && \
+    gh --version && \
+    jq --version && \
+    just --version && \
+    /usr/bin/time --version && \
+    ghostty +version && \
+    distrobox --version
+
+# The runner owns the bind-mounted checkout; root drives Docker gates here.
+# Trust only the selected working directory, including its linked metadata.
+ENTRYPOINT ["/bin/bash", "-c", "git config --global --add safe.directory \"$PWD\" && exec /bin/bash \"$@\"", "--"]

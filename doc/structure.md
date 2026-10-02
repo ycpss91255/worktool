@@ -247,6 +247,7 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
+| `just test verify-env [--help]` | `./script/test/verify-env.sh [args]`（建置真實驗收映像，驗證 uid 1001 bind mount 的 Git checkout 與 host 工具） |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
 | `just test guards [args]` | `./script/test/test.sh --guards [args]`（執行 `test.sh` 的共用全 repo 守門清單） |
@@ -654,9 +655,10 @@ branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = �
 預設 stdout 列出候選路徑，`--apply` 才移除。腳本先 `git fetch --prune origin`，
 只接受 HEAD 是 `origin/main` 或遠端 `m<數字>/<issue>-acceptance`
 驗收分支祖先的項目。
-清理前也要求 HEAD reflog 記錄的 worktree 建立點是 HEAD 的嚴格祖先，
-證明建立後已有 commit；零 commit 的新分支與 detached worktree 一律保留，
-缺少建立點紀錄時也保留。未提交、未追蹤與被忽略的檔案都阻止清理，僅被
+有分支的 worktree 清理前也要求 HEAD reflog 記錄的建立點是 HEAD 的嚴格祖先，
+證明建立後已有 commit；零 commit 的新分支或缺少建立點紀錄時保留。
+detached HEAD worktree 不受建立後需有 commit 或建立點紀錄的限制（#398）。
+未提交、未追蹤與被忽略的檔案都阻止清理，僅被
 gitignore 忽略的 `.agents/state/` 例外；鎖定或目錄遺失的 worktree 也保留。
 有分支時只用 `git branch -d`，拒絕刪除的分支保留。每個保留原因與刪除結果
 寫到 stderr；參數錯誤 exit 2，完整驗證參數後才處理 `--help`。

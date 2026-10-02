@@ -512,14 +512,15 @@ _listed_names() {
         assert_success
         assert_line --regexp "^ +tier: ${_tier}$"
     done
-    run grep -E '^ +run: just ' "${_yml}"
+    run grep -E '^ +run: just |^ +worktool-verify:local -c ' "${_yml}"
     assert_success
     assert_line --regexp '^ +run: just test \$\{\{ matrix\.tier \}\}$'
     assert_line --regexp '^ +run: just test system-real$'
-    # Milestone acceptance (verify-all) drives the gates through just verify.
-    assert_line --regexp '^ +run: just verify all$'
-    # Exactly those three invocations: no gate bypasses the grammar.
-    assert_equal "${#lines[@]}" 3
+    # Milestone acceptance drives just verify inside the real-tool container.
+    assert_line --regexp "^ +worktool-verify:local -c 'just verify all'$"
+    assert_line --regexp '^ +run: just test verify-env$'
+    # Exactly those four invocations: no gate bypasses the grammar.
+    assert_equal "${#lines[@]}" 4
 }
 
 @test "just agent lists the Codex launcher without starting it" {
