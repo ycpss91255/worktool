@@ -181,6 +181,87 @@ _drop_owned_box() {
     [[ "${_e}" -eq 1 ]]
 }
 
+# Report and remove only the isolated HOME assigned to this run's box.
+_box_state_report() {
+    local _when="$1" _home="$2" _h=0 _t=0
+    [[ ! -e "${_home}" && ! -L "${_home}" ]] || _h=1
+    [[ ! -e "${_home}/.cache/tmux" && ! -L "${_home}/.cache/tmux" ]] || _t=1
+    printf 'box-state %s: home=%s tmux=%s\n' "${_when}" "${_h}" "${_t}"
+    [[ "${_when}" != after-cleanup || "${_h}" -eq 0 ]]
+}
+
+_box_state_cleanup() {
+    local _home="$1" _rc=0
+    _box_state_report before-cleanup "${_home}" || return 1
+    if [[ -e "${_home}" || -L "${_home}" ]]; then
+        rm -rf -- "${_home}" || _rc=1
+    fi
+    _box_state_report after-cleanup "${_home}" || _rc=1
+    [[ "${_rc}" -eq 0 ]] || guard_fail "box HOME state survived cleanup at ${_home}"
+    return "${_rc}"
+}
+
+# Keep a NUL-delimited inventory: filenames and sockets need no text parsing.
+_host_state_list() {
+    local _path="${HOME}/${BOX}-box"
+    if [[ -e "${_path}" || -L "${_path}" ]]; then
+        find "${_path}" -depth -print0 || return 1
+    fi
+}
+
+_host_state_snapshot() {
+    local _present=0
+    guard_require find sort cmp || return 1
+    [[ ! -e "${HOME}/${BOX}-box" && ! -L "${HOME}/${BOX}-box" ]] || _present=1
+    printf 'host-state baseline: present=%s\n' "${_present}"
+    _host_state_list | sort -z >"$1/host-state-baseline" \
+        || { guard_fail "cannot inventory host default HOME"; return 1; }
+}
+
+_host_state_new() {
+    local _dir="$1" _path
+    local -A _existing=()
+    [[ -f "${_dir}/host-state-baseline" ]] \
+        || { guard_fail "no host state baseline; refusing to delete user data"; return 1; }
+    while IFS= read -r -d '' _path; do
+        _existing["${_path}"]=1
+    done <"${_dir}/host-state-baseline"
+    _host_state_list >"${_dir}/host-state-current" \
+        || { guard_fail "cannot inspect host default HOME"; return 1; }
+    : >"${_dir}/host-state-new" || return 1
+    while IFS= read -r -d '' _path; do
+        [[ -n "${_existing[${_path}]+present}" ]] && continue
+        printf '%s\0' "${_path}" >>"${_dir}/host-state-new" || return 1
+    done <"${_dir}/host-state-current"
+}
+
+_host_state_report() {
+    local _dir="$1" _when="$2" _path _n=0
+    _host_state_new "${_dir}" || return 1
+    while IFS= read -r -d '' _path; do _n=$((_n + 1)); done <"${_dir}/host-state-new"
+    printf 'host-state %s: new=%s\n' "${_when}" "${_n}"
+    [[ "${_when}" != after-cleanup || "${_n}" -eq 0 ]]
+}
+
+_host_state_cleanup() {
+    local _dir="$1" _path _rc=0
+    _host_state_report "${_dir}" before-cleanup || return 1
+    # Depth order removes children first; never recursively remove a directory
+    # that could contain pre-existing user data. Symlinks are never followed.
+    while IFS= read -r -d '' _path; do
+        if [[ -d "${_path}" && ! -L "${_path}" ]]; then
+            rmdir -- "${_path}" || _rc=1
+        else
+            rm -f -- "${_path}" || _rc=1
+        fi
+    done <"${_dir}/host-state-new"
+    _host_state_report "${_dir}" after-cleanup || _rc=1
+    sort -z "${_dir}/host-state-current" >"${_dir}/host-state-after" || return 1
+    cmp -s "${_dir}/host-state-baseline" "${_dir}/host-state-after" || _rc=1
+    [[ "${_rc}" -eq 0 ]] || guard_fail "host default HOME did not return to its baseline"
+    return "${_rc}"
+}
+
 # --- Cleanup stack -----------------------------------------------------------
 # Items push a token; the token is run either explicitly (normal path) or by
 # the EXIT / INT / TERM / HUP trap (interrupt path), in reverse order. A
@@ -241,6 +322,8 @@ _51_cleanup() {
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
+        _host_state_cleanup "${_51_W}" || return 1
+        _box_state_cleanup "${_51_W}/box-home" || return 1
         rm -rf -- "${_51_W}" || _crc=1
     fi
     return "${_crc}"
@@ -434,6 +517,7 @@ item_51() {
         || { guard_fail "mktemp returned '${_51_W}', which is not a directory"; return 1; }
 
     _51_CREATED=0
+    _host_state_snapshot "${_51_W}" || return 1
     _cleanup_push 51
     local _rc=0
     _51_body || _rc=1
@@ -458,7 +542,7 @@ _52_step1_backup() {
     # that fails or is interrupted removes its own half-written backup.
     _cleanup_push 52-abort-backup
     local _rc=0
-    if cfgbk_backup_body; then
+    if _host_state_snapshot "${CFGBK_B}" && cfgbk_backup_body; then
         _cleanup_drop
     else
         _cleanup_pop_run
@@ -531,13 +615,27 @@ _52_remove_owned_box() {
     fi
     if _drop_owned_box; then
         printf 'dev-gone=1\n'
-        rm -f -- "${CFGBK_B}/created-box" \
-            || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
+        _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         return 0
     fi
     printf 'dev-gone=0\n'
     guard_fail "box '${BOX}' created by this run is still there (or distrobox list failed) -- remove it by hand"
     return 1
+}
+
+_52_cleanup_state() {
+    if [[ ! -e "${CFGBK_B}/created-box" ]]; then
+        _52_remove_owned_box || return 1
+        # Separate invocations allow user-owned state to appear after backup.
+        # Without an assemble marker, none of it belongs to this run.
+        _host_state_report "${CFGBK_B}" untouched
+        return $?
+    fi
+    _52_remove_owned_box || return 1
+    _host_state_cleanup "${CFGBK_B}" || return 1
+    # Keep ownership across retries until all owned state is clean.
+    rm -f -- "${CFGBK_B}/created-box" \
+        || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 
 _52_step3_restore() {
@@ -572,7 +670,7 @@ _52_step3_restore() {
 
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
-    _52_remove_owned_box || _rc=1
+    _52_cleanup_state || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"
@@ -610,6 +708,7 @@ item_52() {
 # 5.3  negative: a pre-existing `dev` box is refused, never deleted
 # =============================================================================
 _53_CREATED=0
+_53_W=""
 
 _53_cleanup() {
     local _crc=0
@@ -619,13 +718,18 @@ _53_cleanup() {
     printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] \
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
+    if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
+        _host_state_cleanup "${_53_W}" || return 1
+        _box_state_cleanup "${_53_W}/box-home" || return 1
+        rm -rf -- "${_53_W}" || _crc=1
+    fi
     return "${_crc}"
 }
 
 _53_make_decoy() {
     local _e
     guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
-        --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
+        --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}"
@@ -681,6 +785,10 @@ item_53() {
     _refuse_preexisting_box \
         "5.3 creates the decoy box itself, so rename or remove yours by hand first." \
         || return 1
+    _53_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-53.XXXXXXXX")" \
+        || { guard_fail "mktemp failed"; return 1; }
+    [[ -d "${_53_W}" ]] || { guard_fail "decoy scratch is not a directory"; return 1; }
+    _host_state_snapshot "${_53_W}" || return 1
     _53_CREATED=1
     _cleanup_push 53
     local _rc=0
