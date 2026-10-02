@@ -915,3 +915,15 @@ _product_printf() { printf "$@"; }
         assert_success
     done <<<"${_out}"
 }
+
+@test "single source: every documented TAP case exists in the real suites" {
+    local _names="${BATS_TEST_TMPDIR}/all.names" _line
+    find "${REPO_ROOT}/test" -name '*_spec.bats' -exec \
+        sed -n 's/^@test "\(.*\)" {$/\1/p' {} + >"${_names}"
+    while IFS= read -r _line; do
+        [[ "${_line}" == '...' ]] && continue
+        printf '# documented case: %s\n' "${_line}" >&3
+        run grep -Fx "${_line}" "${_names}"
+        assert_success
+    done < <(sed -n 's/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
+}

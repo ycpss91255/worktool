@@ -147,7 +147,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       1..12
       ok 1 preflight: a real docker engine is live inside the runner
       ...
-      ok 5 real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)
+      ok 5 real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version
       ok 6 real engine: distrobox enter dev -- fzf --version prints a version
       # tmux: tmux 3.x
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
