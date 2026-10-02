@@ -883,6 +883,8 @@ EOF
     _pat="$(sed -n "s/^CHAIN_OK='\(.*\)'$/\1/p" "${_src}")"
     assert_equal "${SYSTEM_REAL_CRITERIA[0]}" "^# chain: ${_pat#^}"
     assert_equal "${SYSTEM_REAL_CRITERIA[14]}" "^# chain-desktop-path: ${_pat#^}"
+    _pat="$(sed -n "s/.*assert_line --regexp '\(\^hang-ready .*\)'$/\1/p" "${_src}")"
+    assert_equal "${SYSTEM_REAL_CRITERIA[2]}" "^# hang-ready: ${_pat#^}"
 }
 
 # Forward a product printf format and its values without interpreting shell code.
@@ -893,6 +895,7 @@ _product_printf() {
 
 @test "single source: chain diagnostic fixture lines use the real producer templates" {
     local _src="${REPO_ROOT}/test/system/real_engine_spec.bats" _fmt _line _out
+    local _logger="${BATS_TEST_TMPDIR}/logger.sh"
     _system_real_block >"${SYS_BLOCK}"
     _fmt="$(sed -n "s/^printf '\(inbox-ok .*\)' .*/\1/p" "${_src}")"
     _out="$(_product_printf "${_fmt}" '4.2.1' '/run/.containerenv' 'mnt:[1234]' no ca83e9d035cd)"
@@ -904,10 +907,12 @@ _product_printf() {
     _out="$(_product_printf "${_fmt}" '4.2.1' ca83e9d035cd)"
     run grep -Fx "# hang-ready: ${_out}" "${SYS_BLOCK}"
     assert_success
-    # Evaluate only trusted producer calls, with sample measurements and a
-    # logger that returns data. No system case, engine or window is run.
+    # Read the real logger and producer arguments; run only formatting with
+    # sample measurements. No system case, engine or window is run.
+    sed -n '/^_log_lines() {/,/^}/p' "${_src}" >"${_logger}"
     _out="$(
-        _log_lines() { printf '# %s: %s\n' "$1" "$2"; }
+        # shellcheck source=/dev/null
+        source "${_logger}"
         _marker_ns='mnt:[1234]' _marker_host=ca83e9d035cd
         _elapsed=45 _hang_status=124
         export GHOSTTY_HANG_TIMEOUT=45
@@ -915,11 +920,12 @@ _product_printf() {
         while IFS= read -r _line; do
             _line="${_line#* _log_lines }"
             eval "set -- ${_line}"
-            _log_lines "$@"
+            _log_lines "$@" 3>&1
         done < <(
             grep -E '^    _log_lines ("[^"]+-in-box"|hang )' "${_src}"
         )
     )"
+    _out="$(printf '%s\n' "${_out}" | grep '^# ')"
     while IFS= read -r _line; do
         run grep -Fx "${_line}" "${SYS_BLOCK}"
         assert_success

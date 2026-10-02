@@ -162,7 +162,7 @@ INTEGRATION_CRITERIA=()
 SYSTEM_REAL_CRITERIA=(
     '^# chain: inbox-ok fish=[0-9]+\.[0-9]+[^ ]* ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
     '^# chain-in-box: marker mntns=mnt:\[[0-9]+\] == dev container; host=[^[:space:]]+ == docker inspect dev hostname$'
-    '^# hang-ready: hang-ready fish=[0-9]+(\.[0-9]+)+ host=[^[:space:]]+$'
+    '^# hang-ready: hang-ready fish=[0-9]+\.[0-9]+.* host=.+$'
     '^# hang: in-box command started, then timed out after [0-9]+s \(budget [0-9]+s, status 124\)$'
     '^# single-instance: PRIMARY=up$'
     '^# single-instance: SECOND_RC=0$'
