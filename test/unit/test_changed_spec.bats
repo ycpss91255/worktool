@@ -537,8 +537,8 @@ _document_change() {
 @test "guard coverage catches source-directory scans in all tiers including untracked specs" {
     local _scanner _index=0
     for _scanner in 'find script/ lib/ -name "*.sh"' \
-        'grep -r pattern "${REPO_ROOT}/script"' \
-        'for file in "${REPO_ROOT}"/lib/*.sh; do :; done'; do
+        "grep -r pattern \"\${REPO_ROOT}/script\"" \
+        "for file in \"\${REPO_ROOT}\"/lib/*.sh; do :; done"; do
         mkdir -p "${TEMP_REPO}/test/integration"
         printf '@test "scan" {\n%s\n}\n' "${_scanner}" \
             >"${TEMP_REPO}/test/integration/unlisted_spec.bats"
