@@ -879,12 +879,12 @@ _run_changed() {
     fi
     while IFS= read -r _path; do
         if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
-            _info "此改動由 CI 的 integration 驗證"
+            _info "此改動由 CI 的 integration 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue
         fi
         if [[ "${_path}" == dockerfile/Dockerfile.system-real \
             || "${_path}" == script/test/system-real-entry.sh ]]; then
-            _info "此改動由 CI 的 system-real 驗證"
+            _info "此改動由 CI 的 system-real 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue
         fi
         if _is_test_infrastructure "${_path}"; then

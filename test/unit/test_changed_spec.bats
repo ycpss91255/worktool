@@ -431,3 +431,23 @@ _document_change() {
             test/unit/diagram_spec.bats test/unit/justfile_spec.bats "${_extra[@]}"
     done
 }
+
+@test "test.sh --changed names dedicated runner infrastructure left to CI" {
+    local _path _tier
+    for _path in dockerfile/Dockerfile.ghostty dockerfile/Dockerfile.system-real \
+        script/test/system-real-entry.sh; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+        printf '# runner\n' >"${TEMP_REPO}/${_path}"
+        _commit_baseline
+        printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+            _ "${TEMP_REPO}"
+        assert_success
+        assert_equal "$(_dispatched)" --ci-lint
+        _tier=system-real
+        [[ "${_path}" != dockerfile/Dockerfile.ghostty ]] || _tier=integration
+        assert_output --partial "此改動由 CI 的 ${_tier} 驗證：${_path}"
+        assert_output --partial "測試基礎設施變更"
+    done
+}
