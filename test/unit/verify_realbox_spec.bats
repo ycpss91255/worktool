@@ -885,3 +885,41 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
     assert_equal "${_expected}" "${_actual}"
 }
+
+_assert_product_bench_sample() {
+    local _line="$1" _metric _min _median _max _kind _limit
+    local _metric_re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
+    local _notice_re='^\[(INFO|ERROR)\] shell median ([0-9]+(\.[0-9]+)?) ms (within|exceeds) --max-ms ([0-9]+)$'
+    if [[ "${_line}" =~ ${_metric_re} ]]; then
+        _metric="${BASH_REMATCH[1]}"
+        _min="${BASH_REMATCH[2]}" _median="${BASH_REMATCH[4]}" _max="${BASH_REMATCH[6]}"
+        run bash -c 'source "$1"; _print_text "$2" "$3" "$4" "$5"' _ \
+            "${REPO_ROOT}/script/box/bench.sh" "${_metric}" \
+            "$(awk -v n="${_min}" 'BEGIN {printf "%.0f", n*1000}')" \
+            "$(awk -v n="${_median}" 'BEGIN {printf "%.0f", n*1000}')" \
+            "$(awk -v n="${_max}" 'BEGIN {printf "%.0f", n*1000}')"
+        assert_success
+    elif [[ "${_line}" =~ ${_notice_re} ]]; then
+        _kind="${BASH_REMATCH[1]}" _median="${BASH_REMATCH[2]}" _limit="${BASH_REMATCH[5]}"
+        run bash -c 'source "$1"; OPT_MAX_MS="$2"; _check_threshold "$3"' _ \
+            "${REPO_ROOT}/script/box/bench.sh" "${_limit}" \
+            "$(awk -v n="${_median}" 'BEGIN {printf "%.0f", n*1000}')"
+        if [[ "${_kind}" == INFO ]]; then assert_success; else assert_failure 1; fi
+    else
+        fail "unrecognised bench sample: ${_line}"
+    fi
+    assert_equal "${output}" "${_line}"
+}
+
+@test "single source: bench fixture and documented samples match real product formatting" {
+    local _fixture _line
+    run "${STUBS}/just" box bench
+    assert_success
+    _fixture="${output}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done <<<"${_fixture}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done < <(
+        sed -n -e 's/^ *# bench\(-gate\)\?: //p' \
+            -e 's/^ *\(\(enter\|shell\|inbox\): min=.*\)$/\1/p' \
+            -e 's/^ *\(\[INFO\] shell median .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md"
+    )
+}
