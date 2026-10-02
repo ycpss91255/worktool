@@ -14,10 +14,10 @@
 
 ## 2. worktool 做的事
 
-- **核心承諾：驅動裝好之後，一個指令建好 worktool 環境。** 建好的意思是：開終端即在盒內、盒內工具可用、tool config 就位。驅動與 GUI app 是例外，各自是獨立的 host install script，不在那一個指令內（見第 3 節）。目前建盒（`just box assemble`）與終端進盒設定（`just box setup`）還是兩個指令，tool config 要到 M5 才開始進盒。
+- **核心承諾：驅動裝好之後，一個指令建好 worktool 環境。** 建好的意思是：開終端即在盒內、盒內工具可用、tool config 就位。驅動與 GUI app 是例外，各自是獨立的 host install script，不在那一個指令內（見第 3 節）。目前建盒（`just box assemble`）與終端進盒設定（`just box setup`）還是兩個指令，tool config 要到 M5 才開始放進盒子 HOME。
   - 驗證：待驗（整條承諾尚無從公開入口一次跑完的測試）。已有的部分檢查：`test/system/real_engine_spec.bats` 以真實 docker 引擎從 `box/dev.ini` 建出 dev 盒並在盒內執行 `rg`／`fzf`／`tmux`／`fish`，並以真的 ghostty 視窗證明受管區塊的指令會在盒內跑起 fish（ghostty chain 案例）。
 - **tool config 隨重建回來。** tool config 在 repo 內只有一份（不變量 2），重建時就位在盒子自己的 HOME。盒子使用獨立 HOME（[ADR 0002](adr/0002-box-owns-its-home.md)，預設 `~/<盒名>-box`，dev 盒為 `~/dev-box`，可用 `just box assemble --home <路徑>` 指定），tool config 只放在盒子 HOME。
-  - 驗證：待驗（tool config 從 M5 起才進盒，尚無「重建後 tool config 仍在」的測試）。盒子 HOME 本身已有檢查：`test/system/real_engine_spec.bats` 的 #198 案例（盒內 `$HOME` 就是 `--home` 指定的路徑；已存在的盒子給了不同的 `--home` 以結束碼 1 拒絕且盒子 HOME 不變）；`test/unit/assemble_spec.bats` 的 #198 案例（預設路徑、`--home` 的驗證與紀錄）。
+  - 驗證：待驗（tool config 從 M5 起才放進盒子 HOME，尚無「重建後 tool config 仍在」的測試）。盒子 HOME 本身已有檢查：`test/system/real_engine_spec.bats` 的 #198 案例（盒內 `$HOME` 就是 `--home` 指定的路徑；已存在的盒子給了不同的 `--home` 以結束碼 1 拒絕且盒子 HOME 不變）；`test/unit/assemble_spec.bats` 的 #198 案例（預設路徑、`--home` 的驗證與紀錄）。
 
 ## 3. worktool 不做的事
 
