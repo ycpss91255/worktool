@@ -433,6 +433,7 @@ EOF
     cat >"${_env}" <<'BASH'
 printf() {
     if [[ "$*" == '%s\n auto-enter terminal box' ]]; then
+        touch "${BATS_TEST_TMPDIR}/injected"
         builtin printf '%s\n' auto-enter terminal
         builtin printf '%1048576s\n' box
     else
@@ -443,6 +444,7 @@ BASH
     _trap poison
     printf '%s\n' 'terminal=sideways' >"${STATE}"
     BASH_ENV="${_env}" run just --justfile "${REPO_ROOT}/justfile" box setup
+    [[ -f "${BATS_TEST_TMPDIR}/injected" ]]
     assert_failure 1
     assert_line "[ERROR] ${STATE}: invalid value 'sideways' for terminal (expected ghostty|none)"
     run cat "${STATE}"

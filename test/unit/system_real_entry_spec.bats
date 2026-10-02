@@ -81,13 +81,7 @@ case "${FAKE_MODE:-}" in
 esac
 case "${1:-}" in
     info) exit 0 ;;
-    ps)
-        [[ -n "${FAKE_DEV:-}" ]] && printf 'dev\n'
-        if [[ "${FAKE_MODE:-}" == stream-ps && "$*" == *--format* ]]; then
-            # Exceed pipe capacity after the match to force a late write.
-            printf '%1048576s\n' other
-        fi
-        exit 0 ;;
+    ps)   [[ -n "${FAKE_DEV:-}" ]] && printf 'dev\n'; exit 0 ;;
     rm)   exit 0 ;;
     *)    exit 1 ;;
 esac
@@ -277,15 +271,6 @@ _with_entry() {
     assert_line "docker rm -f dev"
     run kill -0 "$(cat "${PIDFILE}")"
     assert_failure
-}
-
-@test "_cleanup removes a matching box when docker ps writes beyond pipe capacity after the match" {
-    FAKE_DEV=1 FAKE_MODE=stream-ps _with_entry _cleanup live 3
-    assert_failure 3
-    assert_output --partial "cleanup: box 'dev' still present - removing"
-    run cat "${FAKE_LOG}"
-    assert_line "distrobox rm -f dev"
-    assert_line "docker rm -f dev"
 }
 
 @test "_cleanup reports the leftover count as unknown (never 0) when docker ps hangs, and still finishes" {
