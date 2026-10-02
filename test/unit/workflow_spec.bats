@@ -453,6 +453,50 @@ _pl_blocked_run() {
     done
 }
 
+@test "doc/workflow.md documents gates as a complete replacement with explicit lint responsibility (#385)" {
+    run grep "^| \`gates\` |" "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '完整取代預設推送前 gate'
+    assert_output --partial "呼叫者須自行包含 \`just test lint\`"
+    assert_output --partial '僅省略時採用預設'
+    assert_output --partial "\`just test lint\` 與 \`just test changed\`"
+    refute_output --partial '額外 gate'
+}
+
+@test "workflows: custom gates are the only pre-push gate in every role (#385)" {
+    local template mode implementer args json
+    local gate='just test unit test/unit/workflow_spec.bats'
+    local replies='{"implement:":{"status":"ready"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc"},"review:#385:light":{"verdict":"mergeable"},"review:":{"verdict":"blocked","blocking":["broken"]}}'
+    for template in "${PR_LOOP}" "${FANOUT}"; do
+        for mode in full light; do
+            for implementer in codex claude; do
+                args="$(jq -cn --arg m "${mode}" --arg i "${implementer}" --arg g "${gate}" --arg d "${REPO_ROOT}" \
+                    '{repo:"o/r",repoDir:$d,mode:$m,implementer:$i,maxRounds:1} +
+                    {issue:385,branch:"b",name:"n",task:"t",gates:$g}')"
+                if [[ "${template}" == "${FANOUT}" ]]; then
+                    args="$(jq -c '. + {items:[{issue,branch,name,task,gates}]} | del(.issue,.branch,.name,.task,.gates)' <<<"${args}")"
+                fi
+                run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" "${args}" "${replies}"
+                assert_success
+                json="${output}"
+                run jq -e --arg g "${gate}" --arg m "${mode}" '
+                    .error == null and
+                    ([.calls[].prompt | contains("just test changed") or
+                        contains("Locally run only just test lint") or
+                        contains("before pushing run lint and only the touched specs")] | any | not) and
+                    ([.calls[] | select(.role | test("^(implement|fix|publish):")) |
+                        .prompt | contains("before pushing run " + $g)] | all) and
+                    (.calls[] | select(.role | startswith("ci:")) | .prompt | contains($g)) and
+                    (if $m == "full" then
+                        ([.calls[].role | startswith("fix:")] | any)
+                    else ([.calls[].role | startswith("publish:")] | any) end)
+                ' <<<"${json}"
+                assert_success
+            done
+        done
+    done
+}
+
 @test "pr-loop (node): Implement and Fix preserve pushed history except for the commit-email remedy" {
     local implementer
     for implementer in codex claude; do
