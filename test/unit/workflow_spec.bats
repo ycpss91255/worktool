@@ -2743,3 +2743,20 @@ _pl_resume_run() {
     run cat "${root}/gates"
     assert_output $'test lint\ntest changed'
 }
+
+@test "pr-loop (node): diverged fix history blocks without gates or force push (#396)" {
+    _pl_stage_setup
+    run _pl_stage_run codex diverged
+    assert_success
+    local json="${output}"
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        (.result.blockingLeft[0] | contains("history diverged")) and
+        ([.calls[].role | startswith("push-check:")] | any | not) and
+        ([.calls[].role | select(startswith("ci:"))] | length) == 1' <<<"${json}"
+    assert_success
+    assert [ ! -e "${BATS_TEST_TMPDIR}/gates" ]
+    run git --git-dir="${BATS_TEST_TMPDIR}/remote" rev-parse refs/heads/b
+    local remote="${output}"
+    run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
+    refute_output "${remote}"
+}

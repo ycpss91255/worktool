@@ -93,8 +93,12 @@ const agent = async (prompt, opts = {}) => {
   if (mode === 'exec-stage-checks' && role.startsWith(process.env.PL_STAGE === 'Implement' ? 'implement:' : 'fix:')) {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     if (process.env.PL_ACTION === 'dirty') writeFileSync(`${wt}/pending.txt`, 'pending')
-    if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed') {
+    if (process.env.PL_ACTION === 'unpushed' || process.env.PL_ACTION === 'pushed' || process.env.PL_ACTION === 'diverged') {
       execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix', '--allow-empty'])
+    }
+    if (process.env.PL_ACTION === 'diverged') {
+      const remote = execFileSync('git', ['-C', wt, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD^', '-m', 'remote change']).toString().trim()
+      execFileSync('git', ['-C', wt, 'push', '-q', 'origin', `${remote}:b`])
     }
     if (process.env.PL_ACTION === 'pushed') execFileSync('git', ['-C', wt, 'push', '-q', 'origin', 'b'])
   }

@@ -183,13 +183,13 @@ const result = (extra) => ({ issue: A.issue, ...extra })
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
-  const guards = `test -z "$(git status --porcelain)" &&
+  const guards = `status=$(git status --porcelain) && [ -z "$status" ] &&
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] &&
   git fetch origin ${sq(A.branch)} >&2 &&
   git merge-base --is-ancestor FETCH_HEAD HEAD`
   const gates = MODE === 'light' && !A.gates ? '' : `${GATES.split(',').map(g => g.trim()).join(' && ')} &&`
   return agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
-Local HEAD is ahead. Run ${GATES} blocking in the foreground before pushing. Any failed gate or guard is blocking. Never force push or rewrite history. Run this script only after all gates pass:
+Local HEAD is ahead. Run ${GATES} blocking in the foreground before pushing. Verify every unpublished commit has noreply author/committer, Refs: #${A.issue}, and no attribution trailers before running the script. Any failed gate or guard is blocking. Never force push or rewrite history. Run this script only after all gates pass:
 \`cd ${sq(WT)} && ${guards} &&
 ${gates}
 ${guards} && git push origin ${sq(A.branch)} >&2\`
@@ -210,7 +210,12 @@ remote_head=$(git ls-remote --exit-code origin ${sq(`refs/heads/${A.branch}`)}) 
 remote_head=$(printf '%s' "$remote_head" | cut -f1)
 ahead=false
 if [ \"$local_head\" != \"$remote_head\" ] && [ -z \"$errors$status\" ]; then
-  if git fetch origin ${sq(A.branch)} >&2 && git merge-base --is-ancestor \"$remote_head\" HEAD; then ahead=true; fi
+  if git fetch origin ${sq(A.branch)} >&2; then
+    if git merge-base --is-ancestor "$remote_head" HEAD; then ahead=true
+    elif ! git merge-base --is-ancestor HEAD "$remote_head"; then errors="$errors history diverged; "
+    fi
+  else errors="$errors remote history fetch failed; "
+  fi
 fi
 pr_head=$(gh pr view ${pr} --repo ${sq(REPO)} --json headRefOid --jq .headRefOid) || errors="$errors PR head lookup failed; "
 jq -cn --arg status "$status" --arg localHead "$local_head" --arg remoteHead "$remote_head" --arg prHead "$pr_head" --arg errors "$errors" --argjson ahead "$ahead" '{ahead:$ahead,status:$status,localHead:$localHead,remoteHead:$remoteHead,prHead:$prHead,errors:$errors}'
