@@ -114,7 +114,8 @@ _registered_names() {
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
         "UserPromptSubmit||${_p}/remind_no_emoji.sh" \
-        "Stop||${_p}/enforce_reply_language.sh")"
+        "Stop||${_p}/enforce_reply_language.sh" \
+        "PostToolUse|Bash|${_p}/remind_main_sync.sh")"
 }
 
 @test "codex registers every Claude PreToolUse Bash hook" {
