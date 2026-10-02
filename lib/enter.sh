@@ -306,6 +306,15 @@ enter_body_distrobox() {
     printf '%s\n' "${_prog}"
 }
 
+# The wrapper target recorded in a managed body, without executing shell code.
+enter_body_wrapper() {
+    local _body="$1" _prog
+    [[ "${_body}" == 'command = '* ]] || return 0
+    _prog="$(enter_first_word "${_body#command = }")"
+    [[ "${_prog##*/}" == enter.sh ]] || return 0
+    printf '%s\n' "${_prog}"
+}
+
 # --- The box's tmux environment (issue #179) ---------------------------------
 
 # The managed body of distrobox.conf for box $1: ONE line of POSIX sh that

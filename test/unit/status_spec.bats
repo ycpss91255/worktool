@@ -474,3 +474,18 @@ _write_block() {
     assert_line "ghostty: ${_new} (managed block: present)"
     refute_line --partial "ghostty: ${GHOSTTY} ("
 }
+
+@test "status reports a missing wrapper from the setup-written command and tells how to repair it" {
+    local _repo="${BATS_TEST_TMPDIR}/moved repo"
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${SETUP_SH}" "${REPO_ROOT}/script/box/enter.sh" "${_repo}/script/box/"
+    cp "${REPO_ROOT}/script/box/justfile.box" "${_repo}/script/box/"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty
+    assert_success
+    rm "${_repo}/script/box/enter.sh"
+    run just box status
+    assert_success
+    assert_line "wrapper: ${_repo}/script/box/enter.sh (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)"
+    assert_line "distrobox: ${DISTROBOX} (recorded in a managed block: runnable)"
+}

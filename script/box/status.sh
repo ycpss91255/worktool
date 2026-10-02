@@ -61,7 +61,7 @@ Show the auto-enter decisions in force (from {state-file},
 written by `just box setup`), the source of each (default | user), whether
 the worktool managed block is present in the ghostty config and in
 distrobox.conf (the block that keeps a host tmux pane's TMUX out of the
-box), whether the distrobox the ghostty block names can still be run,
+box), whether the wrapper and distrobox the ghostty block names can still be run,
 the user-config link states and the recorded box HOME.
 Read-only. A corrupt state file is refused: `[ERROR] <file>: invalid value
 ...` on stderr, exit 1.
@@ -127,6 +127,7 @@ _report() {
     done < <(enter_keys)
     _report_ghostty
     _report_block distrobox.conf "$(enter_distrobox_conf)"
+    _report_wrapper
     _report_distrobox
     _report_links
     _report_home
@@ -223,6 +224,21 @@ _report_recorded_distrobox() {
     else
         printf 'distrobox: %s (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)\n' "$1"
     fi
+}
+
+# Read every managed profile, including an unmigrated companion file.
+_report_wrapper() {
+    local _file _path _state
+    for _file in "$(enter_ghostty_target)" "$(enter_config_dir)/ghostty/config" "$(enter_config_dir)/ghostty/config.ghostty"; do
+        _path="$(enter_body_wrapper "$(enter_block_body "${_file}")")"
+        [[ -n "${_path}" ]] || continue
+        _state="runnable"
+        if [[ ! -f "${_path}" || ! -x "${_path}" ]]; then
+            _state="NOT RUNNABLE - moved or removed; re-run: just box setup"
+        fi
+        printf 'wrapper: %s (recorded in a managed block: %s)\n' "${_path}" "${_state}"
+        return 0
+    done
 }
 
 # --- Main --------------------------------------------------------------------

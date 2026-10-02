@@ -423,6 +423,11 @@ link: the box HOME is the host HOME - user config already in place
 後面照樣列出預設值(全部 `(default)`)、ghostty 的區塊狀態與 `distrobox:` 那行,
 報告永遠不會是空的。
 
+受管命令也記錄 repo 內 wrapper 的絕對路徑。`just box status` 會列出
+`wrapper: <路徑> (recorded in a managed block: runnable)`；若 repo 搬走、
+wrapper 被刪除或不再可執行，會顯示 `NOT RUNNABLE` 與修復指令
+`just box setup`。請在 repo 的新位置重跑 setup，更新受管命令。
+
 ## 首次啟動的進度(Ghostty 與 just box enter,issues #180／#360)
 
 盒子第一次 `distrobox enter` 時,distrobox-init 會在盒內安裝基本套件與
