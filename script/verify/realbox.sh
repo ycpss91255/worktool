@@ -587,6 +587,10 @@ _52_step2_apply() {
 # --- objective new-window check ---------------------------------------------
 _52_confirm_window() {
     local _pid
+    printf 'Ghostty already running when setup applied? Reload config (Linux default Ctrl+Shift+,).\n'
+    printf 'Reload is asynchronous: wait for evidence that config.ghostty was read (e.g. Ghostty logs),\n'
+    printf 'or start a new Ghostty process with the updated config before opening a new window.\n'
+    printf 'Never close your existing windows.\n'
     printf 'Open a NEW ghostty window now and run: echo $fish_pid\n'
     [[ -t 0 ]] \
         || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }

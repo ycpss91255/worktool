@@ -833,8 +833,9 @@ rc=0
       # 中斷時的還原手段：
       just verify realbox --allow-real-box 5.2.3; echo rc=$?
       ```
-      預期 `rc=0`。5.2 需互動 tty 作主觀確認；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 只印 `no-backup=1`。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
-      新視窗中執行 `ls /run/.containerenv 2>/dev/null || ls /.dockerenv; ps -p $fish_pid -o comm=`，應看到所用引擎的容器標記檔與 `fish`，不要求 tmux session。主觀確認後 transcript 印 `container-marker=confirmed` 與 `fish`（PR #232）。
+      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 只印 `no-backup=1`。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
+      先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
+      新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
     - 預期看到資訊：`decoy-created=1`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`dev-still-there=1`。還原印 `restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
     - 驗收方式

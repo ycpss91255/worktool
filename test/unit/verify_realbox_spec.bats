@@ -495,6 +495,18 @@ STUB
     assert_output --partial "restore-ok=1"
 }
 
+@test "#362: 5.2 explains asynchronous reload for an already running Ghostty" {
+    export REALBOX
+    run _window_input yes
+    assert_output --partial "Ghostty already running"
+    assert_output --partial "Ctrl+Shift+,"
+    assert_output --partial "asynchronous"
+    assert_output --partial "config.ghostty"
+    assert_output --partial "start a new Ghostty process"
+    assert_output --partial "Never close your existing windows"
+    assert_output --partial 'echo $fish_pid'
+}
+
 @test "#362: 5.2 passes with measured fish namespace different from host" {
     _fake_window_process
     run _window_input 4242
