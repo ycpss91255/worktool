@@ -24,7 +24,11 @@ git fetch origin >&2
 prune_tree() {
     local tree="$1" branch
     if ! git merge-base --is-ancestor "$(git -C "${tree}" rev-parse HEAD)" origin/main; then
-        log_info "kept ${tree}: not merged"
+        if [[ -z "$(git for-each-ref --contains="$(git -C "${tree}" rev-parse HEAD)" --format='%(refname)' refs/remotes/origin)" ]]; then
+            log_info "kept ${tree}: unpushed commits; not merged"
+        else
+            log_info "kept ${tree}: not merged"
+        fi
         return 0
     fi
     if [[ -n "$(git -C "${tree}" status --porcelain --untracked-files=all)" ]]; then

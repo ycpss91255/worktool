@@ -66,3 +66,12 @@ prune() {
         [ -d "${TREE}" ]
     done
 }
+
+@test "keeps local unpushed commits with a specific reason" {
+    git -C "${TREE}" push -qu origin topic
+    git -C "${TREE}" commit -qm local --allow-empty
+    prune --apply
+    assert_success
+    assert_output --partial "unpushed commits"
+    [ -d "${TREE}" ]
+}
