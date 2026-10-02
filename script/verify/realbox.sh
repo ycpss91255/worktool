@@ -592,7 +592,7 @@ _52_confirm_window() {
     printf 'Reload is asynchronous: wait for evidence that config.ghostty was read (e.g. Ghostty logs),\n'
     printf 'or start a new Ghostty process with the updated config before opening a new window.\n'
     printf 'Never close your existing windows.\n'
-    printf 'Open a NEW ghostty window now and run: echo $fish_pid\n'
+    printf 'Open a NEW ghostty window now and run: echo %s\n' "\$fish_pid"
     [[ -t 0 ]] \
         || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }
     printf 'Enter the fish PID from the new window: '

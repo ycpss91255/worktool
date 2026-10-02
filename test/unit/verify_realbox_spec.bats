@@ -440,8 +440,16 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 # --- 5.2 step 1: back up -----------------------------------------------------
 
 _window_input() {
+    cat >"${STATE}/window-run" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+"${REALBOX}" --allow-real-box 5.2 || rc=$?
+printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/window-rc"
+STUB
+    chmod +x "${STATE}/window-run"
     printf '%s\n' "$1" | script -q -c \
-        '"$REALBOX" --allow-real-box 5.2; printf "%s\n" "$?" >"$FAKE_STATE_DIR/window-rc"' /dev/null
+        "\"${STATE}/window-run\"" /dev/null
 }
 
 @test "#362: 5.2 refuses typed yes without objective window evidence" {
@@ -504,7 +512,7 @@ STUB
     assert_output --partial "config.ghostty"
     assert_output --partial "start a new Ghostty process"
     assert_output --partial "Never close your existing windows"
-    assert_output --partial 'echo $fish_pid'
+    assert_output --partial "echo \$fish_pid"
 }
 
 @test "#362: realbox help names the four actual backup files" {
@@ -514,7 +522,7 @@ STUB
     assert_output --partial "config.ghostty"
     assert_output --partial "worktool state file"
     assert_output --partial "distrobox.conf"
-    refute_output --partial "~/.tmux.conf"
+    refute_output --partial ".tmux.conf"
     assert_output --partial "fish mount namespace"
 }
 
@@ -957,7 +965,7 @@ STUB
 @test "5.2: new-window instructions check direct fish entry without a tmux session" {
     run "${REALBOX}" --allow-real-box 5.2
     assert_failure
-    assert_output --partial 'echo $fish_pid'
+    assert_output --partial "echo \$fish_pid"
     assert_output --partial "Open a NEW ghostty window"
     refute_output --partial "tmux display"
     assert_line "restore-ok=1"
