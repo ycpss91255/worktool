@@ -72,8 +72,8 @@ install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/000
    300 ms 這條線由系統層 real-engine gate **強制**(`just test system-real`,
    issue #23):`test/system/real_engine_spec.bats` 對 DinD 內建出的真實 dev 盒跑
    `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
-   --warmup 2 --max-ms 300`),shell 中位數(enter + shell 啟動,即使用者拿到提示
-   字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
+   --warmup 2 --max-ms 300`),shell 中位數(由 setup 寫出的受管 command 經
+   enter.sh wrapper、distrobox enter + shell 啟動,即使用者拿到提示字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
    一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
    pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
    (未判定,不給通過也不給退化;CI 上一樣是紅),見
@@ -252,9 +252,11 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
    (lint、test-unit、test-matrix、test-integration、test-system、test-acceptance、
-   test-system-real、ci-passed),matrix 以 `just test <tier>` 執行(tier 為 lint /
+   test-system-real、ci-passed),另加 milestone 驗收 job `verify-all`。matrix 以 `just test <tier>` 執行(tier 為 lint /
    unit / matrix / integration / system / acceptance),real job 以 `just test system-real`
-   執行。
+   執行。`verify-all` 只在貼有 `milestone-gate` 標籤的 PR 以 `just verify all` 執行
+   非實機驗收(不傳 `--allow-real-box`,第 5 節留給實機驗收),兩種架構全部成功才通過
+   `ci-passed`。普通 PR 與 main push 不要求 `verify-all`,其餘必要 gate 仍須全部成功。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
 

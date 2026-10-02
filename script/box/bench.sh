@@ -2,16 +2,16 @@
 # bench.sh - measure the enter latency of a worktool box (M3, issues #150,
 # #162 and #181).
 #
-# Times `distrobox enter <box> -- ...` with bash's EPOCHREALTIME (microsecond
-# wall clock; no hyperfine, nothing to install) and reports min / median /
+# Times setup's managed command (through enter.sh) plus a metric payload
+# with bash's EPOCHREALTIME (microsecond wall clock; no hyperfine, nothing to install) and reports min / median /
 # max in milliseconds for three metrics (the unit tests swap the clock for
 # an injected one through the test-only BENCH_CLOCK, issue #249; see
 # _now_us):
 #
-#   enter   distrobox enter <box> -- true          (wrapper + engine round trip)
-#   shell   distrobox enter <box> -- <shell>       (the same, plus a shell
+#   enter   <managed-command> -- true          (wrapper + engine round trip)
+#   shell   <managed-command> -- <shell>       (the same, plus a shell
 #                                                   start-up; default `sh -c :`)
-#   inbox   distrobox enter <box> -- bash -c '<timer>' bench-inbox <shell>
+#   inbox   <managed-command> -- bash -c '<timer>' bench-inbox <shell>
 #                                                  (the shell start-up ALONE,
 #                                                   clocked inside the box)
 #
@@ -106,6 +106,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 
 # shellcheck source=log.sh
 source "${LIB_DIR}/log.sh"
+# shellcheck source=enter.sh
+source "${LIB_DIR}/enter.sh"
 
 # --- Defaults (overridden by the command line; see _parse_args) --------------
 OPT_BOX="dev"
@@ -156,11 +158,13 @@ _usage() {
 Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
                 [--shell CMD] [--max-wait N] [-h|--help]
 
-Measure the enter latency of a worktool box with bash EPOCHREALTIME:
+Measure the enter latency of a worktool box with bash EPOCHREALTIME.
+Setup writes the managed terminal command in a temporary config (not timed).
+Every metric executes that command through enter.sh; user config is untouched:
 
-  enter   distrobox enter <box> -- true                 (host-clocked)
-  shell   distrobox enter <box> -- <shell>              (host-clocked)
-  inbox   distrobox enter <box> -- bash -c '<timer>' bench-inbox <shell>
+  enter   <managed-command> -- true                 (host-clocked)
+  shell   <managed-command> -- <shell>              (host-clocked)
+  inbox   <managed-command> -- bash -c '<timer>' bench-inbox <shell>
           (<shell> clocked INSIDE the box: its start-up without the enter)
 
 Each metric runs --warmup unrecorded times, then --runs recorded times, and
@@ -376,7 +380,13 @@ _run_metric() {
     local _name="$1" _runner="$3"
     local -n _ref_samples="$2"
     shift 3
-    local _i _us _rc _shown="${*//"${INBOX_TIMER}"/<timer>}"
+    local _i _us _rc _shown="$*"
+    # The shell adapter executes setup's source verbatim; report that source
+    # and the payload rather than the adapter's own argv.
+    if [[ -n "${MANAGED_COMMAND:-}" ]]; then
+        _shown="${MANAGED_COMMAND} -- ${*:5}"
+    fi
+    _shown="${_shown//"${INBOX_TIMER}"/<timer>}"
     for (( _i = 0; _i < OPT_WARMUP + OPT_RUNS; _i++ )); do
         _psi_guard "before ${_name} run $(( _i + 1 ))" || return 3
         RUN_ERR=""
@@ -606,6 +616,25 @@ _check_threshold() {
 
 # --- Main --------------------------------------------------------------------
 
+# Run the real setup in an isolated config, outside the timed path. Read the
+# resulting terminal command rather than reconstructing its wrapper argv.
+# No user config is changed, including the test-only config override.
+_managed_command() (
+    local _tmp _body
+    _tmp="$(mktemp -d)" || return 1
+    trap 'rm -rf -- "${_tmp}"' EXIT
+    export XDG_CONFIG_HOME="${_tmp}"
+    unset WORKTOOL_CONFIG_FILE
+    "${SCRIPT_DIR}/setup.sh" --auto-enter yes --terminal ghostty \
+        --box "${OPT_BOX}" >/dev/null || return 1
+    _body="$(enter_block_body "$(enter_ghostty_target)")" || return 1
+    if [[ "${_body}" != 'command = '* || "${_body}" == 'command = ' ]]; then
+        log_error "setup did not write a managed command - cannot bench"
+        return 1
+    fi
+    printf '%s\n' "${_body#command = }"
+)
+
 # Wait for a quiet host, measure the three metrics (enter, shell, inbox)
 # and report. Runs only after the command line was fully validated.
 _bench_exec() {
@@ -616,14 +645,18 @@ _bench_exec() {
     local -a _shell_argv _enter_us=() _shell_us=() _inbox_us=()
     local -a _e_stats _s_stats _i_stats
     read -r -a _shell_argv <<<"${OPT_SHELL}"
+    MANAGED_COMMAND="$(_managed_command)" || return 1
+    # Ghostty executes this shell source; append only the metric payload,
+    # with argv boundaries preserved across the shell and enter wrapper.
+    local -a _managed=(sh -c "${MANAGED_COMMAND} -- \"\$@\"" bench-managed)
     _host_precondition || return $?
 
     _run_metric enter _enter_us _time_cmd \
-        distrobox enter "${OPT_BOX}" -- true || return $?
+        "${_managed[@]}" true || return $?
     _run_metric shell _shell_us _time_cmd \
-        distrobox enter "${OPT_BOX}" -- "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" "${_shell_argv[@]}" || return $?
     _run_metric inbox _inbox_us _inbox_cmd \
-        distrobox enter "${OPT_BOX}" -- bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return $?
     if [[ -n "${PSI_PATH}" ]]; then
         _loadavg
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
