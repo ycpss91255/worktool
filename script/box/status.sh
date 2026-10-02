@@ -233,8 +233,10 @@ _report_wrapper() {
         _path="$(enter_body_wrapper "$(enter_block_body "${_file}")")"
         [[ -n "${_path}" ]] || continue
         _state="runnable"
-        if [[ ! -f "${_path}" || ! -x "${_path}" ]]; then
+        if [[ ! -f "${_path}" ]]; then
             _state="NOT RUNNABLE - moved or removed; re-run: just box setup"
+        elif [[ ! -x "${_path}" ]]; then
+            _state="NOT RUNNABLE - not executable; re-run: just box setup"
         fi
         printf 'wrapper: %s (recorded in a managed block: %s)\n' "${_path}" "${_state}"
         return 0
