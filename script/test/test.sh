@@ -561,8 +561,8 @@ given):
                   Always run lint, then select specs from committed,
                   uncommitted, and untracked changes since REF (default:
                   origin/main). Runs changed unit and matrix specs only;
-                  heavier tiers are reported for CI. Unknown impact or an
-                  unreadable diff runs the whole unit tier only.
+                  heavier tiers are reported for CI. Unknown impact and an
+                  unreadable diff are also reported for CI verification.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
   --matrix [SPEC...] [--filter REGEX]
@@ -723,6 +723,38 @@ script/box/status.sh|test/unit/status_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
+    _changed_doc_path_map
+}
+
+_changed_doc_path_map() {
+    cat <<'MAP'
+README*|test/unit/diagram_spec.bats
+README*|test/unit/justfile_spec.bats
+doc/diagram/*|test/unit/diagram_spec.bats
+doc/adr/*.md|test/unit/adr_spec.bats
+doc/adr/*.md|test/unit/adr/0004_spec.bats
+doc/adr/*.md|test/unit/adr/0005_spec.bats
+doc/adr/*.md|test/unit/adr/0006_spec.bats
+doc/adr/*.md|test/unit/adr/0007_spec.bats
+doc/adr/*.md|test/unit/adr/0008_spec.bats
+doc/adr/*.md|test/unit/adr/0009_spec.bats
+doc/adr/*.md|test/unit/adr/0010_spec.bats
+doc/adr/*.md|test/unit/adr/0011_spec.bats
+doc/adr/*.md|test/unit/adr/0012_spec.bats
+doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/*.md|test/unit/contract_spec.bats
+doc/*.md|test/unit/diagram_spec.bats
+doc/*.md|test/unit/justfile_spec.bats
+doc/structure.md|test/unit/adr/0007_spec.bats
+doc/manifest.md|test/unit/bench_spec.bats
+doc/manifest.md|test/unit/adr/0007_spec.bats
+doc/enter.md|test/unit/adr/0007_spec.bats
+doc/design.md|test/unit/adr/0008_spec.bats
+doc/workflow.md|test/unit/workflow_spec.bats
+doc/contract.md|test/unit/adr/0004_spec.bats
+doc/contract.md|test/unit/adr/0007_spec.bats
+doc/contract.md|test/unit/adr/0009_spec.bats
+MAP
 }
 
 _changed_hook_path_map() {
@@ -766,19 +798,24 @@ MAP
 _mapped_specs() {
     local _path="$1" _pattern _spec
     while IFS='|' read -r _pattern _spec; do
-        if [[ "${_path}" == "${_pattern}" ]]; then
+        # Root documentation guards do not apply to nested ADRs or diagrams.
+        if [[ "${_pattern}" == 'doc/*.md' && "${_path%/*}" != doc ]]; then
+            continue
+        fi
+        if [[ "${_path}" == @(${_pattern}) ]]; then
             printf '%s\n' "${_spec}"
         fi
     done < <(_changed_path_map)
 }
 
 _add_changed_spec() {
-    local _path="$1" _mapped="${2:-0}" _tier
+    local _path="$1" _mapped="${2:-0}" _source="${3:-$1}" _tier
     [[ "${_path}" =~ ^test/(unit|matrix|integration|system|acceptance)/.+\.bats$ ]] \
         || return 1
     _tier="${BASH_REMATCH[1]}"
     if [[ ! -f "${REPO_ROOT}/${_path}" ]]; then
         if [[ "${_mapped}" -eq 1 ]]; then
+            _info "此改動由 CI 的 ${_tier} 驗證：${_source}（對應 spec 不存在：${_path}）"
             local -n _full_tier="_full_${_tier}"
             _full_tier=1
             unset -n _full_tier
@@ -803,7 +840,7 @@ _add_changed_spec() {
 
 _is_test_infrastructure() {
     case "$1" in
-        script/test/*|dockerfile/Dockerfile.*|justfile*|test/helper/*) return 0 ;;
+        script/test/*|dockerfile/Dockerfile.*|Dockerfile|Dockerfile.*|justfile*|test/helper/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -814,28 +851,15 @@ _run_changed_tiers() {
     for _tier in unit matrix integration system acceptance; do
         local -n _selected_specs="_${_tier}"
         local -n _full_tier="_full_${_tier}"
-        if [[ "${_tier}" != unit \
-            && ( "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ) ]]; then
-            if [[ "${_tier}" == matrix && "${#_selected_specs[@]}" -gt 0 ]]; then
+        if [[ "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
+            _info "此改動由 CI 的 ${_tier} 驗證"
+        fi
+        if [[ "${#_selected_specs[@]}" -gt 0 ]]; then
+            if [[ "${_tier}" == unit || "${_tier}" == matrix ]]; then
                 _run_host_step "${_tier}" "" "${_selected_specs[@]}"
             else
                 _info "此改動由 CI 的 ${_tier} 驗證"
             fi
-            unset -n _selected_specs
-            unset -n _full_tier
-            continue
-        fi
-        if [[ "${_tier}" =~ ^(integration|system|acceptance)$ \
-            && "${#_selected_specs[@]}" -gt 0 ]]; then
-            _info "此改動由 CI 的 ${_tier} 驗證"
-            unset -n _selected_specs
-            unset -n _full_tier
-            continue
-        fi
-        if [[ "${_full_fallback}" -eq 1 || "${_full_tier}" -eq 1 ]]; then
-            _run_host_step "${_tier}" ""
-        elif [[ "${#_selected_specs[@]}" -gt 0 ]]; then
-            _run_host_step "${_tier}" "" "${_selected_specs[@]}"
         fi
         unset -n _selected_specs
         unset -n _full_tier
@@ -856,20 +880,21 @@ _run_changed() {
     local -a _unit=() _matrix=() _integration=() _system=() _acceptance=()
     _list="$(mktemp)" || _die "mktemp failed"
     if ! _changed_files "${_base}" "${_list}"; then
-        _info "changed-file diff unreadable; running the unit tier"
+        _info "changed-file diff unreadable; verification left to CI"
         _full_fallback=1
     fi
     while IFS= read -r _path; do
         if [[ "${_path}" == dockerfile/Dockerfile.ghostty ]]; then
-            _info "此改動由 CI 的 integration 驗證"
+            _info "此改動由 CI 的 integration 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue
         fi
         if [[ "${_path}" == dockerfile/Dockerfile.system-real \
             || "${_path}" == script/test/system-real-entry.sh ]]; then
-            _info "此改動由 CI 的 system-real 驗證"
+            _info "此改動由 CI 的 system-real 驗證：${_path}（測試基礎設施變更；專用 runner）"
             continue
         fi
         if _is_test_infrastructure "${_path}"; then
+            _info "此改動由 CI 的 unit 驗證：${_path}（測試基礎設施變更；全部 tier 交給 CI）"
             _full_fallback=1
             continue
         fi
@@ -878,12 +903,13 @@ _run_changed() {
         fi
         _mapped="$(_mapped_specs "${_path}")"
         if [[ -z "${_mapped}" ]]; then
+            _info "此改動由 CI 的 unit 驗證：${_path}（沒有對應 spec）"
             _full_unit=1
             continue
         fi
         while IFS= read -r _spec; do
             [[ -n "${_spec}" ]] || continue
-            _add_changed_spec "${_spec}" 1
+            _add_changed_spec "${_spec}" 1 "${_path}"
         done <<<"${_mapped}"
     done <"${_list}"
     rm -f "${_list}"

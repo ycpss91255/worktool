@@ -491,9 +491,34 @@ _managed_enter_tty() {
     assert_output --partial "failed: timed out after 3s without container_setup_done"
 }
 
+# Freeze Bash's clock only in the setup-written entry command. Each polling
+# sleep advances one virtual second; CPU scheduling cannot skip an interval.
+# Wait for the asynchronous follower's fixture before advancing the clock.
+_managed_timeout_clock() {
+    export FAKE_CLOCK_ENTER="${ENTER}"
+    cat >"${BATS_TEST_TMPDIR}/clock.bash" <<'EOF'
+if [[ "$0" == "${FAKE_CLOCK_ENTER}" ]]; then
+    unset SECONDS
+    SECONDS=0
+    sleep() {
+        if ! timeout 30 bash -c '
+            until grep -q "Unpacking stuck-pkg" "$1"; do
+                /bin/sleep 0.01
+            done
+        ' _ "${INIT_LOG}"; then
+            printf 'clock: init log fixture was not delivered\n' >&2
+            exit 1
+        fi
+        SECONDS=$((SECONDS + $1))
+    }
+fi
+EOF
+}
+
 @test "Ghostty managed command times out with ongoing progress log and recovery" {
     enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
-    WORKTOOL_INIT_TIMEOUT=3 _managed_enter
+    _managed_timeout_clock
+    BASH_ENV="${BATS_TEST_TMPDIR}/clock.bash" WORKTOOL_INIT_TIMEOUT=3 _managed_enter
     assert_failure 1
     assert_output --partial "failed: timed out after 3s without container_setup_done"
     assert_line "[ERROR] init log: ${INIT_LOG}"
@@ -502,6 +527,8 @@ _managed_enter_tty() {
     local _n
     _n="$(grep -c 'first launch: Installing basic packages.*elapsed' <<<"${output}")"
     assert [ "${_n}" -ge 2 ]
+    assert_line "[INFO] first launch: Installing basic packages... - 1s elapsed - Unpacking stuck-pkg"
+    assert_line "[INFO] first launch: Installing basic packages... - 2s elapsed - Unpacking stuck-pkg"
     assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
     run enter_fake_logs_alive
     assert_failure

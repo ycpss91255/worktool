@@ -8,10 +8,10 @@
 #
 # Contract under test:
 #   - Three metrics, in this order:
-#       enter = `distrobox enter <box> -- true`          host EPOCHREALTIME
-#       shell = `distrobox enter <box> -- <shell>`       host EPOCHREALTIME
+#       enter = `<managed-command> -- true`          host EPOCHREALTIME
+#       shell = `<managed-command> -- <shell>`       host EPOCHREALTIME
 #               (default `sh -c :`)
-#       inbox = `distrobox enter <box> -- bash -c '<timer>' bench-inbox <shell>`
+#       inbox = `<managed-command> -- bash -c '<timer>' bench-inbox <shell>`
 #               where <timer> runs <shell> INSIDE the box between two in-box
 #               EPOCHREALTIME reads and prints the difference (microseconds,
 #               one integer, last stdout line); the enter round trip is NOT
@@ -273,6 +273,34 @@ _json_object_re() {
 }
 
 # --- self-registration -------------------------------------------------------
+
+@test "bench executes the managed command written by setup for every metric" {
+    export XDG_CONFIG_HOME="${TMP}/user-config"
+    export FAKE_MANAGED_CALLS="${TMP}/managed.calls"
+    # Observe the terminal's shell boundary without replacing setup or enter.
+    cat >"${MOCKBIN}/sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$2" >>"${FAKE_MANAGED_CALLS}"
+exec /bin/sh "$@"
+EOF
+    chmod +x "${MOCKBIN}/sh"
+    run "${REPO_ROOT}/script/box/setup.sh" --auto-enter yes --terminal ghostty --box other
+    assert_success
+    local managed
+    managed="$(sed -n 's/^command = //p' "${XDG_CONFIG_HOME}/ghostty/config")"
+    [[ -n "${managed}" ]]
+    run "${BENCH}" --box other --runs 1 --warmup 1 --shell 'fish -c exit'
+    assert_success
+    [[ -f "${FAKE_MANAGED_CALLS}" ]]
+    run sort -u "${FAKE_MANAGED_CALLS}"
+    assert_output "${managed} -- \"\$@\""
+    run wc -l <"${FAKE_MANAGED_CALLS}"
+    assert_output '6'
+    run cat "${FAKE_DBX_CALLS}"
+    assert_line 'enter other -- true'
+    assert_line 'enter other -- fish -c exit'
+    assert_line --regexp '^enter other -- bash -c .* bench-inbox fish -c exit$'
+}
 
 @test "this spec is a required unit spec of test.sh" {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
@@ -1114,8 +1142,8 @@ _manifest_gate_paragraph() {
     run _manifest_gate_paragraph
     assert_success
     assert_output --partial "\`enter: ...\` / \`shell: ...\` / \`inbox: ...\` 三行指標存在"
-    assert_output --partial "\`[INFO] shell: ... of 'distrobox enter dev -- fish -c exit' done\`"
-    assert_output --partial "\`[INFO] inbox: ... of 'distrobox enter dev -- bash -c <timer> bench-inbox fish -c exit' done\`"
+    assert_output --partial "\`[INFO] shell: ... of '<受管 command> -- fish -c exit' done\`"
+    assert_output --partial "\`[INFO] inbox: ... of '<受管 command> -- bash -c <timer> bench-inbox fish -c exit' done\`"
     assert_output --partial "三行指標仍在"
     assert_output --partial "\`sh -c :\`"
     refute_output --partial "兩行指標"

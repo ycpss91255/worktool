@@ -10,6 +10,26 @@ worktool 的 sub-issue 都用同一條迴圈交付:**實作(TDD)-> CI -> 另一�
 | `milestone-fanout.js` | 多個**彼此獨立**的 sub-issue 各自跑一遍 `pr-loop`(pipeline,誰先好誰先回報) | milestone 開工、一波獨立的 sub-issue |
 | `research-verify.js` | 找資料:agy(gemini)查,codex 逐條開來源核對、claude 抽查與整合,結論留言在 issue | 任何需要查證的設計問題(見下方「research-verify」) |
 
+## 主迴圈的 Codex 派工限制（#366）
+
+`enforce_codex_via_workflow.sh` 在 Claude 與 Codex 的 PreToolUse Bash 註冊。
+#364（PR #369）已合併，提供 base 分支支援；本 hook 隨設定載入立即啟用。
+主 session 直接派 Codex 實作（含 `bash run.sh`、巢狀或 sourced 包裝腳本）會拒絕，
+並提示改走 pr-loop／milestone-fanout。
+
+身分依據是 [Claude Code hook 輸入契約](https://code.claude.com/docs/en/hooks#common-input-fields)：
+子 agent 的工具呼叫帶 `agent_id`，主 session 沒有。依 PR #372 收尾決議，
+任何非空字串 `agent_id` 都放行，包含一般子 agent 與 Workflow agent；
+不靠 `agent_type`、環境標記或 transcript 格式判斷。空值或錯誤型別不構成例外。
+測試 fixture 依 2026-10-02 查閱的官方文件欄位建立，並非擷取實際執行輸入。
+
+主 session 的唯讀例外只接受字面 `codex exec --sandbox read-only`（含 `e`、`-s` 等形式）。
+未知選項、sandbox 覆寫、shell 展開、eval／xargs、不透明 launcher 與非 shell 直譯器採封閉拒絕。
+包裝腳本只讀取不執行，遞迴深度上限 16；缺檔或不可判讀也拒絕。
+未被結構化檢查核對的 Codex 原始文字會觸發拒絕，單純提到 Codex 也可能被擋。
+僅透過 PATH 解析的自訂執行檔、自訂 just recipe、編碼或執行時才組出的呼叫不在靜態檢查範圍；
+此 hook 是合作 agent 的規則護欄，不是作業系統 sandbox，也不驗證 agent 身分真偽。
+
 ## 呼叫方式
 
 從任何 cwd 以 `scriptPath` 呼叫(不需要把腳本裝進 session 的專案目錄):
@@ -118,6 +138,24 @@ args 範例：
   ]
 }
 ```
+
+## milestone 驗收 PR 交出前檢查清單
+
+交給維護者驗收前，agent 必須逐項完成並在 PR 說明附上證據：
+
+- [ ] 驗收 PR 已貼 `milestone-gate`，目前 head 的 CI 全部成功，包含兩種架構的 `verify-all` 與彙總 `ci-passed`；附上成功 run 的連結。CI 的 `verify-all` 實跑 `just verify all`，只涵蓋非實機項目，不含需要 `--allow-real-box` 的第 5 節。普通 PR 不要求這個 job。
+- [ ] milestone 每個目標都對應至少一個從使用者實際入口出發的測試或驗收項目；在 PR 說明列出下表，每列填入可查證的測試位置、驗收編號與輸出或 CI 連結。入口應是使用者會啟動的命令或操作，例如 setup 寫出的命令或正在執行的 Ghostty；只驗腳本接線或 stub 成功，不能當作目標已達成的證據。
+- [ ] 第 5 節實機項目中，agent 能在 host 上安全執行、有備份與還原流程的項目，交出前先跑一次並貼出輸出與還原結果。無法安全執行的項目，列出原因與待維護者實跑的命令，不宣稱通過。
+
+| milestone 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
+|----------------|----------------|----------------|------|
+| 逐項填入目標 | 命令或操作 | spec／驗收編號 | 輸出或 CI 連結 |
+
+這份清單是交出前的責任；就緒留言的自動檢查另由 #365 處理。milestone 驗收 PR 的合併仍須維護者在該 PR 留下核准紀錄。
+
+### CI job 驗收追蹤(#363)
+
+#363 的 CI job 驗收需附 GitHub runner 的兩份實跑證據：目前 #157 head 重現 F1 的 RED，以及修正後 head 的 GREEN（兩種架構的 `verify-all` 全部成功）。證據齊全前，CI 變更 PR 使用 `Refs #363`，#363 保持開啟。普通 PR 的 `verify-all` 為 skipped、本機 spec 通過或 workflow 接線正確，都不能代替這兩份證據。
 
 ## research-verify
 

@@ -445,8 +445,10 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能
 
-- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> `distrobox enter dev` -> 盒內
-  fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。終端**不自動開 tmux**(issue #179:
+- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
+  fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
+  實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
+  shell median 仍以 300 ms 判定。終端**不自動開 tmux**(issue #179:
   distrobox 與 host 共用 `/tmp`,舊的 `-- tmux new -A -s main` 會附著到 host 的 tmux
   server,實機因此假成功):
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
