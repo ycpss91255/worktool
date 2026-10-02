@@ -105,10 +105,11 @@ const RULES = GUARDRAILS
 const IMPLEMENT_TASK = `TASK (issue #${A.issue}): ${A.task}
 When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
+const SETUP = `cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}`
 const IMPLEMENT = `${RULES}
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
-Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE} && cd ${WT}. Work ONLY there.
+Setup: ${SETUP} && cd ${WT}. Work ONLY there.
 ${IMPLEMENT_TASK}. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const CODEX_IMPLEMENT_BRIEF = `${CODEX_RULES}
@@ -126,7 +127,7 @@ const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for i
 
 ${CODEX_RULES}
 
-First run: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}.
+First run: ${SETUP}.
 ${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
@@ -261,14 +262,26 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   common=$(git rev-parse --path-format=absolute --git-common-dir) &&
   cd ${sq(WT)} &&
   [ "$(git rev-parse --path-format=absolute --git-common-dir)" = "$common" ] &&
-  [ "$(git branch --show-current)" = ${sq(A.branch)} ] && printf resume
+  [ "$(git branch --show-current)" = ${sq(A.branch)} ] || exit 1
+  ${A.pr ? 'printf resume' : `count=$(git rev-list --count ${sq(`origin/${BASE}..HEAD`)}) || exit 1
+  if [ "$count" -eq 0 ]; then
+    prs=$(gh pr list --repo ${sq(REPO)} --head ${sq(A.branch)} --base ${sq(BASE)} --state open --json number) || exit 1
+    size=$(printf '%s' "$prs" | jq -er 'if type == "array" then length else error("invalid PR list") end') || exit 1
+    if [ "$size" -eq 0 ]; then printf implement; else printf resume; fi
+  else
+    printf resume
+  fi`}
 else
   rc=$?
   [ "$rc" -eq 1 ] && printf new
 fi
-}\``, { label: `${RUN_ID} prepare:${A.branch}`, phase: 'Locate', schema: { type: 'object', properties: { state: { type: 'string', enum: ['new', 'resume'] } }, required: ['state'] }, agentType: 'general-purpose' })
-if (!prepared || !['new', 'resume'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
+}\``, { label: `${RUN_ID} prepare:${A.branch}`, phase: 'Locate', schema: { type: 'object', properties: { state: { type: 'string', enum: ['new', 'resume', 'implement'] } }, required: ['state'] }, agentType: 'general-purpose' })
+if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
+const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP
+const IMPLEMENT_CONTEXT = prepared.state === 'implement'
+  ? `Continue implementation in the existing worktree. Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
+  : ''
 if (A.pr && !RESUME) return result({ pr: A.pr, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['resume PR requires an existing branch'] })
 
 const reviewLight = async () => {
@@ -286,7 +299,8 @@ if (MODE === 'light' && !RESUME) {
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
 Act directly as Claude; do not invoke codex or delegate implementation.
-Setup: cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE} && cd ${WT}.
+Setup: ${IMPLEMENT_SETUP} && cd ${WT}.
+${IMPLEMENT_CONTEXT}
 TASK (issue #${A.issue}): ${A.task}
 For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
   if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
@@ -307,7 +321,8 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
 
 if (!RESUME) {
   phase('Implement')
-  await agent(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
+  const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, IMPLEMENT_SETUP)}\n${IMPLEMENT_CONTEXT}`
+  await agent(brief, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
 }
 
 if (RESUME && MODE === 'light') {
