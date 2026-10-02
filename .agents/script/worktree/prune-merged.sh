@@ -19,9 +19,10 @@ Usage: prune-merged.sh [--apply] [--help]
 
 Fetch origin and list merged, clean linked worktrees under the sibling
 worktree/ directory. HEAD must be an ancestor of origin/main or a remote
-m<number>/<issue>-acceptance branch, with commits after the worktree's
-creation point recorded in its HEAD reflog. Missing creation evidence
-keeps the worktree. Ignored .agents/state/ is exempt
+m<number>/<issue>-acceptance branch. Branch worktrees also need commits
+after the creation point recorded in their HEAD reflog; missing creation
+evidence keeps them. Detached HEAD worktrees need no creation evidence.
+Ignored .agents/state/ is exempt
 from cleanliness checks; all other changes prevent deletion.
 
   --apply     Remove eligible worktrees and use git branch -d for branches.
@@ -78,7 +79,8 @@ has_worktree_commits() {
 prune_tree() {
     local tree="$1" branch head
     head="$(git -C "${tree}" rev-parse HEAD)"
-    if ! has_worktree_commits "${tree}" "${head}"; then
+    branch="$(git -C "${tree}" symbolic-ref -q --short HEAD)" || branch=''
+    if [[ -n "${branch}" ]] && ! has_worktree_commits "${tree}" "${head}"; then
         log_info "kept ${tree}: no commits since worktree creation or missing creation evidence"
         return 0
     fi
@@ -98,7 +100,6 @@ prune_tree() {
         printf '%s\n' "${tree}"
         return 0
     fi
-    branch="$(git -C "${tree}" symbolic-ref -q --short HEAD)" || branch=''
     if ! git -C "${MAIN}" worktree remove -- "${tree}" >&2; then
         log_warn "kept ${tree}: git worktree remove refused"
         return 0
