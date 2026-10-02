@@ -470,6 +470,27 @@ _config_write() {
 
 # --- Apply -------------------------------------------------------------------
 
+# Make the status remedy (re-run setup) repair a lost wrapper execute bit.
+# Refuse a missing or unrepairable target before writing managed files.
+_prepare_wrapper() {
+    local _path="${SCRIPT_DIR}/enter.sh"
+    [[ "${AUTO_ENTER}" == yes && "${TERMINAL}" == ghostty ]] || return 0
+    if [[ ! -f "${_path}" ]]; then
+        log_error "wrapper: ${_path} is missing; restore the repo, then re-run: just box setup; nothing was written"
+        return 1
+    fi
+    [[ ! -x "${_path}" ]] || return 0
+    if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
+        log_info "dry-run: would restore wrapper execute permission: ${_path}"
+        return 0
+    fi
+    if ! chmod u+x -- "${_path}"; then
+        log_error "wrapper: cannot restore execute permission: ${_path}; check repo ownership and permissions, then re-run: just box setup; no managed files were written"
+        return 1
+    fi
+    log_info "restored wrapper execute permission: ${_path}"
+}
+
 # auto-enter yes: the terminal profile (ghostty); a block that the current
 # decisions no longer need (terminal none) is removed if an earlier run
 # left it.
@@ -572,6 +593,7 @@ setup_run() {
         return 0
     fi
     _resolve_all || return 1
+    _prepare_wrapper || return 1
     _config_write || return 1
     _apply_box_env || return 1
     if [[ "${AUTO_ENTER}" == "yes" ]]; then

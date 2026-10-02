@@ -505,4 +505,13 @@ _write_block() {
     run just box status
     assert_success
     assert_line "wrapper: ${_repo}/script/box/enter.sh (recorded in a managed block: NOT RUNNABLE - not executable; re-run: just box setup)"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty --dry-run
+    assert_success
+    assert [ ! -x "${_repo}/script/box/enter.sh" ]
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty
+    assert_success
+    run just box status
+    assert_success
+    assert_line "wrapper: ${_repo}/script/box/enter.sh (recorded in a managed block: runnable)"
+    refute_output --partial "NOT RUNNABLE"
 }

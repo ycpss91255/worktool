@@ -431,6 +431,8 @@ link: the box HOME is the host HOME - user config already in place
 `wrapper: <路徑> (recorded in a managed block: runnable)`；若 repo 搬走、
 wrapper 被刪除或不再可執行，會顯示 `NOT RUNNABLE` 與修復指令
 `just box setup`。請在 repo 的新位置重跑 setup，更新受管命令。
+wrapper 遺失時需先還原 repo；執行權限遺失時，setup 會恢復執行權限並印 log，
+`--dry-run` 只報告、不改權限。無法恢復時，setup 拒絕寫入受管檔案並說明原因與下一步。
 
 ## 首次啟動的進度(Ghostty 與 just box enter,issues #180／#360)
 
@@ -479,7 +481,9 @@ TMUX／TMUX_PANE。首次進度、log 與逾時也適用於 Ghostty 自動進盒
    `exec distrobox enter`。
 4. **失敗或逾時**:distrobox-init 印出 `Error:` 行、容器中途停了、`docker start`
    失敗、背景的 `docker logs -f` 提早結束(Docker 錯誤、權限、連線中斷;訊息帶它的
-   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式,exit 1。
+   exit status,不會被誤報成逾時)、或超過逾時,都印原因、log 路徑、log 最後 20 行與復原方式。
+   stdin 是終端時，先清理 log follower，再等待 Enter 才 exit 1，讓 Ghostty 視窗保留診斷；
+   非互動呼叫直接 exit 1。
    **不停止、不刪除盒子**(刪盒是使用者的決定;逾時時盒子可能還在裝,訊息會給
    `docker logs -f <盒>`)。
 5. **清理**:背景的 `docker logs -f` 是唯一的背景行程,成功、失敗、逾時、Ctrl-C

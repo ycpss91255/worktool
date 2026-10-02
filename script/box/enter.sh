@@ -28,7 +28,8 @@
 #      exits early (engine error, permission, lost connection) or the timeout
 #      (15 min by default) is a failure: the reason, the log path, the last 20 log
 #      lines and the recovery (`distrobox rm -f <box>`, then a new terminal)
-#      are printed and the script exits 1. The box is NEVER stopped or
+#      are printed; on a terminal, Enter acknowledges them before exit 1.
+#      The box is NEVER stopped or
 #      removed here - deleting it is the user's decision.
 #   4. Hand over: `exec <distrobox> enter <box> [-- <cmd>...]`.
 #
@@ -110,7 +111,8 @@ going on instead of two static lines:
     line (overwritten in place on a terminal);
   - on a timeout or failure: the reason, the log path, its last 20 lines
     and the recovery (distrobox rm -f <box>, then open a new terminal),
-    exit 1. The box is never stopped or removed.
+    wait for Enter when stdin is a terminal, then exit 1.
+    The box is never stopped or removed.
 
   --box <name>          Box to enter (default: @DEFAULT_BOX@); a container name:
                         [A-Za-z0-9][A-Za-z0-9_.-]*.
@@ -293,6 +295,13 @@ _fail() {
     log_error "last ${ENTER_TAIL_LINES} lines of the init log:"
     tail -n "${ENTER_TAIL_LINES}" "${INIT_LOG}" | sed 's/^/  | /' >&2
     log_error "the box was left as it is (not stopped, not removed); to start over: distrobox rm -f ${OPT_BOX}, then open a new terminal"
+    _cleanup
+    if [[ -t 0 ]]; then
+        log_info "Press Enter to close this terminal"
+        if ! IFS= read -r; then
+            :
+        fi
+    fi
 }
 
 # Stop and reap the background log follower, if any.

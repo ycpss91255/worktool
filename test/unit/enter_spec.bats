@@ -442,6 +442,55 @@ _managed_enter() {
     assert_failure
 }
 
+# A PTY models the desktop terminal; release Enter only after diagnostics
+# are visible and record whether the setup-written command is still alive.
+_managed_enter_tty() {
+    run just box setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    local _cmd _transcript="${BATS_TEST_TMPDIR}/terminal.output"
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    export MANAGED_COMMAND="${_cmd}" TERMINAL_RESULT="${BATS_TEST_TMPDIR}/terminal.result"
+    export TERMINAL_HELD="${BATS_TEST_TMPDIR}/terminal.held"
+    WORKTOOL_INIT_INTERVAL=1 run bash -c '
+        {
+            for ((i=0; i<100; i++)); do
+                if grep -q "then open a new terminal" "$1"; then
+                    sleep 1
+                    if [[ ! -e "${TERMINAL_RESULT}" ]]; then
+                        printf held >"${TERMINAL_HELD}"
+                    fi
+                    break
+                fi
+                sleep 0.1
+            done
+            printf "\n"
+        } | timeout 15 script -q -c '\''/bin/sh -c "$MANAGED_COMMAND"; rc=$?; printf "%s" "$rc" >"$TERMINAL_RESULT"'\'' /dev/null >"$1" 2>&1
+        cat "$1"
+    ' _ "${_transcript}"
+    assert_success
+    assert_output --partial "init log: ${INIT_LOG}"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    assert_output --partial "Press Enter to close this terminal"
+    assert [ -f "${TERMINAL_HELD}" ]
+    assert_equal "$(cat "${TERMINAL_RESULT}")" 1
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    if enter_fake_logs_alive; then
+        fail "the log follower survived the terminal failure"
+    fi
+}
+
+@test "Ghostty setup-written command keeps init failure diagnostics visible until Enter on a terminal" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '1|Error: package installation failed'
+    _managed_enter_tty
+    assert_output --partial "failed: distrobox-init reported: Error: package installation failed"
+}
+
+@test "Ghostty setup-written command keeps timeout diagnostics visible until Enter on a terminal" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    WORKTOOL_INIT_TIMEOUT=3 _managed_enter_tty
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+}
+
 @test "Ghostty managed command times out with ongoing progress log and recovery" {
     enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
     WORKTOOL_INIT_TIMEOUT=3 _managed_enter
