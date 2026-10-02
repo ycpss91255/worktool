@@ -41,3 +41,10 @@ check_ready() {
     assert_failure 2
     assert_output --partial 'query'
 }
+
+@test "an absent verify-all job cannot count as successful evidence" {
+    printf '%s' '{"check_runs":[{"name":"ci-passed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'verify-all'
+}

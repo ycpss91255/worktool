@@ -14,7 +14,8 @@ ready_check_comment() {
     _sha="$(jq -er '.head.sha' <<<"${_json}")"
     _checks="$(_gh api --repo "${_repo}" "repos/${_repo}/commits/${_sha}/check-runs")" \
         || hook_block 'verify-all query failed (fail closed)'
-    if jq -e '.check_runs | any(.name == "verify-all" and .conclusion != "success")' <<<"${_checks}" >/dev/null; then
-        hook_block 'verify-all on the current PR head must be success'
+    if ! jq -e '[.check_runs[] | select(.name == "verify-all")] |
+        length > 0 and all(.status == "completed" and .conclusion == "success")' <<<"${_checks}" >/dev/null; then
+        hook_block 'verify-all on the current PR head must be success (missing or not successful)'
     fi
 }
