@@ -834,7 +834,7 @@ _add_changed_spec() {
 
 _is_test_infrastructure() {
     case "$1" in
-        script/test/*|dockerfile/Dockerfile.*|justfile*|test/helper/*) return 0 ;;
+        script/test/*|dockerfile/Dockerfile.*|Dockerfile|Dockerfile.*|justfile*|test/helper/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -888,6 +888,7 @@ _run_changed() {
             continue
         fi
         if _is_test_infrastructure "${_path}"; then
+            _info "此改動由 CI 的 unit 驗證：${_path}（測試基礎設施變更；全部 tier 交給 CI）"
             _full_fallback=1
             continue
         fi

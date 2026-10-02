@@ -79,7 +79,7 @@ _dispatched() {
 
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' \
-        --ci-lint --ci-unit \
+        --ci-lint \
         '--ci-matrix test/matrix/example_spec.bats')"
 }
 
@@ -282,20 +282,34 @@ _dispatched() {
     assert_output --partial "沒有對應 spec"
 }
 
-@test "test.sh --changed fails open only to unit for test infrastructure" {
-    mkdir -p "${TEMP_REPO}/test/helper"
-    printf '# helper\n' >"${TEMP_REPO}/test/helper/common.bash"
+@test "test.sh --changed leaves test infrastructure to CI with filenames and reasons" {
+    local -a _paths=(test/helper/common.bash script/test/test.sh
+        dockerfile/Dockerfile.test Dockerfile justfile script/test/justfile.test)
+    local _path
+    for _path in "${_paths[@]}"; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+        touch "${TEMP_REPO}/${_path}"
+    done
+    printf '@test "example" { true; }\n' >"${TEMP_REPO}/test/unit/example_spec.bats"
     _commit_baseline
-    printf '\n# changed\n' >>"${TEMP_REPO}/test/helper/common.bash"
+    for _path in "${_paths[@]}"; do
+        printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+    done
+    printf '\n# changed\n' >>"${TEMP_REPO}/test/unit/example_spec.bats"
 
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
 
     assert_success
-    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint --ci-unit)"
-    for tier in matrix integration system system-real acceptance; do
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/example_spec.bats')"
+    for tier in unit matrix integration system system-real acceptance; do
         assert_output --partial "此改動由 CI 的 ${tier} 驗證"
     done
+    for _path in "${_paths[@]}"; do
+        assert_output --partial "${_path}"
+    done
+    assert_output --partial "測試基礎設施變更"
 }
 
 @test "test.sh --changed fails open when the base diff is unreadable" {
