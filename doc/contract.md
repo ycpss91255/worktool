@@ -14,7 +14,7 @@
 
 ## 2. worktool 做的事
 
-- **核心承諾：驅動裝好之後，一個指令建好 worktool 環境。** 建好的意思是：開終端即在盒內、盒內工具可用、tool config 就位。驅動與 GUI app 是例外，各自是獨立的 host install script，不在那一個指令內（見第 3 節）。目前建盒（`just box assemble`）與終端進盒設定（`just box setup`）還是兩個指令，tool config 要到 M5 才開始放進盒子 HOME。
+- **核心承諾：驅動裝好之後，一個指令建好 worktool 環境。** 建好的意思是：開終端即在盒內、盒內工具可用、tool config 就位。驅動與 GUI app 是例外，各自是獨立的 host install script，不在那一個指令內（見第 3 節）。目前 assemble（`just box assemble`）與終端進盒設定（`just box setup`）還是兩個指令，tool config 要到 M5 才開始放進盒子 HOME。
   - 驗證：待驗（整條承諾尚無從公開入口一次跑完的測試）。已有的部分檢查：`test/system/real_engine_spec.bats` 以真實 docker 引擎從 `box/dev.ini` 建出 dev 盒並在盒內執行 `rg`／`fzf`／`tmux`／`fish`，並以真的 ghostty 視窗證明受管區塊的指令會在盒內跑起 fish（ghostty chain 案例）。
 - **tool config 隨重建回來。** tool config 在 repo 內只有一份（不變量 2），重建時就位在盒子自己的 HOME。盒子使用獨立 HOME（[ADR 0002](adr/0002-box-owns-its-home.md)，預設 `~/<盒名>-box`，dev 盒為 `~/dev-box`，可用 `just box assemble --home <路徑>` 指定），tool config 只放在盒子 HOME。
   - 驗證：待驗（tool config 從 M5 起才放進盒子 HOME，尚無「重建後 tool config 仍在」的測試）。盒子 HOME 本身已有檢查：`test/system/real_engine_spec.bats` 的 #198 案例（盒內 `$HOME` 就是 `--home` 指定的路徑；已存在的盒子給了不同的 `--home` 以結束碼 1 拒絕且盒子 HOME 不變）；`test/unit/assemble_spec.bats` 的 #198 案例（預設路徑、`--home` 的驗證與紀錄）。
@@ -24,7 +24,7 @@
 - **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，user config 之後會以 symlink 從 host HOME 帶進盒子 HOME（不複製、不修改，host 那份是唯一一份），尚未實作，將由 #199 實作。
   - 驗證：待驗（#199 落地時補測試）。
 - **不在 host 用 apt 裝 CLI／TUI 工具。** CLI／TUI 工具一律裝在盒內，盒子清單只有 `box/dev.ini` 一份。
-  - 驗證：待驗（尚無檢查「沒有任何腳本在 host 呼叫 apt」的測試）。盒內安裝的部分由 `test/system/real_assemble_spec.bats` 檢查：真實 distrobox 送到容器管理器的建盒請求帶有清單裡的套件。
+  - 驗證：待驗（尚無檢查「沒有任何腳本在 host 呼叫 apt」的測試）。盒內安裝的部分由 `test/system/real_assemble_spec.bats` 檢查：真實 distrobox 送到容器管理器的建立容器的請求帶有清單裡的套件。
 - **不寫 host shell 設定。** host 與盒子互不干擾：用非 ghostty 開的終端拿到的是 worktool 沒碰過的 host shell。`just box setup` 只寫 worktool 自己的狀態檔與終端設定裡標記的受管區塊（見 [`enter.md`](enter.md)）。盒子使用獨立 HOME 是這條的機制（#196、[ADR 0002](adr/0002-box-owns-its-home.md)）；ADR 0002 也寫明 `--home` 不是隔離，盒內仍能以絕對路徑讀寫 host HOME。
   - 驗證：待驗（尚無檢查「host 的 shell 設定檔沒有被寫」的測試）。受管區塊只寫在宣告的檔案由 `test/unit/setup_spec.bats` 檢查。
 - **驅動與 GUI app 不在那一個指令內。** 驅動（nvidia、kvm）與 GUI app 各自是獨立的 host install script（`tool/`，M11／M12）。
@@ -51,7 +51,7 @@
 - **使用者介面極少。** 所有使用者動作都經 `just <命名空間> <recipe>`；recipe 的語意一旦發布就不改，改名走別名期（不變量 5）。
   - 驗證：`test/unit/justfile_spec.bats`（根 justfile 只有命名空間、每個 recipe 原封轉發給腳本）；人類驗收見 `doc/acceptance.md` M2 第 0 項。「發布後語意不改」：待驗（尚未發布）。
 - **冪等。** 同一個指令重跑，結果相同：不重複寫入、不累積副作用；已是最新狀態時明確說明 unchanged（不變量 6）。
-  - 驗證：`test/unit/setup_spec.bats`（受管區塊只寫一次，重跑回報 unchanged）；`test/system/real_engine_spec.bats`（第二次 assemble 以結束碼 0 結束且不重複建盒）。
+  - 驗證：`test/unit/setup_spec.bats`（受管區塊只寫一次，重跑回報 unchanged）；`test/system/real_engine_spec.bats`（第二次 assemble 以結束碼 0 結束且不重複建立容器）。
 - **對外承諾黑箱可驗，開發與正式使用走同一個入口。** 目標是讓本節所有承諾都能從公開入口（`just`）以自動或人類驗收檢查，測試不走後門；CI 跑的就是使用者打的 `just test <tier>`（不變量 7）。目前尚未兌現：上面標「待驗」的承諾還沒有檢查。
   - 驗證：`test/unit/justfile_spec.bats`（ci.yml 的每個 gate 都以 `just test <tier>` 執行）；本文件的「驗證：」行由 `test/unit/contract_spec.bats` 檢查存在且引用的測試檔存在。「每條承諾都從 `just` 驗」：待驗（見上方各條的「待驗」）；`test/acceptance/m2_selfcheck_spec.bats` 直接執行 `script/test/selfcheck.sh`、不經 `just`，所以不算這條的檢查。
 - **host 依賴最小。** 除了驅動與 GUI app，host 只需要 `docker` 與 `just`；其餘一切在盒內（不變量 8）。
