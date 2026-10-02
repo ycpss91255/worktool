@@ -864,6 +864,9 @@ main() {
     hook_allow
 }
 
-_AGENT="${1:-claude}"
-case "${_AGENT}" in claude|codex|agy|gemini) ;; *) hook_block "unknown agent '${_AGENT}'" ;; esac
-main
+# Execute only at the hook entry; readiness sources this parser.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    _AGENT="${1:-claude}"
+    case "${_AGENT}" in claude|codex|agy|gemini) ;; *) hook_block "unknown agent '${_AGENT}'" ;; esac
+    main
+fi

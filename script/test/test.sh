@@ -173,6 +173,7 @@ _required_specs() {
                 unit/hook/enforce_gh_body_file_spec.bats \
                 unit/hook/enforce_no_local_paths_spec.bats \
                 unit/hook/enforce_milestone_gate_approval_representative_spec.bats \
+                unit/hook/enforce_milestone_ready_evidence_spec.bats \
                 unit/hook/enforce_main_checkout_readonly_representative_spec.bats \
                 unit/hook/enforce_scope_on_guard_issues_spec.bats \
                 unit/hook/enforce_issue_milestone_spec.bats \
@@ -784,6 +785,11 @@ _changed_hook_path_map() {
 .agents/hook/worktree_create.sh|test/unit/hook/worktree_create_spec.bats
 .agents/hook/lib/hook_bootstrap.sh|test/unit/hook/hook_bootstrap_spec.bats
 .agents/hook/lib/subcommand.sh|test/unit/hook/subcommand_spec.bats
+.agents/hook/enforce_milestone_ready_evidence.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats
+.agents/hook/lib/ready_evidence.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats
+.agents/hook/lib/ready_goals.awk|test/unit/hook/enforce_milestone_ready_evidence_spec.bats
+.agents/hook/lib/ready_table.awk|test/unit/hook/enforce_milestone_ready_evidence_spec.bats
+.agents/hook/enforce_milestone_gate_approval.sh|test/unit/hook/enforce_milestone_ready_evidence_spec.bats
 .agents/script/monitor/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
 .agents/script/monitor/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP

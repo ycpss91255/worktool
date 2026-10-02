@@ -100,6 +100,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_gh_body_file.sh" \
         "PreToolUse|Bash|${_p}/enforce_no_local_paths.sh" \
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
+        "PreToolUse|Bash|${_p}/enforce_milestone_ready_evidence.sh" \
         "PreToolUse|Bash|${_p}/enforce_main_checkout_readonly.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_via_workflow.sh" \
