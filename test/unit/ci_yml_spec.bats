@@ -39,6 +39,8 @@
 #   - commit-attribution uses the same event range, checks commit messages
 #     and pull request bodies through lib/commit_attribution.sh, and joins
 #     ci-passed.
+#   - pushes remain main-only; PR bases include main and milestone
+#     acceptance branches such as m3/5-acceptance (issue #389).
 #
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
@@ -188,6 +190,21 @@ _pull_request_types() {
         | sort
 }
 
+# Print an event's branch filters as a sorted set, without YAML quotes.
+_trigger_branches() {
+    awk -v event="$1" '
+        /^on:$/ { inon = 1; next }
+        inon && /^[^ ]/ { exit }
+        inon && /^  [a-z_]+:$/ { active = ($0 == "  " event ":") }
+        active && /^    branches: / { print }
+    ' "${CI_YML}" \
+        | sed -nE 's/^    branches: \[(.*)\]$/\1/p' \
+        | tr ',' '\n' \
+        | tr -d "\"'" \
+        | sed -E 's/^ +//; s/ +$//' \
+        | sort
+}
+
 # --- required spec -----------------------------------------------------------
 
 @test "this spec is a required unit spec of test.sh" {
@@ -199,6 +216,25 @@ _pull_request_types() {
 @test "pull_request reruns CI when the PR body or labels change" {
     run _pull_request_types
     assert_output "$(_sorted_set opened synchronize reopened edited labeled unlabeled)"
+}
+
+@test "CI accepts milestone acceptance PR bases such as m3/5-acceptance and keeps pushes main-only" {
+    run _trigger_branches push
+    assert_success
+    assert_output main
+
+    run _trigger_branches pull_request
+    assert_success
+    assert_output "$(_sorted_set main 'm*/*-acceptance')"
+    local _pattern _matches=0 _base=m3/5-acceptance
+    for _pattern in "${lines[@]}"; do
+        # These filters only use *, which excludes / in Actions patterns.
+        _pattern="${_pattern//\*/[^\/]*}"
+        if [[ "${_base}" =~ ^${_pattern}$ ]]; then
+            _matches=$((_matches + 1))
+        fi
+    done
+    assert_equal "${_matches}" 1
 }
 
 # --- every leg-carrying job runs on both runners -----------------------------
