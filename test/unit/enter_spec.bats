@@ -41,7 +41,7 @@ setup() {
     ENTER="${REPO_ROOT}/script/box/enter.sh"
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
-    unset XDG_CACHE_HOME WORKTOOL_INIT_TIMEOUT WORKTOOL_INIT_INTERVAL
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME WORKTOOL_INIT_TIMEOUT WORKTOOL_INIT_INTERVAL
     mkdir -p "${HOME}"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     enter_fake_install "${FAKE_BIN}"
@@ -79,6 +79,30 @@ _long_init_script() {
 # Run the wrapper with a 1 s progress interval.
 _enter() {
     WORKTOOL_INIT_INTERVAL=1 run "${ENTER}" "$@"
+}
+
+# Exercise exactly the shell command Ghostty receives from the public setup.
+_managed_enter() {
+    run just box setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    local _cmd
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    WORKTOOL_INIT_INTERVAL=1 run /bin/sh -c "${_cmd}"
+}
+
+@test "Ghostty managed command keeps reporting cold-init stages and elapsed time before entering without tmux" {
+    _long_init_script
+    _managed_enter
+    assert_success
+    assert_output --partial "full init log: ${INIT_LOG}"
+    local _n
+    _n="$(grep -c 'first launch: Installing basic packages.*elapsed' <<<"${output}")"
+    assert [ "${_n}" -ge 3 ]
+    assert_line --partial "elapsed - Unpacking pkg-"
+    assert_line --partial "initialisation complete after"
+    assert_line "FAKE-DISTROBOX enter dev"
+    run cat "${FAKE_DISTROBOX_CALLS}"
+    assert_output "enter dev"
 }
 
 @test "this spec is a required unit spec of test.sh" {
