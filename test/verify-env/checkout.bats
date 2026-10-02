@@ -3,9 +3,10 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 @test "real GitHub CLI supports every evidence query flag and checks JSON fields" {
     local query flag
+    local -a command
     for query in 'pr checks' 'pr view' 'pr list'; do
-        # Deliberate word splitting: each literal query names two subcommands.
-        run gh ${query} --repo ycpss91255/worktool --help
+        read -r -a command <<<"${query}"
+        run gh "${command[@]}" --repo ycpss91255/worktool --help
         assert_success
         for flag in --repo --json; do
             assert_output --partial "${flag}"
