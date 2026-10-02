@@ -14,3 +14,12 @@ _check() {
         assert_output --partial 'pr-loop / milestone-fanout'
     done
 }
+
+@test "shell wrapper scripts cannot hide main-loop implementation" {
+    printf '%s\n' '#!/usr/bin/env bash' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'bash run.sh' > "${BATS_TEST_TMPDIR}/outer.sh"
+    for cmd in 'bash run.sh' './run.sh' 'bash outer.sh' 'cd . && bash run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}
