@@ -226,11 +226,13 @@ _trigger_branches() {
     run _trigger_branches pull_request
     assert_success
     assert_output "$(_sorted_set main 'm*/*-acceptance')"
-    local _pattern _matches=0
+    local _pattern _matches=0 _base=m3/5-acceptance
     for _pattern in "${lines[@]}"; do
-        case m3/5-acceptance in
-            ${_pattern}) _matches=$((_matches + 1)) ;;
-        esac
+        # These filters only use *, which excludes / in Actions patterns.
+        _pattern="${_pattern//\*/[^\/]*}"
+        if [[ "${_base}" =~ ^${_pattern}$ ]]; then
+            _matches=$((_matches + 1))
+        fi
     done
     assert_equal "${_matches}" 1
 }
