@@ -338,7 +338,7 @@ let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
 if (RESUME) {
-  const checked = await checkStage(pr, 'Resume')
+  const checked = await checkStage(pr, 'Resume', '', false)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
   sha = checked.sha
 }

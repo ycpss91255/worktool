@@ -2744,6 +2744,29 @@ _pl_resume_run() {
     assert_output $'test lint\ntest changed'
 }
 
+@test "pr-loop resume: unpushed CI repair blocks without publication or review (#396)" {
+    _pl_stage_setup
+    local root="${BATS_TEST_TMPDIR}" replies json
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable"}}'
+    PL_ACTION=unpushed PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
+        "${replies}" exec-resume-push
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        (.result.blockingLeft[0] | contains("Resume check failed")) and
+        ([.calls[].role | test("^(push-check|review):")] | any | not) and
+        ([.calls[].role | select(startswith("ci:"))] | length) == 1' <<<"${json}"
+    assert_success
+    assert [ ! -e "${root}/gates" ]
+    run git --git-dir="${root}/remote" rev-parse refs/heads/b
+    assert_output "${PL_BEFORE}"
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    refute_output "${PL_BEFORE}"
+    run git -C "${root}/worktree/n" status --porcelain
+    assert_output ''
+}
+
 @test "pr-loop (node): diverged fix history blocks without gates or force push (#396)" {
     _pl_stage_setup
     run _pl_stage_run codex diverged
