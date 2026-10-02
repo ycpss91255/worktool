@@ -2,6 +2,13 @@
 # Claude PreToolUse Bash hook. Allow = 0; refuse = 2, diagnostics on stderr.
 # Registration is deferred until #364 merges; see doc/workflow.md.
 # This is a cooperating-agent guard, not an operating-system sandbox.
+# Main-loop shell wrappers are recursively inspected without executing them
+# (literal paths, depth < 16); missing/opaque wrappers fail closed. eval,
+# xargs and opaque launcher chains, expanded executable/script paths, and
+# non-shell interpreters are refused. Raw Codex mentions not credited by
+# the structured pass also block, including plain text. Executables resolved
+# only through PATH, custom just recipes, and runtime-generated/encoded calls
+# are outside static inspection; this guard cannot authenticate agent intent.
 
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -75,7 +82,7 @@ raw_codex_count() {
 }
 
 closed_command() {
-    local text="$1" re='(^|[^[:alnum:]_.-])(eval|xargs)([^[:alnum:]_.-]|$)'
+    local text="$1" re='(^|[^[:alnum:]_.-])(eval|xargs|setsid|busybox|nice|stdbuf|chroot)([^[:alnum:]_.-]|$)'
     [[ "${text}" =~ ${re} ]] && refuse 'Indirect execution cannot be checked statically.'
     return 0
 }

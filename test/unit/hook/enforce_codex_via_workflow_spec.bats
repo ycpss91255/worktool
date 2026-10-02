@@ -78,3 +78,11 @@ _check() {
         assert_equal "${status}" 2
     done
 }
+
+@test "opaque launcher chains cannot hide a wrapper script" {
+    printf '%s\n' 'codex exec "implement"' > "${BATS_TEST_TMPDIR}/run.sh"
+    for cmd in 'setsid bash run.sh' 'busybox sh run.sh' 'nice bash run.sh' 'stdbuf -oL bash run.sh'; do
+        _check "${cmd}"
+        assert_equal "${status}" 2
+    done
+}

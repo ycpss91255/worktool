@@ -292,3 +292,38 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 作答的 `failed_reasons` 同樣回報修復後內容；若修復代理未回傳內容，則保留原始未通過條目。
 雙方的所有未通過理由都會回報；作答失敗時不進入比對或留言。若失敗源於缺少答案等其他格式錯誤，
 而沒有可列出的未通過理由，`failed_reasons` 為空陣列。
+
+## 主迴圈的 Codex 實作守門（#366）
+
+`.agents/hook/enforce_codex_via_workflow.sh` 是 Claude `PreToolUse` 的 Bash 守門：主迴圈直接執行 `codex exec`（含 `e` 縮寫）實作時，exit 2 並提示改走 `pr-loop`／`milestone-fanout`。它只檢查文字，不執行被檢查的腳本；診斷走 stderr，放行時不輸出。
+
+**啟用依賴 #364 合併。** 本 PR 完成時 #364 尚未合併，所以 `.claude/settings.json` **尚未註冊**本 hook，不會提早阻擋驗收分支修正。#364 合併後，在既有 `PreToolUse` 的 `matcher: "Bash"` hooks 陣列加入下列項目；`.claude/hook` 已是指向 `.agents/hook` 的相對 symlink，無須另建檔案：
+
+```json
+{
+  "type": "command",
+  "command": "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_codex_via_workflow.sh"
+}
+```
+
+Workflow 子 agent 的判斷必須同時符合：
+
+- Claude hook payload 的 `transcript_path` 指向可讀的 `*/subagents/agent-*.jsonl`。
+- transcript 的第一則 `type: "user"`、`message.role: "user"` 任務，第一行是 `WORKTOOL_WORKFLOW_AGENT: pr-loop`、`discuss` 或 `research-verify`。content 可為字串或 text blocks。
+
+上述範本在會啟動 Codex 的子 agent 任務開頭提供標記；`milestone-fanout` 委派 `pr-loop`，沿用其標記。主 transcript、一般 Agent、assistant／tool 的標記、後續 user 訊息與 command 中自行加環境變數都不足以取得例外。Workflow 內允許既有 prompt 檔案替換、包裝腳本與實作命令。若 Claude 的 transcript 格式改變，身分判斷會拒絕放行，須先更新此契約及 spec。這個標記是合作式流程判斷，不是認證；惡意偽造 transcript 或刻意偽造子 agent 任務不在防護能力內。
+
+主迴圈的唯讀例外使用 Codex 的明確 sandbox 參數，不接受 prompt 自稱唯讀：
+
+```sh
+codex exec --sandbox read-only "請核對這項主張"
+codex e -s read-only "請比較方案"
+```
+
+`--sandbox=read-only`／`-sread-only` 亦可。允許的附加選項只有 `--skip-git-repo-check`、`--json`、`--ephemeral`、`-C`／`--cd`、`-o`／`--output-last-message`、`-m`／`--model`（後三組需字面值）。未知選項、config／profile 覆寫、寫入 sandbox 與 shell 展開均拒絕；`--` 之後視為 prompt。`-o` 是唯讀分析結果的輸出，並非允許修改產品檔案。
+
+主迴圈的 `bash run.sh`、直接路徑執行、`source`／`.` 與巢狀腳本，依 payload cwd 及字面 `cd` 解析路徑、遞迴檢查；讀不到、參數不明或巢狀達 16 層就拒絕。`eval`、`xargs`、`setsid`／`busybox`／`nice`／`stdbuf`／`chroot` 等不透明 launcher、展開的 executable／腳本路徑及非 shell interpreter 都拒絕。封閉規則另核對原始文字的 Codex 提及數，未被結構化檢查涵蓋的提及會拒絕，因此 echo、註解或 prompt 只「提到」Codex 也可能被擋；長資料改放檔案，以字面參數傳遞。這些保守拒絕只適用主迴圈，不適用已辨識的 Workflow 子 agent。
+
+限制：此 hook 不是作業系統 sandbox；只從 PATH 找到、沒有字面腳本路徑的自訂 executable、自訂 just recipe，以及執行時才組出的或編碼的呼叫，不保證能識別。應以 Workflow 作為實作入口，不能把靜態檢查當成任意程式的安全隔離。
+
+測試入口為 `just test unit test/unit/hook/enforce_codex_via_workflow_spec.bats`，透過 hook 的 stdin JSON 與退出碼驗證直接實作、腳本包裝、Workflow transcript 身分、唯讀 sandbox 與封閉拒絕規則。本 issue 的本機檢查只跑此 spec 與 `just test lint`；完整 tier 交由 CI。
