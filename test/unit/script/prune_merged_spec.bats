@@ -77,6 +77,17 @@ merge_topic() {
     [ -d "${TREE}" ]
 }
 
+@test "keeps a newly created detached worktree whose HEAD is not merged" {
+    git -C "${TREE}" commit -qm feature --allow-empty
+    git -C "${TREE}" push -qu origin topic
+    local detached="${FIXTURE}/worktree/detached"
+    git -C "${MAIN}" worktree add -q --detach "${detached}" topic
+    prune --apply
+    assert_success
+    assert_output --partial "kept ${detached}: not merged"
+    [ -d "${detached}" ]
+}
+
 @test "keeps tracked staged and untracked changes" {
     merge_topic
     local change
