@@ -727,6 +727,17 @@ MAP
 
 _changed_doc_path_map() {
     cat <<'MAP'
+doc/adr/*.md|test/unit/adr_spec.bats
+doc/adr/*.md|test/unit/adr/0004_spec.bats
+doc/adr/*.md|test/unit/adr/0005_spec.bats
+doc/adr/*.md|test/unit/adr/0006_spec.bats
+doc/adr/*.md|test/unit/adr/0007_spec.bats
+doc/adr/*.md|test/unit/adr/0008_spec.bats
+doc/adr/*.md|test/unit/adr/0009_spec.bats
+doc/adr/*.md|test/unit/adr/0010_spec.bats
+doc/adr/*.md|test/unit/adr/0011_spec.bats
+doc/adr/*.md|test/unit/adr/0012_spec.bats
+doc/adr/*.md|test/unit/adr/0013_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats

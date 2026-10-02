@@ -365,3 +365,12 @@ _document_change() {
     _document_change doc/structure.md test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats
 }
+
+@test "test.sh --changed maps ADR documents to shared and individual guards" {
+    local -a _specs=(test/unit/adr_spec.bats)
+    local _number
+    for _number in 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013; do
+        _specs+=("test/unit/adr/${_number}_spec.bats")
+    done
+    _document_change doc/adr/0004-invariant-user-content.md "${_specs[@]}"
+}
