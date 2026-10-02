@@ -374,3 +374,10 @@ _document_change() {
     done
     _document_change doc/adr/0004-invariant-user-content.md "${_specs[@]}"
 }
+
+@test "test.sh --changed maps the contract to its invariant index guards" {
+    _document_change doc/contract.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/adr/0004_spec.bats test/unit/adr/0007_spec.bats \
+        test/unit/adr/0009_spec.bats
+}
