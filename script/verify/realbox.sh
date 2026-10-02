@@ -181,6 +181,24 @@ _drop_owned_box() {
     [[ "${_e}" -eq 1 ]]
 }
 
+# Report and remove only the isolated HOME assigned to this run's box.
+_box_state_report() {
+    local _when="$1" _home="$2" _h=0 _t=0
+    [[ ! -e "${_home}" && ! -L "${_home}" ]] || _h=1
+    [[ ! -e "${_home}/.cache/tmux" && ! -L "${_home}/.cache/tmux" ]] || _t=1
+    printf 'box-state %s: home=%s tmux=%s\n' "${_when}" "${_h}" "${_t}"
+    [[ "${_when}" != after-cleanup || "${_h}" -eq 0 ]]
+}
+
+_box_state_cleanup() {
+    local _home="$1" _rc=0
+    _box_state_report before-cleanup "${_home}" || return 1
+    rm -rf -- "${_home}" || _rc=1
+    _box_state_report after-cleanup "${_home}" || _rc=1
+    [[ "${_rc}" -eq 0 ]] || guard_fail "box HOME state survived cleanup at ${_home}"
+    return "${_rc}"
+}
+
 # --- Cleanup stack -----------------------------------------------------------
 # Items push a token; the token is run either explicitly (normal path) or by
 # the EXIT / INT / TERM / HUP trap (interrupt path), in reverse order. A
@@ -241,6 +259,7 @@ _51_cleanup() {
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
+        _box_state_cleanup "${_51_W}/box-home" || return 1
         rm -rf -- "${_51_W}" || _crc=1
     fi
     return "${_crc}"
@@ -531,6 +550,7 @@ _52_remove_owned_box() {
     fi
     if _drop_owned_box; then
         printf 'dev-gone=1\n'
+        _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         rm -f -- "${CFGBK_B}/created-box" \
             || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
         return 0

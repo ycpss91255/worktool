@@ -988,3 +988,18 @@ EOF
         done <<<"${_fixture}"
     done
 }
+
+@test "5.2.3: custom box HOME socket state is checked and removed" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    local _home="$(_backup_dir)/box-home"
+    mkdir -p "${_home}/.cache/tmux/tmux-1000"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/default"
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line "box-state before-cleanup: home=1 tmux=1"
+    assert_line "box-state after-cleanup: home=0 tmux=0"
+    [ ! -e "${_home}" ]
+}
