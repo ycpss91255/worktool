@@ -216,7 +216,7 @@ Run this script blocking in the foreground; return stdout verbatim in state. Onl
 \`cd ${sq(REPO_DIR)} && {
 if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   if [ ! -e ${sq(WT)} ]; then
-    git worktree add ${sq(WT)} ${sq(A.branch)} || exit 1
+    git worktree add ${sq(WT)} ${sq(A.branch)} >&2 || exit 1
   fi
   common=$(git rev-parse --path-format=absolute --git-common-dir) &&
   cd ${sq(WT)} &&
