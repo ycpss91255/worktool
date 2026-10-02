@@ -796,9 +796,9 @@ _mapped_specs() {
         if [[ "${_pattern}" == 'doc/*.md' && "${_path%/*}" != doc ]]; then
             continue
         fi
-        if [[ "${_path}" == ${_pattern} ]]; then
-            printf '%s\n' "${_spec}"
-        fi
+        case "${_path}" in
+            ${_pattern}) printf '%s\n' "${_spec}" ;;
+        esac
     done < <(_changed_path_map)
 }
 
