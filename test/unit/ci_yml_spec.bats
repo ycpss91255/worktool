@@ -445,9 +445,9 @@ _pull_request_types() {
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
     assert_line '        run: docker load -i /tmp/worktool-test.tar'
-    assert_line --partial 'docker cp "${container}:/usr/local/bin/." "${RUNNER_TEMP}/worktool-bin"'
+    assert_line --partial "docker cp \"\${container}:/usr/local/bin/.\" \"\${RUNNER_TEMP}/worktool-bin\""
     assert_line '          TEST_IMAGE_PREBUILT: "1"'
-    assert_line '          GH_TOKEN: ${{ github.token }}'
+    assert_line "          GH_TOKEN: \${{ github.token }}"
     assert_line '      pull-requests: read'
     assert_line '      checks: read'
     assert_line '      issues: read'
@@ -489,5 +489,5 @@ _run_aggregator() {
     done
     run _job_block ci-passed
     assert_line "          VERIFY_REQUIRED: \${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}"
-    assert_line '          VERIFY_RESULT: ${{ needs.verify-all.result }}'
+    assert_line "          VERIFY_RESULT: \${{ needs.verify-all.result }}"
 }
