@@ -87,7 +87,7 @@ _managed_enter() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
-    WORKTOOL_INIT_INTERVAL=1 run /bin/sh -c "${_cmd}"
+    WORKTOOL_INIT_INTERVAL=1 run timeout -k 2 10 /bin/sh -c "${_cmd}"
 }
 
 @test "Ghostty managed command keeps reporting cold-init stages and elapsed time before entering without tmux" {
@@ -429,10 +429,12 @@ _managed_enter() {
     assert_output "$(printf '9s\n1m00s\n3m32s')"
 }
 
-@test "Ghostty managed command reports init failure with cause log and recovery instead of entering" {
+@test "Ghostty managed command reports bounded init failure with cause log and recovery instead of entering" {
+    local _started="${SECONDS}"
     enter_fake_logs '0|distrobox: Installing basic packages...' '1|Error: package installation failed'
     _managed_enter
     assert_failure 1
+    [[ "$((SECONDS - _started))" -lt 10 ]] || fail "setup command did not report failure within 10s"
     assert_output --partial "failed: distrobox-init reported: Error: package installation failed"
     assert_line "[ERROR] init log: ${INIT_LOG}"
     assert_line "  | Error: package installation failed"
