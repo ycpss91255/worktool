@@ -1304,3 +1304,24 @@ STUB
     run cmp "${_baseline}" "${_state}"
     assert_success
 }
+
+@test "5.3: existing managed blocks match the pre-run baseline" {
+    local _file _files=("$(_ghostty_config)" "${HOME}/.config/ghostty/config.ghostty" "$(_distrobox_conf)") _i=0
+    mkdir -p "${HOME}/.config/distrobox"
+    for _file in "${_files[@]}"; do
+        printf '# BEGIN worktool managed block\nuser baseline\n# END worktool managed block\n' >>"${_file}"
+        cp "${_file}" "${STATE}/baseline-${_i}"
+        _i=$((_i + 1))
+    done
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'blocks=3'
+    assert_line 'backup-removed=1'
+    _i=0
+    for _file in "${_files[@]}"; do
+        run cmp "${STATE}/baseline-${_i}" "${_file}"
+        assert_success
+        _i=$((_i + 1))
+    done
+}
