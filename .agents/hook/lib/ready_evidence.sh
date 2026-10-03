@@ -7,12 +7,14 @@ ready_check_comment() {
     _target="$(ready_target)" || exit 2
     read -r _repo _pr <<<"${_target}"
     ready_is_pr "${_repo}" "${_pr}" || return 0
-    _json="$(_gh pr view "${_pr}" --repo "${_repo}" --json labels,headRefOid,body)" \
+    _json="$(_gh pr view "${_pr}" --repo "${_repo}" --json number,labels,headRefOid,body)" \
         || hook_block 'PR query failed (fail closed)'
     if ! jq -e '.labels | type == "array"' <<<"${_json}" >/dev/null; then
         hook_block 'PR labels query is malformed (fail closed)'
     fi
     jq -e '.labels | any(.name == "milestone-gate")' <<<"${_json}" >/dev/null || return 0
+    _pr="$(jq -er '.number | numbers | select(. > 0 and . == floor)' <<<"${_json}")" \
+        || hook_block 'PR number query failed (fail closed)'
     _sha="$(jq -er '.headRefOid | strings | select(length > 0)' <<<"${_json}")" \
         || hook_block 'PR head query failed (fail closed)'
     _checks="$(_gh pr view "${_pr}" --repo "${_repo}" --json headRefOid,statusCheckRollup)" \
