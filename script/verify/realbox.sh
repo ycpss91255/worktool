@@ -801,7 +801,7 @@ _53_body() {
     [[ "${_rc51}" -ne 0 ]] \
         || { guard_fail "5.1 did NOT refuse a pre-existing '${BOX}' box"; return 1; }
 
-    _52_step1_backup || { guard_fail "5.2 step 1 failed"; return 1; }
+    _52_step1_backup || return $?
     _cleanup_push 52-restore
     _52_step2_apply
     _rc52=$?
@@ -830,7 +830,7 @@ item_53() {
     _53_CREATED=1
     _cleanup_push 53
     local _rc=0
-    _53_body || _rc=1
+    _53_body || _rc=$?
     _cleanup_pop_run || _rc=1
     return "${_rc}"
 }
@@ -929,7 +929,10 @@ realbox_run() {
     for _i in "${_items[@]}"; do
         _dispatch_item "${_i}" || {
             _rc=$?
-            if [[ "${_rc}" -ne 3 ]]; then guard_fail "item ${_i} failed"; fi
+            if [[ "${_rc}" -ne 3 ]]; then
+                guard_fail "item ${_i} failed"
+                _rc=1
+            fi
             break
         }
     done
