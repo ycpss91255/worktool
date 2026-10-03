@@ -536,6 +536,23 @@ EOF
     assert_failure
 }
 
+@test "Ghostty managed command bounds a stalled first init with a real deadline and readable timeout" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    local _started="${SECONDS}"
+    WORKTOOL_INIT_TIMEOUT=3 _managed_enter
+    assert_failure 1
+    local _elapsed=$((SECONDS - _started))
+    [[ "${_elapsed}" -ge 3 && "${_elapsed}" -lt 10 ]] || fail "3s timeout returned after ${_elapsed}s"
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Unpacking stuck-pkg"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    assert_output --regexp 'first launch: .+ - [0-9]+s elapsed - '
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    run enter_fake_logs_alive
+    assert_failure
+}
+
 @test "Ghostty managed command safely quotes repo and distrobox paths and enters a warm named box with one inspect" {
     local _repo="${BATS_TEST_TMPDIR}/repo ' \" \$(touch injected)" _cmd
     local _bin="${BATS_TEST_TMPDIR}/bin ' \" \$(touch injected)"
