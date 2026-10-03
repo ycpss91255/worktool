@@ -298,14 +298,19 @@ _list_items() {
 # Refuse to pretend a check ran when the tools it needs are not here.
 # Prints every missing name, so one run tells the maintainer everything to
 # install instead of one name per attempt.
+_unavailable() {
+    printf '[UNAVAILABLE] setup.sh: %s\n' "$*" >&2
+    return 3
+}
+
 _require_tools() {
     local _t _missing=()
     for _t in "$@"; do
         command -v -- "${_t}" >/dev/null 2>&1 || _missing+=("${_t}")
     done
     if [[ "${#_missing[@]}" -gt 0 ]]; then
-        _fail "cannot run this check here: missing on PATH: ${_missing[*]}"
-        return 1
+        _unavailable "cannot run this check here: missing on PATH: ${_missing[*]}"
+        return 3
     fi
     return 0
 }
@@ -672,7 +677,7 @@ _realbox_guard() {
         _fail "${_item} is in group realbox: it would build the real '${REALBOX_NAME}' box on this machine. Re-run with --allow-real-box to allow that."
         return 1
     fi
-    _require_tools distrobox || return 1
+    _require_tools distrobox || return $?
     _rc=0
     _list="$(distrobox list)" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || {
@@ -718,7 +723,7 @@ _realbox_release() {
 # dry-run prints every decision, writes NOTHING, and the managed command it
 # WOULD write names the quoted absolute distrobox path (#175).
 _item_3_1() {
-    _require_tools env just sed find wc mktemp || return 1
+    _require_tools env just sed find wc mktemp || return $?
     _item_begin || return 1
     local _g _d _before _after _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
@@ -765,7 +770,7 @@ _item_3_1() {
 # The real write: state file plus the ghostty managed block, then the
 # `status` report and the managed block itself.
 _item_3_2() {
-    _require_tools env just sed mktemp || return 1
+    _require_tools env just sed mktemp || return $?
     _item_begin || return 1
     local _g _d _setup_rc _status_rc _ghostty _state _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
@@ -870,7 +875,7 @@ _item_3_2() {
 # repeated), then --auto-enter no, which removes the block and reports each
 # removal. Afterwards zero managed blocks are left.
 _item_3_3() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     local _g _d _blocks _before _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
@@ -944,7 +949,7 @@ _item_3_3() {
 # Bad input is refused by the script itself (exit 2) and nothing is created
 # under HOME; a corrupt state file is refused whatever source it claims.
 _item_3_4() {
-    _require_tools env just sed find wc mktemp cp diff || return 1
+    _require_tools env just sed find wc mktemp cp diff || return $?
     _item_begin || return 1
     local _bogus_rc _files _src _status_rc _bad=0
 
@@ -1046,7 +1051,7 @@ _require_no_distrobox_on_path() {
 }
 
 _item_3_5() {
-    _require_tools env just sed find wc grep ln mktemp || return 1
+    _require_tools env just sed find wc grep ln mktemp || return $?
     _item_begin || return 1
     local _d _t _p _refuse_rc _before _files _write_rc _cmd _cmd_norm _grc _bad=0
     _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return 1
@@ -1150,7 +1155,7 @@ _item_3_5() {
 # pinned to the four states, and the item then checks they really were four
 # different answers.
 _item_3_6() {
-    _require_tools env just sed grep ln chmod mktemp || return 1
+    _require_tools env just sed grep ln chmod mktemp || return $?
     _item_begin || return 1
     local _d _t _p _bad=0
     DISTROBOX_LINES_SEEN=()
@@ -1315,7 +1320,7 @@ but status reported
 # --- 3.7 ---------------------------------------------------------------------
 # The second managed file now belongs to distrobox, never host tmux.
 _item_3_7() {
-    _require_tools env just sed grep mktemp sh || return 1
+    _require_tools env just sed grep mktemp sh || return $?
     _item_begin || return 1
     _seed_user_content 3.7 || return 1
     local _conf="${ITEM_H}/.config/distrobox/distrobox.conf" _blocks _bad=0
@@ -1343,7 +1348,7 @@ _item_3_7() {
 # --- 3.8 ---------------------------------------------------------------------
 # No terminal: remove the profile, keep the independent box isolation.
 _item_3_8() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     _seed_user_content 3.8 || return 1
     NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return 1
@@ -1381,7 +1386,7 @@ _item_3_8() {
 # --- 3.9 ---------------------------------------------------------------------
 # Switch to the existing modern file: move the single block, keep both files.
 _item_3_9() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     _seed_user_content 3.9 || return 1
     local _legacy="${ITEM_H}/.config/ghostty/config" _target="${ITEM_H}/.config/ghostty/config.ghostty"
@@ -1452,7 +1457,9 @@ _run_item() {
             ;;
     esac
     _rc=$?
-    if [[ "${_rc}" -eq 0 ]]; then
+    if [[ "${_rc}" -eq 3 ]]; then
+        _note "${_item} UNAVAILABLE (exit 3)"
+    elif [[ "${_rc}" -eq 0 ]]; then
         _note "${_item} PASS"
     else
         _note "${_item} FAIL (exit ${_rc})"
@@ -1497,7 +1504,7 @@ verify_setup_run() {
         return 1
     }
     for _item in "${_items[@]}"; do
-        _run_item "${_item}" || return 1
+        _run_item "${_item}" || return $?
     done
     return 0
 }

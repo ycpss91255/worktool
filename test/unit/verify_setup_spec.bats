@@ -426,8 +426,8 @@ EOF
     done
     ln -s "${STUB}/ghostty" "${_d}/ghostty"
     run env PATH="${_d}" "${VERIFY}" 3.1
-    assert_failure
-    assert_output --partial "missing on PATH"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] setup.sh: cannot run this check here: missing on PATH"
     assert_output --partial "just"
 }
 
