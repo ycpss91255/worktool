@@ -772,7 +772,7 @@ rc=0
       user-content after-write: ghostty=intact tmux.conf=intact
       rc=0
       ```
-      (just 診斷屬於**工具版本會影響的輸出**：`error: Recipe `setup` failed on line 45 with exit code 1` 是示例，大小寫、行號會隨 just 版本與 recipe 位置變動；只比對 recipe 名稱 `setup` 與 `exit code 1`。其餘正規化產品行是固定判準，逐字比對。
+      (just 診斷屬於**工具版本會影響的輸出**：``error: Recipe `setup` failed on line 45 with exit code 1`` 是示例，大小寫、行號會隨 just 版本與 recipe 位置變動；只比對 recipe 名稱 `setup` 與 `exit code 1`。其餘正規化產品行是固定判準，逐字比對。
       前半是「PATH 上沒有 distrobox」那一輪:`rc=1`、`files 2->2`(什麼都沒寫);後半是 `--distrobox <絕對路徑>` 那一輪:`rc=0` 與它寫出的受管 command。最後一行是本項 `echo rc=$?`。
       `files` 的那兩個數字是本項在跑 setup 前種下的 ghostty 設定與 `~/.tmux.conf`:被拒絕的那一輪不得新增檔案,也不得改動既有的 —— 檔案數看不出「拒絕之前先把設定重寫了一遍」,`user-content after-refusal` 看得出來(round 17)。
       `--distrobox` 那一輪是本項真正寫出受管區塊的地方,所以後面跟著 `user-content after-write`:受管 command 那行寫得再對,也分不出區塊是**放進**使用者的設定裡,還是**取代**了整份設定 —— 把 `enter_block_compose` 退化成「印出區塊、忘掉原檔」後,上面的 `command = ...` 一字不差,而使用者的 `font-size` 已經沒了)
@@ -828,7 +828,7 @@ rc=0
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)
-      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
+      輸出類型：固定判準（逐字比對）。
       ```text
       svg=3
       foreignobject=0/3
@@ -911,7 +911,7 @@ rc=0
       rc=0
       rc=0
       ```
-      (固定判準：`total>0`、`nonpass=0`、`closes=1`、issue 對應與 `distinct=10`；#153 起 `amd=arm>0` 且 `both=0`。下列 8／15 是舊輪次示例，#427 的 CI 證據為 #152=9，#153／#156／#167=16；均不是固定總數。
+      (固定判準：`total>0`、`nonpass=0`、`closes=1`、issue 對應與 `distinct=10`；#153 起 `amd=arm>0` 且 `both=0`。上列 8／15 是舊輪次示例，issue #427 記錄的 CI 證據為 #152=9，#153／#156／#167=16；均不是固定總數。
       6 的三項各有兩行 `rc=`:第一行是 `script/verify/evidence.sh` 自己印的彙總判定,第二行是本項 `echo rc=$?`,兩者必須相同。任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等或 both>0 —— 兩行就都是 1。
       `amd` / `arm` 數的是**相異的 check 名稱**,`both` 是同時算進兩邊的名稱數:「兩個架構」講的是兩組互斥的 check,不是「有字串對到 ubuntu-latest」加上「有字串對到 ubuntu-24.04-arm」—— 只用兩個各自獨立的子字串判斷的話,一個叫 `lint (ubuntu-latest, ubuntu-24.04-arm)` 的 check 會同時滿足兩邊,只跑了一個 job 的 PR 照樣印出 `amd=1 arm=1` 過關)
     - 驗收方式
@@ -935,7 +935,7 @@ rc=0
       ```
   - [ ] 6.3 codex:#156、#165-#169 的最後一則 [codex] 留言判定行是「可合併」;#152-#155 是配額恢復後的補複驗,最後一則 [codex] 判定「不可合併」,各自的阻擋項記錄在 follow-up issue(#163 / #164 / #162 / #161,由原 PR 上的 [claude] 留言指向),而修正該 issue 的 PR(#166 / #165 / #169 / #168)必須 Closes 正是那個 issue,且該 PR 自己的最後 [codex] 判定「可合併」
     - 預期看到資訊
-      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
+      輸出類型：固定判準（逐字比對）。
       ```text
       #156 mergeable
       #165 mergeable
