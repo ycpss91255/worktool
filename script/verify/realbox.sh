@@ -474,15 +474,18 @@ _51_publish() {
 }
 
 _51_prepare_config() {
-    local _distrobox="${XDG_CONFIG_HOME:-${HOME}/.config}/distrobox"
+    local _config="${XDG_CONFIG_HOME:-${HOME}/.config}" _entry
     mkdir -p -- "${_51_W}/config" \
         || { guard_fail "creating scratch config failed"; return 1; }
-    # Keep distrobox's manager and user settings identical across assemble,
-    # bench and cleanup; only worktool's state writes belong in scratch.
-    if [[ -e "${_distrobox}" || -L "${_distrobox}" ]]; then
-        ln -s -- "${_distrobox}" "${_51_W}/config/distrobox" \
-            || { guard_fail "linking user distrobox config failed"; return 1; }
-    fi
+    # Preserve all user config, including the container tool's store and
+    # connection settings; only worktool's state writes belong in scratch.
+    for _entry in "${_config}"/* "${_config}"/.[!.]* "${_config}"/..?*; do
+        [[ -e "${_entry}" || -L "${_entry}" ]] || continue
+        [[ "${_entry##*/}" != worktool ]] || continue
+        ln -s -- "${_entry}" "${_51_W}/config/${_entry##*/}" \
+            || { guard_fail "linking user config '${_entry}' failed"; return 1; }
+    done
+    return 0
 }
 
 _51_body() {

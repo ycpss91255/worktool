@@ -131,9 +131,24 @@ _record_distrobox_config() {
     printf '%s manager=%s\n' "$1" "${_manager}" >>"${_DIR}/distrobox-managers"
 }
 
+_record_container_config() {
+    [[ "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]] || return 0
+    local _config="${XDG_CONFIG_HOME:-${HOME}/.config}" _file _line
+    for _file in storage.conf containers.conf containers.conf.d/connection.conf; do
+        local _record="${_DIR}/container-config-$1-${_file##*/}"
+        : >"${_record}"
+        if [[ -f "${_config}/containers/${_file}" ]]; then
+            while IFS= read -r _line || [[ -n "${_line}" ]]; do
+                printf '%s\n' "${_line}" >>"${_record}"
+            done <"${_config}/containers/${_file}"
+        fi
+    done
+}
+
 _fake_distrobox() {
     local _verb="${1:-}"
     _record_distrobox_config "${_verb}" || return 1
+    _record_container_config "${_verb}" || return 1
     shift || true
     case "${_verb}" in
         list) _fake_distrobox_list ;;
@@ -170,7 +185,7 @@ _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
-            if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 ]]; then
+            if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 || "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]]; then
                 distrobox assemble create --file box/dev.ini || return 1
             fi
             _fake_assemble_state "$@" || return 1

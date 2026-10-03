@@ -1296,6 +1296,30 @@ STUB
     [ ! -s "${STATE}/boxes" ]
 }
 
+@test "5.1: assemble list and rm see the same container config while isolating state" {
+    local _config="${HOME}/custom-config" _verb _file
+    mkdir -p "${_config}/containers/containers.conf.d" "${_config}/worktool"
+    printf '[storage]\ngraphroot = "/custom/store"\n' >"${_config}/containers/storage.conf"
+    printf '[engine]\nactive_service = "custom"\n' >"${_config}/containers/containers.conf"
+    printf '[engine.service_destinations.custom]\nuri = "ssh://custom/run/podman.sock"\n' \
+        >"${_config}/containers/containers.conf.d/connection.conf"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONTAINER_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        for _file in storage.conf containers.conf containers.conf.d/connection.conf; do
+            run cmp "${_config}/containers/${_file}" "${STATE}/container-config-${_verb}-${_file##*/}"
+            assert_success
+        done
+    done
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: assemble state writes leave existing real state byte-identical" {
     export XDG_CONFIG_HOME="${HOME}/custom-config"
     local _state="${XDG_CONFIG_HOME}/worktool/config" _baseline="${STATE}/baseline"
