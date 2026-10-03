@@ -78,12 +78,16 @@ check_tests() {
 }
 
 check_launch() {
-    local launch="$1" lead tool
+    local launch="$1" lead tool index
     local -a words=()
     lead="$(hook_timeout_lead "${launch}")"
     read -r -a words <<<"${launch#"${lead}"}"
     tool="$(hook_word "${words[0]:-}")"
-    if [[ "${tool##*/}" == git ]]; then
+    if [[ "${tool##*/}" == xargs ]]; then
+        local _HOOK_LONG_VALUE_OPTS="${_HOOK_LONG_VALUE_OPTS} --arg-file --eof --replace --max-lines --max-args --max-procs --max-chars --delimiter --process-slot-var "
+        index="$(_hook_after_opts 0 aEILnPsd "${words[@]}")"
+        check_launch "${words[*]:index}"
+    elif [[ "${tool##*/}" == git ]]; then
         check_git "${words[@]:1}"
     elif [[ "${tool##*/}" == just || "${tool##*/}" == docker ]]; then
         check_tests "${tool##*/}" "${words[@]:1}"

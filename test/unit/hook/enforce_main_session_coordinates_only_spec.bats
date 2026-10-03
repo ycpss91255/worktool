@@ -131,3 +131,17 @@ _edit() {
         assert_success
     done
 }
+
+@test "quoted and expanded restricted launches cannot bypass the closed rule" {
+    local command
+    for command in "xargs 'git' 'commit'" "xargs -n 1 git -C '/tmp' 'push'" \
+        "xargs 'just' 'test' unit" "git -C \"\$DIR\" commit -m fix" \
+        'git -C/tmp commit -m fix'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+    # Use valid JSON with agent_id omitted, as supplied for a main session.
+    run_hook enforce_main_session_coordinates_only \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m fix"}}'
+    assert_equal "${status}" 2
+}
