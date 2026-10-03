@@ -626,6 +626,18 @@ STUB
     done
 }
 
+@test "#433: 5.2 rejects a fresh fish in another container and restores" {
+    _fake_window_process
+    export FAKE_WINDOW_NS='mnt:[300]'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "5.2.1 happy path records every file setup can write and publishes the manifest" {
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1

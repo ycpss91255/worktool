@@ -655,10 +655,12 @@ _52_window_evidence() {
     [[ "${_host}" =~ ^mnt:\[[0-9]+\]$ && "${_window}" =~ ^mnt:\[[0-9]+\]$ ]] \
         || { guard_fail "invalid mount namespace evidence"; return 1; }
     _dev="$(_52_dev_namespace)" || return 1
-    printf 'window-evidence: pid=%s comm=%s host=%s window=%s dev=%s\n' \
-        "${_pid}" "${_comm}" "${_host}" "${_window}" "${_dev}"
     [[ "${_window}" != "${_host}" ]] \
         || { guard_fail "fish remains in the host mount namespace"; return 1; }
+    [[ "${_window}" == "${_dev}" ]] \
+        || { guard_fail "fish mount namespace does not match dev; open a new window in this run's box"; return 1; }
+    printf 'window-evidence: pid=%s comm=%s host=%s window=%s dev=%s\n' \
+        "${_pid}" "${_comm}" "${_host}" "${_window}" "${_dev}"
 }
 
 # --- step 3 ------------------------------------------------------------------
