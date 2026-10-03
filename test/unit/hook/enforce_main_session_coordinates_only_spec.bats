@@ -194,13 +194,13 @@ _edit() {
 
 @test "known read-only git and fetch arguments can expand without hiding mutations" {
     local command
-    for command in 'git log --since="$SINCE"' 'git diff "$REF"' \
-        'git show "$REF"' 'git fetch "$REMOTE"'; do
+    for command in "git log --since=\"\$SINCE\"" "git diff \"\$REF\"" \
+        "git show \"\$REF\"" "git fetch \"\$REMOTE\""; do
         _check "${command}"
         assert_success
     done
-    for command in 'git -c core.pager="$PAGER" log' \
-        'git log "$(git commit -m fix)"'; do
+    for command in "git -c core.pager=\"\$PAGER\" log" \
+        "git log \"\$(git commit -m fix)\""; do
         _check "${command}"
         assert_equal "${status}" 2
     done
