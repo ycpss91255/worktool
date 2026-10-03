@@ -73,4 +73,3 @@ _dbx_manager_conf() {
     done < <(_dbx_manager_conf_files "$1")
     printf '%s\n' "${_m}"
 }
-
