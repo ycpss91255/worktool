@@ -789,15 +789,19 @@ STUB
     assert_output --partial "blocks= is not trustworthy"
 }
 
-@test "5.2.3: a managed block still in the config fails the item" {
+@test "5.2.3: existing Ghostty blocks survive a successful baseline restore" {
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
         >>"$(_ghostty_config)"
+    cp "$(_ghostty_config)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure
+    assert_success
     assert_line "blocks=1"
-    assert_output --partial "managed block still present"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline" "$(_ghostty_config)"
+    assert_success
 }
 
 @test "5.2.3: the owned box surviving removal fails the item" {

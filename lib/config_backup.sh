@@ -41,7 +41,7 @@
 #   cfgbk_report_user_content <when>
 #                               print `user-content <when>: <n>=<state> ...`,
 #                               fail unless every one is `intact`
-#   cfgbk_report_blocks         print `blocks=N`, fail if N is not 0
+#   cfgbk_report_blocks         print `blocks=N`, fail if the count cannot be read
 #   cfgbk_report_leftover_dirs  print `leftover-dirs=N`, fail if N is not 0
 #
 # Requires lib/guard.sh to be sourced first.
@@ -590,17 +590,11 @@ cfgbk_report_user_content() {
     return "${_bad}"
 }
 
-# Print `blocks=N` and fail unless N is 0. N counts the managed blocks left
-# in EVERY user-owned managed file, not only the ghostty one: a `--tmux
-# host` run leaves one in ~/.tmux.conf too, and a restore that missed it
-# would still print blocks=0.
-#
-# THE GUARD this whole item turns on: `grep -c` exits 1 for "zero matches" and
-# >= 2 for "cannot read the file". Printing the latter as blocks=0 would state
-# "the managed block is gone" on the strength of a file nobody read, so it is
-# printed as -1 and fails instead.
+# Report managed blocks in every user-owned managed file. Existing blocks
+# belong to the pre-run baseline; cfgbk_restore_one verifies its checksum.
+# A failed read is not a zero count and must still fail the item.
 cfgbk_report_blocks() {
-    local _n _f _c _b=0 _where=""
+    local _n _f _c _b=0
     for _n in "${CFGBK_USER_NAMES[@]}"; do
         if ! _f="$(cfgbk_file_of "${_n}")"; then
             printf 'blocks=-1\n'
@@ -612,12 +606,10 @@ cfgbk_report_blocks() {
             guard_fail "cannot read ${_f} -- blocks= is not trustworthy"
             return 1
         }
-        [[ "${_c}" -eq 0 ]] || _where="${_where:-${_f}}"
         _b=$((_b + _c))
     done
     printf 'blocks=%s\n' "${_b}"
-    [[ "${_b}" -eq 0 ]] \
-        || { guard_fail "worktool managed block still present in ${_where}"; return 1; }
+    return 0
 }
 
 # Print `leftover-dirs=N` and fail unless N is 0. Names whose file lives in a

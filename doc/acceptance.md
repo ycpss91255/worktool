@@ -803,7 +803,7 @@ rc=0
       ```
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
-- [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
+- [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
   - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
@@ -827,7 +827,7 @@ rc=0
     - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`；`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。
     - 預期看到資訊：`backup-covers=4/4`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
       `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
-      還原成功依序印 `restore-rc=0`、`restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。
+      還原成功依序印 `restore-rc=0`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.2; echo rc=$?
@@ -838,7 +838,7 @@ rc=0
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
-    - 預期看到資訊：`decoy-created=1`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`dev-still-there=1`。還原印 `restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
+    - 預期看到資訊：`decoy-created=1`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`dev-still-there=1`。還原印 `restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.3; echo rc=$?
