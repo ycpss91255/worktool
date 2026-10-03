@@ -3188,3 +3188,16 @@ _pl_retry_run() {
             contains("never use Monitor/background"))' <<<"${output}"
     assert_success
 }
+
+@test "milestone-handover Sync stops immediately on failed checks before another wait (#421)" {
+    local replies
+    replies="$(_handover_replies | jq '."sync:"={state:"blocked",error:"verify-all (ubuntu-latest): test failed",checks:[{name:"verify-all (ubuntu-latest)",status:"COMPLETED",conclusion:"FAILURE",reason:"test failed"}]}')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "sync-blocked" and [.calls[].phase] == ["Sync"] and
+        (.result.report.error | contains("verify-all (ubuntu-latest)") and contains("test failed")) and
+        (.calls[0].prompt | contains("Check for failures before sleeping or starting another round") and
+            contains("FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, NEUTRAL or SKIPPED") and
+            contains("Exclude only milestone-gate-approval") and
+            contains("return its name, URL and concrete failure reason"))' <<<"${output}"
+    assert_success
+}

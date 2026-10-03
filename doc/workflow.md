@@ -409,7 +409,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    最後一輪只使用剩餘時間，單輪到期仍繼續下一輪，超過 1800 秒也不停止。
    每輪開始、結束與每次 poll 都重新確認同一 PR head；除了 `milestone-gate-approval`，
    所有 check（含兩種架構的 `verify-all` 與 `ci-passed`）都須成功。
-   失敗回報 job 名稱、連結與 log 的具體原因；缺 check、查詢失敗、head 改變或逾時均停止。
+   每次等待前先判斷失敗；commit status 的 FAILURE／ERROR，以及已完成但非 SUCCESS 的 check
+   （含取消、job 逾時與跳過）立即停止，回報 job 名稱、連結與 log 的具體原因；缺 check、查詢失敗、head 改變或逾時均停止。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
    `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
