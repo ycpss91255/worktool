@@ -2968,3 +2968,15 @@ _pl_retry_run() {
         ([.calls[].role] | index("implement-wait:#417:retry1") < index("implement:#417:retry1"))' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop retry: three retries exhaust with increasing waits and the final reason (#417)" {
+    run _pl_retry_run true
+    assert_success
+    run jq -e '.error == null and .result.ciState == "none" and
+        (.result.blockingLeft[0] | contains("at capacity")) and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 4 and
+        ([.calls[] | select(.role | startswith("implement-wait:")) | .prompt |
+            capture("sleep (?<seconds>[0-9]+)").seconds] == ["30","60","90"]) and
+        ([.calls[].role | test("^(locate|ci|review):")] | any | not)' <<<"${output}"
+    assert_success
+}

@@ -321,7 +321,7 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
 
 const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT} before starting codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
 const implementFull = async () => {
-  for (let retry = 0; retry <= 1; retry += 1) {
+  for (let retry = 0; retry <= 3; retry += 1) {
     const setup = retry ? `cd ${WT}` : IMPLEMENT_SETUP
     const context = retry ? continueContext : IMPLEMENT_CONTEXT
     const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, setup)}\n${context}`
@@ -334,7 +334,7 @@ const implementFull = async () => {
     } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
     if (edited && edited.status === 'ready') return ''
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
-    if (retry === 1 || !/at capacity|rate[ -]?limit|HTTP\s*5\d\d/i.test(reason)) return reason
+    if (retry === 3 || !/at capacity|rate[ -]?limit|HTTP\s*5\d\d/i.test(reason)) return reason
     await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
       label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
     })
