@@ -28,7 +28,7 @@ ready_check_comment() {
 }
 
 ready_require_table() {
-    [[ "$1" =~ (^|$'\n')##[[:space:]]+目標對照($|$'\n') && "$1" == *'| 目標 |'* ]] \
+    printf '%s\n' "$1" | awk -v header_only=1 -f "${_READY_HERE}/lib/ready_table.awk" \
         || hook_block '缺少目標對照段落與表格'
 }
 
@@ -46,7 +46,7 @@ ready_require_goals() {
     [[ -n "${_goals}" ]] || hook_block 'milestone issue has no readable goals (fail closed)'
     while IFS= read -r _goal; do
         printf '%s\n' "${_body}" | awk -v goal="${_goal}" -f "${_READY_HERE}/lib/ready_table.awk" \
-            || hook_block "目標對照缺少目標、驗證項目或使用者入口：${_goal}"
+            || hook_block "目標對照缺少目標、使用者實際入口、驗證項目或證據：${_goal}"
     done <<<"${_goals}"
 }
 
