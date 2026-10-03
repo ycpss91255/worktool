@@ -333,7 +333,7 @@ case "$1" in
 esac
 SH
     chmod +x "${stub}/gh" "${stub}/git"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/repo" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
@@ -356,7 +356,7 @@ _pl_run() {
 
 _pl_blocked_run() {
     local implementer="$1"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
@@ -653,7 +653,7 @@ _pl_blocked_run() {
 
 @test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
     local implementer replies
-    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     for implementer in codex claude; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
             "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
@@ -738,7 +738,7 @@ JS
 
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
-    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
         "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
     assert_success
@@ -1490,7 +1490,7 @@ _codex_rel_answer() {
 @test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
         "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
@@ -1940,7 +1940,7 @@ _pl_stage_run() {
     local implementer="$1" action="${2:-dirty}" root="${BATS_TEST_TMPDIR}"
     # The first review creates the requested Fix result, before the check runs.
     local replies
-    replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
+    replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:": {"status":"ready","reason":""}, "locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
         "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
         "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
@@ -2028,7 +2028,7 @@ _pl_stage_run() {
 @test "pr-loop (node): invalid stage evidence fails closed with a reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t"}' \
-        '{"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"null"}}'
+        '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"null"}}'
     assert_success
     run jq -cr '[.error, .result.codexVerdict, .result.blockingLeft]' <<<"${output}"
     assert_output '[null,"blocked",["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
@@ -2051,7 +2051,7 @@ _pl_stage_run() {
 @test "pr-loop (node): a missing worktree stops the stage script (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/missing" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"}')" \
-        '{"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
+        '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
     assert_success
     run jq -cr '[.error, .result.codexVerdict, (.ran[0].rc != 0), .result.blockingLeft]' <<<"${output}"
     assert_output '[null,"blocked",true,["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
