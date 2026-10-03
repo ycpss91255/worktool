@@ -11,18 +11,20 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${READY_FIXTURE}/calls"
 [[ ! -f "${READY_FIXTURE}/fail" ]] || exit 1
 case "$*" in
-    *'pr view 7'*'statusCheckRollup'*) jq '{headRefOid: "head123",statusCheckRollup: [.check_runs[] | .status |= ascii_upcase | .conclusion |= ascii_upcase]}' "${READY_FIXTURE}/checks" ;;
+    *'pr view 7'*'statusCheckRollup'*) jq '{headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",statusCheckRollup: [.check_runs[] | .status |= ascii_upcase | .conclusion |= ascii_upcase]}' "${READY_FIXTURE}/checks" ;;
     *'pr view 7'*) cat "${READY_FIXTURE}/pr" ;;
-    *'/commits/head123/check-runs'*) cat "${READY_FIXTURE}/checks" ;;
+    *'/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs'*) cat "${READY_FIXTURE}/checks" ;;
+    *'/comments'*) cat "${READY_FIXTURE}/comments" ;;
     *'repos/ycpss91255/worktool/issues/'*) cat "${READY_FIXTURE}/target" ;;
     *'issue view 5'*) cat "${READY_FIXTURE}/issue" ;;
     *) exit 1 ;;
 esac
 STUB
     chmod +x "${READY_FIXTURE}/bin/gh"
+    printf '%s' '[{"id":1,"created_at":"2026-10-03T00:00:00Z","body":"[codex]\n交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' >"${READY_FIXTURE}/comments"
     export PATH="${READY_FIXTURE}/bin:${PATH}"
     printf '%s' '{"number":7,"pull_request":{}}' >"${READY_FIXTURE}/target"
-    printf '%s' '{"labels":[{"name":"milestone-gate"}],"headRefOid":"head123","body":"Closes #5"}' >"${READY_FIXTURE}/pr"
+    printf '%s' '{"labels":[{"name":"milestone-gate"}],"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"Closes #5"}' >"${READY_FIXTURE}/pr"
     printf '%s' '{"check_runs":[{"name":"verify-all (ubuntu-latest)","status":"completed","conclusion":"failure"},{"name":"verify-all (ubuntu-24.04-arm)","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
     printf '%s' '{"body":"目標: 開終端即在盒內;量測進盒延遲並達標。"}' >"${READY_FIXTURE}/issue"
     printf '[claude] 就緒，請驗收\n\n## 目標對照\n\n| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |\n|---|---|---|---|\n| 開終端即在盒內 | 開啟 Ghostty | setup spec | CI run 123 |\n| 量測進盒延遲並達標 | just box bench | gate 2.3 | bench output |\n' >"${READY_FIXTURE}/body"
@@ -210,4 +212,12 @@ STUB
     check_ready
     assert_failure 2
     assert_output --partial '目標對照'
+}
+
+@test "ready evidence blocks without a codex handover verdict on the current head (#412)" {
+    successful_job
+    printf '[]' >"${READY_FIXTURE}/comments"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'codex'
 }

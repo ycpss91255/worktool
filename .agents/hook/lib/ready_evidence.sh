@@ -23,6 +23,7 @@ ready_check_comment() {
         and all(.status == "COMPLETED" and .conclusion == "SUCCESS"))' <<<"${_checks}" >/dev/null; then
         hook_block 'verify-all on the current PR head must be success (missing or not successful)'
     fi
+    ready_require_verdict "${_repo}" "${_pr}" "${_sha}"
     ready_require_table "$1"
     ready_require_goals "${_repo}" "${_json}" "$1"
 }
@@ -77,4 +78,14 @@ ready_is_pr() {
         hook_block 'issue target query is malformed (fail closed)'
     fi
     jq -e 'has("pull_request")' <<<"${_json}" >/dev/null
+}
+
+ready_require_verdict() {
+    local _comments
+    _comments="$(_gh api --paginate "repos/$1/issues/$2/comments")" \
+        || hook_block 'codex verdict query failed (fail closed)'
+    if ! jq -s -e '[.[][] | select(.body | test("^\\s*\\[codex\\]"))] | length > 0' \
+        <<<"${_comments}" >/dev/null; then
+        hook_block 'codex handover verdict required (fail closed)'
+    fi
 }
