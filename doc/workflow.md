@@ -377,3 +377,42 @@ Claude 與 Codex 的 `enforce_milestone_ready_evidence.sh` 在留言送出前檢
 命令解析共用 approval hook 的封閉規則；shell 展開、間接執行與無法靜態辨識的
 API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 approval hook 的已知限制。
 人類核准與合併仍走既有 milestone gate。
+
+## milestone-handover
+
+每次 milestone 驗收交出前，執行 `.claude/workflows/milestone-handover.js`。
+這個 workflow 不合併、不代寫維護者核准，也不自動張貼就緒留言。
+
+| 參數 | 必要 | 說明 |
+|---|---|---|
+| `repo` | 是 | `owner/name`；每個 gh 指令明寫 `--repo` |
+| `repoDir` | 是 | 本次 linked worktree 的絕對路徑；所有寫入限於這個 worktree |
+| `pr` | 是 | milestone 驗收 PR 的正整數編號 |
+| `milestoneIssue` | 否 | milestone issue 正整數；省略時取 PR 第一筆 Closes/Fixes/Resolves 參照 |
+| `safeRun` | 否 | 布林值，預設 `true`；為 `false` 時只列安全分類與待執行命令 |
+
+1. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
+   包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
+   缺少、查詢失敗或未綠即回報並停止。
+2. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
+   驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
+   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
+3. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
+   `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
+   只發布 codex 原始結果，以 `[codex]` 開頭且包含一行
+   `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
+   非零結束、空結果、格式不符或 head 改變均停止。
+4. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
+   修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
+   安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
+   worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
+5. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+   `ready.md` 草稿，採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
+   第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
+
+中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
+每次覆寫當次產物避免誤用舊結果。回傳 `status: prepared` 只代表文件已產生；
+負面判定或實跑／還原失敗的草稿明列阻擋，不能宣告就緒。
+
+就緒 hook 另要求同 head 的 `[codex]`「可交出」判定，其時間必須晚於該 SHA
+任何「不可交出」判定；查詢失敗、舊 SHA 或後續負面判定都拒絕。

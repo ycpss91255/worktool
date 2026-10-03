@@ -2871,3 +2871,26 @@ _handover_run() {
         jq -e '.calls == []' <<<"${output}"
     done
 }
+
+_handover_replies() {
+    jq -n '{"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
+        checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
+            map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
+        "findings:":{file:"findings.md"},
+        "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
+        "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}}'
+}
+
+@test "milestone-handover prepares evidence in five ordered unstructured stages without publishing readiness (#412)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(_handover_replies)"
+    jq -e '.result.status == "prepared" and
+        [.calls[].role] == ["head:","findings:","review:","machine:","evidence:"] and
+        ([.calls[1:][] | .schema] | all(. == null))' <<<"${output}"
+    jq -e '.calls[1].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[2].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[3].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+    refute_output --partial '允許合併'
+    run grep -E 'gh pr merge|/merge|StructuredOutput' "${WF_DIR}/milestone-handover.js"
+    assert_failure 1
+}
