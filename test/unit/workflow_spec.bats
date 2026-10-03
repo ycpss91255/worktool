@@ -2906,20 +2906,20 @@ _handover_replies() {
     jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
-        "findings:":{file:"findings.md"},
+        "scratch:":{ok:true},"findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
 }
 
-@test "milestone-handover prepares evidence in six ordered unstructured stages without publishing readiness (#412)" {
+@test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","findings:","review:","machine:","evidence:"] and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","review:","machine:","evidence:"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
-    jq -e '.calls[2].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
-    jq -e '.calls[3].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
-    jq -e '.calls[4].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
-    jq -e '.calls[5].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+    jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[5].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
+    jq -e '.calls[6].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
     jq -e '[.calls[1:][].prompt] | all(contains("/tmp/acceptance"))' <<<"${output}"
     jq -e '[.calls[].phase][0:2] == ["Sync","Head"]' <<<"${output}"
@@ -2945,7 +2945,7 @@ _handover_replies() {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7,"safeRun":false}' \
         "$(jq '."head:".checks += [{name:"milestone-gate-approval",status:"PENDING"}] |
             ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
-    jq -e '.result.status == "prepared" and (.calls[4].prompt | contains("safeRun=false"))' <<<"${output}"
+    jq -e '.result.status == "prepared" and (.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=false"))' <<<"${output}"
 }
 
 @test "milestone-handover accepts JSON text from unstructured long stages and fails closed on prose (#412)" {
@@ -3229,4 +3229,18 @@ _pl_retry_run() {
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("own files: codex*")' <<<"${json}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("own files: machine.md and machine/")' <<<"${json}"
     jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("own files: evidence.md and ready.md")' <<<"${json}"
+}
+
+@test "milestone-handover initializes scratch exactly once after Head and stops on failure (#423)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    local json="${output}"
+    run jq -e '.result.status == "prepared" and [.calls[].role][0:4] ==
+        ["sync:","head:","scratch:","findings:"] and
+        ([.calls[] | select(.role == "scratch:")] | length) == 1 and
+        (.calls[] | select(.role == "scratch:") | .prompt | contains("rm -rf --") and contains("mkdir -p --")) and
+        ([.calls[] | select(.role != "scratch:") | .prompt | contains("rm -rf")] | any | not)' <<<"${json}"
+    assert_success
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$(_handover_replies | jq '."scratch:"={error:"mkdir failed"}')"
+    jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","scratch:"]' <<<"${output}"
 }

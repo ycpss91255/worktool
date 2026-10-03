@@ -420,20 +420,22 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    缺少、查詢失敗或未綠即回報並停止。
-3. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
+3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
+   初始化失敗即停止，不進入 Findings。
+4. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
    驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
-4. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
+5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
-5. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
+6. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
    修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
    安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
    worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
-6. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+7. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。

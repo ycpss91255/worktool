@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Sync', detail: 'Sync acceptance worktree with main, gate, push and wait for CI' },
     { title: 'Head', detail: 'Require current-head checks' },
+    { title: 'Scratch', detail: 'Initialize the per-head scratch directory once' },
     { title: 'Findings', detail: 'Collect all maintainer acceptance findings' },
     { title: 'Review', detail: 'Independent codex review of the whole head' },
     { title: 'Machine', detail: 'Classify and run safe real-machine items' },
@@ -75,6 +76,14 @@ if (!head || head.error || head.sha !== sync.sha || !/^[0-9a-f]{40}$/.test(head.
   return { pr: A.pr, status: 'head-blocked', report: head || 'PR query failed' }
 }
 const SCRATCH = `${A.repoDir}/.agents/state/milestone-handover-${A.pr}-${head.sha}`
+const scratchResult = decode(await agent(`${RULES}
+Initialize this run's scratch directory exactly once, after Head, in the foreground.
+Run \`cd ${sq(A.repoDir)} && rm -rf -- ${sq(SCRATCH)} && mkdir -p -- ${sq(SCRATCH)}\`.
+On command failure return {error: concrete failure reason}; only on exit 0 return {ok: true}.`,
+{ label: `${RUN_ID} scratch:`, phase: 'Scratch', agentType: 'general-purpose' }))
+if (!scratchResult || scratchResult.error || scratchResult.ok !== true) {
+  return { pr: A.pr, sha: head.sha, status: 'scratch-failed', report: scratchResult || 'Scratch initialization failed' }
+}
 const CONTEXT = `${RULES} Frozen head=${head.sha}, milestone issue #${head.milestoneIssue}. Scratch ONLY ${JSON.stringify(SCRATCH)}. Never delete or recreate the scratch directory; preserve all earlier stages' files. Before any publication or final evidence, re-query head; if it changed, return error and stop. Do not publish a ready comment.`
 const findingsResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: findings.md.
