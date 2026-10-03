@@ -157,3 +157,23 @@ STUB
     check_ready
     assert_success
 }
+
+@test "goal mapping blocks missing columns and the old three-column format (#407)" {
+    successful_job
+    local valid
+    valid="$(cat "${READY_FIXTURE}/body")"
+    for row in \
+        '| 目標 | 使用者實際入口 | 測試或驗收項目 |' \
+        '| 開終端即在盒內 | 開啟 Ghostty | setup spec |' \
+        '| 目標 | 測試或驗收項目 | 使用者入口 |'; do
+        printf '%s\n' "${valid}" >"${READY_FIXTURE}/body"
+        if [[ "${row}" == '| 開終端'* ]]; then
+            sed -i "s/^| 開終端.*/${row}/" "${READY_FIXTURE}/body"
+        else
+            sed -i "s/^| 目標.*/${row}/" "${READY_FIXTURE}/body"
+        fi
+        check_ready
+        assert_failure 2
+        assert_output --partial '目標對照'
+    done
+}

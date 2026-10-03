@@ -28,7 +28,7 @@ ready_check_comment() {
 }
 
 ready_require_table() {
-    [[ "$1" =~ (^|$'\n')##[[:space:]]+目標對照($|$'\n') && "$1" == *'| 目標 |'* ]] \
+    printf '%s\n' "$1" | awk -v header_only=1 -f "${_READY_HERE}/lib/ready_table.awk" \
         || hook_block '缺少目標對照段落與表格'
 }
 
