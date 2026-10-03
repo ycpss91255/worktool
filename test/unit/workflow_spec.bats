@@ -3216,3 +3216,17 @@ _pl_retry_run() {
             contains("stop on a changed head or query failure"))' <<<"${output}"
     assert_success
 }
+
+@test "milestone-handover stages write only their own artifacts and preserve scratch (#423)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    local json="${output}"
+    run jq -e '[.calls[] | select(.role | test("^(findings|review|machine|evidence):"))] |
+        length == 4 and all(.prompt | contains("Only create or overwrite your own files:") and
+            contains("Never delete or recreate the scratch directory") and
+            (contains("Create this directory and overwrite") | not))' <<<"${json}"
+    assert_success
+    jq -e '.calls[] | select(.role == "findings:") | .prompt | contains("own files: findings.md")' <<<"${json}"
+    jq -e '.calls[] | select(.role == "review:") | .prompt | contains("own files: codex*")' <<<"${json}"
+    jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("own files: machine.md and machine/")' <<<"${json}"
+    jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("own files: evidence.md and ready.md")' <<<"${json}"
+}

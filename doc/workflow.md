@@ -439,7 +439,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
 
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
-每次覆寫當次產物避免誤用舊結果。回傳 `status: prepared` 只代表文件已產生；
+各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
+Machine 的 `machine.md` 與 `machine/` 子目錄、Evidence 的 `evidence.md` 與 `ready.md`。
+所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。回傳 `status: prepared` 只代表文件已產生；
 負面判定或實跑／還原失敗的草稿明列阻擋，不能宣告就緒。
 
 就緒 hook 另要求同 head 的 `[codex]`「可交出」判定，其時間必須晚於該 SHA
