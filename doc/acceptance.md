@@ -724,7 +724,7 @@ rc=0
       [INFO] terminal detected: ghostty (ghostty executable <H>/bin/ghostty)
       [INFO] box: dev (default)
       [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
-      error: recipe `setup` failed on line 44 with exit code 1
+      error: Recipe `setup` failed on line 45 with exit code 1
       rc=1
       files 2->2
       user-content after-refusal: ghostty=intact tmux.conf=intact
@@ -733,7 +733,8 @@ rc=0
       user-content after-write: ghostty=intact tmux.conf=intact
       rc=0
       ```
-      (前半是「PATH 上沒有 distrobox」那一輪:`rc=1`、`files 2->2`(什麼都沒寫);後半是 `--distrobox <絕對路徑>` 那一輪:`rc=0` 與它寫出的受管 command。最後一行是本項 `echo rc=$?`。
+      (just 診斷屬於**工具版本會影響的輸出**：`error: Recipe `setup` failed on line 45 with exit code 1` 是示例，大小寫、行號會隨 just 版本與 recipe 位置變動；只比對 recipe 名稱 `setup` 與 `exit code 1`。其餘正規化產品行是固定判準，逐字比對。
+      前半是「PATH 上沒有 distrobox」那一輪:`rc=1`、`files 2->2`(什麼都沒寫);後半是 `--distrobox <絕對路徑>` 那一輪:`rc=0` 與它寫出的受管 command。最後一行是本項 `echo rc=$?`。
       `files` 的那兩個數字是本項在跑 setup 前種下的 ghostty 設定與 `~/.tmux.conf`:被拒絕的那一輪不得新增檔案,也不得改動既有的 —— 檔案數看不出「拒絕之前先把設定重寫了一遍」,`user-content after-refusal` 看得出來(round 17)。
       `--distrobox` 那一輪是本項真正寫出受管區塊的地方,所以後面跟著 `user-content after-write`:受管 command 那行寫得再對,也分不出區塊是**放進**使用者的設定裡,還是**取代**了整份設定 —— 把 `enter_block_compose` 退化成「印出區塊、忘掉原檔」後,上面的 `command = ...` 一字不差,而使用者的 `font-size` 已經沒了)
     - 驗收方式
