@@ -32,3 +32,15 @@ _edit() {
         assert_output --partial 'milestone-handover'
     done
 }
+
+@test "main session cannot run other git mutations or hide them behind options" {
+    local command
+    for command in 'git rebase main' 'git cherry-pick HEAD' 'git revert HEAD' \
+        'git am patch' 'git reset --hard' 'git checkout -- file' 'git restore file' \
+        'git stash list' 'git apply patch' 'git -C /tmp commit -m fix' \
+        'git --git-dir=/tmp/repo merge main' 'git -c user.name=agent push' \
+        'git pull' 'git pull --ff-only --no-ff'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+}
