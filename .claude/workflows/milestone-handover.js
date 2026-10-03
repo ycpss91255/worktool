@@ -31,7 +31,7 @@ const head = await agent(`${RULES}
 Resolve PR ${A.pr} using \`gh pr view ${A.pr} --repo ${A.repo} --json headRefOid,labels,body,statusCheckRollup\`.
 Resolve milestoneIssue from ${A.milestoneIssue ?? 'the first Closes/Fixes/Resolves #N in the PR body'}; read that issue's goals using gh issue view --repo ${A.repo}.
 Return {sha: full headRefOid, labels: array of label names, milestoneIssue: positive integer, checks: normalized statusCheckRollup array with name, status, conclusion, url}. Normalize commit statuses to COMPLETED and SUCCESS only when state is SUCCESS. Include every check/status, never filter failures. Missing/query/malformed data is error.`, { label: `${RUN_ID} head:`, phase: 'Head', agentType: 'general-purpose' })
-const green = c => c && c.status === 'COMPLETED' && c.conclusion === 'SUCCESS'
+const green = c => c && typeof c.name === 'string' && c.name.trim() && c.status === 'COMPLETED' && c.conclusion === 'SUCCESS'
 const requiredChecks = ['verify-all (ubuntu-latest)', 'verify-all (ubuntu-24.04-arm)', 'ci-passed']
 if (!head || head.error || !/^[0-9a-f]{40}$/.test(head.sha) || !head.labels?.includes('milestone-gate') ||
     !Number.isInteger(head.milestoneIssue) || head.milestoneIssue < 1 ||

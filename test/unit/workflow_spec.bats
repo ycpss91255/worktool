@@ -2894,3 +2894,23 @@ _handover_replies() {
     run grep -E 'gh pr merge|/merge|StructuredOutput' "${WF_DIR}/milestone-handover.js"
     assert_failure 1
 }
+
+@test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {
+    local replies mutation
+    replies="$(_handover_replies)"
+    for mutation in '."head:".checks=[]' '."head:".labels=[]' \
+        '."head:".checks += [{status:"COMPLETED",conclusion:"SUCCESS"}]' \
+        '."head:".checks[0].conclusion="FAILURE"' \
+        '."head:".checks += [{name:"extra",status:"IN_PROGRESS",conclusion:null}]' \
+        '."review:".line="交出判定：可交出 head=old"' \
+        '."review:".line="prefix 交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+        '."review:".url="https://github.com/o/r/pull/7#issuecomment-1junk"'; do
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(jq "${mutation}" <<<"${replies}")"
+        jq -e '.result.status == "head-blocked" or .result.status == "review-failed"' <<<"${output}"
+        jq -e '[.calls[].role] | index("machine:") == null' <<<"${output}"
+    done
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7,"safeRun":false}' \
+        "$(jq '."head:".checks += [{name:"milestone-gate-approval",status:"PENDING"}] |
+            ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
+    jq -e '.result.status == "prepared" and (.calls[3].prompt | contains("safeRun=false"))' <<<"${output}"
+}
