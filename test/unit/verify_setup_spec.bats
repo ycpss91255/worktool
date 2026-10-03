@@ -665,6 +665,23 @@ EOF
     assert_output --partial '3.5 PASS'
 }
 
+@test "missing-tool rounds: leaked distrobox makes the environment unfit" {
+    local _ln _distrobox _item
+    _ln="$(command -v ln)"
+    _distrobox="$(command -v distrobox)"
+    _stub ln '#!/bin/sh' \
+        "${_ln} \"\$@\" || exit 1" \
+        'case "$3" in' \
+        "  */bin/just) ${_ln} -s '${_distrobox}' \"\${3%/just}/distrobox\" ;;" \
+        'esac'
+    for _item in 3.5 3.6; do
+        run "${VERIFY}" "${_item}"
+        assert_failure
+        assert_output --partial "${_item}: environment unfit: distrobox is still on the restricted PATH"
+        refute_output --partial "${_item} PASS"
+    done
+}
+
 @test "3.5: a just that prints the documented restricted-PATH refusal but exits 1 everywhere cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.5
