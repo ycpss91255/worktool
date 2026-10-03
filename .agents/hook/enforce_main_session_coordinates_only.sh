@@ -48,6 +48,35 @@ check_git() {
     esac
 }
 
+check_tests() {
+    local tool="$1" word skip=0 recipe='' text=''
+    shift
+    for word in "$@"; do
+        text+=" $(hook_word "${word}")"
+        [[ "${tool}" == just ]] || continue
+        hook_word_has_expansion "${word}" && refuse 'Expanded just arguments cannot be checked.'
+        word="$(hook_word "${word}")"
+        if (( skip > 0 )); then
+            skip=$((skip - 1))
+            continue
+        fi
+        [[ -z "${recipe}" ]] || continue
+        case "${word}" in
+            -f|--justfile|-d|--working-directory|--chooser|--shell) skip=1 ;;
+            --set) skip=2 ;;
+            --*=*|-f?*|-d?*|--quiet|-q|--verbose|-v|--dry-run|-n|--) ;;
+            -*) refuse 'Unknown just option cannot be checked.' ;;
+            *) recipe="${word}" ;;
+        esac
+    done
+    if [[ "${tool}" == just && "${recipe}" == test ]]; then
+        refuse 'Main-session tests belong in a Workflow.'
+    fi
+    if [[ "${tool}" == docker && "${text}" =~ (^|[[:space:]\"\'])([^[:space:]\"\']*/)?bats([[:space:]\"\']|$) ]]; then
+        refuse 'Main-session Docker bats execution belongs in a Workflow.'
+    fi
+}
+
 check_launch() {
     local launch="$1" lead tool
     local -a words=()
@@ -56,6 +85,8 @@ check_launch() {
     tool="$(hook_word "${words[0]:-}")"
     if [[ "${tool##*/}" == git ]]; then
         check_git "${words[@]:1}"
+    elif [[ "${tool##*/}" == just || "${tool##*/}" == docker ]]; then
+        check_tests "${tool##*/}" "${words[@]:1}"
     fi
 }
 

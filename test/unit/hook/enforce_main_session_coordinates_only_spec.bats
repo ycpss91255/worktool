@@ -44,3 +44,15 @@ _edit() {
         assert_equal "${status}" 2
     done
 }
+
+@test "main session delegates just tests and Docker bats execution" {
+    local command
+    for command in 'just test unit' 'just test lint' 'just --justfile justfile test guards' \
+        'just -d /tmp test unit' 'timeout 60 just test unit' \
+        'docker run --rm image bats test/unit/x.bats' \
+        'docker exec box /usr/bin/bats test/unit/x.bats' \
+        "docker run image bash -c 'bats test/unit/x.bats'"; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+}
