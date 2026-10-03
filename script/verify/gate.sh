@@ -120,7 +120,7 @@ SYSTEM_REAL_PATTERN='^# (chain|chain-host|hang|single-instance)|^ok .*ghostty ch
 # DESCRIPTION rather than by `ok <n>`: bats numbers shift whenever a case is
 # added anywhere earlier in the tier, and a number is not evidence. Each
 # description must appear exactly once, and nothing else may appear - which
-# also pins the case count per tier (10 and 5). Adding a chain case means
+# also pins the case count per tier (10 and 6). Adding a chain case means
 # adding it to the document's block and to the list here; that is the point.
 INTEGRATION_CASES=(
     "the ghostty command just box setup writes enters the box directly without starting tmux"
@@ -135,6 +135,7 @@ INTEGRATION_CASES=(
     "+validate-config refuses a config ghostty cannot parse (the check bites)"
 )
 SYSTEM_REAL_CASES=(
+    "ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish"
     "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)"
     "ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)"
     "ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging"
@@ -160,6 +161,7 @@ SYSTEM_REAL_CASES=(
 # published without a bound and stay shape-only.
 INTEGRATION_CRITERIA=()
 SYSTEM_REAL_CRITERIA=(
+    '^# chain-cold: changing progress updates=([2-9]|[1-9][0-9]+); setup command entered fish in dev$'
     '^# chain: inbox-ok fish=[0-9]+\.[0-9]+[^ ]* ctrenv=(/run/\.containerenv|/\.dockerenv) mntns=mnt:\[[0-9]+\] tmux=no host=.+$'
     '^# chain-in-box: marker mntns=mnt:\[[0-9]+\] == dev container; host=[^[:space:]]+ == docker inspect dev hostname$'
     '^# hang-ready: hang-ready fish=[0-9]+\.[0-9]+.* host=.+$'
