@@ -87,6 +87,7 @@ setup() {
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
+    export FAKE_WORKTOOL_LIB_DIR="${REPO_ROOT}/lib"
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
@@ -1257,4 +1258,18 @@ STUB
     assert_equal "$(readlink "${_home}/profile-link")" '.profile'
     [ -S "${_home}/.cache/tmux/user" ]
     assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "5.1: assemble state writes leave existing real state byte-identical" {
+    export XDG_CONFIG_HOME="${HOME}/custom-config"
+    local _state="${XDG_CONFIG_HOME}/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${XDG_CONFIG_HOME}/worktool"
+    printf '# user state\r\nhome=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+    [ "$(cat "${STATE}/assemble-config-dir")" != "${XDG_CONFIG_HOME}" ]
 }

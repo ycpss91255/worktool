@@ -132,6 +132,22 @@ _fake_distrobox() {
     esac
 }
 
+# Opt-in adapter for assemble's real home/home.source state mutation.
+_fake_assemble_state() {
+    [[ "${FAKE_JUST_ASSEMBLE_WRITES_STATE:-0}" -eq 1 ]] || return 0
+    local _previous="" _arg _home=""
+    for _arg in "$@"; do
+        [[ "${_previous}" != --home ]] || _home="${_arg}"
+        _previous="${_arg}"
+    done
+    [[ -n "${_home}" ]] || return 1
+    # shellcheck source=lib/config.sh
+    source "${FAKE_WORKTOOL_LIB_DIR}/config.sh"
+    config_set home "${_home}" home.source user || return 1
+    config_get home >"${_DIR}/assemble-home" || return 1
+    config_xdg_dir >"${_DIR}/assemble-config-dir"
+}
+
 # --- just --------------------------------------------------------------------
 # argv always starts `box <verb>` (script/verify/realbox.sh only ever calls
 # the box namespace).
@@ -139,6 +155,7 @@ _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
+            _fake_assemble_state "$@" || return 1
             _rc="${FAKE_JUST_ASSEMBLE_RC:-0}"
             _out="${FAKE_JUST_ASSEMBLE_OUT-distrobox assemble create --file box/dev.ini}"
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
