@@ -333,7 +333,7 @@ case "$1" in
 esac
 SH
     chmod +x "${stub}/gh" "${stub}/git"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/repo" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
@@ -356,7 +356,7 @@ _pl_run() {
 
 _pl_blocked_run() {
     local implementer="$1"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
@@ -653,7 +653,7 @@ _pl_blocked_run() {
 
 @test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
     local implementer replies
-    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     for implementer in codex claude; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
             "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
@@ -738,7 +738,7 @@ JS
 
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
-    replies='{"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
         "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
     assert_success
@@ -1490,7 +1490,7 @@ _codex_rel_answer() {
 @test "pr-loop (node): the codex answer is extracted with local paths rewritten repo-relative, and that file is posted" {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
-    local replies='{"stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
         "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
@@ -1940,7 +1940,7 @@ _pl_stage_run() {
     local implementer="$1" action="${2:-dirty}" root="${BATS_TEST_TMPDIR}"
     # The first review creates the requested Fix result, before the check runs.
     local replies
-    replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
+    replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:": {"status":"ready","reason":""}, "locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
         "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
         "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
@@ -2028,7 +2028,7 @@ _pl_stage_run() {
 @test "pr-loop (node): invalid stage evidence fails closed with a reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t"}' \
-        '{"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"null"}}'
+        '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"null"}}'
     assert_success
     run jq -cr '[.error, .result.codexVerdict, .result.blockingLeft]' <<<"${output}"
     assert_output '[null,"blocked",["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
@@ -2051,7 +2051,7 @@ _pl_stage_run() {
 @test "pr-loop (node): a missing worktree stops the stage script (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/missing" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"}')" \
-        '{"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
+        '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
     assert_success
     run jq -cr '[.error, .result.codexVerdict, (.ran[0].rc != 0), .result.blockingLeft]' <<<"${output}"
     assert_output '[null,"blocked",true,["Implement check failed: no valid script evidence; git status and HEAD comparison unavailable"]]'
@@ -2601,6 +2601,14 @@ _pl_resume_setup() {
     cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
 }
 
+# Only codex's detached wrapper writes completion artifacts.
+_pl_resume_codex_complete() {
+    local root="${BATS_TEST_TMPDIR}"
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '0\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'finished\n' > "${root}/worktree/.scratch/n/implement.md"
+}
+
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
     replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
@@ -2661,6 +2669,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
     assert_success
     local json="${output}"
@@ -2675,6 +2684,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: unpublished local commits pass gates and publish before CI (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local before json
     before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
@@ -2690,6 +2700,22 @@ _pl_resume_run() {
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
+}
+
+@test "pr-loop resume: Claude paths resume clean committed work without codex output (#417)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" extra
+    git -C "${root}/worktree/n" commit -qm pending -m 'Refs: #417' --allow-empty
+    for extra in '{"mode":"light"}' '{"mode":"light","pr":7}' \
+        '{"implementer":"claude"}' '{"implementer":"claude","pr":7}' \
+        '{"implementer":"claude","codex":"off"}' '{"implementer":"claude","codex":"off","pr":7}'; do
+        run _pl_resume_run "${extra}"
+        assert_success
+        run jq -e '.error == null and .result.pr == 7 and .result.ciState == "green" and
+            ([.calls[].role | startswith("implement:")] | any | not) and
+            ([.calls[].role | startswith("ci:")] | any)' <<<"${output}"
+        assert_success
+    done
 }
 
 @test "pr-loop resume: light requires independent diff review before publishing pending commits (#386)" {
@@ -2718,6 +2744,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: missing worktree is recreated without changing branch history (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}" before
     git -C "${root}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
@@ -2735,6 +2762,7 @@ _pl_resume_run() {
 
 @test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
     assert_success
     run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
@@ -2746,6 +2774,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: CI success cannot bypass the published HEAD guard (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}"
     local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -2760,6 +2789,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: a deleted worktree with stale registration can be recreated (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}" before
     before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
     rm -rf "${root}/worktree/n"
@@ -2970,4 +3000,158 @@ STUB
     jq -e '.calls[0].prompt | contains("git diff --name-only --diff-filter=U") and
         contains("record each resolution") and contains("stop before gates or push") and
         contains("Never rewrite pushed history or force push")' <<<"${output}"
+}
+
+_pl_retry_run() {
+    local failures="$1" reason="${2:-ERROR: Selected model is at capacity}" replies
+    replies="$(jq -cn --argjson failures "${failures}" --arg reason "${reason}" '{
+        "implement:#417:retry1": (if $failures then {status:"failed",reason:"HTTP 503 at capacity"} else {status:"ready",reason:""} end),
+        "implement:": {status:"failed",reason:$reason},
+        "locate:": {pr:7,sha:"abc"},
+        "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
+        "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"repo":"o/r","repoDir":"/work","issue":417,"branch":"b","name":"n","task":"t"}' "${replies}"
+}
+
+@test "pr-loop retry: capacity failure then success continues in the same worktree (#417)" {
+    run _pl_retry_run false
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 2 and
+        (.calls[] | select(.role == "implement:#417:retry1") | .prompt |
+            contains("Continue implementation") and contains("/work/../worktree/n") and
+            (contains("git worktree add") | not)) and
+        ([.calls[].role] | index("implement-wait:#417:retry1") < index("implement:#417:retry1"))' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop retry: three retries exhaust with increasing waits and the final reason (#417)" {
+    run _pl_retry_run true
+    assert_success
+    run jq -e '.error == null and .result.ciState == "none" and
+        (.result.blockingLeft[0] | contains("at capacity")) and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 4 and
+        ([.calls[] | select(.role | startswith("implement-wait:")) | .prompt |
+            capture("sleep (?<seconds>[0-9]+)").seconds] == ["30","60","90"]) and
+        ([.calls[].role | test("^(locate|ci|review):")] | any | not)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop continue: dirty worktree with commits continues implementation and preserves work (#417)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before json
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '0\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'finished\n' > "${root}/worktree/.scratch/n/implement.md"
+    printf 'previous run\n' > "${root}/worktree/.scratch/n/implement.md.log"
+    git -C "${root}/worktree/n" commit -qm pending --allow-empty
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    printf 'unfinished\n' > "${root}/worktree/n/pending.txt"
+    run _pl_resume_run '{}'
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.ciState == "green" and
+        (.calls[] | select(.role | startswith("implement:")) | .prompt |
+            contains("git log origin/main..HEAD") and contains("git status --short") and
+            contains("git diff") and contains("implement.md.log")) and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1' <<<"${json}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
+    run cat "${root}/worktree/n/pending.txt"
+    assert_output unfinished
+    run cat "${root}/worktree/.scratch/n/implement.md.log"
+    assert_output 'previous run'
+}
+
+@test "pr-loop continue: failed implementation rc overrides clean committed work (#417)" {
+    _pl_resume_setup
+    _pl_resume_codex_complete
+    local root="${BATS_TEST_TMPDIR}"
+    git -C "${root}/worktree/n" commit -qm pending --allow-empty
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '1\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'partial report\n' > "${root}/worktree/.scratch/n/implement.md"
+    run _pl_resume_run '{}'
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
+        ([.calls[].role | select(startswith("publish:"))] | length) == 0' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop continue: missing implementation report continues clean committed work (#417)" {
+    _pl_resume_setup
+    _pl_resume_codex_complete
+    rm "${BATS_TEST_TMPDIR}/worktree/.scratch/n/implement.md"
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm pending --allow-empty
+    run _pl_resume_run '{}'
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop retry: actual codex server status errors retry then continue (#417)" {
+    local reason
+    for reason in 'unexpected status 503 Service Unavailable' 'exceeded retry limit, last status: 502 Bad Gateway'; do
+        run _pl_retry_run false "${reason}"
+        assert_success
+        run jq -e '.error == null and .result.ciState == "green" and
+            ([.calls[].role | select(startswith("implement:"))] | length) == 2 and
+            ([.calls[].role | select(startswith("implement-wait:"))] | length) == 1' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "pr-loop retry: rate limits and HTTP server failures retry while permanent errors stop (#417)" {
+    local reason json
+    for reason in 'rate limit exceeded' 'HTTP/1.1 502 Bad Gateway' 'HTTP 500 Internal Server Error' 'authentication failed'; do
+        run _pl_retry_run false "${reason}"
+        assert_success
+        json="${output}"
+        run jq -e --arg reason "${reason}" '.error == null and
+            (if $reason == "authentication failed" then
+                .result.ciState == "none" and (.result.blockingLeft[0] | contains($reason)) and
+                ([.calls[].role | select(startswith("implement:"))] | length) == 1
+            else .result.ciState == "green" and
+                ([.calls[].role | select(startswith("implement:"))] | length) == 2 end)' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "pr-loop continue: interrupted work with an explicit PR still implements without recreating it (#417)" {
+    _pl_resume_setup
+    _pl_resume_codex_complete
+    printf 'unfinished\n' > "${BATS_TEST_TMPDIR}/worktree/n/pending.txt"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.pr == 7 and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
+        (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Reuse PR #7"))' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop continue: codex snapshots previous output before starting another attempt (#417)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf 'previous report\n' > "${root}/worktree/.scratch/n/implement.md"
+    printf 'at capacity\n' > "${root}/worktree/.scratch/n/implement.md.log"
+    printf '1\n' > "${root}/worktree/.scratch/n/implement.rc"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:417,branch:"b",name:"n",task:"t"}')" \
+        '{"prepare:":{"state":"implement"},"implement:":{"status":"ready","reason":""}}' exec
+    assert_success
+    json="${output}"
+    run cat "${root}/worktree/.scratch/n/implement.md.log.previous"
+    assert_success
+    assert_output 'at capacity'
+    run cat "${root}/worktree/.scratch/n/implement.md.previous"
+    assert_output 'previous report'
+    run cat "${root}/worktree/.scratch/n/implement.rc.previous"
+    assert_output 1
+    run jq -e '.error == null and (.calls[] | select(.role | startswith("implement:")) | .prompt |
+        split("brief:\n")[1] | contains("implement.md.log.previous"))' <<<"${json}"
+    assert_success
 }
