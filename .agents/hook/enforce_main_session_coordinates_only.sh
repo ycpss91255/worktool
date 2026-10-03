@@ -108,6 +108,7 @@ check_edit() {
 
 main() {
     hook_read_input
+    hook_subagent_call && hook_allow
     local launch
     if [[ "$(hook_field '.tool_name')" == Bash ]]; then
         while IFS= read -r launch; do

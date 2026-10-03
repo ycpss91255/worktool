@@ -73,3 +73,22 @@ _edit() {
     _edit 'file'
     assert_equal "${status}" 2
 }
+
+@test "nonempty subagent identity allows git tests and file edits" {
+    local command
+    for command in 'git commit -m fix' 'git merge main' 'git push' 'just test unit' \
+        'docker run image bats spec.bats'; do
+        _check "${command}" 'agent-workflow'
+        assert_success
+    done
+    _edit "${WORK}/file" 'agent-workflow'
+    assert_success
+    _edit "${WORK}/notebook" 'agent-workflow' NotebookEdit
+    assert_success
+    local identity
+    for identity in 'null' '""' 'false' '123' '[]' '{}'; do
+        run_hook enforce_main_session_coordinates_only "$(jq -n --argjson a "${identity}" \
+            '{agent_id:$a,tool_name:"Bash",tool_input:{command:"git commit -m fix"}}')"
+        assert_equal "${status}" 2
+    done
+}

@@ -25,16 +25,6 @@ refuse() {
     hook_block "$1" 'Use pr-loop / milestone-fanout for implementation.'
 }
 
-# Identity contract: Claude Code supplies agent_id on subagent tool calls.
-# Source checked 2026-10-02: https://code.claude.com/docs/en/hooks#common-input-fields
-# Accept any subagent (including Workflow agents), as decided in PR #372.
-# No transcript or environment markers are consulted. Empty/invalid IDs
-# grant no exception; this cooperating-agent guard cannot authenticate input.
-subagent_call() {
-    jq -e '.agent_id | type == "string" and length > 0' \
-        <<<"${HOOK_INPUT}" >/dev/null 2>&1
-}
-
 # Only the explicit read-only sandbox is a main-loop exception. Unknown
 # options and configuration overrides cannot silently grant write access.
 readonly_launch() {
@@ -172,6 +162,6 @@ check_command() {
 }
 
 hook_read_input
-subagent_call && hook_allow
+hook_subagent_call && hook_allow
 check_command "$(hook_command)" "$(hook_field '.cwd')"
 hook_allow
