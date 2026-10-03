@@ -2861,11 +2861,11 @@ _handover_run() {
 
 @test "milestone-handover rejects invalid arguments before any agent runs (#412)" {
     local args
-    for args in '{}' '{"repo":"bad","repoDir":"/tmp/w","pr":1}' \
-        '{"repo":"o/r","repoDir":"relative","pr":1}' \
-        '{"repo":"o/r","repoDir":"/tmp/w","pr":0}' \
-        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"safeRun":"yes"}' \
-        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"milestoneIssue":0}'; do
+    for args in '{}' '{"repo":"bad","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1}' \
+        '{"repo":"o/r","repoDir":"relative","base":"m3/5-acceptance","pr":1}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":0}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1,"safeRun":"yes"}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1,"milestoneIssue":0}'; do
         _handover_run "${args}"
         jq -e '.error | contains("milestone-handover: invalid args.")' <<<"${output}"
         jq -e '.calls == []' <<<"${output}"
@@ -2882,7 +2882,7 @@ _handover_replies() {
 }
 
 @test "milestone-handover prepares evidence in five ordered unstructured stages without publishing readiness (#412)" {
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(_handover_replies)"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
         [.calls[].role] == ["head:","findings:","review:","machine:","evidence:"] and
         ([.calls[1:][] | .schema] | all(. == null))' <<<"${output}"
@@ -2905,11 +2905,11 @@ _handover_replies() {
         '."review:".line="交出判定：可交出 head=old"' \
         '."review:".line="prefix 交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
         '."review:".url="https://github.com/o/r/pull/7#issuecomment-1junk"'; do
-        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(jq "${mutation}" <<<"${replies}")"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(jq "${mutation}" <<<"${replies}")"
         jq -e '.result.status == "head-blocked" or .result.status == "review-failed"' <<<"${output}"
         jq -e '[.calls[].role] | index("machine:") == null' <<<"${output}"
     done
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7,"safeRun":false}' \
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7,"safeRun":false}' \
         "$(jq '."head:".checks += [{name:"milestone-gate-approval",status:"PENDING"}] |
             ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
     jq -e '.result.status == "prepared" and (.calls[3].prompt | contains("safeRun=false"))' <<<"${output}"
@@ -2918,9 +2918,9 @@ _handover_replies() {
 @test "milestone-handover accepts JSON text from unstructured long stages and fails closed on prose (#412)" {
     local replies
     replies="$(_handover_replies | jq 'with_entries(.value |= tojson)')"
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "${replies}"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
     jq -e '.result.status == "prepared"' <<<"${output}"
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' \
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
         "$(jq '."review:"="Looks good"' <<<"${replies}")"
     jq -e '.result.status == "review-failed" and ([.calls[].role] | index("machine:") == null)' <<<"${output}"
 }
@@ -2937,10 +2937,20 @@ STUB
     chmod +x "${root}/bin/gh"
     PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" \
-        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,pr:7}')" "$(_handover_replies)" exec-handover
+        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" "$(_handover_replies)" exec-handover
     assert_success
     json="${output}"
     run jq -e '.result.status == "prepared" and .ran[0].rc == 0 and .ran[0].poster == "codex" and
         .result.comment == "https://github.com/o/r/pull/7#issuecomment-1"' <<<"${json}"
     assert_success
+}
+
+@test "milestone-handover requires a valid acceptance base before agents (#415)" {
+    local base
+    for base in 'null' '""' '"-bad"' '"a..b"' '"a b"' '"a.lock"' '"a@{b"'; do
+        _handover_run "$(jq -cn --argjson b "${base}" '{repo:"o/r",repoDir:"/tmp/w",pr:7,base:$b}')"
+        jq -e '.error == "milestone-handover: invalid args.base" and .calls == []' <<<"${output}"
+    done
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}'
+    jq -e '.error == "milestone-handover: invalid args.base" and .calls == []' <<<"${output}"
 }

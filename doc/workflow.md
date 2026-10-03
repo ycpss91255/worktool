@@ -387,6 +387,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 |---|---|---|
 | `repo` | 是 | `owner/name`；每個 gh 指令明寫 `--repo` |
 | `repoDir` | 是 | 本次 linked worktree 的絕對路徑；所有寫入限於這個 worktree |
+| `base` | 是 | 驗收分支名稱（例如 `m3/5-acceptance`）；拒絕不合法的分支名稱 |
 | `pr` | 是 | milestone 驗收 PR 的正整數編號 |
 | `milestoneIssue` | 否 | milestone issue 正整數；省略時取 PR 第一筆 Closes/Fixes/Resolves 參照 |
 | `safeRun` | 否 | 布林值，預設 `true`；為 `false` 時只列安全分類與待執行命令 |

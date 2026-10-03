@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-handover',
   description: 'Prepare milestone acceptance evidence without merging.',
-  whenToUse: 'Before every milestone acceptance hand-over. Pass {repo, repoDir, pr, milestoneIssue?, safeRun?}.',
+  whenToUse: 'Before every milestone acceptance hand-over. Pass {repo, repoDir, pr, base, milestoneIssue?, safeRun?}.',
   phases: [
     { title: 'Head', detail: 'Require current-head checks' },
     { title: 'Findings', detail: 'Collect all maintainer acceptance findings' },
@@ -19,6 +19,11 @@ if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(A.repo)) throw new Error('milesto
 if (!A.repoDir.startsWith('/')) throw new Error('milestone-handover: invalid args.repoDir')
 for (const k of ['pr', 'milestoneIssue']) {
   if ((k === 'pr' || A[k] !== undefined) && (!Number.isInteger(A[k]) || A[k] < 1)) throw new Error(`milestone-handover: invalid args.${k}`)
+}
+if (typeof A.base !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(A.base) ||
+    A.base.includes('..') || A.base.includes('//') || A.base.endsWith('/') ||
+    A.base.split('/').some(part => part.endsWith('.') || part.endsWith('.lock'))) {
+  throw new Error('milestone-handover: invalid args.base')
 }
 if (A.safeRun !== undefined && typeof A.safeRun !== 'boolean') throw new Error('milestone-handover: invalid args.safeRun')
 
