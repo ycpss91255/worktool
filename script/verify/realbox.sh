@@ -928,12 +928,16 @@ realbox_run() {
         return 2
     fi
 
+    _run_requested_items "${_items[@]}"
+}
+
+_run_requested_items() {
     trap _on_exit EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     trap 'exit 129' HUP
-    local _rc=0
-    for _i in "${_items[@]}"; do
+    local _rc=0 _i
+    for _i in "$@"; do
         _dispatch_item "${_i}" || {
             _rc=$?
             if [[ "${_rc}" -ne 3 ]]; then

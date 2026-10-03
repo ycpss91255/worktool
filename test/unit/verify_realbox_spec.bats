@@ -362,7 +362,7 @@ FRAG
 
 @test "5.1: just box assemble fails, and cleanup still runs" {
     FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.1
-    assert_failure
+    assert_failure 1
     assert_output --partial "just box assemble failed"
     assert_line "cleanup-rc=0"
 }
