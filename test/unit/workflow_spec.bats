@@ -2914,3 +2914,13 @@ _handover_replies() {
             ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
     jq -e '.result.status == "prepared" and (.calls[3].prompt | contains("safeRun=false"))' <<<"${output}"
 }
+
+@test "milestone-handover accepts JSON text from unstructured long stages and fails closed on prose (#412)" {
+    local replies
+    replies="$(_handover_replies | jq 'with_entries(.value |= tojson)')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "${replies}"
+    jq -e '.result.status == "prepared"' <<<"${output}"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' \
+        "$(jq '."review:"="Looks good"' <<<"${replies}")"
+    jq -e '.result.status == "review-failed" and ([.calls[].role] | index("machine:") == null)' <<<"${output}"
+}
