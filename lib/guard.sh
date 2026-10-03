@@ -13,12 +13,13 @@
 #
 # Every helper here answers with a status that keeps those cases apart, or
 # refuses to answer at all. Nothing in this file prints a result line; a
-# reason goes to stderr as `[FAIL] ...` and the status carries the verdict.
+# reason goes to stderr as `[FAIL] ...` or `[UNAVAILABLE] ...`; the status
+# carries the verdict.
 #
 # Public API:
 #   guard_fail <message...>          -> `[FAIL] <message>` on stderr, returns 1
 #   guard_timed <secs> <cmd...>      -> run <cmd> under a timeout
-#   guard_require <cmd...>           -> every command must be on PATH
+#   guard_require <cmd...>           -> 0 tools present / 3 unavailable
 #   guard_box_exists <name>          -> 0 exists / 1 absent / 2 CANNOT TELL
 #   guard_sha256 <file>              -> the file's sha256, or status 1
 #   guard_path_type <path>           -> regular | symlink | absent | other
@@ -45,15 +46,15 @@ guard_timed() {
 }
 
 # Every tool a caller needs must be on PATH BEFORE the caller does anything.
-# A missing tool is reported and fails - it never degrades into a check that
+# A missing tool is reported as unavailable (3) - never a check that
 # quietly did not run.
 guard_require() {
     local _c _missing=0
     for _c in "$@"; do
         command -v -- "${_c}" >/dev/null 2>&1 \
-            || { guard_fail "missing command: ${_c}"; _missing=1; }
+            || { printf '[UNAVAILABLE] %s: missing command: %s\n' "${0##*/}" "${_c}" >&2; _missing=3; }
     done
-    [[ "${_missing}" -eq 0 ]]
+    return "${_missing}"
 }
 
 # --- distrobox ---------------------------------------------------------------

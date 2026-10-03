@@ -96,6 +96,19 @@ setup() {
     export PATH
 }
 
+@test "realbox: missing jq is unavailable before any box action" {
+    local _path="${BATS_TEST_TMPDIR}/no-jq" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh mktemp timeout grep cut sort wc tee date uname mkdir ln; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: jq"
+    refute_output --partial "[FAIL]"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
 @test "stub contract: failing stream shims drain pipeline input before answering" {
     local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
     cat >"${_probe}" <<'EOF'
