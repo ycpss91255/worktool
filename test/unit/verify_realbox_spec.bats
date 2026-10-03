@@ -1283,3 +1283,18 @@ STUB
     [ ! -e "${_state}" ]
     [ ! -d "${HOME}/.config/worktool" ]
 }
+
+@test "5.1: assemble failure leaves real state byte-identical" {
+    local _state="${HOME}/.config/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${HOME}/.config/worktool"
+    printf 'home=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    assert_line 'cleanup-rc=0'
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+}
