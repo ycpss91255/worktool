@@ -35,6 +35,11 @@ check_git() {
     case "${sub}" in
         commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply)
             refuse 'Main-session git mutation belongs in a Workflow.' ;;
+        worktree)
+            case "${args[0]:-}" in
+                add|remove|prune|list) ;;
+                *) refuse 'Only git worktree add/remove/prune/list is allowed.' ;;
+            esac ;;
         checkout)
             for word in "${args[@]}"; do
                 [[ "${word}" != -- ]] || refuse 'Main-session git path checkout belongs in a Workflow.'

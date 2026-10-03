@@ -145,3 +145,12 @@ _edit() {
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m fix"}}'
     assert_equal "${status}" 2
 }
+
+@test "main session limits worktree management to the approved operations" {
+    local command
+    for command in 'git worktree move old new' 'git worktree repair' \
+        'git worktree lock old' 'git worktree unlock old'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+}
