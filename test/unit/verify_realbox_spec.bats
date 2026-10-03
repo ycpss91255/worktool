@@ -1273,3 +1273,13 @@ STUB
     assert_success
     [ "$(cat "${STATE}/assemble-config-dir")" != "${XDG_CONFIG_HOME}" ]
 }
+
+@test "5.1: assemble state writes leave absent real state absent" {
+    local _state="${HOME}/.config/worktool/config"
+    [ ! -e "${_state}" ]
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    [ ! -e "${_state}" ]
+    [ ! -d "${HOME}/.config/worktool" ]
+}
