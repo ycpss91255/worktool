@@ -1266,6 +1266,36 @@ STUB
     assert_equal "$(cat "${STATE}/boxes")" dev
 }
 
+@test "5.1: assemble and cleanup retain the same user distrobox config while isolating state" {
+    local _config="${HOME}/custom-config" _verb
+    local _conf="${_config}/distrobox/distrobox.conf"
+    mkdir -p "${_config}/distrobox" "${_config}/worktool"
+    printf '%s\n' "${DISTROBOX_USER_LINES[@]}" \
+        '# BEGIN worktool managed block' 'unset TMUX TMUX_PANE' \
+        '# END worktool managed block' >"${_conf}"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    cp "${_conf}" "${STATE}/baseline-distrobox"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        run cmp "${STATE}/baseline-distrobox" "${STATE}/distrobox-config-${_verb}"
+        assert_success
+    done
+    run cat "${STATE}/distrobox-managers"
+    assert_line 'assemble manager=docker'
+    assert_line 'list manager=docker'
+    assert_line 'rm manager=docker'
+    refute_output --partial 'manager=podman'
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    run cmp "${STATE}/baseline-distrobox" "${_conf}"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: assemble state writes leave existing real state byte-identical" {
     export XDG_CONFIG_HOME="${HOME}/custom-config"
     local _state="${XDG_CONFIG_HOME}/worktool/config" _baseline="${STATE}/baseline"

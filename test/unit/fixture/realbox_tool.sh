@@ -117,8 +117,23 @@ _fake_distrobox_rm() {
     return "${FAKE_DBX_RM_RC:-0}"
 }
 
+_record_distrobox_config() {
+    [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 ]] || return 0
+    local _conf="${XDG_CONFIG_HOME:-${HOME}/.config}/distrobox/distrobox.conf"
+    local _line _manager=podman
+    : >"${_DIR}/distrobox-config-$1"
+    if [[ -f "${_conf}" ]]; then
+        while IFS= read -r _line || [[ -n "${_line}" ]]; do
+            printf '%s\n' "${_line}" >>"${_DIR}/distrobox-config-$1"
+            case "${_line}" in container_manager=*) _manager="${_line#*=}" ;; esac
+        done <"${_conf}"
+    fi
+    printf '%s manager=%s\n' "$1" "${_manager}" >>"${_DIR}/distrobox-managers"
+}
+
 _fake_distrobox() {
     local _verb="${1:-}"
+    _record_distrobox_config "${_verb}" || return 1
     shift || true
     case "${_verb}" in
         list) _fake_distrobox_list ;;
@@ -155,6 +170,9 @@ _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
+            if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 ]]; then
+                distrobox assemble create --file box/dev.ini || return 1
+            fi
             _fake_assemble_state "$@" || return 1
             _rc="${FAKE_JUST_ASSEMBLE_RC:-0}"
             _out="${FAKE_JUST_ASSEMBLE_OUT-distrobox assemble create --file box/dev.ini}"

@@ -473,11 +473,24 @@ _51_publish() {
     return 0
 }
 
+_51_prepare_config() {
+    local _distrobox="${XDG_CONFIG_HOME:-${HOME}/.config}/distrobox"
+    mkdir -p -- "${_51_W}/config" \
+        || { guard_fail "creating scratch config failed"; return 1; }
+    # Keep distrobox's manager and user settings identical across assemble,
+    # bench and cleanup; only worktool's state writes belong in scratch.
+    if [[ -e "${_distrobox}" || -L "${_distrobox}" ]]; then
+        ln -s -- "${_distrobox}" "${_51_W}/config/distrobox" \
+            || { guard_fail "linking user distrobox config failed"; return 1; }
+    fi
+}
+
 _51_body() {
     local _tag='M3 5.1 real-machine bench' _stamp _run_id _brc _trc
     local -a _st
     _stamp="$(date -u +%Y%m%dT%H%M%SZ)" || { guard_fail "date failed"; return 1; }
     _run_id="m3-51-${_stamp}-$$"
+    _51_prepare_config || return 1
 
     # Ownership BEFORE the box can exist: the marker means "assemble was
     # ATTEMPTED", not "assemble returned 0", so an interrupt anywhere inside
@@ -505,7 +518,7 @@ _51_body() {
 }
 
 item_51() {
-    guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
+    guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
         || return 1
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \
