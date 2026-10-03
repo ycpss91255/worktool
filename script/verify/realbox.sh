@@ -74,8 +74,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/guard.sh"
 # shellcheck source=lib/manifest.sh
 source "${LIB_DIR}/manifest.sh"
-# shellcheck source=lib/home.sh
-source "${LIB_DIR}/home.sh"
+# shellcheck source=lib/distrobox_manager.sh
+source "${LIB_DIR}/distrobox_manager.sh"
 # shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
@@ -623,7 +623,7 @@ _52_confirm_window() {
 
 _52_dev_namespace() {
     local _manager _init _ns
-    _manager="$(_home_manager)" \
+    _manager="$(distrobox_manager "${XDG_CONFIG_HOME:-${HOME}/.config}")" \
         || { guard_fail "cannot resolve dev container engine; check distrobox config and re-run 5.2"; return 1; }
     _init="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" inspect --type container \
         --format '{{.State.Pid}}' "${BOX}")" \
