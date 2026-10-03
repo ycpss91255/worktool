@@ -2944,3 +2944,27 @@ STUB
         .result.comment == "https://github.com/o/r/pull/7#issuecomment-1"' <<<"${json}"
     assert_success
 }
+
+_pl_retry_run() {
+    local failures="$1" replies
+    replies="$(jq -cn --argjson failures "${failures}" '{
+        "implement:#417:retry1": (if $failures then {status:"failed",reason:"HTTP 503 at capacity"} else {status:"ready",reason:""} end),
+        "implement:": {status:"failed",reason:"ERROR: Selected model is at capacity"},
+        "locate:": {pr:7,sha:"abc"},
+        "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
+        "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"repo":"o/r","repoDir":"/work","issue":417,"branch":"b","name":"n","task":"t"}' "${replies}"
+}
+
+@test "pr-loop retry: capacity failure then success continues in the same worktree (#417)" {
+    run _pl_retry_run false
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 2 and
+        (.calls[] | select(.role == "implement:#417:retry1") | .prompt |
+            contains("Continue implementation") and contains("/work/../worktree/n") and
+            (contains("git worktree add") | not)) and
+        ([.calls[].role] | index("implement-wait:#417:retry1") < index("implement:#417:retry1"))' <<<"${output}"
+    assert_success
+}

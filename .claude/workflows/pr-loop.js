@@ -121,7 +121,7 @@ const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief belo
 setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
 Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
 timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
-An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from \`tail -n 80 ${out}\`; never treat it as success.`
+An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from both \`tail -n 80 ${out}.log\` and \`tail -n 80 ${out}\`; never treat it as success.`
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
@@ -319,10 +319,32 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
+const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT} before starting codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
+const implementFull = async () => {
+  for (let retry = 0; retry <= 1; retry += 1) {
+    const setup = retry ? `cd ${WT}` : IMPLEMENT_SETUP
+    const context = retry ? continueContext : IMPLEMENT_CONTEXT
+    const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, setup)}\n${context}`
+    let edited
+    try {
+      edited = await agent(`${brief}\nReturn status ready only after implementation and publication succeed; otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
+        label: `${RUN_ID} implement:#${A.issue}${retry ? `:retry${retry}` : ''}`, phase: 'Implement',
+        schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose',
+      })
+    } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
+    if (edited && edited.status === 'ready') return ''
+    const reason = (edited && edited.reason) || 'implementer returned no failure reason'
+    if (retry === 1 || !/at capacity|rate[ -]?limit|HTTP\s*5\d\d/i.test(reason)) return reason
+    await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
+      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
+    })
+  }
+}
+
 if (!RESUME) {
   phase('Implement')
-  const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, IMPLEMENT_SETUP)}\n${IMPLEMENT_CONTEXT}`
-  await agent(brief, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
+  const failure = await implementFull()
+  if (failure) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [`implementation failed: ${failure}`] })
 }
 
 if (RESUME && MODE === 'light') {
