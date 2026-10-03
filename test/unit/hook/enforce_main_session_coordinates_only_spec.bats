@@ -112,3 +112,22 @@ _edit() {
         assert_success
     done
 }
+
+@test "indirect shell execution fails closed when it mentions restricted actions" {
+    local command
+    for command in "bash -c 'git commit -m fix'" 'eval git push' \
+        'printf x | xargs git commit' "bash -c \"\$CMD\" # git commit" \
+        "eval \"\$CMD\" # just test unit" 'xargs just test unit' \
+        $'sh <<\'SCRIPT\'\ngit merge main\nSCRIPT' \
+        $'bash <<SCRIPT\njust test unit\nSCRIPT' \
+        "sh <<< 'git push'" \
+        "python3 -c 'import os; os.system(\"git commit -m fix\")'"; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+    for command in "bash -c 'git log'" 'printf x | xargs echo' "eval 'echo ready'" \
+        $'cat <<EOF\ngit commit -m example\njust test unit\nEOF'; do
+        _check "${command}"
+        assert_success
+    done
+}

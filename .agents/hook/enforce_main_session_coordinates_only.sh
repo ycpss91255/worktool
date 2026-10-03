@@ -90,6 +90,19 @@ check_launch() {
     fi
 }
 
+check_indirect() {
+    local text="$1"
+    local indirect='(^|[^[:alnum:]_.-])(eval|xargs|bash|sh|dash|zsh|ksh|fish|python[0-9.]*|perl|ruby|node|php|awk)([^[:alnum:]_.-]|$)'
+    local git_write='(^|[^[:alnum:]_.-])git[[:space:]]+([^;|&]*[[:space:]])?(commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply)([^[:alnum:]_.-]|$)'
+    local checkout='(^|[^[:alnum:]_.-])git[[:space:]][^;|&]*checkout[[:space:]][^;|&]*--([[:space:]]|$)'
+    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*test([^[:alnum:]_.-]|$)'
+    local docker='(^|[^[:alnum:]_.-])docker[[:space:]][^;|&]*bats([^[:alnum:]_.-]|$)'
+    if [[ "${text}" =~ ${indirect} ]] && \
+        [[ "${text}" =~ ${git_write} || "${text}" =~ ${checkout} || "${text}" =~ ${tests} || "${text}" =~ ${docker} ]]; then
+        refuse 'Indirect execution mentions a restricted main-session action.'
+    fi
+}
+
 check_edit() {
     local cwd path common root relative
     cwd="$(hook_field '.cwd')"
@@ -111,11 +124,13 @@ check_edit() {
 main() {
     hook_read_input
     hook_subagent_call && hook_allow
-    local launch
+    local launch command
     if [[ "$(hook_field '.tool_name')" == Bash ]]; then
+        command="$(hook_command)"
+        check_indirect "${command}"
         while IFS= read -r launch; do
             check_launch "${launch}"
-        done < <(hook_subcommands_raw "$(hook_command)")
+        done < <(hook_subcommands_raw "${command}")
     elif [[ "$(hook_field '.tool_name')" =~ ^(Edit|Write|MultiEdit|NotebookEdit)$ ]]; then
         check_edit
     fi
