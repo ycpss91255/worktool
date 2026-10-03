@@ -429,8 +429,9 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     `just box setup` **實際寫出的**受管 command 原樣交給真 ghostty 開窗,由 ghostty 的
     `input` 把 payload 打進落地的 shell,斷言標記檔仍來自盒內 fish(若命令又附著到
     host 的 server,payload 會在沒有 fish 的 runner 上跑、標記檔不會出現);(2) 盒內
-    執行 `tmux` 得到盒子自己的 server:`box/dev.ini` 設的 `TMUX_TMPDIR`
-    (`~/dev-box/.cache/tmux`)傳到盒內、server pid 與 host 的不同、其 mount
+    執行 `tmux` 得到盒子自己的 server:`script/box/assemble.sh` 依 `BOX_HOME` 決定的 `TMUX_TMPDIR`
+    (`${BOX_HOME}/.cache/tmux`，預設為 `~/dev-box/.cache/tmux`)，由
+    `box/dev.ini` 的 `additional_flags="--env TMUX_TMPDIR"` 轉交到盒內、server pid 與 host 的不同、其 mount
     namespace 等於 dev 容器的(而不是 host server 的)、該行程的根目錄裡有引擎的
     容器檔、socket 在 `TMUX_TMPDIR` 底下,盒內 `tmux ls` 不列 host 的 session、host 的
     `tmux ls` 也不列盒內的;(3) 盒內 tmux 環境的**矩陣**(codex 第 1–4 輪,PR #232):
