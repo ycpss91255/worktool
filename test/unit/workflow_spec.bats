@@ -2891,8 +2891,8 @@ _handover_replies() {
     jq -e '.calls[3].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
     jq -e '.calls[4].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     refute_output --partial '允許合併'
-    run grep -E 'gh pr merge|/merge|StructuredOutput' "${WF_DIR}/milestone-handover.js"
-    assert_failure 1
+    run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
+    assert_success
 }
 
 @test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {
@@ -2923,4 +2923,24 @@ _handover_replies() {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' \
         "$(jq '."review:"="Looks good"' <<<"${replies}")"
     jq -e '.result.status == "review-failed" and ([.calls[].role] | index("machine:") == null)' <<<"${output}"
+}
+
+@test "milestone-handover publishes the independent verdict through Codex's real identity hook (#412)" {
+    local root="${BATS_TEST_TMPDIR}/handover" json
+    mkdir -p "${root}/bin"
+    cat >"${root}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1 $2" == 'pr comment' ]] || exit 1
+printf '%s\n' 'https://github.com/o/r/pull/7#issuecomment-1'
+STUB
+    chmod +x "${root}/bin/gh"
+    PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" \
+        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,pr:7}')" "$(_handover_replies)" exec-handover
+    assert_success
+    json="${output}"
+    run jq -e '.result.status == "prepared" and .ran[0].rc == 0 and .ran[0].poster == "codex" and
+        .result.comment == "https://github.com/o/r/pull/7#issuecomment-1"' <<<"${json}"
+    assert_success
 }

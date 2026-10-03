@@ -54,11 +54,16 @@ Fetch ALL PR comments and reviews with pagination (REST comments include author_
 const findings = decode(findingsResult)
 if (!findings?.file || findings.error) return { pr: A.pr, sha: head.sha, status: 'findings-failed', report: findings }
 const reviewResult = await agent(`${CONTEXT}
-Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex.md`)} with a prompt covering the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milestone issue goals, and every prior finding in ${findings.file}. Read scripts and check that documented expected output of EACH acceptance item matches what the script actually prints, including section 5. Compare all goals from actual user entry points. Mark real-machine items pending rather than passed. This is a hand-over verdict, not a claim that human acceptance passed.
-Run in the foreground; capture transcript and exit code under scratch. Nonzero exit or empty output fails closed; never answer for codex or retype its verdict. Require codex's own final answer to start [codex], contain exactly one standalone verdict line with either:
+Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} with the following task as its prompt. Write the task verbatim to a scratch prompt file and pass it on stdin; keep nested gh commands out of the Claude shell command. Run in the foreground; capture transcript and exit code under scratch. Nonzero exit, empty output or malformed JSON fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
+BEGIN CODEX TASK
+${CONTEXT}
+Review the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milestone issue goals, and every prior finding in ${findings.file}. Read scripts and check that documented expected output of EACH acceptance item matches what the script actually prints, including section 5. Compare all goals from actual user entry points. Mark real-machine items pending rather than passed. This is a hand-over verdict, not a claim that human acceptance passed.
+Write your own verdict to ${SCRATCH}/codex.md starting [codex], containing exactly one standalone verdict line with either:
 交出判定：可交出 head=${head.sha}
 交出判定：不可交出 head=${head.sha}
-and list blocking items (or explicitly none), evidence and real-machine limitations. Check this exact format and frozen head before posting that original file via gh pr comment ${A.pr} --repo ${A.repo} --body-file <literal absolute codex.md path>. Do not post on malformed/failed output. Return {line: exact verdict line, url: posted comment URL, error?: reason}.`, { label: `${RUN_ID} review:`, phase: 'Review', agentType: 'general-purpose' })
+and list blocking items (or explicitly none), evidence and real-machine limitations. Validate this exact format, re-query the frozen head and stop on mismatch before publishing. Post your original file yourself via \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/codex.md`)}\`. Do not post on malformed/failed output. Return only {line: exact verdict line, url: actual posted comment URL, error?: reason}; never invent a URL.
+END CODEX TASK
+Read codex-result.json and relay its JSON unchanged; verify the comment URL exists and contains the original verdict on the frozen head. Return {line: exact verdict line, url: posted comment URL, error?: reason}.`, { label: `${RUN_ID} review:`, phase: 'Review', agentType: 'general-purpose' })
 const review = decode(reviewResult)
 const verdicts = [`交出判定：可交出 head=${head.sha}`, `交出判定：不可交出 head=${head.sha}`]
 if (!review || review.error || !verdicts.includes(review.line) ||
@@ -72,7 +77,7 @@ When safeRun=true, execute safe items through their documented just entry point,
 const machine = decode(machineResult)
 if (!machine?.file || machine.error) return { pr: A.pr, sha: head.sha, status: 'machine-failed', report: machine }
 const evidenceResult = await agent(`${CONTEXT}
-Read doc/workflow.md's single evidence template, milestone goals, ${findings.file}, ${SCRATCH}/codex.md and ${machine.file}. Re-query the head and current checks; require the same green check policy as Head (except milestone-gate-approval). Write the PR-description evidence section to ${SCRATCH}/evidence.md and a ready-comment draft to ${SCRATCH}/ready.md, both starting [codex]. Do not post or edit the PR. Include head SHA, CI run/job links from ${JSON.stringify(head.checks)}, all prior finding rows with user entry/reproduction/verification/evidence, section-5 per-item safety reasons, exact commands, output and restoration results. Never omit pending or failed items. Use exactly this four-column goal table, one row per original milestone goal:
+Read doc/workflow.md's single evidence template, milestone goals, ${findings.file}, ${SCRATCH}/codex.md and ${machine.file}. Re-query the head and current checks; require the same green check policy as Head (except milestone-gate-approval). Write the PR-description evidence section to ${SCRATCH}/evidence.md and a ready-comment draft to ${SCRATCH}/ready.md, both starting [claude], the identity of the hand-over session that will post the ready draft. Do not post or edit the PR. Include head SHA, CI run/job links from ${JSON.stringify(head.checks)}, all prior finding rows with user entry/reproduction/verification/evidence, section-5 per-item safety reasons, exact commands, output and restoration results. Never omit pending or failed items. Use exactly this four-column goal table, one row per original milestone goal:
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|

@@ -399,7 +399,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
 3. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
-   只發布 codex 原始結果，以 `[codex]` 開頭且包含一行
+   codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
+   留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
 4. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
@@ -407,7 +408,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
    worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
 5. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
-   `ready.md` 草稿，採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
+   `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
+   採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
 
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，

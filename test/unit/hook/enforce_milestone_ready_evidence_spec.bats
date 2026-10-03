@@ -11,6 +11,9 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${READY_FIXTURE}/calls"
 [[ ! -f "${READY_FIXTURE}/fail" ]] || exit 1
 case "$*" in
+    *'pr comment 7'*)
+        jq -n --rawfile body "${@: -1}" '[{id:1,created_at:"2026-10-03T00:00:00Z",body:$body}]' >"${READY_FIXTURE}/comments"
+        printf '%s\n' 'https://github.com/ycpss91255/worktool/pull/7#issuecomment-1' ;;
     *'pr view milestone-branch'*'statusCheckRollup'*|*'pr view 7'*'statusCheckRollup'*) jq '{headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",statusCheckRollup: [.check_runs[] | .status |= ascii_upcase | .conclusion |= ascii_upcase]}' "${READY_FIXTURE}/checks" ;;
     *'pr view milestone-branch'*) cat "${READY_FIXTURE}/pr" ;;
     *'pr view 7'*) cat "${READY_FIXTURE}/pr" ;;
@@ -256,4 +259,23 @@ STUB
     run_hook enforce_milestone_ready_evidence "$(hook_json "gh pr comment milestone-branch --repo ycpss91255/worktool --body-file ${READY_FIXTURE}/body")"
     assert_success
     assert_output ''
+}
+
+@test "handover evidence draft uses the Claude poster's marker through the ready hook (#412)" {
+    successful_job
+    local replies json prompt marker
+    printf '[]' >"${READY_FIXTURE}/comments"
+    replies='{"head:":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":["milestone-gate"],"milestoneIssue":5,"checks":[{"name":"verify-all (ubuntu-latest)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"verify-all (ubuntu-24.04-arm)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"ci-passed","status":"COMPLETED","conclusion":"SUCCESS"}]},"findings:":{"file":"findings.md"},"review:":{"line":"交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"https://github.com/ycpss91255/worktool/pull/7#issuecomment-1"},"machine:":{"file":"machine.md"},"evidence:":{"evidence":"evidence.md","draft":"ready.md"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${REPO_ROOT}/.claude/workflows/milestone-handover.js" \
+        "$(jq -cn --arg d "${READY_FIXTURE}" '{repo:"ycpss91255/worktool",repoDir:$d,pr:7}')" "${replies}" exec-handover
+    assert_success
+    json="${output}"
+    jq -e '.result.status == "prepared" and .ran[0].poster == "codex" and .ran[0].rc == 0' <<<"${json}"
+    prompt="$(jq -r '.calls[] | select(.role == "evidence:") | .prompt' <<<"${json}")"
+    marker="$(sed -n 's/.*both starting \(\[[a-z]*\]\).*/\1/p' <<<"${prompt}")"
+    assert [ -n "${marker}" ]
+    sed -i "1s/\[claude\]/${marker}/" "${READY_FIXTURE}/body"
+    check_ready
+    assert_success
 }
