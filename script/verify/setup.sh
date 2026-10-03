@@ -1038,6 +1038,13 @@ _item_3_4() {
 # <absolute path> names the executable to record (#175: a terminal launched
 # from the desktop cannot find ~/.local/bin, so the managed command must
 # never be a bare name).
+_require_no_distrobox_on_path() {
+    if (PATH="$2"; command -v distrobox >/dev/null 2>&1); then
+        _fail "$1: environment unfit: distrobox is still on the restricted PATH"
+        return 1
+    fi
+}
+
 _item_3_5() {
     _require_tools env just sed find wc grep ln mktemp || return 1
     _item_begin || return 1
@@ -1057,16 +1064,17 @@ _item_3_5() {
     # config or put THERE INSTEAD OF it, so the block assertion below cannot
     # tell the two apart on its own.
     _seed_user_content 3.5 || return 1
-    # ghostty is linked in next to just, so the terminal detection under
-    # the restricted PATH no longer depends on where ghostty is installed.
-    for _t in just ghostty; do
+    # Only setup's dependencies are linked; including system directories
+    # would also expose a distrobox installed by the package manager.
+    for _t in just ghostty sh bash dirname awk grep mkdir mktemp mv rm cat chmod flock; do
         _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return 1
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.5: cannot link ${_t} into the restricted PATH"
             return 1
         }
     done
-    local _path="${ITEM_H}/bin:/usr/bin:/bin"
+    local _path="${ITEM_H}/bin"
+    _require_no_distrobox_on_path 3.5 "${_path}" || return 1
 
     # Counted AFTER the seeding, so "the refusal wrote nothing" is a claim
     # about a HOME that already had the user's two files in it.
@@ -1214,6 +1222,7 @@ _item_3_6() {
             return 1
         }
     done
+    _require_no_distrobox_on_path 3.6 "${ITEM_H}/bin" || return 1
     _status_distrobox_line "${DISTROBOX_STATE_NONE}" "PATH=${ITEM_H}/bin" || _bad=1
 
     _expect_distinct_distrobox_lines || _bad=1

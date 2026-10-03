@@ -649,6 +649,77 @@ EOF
 
 # --- 3.5 ----------------------------------------------------------------------
 
+# Simulate a package-manager installation only for commands launched by
+# verification's env adapter. The shared container directories stay untouched.
+_stub_system_path_distrobox() {
+    local _env _bash
+    _env="$(command -v env)"
+    _bash="$(command -v bash)"
+    mkdir -p "${BATS_TEST_TMPDIR}/system-bin"
+    ln -s "$(command -v distrobox)" "${BATS_TEST_TMPDIR}/system-bin/distrobox"
+    _stub env "#!${_bash}" \
+        'args=()' \
+        'for arg in "$@"; do' \
+        "    case \"\$arg\" in" \
+        '        PATH=*)' \
+        "            case \":\${arg#PATH=}:\" in" \
+        "                *:/usr/bin:* | *:/bin:*) arg=\"PATH=${BATS_TEST_TMPDIR}/system-bin:\${arg#PATH=}\" ;;" \
+        '            esac ;;' \
+        '    esac' \
+        "    args+=(\"\$arg\")" \
+        'done' \
+        "exec '${_env}' \"\${args[@]}\""
+}
+
+@test "3.5: a system-path distrobox cannot leak into the refusal round" {
+    # Observe the shared PATH while verification is running, not only
+    # after cleanup: other spec files execute concurrently in this container.
+    _stub just '#!/bin/sh' \
+        'if PATH=/usr/bin:/bin command -v distrobox >/dev/null 2>&1; then' \
+        '    echo "shared system PATH was polluted" >&2; exit 1' \
+        'fi' \
+        "exec '${REAL_JUST}' \"\$@\""
+    _stub_system_path_distrobox
+    run env PATH=/usr/bin:/bin sh -c 'command -v distrobox'
+    assert_success
+    assert_output "${BATS_TEST_TMPDIR}/system-bin/distrobox"
+    run "${VERIFY}" 3.5
+    assert_success
+    assert_line 'rc=1'
+    assert_line 'files 2->2'
+    assert_output --partial '3.5 PASS'
+
+    # Prove this private fixture still catches the original system-PATH
+    # regression, rather than passing because injection was ineffective.
+    local _repo
+    _repo="$(_repo_copy)"
+    "${REAL_SED}" -i "s|local _path=\"\${ITEM_H}/bin\"|local _path=\"\${ITEM_H}/bin:/usr/bin:/bin\"|" \
+        "${_repo}/script/verify/setup.sh"
+    run "${_repo}/script/verify/setup.sh" 3.5
+    assert_failure
+    assert_line 'rc=0'
+    assert_line 'files 2->4'
+    refute_output --partial '3.5 PASS'
+    refute_output --partial 'shared system PATH was polluted'
+}
+
+@test "missing-tool rounds: leaked distrobox makes the environment unfit" {
+    local _ln _distrobox _item
+    _ln="$(command -v ln)"
+    _distrobox="$(command -v distrobox)"
+    _stub ln '#!/bin/sh' \
+        "${_ln} \"\$@\" || exit 1" \
+        "case \"\$3\" in" \
+        "  */bin/just) ${_ln} -s '${_distrobox}' \"\${3%/just}/distrobox\" ;;" \
+        'esac'
+    for _item in 3.5 3.6; do
+        run "${VERIFY}" "${_item}"
+        assert_failure
+        assert_output --partial "${_item}: environment unfit: distrobox is still on the restricted PATH"
+        refute_output --partial "${_item} PASS"
+    done
+}
+
 @test "3.5: a just that prints the documented restricted-PATH refusal but exits 1 everywhere cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.5
