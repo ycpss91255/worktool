@@ -505,7 +505,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 每個「驗收方式」區塊都是**一行 `just verify <動作> [ITEM]` 加上 `echo rc=$?`**,以 **bash** 執行(fish 使用者先打 `bash`);**請原樣貼上,不要改寫**,改寫過的區塊不算數。文件本身已經不帶任何 shell 邏輯 —— 判準全部搬進 repo 的 `script/verify/`(`ui.sh` / `gate.sh` / `setup.sh` / `diagram.sh` / `realbox.sh` / `evidence.sh`),由 `just verify` namespace 轉發。每支腳本自己建立並清理臨時目錄 / 暫存檔,自己守住每條管線與每個計數(先判外部指令自己的結束碼再用它的輸出、每個計數都與它的退化情況分得開),跑不動的環境一律明講並回非 0,不會靜默跳過;`test/unit/verify_*_spec.bats` 再以「印得出像樣輸出、結束碼卻非 0」的 stub 證明它們咬得動。**裸 `just verify` 只列出動作、什麼都不驗**(它自己會印一行 `NOTE: this only lists the verify groups - nothing has been verified. ...` 並回 0,那個 rc=0 不代表通過;#182);**一次跑完全部非實機驗收的是 `just verify all`**(依序 ui、gate、setup、diagram、evidence,遇第一個失敗即停,每組一行摘要加一行總判決,任一組失敗就回非 0;5 是實機,需 `--allow-real-box`,不在內)。`just verify <動作> --help` 是該腳本自己的說明,`just verify <動作> --list` 列出它涵蓋的項目。
 
 搬出文件的原因是 #176 item 8:維護者那一輪跑 2.2 得到 9/10 `order=BAD`,但十份 PR 描述其實都滿足 2.2 的主張(同一份判定邏輯實測 10/10),awk 實作、locale、CRLF、貼上時的 shell 與縮排都已逐項排除,**根因未解** —— 那一輪跑在維護者的指令執行器裡,那個環境在這裡沒有、重現不了;處置因此是結構性的(把邏輯搬出文件),不是找出成因。逐項排除的指令與輸出見 `doc/evidence/README.md`。
-本 PR(#157)只改驗收清單與它的檢查程式(`doc/acceptance.md`、`script/verify/`、`doc/evidence/`),不動產品程式;**要驗的產品程式全在 main,但 `just verify` namespace 與 `script/verify/` 只在本 PR 分支上**,所以下面直接 clone 本 PR 分支 `m3/5-acceptance`(= main 加這些驗收變更)。clone 成 main 的話,每個區塊都會是 just 自己的 `Justfile does not contain recipe`(rc=1),什麼都不會跑。
+本 PR(#157)相對 main 的改動範圍（`origin/main...m3/5-acceptance`）包含驗收清單與證據（`doc/acceptance.md`、`doc/evidence/`）、ADR 0008／0010 的措辭、驗收程式與入口（`script/verify/`、`justfile`）、產品共用程式（`lib/config_backup.sh`、`lib/guard.sh`）、測試入口（`script/test/test.sh`）與相關測試（`test/unit/verify_*_spec.bats`、`test/unit/justfile_spec.bats`、`test/unit/fixture/`、`test/helper/`、`test/system/real_engine_spec.bats`）。**`just verify` namespace 與 `script/verify/` 只在本 PR 分支上**，所以下面直接 clone 本 PR 分支 `m3/5-acceptance`（= main 加上述變更）。clone 成 main 的話，每個區塊都會是 just 自己的 `Justfile does not contain recipe`（rc=1），什麼都不會跑。
 
 ```bash
 git clone --branch m3/5-acceptance https://github.com/ycpss91255/worktool.git && cd worktool   # 該分支已 merge main,含 M3 全部 sub-issue PR(#152-#156、#165-#169)與 #177
@@ -884,7 +884,7 @@ rc=0
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
-    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`still-there=dev`。還原印 `restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
+    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，印 `52-rc=1`。接著還原依序印 `restore-rc=0`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`，最後確認既有盒仍在，印 `still-there=dev`；本項最後只清除自己建的 decoy。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.3; echo rc=$?

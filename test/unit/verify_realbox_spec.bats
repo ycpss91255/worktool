@@ -956,6 +956,19 @@ STUB
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
 
+@test "5.3: documented refusal and restore lines follow the actual output order" {
+    local _actual _documented _keys
+    _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
+        | sed -e 's/ (.*$//' -e 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+    _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
+        "${REPO_ROOT}/doc/acceptance.md" | sed -n '/預期看到資訊/p' | grep -o "\`[^\`]*\`" \
+        | sed 's/`//g' | grep -E "${_keys}")"
+    assert_equal "${_documented}" "${_actual}"
+}
+
 @test "5.3 happy path proves 5.1 and 5.2 step 2 refuse, and the box survives" {
     run "${REALBOX}" --allow-real-box 5.3
     assert_success
