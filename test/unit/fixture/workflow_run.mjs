@@ -86,10 +86,37 @@ const withStdout = (value, stdout) => {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, v === '<stdout>' ? stdout : v]))
 }
 
+// Model the Review agent and its Codex child at the publication seam.
+const playHandoverReview = (prompt) => {
+  const task = prompt.match(/BEGIN CODEX TASK\n([\s\S]*?)\nEND CODEX TASK/)
+  const poster = task ? 'codex' : 'claude'
+  const commandPrompt = task ? task[1] : prompt
+  const args = JSON.parse(argsJson)
+  const bodyPath = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}/codex.md`
+  mkdirSync(dirname(bodyPath), { recursive: true })
+  writeFileSync(bodyPath, `[codex]\n交出判定：可交出 head=${'a'.repeat(40)}\nBlocking items: none\n`)
+  const command = commandPrompt.match(/gh pr comment \d+ --repo [\w./-]+ --body-file ([^\n`]+?)(?:\. Do|`|$)/m)
+  if (!command) return null
+  const cmd = command[0].replace(/\. Do$/, '').replace(/`$/, '')
+    .replace(/<literal absolute codex.md path>/, bodyPath)
+  const input = JSON.stringify({ cwd: process.cwd(), tool_name: 'Bash', tool_input: { command: cmd } })
+  const hook = fileURLToPath(new URL('../../../.agents/hook/enforce_milestone_gate_approval.sh', import.meta.url))
+  try {
+    execFileSync('bash', [hook, poster], { input, stdio: ['pipe', 'pipe', 'pipe'] })
+    const url = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
+    ran.push({ cmd, poster, rc: 0 })
+    return { ...reply('review:'), url }
+  } catch (e) {
+    ran.push({ cmd, poster, rc: e.status })
+    return null
+  }
+}
+
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, schema: opts.schema || null, prompt })
+  if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix: CI repair', '-m', 'Refs: #396', '--allow-empty'])

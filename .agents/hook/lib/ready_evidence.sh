@@ -7,12 +7,14 @@ ready_check_comment() {
     _target="$(ready_target)" || exit 2
     read -r _repo _pr <<<"${_target}"
     ready_is_pr "${_repo}" "${_pr}" || return 0
-    _json="$(_gh pr view "${_pr}" --repo "${_repo}" --json labels,headRefOid,body)" \
+    _json="$(_gh pr view "${_pr}" --repo "${_repo}" --json number,labels,headRefOid,body)" \
         || hook_block 'PR query failed (fail closed)'
     if ! jq -e '.labels | type == "array"' <<<"${_json}" >/dev/null; then
         hook_block 'PR labels query is malformed (fail closed)'
     fi
     jq -e '.labels | any(.name == "milestone-gate")' <<<"${_json}" >/dev/null || return 0
+    _pr="$(jq -er '.number | numbers | select(. > 0 and . == floor)' <<<"${_json}")" \
+        || hook_block 'PR number query failed (fail closed)'
     _sha="$(jq -er '.headRefOid | strings | select(length > 0)' <<<"${_json}")" \
         || hook_block 'PR head query failed (fail closed)'
     _checks="$(_gh pr view "${_pr}" --repo "${_repo}" --json headRefOid,statusCheckRollup)" \
@@ -23,6 +25,7 @@ ready_check_comment() {
         and all(.status == "COMPLETED" and .conclusion == "SUCCESS"))' <<<"${_checks}" >/dev/null; then
         hook_block 'verify-all on the current PR head must be success (missing or not successful)'
     fi
+    ready_require_verdict "${_repo}" "${_pr}" "${_sha}"
     ready_require_table "$1"
     ready_require_goals "${_repo}" "${_json}" "$1"
 }
@@ -77,4 +80,25 @@ ready_is_pr() {
         hook_block 'issue target query is malformed (fail closed)'
     fi
     jq -e 'has("pull_request")' <<<"${_json}" >/dev/null
+}
+
+ready_require_verdict() {
+    local _comments
+    _comments="$(_gh api --paginate "repos/$1/issues/$2/comments")" \
+        || hook_block 'codex verdict query failed (fail closed)'
+    if ! jq -s -e --arg sha "$3" '
+        if all(.[]; type == "array") then add else error("malformed pages") end |
+        if all(.[]; (.body | type == "string") and
+            (.created_at | fromdateiso8601 | type == "number")) then .
+        else error("malformed comments") end |
+        def verdict($word): .body | split("\n") | map(rtrimstr("\r")) |
+            index("交出判定：" + $word + " head=" + $sha) != null;
+        [ .[] | select((.body | test("^\\s*\\[codex\\](\\s|$)")) and verdict("可交出")) |
+            .created_at | fromdateiso8601 ] as $positive |
+        [ .[] | select(verdict("不可交出")) | .created_at | fromdateiso8601 ] as $negative |
+        ($sha | test("^[0-9a-f]{40}$")) and ($positive | length > 0) and
+        (($negative | length == 0) or (($positive | max) > ($negative | max)))' \
+        <<<"${_comments}" >/dev/null; then
+        hook_block 'codex handover verdict required (fail closed)'
+    fi
 }

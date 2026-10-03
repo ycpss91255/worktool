@@ -2850,3 +2850,97 @@ _pl_resume_run() {
     # One header, one separator and one example row: other sections link here.
     assert [ "$(awk '/^\|/ { count++ } END { print count+0 }' "${table}")" -eq 3 ]
 }
+
+_handover_run() {
+    local replies="${2:-}"
+    [[ -n "${replies}" ]] || replies='{}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$1" "${replies}"
+    assert_success
+}
+
+@test "milestone-handover rejects invalid arguments before any agent runs (#412)" {
+    local args
+    for args in '{}' '{"repo":"bad","repoDir":"/tmp/w","pr":1}' \
+        '{"repo":"o/r","repoDir":"relative","pr":1}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":0}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"safeRun":"yes"}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"milestoneIssue":0}'; do
+        _handover_run "${args}"
+        jq -e '.error | contains("milestone-handover: invalid args.")' <<<"${output}"
+        jq -e '.calls == []' <<<"${output}"
+    done
+}
+
+_handover_replies() {
+    jq -n '{"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
+        checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
+            map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
+        "findings:":{file:"findings.md"},
+        "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
+        "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}}'
+}
+
+@test "milestone-handover prepares evidence in five ordered unstructured stages without publishing readiness (#412)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(_handover_replies)"
+    jq -e '.result.status == "prepared" and
+        [.calls[].role] == ["head:","findings:","review:","machine:","evidence:"] and
+        ([.calls[1:][] | .schema] | all(. == null))' <<<"${output}"
+    jq -e '.calls[1].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[2].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[3].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+    refute_output --partial '允許合併'
+    run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {
+    local replies mutation
+    replies="$(_handover_replies)"
+    for mutation in '."head:".checks=[]' '."head:".labels=[]' \
+        '."head:".checks += [{status:"COMPLETED",conclusion:"SUCCESS"}]' \
+        '."head:".checks[0].conclusion="FAILURE"' \
+        '."head:".checks += [{name:"extra",status:"IN_PROGRESS",conclusion:null}]' \
+        '."review:".line="交出判定：可交出 head=old"' \
+        '."review:".line="prefix 交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+        '."review:".url="https://github.com/o/r/pull/7#issuecomment-1junk"'; do
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "$(jq "${mutation}" <<<"${replies}")"
+        jq -e '.result.status == "head-blocked" or .result.status == "review-failed"' <<<"${output}"
+        jq -e '[.calls[].role] | index("machine:") == null' <<<"${output}"
+    done
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7,"safeRun":false}' \
+        "$(jq '."head:".checks += [{name:"milestone-gate-approval",status:"PENDING"}] |
+            ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
+    jq -e '.result.status == "prepared" and (.calls[3].prompt | contains("safeRun=false"))' <<<"${output}"
+}
+
+@test "milestone-handover accepts JSON text from unstructured long stages and fails closed on prose (#412)" {
+    local replies
+    replies="$(_handover_replies | jq 'with_entries(.value |= tojson)')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' "${replies}"
+    jq -e '.result.status == "prepared"' <<<"${output}"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}' \
+        "$(jq '."review:"="Looks good"' <<<"${replies}")"
+    jq -e '.result.status == "review-failed" and ([.calls[].role] | index("machine:") == null)' <<<"${output}"
+}
+
+@test "milestone-handover publishes the independent verdict through Codex's real identity hook (#412)" {
+    local root="${BATS_TEST_TMPDIR}/handover" json
+    mkdir -p "${root}/bin"
+    cat >"${root}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1 $2" == 'pr comment' ]] || exit 1
+printf '%s\n' 'https://github.com/o/r/pull/7#issuecomment-1'
+STUB
+    chmod +x "${root}/bin/gh"
+    PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" \
+        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,pr:7}')" "$(_handover_replies)" exec-handover
+    assert_success
+    json="${output}"
+    run jq -e '.result.status == "prepared" and .ran[0].rc == 0 and .ran[0].poster == "codex" and
+        .result.comment == "https://github.com/o/r/pull/7#issuecomment-1"' <<<"${json}"
+    assert_success
+}
