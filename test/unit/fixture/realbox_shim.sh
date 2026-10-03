@@ -42,13 +42,11 @@ if [[ -n "${_ON}" ]]; then
 fi
 
 if [[ -n "${_RC}" && "${_MATCH}" -eq 1 ]]; then
-    # `tee` sits at the END of a pipeline: exiting straight away would
-    # SIGPIPE the writer, so the UPSTREAM stage would be the one that fails
-    # and the case would prove the wrong guard. Drain stdin first, so only
-    # this stage's status is abnormal.
-    if [[ "${_ME}" == tee ]]; then
-        while IFS= read -r _drain || [[ -n "${_drain}" ]]; do :; done
-    fi
+    # Stream readers must drain stdin before injecting output or failure,
+    # so pipefail observes this stage's status without SIGPIPE upstream.
+    case "${_ME}" in
+        cut | sort | wc | tee) cat >/dev/null ;;
+    esac
     [[ -n "${_OUT}" ]] && printf '%s\n' "${_OUT}"
     exit "${_RC}"
 fi

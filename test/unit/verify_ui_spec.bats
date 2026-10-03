@@ -185,6 +185,7 @@ EOF
         cat <<'EOF'
 for _a in "$@"; do
     if [ "${_a}" = '^Usage:' ]; then
+        cat >/dev/null
 EOF
         _usage_lines_body
         cat <<'EOF'
@@ -205,6 +206,7 @@ EOF
     _stub grep <<'EOF'
 for _a in "$@"; do
     if [ "${_a}" = '^Usage: [a-z]*\.sh' ]; then
+        cat >/dev/null
         printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\nUsage: enter.sh\n'
         exit 2
     fi
@@ -220,6 +222,7 @@ EOF
 @test "false-pass guard: sort printing the five script names but exiting 1 fails" {
     _stub_just_documented 0
     _stub sort <<'EOF'
+cat >/dev/null
 printf 'Usage: assemble.sh\nUsage: bench.sh\nUsage: setup.sh\nUsage: status.sh\nUsage: enter.sh\n'
 exit 1
 EOF
@@ -232,6 +235,7 @@ EOF
 @test "false-pass guard: wc printing 5 but exiting 1 fails" {
     _stub_just_documented 0
     _stub wc <<'EOF'
+cat >/dev/null
 printf '5\n'
 exit 1
 EOF
@@ -243,7 +247,13 @@ EOF
 
 @test "false-pass guard: wc printing a word instead of a count fails before the comparison" {
     _stub_just_documented 0
+    # Exceed pipe capacity so an early-exit wc always SIGPIPEs the writer.
+    _stub sort <<'EOF'
+cat >/dev/null
+printf '%1048576s\n' x
+EOF
     _stub wc <<'EOF'
+cat >/dev/null
 printf 'four\n'
 exit 0
 EOF

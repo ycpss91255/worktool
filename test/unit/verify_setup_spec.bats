@@ -125,6 +125,19 @@ _stub() {
     chmod +x "${STUB}/${_name}"
 }
 
+@test "stub contract: failing wc drains pipeline input before answering" {
+    _stub_wc_zero_then_fail
+    run bash -c '
+        set -o pipefail
+        printf "%1048576s\n" x | wc -l
+        statuses=("${PIPESTATUS[@]}")
+        printf "writer=%s reader=%s\n" "${statuses[@]}"
+    '
+    assert_success
+    assert_line '0'
+    assert_line 'writer=0 reader=1'
+}
+
 # --- The stubs ----------------------------------------------------------------
 
 # A `just` that prints exactly the lines doc/acceptance.md shows and then
@@ -170,6 +183,7 @@ EOF
 _stub_wc_zero_then_fail() {
     _stub wc \
         '#!/bin/sh' \
+        'cat >/dev/null' \
         'printf "0\n"' \
         'exit 1'
 }
