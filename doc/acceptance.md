@@ -714,8 +714,8 @@ rc=0
       [INFO] terminal: ghostty (default)
       [INFO] terminal detected: ghostty (ghostty executable <G>)
       [INFO] box: dev (default)
-      [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
       [INFO] dry-run: would write <H>/.config/worktool/config
       [INFO] dry-run: would write <H>/.config/distrobox/distrobox.conf (managed block: _worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != 'dev' ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v)
       [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev')
