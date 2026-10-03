@@ -2850,3 +2850,24 @@ _pl_resume_run() {
     # One header, one separator and one example row: other sections link here.
     assert [ "$(awk '/^\|/ { count++ } END { print count+0 }' "${table}")" -eq 3 ]
 }
+
+_handover_run() {
+    local replies="${2:-}"
+    [[ -n "${replies}" ]] || replies='{}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$1" "${replies}"
+    assert_success
+}
+
+@test "milestone-handover rejects invalid arguments before any agent runs (#412)" {
+    local args
+    for args in '{}' '{"repo":"bad","repoDir":"/tmp/w","pr":1}' \
+        '{"repo":"o/r","repoDir":"relative","pr":1}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":0}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"safeRun":"yes"}' \
+        '{"repo":"o/r","repoDir":"/tmp/w","pr":1,"milestoneIssue":0}'; do
+        _handover_run "${args}"
+        jq -e '.error | contains("milestone-handover: invalid args.")' <<<"${output}"
+        jq -e '.calls == []' <<<"${output}"
+    done
+}
