@@ -3066,6 +3066,18 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "pr-loop retry: actual codex server status errors retry then continue (#417)" {
+    local reason
+    for reason in 'unexpected status 503 Service Unavailable' 'exceeded retry limit, last status: 502 Bad Gateway'; do
+        run _pl_retry_run false "${reason}"
+        assert_success
+        run jq -e '.error == null and .result.ciState == "green" and
+            ([.calls[].role | select(startswith("implement:"))] | length) == 2 and
+            ([.calls[].role | select(startswith("implement-wait:"))] | length) == 1' <<<"${output}"
+        assert_success
+    done
+}
+
 @test "pr-loop retry: rate limits and HTTP server failures retry while permanent errors stop (#417)" {
     local reason json
     for reason in 'rate limit exceeded' 'HTTP/1.1 502 Bad Gateway' 'HTTP 500 Internal Server Error' 'authentication failed'; do
