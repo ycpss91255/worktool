@@ -185,3 +185,20 @@ STUB
     assert_failure 2
     assert_output --partial '開終端即在盒內'
 }
+
+@test "no goal mapping cell may be empty or a dash (#407)" {
+    successful_job
+    local valid column value
+    valid="$(cat "${READY_FIXTURE}/body")"
+    for column in 2 3 4 5; do
+        for value in '' '-'; do
+            printf '%s\n' "${valid}" | awk -F '|' -v OFS='|' -v column="${column}" -v value="${value}" '
+                /^\| 開終端即在盒內 / { $column=" " value " " }
+                { print }
+            ' >"${READY_FIXTURE}/body"
+            check_ready
+            assert_failure 2
+            assert_output --partial '開終端即在盒內'
+        done
+    done
+}
