@@ -671,7 +671,7 @@ EOF
     _distrobox="$(command -v distrobox)"
     _stub ln '#!/bin/sh' \
         "${_ln} \"\$@\" || exit 1" \
-        'case "$3" in' \
+        "case \"\$3\" in" \
         "  */bin/just) ${_ln} -s '${_distrobox}' \"\${3%/just}/distrobox\" ;;" \
         'esac'
     for _item in 3.5 3.6; do
