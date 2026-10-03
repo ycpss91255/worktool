@@ -1059,14 +1059,14 @@ _item_3_5() {
     _seed_user_content 3.5 || return 1
     # ghostty is linked in next to just, so the terminal detection under
     # the restricted PATH no longer depends on where ghostty is installed.
-    for _t in just ghostty; do
+    for _t in just ghostty sh bash dirname awk grep mkdir mktemp mv rm cat chmod flock; do
         _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return 1
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.5: cannot link ${_t} into the restricted PATH"
             return 1
         }
     done
-    local _path="${ITEM_H}/bin:/usr/bin:/bin"
+    local _path="${ITEM_H}/bin"
 
     # Counted AFTER the seeding, so "the refusal wrote nothing" is a claim
     # about a HOME that already had the user's two files in it.

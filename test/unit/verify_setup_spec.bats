@@ -649,6 +649,22 @@ EOF
 
 # --- 3.5 ----------------------------------------------------------------------
 
+@test "3.5: a system-path distrobox cannot leak into the refusal round" {
+    # This path belongs only to the disposable Docker test container.
+    [ ! -e /usr/bin/distrobox ]
+    run bash -c '
+        set -euo pipefail
+        trap '\''rm -f /usr/bin/distrobox'\'' EXIT
+        printf "#!/bin/sh\nexec %s \"\$@\"\n" "$1" >/usr/bin/distrobox
+        chmod +x /usr/bin/distrobox
+        "$2" 3.5
+    ' bash "$(command -v distrobox)" "${VERIFY}"
+    assert_success
+    assert_line 'rc=1'
+    assert_line 'files 2->2'
+    assert_output --partial '3.5 PASS'
+}
+
 @test "3.5: a just that prints the documented restricted-PATH refusal but exits 1 everywhere cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.5
