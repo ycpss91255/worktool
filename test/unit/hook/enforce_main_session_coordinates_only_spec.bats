@@ -92,3 +92,23 @@ _edit() {
         assert_equal "${status}" 2
     done
 }
+
+@test "main session retains coordination reads synchronization and memory writes" {
+    local command path
+    for command in 'gh pr merge 1 --repo ycpss91255/worktool' \
+        'gh pr comment 1 --repo ycpss91255/worktool --body-file /tmp/body' \
+        'gh pr review 1 --repo ycpss91255/worktool --approve' \
+        'gh issue view 416 --repo ycpss91255/worktool' \
+        'git fetch' 'git log' 'git status --short' 'git diff' 'git -C /tmp log' \
+        'git pull --ff-only' 'git worktree add ../worktree/new' \
+        'git worktree remove ../worktree/old' 'git worktree prune' 'git worktree list' \
+        'docker ps' 'just box status'; do
+        _check "${command}"
+        assert_success
+    done
+    for path in '.agents/memory/note.md' "${WORK}/.agents/memory/note.md" \
+        "${BATS_TEST_TMPDIR}/body.md" '../worktree-other/body.md'; do
+        _edit "${path}"
+        assert_success
+    done
+}

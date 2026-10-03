@@ -91,7 +91,7 @@ check_launch() {
 }
 
 check_edit() {
-    local cwd path common root
+    local cwd path common root relative
     cwd="$(hook_field '.cwd')"
     [[ -n "${cwd}" ]] || cwd="${HOOK_REPO_ROOT}"
     path="$(hook_field '.tool_input.file_path // .tool_input.notebook_path')"
@@ -102,6 +102,8 @@ check_edit() {
         common="$(git -C "${HOOK_REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
     fi
     root="$(realpath -m -- "$(hook_worktree_root "$(dirname -- "${common}")")")"
+    relative="${path#"${root}/"}"
+    [[ ! "${relative}" =~ ^[^/]+/\.agents/memory(/|$) ]] || return 0
     [[ "${path}" != "${root}" && "${path}" != "${root}/"* ]] || \
         refuse 'Main-session file edits under worktree/ belong in a Workflow.'
 }
