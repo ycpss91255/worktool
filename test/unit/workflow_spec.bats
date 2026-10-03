@@ -2597,6 +2597,9 @@ _pl_resume_setup() {
     git -C "${root}/src" push -q origin main
     git -C "${root}/src" update-ref refs/remotes/origin/acceptance HEAD
     git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '0\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'finished\n' > "${root}/worktree/.scratch/n/implement.md"
     mkdir -p "${root}/src/.claude/workflows"
     cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
 }
@@ -3020,5 +3023,16 @@ _pl_retry_run() {
     run jq -e '.error == null and .result.ciState == "green" and
         ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
         ([.calls[].role | select(startswith("publish:"))] | length) == 0' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop continue: missing implementation report continues clean committed work (#417)" {
+    _pl_resume_setup
+    rm "${BATS_TEST_TMPDIR}/worktree/.scratch/n/implement.md"
+    git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm pending --allow-empty
+    run _pl_resume_run '{}'
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1' <<<"${output}"
     assert_success
 }
