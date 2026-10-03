@@ -99,7 +99,8 @@ setup() {
     local _tool
     for _tool in cut sort wc tee; do
         run env "SHIM_${_tool^^}_RC=1" "SHIM_${_tool^^}_OUT=plausible" \
-            bash -o pipefail -c '
+            bash -c '
+                set -o pipefail
                 printf "%1048576s\n" x | "$1"
                 statuses=("${PIPESTATUS[@]}")
                 printf "writer=%s reader=%s\n" "${statuses[@]}"

@@ -127,7 +127,8 @@ _stub() {
 
 @test "stub contract: failing wc drains pipeline input before answering" {
     _stub_wc_zero_then_fail
-    run bash -o pipefail -c '
+    run bash -c '
+        set -o pipefail
         printf "%1048576s\n" x | wc -l
         statuses=("${PIPESTATUS[@]}")
         printf "writer=%s reader=%s\n" "${statuses[@]}"
