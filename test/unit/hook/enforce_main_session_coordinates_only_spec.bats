@@ -179,3 +179,15 @@ _edit() {
     _edit "${outside}/body.md"
     assert_success
 }
+
+@test "launcher wrappers and namespace spellings cannot hide restricted actions" {
+    local command
+    for command in 'timeout 60 env git commit -m fix' \
+        'timeout 60 timeout 30 command git push' \
+        'timeout 60 env just test unit' 'just test::unit' 'just test::lint'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+    _check 'timeout 60 env git log'
+    assert_success
+}

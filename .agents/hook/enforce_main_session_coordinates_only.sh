@@ -74,7 +74,7 @@ check_tests() {
             *) recipe="${word}" ;;
         esac
     done
-    if [[ "${tool}" == just && "${recipe}" == test ]]; then
+    if [[ "${tool}" == just && ( "${recipe}" == test || "${recipe}" == test::* ) ]]; then
         refuse 'Main-session tests belong in a Workflow.'
     fi
     if [[ "${tool}" == docker && "${text}" =~ (^|[[:space:]\"\'])([^[:space:]\"\']*/)?bats([[:space:]\"\']|$) ]]; then
@@ -85,8 +85,13 @@ check_tests() {
 check_launch() {
     local launch="$1" lead tool index
     local -a words=()
-    lead="$(hook_timeout_lead "${launch}")"
-    read -r -a words <<<"${launch#"${lead}"}"
+    while :; do
+        launch="$(_hook_strip_wrappers "${launch}")"
+        lead="$(hook_timeout_lead "${launch}")"
+        [[ -n "${lead}" ]] || break
+        launch="${launch#"${lead}"}"
+    done
+    read -r -a words <<<"${launch}"
     tool="$(hook_word "${words[0]:-}")"
     if [[ "${tool##*/}" == xargs ]]; then
         local _HOOK_LONG_VALUE_OPTS="${_HOOK_LONG_VALUE_OPTS} --arg-file --eof --replace --max-lines --max-args --max-procs --max-chars --delimiter --process-slot-var "
