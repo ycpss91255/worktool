@@ -2908,7 +2908,7 @@ _handover_replies() {
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
-        "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}}'
+        "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
 }
 
 @test "milestone-handover prepares evidence in six ordered unstructured stages without publishing readiness (#412)" {
@@ -2974,7 +2974,7 @@ STUB
     chmod +x "${root}/bin/gh"
     PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" \
-        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" "$(_handover_replies)" exec-handover
+        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" "$(_handover_replies | jq --arg d "${root}" '."sync:".repoDir=$d')" exec-handover
     assert_success
     json="${output}"
     run jq -e '.result.status == "prepared" and .ran[0].rc == 0 and .ran[0].poster == "codex" and
@@ -3154,4 +3154,21 @@ _pl_retry_run() {
     run jq -e '.error == null and (.calls[] | select(.role | startswith("implement:")) | .prompt |
         split("brief:\n")[1] | contains("implement.md.log.previous"))' <<<"${json}"
     assert_success
+}
+
+@test "milestone-handover stops CI failures and reports job names and reasons (#415)" {
+    local replies
+    replies="$(_handover_replies | jq '."sync:".checks=[{name:"verify-all (ubuntu-24.04-arm)",status:"COMPLETED",conclusion:"FAILURE",reason:"verify item 4 failed"}]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    jq -e '.result.status == "sync-blocked" and [.calls[].role] == ["sync:"] and
+        .result.report.checks[0].name == "verify-all (ubuntu-24.04-arm)" and
+        .result.report.checks[0].reason == "verify item 4 failed"' <<<"${output}"
+    jq -e '.calls[0].prompt | contains("foreground") and contains("--watch") and
+        contains("milestone-gate-approval") and contains("--log-failed") and contains("headRefOid")' <<<"${output}"
+    for replies in '{}' '{"state":"synced","repoDir":"/tmp/acceptance","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","checks":[]}' \
+        '{"state":"synced","repoDir":"/tmp/acceptance","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","checks":[{"name":"ci-passed","status":"IN_PROGRESS"}]}'; do
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+            "$( _handover_replies | jq --argjson s "${replies}" '."sync:"=$s')"
+        jq -e '.result.status == "sync-blocked" and [.calls[].role] == ["sync:"]' <<<"${output}"
+    done
 }
