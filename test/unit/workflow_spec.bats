@@ -2485,7 +2485,6 @@ _scratch_assert_isolated() {
 }
 
 @test "doc/workflow.md requires milestone acceptance hand-off evidence from real user entries" {
-    local json="${output}"
     run sed -n '/^## milestone 驗收 PR 交出前檢查清單$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
     assert_success
     assert_output --partial 'milestone-gate'
@@ -2893,6 +2892,7 @@ _handover_replies() {
     jq -e '.calls[5].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
     jq -e '[.calls[1:][].prompt] | all(contains("/tmp/acceptance"))' <<<"${output}"
+    local json="${output}"
     run sed -n '/phases: \[/,/^  ],/p' "${WF_DIR}/milestone-handover.js"
     assert_line --index 1 --partial "title: 'Sync'"
     assert_line --index 2 --partial "title: 'Head'"
