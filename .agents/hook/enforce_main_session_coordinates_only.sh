@@ -90,6 +90,22 @@ check_launch() {
     fi
 }
 
+check_edit() {
+    local cwd path common root
+    cwd="$(hook_field '.cwd')"
+    [[ -n "${cwd}" ]] || cwd="${HOOK_REPO_ROOT}"
+    path="$(hook_field '.tool_input.file_path // .tool_input.notebook_path')"
+    [[ -n "${path}" ]] || return 0
+    [[ "${path}" == /* ]] || path="${cwd}/${path}"
+    path="$(realpath -m -- "${path}")"
+    if ! common="$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+        common="$(git -C "${HOOK_REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
+    fi
+    root="$(realpath -m -- "$(hook_worktree_root "$(dirname -- "${common}")")")"
+    [[ "${path}" != "${root}" && "${path}" != "${root}/"* ]] || \
+        refuse 'Main-session file edits under worktree/ belong in a Workflow.'
+}
+
 main() {
     hook_read_input
     local launch
@@ -97,6 +113,8 @@ main() {
         while IFS= read -r launch; do
             check_launch "${launch}"
         done < <(hook_subcommands_raw "$(hook_command)")
+    elif [[ "$(hook_field '.tool_name')" =~ ^(Edit|Write|MultiEdit|NotebookEdit)$ ]]; then
+        check_edit
     fi
     hook_allow
 }

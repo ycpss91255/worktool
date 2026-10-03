@@ -56,3 +56,20 @@ _edit() {
         assert_equal "${status}" 2
     done
 }
+
+@test "main session file tools cannot edit the sibling worktree directory" {
+    local tool path
+    for tool in Write Edit MultiEdit NotebookEdit; do
+        for path in "${WORK}/file" '../worktree/x/file' '../worktree/new/file'; do
+            _edit "${path}" '' "${tool}"
+            assert_equal "${status}" 2
+        done
+    done
+    # The current checkout can itself be a linked worktree.
+    git -C "${MAIN}" -c user.name=Test -c user.email=test@users.noreply.github.com \
+        commit -q --allow-empty -m fixture
+    git -C "${MAIN}" worktree add -q "${WORK}" -b fixture
+    MAIN="${WORK}"
+    _edit 'file'
+    assert_equal "${status}" 2
+}
