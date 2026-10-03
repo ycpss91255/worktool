@@ -28,7 +28,7 @@
 // Prints ONE JSON object: { result, error, calls: [{label, role, phase, schema, prompt}],
 // ran: [{cmd, rc}] }.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -112,10 +112,37 @@ const playHandoverReview = (prompt) => {
   }
 }
 
+// Exercise handover filesystem commands with deterministic stage writers.
+const playHandoverFiles = (role, prompt) => {
+  if (role === 'scratch:' || role.startsWith('artifact-check:')) {
+    const result = play(prompt)
+    if (!result.ok) return null
+    return role === 'scratch:' ? reply(role) : result.stdout
+  }
+  const args = JSON.parse(argsJson)
+  const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
+  const files = {
+    'findings:': ['findings.md'], 'review:': ['codex.md', 'codex-result.json'],
+    'machine:': ['machine.md'], 'evidence:': ['evidence.md', 'ready.md'],
+  }[role]
+  if (files) {
+    mkdirSync(scratch, { recursive: true })
+    if (role === 'machine:') mkdirSync(`${scratch}/machine`, { recursive: true })
+    for (const file of files) writeFileSync(`${scratch}/${file}`, `${role} output\n`)
+    const [stage, file, kind] = (process.env.HANDOVER_LOSS || '').split(':')
+    if (role === `${stage}:`) {
+      if (kind === 'missing') unlinkSync(`${scratch}/${file}`)
+      else writeFileSync(`${scratch}/${file}`, '')
+    }
+  }
+  return reply(role)
+}
+
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, prompt })
+  if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`

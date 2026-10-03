@@ -405,34 +405,51 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    衝突逐處記錄兩邊意圖、解法、理由與驗證；無法安全解決就列出路徑和原因並停止。
    在 Docker 前景依序跑 `just test guards`、合入變更涉及的 spec 和 `just test lint`，
    每次確認最多兩個 worktool-test container；失敗即停止，不推送。
-   推送後在前景最多等待 1800 秒，每輪確認同一 PR head；除了 `milestone-gate-approval`，
+   推送後分輪在前景等待，每輪最多 540 秒，從開始等待起以實際經過時間累計最多 7200 秒；
+   最後一輪只使用剩餘時間，單輪到期仍繼續下一輪，超過 1800 秒也不停止。
+   每輪開始、結束與每次 poll 都重新確認同一 PR head；除了 `milestone-gate-approval`，
    所有 check（含兩種架構的 `verify-all` 與 `ci-passed`）都須成功。
-   失敗回報 job 名稱、連結與 log 的具體原因；缺 check、查詢失敗、head 改變或逾時均停止。
+   每次等待前先判斷失敗；commit status 的 FAILURE／ERROR，以及已完成但非 SUCCESS 的 check
+   （含取消、job 逾時與跳過）立即停止，回報 job 名稱、連結與 log 的具體原因；查詢失敗或 head 改變立即停止。
+   缺少或仍在執行的 check 跨輪繼續等待；只有累計 7200 秒用盡才判為 CI 逾時。
+   上限到期再查一次 head／checks，先判斷失敗或全綠；仍未完成才回報逾時，列出
+   已經過時間與所有 pending check 的名稱、狀態、連結，缺少的必要 check 標為 MISSING，
+   不列入 milestone-gate-approval，並保存最後一輪證據。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
    `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    缺少、查詢失敗或未綠即回報並停止。
-3. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
+3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
+   初始化失敗即停止，不進入 Findings。
+4. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
    驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
-4. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
+5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
-5. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
+6. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
    修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
    安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
    worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
-6. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+7. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
 
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
-每次覆寫當次產物避免誤用舊結果。回傳 `status: prepared` 只代表文件已產生；
+各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
+Machine 的 `machine.md` 與 `machine/` 子目錄、Evidence 的 `evidence.md` 與 `ready.md`。
+所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。Review 前以獨立 agent 在前景執行 `test -s` 確認 `findings.md`；Machine 前確認
+`findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`。
+Evidence 完成後也確認全部前段產物及 `evidence.md`、`ready.md`，才回傳 prepared。
+任一檔案不存在或為空即停止，回傳 `status: artifacts-missing`、被阻擋的階段及缺檔完整路徑；
+檢查失敗或回傳格式不符也停止並列出無法確認的檔案，不補寫或重編 F 編號。
+
+回傳 `status: prepared` 只代表文件已產生；
 負面判定或實跑／還原失敗的草稿明列阻擋，不能宣告就緒。
 
 就緒 hook 另要求同 head 的 `[codex]`「可交出」判定，其時間必須晚於該 SHA
