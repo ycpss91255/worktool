@@ -826,7 +826,7 @@ rc=0
       just verify realbox --allow-real-box 5.1; echo rc=$?
       ```
   - [ ] 5.2 開終端即在盒內 fish，主觀無明顯延遲；一次呼叫依序備份、套用、確認新視窗、還原。中斷後單獨跑 5.2.3 還原。
-    - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`；`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。
+    - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`；`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。集合來源是 [config_backup_paths.sh](../script/verify/config_backup_paths.sh) 的 `CFGBK_NAMES`；3.x 的 `tmux.conf=intact` 是不得改動使用者檔案的判準，不代表它列入 5.2 備份。
     - 預期看到資訊：`backup-covers=4/4`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
       `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
       還原成功依序印 `restore-rc=0`、`restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。
