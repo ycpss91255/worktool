@@ -3172,3 +3172,12 @@ _pl_retry_run() {
         jq -e '.result.status == "sync-blocked" and [.calls[].role] == ["sync:"]' <<<"${output}"
     done
 }
+
+@test "milestone-handover skips merging unchanged main and proceeds to Head (#415)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$( _handover_replies | jq '."sync:"={state:"unchanged",repoDir:"/tmp/acceptance",sha:("a" * 40)}')"
+    jq -e '.result.status == "prepared" and [.calls[].role][0:2] == ["sync:","head:"] and
+        ([.calls[1:][].prompt] | all(contains("/tmp/acceptance")))' <<<"${output}"
+    jq -e '.calls[0].prompt | contains("git merge-base --is-ancestor origin/main HEAD") and
+        contains("skip merge, local gates, push and CI waiting")' <<<"${output}"
+}
