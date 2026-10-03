@@ -271,10 +271,10 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] || exit 1
   status=$(git status --porcelain) || exit 1
   previous_rc=0
-  if [ -e ${sq(`${SCRATCH}/implement.rc`)} ]; then
+  ${IMPLEMENTER === 'codex' ? `if [ -e ${sq(`${SCRATCH}/implement.rc`)} ]; then
     previous_rc=$(cat ${sq(`${SCRATCH}/implement.rc`)}) || exit 1
-  fi
-  if [ -n "$status" ] || [ "$previous_rc" != 0 ] || [ ! -s ${sq(IMPLEMENT_OUT)} ]; then printf implement
+  fi` : ''}
+  if [ -n "$status" ]${IMPLEMENTER === 'codex' ? ` || [ "$previous_rc" != 0 ] || [ ! -s ${sq(IMPLEMENT_OUT)} ]` : ''}; then printf implement
   else
   ${A.pr ? 'printf resume' : `count=$(git rev-list --count ${sq(`origin/${BASE}..HEAD`)}) || exit 1
   if [ "$count" -eq 0 ]; then

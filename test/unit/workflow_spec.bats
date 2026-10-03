@@ -2597,11 +2597,16 @@ _pl_resume_setup() {
     git -C "${root}/src" push -q origin main
     git -C "${root}/src" update-ref refs/remotes/origin/acceptance HEAD
     git -C "${root}/src" worktree add -qb b "${root}/worktree/n"
+    mkdir -p "${root}/src/.claude/workflows"
+    cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
+}
+
+# Only codex's detached wrapper writes completion artifacts.
+_pl_resume_codex_complete() {
+    local root="${BATS_TEST_TMPDIR}"
     mkdir -p "${root}/worktree/.scratch/n"
     printf '0\n' > "${root}/worktree/.scratch/n/implement.rc"
     printf 'finished\n' > "${root}/worktree/.scratch/n/implement.md"
-    mkdir -p "${root}/src/.claude/workflows"
-    cp "${PR_LOOP}" "${root}/src/.claude/workflows/pr-loop.js"
 }
 
 _pl_resume_run() {
@@ -2664,6 +2669,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
     assert_success
     local json="${output}"
@@ -2678,6 +2684,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: unpublished local commits pass gates and publish before CI (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local before json
     before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
@@ -2693,6 +2700,22 @@ _pl_resume_run() {
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
+}
+
+@test "pr-loop resume: Claude paths resume clean committed work without codex output (#417)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" extra
+    git -C "${root}/worktree/n" commit -qm pending -m 'Refs: #417' --allow-empty
+    for extra in '{"mode":"light"}' '{"mode":"light","pr":7}' \
+        '{"implementer":"claude"}' '{"implementer":"claude","pr":7}' \
+        '{"implementer":"claude","codex":"off"}' '{"implementer":"claude","codex":"off","pr":7}'; do
+        run _pl_resume_run "${extra}"
+        assert_success
+        run jq -e '.error == null and .result.pr == 7 and .result.ciState == "green" and
+            ([.calls[].role | startswith("implement:")] | any | not) and
+            ([.calls[].role | startswith("ci:")] | any)' <<<"${output}"
+        assert_success
+    done
 }
 
 @test "pr-loop resume: light requires independent diff review before publishing pending commits (#386)" {
@@ -2721,6 +2744,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: missing worktree is recreated without changing branch history (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}" before
     git -C "${root}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
@@ -2738,6 +2762,7 @@ _pl_resume_run() {
 
 @test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
     assert_success
     run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
@@ -2749,6 +2774,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: CI success cannot bypass the published HEAD guard (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}"
     local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -2763,6 +2789,7 @@ _pl_resume_run() {
 
 @test "pr-loop resume: a deleted worktree with stale registration can be recreated (#386)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}" before
     before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
     rm -rf "${root}/worktree/n"
@@ -3013,6 +3040,7 @@ _pl_retry_run() {
 
 @test "pr-loop continue: failed implementation rc overrides clean committed work (#417)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}"
     git -C "${root}/worktree/n" commit -qm pending --allow-empty
     mkdir -p "${root}/worktree/.scratch/n"
@@ -3028,6 +3056,7 @@ _pl_retry_run() {
 
 @test "pr-loop continue: missing implementation report continues clean committed work (#417)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     rm "${BATS_TEST_TMPDIR}/worktree/.scratch/n/implement.md"
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm pending --allow-empty
     run _pl_resume_run '{}'
@@ -3055,6 +3084,7 @@ _pl_retry_run() {
 
 @test "pr-loop continue: interrupted work with an explicit PR still implements without recreating it (#417)" {
     _pl_resume_setup
+    _pl_resume_codex_complete
     printf 'unfinished\n' > "${BATS_TEST_TMPDIR}/worktree/n/pending.txt"
     run _pl_resume_run '{"pr":7}'
     assert_success

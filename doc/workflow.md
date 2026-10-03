@@ -81,14 +81,14 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 ## 既有分支接續
 
 本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；若目錄已刪除但登錄仍在，只移除該路徑的殘留登錄再重建，不清理其他 worktree。已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
-Locate 先檢查指定 worktree：工作目錄不乾淨、`.scratch/<name>/implement.rc` 非 `0`、或 `.scratch/<name>/implement.md` 不存在／為空時，一律判為 `implement`，在原 worktree 接續實作。brief 要求檢查 `git log origin/<base>..HEAD`、`git status --short`、`git diff`、前次報告與 `implement.md.log`，保留既有 commit、未提交修改與 `.agents/state/` 的診斷及測試證據。codex 啟動前以 `.previous` 副本保存前次報告、rc 與 log，供實作方在新輸出覆寫原檔後繼續閱讀。
+Locate 先檢查指定 worktree：工作目錄不乾淨時，一律判為 `implement`，在原 worktree 接續實作。只有 codex 實作路徑額外檢查 `.scratch/<name>/implement.rc` 非 `0` 或 `.scratch/<name>/implement.md` 不存在／為空；這些完成檔由 codex detached wrapper 寫入，light、Claude 實作與 `codex: "off"` 的 Claude 路徑不以它們判斷完成狀態。brief 要求檢查 `git log origin/<base>..HEAD`、`git status --short`、`git diff`、前次報告與 `implement.md.log`，保留既有 commit、未提交修改與 `.agents/state/` 的診斷及測試證據。codex 啟動前以 `.previous` 副本保存前次報告、rc 與 log，供實作方在新輸出覆寫原檔後繼續閱讀。
 指定既有 `branch` 與 `pr` 且實作已完成、工作區乾淨時，跳過實作與開 PR，直接進入 CI／審查迴圈；需要接續實作時仍重用指定 PR，不另開 PR。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
 未傳 `pr` 且相對 `origin/<base>` 沒有新增 commit 時，以結構化查詢確認是否已有相同分支與 base 的開啟 PR；沒有 PR 就在原 worktree 進入實作，不另建分支或 worktree。保留 `.agents/state/` 的既有診斷，實作 brief 明確指出該目錄，要求先讀診斷並將測試證據留在其中。查詢失敗或回傳格式無效則停止。
-有既有 commit、工作區乾淨、前次 rc 不為非零且有非空實作報告時，判為 `resume`，接續發布：先查相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有未推送 commit 或查詢失敗則停止。
+有既有 commit、工作區乾淨（codex 實作另須前次 rc 不為非零且有非空實作報告）時，判為 `resume`，接續發布：先查相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有未推送 commit 或查詢失敗則停止。
 CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR head 相同，未通過就停止，不相信 CI agent 的完成敘述。
-接續 light 模式同樣先看工作區與前次實作結果；實作完成且有 commit 或 PR 時跳過實作，空分支且無 PR 或實作中斷時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
+接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## 實作暫時性錯誤
