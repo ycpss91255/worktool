@@ -533,6 +533,8 @@ STUB
 }
 
 _fake_window_process() {
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/docker"
+    export DBX_CONTAINER_MANAGER=docker
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -549,6 +551,9 @@ STUB
 set -euo pipefail
 case "$*" in
     /proc/self/ns/mnt) printf 'mnt:[100]\n' ;;
+    /proc/4343/ns/mnt)
+        printf '%s\n' "${FAKE_DEV_NS-mnt:[200]}"
+        exit "${FAKE_DEV_NS_RC:-0}" ;;
     /proc/4242/ns/mnt)
         printf '%s\n' "${FAKE_WINDOW_NS-mnt:[200]}"
         exit "${FAKE_WINDOW_NS_RC:-0}" ;;
@@ -596,11 +601,11 @@ STUB
     assert_output --partial "fish mount namespace"
 }
 
-@test "#362: 5.2 passes with measured fish namespace different from host" {
+@test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "0"
-    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200]"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
     refute_output --partial "container-marker=confirmed"
     assert_output --partial "restore-ok=1"
     local _mode
@@ -618,6 +623,40 @@ STUB
         assert_equal "$(cat "${STATE}/window-rc")" "1"
         refute_output --partial "container-marker=confirmed"
         assert_output --partial "restore-ok=1"
+    done
+}
+
+@test "#433: 5.2 rejects a fresh fish in another container and restores" {
+    _fake_window_process
+    FAKE_WINDOW_NS='mnt:[300]' run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#433: 5.2 rejects an unresolvable dev namespace and restores" {
+    _fake_window_process
+    local _mode
+    for _mode in inspect-failed zero-pid empty-pid malformed-pid unreadable empty malformed; do
+        unset FAKE_DEV_INSPECT_RC FAKE_DEV_PID FAKE_DEV_NS_RC FAKE_DEV_NS
+        case "${_mode}" in
+            inspect-failed) export FAKE_DEV_INSPECT_RC=1 ;;
+            zero-pid) export FAKE_DEV_PID=0 ;;
+            empty-pid) export FAKE_DEV_PID='' ;;
+            malformed-pid) export FAKE_DEV_PID=unknown ;;
+            unreadable) export FAKE_DEV_NS_RC=1 ;;
+            empty) export FAKE_DEV_NS='' ;;
+            malformed) export FAKE_DEV_NS=unknown ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "window-evidence:"
+        assert_output --partial "restore-ok=1"
+        assert_output --partial "dev-gone=1"
+        assert_output --partial "backup-removed=1"
     done
 }
 
