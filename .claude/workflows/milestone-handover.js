@@ -76,11 +76,12 @@ if (!head || head.error || head.sha !== sync.sha || !/^[0-9a-f]{40}$/.test(head.
   return { pr: A.pr, status: 'head-blocked', report: head || 'PR query failed' }
 }
 const SCRATCH = `${A.repoDir}/.agents/state/milestone-handover-${A.pr}-${head.sha}`
-const scratchResult = decode(await agent(`${RULES}
+const scratchRaw = await agent(`${RULES}
 Initialize this run's scratch directory exactly once, after Head, in the foreground.
 Run \`cd ${sq(A.repoDir)} && rm -rf -- ${sq(SCRATCH)} && mkdir -p -- ${sq(SCRATCH)}\`.
 On command failure return {error: concrete failure reason}; only on exit 0 return {ok: true}.`,
-{ label: `${RUN_ID} scratch:`, phase: 'Scratch', agentType: 'general-purpose' }))
+{ label: `${RUN_ID} scratch:`, phase: 'Scratch', agentType: 'general-purpose' })
+const scratchResult = decode(scratchRaw)
 if (!scratchResult || scratchResult.error || scratchResult.ok !== true) {
   return { pr: A.pr, sha: head.sha, status: 'scratch-failed', report: scratchResult || 'Scratch initialization failed' }
 }
@@ -88,11 +89,12 @@ const CONTEXT = `${RULES} Frozen head=${head.sha}, milestone issue #${head.miles
 const verifyArtifacts = async (stage, files) => {
   const paths = files.map(file => `${SCRATCH}/${file}`)
   const checks = paths.map(path => `if ! test -s ${sq(path)}; then printf '%s\\n' ${sq(JSON.stringify({ missing: path }))}; exit 0; fi`).join('; ')
-  const checked = decode(await agent(`${CONTEXT}
+  const checkedRaw = await agent(`${CONTEXT}
 Verify earlier outputs before ${stage}; do not write any files. Run this exact command in the foreground:
 \`cd ${sq(A.repoDir)} && { ${checks}; printf '%s\\n' '${JSON.stringify({ ok: true })}'; }\`
 Return only the command's JSON stdout unchanged. A missing or empty file stops this stage; never repair or reconstruct it. Command failure is error.`,
-  { label: `${RUN_ID} artifact-check:${stage}`, phase: stage, agentType: 'general-purpose' }))
+  { label: `${RUN_ID} artifact-check:${stage}`, phase: stage, agentType: 'general-purpose' })
+  const checked = decode(checkedRaw)
   if (!checked || checked.error || checked.missing || checked.ok !== true) {
     return { pr: A.pr, sha: head.sha, status: 'artifacts-missing', stage,
       report: checked?.missing ? checked : { error: `Could not verify non-empty files: ${paths.join(', ')}`, detail: checked } }
