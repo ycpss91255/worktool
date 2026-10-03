@@ -2831,3 +2831,22 @@ _pl_resume_run() {
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     refute_output "${remote}"
 }
+
+@test "milestone goal mapping has one documented template accepted by the hook parser (#407)" {
+    local table="${BATS_TEST_TMPDIR}/goal-table" goal
+    printf '## 目標對照\n' >"${table}"
+    awk '
+        /^## milestone 驗收 PR 交出前檢查清單$/ { active=1; next }
+        /^## 交出 milestone 驗收 PR$/ { active=1; next }
+        /^## / { active=0 }
+        active && /^\|/ { print }
+    ' "${REPO_ROOT}/doc/workflow.md" >>"${table}"
+    goal="$(awk -F '|' '/^\|/ { goal=$2 } END {
+        sub(/^[[:space:]]*/, "", goal); sub(/[[:space:]]*$/, "", goal); print goal
+    }' "${table}")"
+    assert [ -n "${goal}" ]
+    run awk -v goal="${goal}" -f "${REPO_ROOT}/.agents/hook/lib/ready_table.awk" "${table}"
+    assert_success
+    # One header, one separator and one example row: other sections link here.
+    assert [ "$(awk '/^\|/ { count++ } END { print count+0 }' "${table}")" -eq 3 ]
+}
