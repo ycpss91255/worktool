@@ -1045,8 +1045,8 @@ _item_3_4() {
 # never be a bare name).
 _require_no_distrobox_on_path() {
     if (PATH="$2"; command -v distrobox >/dev/null 2>&1); then
-        _fail "$1: environment unfit: distrobox is still on the restricted PATH"
-        return 1
+        _unavailable "$1: environment unfit: distrobox is still on the restricted PATH"
+        return 3
     fi
 }
 
@@ -1079,7 +1079,7 @@ _item_3_5() {
         }
     done
     local _path="${ITEM_H}/bin"
-    _require_no_distrobox_on_path 3.5 "${_path}" || return 1
+    _require_no_distrobox_on_path 3.5 "${_path}" || return $?
 
     # Counted AFTER the seeding, so "the refusal wrote nothing" is a claim
     # about a HOME that already had the user's two files in it.
@@ -1227,7 +1227,7 @@ _item_3_6() {
             return 1
         }
     done
-    _require_no_distrobox_on_path 3.6 "${ITEM_H}/bin" || return 1
+    _require_no_distrobox_on_path 3.6 "${ITEM_H}/bin" || return $?
     _status_distrobox_line "${DISTROBOX_STATE_NONE}" "PATH=${ITEM_H}/bin" || _bad=1
 
     _expect_distinct_distrobox_lines || _bad=1
