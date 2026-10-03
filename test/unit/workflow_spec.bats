@@ -2949,10 +2949,10 @@ STUB
 }
 
 _pl_retry_run() {
-    local failures="$1" replies
-    replies="$(jq -cn --argjson failures "${failures}" '{
+    local failures="$1" reason="${2:-ERROR: Selected model is at capacity}" replies
+    replies="$(jq -cn --argjson failures "${failures}" --arg reason "${reason}" '{
         "implement:#417:retry1": (if $failures then {status:"failed",reason:"HTTP 503 at capacity"} else {status:"ready",reason:""} end),
-        "implement:": {status:"failed",reason:"ERROR: Selected model is at capacity"},
+        "implement:": {status:"failed",reason:$reason},
         "locate:": {pr:7,sha:"abc"},
         "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
         "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
@@ -3035,4 +3035,20 @@ _pl_retry_run() {
     run jq -e '.error == null and .result.ciState == "green" and
         ([.calls[].role | select(startswith("implement:"))] | length) == 1' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop retry: rate limits and HTTP server failures retry while permanent errors stop (#417)" {
+    local reason json
+    for reason in 'rate limit exceeded' 'HTTP/1.1 502 Bad Gateway' 'HTTP 500 Internal Server Error' 'authentication failed'; do
+        run _pl_retry_run false "${reason}"
+        assert_success
+        json="${output}"
+        run jq -e --arg reason "${reason}" '.error == null and
+            (if $reason == "authentication failed" then
+                .result.ciState == "none" and (.result.blockingLeft[0] | contains($reason)) and
+                ([.calls[].role | select(startswith("implement:"))] | length) == 1
+            else .result.ciState == "green" and
+                ([.calls[].role | select(startswith("implement:"))] | length) == 2 end)' <<<"${json}"
+        assert_success
+    done
 }

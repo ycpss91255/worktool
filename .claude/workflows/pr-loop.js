@@ -342,7 +342,7 @@ const implementFull = async () => {
     } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
     if (edited && edited.status === 'ready') return ''
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
-    if (retry === 3 || !/at capacity|rate[ -]?limit|HTTP\s*5\d\d/i.test(reason)) return reason
+    if (retry === 3 || !/at capacity|rate[ -]?limit|HTTP(?:\/\d(?:\.\d)?)?\s*5\d\d/i.test(reason)) return reason
     await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
       label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
     })
