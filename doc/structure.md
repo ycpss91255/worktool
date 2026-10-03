@@ -106,7 +106,7 @@ worktool/
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
-│   │   │                enforce_main_checkout_readonly、
+│   │   │                enforce_main_checkout_readonly、enforce_main_session_coordinates_only(主 session 只協調,#416)、
 │   │   │                enforce_codex_round_cap、enforce_codex_via_workflow(主 session 派工限制與 agent_id 子代理例外,#366)、
 │   │   │                enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
@@ -212,6 +212,32 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 裡會改動 working tree 的 git 指令同樣拒絕，包含經 `git -C`、`bash -c` 或
 `eval` 指定的呼叫。`git fetch`、`git pull --ff-only`、指定的 `git worktree`
 管理動作、唯讀 git 指令與 `gh` 仍可在主 checkout 執行。
+
+`.agents/hook/enforce_main_session_coordinates_only.sh` 在 PreToolUse 檢查 Bash 與
+Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agent_id`）只負責
+協調：禁止 `git commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply`、
+`git checkout -- <path>`、`just test ...`、Docker 裡的 bats，以及編輯主 checkout
+同層 `worktree/` 下的檔案。檔案路徑依 `cwd` 解讀、正規化並解析既有 symlink；
+從 Git 共用目錄定位主 checkout，因此從 linked worktree 呼叫也適用。
+
+仍允許 `gh` 留言、review、merge、issue 操作、唯讀 git、`git fetch`、
+`git pull --ff-only`（不得搭配改變合併模式的旗標）、`git worktree add|remove|prune|list`，
+以及 `.agents/memory/` 和 repo、`worktree/` 以外的工作檔。原有主 checkout 唯讀
+hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`、`milestone-fanout`
+或 `milestone-handover`。Claude 與 Codex 的 Bash hook 清單維持一致，檔案編輯轉接
+沿用 Claude 的註冊。
+
+身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
+`hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；
+不讀 transcript，不採用環境變數或 `agent_type` 當身分。這是合作代理的守門規則，
+不提供身分認證。
+
+Bash 檢查沿用 `subcommand.sh` 的指令拆解；直接指令包含引號、常見 wrapper、
+`timeout` 與 git／just 全域選項仍會檢查。`eval`、`bash -c`、`xargs`、shell
+heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則；帶引號的 xargs
+指令也會拆解，git／just 參數有 shell 展開或未知全域旗標時拒絕。
+間接執行的原始文字檢查可能連純文字提及也拒絕；無受限動作的日常指令放行。
+腳本檔內容、自訂 just recipe、編碼或執行時組出的指令不在靜態檢查範圍內。
 
 本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`
 在此 Codex 接線沒有對應事件，因此不註冊；`enforce_reply_language.sh` 只接 Claude

@@ -102,6 +102,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_milestone_gate_approval.sh" \
         "PreToolUse|Bash|${_p}/enforce_milestone_ready_evidence.sh" \
         "PreToolUse|Bash|${_p}/enforce_main_checkout_readonly.sh" \
+        "PreToolUse|Bash|${_p}/enforce_main_session_coordinates_only.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_round_cap.sh" \
         "PreToolUse|Bash|${_p}/enforce_codex_via_workflow.sh" \
         "PreToolUse|Bash|${_p}/enforce_scope_on_guard_issues.sh" \
@@ -110,6 +111,7 @@ _registered_names() {
         "PreToolUse|Bash|${_p}/enforce_no_attribution.sh" \
         "PreToolUse|Edit|Write|MultiEdit|${_p}/enforce_shellcheck_disable_approval.sh" \
         "PreToolUse|Edit|Write|MultiEdit|NotebookEdit|${_p}/enforce_main_checkout_readonly.sh" \
+        "PreToolUse|Edit|Write|MultiEdit|NotebookEdit|${_p}/enforce_main_session_coordinates_only.sh" \
         "PreToolUse|Workflow|Agent|${_p}/enforce_cpu_capacity.sh" \
         "WorktreeCreate||${_p}/worktree_create.sh" \
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
