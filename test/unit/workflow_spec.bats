@@ -2961,3 +2961,13 @@ STUB
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","pr":7}'
     jq -e '.error == "milestone-handover: invalid args.base" and .calls == []' <<<"${output}"
 }
+
+@test "milestone-handover stops unresolved conflicts without force pushing (#415)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$( _handover_replies | jq '."sync:"={state:"blocked",error:"conflict: doc/acceptance.md requires maintainer decision"}')"
+    jq -e '.result.status == "sync-blocked" and (.result.report.error | contains("doc/acceptance.md")) and
+        [.calls[].role] == ["sync:"]' <<<"${output}"
+    jq -e '.calls[0].prompt | contains("git diff --name-only --diff-filter=U") and
+        contains("record each resolution") and contains("stop before gates or push") and
+        contains("Never rewrite pushed history or force push")' <<<"${output}"
+}
