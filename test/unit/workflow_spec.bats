@@ -3052,3 +3052,14 @@ _pl_retry_run() {
         assert_success
     done
 }
+
+@test "pr-loop continue: interrupted work with an explicit PR still implements without recreating it (#417)" {
+    _pl_resume_setup
+    printf 'unfinished\n' > "${BATS_TEST_TMPDIR}/worktree/n/pending.txt"
+    run _pl_resume_run '{"pr":7}'
+    assert_success
+    run jq -e '.error == null and .result.pr == 7 and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
+        (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Reuse PR #7"))' <<<"${output}"
+    assert_success
+}
