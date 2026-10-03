@@ -263,6 +263,9 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   cd ${sq(WT)} &&
   [ "$(git rev-parse --path-format=absolute --git-common-dir)" = "$common" ] &&
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] || exit 1
+  status=$(git status --porcelain) || exit 1
+  if [ -n "$status" ]; then printf implement
+  else
   ${A.pr ? 'printf resume' : `count=$(git rev-list --count ${sq(`origin/${BASE}..HEAD`)}) || exit 1
   if [ "$count" -eq 0 ]; then
     prs=$(gh pr list --repo ${sq(REPO)} --head ${sq(A.branch)} --base ${sq(BASE)} --state open --json number) || exit 1
@@ -271,6 +274,7 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   else
     printf resume
   fi`}
+  fi
 else
   rc=$?
   [ "$rc" -eq 1 ] && printf new
@@ -279,8 +283,9 @@ fi
 if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
 const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP
+const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT} before starting codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
 const IMPLEMENT_CONTEXT = prepared.state === 'implement'
-  ? `Continue implementation in the existing worktree. Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
+  ? `${continueContext} Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
   : ''
 if (A.pr && !RESUME) return result({ pr: A.pr, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['resume PR requires an existing branch'] })
 
@@ -319,7 +324,6 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
-const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT} before starting codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
 const implementFull = async () => {
   for (let retry = 0; retry <= 3; retry += 1) {
     const setup = retry ? `cd ${WT}` : IMPLEMENT_SETUP

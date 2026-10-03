@@ -2980,3 +2980,30 @@ _pl_retry_run() {
         ([.calls[].role | test("^(locate|ci|review):")] | any | not)' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop continue: dirty worktree with commits continues implementation and preserves work (#417)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" before json
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '0\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'finished\n' > "${root}/worktree/.scratch/n/implement.md"
+    printf 'previous run\n' > "${root}/worktree/.scratch/n/implement.md.log"
+    git -C "${root}/worktree/n" commit -qm pending --allow-empty
+    before="$(git -C "${root}/worktree/n" rev-parse HEAD)"
+    printf 'unfinished\n' > "${root}/worktree/n/pending.txt"
+    run _pl_resume_run '{}'
+    assert_success
+    json="${output}"
+    run jq -e '.error == null and .result.ciState == "green" and
+        (.calls[] | select(.role | startswith("implement:")) | .prompt |
+            contains("git log origin/main..HEAD") and contains("git status --short") and
+            contains("git diff") and contains("implement.md.log")) and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1' <<<"${json}"
+    assert_success
+    run git -C "${root}/worktree/n" rev-parse HEAD
+    assert_output "${before}"
+    run cat "${root}/worktree/n/pending.txt"
+    assert_output unfinished
+    run cat "${root}/worktree/.scratch/n/implement.md.log"
+    assert_output 'previous run'
+}
