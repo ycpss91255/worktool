@@ -1,5 +1,7 @@
 # worktool 驗收清單(distrobox UX 累積驗收)
 
+預期輸出依區塊標示為「固定判準」、「工具版本會影響的輸出」或「動態示例」。未展開為 text 區塊的行內預期輸出屬固定判準，`<...>` 佔位符先以本輪值替換；5.x 的 PID／namespace／路徑與實測延遲是動態示例，只比對各項指定的形狀與條件。固定判準只比對列出的行，不要求沒有其他診斷行。
+
 每個 milestone 都有明確驗收標準,分兩類:
 
 - 自動:Docker / docker-in-docker 內可跑的具體測試或指令,必須綠。
@@ -29,6 +31,7 @@ git clone https://github.com/ycpss91255/worktool.git && cd worktool
 just --version && docker info >/dev/null && echo prereq-ok
 ```
 
+輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
 ```text
 just 1.53.0        (版本不限)
 prereq-ok
@@ -43,6 +46,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 0. 使用者介面:`just` 是唯一入口
   - [ ] 0.1 裸 `just` 只列 namespaces(test、box),沒有頂層動作
     - 預期看到資訊
+      輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
       ```text
       （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       ```
@@ -52,6 +56,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 0.2 namespace 清單與 help 都來自底層腳本
     - 預期看到資訊
+      輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
       ```text
       （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       ./script/test/test.sh --help
@@ -69,6 +74,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       rc=2
@@ -84,6 +90,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -95,6 +102,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       ok 1 ...
       rc=0
@@ -107,6 +115,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -118,6 +127,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -129,6 +139,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊(約 2-4 分鐘)
       輸出格式與清單直接讀取 [script/test/system-real-entry.sh](../script/test/system-real-entry.sh)、[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       ok 1 preflight: a real docker engine is live inside the runner
       ok 5 real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version
@@ -149,6 +160,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -162,6 +174,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/selfcheck.sh](../script/test/selfcheck.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -173,6 +186,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/selfcheck.sh](../script/test/selfcheck.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -187,6 +201,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -198,6 +213,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=0
       ```
@@ -209,6 +225,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -220,6 +237,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -231,6 +249,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -242,6 +261,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -253,6 +273,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/box/assemble.sh](../script/box/assemble.sh)、[lib/manifest.sh](../lib/manifest.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -266,6 +287,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -278,6 +300,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊
       輸出格式與清單直接讀取 [script/test/test.sh](../script/test/test.sh)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       rc=1
       ```
@@ -291,6 +314,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 5. CI 與流程(gh / git 查外部證據)
   - [ ] 5.1 一個 sub-issue 一個 PR:12 個 PR(#135-#146)各自 CI 全 pass,以 merge commit 合併(不 squash)
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #135 pass=4
       #136 pass=4
@@ -316,6 +340,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 5.2 main 最新 commit 的 workflow 成功;`docker run` 只有 system-real 這一處帶 `--privileged`
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       completed success 12d4431 Merge pull request #146 from ycpss91255/m2/134-just-interface
       12d4431
@@ -331,6 +356,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 5.3 codex 協作:每個 PR 都有 [codex] 留言判定可合併(原始四層複審與十一輪複驗在 PR #20)
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #135 2
       #136 1
@@ -345,6 +371,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 6. 文件(grep 查內容)
   - [ ] 6.0 just 介面決策在 design.md(base 模型、ADR 引用)與 README
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       README.md:1
       doc/design.md:11
@@ -355,6 +382,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 6.1 manifest.md 有引號規則、驗證邊界、固定版本(1.8.2.5 / 29.8.0)、host 只留 runner 映像
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       17
       ```
@@ -364,6 +392,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       ```
   - [ ] 6.2 manifest.md 的 M2 驗收紀錄表有三列(審核時填 SHA 與結果)
     - 預期看到資訊
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       | 自動化全綠(lint + u
       | 一鍵自檢 `just test
@@ -377,6 +406,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 - [ ] 7. 選做:真實主機(需 host 有 distrobox;host 沒裝可略過 —— 1.5 已在 Docker 內做等價的真實盒驗證)
   - [ ] 7.1 一鍵 assemble、進盒可用、冪等、可清理(**跑之前先確認你沒有同名 `dev` 盒**:這段結尾會無條件 `distrobox rm -f dev`;先斷言不存在、只刪自己建的那種寫法見 M3 的 5.1 與 5.3)
     - 預期看到資訊
+      輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
       ```text
       ripgrep 15.x.x ...
       0.6x (fzf 版本)
@@ -483,6 +513,7 @@ just --version && docker info >/dev/null && echo repo-dep-ok
 gh auth status >/dev/null 2>&1 && jq --version >/dev/null && echo verify-tool-ok
 ```
 
+輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
 ```text
 just 1.53.0        (版本不限)
 repo-dep-ok
@@ -499,6 +530,7 @@ verify-tool-ok
 just verify all; echo rc=$?
 ```
 
+輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
 ```text
 verify all: ui PASS
 verify all: gate PASS
@@ -530,6 +562,7 @@ rc=0
 - [ ] 1. 使用者介面:box namespace 多了 bench / setup / status
   - [ ] 1.1 `just box` 列出七個動作;`just box help` 依序印五支腳本的 usage
     - 預期看到資訊
+      輸出類型：工具版本會影響的輸出；版本／recipe 清單依現行工具，成功標記與 Usage 行依文中判準。
       ```text
       （recipe 清單直接由 justfile 顯示，不另維護說明文字副本）
       Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
@@ -549,6 +582,7 @@ rc=0
 - [ ] 2. 自動測試:六道 gate 全綠(含 300 ms 進盒延遲 gate)
   - [ ] 2.1 裸 `just test` 跑完六層;system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
     - 預期看到資訊(完整入口請預留至少一小時，負載下實測約 65 分鐘（見上方說明）;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       ./script/verify/gate.sh "$@"
       ./script/test/test.sh
@@ -575,6 +609,7 @@ rc=0
       ```
   - [ ] 2.2 TDD 證據:每個 sub-issue PR 的描述都有一個非空的 RED 程式碼區塊,且其後另有一個非空的 GREEN 程式碼區塊(只證明「有貼輸出且順序正確」,不判讀內容語意;`red=` / `green=` 是該區塊開頭的行號)
     - 預期看到資訊(10 行,每行 order=ok;行號依 PR 內容而異)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #152 order=ok red=31 green=51
       #153 order=ok red=21 green=40
@@ -599,6 +634,7 @@ rc=0
       ```
   - [ ] 2.3 「開窗 -> 進盒 -> fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
     - 預期看到資訊(`just test` 的 integration 與 system-real 兩段,中間空一行;每段的 tier 輸出先整份收進檔案再 grep,所以「`just test` 失敗」和「grep 一行都沒對到」分得開,rc 反映的是上游 `just test` 的結果)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       ok 38 the ghostty command just box setup writes enters the box directly without starting tmux
       ok 39 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
@@ -641,6 +677,7 @@ rc=0
       ```
   - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;沒有 `pipefail` 的 pipeline 會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
     - 預期看到資訊(前四行 = 檢查程式咬住順序顛倒與空的 RED 區塊;後兩行 = 同一條 pipeline 有無 `pipefail` 的差別)
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       order=BAD red=6 green=0
       wrong-order rc=1
@@ -670,6 +707,7 @@ rc=0
 
   - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
     - 預期看到資訊
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
@@ -717,6 +755,7 @@ rc=0
       同檔兩個區塊（distrobox.conf、Ghostty legacy）與 Ghostty 兩檔各一個區塊都必須拒絕，不再折疊成一個；印 `multiple-refused=<檔案> unchanged=yes`。同檔重複區塊 status 報 MALFORMED；跨檔各一個區塊由 setup 的總數驗證拒絕。
   - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
     - 預期看到資訊
+      輸出類型：工具版本會影響的輸出（just 診斷行）；其餘為固定判準（替換佔位符後逐字比對）。
       ```text
       ./script/box/setup.sh "$@"
       [INFO] auto-enter: yes (default)
@@ -743,6 +782,7 @@ rc=0
       ```
   - [ ] 3.6 `status` 的 `distrobox:` 那行:除了 3.2 的 runnable,其餘四種狀態(#177)各印一次,證明「受管 command 還跑不跑得起來」在壞掉的情況下也講得出來
     - 預期看到資訊(四案各兩行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有;每案的第二行是那次 `status` 自己的結束碼與它寫到 stderr 的行數。兩行 `user-content` 夾住本項用來佈置狀態的那一次寫入與那一次移除)
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
       ```text
       user-content after-write: ghostty=intact tmux.conf=intact
       distrobox: <H>/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)
@@ -788,6 +828,7 @@ rc=0
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       svg=3
       foreignobject=0/3
@@ -853,7 +894,8 @@ rc=0
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
   - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check,兩邊的 check 名稱數量相等且完全不重疊
-    - 預期看到資訊
+    - 預期看到資訊（動態示例：`total`、`amd`、`arm` 隨查詢當時的 check 集合變動，不逐字比對示例數字）
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #152 total=8 nonpass=0 amd=0 arm=0 both=0 closes=1 issue=#151
       #153 total=15 nonpass=0 amd=7 arm=7 both=0 closes=1 issue=#149
@@ -869,7 +911,8 @@ rc=0
       rc=0
       rc=0
       ```
-      (6 的三項各有兩行 `rc=`:第一行是 `script/verify/evidence.sh` 自己印的彙總判定,第二行是本項 `echo rc=$?`,兩者必須相同。任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等或 both>0 —— 兩行就都是 1。
+      (固定判準：`total>0`、`nonpass=0`、`closes=1`、issue 對應與 `distinct=10`；#153 起 `amd=arm>0` 且 `both=0`。下列 8／15 是舊輪次示例，#427 的 CI 證據為 #152=9，#153／#156／#167=16；均不是固定總數。
+      6 的三項各有兩行 `rc=`:第一行是 `script/verify/evidence.sh` 自己印的彙總判定,第二行是本項 `echo rc=$?`,兩者必須相同。任何一次 gh 查詢失敗、或任何欄位不符 —— total=0 / nonpass>0 / closes!=1 / #153 起 amd 與 arm 不相等或 both>0 —— 兩行就都是 1。
       `amd` / `arm` 數的是**相異的 check 名稱**,`both` 是同時算進兩邊的名稱數:「兩個架構」講的是兩組互斥的 check,不是「有字串對到 ubuntu-latest」加上「有字串對到 ubuntu-24.04-arm」—— 只用兩個各自獨立的子字串判斷的話,一個叫 `lint (ubuntu-latest, ubuntu-24.04-arm)` 的 check 會同時滿足兩邊,只跑了一個 job 的 PR 照樣印出 `amd=1 arm=1` 過關)
     - 驗收方式
       ```bash
@@ -877,6 +920,7 @@ rc=0
       ```
   - [ ] 6.2 決策與研究都在 issue 上,且是具體結論:#22 的 [claude] 留言有實測 `median=.. ms` 與「維持 docker + 預設 runc」;#148 有「只用 LTS」與「ubuntu-24.04-arm」;#21 有「預設 = 直接進盒」與「印 log」
     - 預期看到資訊(每行數字 >= 1)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #22 median-ms:1 runc:1
       #148 lts-only:1 arm-runner:1
@@ -891,6 +935,7 @@ rc=0
       ```
   - [ ] 6.3 codex:#156、#165-#169 的最後一則 [codex] 留言判定行是「可合併」;#152-#155 是配額恢復後的補複驗,最後一則 [codex] 判定「不可合併」,各自的阻擋項記錄在 follow-up issue(#163 / #164 / #162 / #161,由原 PR 上的 [claude] 留言指向),而修正該 issue 的 PR(#166 / #165 / #169 / #168)必須 Closes 正是那個 issue,且該 PR 自己的最後 [codex] 判定「可合併」
     - 預期看到資訊
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
       #156 mergeable
       #165 mergeable
