@@ -736,8 +736,13 @@ item_52() {
         _52_confirm_window || _rc=$?
     fi
     _cleanup_pop_run || {
+        local _crc=$?
         printf 'incomplete=1 (run 5.2.3 now: it restores the config and removes the box this run created)\n' >&2
-        _rc=1
+        if [[ "${_crc}" -eq 3 && "${_rc}" -ne 1 ]]; then
+            _rc=3
+        else
+            _rc=1
+        fi
     }
     return "${_rc}"
 }

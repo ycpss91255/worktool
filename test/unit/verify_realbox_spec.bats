@@ -122,6 +122,19 @@ setup() {
     [ ! -s "${STATE}/boxes" ]
 }
 
+@test "5.2: missing apply tool stays unavailable when restore also cannot run" {
+    local _path="${BATS_TEST_TMPDIR}/no-distrobox" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: distrobox"
+    refute_output --partial "[FAIL] item 5.2 failed"
+    assert_equal "$(_count_calls just)" "0"
+}
+
 @test "stub contract: failing stream shims drain pipeline input before answering" {
     local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
     cat >"${_probe}" <<'EOF'
