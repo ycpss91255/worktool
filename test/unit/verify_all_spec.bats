@@ -26,6 +26,21 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "acceptance: PR 157 scope includes verification, product support and tests" {
+    local _scope _path
+    _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    run printf '%s\n' "${_scope}"
+    for _path in 'doc/acceptance.md' 'doc/evidence/' 'ADR 0008' '0010' \
+        'script/verify/' 'justfile' 'lib/config_backup.sh' 'lib/guard.sh' \
+        'script/test/test.sh' 'test/unit/verify_*_spec.bats' \
+        'test/unit/justfile_spec.bats' 'test/unit/fixture/' 'test/helper/' \
+        'test/system/real_engine_spec.bats'; do
+        assert_output --partial "${_path}"
+    done
+    refute_output --partial '不動產品程式'
+    refute_output --partial '要驗的產品程式全在 main'
+}
+
 setup() {
     COPY="${BATS_TEST_TMPDIR}/copy"
     mkdir -p "${COPY}/script/verify"
