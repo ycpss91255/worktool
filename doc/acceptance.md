@@ -139,7 +139,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
     - 預期看到資訊(約 2-4 分鐘)
       輸出格式與清單直接讀取 [script/test/system-real-entry.sh](../script/test/system-real-entry.sh)、[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)，不保存會漂移的 transcript 副本；以本項的行為與結束碼判準驗收。
 
-      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
+      輸出類型：動態示例（TAP 案例編號會隨案例增減位移）；固定判準為列出的案例敘述皆通過及 `rc=0`。
       ```text
       ok 1 preflight: a real docker engine is live inside the runner
       ok 5 real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version
