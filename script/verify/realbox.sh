@@ -58,7 +58,7 @@
 # `realbox.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
 #
 # Exit codes: 0 pass, 1 a check failed, 2 the command line or the opt-in is
-# wrong (nothing ran).
+# wrong (nothing ran); 3 a required tool is unavailable.
 #
 # Expected failures are handled explicitly; checks run in conditionals so
 # their own exit codes and diagnostics decide the acceptance verdict.
@@ -140,7 +140,8 @@ Options:
   --image REF        Image 5.3 builds its decoy box from (default: ubuntu:24.04).
   -h, --help         Show this help and exit 0.
 
-Exit: 0 pass, 1 a check failed, 2 bad command line or missing --allow-real-box.
+Exit: 0 pass, 1 a check failed, 2 bad command line or missing --allow-real-box,
+3 a required tool is unavailable.
 EOF
 }
 
@@ -212,7 +213,7 @@ _host_state_list() {
 
 _host_state_snapshot() {
     local _present=0
-    guard_require find sort cmp || return 1
+    guard_require find sort cmp || return $?
     [[ ! -e "${HOME}/${BOX}-box" && ! -L "${HOME}/${BOX}-box" ]] || _present=1
     printf 'host-state baseline: present=%s\n' "${_present}"
     _host_state_list | sort -z >"$1/host-state-baseline" \
@@ -522,7 +523,7 @@ _51_body() {
 
 item_51() {
     guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
-        || return 1
+        || return $?
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \
         || return 1
@@ -534,7 +535,7 @@ item_51() {
         || { guard_fail "mktemp returned '${_51_W}', which is not a directory"; return 1; }
 
     _51_CREATED=0
-    _host_state_snapshot "${_51_W}" || return 1
+    _host_state_snapshot "${_51_W}" || return $?
     _cleanup_push 51
     local _rc=0
     _51_body || _rc=1
@@ -548,7 +549,7 @@ item_51() {
 
 # --- step 1 ------------------------------------------------------------------
 _52_step1_backup() {
-    guard_require sha256sum cp mv mkdir rm readlink grep cut id || return 1
+    guard_require sha256sum cp mv mkdir rm readlink grep cut id || return $?
     cfgbk_paths || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
     # backed up: this item rewrites the maintainer's real configuration, and
@@ -570,7 +571,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_step2_apply() {
-    guard_require distrobox just timeout awk sha256sum grep cut readlink id ps || return 1
+    guard_require distrobox just timeout awk sha256sum grep cut readlink id ps || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -620,7 +621,7 @@ _52_confirm_window() {
 
 _52_window_evidence() {
     local _pid="$1" _comm _host _window _before _name
-    guard_require ps readlink || return 1
+    guard_require ps readlink || return $?
     while read -r _before _name; do
         [[ "${_before}" != "${_pid}" ]] \
             || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
@@ -677,7 +678,7 @@ _52_cleanup_state() {
 
 _52_step3_restore() {
     guard_require distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        || return 1
+        || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
 
@@ -724,19 +725,24 @@ _52_step3_restore() {
 
 item_52() {
     cfgbk_paths || return 1
-    _52_step1_backup || return 1
+    _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
     # that undoes anything - the config may already be applied by the time we
     # are interrupted, so it must run on EXIT / INT / TERM / HUP too.
     _cleanup_push 52-restore
     local _rc=0
-    _52_step2_apply || _rc=1
+    _52_step2_apply || _rc=$?
     if [[ "${_rc}" -eq 0 ]]; then
-        _52_confirm_window || _rc=1
+        _52_confirm_window || _rc=$?
     fi
     _cleanup_pop_run || {
+        local _crc=$?
         printf 'incomplete=1 (run 5.2.3 now: it restores the config and removes the box this run created)\n' >&2
-        _rc=1
+        if [[ "${_crc}" -eq 3 && "${_rc}" -ne 1 ]]; then
+            _rc=3
+        else
+            _rc=1
+        fi
     }
     return "${_rc}"
 }
@@ -797,14 +803,16 @@ _53_body() {
     item_51
     _rc51=$?
     printf '51-rc=%s\n' "${_rc51}"
+    [[ "${_rc51}" -ne 3 ]] || return 3
     [[ "${_rc51}" -ne 0 ]] \
         || { guard_fail "5.1 did NOT refuse a pre-existing '${BOX}' box"; return 1; }
 
-    _52_step1_backup || { guard_fail "5.2 step 1 failed"; return 1; }
+    _52_step1_backup || return $?
     _cleanup_push 52-restore
     _52_step2_apply
     _rc52=$?
     printf '52-rc=%s\n' "${_rc52}"
+    [[ "${_rc52}" -ne 3 ]] || return 3
     if [[ "${_rc52}" -eq 0 ]]; then
         _cleanup_pop_run
         guard_fail "5.2 step 2 did NOT refuse a pre-existing '${BOX}' box"
@@ -816,7 +824,7 @@ _53_body() {
 }
 
 item_53() {
-    guard_require distrobox just gh jq timeout awk grep || return 1
+    guard_require distrobox just gh jq timeout awk grep || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \
@@ -825,11 +833,11 @@ item_53() {
     _53_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-53.XXXXXXXX")" \
         || { guard_fail "mktemp failed"; return 1; }
     [[ -d "${_53_W}" ]] || { guard_fail "decoy scratch is not a directory"; return 1; }
-    _host_state_snapshot "${_53_W}" || return 1
+    _host_state_snapshot "${_53_W}" || return $?
     _53_CREATED=1
     _cleanup_push 53
     local _rc=0
-    _53_body || _rc=1
+    _53_body || _rc=$?
     _cleanup_pop_run || _rc=1
     return "${_rc}"
 }
@@ -920,15 +928,22 @@ realbox_run() {
         return 2
     fi
 
+    _run_requested_items "${_items[@]}"
+}
+
+_run_requested_items() {
     trap _on_exit EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     trap 'exit 129' HUP
-    local _rc=0
-    for _i in "${_items[@]}"; do
+    local _rc=0 _i
+    for _i in "$@"; do
         _dispatch_item "${_i}" || {
-            guard_fail "item ${_i} failed"
-            _rc=1
+            _rc=$?
+            if [[ "${_rc}" -ne 3 ]]; then
+                guard_fail "item ${_i} failed"
+                _rc=1
+            fi
             break
         }
     done

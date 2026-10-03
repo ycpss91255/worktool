@@ -96,6 +96,58 @@ setup() {
     export PATH
 }
 
+@test "realbox: missing jq is unavailable before any box action" {
+    local _path="${BATS_TEST_TMPDIR}/no-jq" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh mktemp timeout grep cut sort wc tee date uname mkdir ln; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: jq"
+    refute_output --partial "[FAIL]"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
+@test "5.3: missing backup tool remains unavailable through decoy cleanup" {
+    local _path="${BATS_TEST_TMPDIR}/no-cp" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: cp"
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.2: missing apply tool stays unavailable when restore also cannot run" {
+    local _path="${BATS_TEST_TMPDIR}/no-distrobox" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: distrobox"
+    refute_output --partial "[FAIL] item 5.2 failed"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.3: an unavailable refusal check cannot count as a product refusal" {
+    local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: wc"
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "stub contract: failing stream shims drain pipeline input before answering" {
     local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
     cat >"${_probe}" <<'EOF'
@@ -310,7 +362,7 @@ FRAG
 
 @test "5.1: just box assemble fails, and cleanup still runs" {
     FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.1
-    assert_failure
+    assert_failure 1
     assert_output --partial "just box assemble failed"
     assert_line "cleanup-rc=0"
 }

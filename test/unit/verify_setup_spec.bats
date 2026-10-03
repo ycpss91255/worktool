@@ -353,7 +353,7 @@ EOF
 @test "3.1: a just that prints the documented decision lines but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.1
-    assert_failure
+    assert_failure 1
     assert_output --partial "[FAIL]"
 }
 
@@ -406,8 +406,8 @@ EOF
 @test "3.1: no ghostty on PATH is reported and fails, never skipped" {
     rm -f "${STUB}/ghostty"
     run "${VERIFY}" 3.1
-    assert_failure
-    assert_output --partial "ghostty is not on PATH"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] setup.sh: ghostty is not on PATH"
 }
 
 @test "3.1: no distrobox on PATH is reported and fails, never skipped" {
@@ -426,8 +426,8 @@ EOF
     done
     ln -s "${STUB}/ghostty" "${_d}/ghostty"
     run env PATH="${_d}" "${VERIFY}" 3.1
-    assert_failure
-    assert_output --partial "missing on PATH"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] setup.sh: cannot run this check here: missing on PATH"
     assert_output --partial "just"
 }
 
@@ -714,8 +714,8 @@ _stub_system_path_distrobox() {
         'esac'
     for _item in 3.5 3.6; do
         run "${VERIFY}" "${_item}"
-        assert_failure
-        assert_output --partial "${_item}: environment unfit: distrobox is still on the restricted PATH"
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] setup.sh: ${_item}: environment unfit: distrobox is still on the restricted PATH"
         refute_output --partial "${_item} PASS"
     done
 }

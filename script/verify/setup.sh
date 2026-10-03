@@ -70,8 +70,8 @@
 # maintainer compares against doc/acceptance.md); progress, diagnostics and
 # [FAIL] lines go to STDERR.
 #
-# Exit codes: 0 every requested item passed; 1 an item failed or could not
-# be run; 2 usage error.
+# Exit codes: 0 every requested item passed; 1 an item failed;
+# 2 usage error; 3 the environment cannot run the check.
 #
 # Expected failures are handled explicitly. The item runner deliberately
 # calls each check in a conditional so it can report its own verdict.
@@ -277,7 +277,7 @@ Options:
   --list            List the items with their group and exit.
   -h, --help        Show this help and exit.
 
-Exit: 0 all requested items passed, 1 an item failed or could not run,
+Exit: 0 all requested items passed, 1 an item failed, 3 cannot run here,
 2 usage error.
 EOF
     return 0
@@ -298,14 +298,19 @@ _list_items() {
 # Refuse to pretend a check ran when the tools it needs are not here.
 # Prints every missing name, so one run tells the maintainer everything to
 # install instead of one name per attempt.
+_unavailable() {
+    printf '[UNAVAILABLE] setup.sh: %s\n' "$*" >&2
+    return 3
+}
+
 _require_tools() {
     local _t _missing=()
     for _t in "$@"; do
         command -v -- "${_t}" >/dev/null 2>&1 || _missing+=("${_t}")
     done
     if [[ "${#_missing[@]}" -gt 0 ]]; then
-        _fail "cannot run this check here: missing on PATH: ${_missing[*]}"
-        return 1
+        _unavailable "cannot run this check here: missing on PATH: ${_missing[*]}"
+        return 3
     fi
     return 0
 }
@@ -317,16 +322,16 @@ _require_tools() {
 _resolve_exec() {
     local _name="$1" _why="$2" _p
     _p="$(command -v -- "${_name}")" || {
-        _fail "${_name} is not on PATH - ${_why}"
-        return 1
+        _unavailable "${_name} is not on PATH - ${_why}"
+        return 3
     }
     [[ "${_p}" == /* ]] || {
-        _fail "${_name} resolved to '${_p}', which is not an absolute path - ${_why}"
-        return 1
+        _unavailable "${_name} resolved to '${_p}', which is not an absolute path - ${_why}"
+        return 3
     }
     [[ -x "${_p}" ]] || {
-        _fail "${_p} is not executable - ${_why}"
-        return 1
+        _unavailable "${_p} is not executable - ${_why}"
+        return 3
     }
     printf '%s\n' "${_p}"
     return 0
@@ -672,7 +677,7 @@ _realbox_guard() {
         _fail "${_item} is in group realbox: it would build the real '${REALBOX_NAME}' box on this machine. Re-run with --allow-real-box to allow that."
         return 1
     fi
-    _require_tools distrobox || return 1
+    _require_tools distrobox || return $?
     _rc=0
     _list="$(distrobox list)" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || {
@@ -718,11 +723,11 @@ _realbox_release() {
 # dry-run prints every decision, writes NOTHING, and the managed command it
 # WOULD write names the quoted absolute distrobox path (#175).
 _item_3_1() {
-    _require_tools env just sed find wc mktemp || return 1
+    _require_tools env just sed find wc mktemp || return $?
     _item_begin || return 1
     local _g _d _before _after _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # The managed files exist and hold the user's own content before the dry
@@ -765,11 +770,11 @@ _item_3_1() {
 # The real write: state file plus the ghostty managed block, then the
 # `status` report and the managed block itself.
 _item_3_2() {
-    _require_tools env just sed mktemp || return 1
+    _require_tools env just sed mktemp || return $?
     _item_begin || return 1
     local _g _d _setup_rc _status_rc _ghostty _state _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # The write lands in files the user already owns, so the check can tell
@@ -870,11 +875,11 @@ _item_3_2() {
 # repeated), then --auto-enter no, which removes the block and reports each
 # removal. Afterwards zero managed blocks are left.
 _item_3_3() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     local _g _d _blocks _before _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # Removal is where overwriting is most tempting and most destructive:
@@ -944,7 +949,7 @@ _item_3_3() {
 # Bad input is refused by the script itself (exit 2) and nothing is created
 # under HOME; a corrupt state file is refused whatever source it claims.
 _item_3_4() {
-    _require_tools env just sed find wc mktemp cp diff || return 1
+    _require_tools env just sed find wc mktemp cp diff || return $?
     _item_begin || return 1
     local _bogus_rc _files _src _status_rc _bad=0
 
@@ -1040,17 +1045,17 @@ _item_3_4() {
 # never be a bare name).
 _require_no_distrobox_on_path() {
     if (PATH="$2"; command -v distrobox >/dev/null 2>&1); then
-        _fail "$1: environment unfit: distrobox is still on the restricted PATH"
-        return 1
+        _unavailable "$1: environment unfit: distrobox is still on the restricted PATH"
+        return 3
     fi
 }
 
 _item_3_5() {
-    _require_tools env just sed find wc grep ln mktemp || return 1
+    _require_tools env just sed find wc grep ln mktemp || return $?
     _item_begin || return 1
     local _d _t _p _refuse_rc _before _files _write_rc _cmd _cmd_norm _grc _bad=0
-    _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return 1
-    _resolve_exec ghostty 'setup must still resolve the terminal under the restricted PATH' >/dev/null || return 1
+    _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return $?
+    _resolve_exec ghostty 'setup must still resolve the terminal under the restricted PATH' >/dev/null || return $?
     # <G> is deliberately NOT normalised here: the expected lines name
     # <H>/bin/ghostty, the copy reached through the restricted PATH.
     NORM_D="${_d}"
@@ -1067,14 +1072,14 @@ _item_3_5() {
     # Only setup's dependencies are linked; including system directories
     # would also expose a distrobox installed by the package manager.
     for _t in just ghostty sh bash dirname awk grep mkdir mktemp mv rm cat chmod flock; do
-        _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return 1
+        _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return $?
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.5: cannot link ${_t} into the restricted PATH"
             return 1
         }
     done
     local _path="${ITEM_H}/bin"
-    _require_no_distrobox_on_path 3.5 "${_path}" || return 1
+    _require_no_distrobox_on_path 3.5 "${_path}" || return $?
 
     # Counted AFTER the seeding, so "the refusal wrote nothing" is a claim
     # about a HOME that already had the user's two files in it.
@@ -1150,11 +1155,11 @@ _item_3_5() {
 # pinned to the four states, and the item then checks they really were four
 # different answers.
 _item_3_6() {
-    _require_tools env just sed grep ln chmod mktemp || return 1
+    _require_tools env just sed grep ln chmod mktemp || return $?
     _item_begin || return 1
     local _d _t _p _bad=0
     DISTROBOX_LINES_SEEN=()
-    _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return 1
+    _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return $?
     NORM_D="${_d}"
     mkdir -p -- "${ITEM_H}/bin" || {
         _fail "3.6: cannot create the throwaway bin directory"
@@ -1216,13 +1221,13 @@ _item_3_6() {
     # uses and no distrobox, so the one thing missing is the one under
     # test - and stderr stays empty.
     for _t in just sh bash dirname awk grep; do
-        _p="$(_resolve_exec "${_t}" 'status itself needs it under the restricted PATH')" || return 1
+        _p="$(_resolve_exec "${_t}" 'status itself needs it under the restricted PATH')" || return $?
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.6: cannot link ${_t} into the restricted PATH"
             return 1
         }
     done
-    _require_no_distrobox_on_path 3.6 "${ITEM_H}/bin" || return 1
+    _require_no_distrobox_on_path 3.6 "${ITEM_H}/bin" || return $?
     _status_distrobox_line "${DISTROBOX_STATE_NONE}" "PATH=${ITEM_H}/bin" || _bad=1
 
     _expect_distinct_distrobox_lines || _bad=1
@@ -1315,7 +1320,7 @@ but status reported
 # --- 3.7 ---------------------------------------------------------------------
 # The second managed file now belongs to distrobox, never host tmux.
 _item_3_7() {
-    _require_tools env just sed grep mktemp sh || return 1
+    _require_tools env just sed grep mktemp sh || return $?
     _item_begin || return 1
     _seed_user_content 3.7 || return 1
     local _conf="${ITEM_H}/.config/distrobox/distrobox.conf" _blocks _bad=0
@@ -1343,10 +1348,10 @@ _item_3_7() {
 # --- 3.8 ---------------------------------------------------------------------
 # No terminal: remove the profile, keep the independent box isolation.
 _item_3_8() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     _seed_user_content 3.8 || return 1
-    NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return 1
+    NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return $?
     local _ghostty="${ITEM_H}/.config/ghostty/config" _before _blocks _bad=0
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || {
@@ -1381,12 +1386,12 @@ _item_3_8() {
 # --- 3.9 ---------------------------------------------------------------------
 # Switch to the existing modern file: move the single block, keep both files.
 _item_3_9() {
-    _require_tools env just sed grep mktemp || return 1
+    _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     _seed_user_content 3.9 || return 1
     local _legacy="${ITEM_H}/.config/ghostty/config" _target="${ITEM_H}/.config/ghostty/config.ghostty"
     local _before _old _new _bad=0
-    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return 1
+    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return $?
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
     _before="$(_count_matching 'BEGIN worktool managed block' "${_legacy}")" || return 1
@@ -1452,7 +1457,9 @@ _run_item() {
             ;;
     esac
     _rc=$?
-    if [[ "${_rc}" -eq 0 ]]; then
+    if [[ "${_rc}" -eq 3 ]]; then
+        _note "${_item} UNAVAILABLE (exit 3)"
+    elif [[ "${_rc}" -eq 0 ]]; then
         _note "${_item} PASS"
     else
         _note "${_item} FAIL (exit ${_rc})"
@@ -1497,7 +1504,7 @@ verify_setup_run() {
         return 1
     }
     for _item in "${_items[@]}"; do
-        _run_item "${_item}" || return 1
+        _run_item "${_item}" || return $?
     done
     return 0
 }
