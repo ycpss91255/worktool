@@ -353,7 +353,7 @@ EOF
 @test "3.1: a just that prints the documented decision lines but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.1
-    assert_failure
+    assert_failure 1
     assert_output --partial "[FAIL]"
 }
 
