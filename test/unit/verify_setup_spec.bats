@@ -406,8 +406,8 @@ EOF
 @test "3.1: no ghostty on PATH is reported and fails, never skipped" {
     rm -f "${STUB}/ghostty"
     run "${VERIFY}" 3.1
-    assert_failure
-    assert_output --partial "ghostty is not on PATH"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] setup.sh: ghostty is not on PATH"
 }
 
 @test "3.1: no distrobox on PATH is reported and fails, never skipped" {

@@ -70,8 +70,8 @@
 # maintainer compares against doc/acceptance.md); progress, diagnostics and
 # [FAIL] lines go to STDERR.
 #
-# Exit codes: 0 every requested item passed; 1 an item failed or could not
-# be run; 2 usage error.
+# Exit codes: 0 every requested item passed; 1 an item failed;
+# 2 usage error; 3 the environment cannot run the check.
 #
 # Expected failures are handled explicitly. The item runner deliberately
 # calls each check in a conditional so it can report its own verdict.
@@ -277,7 +277,7 @@ Options:
   --list            List the items with their group and exit.
   -h, --help        Show this help and exit.
 
-Exit: 0 all requested items passed, 1 an item failed or could not run,
+Exit: 0 all requested items passed, 1 an item failed, 3 cannot run here,
 2 usage error.
 EOF
     return 0
@@ -322,16 +322,16 @@ _require_tools() {
 _resolve_exec() {
     local _name="$1" _why="$2" _p
     _p="$(command -v -- "${_name}")" || {
-        _fail "${_name} is not on PATH - ${_why}"
-        return 1
+        _unavailable "${_name} is not on PATH - ${_why}"
+        return 3
     }
     [[ "${_p}" == /* ]] || {
-        _fail "${_name} resolved to '${_p}', which is not an absolute path - ${_why}"
-        return 1
+        _unavailable "${_name} resolved to '${_p}', which is not an absolute path - ${_why}"
+        return 3
     }
     [[ -x "${_p}" ]] || {
-        _fail "${_p} is not executable - ${_why}"
-        return 1
+        _unavailable "${_p} is not executable - ${_why}"
+        return 3
     }
     printf '%s\n' "${_p}"
     return 0
@@ -726,8 +726,8 @@ _item_3_1() {
     _require_tools env just sed find wc mktemp || return $?
     _item_begin || return 1
     local _g _d _before _after _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # The managed files exist and hold the user's own content before the dry
@@ -773,8 +773,8 @@ _item_3_2() {
     _require_tools env just sed mktemp || return $?
     _item_begin || return 1
     local _g _d _setup_rc _status_rc _ghostty _state _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # The write lands in files the user already owns, so the check can tell
@@ -878,8 +878,8 @@ _item_3_3() {
     _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     local _g _d _blocks _before _bad=0
-    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return 1
-    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return 1
+    _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
+    _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
     NORM_D="${_d}"
     # Removal is where overwriting is most tempting and most destructive:
@@ -1054,8 +1054,8 @@ _item_3_5() {
     _require_tools env just sed find wc grep ln mktemp || return $?
     _item_begin || return 1
     local _d _t _p _refuse_rc _before _files _write_rc _cmd _cmd_norm _grc _bad=0
-    _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return 1
-    _resolve_exec ghostty 'setup must still resolve the terminal under the restricted PATH' >/dev/null || return 1
+    _d="$(_resolve_exec distrobox 'the check needs a real one to pass to --distrobox')" || return $?
+    _resolve_exec ghostty 'setup must still resolve the terminal under the restricted PATH' >/dev/null || return $?
     # <G> is deliberately NOT normalised here: the expected lines name
     # <H>/bin/ghostty, the copy reached through the restricted PATH.
     NORM_D="${_d}"
@@ -1072,7 +1072,7 @@ _item_3_5() {
     # Only setup's dependencies are linked; including system directories
     # would also expose a distrobox installed by the package manager.
     for _t in just ghostty sh bash dirname awk grep mkdir mktemp mv rm cat chmod flock; do
-        _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return 1
+        _p="$(_resolve_exec "${_t}" 'the restricted PATH must still hold it')" || return $?
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.5: cannot link ${_t} into the restricted PATH"
             return 1
@@ -1159,7 +1159,7 @@ _item_3_6() {
     _item_begin || return 1
     local _d _t _p _bad=0
     DISTROBOX_LINES_SEEN=()
-    _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return 1
+    _d="$(_resolve_exec distrobox 'the on-PATH case reports the one this machine has')" || return $?
     NORM_D="${_d}"
     mkdir -p -- "${ITEM_H}/bin" || {
         _fail "3.6: cannot create the throwaway bin directory"
@@ -1221,7 +1221,7 @@ _item_3_6() {
     # uses and no distrobox, so the one thing missing is the one under
     # test - and stderr stays empty.
     for _t in just sh bash dirname awk grep; do
-        _p="$(_resolve_exec "${_t}" 'status itself needs it under the restricted PATH')" || return 1
+        _p="$(_resolve_exec "${_t}" 'status itself needs it under the restricted PATH')" || return $?
         ln -s "${_p}" "${ITEM_H}/bin/${_t}" || {
             _fail "3.6: cannot link ${_t} into the restricted PATH"
             return 1
@@ -1351,7 +1351,7 @@ _item_3_8() {
     _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
     _seed_user_content 3.8 || return 1
-    NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return 1
+    NORM_D="$(_resolve_exec distrobox 'staging writes the absolute path')" || return $?
     local _ghostty="${ITEM_H}/.config/ghostty/config" _before _blocks _bad=0
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || {
@@ -1391,7 +1391,7 @@ _item_3_9() {
     _seed_user_content 3.9 || return 1
     local _legacy="${ITEM_H}/.config/ghostty/config" _target="${ITEM_H}/.config/ghostty/config.ghostty"
     local _before _old _new _bad=0
-    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return 1
+    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return $?
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
     _before="$(_count_matching 'BEGIN worktool managed block' "${_legacy}")" || return 1
