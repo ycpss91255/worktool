@@ -202,3 +202,12 @@ STUB
         done
     done
 }
+
+@test "a dash goal cannot serve as a complete goal mapping cell (#407)" {
+    successful_job
+    printf '%s' '{"body":"目標: -"}' >"${READY_FIXTURE}/issue"
+    sed -i 's/| 開終端即在盒內 |/| - |/' "${READY_FIXTURE}/body"
+    check_ready
+    assert_failure 2
+    assert_output --partial '目標對照'
+}
