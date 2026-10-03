@@ -386,33 +386,47 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 ## milestone-handover
 
 每次 milestone 驗收交出前，執行 `.claude/workflows/milestone-handover.js`。
-這個 workflow 不合併、不代寫維護者核准，也不自動張貼就緒留言。
+這個 workflow 不合併 PR、不代寫維護者核准，也不自動張貼就緒留言。
 
 | 參數 | 必要 | 說明 |
 |---|---|---|
 | `repo` | 是 | `owner/name`；每個 gh 指令明寫 `--repo` |
-| `repoDir` | 是 | 本次 linked worktree 的絕對路徑；所有寫入限於這個 worktree |
+| `repoDir` | 是 | 起始 linked worktree 的絕對路徑；Sync 找到或建立驗收 worktree 後，後續階段都在該 worktree 執行 |
+| `base` | 是 | 驗收分支名稱（例如 `m3/5-acceptance`）；拒絕不合法的分支名稱 |
 | `pr` | 是 | milestone 驗收 PR 的正整數編號 |
 | `milestoneIssue` | 否 | milestone issue 正整數；省略時取 PR 第一筆 Closes/Fixes/Resolves 參照 |
 | `safeRun` | 否 | 布林值，預設 `true`；為 `false` 時只列安全分類與待執行命令 |
 
-1. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
+1. **Sync**：從 `git worktree list --porcelain` 找到 `base` 的 linked worktree，
+   沒有時在 repo 同層 `worktree/` 建立；不使用主 checkout。先確認乾淨且 PR head 分支相符，
+   fetch `origin/main`。main 已是 HEAD 的祖先時略過 merge、gate、push 和等待，直接進 Head。
+   否則以 merge commit 合入，訊息透過 `-F` 檔案提供，末段為 milestone issue 的 `Refs: #N`，
+   author 與 committer 使用 GitHub noreply，不加署名、不改寫歷史、不 force push。
+   衝突逐處記錄兩邊意圖、解法、理由與驗證；無法安全解決就列出路徑和原因並停止。
+   在 Docker 前景依序跑 `just test guards`、合入變更涉及的 spec 和 `just test lint`，
+   每次確認最多兩個 worktool-test container；失敗即停止，不推送。
+   推送後在前景最多等待 1800 秒，每輪確認同一 PR head；除了 `milestone-gate-approval`，
+   所有 check（含兩種架構的 `verify-all` 與 `ci-passed`）都須成功。
+   失敗回報 job 名稱、連結與 log 的具體原因；缺 check、查詢失敗、head 改變或逾時均停止。
+   命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
+   `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
+2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    缺少、查詢失敗或未綠即回報並停止。
-2. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
+3. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
    驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
-3. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
+4. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
-4. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
+5. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
    修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
    安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
    worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
-5. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+6. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。

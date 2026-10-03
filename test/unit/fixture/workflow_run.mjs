@@ -25,7 +25,7 @@
 // step, using the unchanged tool cwd rather than following shell `cd`.
 // A top-level reply field equal to "<stdout>" becomes the trimmed stdout of
 // the agent's last step (e.g. the URL `gh issue comment` printed).
-// Prints ONE JSON object: { result, error, calls: [{label, schema, prompt}],
+// Prints ONE JSON object: { result, error, calls: [{label, role, phase, schema, prompt}],
 // ran: [{cmd, rc}] }.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -115,7 +115,7 @@ const playHandoverReview = (prompt) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
-  calls.push({ label, role, schema: opts.schema || null, prompt })
+  calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, prompt })
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
