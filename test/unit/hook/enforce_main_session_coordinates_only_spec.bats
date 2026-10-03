@@ -154,3 +154,11 @@ _edit() {
         assert_equal "${status}" 2
     done
 }
+
+@test "main session permits read-only git root flags" {
+    local command
+    for command in 'git --version' 'git --help' 'git -h' 'git -P log' 'git --bare log'; do
+        _check "${command}"
+        assert_success
+    done
+}

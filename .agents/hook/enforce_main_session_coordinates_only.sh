@@ -26,7 +26,7 @@ check_git() {
             case "${word}" in
                 -C|-c|--git-dir|--work-tree|--namespace|--config-env) skip=1 ;;
                 -C?*|-c?*|--git-dir=*|--work-tree=*|--namespace=*|--config-env=*) ;;
-                --no-pager|--paginate|--literal-pathspecs|--no-optional-locks) ;;
+                --no-pager|-P|--paginate|-p|--bare|--version|--help|-h|--literal-pathspecs|--no-optional-locks) ;;
                 -*) refuse 'Unknown git root option cannot be checked.' ;;
                 *) sub="${word}" ;;
             esac
