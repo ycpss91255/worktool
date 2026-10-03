@@ -102,7 +102,7 @@ const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and
 const CODEX_RULES = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
-const IMPLEMENT_TASK = `TASK (issue #${A.issue}): ${A.task}
+const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
 When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
 const SETUP = `cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}`
@@ -117,17 +117,23 @@ ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 ${IMPLEMENT_TASK}. The PR body starts with "[codex]" and has no attribution footer. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
+const IMPLEMENT_SNAPSHOT = `Before overwriting any output, run this foreground script to preserve the previous attempt:
+\`mkdir -p ${sq(SCRATCH)} && for file in ${sq(IMPLEMENT_OUT)} ${sq(`${IMPLEMENT_OUT}.log`)} ${sq(`${SCRATCH}/implement.rc`)}; do
+  if [ -e "$file" ]; then cp "$file" "$file.previous" || exit 1; fi
+done\``
+
 const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
 setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
 Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
 timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
-An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from \`tail -n 80 ${out}\`; never treat it as success.`
+An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from both \`tail -n 80 ${out}.log\` and \`tail -n 80 ${out}\`; never treat it as success.`
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
 ${CODEX_RULES}
 
 First run: ${SETUP}.
+${IMPLEMENT_SNAPSHOT}
 ${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
@@ -263,6 +269,13 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   cd ${sq(WT)} &&
   [ "$(git rev-parse --path-format=absolute --git-common-dir)" = "$common" ] &&
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] || exit 1
+  status=$(git status --porcelain) || exit 1
+  previous_rc=0
+  ${IMPLEMENTER === 'codex' ? `if [ -e ${sq(`${SCRATCH}/implement.rc`)} ]; then
+    previous_rc=$(cat ${sq(`${SCRATCH}/implement.rc`)}) || exit 1
+  fi` : ''}
+  if [ -n "$status" ]${IMPLEMENTER === 'codex' ? ` || [ "$previous_rc" != 0 ] || [ ! -s ${sq(IMPLEMENT_OUT)} ]` : ''}; then printf implement
+  else
   ${A.pr ? 'printf resume' : `count=$(git rev-list --count ${sq(`origin/${BASE}..HEAD`)}) || exit 1
   if [ "$count" -eq 0 ]; then
     prs=$(gh pr list --repo ${sq(REPO)} --head ${sq(A.branch)} --base ${sq(BASE)} --state open --json number) || exit 1
@@ -271,6 +284,7 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   else
     printf resume
   fi`}
+  fi
 else
   rc=$?
   [ "$rc" -eq 1 ] && printf new
@@ -279,10 +293,11 @@ fi
 if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
 const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP
+const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT}; the codex wrapper snapshots these to ${IMPLEMENT_OUT}.log.previous and ${IMPLEMENT_OUT}.previous before launch, so read those snapshots when continuing inside codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
 const IMPLEMENT_CONTEXT = prepared.state === 'implement'
-  ? `Continue implementation in the existing worktree. Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
+  ? `${continueContext} Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
   : ''
-if (A.pr && !RESUME) return result({ pr: A.pr, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['resume PR requires an existing branch'] })
+if (A.pr && prepared.state === 'new') return result({ pr: A.pr, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['resume PR requires an existing branch'] })
 
 const reviewLight = async () => {
   phase('Review')
@@ -308,7 +323,7 @@ For behaviour changes use TDD; mechanical edits without new behaviour need no ne
   if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
-In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
+In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; push updates instead of creating another PR. Ignore the creation command below for this existing PR.` : ''} Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
   phase('Locate')
   const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
@@ -319,10 +334,31 @@ In ${WT}, run ${GATES} blocking in the foreground. Only when green, push with gi
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
+const implementFull = async () => {
+  for (let retry = 0; retry <= 3; retry += 1) {
+    const setup = retry ? `cd ${WT}` : IMPLEMENT_SETUP
+    const context = retry ? continueContext : IMPLEMENT_CONTEXT
+    const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, setup)}\n${context}`
+    let edited
+    try {
+      edited = await agent(`${brief}\nReturn status ready only after implementation and publication succeed; otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
+        label: `${RUN_ID} implement:#${A.issue}${retry ? `:retry${retry}` : ''}`, phase: 'Implement',
+        schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose',
+      })
+    } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
+    if (edited && edited.status === 'ready') return ''
+    const reason = (edited && edited.reason) || 'implementer returned no failure reason'
+    if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
+    await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
+      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
+    })
+  }
+}
+
 if (!RESUME) {
   phase('Implement')
-  const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, IMPLEMENT_SETUP)}\n${IMPLEMENT_CONTEXT}`
-  await agent(brief, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', agentType: 'general-purpose' })
+  const failure = await implementFull()
+  if (failure) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [`implementation failed: ${failure}`] })
 }
 
 if (RESUME && MODE === 'light') {
