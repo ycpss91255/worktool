@@ -838,7 +838,7 @@ rc=0
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
-    - 預期看到資訊：`decoy-created=1`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`dev-still-there=1`。還原印 `restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
+    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，`52-rc=1`、`still-there=dev`。還原印 `restore-ok=1`、`blocks=0`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`；本項最後只清除自己建的 decoy。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.3; echo rc=$?
