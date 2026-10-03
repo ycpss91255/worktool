@@ -2485,6 +2485,7 @@ _scratch_assert_isolated() {
 }
 
 @test "doc/workflow.md requires milestone acceptance hand-off evidence from real user entries" {
+    local json="${output}"
     run sed -n '/^## milestone 驗收 PR 交出前檢查清單$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
     assert_success
     assert_output --partial 'milestone-gate'
@@ -2873,7 +2874,7 @@ _handover_run() {
 }
 
 _handover_replies() {
-    jq -n '{"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
+    jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "findings:":{file:"findings.md"},
@@ -2881,15 +2882,21 @@ _handover_replies() {
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}}'
 }
 
-@test "milestone-handover prepares evidence in five ordered unstructured stages without publishing readiness (#412)" {
+@test "milestone-handover prepares evidence in six ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["head:","findings:","review:","machine:","evidence:"] and
-        ([.calls[1:][] | .schema] | all(. == null))' <<<"${output}"
-    jq -e '.calls[1].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
-    jq -e '.calls[2].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
-    jq -e '.calls[3].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
-    jq -e '.calls[4].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+        [.calls[].role] == ["sync:","head:","findings:","review:","machine:","evidence:"] and
+        ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
+    jq -e '.calls[2].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[3].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
+    jq -e '.calls[5].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+    jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
+    jq -e '[.calls[1:][].prompt] | all(contains("/tmp/acceptance"))' <<<"${output}"
+    run sed -n '/phases: \[/,/^  ],/p' "${WF_DIR}/milestone-handover.js"
+    assert_line --index 1 --partial "title: 'Sync'"
+    assert_line --index 2 --partial "title: 'Head'"
+    output="${json}"
     refute_output --partial '允許合併'
     run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
     assert_success
@@ -2912,7 +2919,7 @@ _handover_replies() {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7,"safeRun":false}' \
         "$(jq '."head:".checks += [{name:"milestone-gate-approval",status:"PENDING"}] |
             ."review:".line=("交出判定：不可交出 head=" + ("a" * 40))' <<<"${replies}")"
-    jq -e '.result.status == "prepared" and (.calls[3].prompt | contains("safeRun=false"))' <<<"${output}"
+    jq -e '.result.status == "prepared" and (.calls[4].prompt | contains("safeRun=false"))' <<<"${output}"
 }
 
 @test "milestone-handover accepts JSON text from unstructured long stages and fails closed on prose (#412)" {
