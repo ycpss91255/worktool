@@ -16,6 +16,9 @@ check_git() {
     local word sub='' skip='' ff='' conflict=''
     local -a args=()
     for word in "$@"; do
+        case "${sub}" in
+            log|status|show|diff|rev-parse|rev-list|merge-base|ls-files|ls-tree|ls-remote|cat-file|blame|describe|shortlog|fetch) continue ;;
+        esac
         hook_word_has_expansion "${word}" && refuse 'Expanded git arguments cannot be checked.'
         word="$(hook_word "${word}")"
         if [[ -n "${sub}" ]]; then

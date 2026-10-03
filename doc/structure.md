@@ -235,7 +235,8 @@ hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`�
 Bash 檢查沿用 `subcommand.sh` 的指令拆解；直接指令包含引號、常見 wrapper、
 `timeout` 與 git／just 全域選項仍會檢查。`eval`、`bash -c`、`xargs`、shell
 heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則；帶引號的 xargs
-指令也會拆解，git／just 參數有 shell 展開或未知全域旗標時拒絕。
+指令也會拆解，影響 git／just 動作判定的參數有 shell 展開或未知全域旗標時拒絕；
+明確唯讀的 git 子指令與 `fetch` 的資料參數可展開，內嵌的指令替換仍會逐一檢查。
 間接執行的原始文字檢查可能連純文字提及也拒絕；無受限動作的日常指令放行。
 腳本檔內容、自訂 just recipe、編碼或執行時組出的指令不在靜態檢查範圍內。
 
