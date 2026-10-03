@@ -1,6 +1,6 @@
 # Only complete rows in the goal trace section can prove coverage.
 function trim(text) {
-    sub(/^[[:space:]]*/, "", text); sub(/[[:space:]。]+$/, "", text)
+    sub(/^[[:space:]]*/, "", text); sub(/[[:space:]]+$/, "", text)
     return text
 }
 /^##[[:space:]]+目標對照[[:space:]]*$/ { active=1; next }

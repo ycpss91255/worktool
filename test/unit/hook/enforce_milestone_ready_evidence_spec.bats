@@ -177,3 +177,11 @@ STUB
         assert_output --partial '目標對照'
     done
 }
+
+@test "goal cells must equal the extracted goal text exactly (#407)" {
+    successful_job
+    sed -i 's/| 開終端即在盒內 |/| 開終端即在盒內。 |/' "${READY_FIXTURE}/body"
+    check_ready
+    assert_failure 2
+    assert_output --partial '開終端即在盒內'
+}
