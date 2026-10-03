@@ -84,8 +84,18 @@ ready_require_verdict() {
     local _comments
     _comments="$(_gh api --paginate "repos/$1/issues/$2/comments")" \
         || hook_block 'codex verdict query failed (fail closed)'
-    if ! jq -s -e --arg sha "$3" '[.[][] | select(.body | test("^\\s*\\[codex\\]")) |
-        select(.body | split("\n") | index("交出判定：可交出 head=" + $sha))] | length > 0' \
+    if ! jq -s -e --arg sha "$3" '
+        if all(.[]; type == "array") then add else error("malformed pages") end |
+        if all(.[]; (.body | type == "string") and
+            (.created_at | fromdateiso8601 | type == "number")) then .
+        else error("malformed comments") end |
+        def verdict($word): .body | split("\n") | map(rtrimstr("\r")) |
+            index("交出判定：" + $word + " head=" + $sha) != null;
+        [ .[] | select((.body | test("^\\s*\\[codex\\](\\s|$)")) and verdict("可交出")) |
+            .created_at | fromdateiso8601 ] as $positive |
+        [ .[] | select(verdict("不可交出")) | .created_at | fromdateiso8601 ] as $negative |
+        ($sha | test("^[0-9a-f]{40}$")) and ($positive | length > 0) and
+        (($negative | length == 0) or (($positive | max) > ($negative | max)))' \
         <<<"${_comments}" >/dev/null; then
         hook_block 'codex handover verdict required (fail closed)'
     fi

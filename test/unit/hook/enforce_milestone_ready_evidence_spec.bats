@@ -229,3 +229,23 @@ STUB
     assert_failure 2
     assert_output --partial 'codex'
 }
+
+@test "ready evidence blocks when a later negative verdict exists for the same SHA (#412)" {
+    successful_job
+    jq '. + [{id:2,created_at:"2026-10-03T01:00:00Z",body:"[codex]\n交出判定：不可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' \
+        "${READY_FIXTURE}/comments" >"${READY_FIXTURE}/next"
+    mv "${READY_FIXTURE}/next" "${READY_FIXTURE}/comments"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'codex'
+}
+
+@test "ready evidence allows a matching positive verdict newer than all negatives (#412)" {
+    successful_job
+    jq '. + [{id:2,created_at:"2026-10-03T01:00:00Z",body:"[codex]\n交出判定：不可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        {id:3,created_at:"2026-10-03T02:00:00Z",body:"[codex]\n交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}] | reverse' \
+        "${READY_FIXTURE}/comments" >"${READY_FIXTURE}/next"
+    mv "${READY_FIXTURE}/next" "${READY_FIXTURE}/comments"
+    check_ready
+    assert_success
+}
