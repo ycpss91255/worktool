@@ -23,6 +23,7 @@
 #   hook_read_input         read the stdin JSON payload once into HOOK_INPUT
 #   hook_field <jq-filter>  echo a field of HOOK_INPUT via jq (empty if absent
 #                           or jq is missing)
+#   hook_subagent_call      true for a nonempty string agent_id
 #   hook_command            shorthand for the Bash tool's .tool_input.command
 #   hook_worktree_root <r>  print the shared worktree root beside repo <r>
 #   hook_allow              standard pass path: exit 0
@@ -123,4 +124,14 @@ hook_context() {
         printf '[hook:%s] cannot emit advisory context\n' "${HOOK_NAME}" >&2
     fi
     exit 0
+}
+
+# Identity contract: Claude Code supplies agent_id on subagent tool calls.
+# Source checked 2026-10-02: https://code.claude.com/docs/en/hooks#common-input-fields
+# Accept any subagent (including Workflow agents), as decided in PR #372.
+# No transcript or environment markers are consulted. Empty/invalid IDs
+# grant no exception; this cooperating-agent guard cannot authenticate input.
+hook_subagent_call() {
+    jq -e '.agent_id | type == "string" and length > 0' \
+        <<<"${HOOK_INPUT}" >/dev/null 2>&1
 }

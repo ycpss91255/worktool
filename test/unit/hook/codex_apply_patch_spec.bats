@@ -143,3 +143,27 @@ JSON
     assert_failure 2
     assert_output --partial 'main checkout'
 }
+
+@test "a Codex apply_patch without agent_id can edit the sibling worktree directory" {
+    local _repo _work _patch _payload
+    _repo="${BATS_TEST_TMPDIR}/adapter/src"
+    _work="${BATS_TEST_TMPDIR}/adapter/worktree/mainhook416"
+    mkdir -p "${_repo}/.agents/hook/lib" "${_repo}/.claude" "${_work}"
+    git -C "${_repo}" init -q
+    cp "${HOOK_DIR}/codex_apply_patch.sh" \
+        "${HOOK_DIR}/enforce_main_session_coordinates_only.sh" \
+        "${HOOK_DIR}/enforce_main_checkout_readonly.sh" \
+        "${HOOK_DIR}/enforce_shellcheck_disable_approval.sh" "${_repo}/.agents/hook/"
+    cp "${HOOK_DIR}/lib/hook_bootstrap.sh" "${HOOK_DIR}/lib/subcommand.sh" \
+        "${_repo}/.agents/hook/lib/"
+    cp "${REPO_ROOT}/.claude/settings.json" "${_repo}/.claude/"
+    _patch="$(printf '%s\n' '*** Begin Patch' \
+        "*** Update File: ${_work}/README.md" '@@' '-old' '+new' '*** End Patch')"
+    _payload="$(printf '%s' "$(_payload "${_patch}")" | jq --arg cwd "${_work}" '.cwd = $cwd')"
+
+    run bash -c 'printf "%s" "$1" | "$2"' _ \
+        "${_payload}" "${_repo}/.agents/hook/codex_apply_patch.sh"
+
+    assert_success
+    assert_output ''
+}

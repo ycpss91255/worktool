@@ -265,10 +265,11 @@ STUB
     successful_job
     local replies json prompt marker
     printf '[]' >"${READY_FIXTURE}/comments"
-    replies='{"head:":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":["milestone-gate"],"milestoneIssue":5,"checks":[{"name":"verify-all (ubuntu-latest)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"verify-all (ubuntu-24.04-arm)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"ci-passed","status":"COMPLETED","conclusion":"SUCCESS"}]},"findings:":{"file":"findings.md"},"review:":{"line":"交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"https://github.com/ycpss91255/worktool/pull/7#issuecomment-1"},"machine:":{"file":"machine.md"},"evidence:":{"evidence":"evidence.md","draft":"ready.md"}}'
+    replies='{"sync:":{"state":"unchanged","repoDir":"__FIXTURE__","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"head:":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":["milestone-gate"],"milestoneIssue":5,"checks":[{"name":"verify-all (ubuntu-latest)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"verify-all (ubuntu-24.04-arm)","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"ci-passed","status":"COMPLETED","conclusion":"SUCCESS"}]},"findings:":{"file":"findings.md"},"review:":{"line":"交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"https://github.com/ycpss91255/worktool/pull/7#issuecomment-1"},"machine:":{"file":"machine.md"},"evidence:":{"evidence":"evidence.md","draft":"ready.md"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${REPO_ROOT}/.claude/workflows/milestone-handover.js" \
-        "$(jq -cn --arg d "${READY_FIXTURE}" '{repo:"ycpss91255/worktool",repoDir:$d,pr:7}')" "${replies}" exec-handover
+        "$(jq -cn --arg d "${READY_FIXTURE}" '{repo:"ycpss91255/worktool",repoDir:$d,base:"m3/5-acceptance",pr:7}')" \
+        "$(jq -c --arg d "${READY_FIXTURE}" '."sync:".repoDir=$d' <<<"${replies}")" exec-handover
     assert_success
     json="${output}"
     jq -e '.result.status == "prepared" and .ran[0].poster == "codex" and .ran[0].rc == 0' <<<"${json}"
