@@ -96,15 +96,16 @@ setup() {
 }
 
 @test "stub contract: failing stream shims drain pipeline input before answering" {
-    local _tool
+    local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
+    cat >"${_probe}" <<'EOF'
+set -o pipefail
+printf '%1048576s\n' x | "$1"
+statuses=("${PIPESTATUS[@]}")
+printf 'writer=%s reader=%s\n' "${statuses[@]}"
+EOF
     for _tool in cut sort wc tee; do
         run env "SHIM_${_tool^^}_RC=1" "SHIM_${_tool^^}_OUT=plausible" \
-            bash -c '
-                set -o pipefail
-                printf "%1048576s\n" x | "$1"
-                statuses=("${PIPESTATUS[@]}")
-                printf "writer=%s reader=%s\n" "${statuses[@]}"
-            ' _ "${_tool}"
+            bash "${_probe}" "${_tool}"
         assert_success
         assert_line 'plausible'
         assert_line 'writer=0 reader=1'
