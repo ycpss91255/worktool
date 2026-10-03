@@ -84,7 +84,8 @@ ready_require_verdict() {
     local _comments
     _comments="$(_gh api --paginate "repos/$1/issues/$2/comments")" \
         || hook_block 'codex verdict query failed (fail closed)'
-    if ! jq -s -e '[.[][] | select(.body | test("^\\s*\\[codex\\]"))] | length > 0' \
+    if ! jq -s -e --arg sha "$3" '[.[][] | select(.body | test("^\\s*\\[codex\\]")) |
+        select(.body | split("\n") | index("交出判定：可交出 head=" + $sha))] | length > 0' \
         <<<"${_comments}" >/dev/null; then
         hook_block 'codex handover verdict required (fail closed)'
     fi

@@ -221,3 +221,11 @@ STUB
     assert_failure 2
     assert_output --partial 'codex'
 }
+
+@test "ready evidence blocks codex verdicts for an older head SHA (#412)" {
+    successful_job
+    sed -i 's/head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' "${READY_FIXTURE}/comments"
+    check_ready
+    assert_failure 2
+    assert_output --partial 'codex'
+}
