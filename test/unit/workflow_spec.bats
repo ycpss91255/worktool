@@ -3201,3 +3201,18 @@ _pl_retry_run() {
             contains("return its name, URL and concrete failure reason"))' <<<"${output}"
     assert_success
 }
+
+@test "milestone-handover Sync reports pending and missing checks only at the total timeout (#421)" {
+    local replies
+    replies="$(_handover_replies | jq '."sync:"={state:"blocked",error:"CI timeout after 7200 seconds",pending:[{name:"verify-all (ubuntu-latest)",status:"IN_PROGRESS",url:"https://example.test/job"},{name:"ci-passed",status:"MISSING"}]}')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "sync-blocked" and [.calls[].phase] == ["Sync"] and
+        .result.report.pending[0].name == "verify-all (ubuntu-latest)" and
+        .result.report.pending[1].name == "ci-passed" and
+        (.calls[0].prompt | contains("Only exhausting the total 7200-second cap is a CI timeout") and
+            contains("return blocked with the elapsed time and every still-pending check") and
+            contains("name, status and URL") and contains("missing required checks as MISSING") and
+            contains("final fresh head/check query") and
+            contains("stop on a changed head or query failure"))' <<<"${output}"
+    assert_success
+}
