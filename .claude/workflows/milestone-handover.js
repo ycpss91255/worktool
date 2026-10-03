@@ -85,18 +85,34 @@ if (!scratchResult || scratchResult.error || scratchResult.ok !== true) {
   return { pr: A.pr, sha: head.sha, status: 'scratch-failed', report: scratchResult || 'Scratch initialization failed' }
 }
 const CONTEXT = `${RULES} Frozen head=${head.sha}, milestone issue #${head.milestoneIssue}. Scratch ONLY ${JSON.stringify(SCRATCH)}. Never delete or recreate the scratch directory; preserve all earlier stages' files. Before any publication or final evidence, re-query head; if it changed, return error and stop. Do not publish a ready comment.`
+const verifyArtifacts = async (stage, files) => {
+  const paths = files.map(file => `${SCRATCH}/${file}`)
+  const checks = paths.map(path => `if ! test -s ${sq(path)}; then printf '%s\\n' ${sq(JSON.stringify({ missing: path }))}; exit 0; fi`).join('; ')
+  const checked = decode(await agent(`${CONTEXT}
+Verify earlier outputs before ${stage}; do not write any files. Run this exact command in the foreground:
+\`cd ${sq(A.repoDir)} && { ${checks}; printf '%s\\n' '${JSON.stringify({ ok: true })}'; }\`
+Return only the command's JSON stdout unchanged. A missing or empty file stops this stage; never repair or reconstruct it. Command failure is error.`,
+  { label: `${RUN_ID} artifact-check:${stage}`, phase: stage, agentType: 'general-purpose' }))
+  if (!checked || checked.error || checked.missing || checked.ok !== true) {
+    return { pr: A.pr, sha: head.sha, status: 'artifacts-missing', stage,
+      report: checked?.missing ? checked : { error: `Could not verify non-empty files: ${paths.join(', ')}`, detail: checked } }
+  }
+  return null
+}
 const findingsResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: findings.md.
 Fetch ALL PR comments and reviews with pagination (REST comments include author_association); include every prior maintainer acceptance report: OWNER and not agent-tagged after leading whitespace ([claude]/[codex]/[agy]/[gemini]). Keep source URL, date and verbatim finding; assign F1..Fn without losing repeated or superseded findings. Explain for each how the current head reproduces/verifies it, at which user entry point, with command, expected output and evidence. Real-machine-only findings are pending real-machine verification, never passed from CI or static reading. Read doc/acceptance.md for this milestone. Save reports and the complete per-finding table to ${SCRATCH}/findings.md. Return {file: absolute findings path, error?: reason}.`, { label: `${RUN_ID} findings:`, phase: 'Findings', agentType: 'general-purpose' })
 const findings = decode(findingsResult)
 if (!findings?.file || findings.error) return { pr: A.pr, sha: head.sha, status: 'findings-failed', report: findings }
+const reviewInputs = await verifyArtifacts('Review', ['findings.md'])
+if (reviewInputs) return reviewInputs
 const reviewResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: codex*.
-Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} with the following task as its prompt. Write the task verbatim to a scratch prompt file and pass it on stdin; keep nested gh commands out of the Claude shell command. Run in the foreground; capture transcript and exit code under scratch. Nonzero exit, empty output or malformed JSON fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
+Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} with the following task as its prompt. Write the task verbatim to ${SCRATCH}/codex-prompt.md and pass it on stdin; keep nested gh commands out of the Claude shell command. Run in the foreground; capture transcript and exit code in ${SCRATCH}/codex-transcript.log and ${SCRATCH}/codex-exit.txt. Nonzero exit, empty output or malformed JSON fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
 BEGIN CODEX TASK
 ${CONTEXT}
 Only create or overwrite your own files: codex*.
-Review the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milestone issue goals, and every prior finding in ${findings.file}. Read scripts and check that documented expected output of EACH acceptance item matches what the script actually prints, including section 5. Compare all goals from actual user entry points. Mark real-machine items pending rather than passed. This is a hand-over verdict, not a claim that human acceptance passed.
+Review the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milestone issue goals, and every prior finding in ${SCRATCH}/findings.md. Read scripts and check that documented expected output of EACH acceptance item matches what the script actually prints, including section 5. Compare all goals from actual user entry points. Mark real-machine items pending rather than passed. This is a hand-over verdict, not a claim that human acceptance passed.
 Write your own verdict to ${SCRATCH}/codex.md starting [codex], containing exactly one standalone verdict line with either:
 交出判定：可交出 head=${head.sha}
 交出判定：不可交出 head=${head.sha}
@@ -110,19 +126,27 @@ if (!review || review.error || !verdicts.includes(review.line) ||
     !/#[a-z]+-[0-9]+$/.test(review.url)) {
   return { pr: A.pr, sha: head.sha, status: 'review-failed', report: review }
 }
+const reviewFiles = ['findings.md', 'codex.md', 'codex-result.json']
+const machineInputs = await verifyArtifacts('Machine', reviewFiles)
+if (machineInputs) return machineInputs
 const machineResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: machine.md and machine/ (create the subdirectory if needed).
 Read EVERY real-machine item (section 5 for M3), including prior findings. safeRun=${SAFE_RUN}. Classify EACH separately: safe only if it does not post to GitHub untagged, does not modify live user config without built-in backup+restore, needs no human desktop interaction, and no same-name box exists. Inspect the actual scripts and engine inventory before execution; unknown safety means unsafe. Respect max 2 worktool-test containers; inspect running count before each run, run sequentially, never stop others' containers. Every user action goes through just; do not run tests on host or whole tiers locally.
 When safeRun=true, execute safe items through their documented just entry point, capturing exact commands, stdout/stderr, exit status and built-in restore results (including failure cleanup). Verify restoration against before-state. Unsafe items need reason plus exact maintainer command; safeRun=false marks safe items not run with exact command. Human desktop interaction remains pending, never passed. Write ${SCRATCH}/machine.md and output logs under ${SCRATCH}/machine/. Return {file: absolute machine.md path, error?: reason}.`, { label: `${RUN_ID} machine:`, phase: 'Machine', agentType: 'general-purpose' })
 const machine = decode(machineResult)
 if (!machine?.file || machine.error) return { pr: A.pr, sha: head.sha, status: 'machine-failed', report: machine }
+const evidenceFiles = [...reviewFiles, 'machine.md']
+const evidenceInputs = await verifyArtifacts('Evidence', evidenceFiles)
+if (evidenceInputs) return evidenceInputs
 const evidenceResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: evidence.md and ready.md.
-Read doc/workflow.md's single evidence template, milestone goals, ${findings.file}, ${SCRATCH}/codex.md and ${machine.file}. Re-query the head and current checks; require the same green check policy as Head (except milestone-gate-approval). Write the PR-description evidence section to ${SCRATCH}/evidence.md and a ready-comment draft to ${SCRATCH}/ready.md, both starting [claude], the identity of the hand-over session that will post the ready draft. Do not post or edit the PR. Include head SHA, CI run/job links from ${JSON.stringify(head.checks)}, all prior finding rows with user entry/reproduction/verification/evidence, section-5 per-item safety reasons, exact commands, output and restoration results. Never omit pending or failed items. Use exactly this four-column goal table, one row per original milestone goal:
+Read doc/workflow.md's single evidence template, milestone goals, ${SCRATCH}/findings.md, ${SCRATCH}/codex.md and ${SCRATCH}/machine.md. Re-query the head and current checks; require the same green check policy as Head (except milestone-gate-approval). Write the PR-description evidence section to ${SCRATCH}/evidence.md and a ready-comment draft to ${SCRATCH}/ready.md, both starting [claude], the identity of the hand-over session that will post the ready draft. Do not post or edit the PR. Include head SHA, CI run/job links from ${JSON.stringify(head.checks)}, all prior finding rows with user entry/reproduction/verification/evidence, section-5 per-item safety reasons, exact commands, output and restoration results. Never omit pending or failed items. Use exactly this four-column goal table, one row per original milestone goal:
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|
 Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. If verdict is negative (${review.line}) or any required run/restore failed, draft clearly states blocked and cannot declare readiness. Otherwise link the independent verdict and explain pending human items. Return {evidence: absolute evidence.md path, draft: absolute ready.md path, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', agentType: 'general-purpose' })
 const evidence = decode(evidenceResult)
 if (!evidence?.evidence || !evidence.draft || evidence.error) return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidence }
+const preparedFiles = await verifyArtifacts('Prepared', [...evidenceFiles, 'evidence.md', 'ready.md'])
+if (preparedFiles) return preparedFiles
 return { pr: A.pr, sha: head.sha, status: 'prepared', verdict: review.line, comment: review.url, ...evidence }

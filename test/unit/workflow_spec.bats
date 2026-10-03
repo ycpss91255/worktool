@@ -2906,7 +2906,7 @@ _handover_replies() {
     jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
-        "scratch:":{ok:true},"findings:":{file:"findings.md"},
+        "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
 }
@@ -2914,12 +2914,12 @@ _handover_replies() {
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","review:","machine:","evidence:"] and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
-    jq -e '.calls[4].prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
-    jq -e '.calls[5].prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
-    jq -e '.calls[6].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
+    jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
+    jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
     jq -e '[.calls[1:][].prompt] | all(contains("/tmp/acceptance"))' <<<"${output}"
     jq -e '[.calls[].phase][0:2] == ["Sync","Head"]' <<<"${output}"
@@ -3243,4 +3243,41 @@ _pl_retry_run() {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
         "$(_handover_replies | jq '."scratch:"={error:"mkdir failed"}')"
     jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","scratch:"]' <<<"${output}"
+}
+
+@test "milestone-handover checks real nonempty artifacts before stages and preserves successful output (#423)" {
+    local root="${BATS_TEST_TMPDIR}/handover files" scratch args replies json loss kind stage file mode
+    scratch="${root}/.agents/state/milestone-handover-7-$(printf 'a%.0s' {1..40})"
+    args="$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$(_handover_replies | jq --arg d "${root}" '."sync:".repoDir=$d')"
+    mkdir -p "${scratch}"
+    printf 'stale\n' > "${scratch}/stale.md"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "${args}" "${replies}" exec-handover-files
+    assert_success
+    json="${output}"
+    run jq -e '.result.status == "prepared" and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review",
+            "review:","artifact-check:Machine","machine:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+        ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
+    assert_success
+    [ ! -e "${scratch}/stale.md" ]
+    for file in findings.md codex.md codex-result.json machine.md evidence.md ready.md; do
+        [ -s "${scratch}/${file}" ]
+    done
+    for loss in 'findings:findings.md:Review' 'review:findings.md:Machine' 'review:codex.md:Machine' \
+        'review:codex-result.json:Machine' 'machine:findings.md:Evidence' 'machine:codex.md:Evidence' \
+        'machine:machine.md:Evidence' 'evidence:ready.md:Prepared'; do
+        IFS=: read -r stage file kind <<<"${loss}"
+        for mode in missing empty; do
+            HANDOVER_LOSS="${stage}:${file}:${mode}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+                "${WF_DIR}/milestone-handover.js" "${args}" "${replies}" exec-handover-files
+            assert_success
+            json="${output}"
+            run jq -e --arg file "${scratch}/${file}" --arg kind "${kind}" '
+                .result.status == "artifacts-missing" and .result.stage == $kind and .result.report.missing == $file and
+                .calls[-1].role == ("artifact-check:" + $kind)' <<<"${json}"
+            assert_success
+        done
+    done
 }
