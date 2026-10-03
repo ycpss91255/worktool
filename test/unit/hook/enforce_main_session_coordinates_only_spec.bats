@@ -26,6 +26,18 @@ _edit() {
         '{cwd:$cwd,agent_id:$agent,tool_name:$tool,tool_input:{file_path:$p,notebook_path:$p}}')"
 }
 
+@test "Claude identity guard is not registered for Codex Bash calls" {
+    run jq -e '[.hooks.PreToolUse[] | select(.matcher == "Bash")
+        | .hooks[].command | select(contains("/enforce_main_session_coordinates_only.sh"))]
+        | length == 0' "${REPO_ROOT}/.codex/hooks.json"
+    assert_success
+
+    run jq -e '[.hooks.PreToolUse[] | select(.matcher == "Bash")
+        | .hooks[].command | select(contains("/enforce_main_session_coordinates_only.sh"))]
+        | length == 1' "${REPO_ROOT}/.claude/settings.json"
+    assert_success
+}
+
 @test "main session cannot commit merge or push from a worktree" {
     local command
     for command in 'git commit -m fix' 'git merge origin/main' 'git push origin topic'; do

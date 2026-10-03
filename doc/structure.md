@@ -60,7 +60,7 @@ worktool/
 │   │   │   ├── 0008_spec.bats  不變量 5 的 issue、just 命令模型連結、引用案例與介面語意守門
 │   │   │   └── 0012_spec.bats  ADR 0012 的引用案例、議題與平台宣稱守門
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
-│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
+│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex 共用 Bash hook 清單與 Claude 身分例外、兩者註冊路徑跑得起來、
 │   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同；含 Stop 回覆語言檢查 #281)
@@ -133,7 +133,7 @@ worktool/
 ├── .gemini/
 │   └── settings.json    Gemini BeforeTool 留言 hook 註冊
 ├── .codex/
-│   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
+│   └── hooks.json       Codex repo hook 註冊:Bash 共用 Claude PreToolUse Bash hook，但排除 Claude 主 session 身分 guard；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
@@ -166,12 +166,14 @@ commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存�
 
 ## Agent hook
 
-`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
-PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
+`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡共用的
+PreToolUse Bash hook，但排除 `enforce_main_session_coordinates_only.sh`：Codex 的
+hook payload 沒有 Claude 的 `agent_id`，不能以此判斷主 session 與實作者。
+command 每次從 `git rev-parse --show-toplevel` 解析目前
 worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
 `CLAUDE_PROJECT_DIR`。留言 guard 在 Codex command 末尾傳入 `codex`，
-Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
-所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 排除上述 Claude 身分
+guard 後比較兩份 Bash 清單，所以其他共用 hook 漏登 Codex 時會失敗。
 
 `.agents/hooks.json` 在 agy 的 `PreToolUse`／`run_command` 註冊
 `.agents/hook/agy_comment.sh`，把實測的 `toolCall.args.CommandLine`、`Cwd`
@@ -224,8 +226,9 @@ Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agen
 `git pull --ff-only`（不得搭配改變合併模式的旗標）、`git worktree add|remove|prune|list`，
 以及 `.agents/memory/` 和 repo、`worktree/` 以外的工作檔。原有主 checkout 唯讀
 hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`、`milestone-fanout`
-或 `milestone-handover`。Claude 與 Codex 的 Bash hook 清單維持一致，檔案編輯轉接
-沿用 Claude 的註冊。
+或 `milestone-handover`。這個 Bash guard 只在 Claude 註冊，不在 Codex 註冊，
+避免把缺少 `agent_id` 的 Codex 實作者誤判成主 session。Codex 的檔案編輯轉接
+沿用 Claude 的 Edit／Write 註冊。
 
 身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
 `hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；

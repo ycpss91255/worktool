@@ -120,9 +120,9 @@ _registered_names() {
         "PostToolUse|Bash|${_p}/remind_main_sync.sh")"
 }
 
-@test "codex registers every Claude PreToolUse Bash hook" {
+@test "codex registers shared Claude Bash hooks except the Claude identity guard" {
     run diff -u \
-        <(_registered_names "${SETTINGS}" Bash) \
+        <(_registered_names "${SETTINGS}" Bash | grep -vxF 'enforce_main_session_coordinates_only.sh') \
         <(_registered_names "${CODEX_HOOKS}" Bash)
     assert_success
 }
