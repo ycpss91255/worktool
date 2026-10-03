@@ -120,9 +120,7 @@ check_edit() {
     [[ -n "${path}" ]] || return 0
     [[ "${path}" == /* ]] || path="${cwd}/${path}"
     path="$(realpath -m -- "${path}")"
-    if ! common="$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
-        common="$(git -C "${HOOK_REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
-    fi
+    common="$(git -C "${HOOK_REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
     root="$(realpath -m -- "$(hook_worktree_root "$(dirname -- "${common}")")")"
     relative="${path#"${root}/"}"
     [[ ! "${relative}" =~ ^[^/]+/\.agents/memory(/|$) ]] || return 0

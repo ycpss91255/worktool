@@ -8,6 +8,10 @@ setup() {
     git init -q "${root}/src"
     MAIN="${root}/src"
     WORK="${root}/worktree/x"
+    mkdir -p "${MAIN}/.agents/hook"
+    cp "${HOOK_DIR}/enforce_main_session_coordinates_only.sh" "${MAIN}/.agents/hook/"
+    cp -R "${HOOK_DIR}/lib" "${MAIN}/.agents/hook/"
+    HOOK_DIR="${MAIN}/.agents/hook"
 }
 
 _check() {
@@ -161,4 +165,17 @@ _edit() {
         _check "${command}"
         assert_success
     done
+}
+
+@test "file protection stays anchored to its repo despite external cwd or symlinks" {
+    local outside="${BATS_TEST_TMPDIR}/other-repo"
+    git init -q "${outside}"
+    ln -s "${WORK}" "${outside}/alias"
+    MAIN="${outside}"
+    _edit "${WORK}/file"
+    assert_equal "${status}" 2
+    _edit 'alias/new-file'
+    assert_equal "${status}" 2
+    _edit "${outside}/body.md"
+    assert_success
 }
