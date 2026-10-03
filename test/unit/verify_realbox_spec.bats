@@ -135,6 +135,19 @@ setup() {
     assert_equal "$(_count_calls just)" "0"
 }
 
+@test "5.3: an unavailable refusal check cannot count as a product refusal" {
+    local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: wc"
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "stub contract: failing stream shims drain pipeline input before answering" {
     local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
     cat >"${_probe}" <<'EOF'

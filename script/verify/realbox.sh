@@ -803,6 +803,7 @@ _53_body() {
     item_51
     _rc51=$?
     printf '51-rc=%s\n' "${_rc51}"
+    [[ "${_rc51}" -ne 3 ]] || return 3
     [[ "${_rc51}" -ne 0 ]] \
         || { guard_fail "5.1 did NOT refuse a pre-existing '${BOX}' box"; return 1; }
 
@@ -811,6 +812,7 @@ _53_body() {
     _52_step2_apply
     _rc52=$?
     printf '52-rc=%s\n' "${_rc52}"
+    [[ "${_rc52}" -ne 3 ]] || return 3
     if [[ "${_rc52}" -eq 0 ]]; then
         _cleanup_pop_run
         guard_fail "5.2 step 2 did NOT refuse a pre-existing '${BOX}' box"
