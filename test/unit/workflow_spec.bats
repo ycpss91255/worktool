@@ -2491,7 +2491,7 @@ _scratch_assert_isolated() {
     assert_output --partial 'verify-all'
     assert_output --partial 'just verify all'
     assert_output --partial '全部成功'
-    assert_output --partial '| milestone 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |'
+    assert_output --partial '[交出 milestone 驗收 PR](#交出-milestone-驗收-pr) 的範本'
     assert_output --partial '每個目標'
     assert_output --partial '第 5 節'
     assert_output --partial '--allow-real-box'
