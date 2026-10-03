@@ -1329,7 +1329,8 @@ STUB
 @test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    export VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
+    VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
+    export VERIFY_RESTORE_SOURCE
     VERIFY_CP="$(cat "${STATE}/real/cp")"
     export VERIFY_CP
     cat >"${STUBS}/cp" <<'STUB'
