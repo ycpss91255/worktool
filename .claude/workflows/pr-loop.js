@@ -117,6 +117,11 @@ ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 ${IMPLEMENT_TASK}. The PR body starts with "[codex]" and has no attribution footer. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
+const IMPLEMENT_SNAPSHOT = `Before overwriting any output, run this foreground script to preserve the previous attempt:
+\`mkdir -p ${sq(SCRATCH)} && for file in ${sq(IMPLEMENT_OUT)} ${sq(`${IMPLEMENT_OUT}.log`)} ${sq(`${SCRATCH}/implement.rc`)}; do
+  if [ -e "$file" ]; then cp "$file" "$file.previous" || exit 1; fi
+done\``
+
 const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
 setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
 Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
@@ -128,6 +133,7 @@ const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for i
 ${CODEX_RULES}
 
 First run: ${SETUP}.
+${IMPLEMENT_SNAPSHOT}
 ${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
@@ -287,7 +293,7 @@ fi
 if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
 const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP
-const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT} before starting codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
+const continueContext = `Continue implementation in the existing worktree ${WT}. Preserve existing commits and uncommitted changes. Inspect git log origin/${BASE}..HEAD, git status --short and git diff before continuing. Read the previous ${IMPLEMENT_OUT}.log and ${IMPLEMENT_OUT}; the codex wrapper snapshots these to ${IMPLEMENT_OUT}.log.previous and ${IMPLEMENT_OUT}.previous before launch, so read those snapshots when continuing inside codex; keep diagnosis and evidence under ${WT}/.agents/state/.`
 const IMPLEMENT_CONTEXT = prepared.state === 'implement'
   ? `${continueContext} Preserve all existing diagnosis files under ${WT}/.agents/state/; inspect them before implementing and keep evidence logs there.`
   : ''

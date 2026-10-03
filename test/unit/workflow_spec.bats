@@ -3063,3 +3063,26 @@ _pl_retry_run() {
         (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Reuse PR #7"))' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop continue: codex snapshots previous output before starting another attempt (#417)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf 'previous report\n' > "${root}/worktree/.scratch/n/implement.md"
+    printf 'at capacity\n' > "${root}/worktree/.scratch/n/implement.md.log"
+    printf '1\n' > "${root}/worktree/.scratch/n/implement.rc"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:417,branch:"b",name:"n",task:"t"}')" \
+        '{"prepare:":{"state":"implement"},"implement:":{"status":"ready","reason":""}}' exec
+    assert_success
+    json="${output}"
+    run cat "${root}/worktree/.scratch/n/implement.md.log.previous"
+    assert_success
+    assert_output 'at capacity'
+    run cat "${root}/worktree/.scratch/n/implement.md.previous"
+    assert_output 'previous report'
+    run cat "${root}/worktree/.scratch/n/implement.rc.previous"
+    assert_output 1
+    run jq -e '.error == null and (.calls[] | select(.role | startswith("implement:")) | .prompt |
+        split("brief:\n")[1] | contains("implement.md.log.previous"))' <<<"${json}"
+    assert_success
+}
