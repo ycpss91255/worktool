@@ -1325,3 +1325,26 @@ STUB
         _i=$((_i + 1))
     done
 }
+
+@test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    export VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
+    VERIFY_CP="$(cat "${STATE}/real/cp")"
+    export VERIFY_CP
+    cat >"${STUBS}/cp" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${VERIFY_CP}" "$@"
+if [[ "${3:-}" == "${VERIFY_RESTORE_SOURCE}" ]]; then
+    printf 'corrupted user content\n' >"${4}"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line 'restore-ok=0'
+    assert_line 'blocks=0'
+    assert_output --partial 'restored content checksum mismatch'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
