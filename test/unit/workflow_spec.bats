@@ -3007,3 +3007,18 @@ _pl_retry_run() {
     run cat "${root}/worktree/.scratch/n/implement.md.log"
     assert_output 'previous run'
 }
+
+@test "pr-loop continue: failed implementation rc overrides clean committed work (#417)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    git -C "${root}/worktree/n" commit -qm pending --allow-empty
+    mkdir -p "${root}/worktree/.scratch/n"
+    printf '1\n' > "${root}/worktree/.scratch/n/implement.rc"
+    printf 'partial report\n' > "${root}/worktree/.scratch/n/implement.md"
+    run _pl_resume_run '{}'
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
+        ([.calls[].role | select(startswith("publish:"))] | length) == 0' <<<"${output}"
+    assert_success
+}
