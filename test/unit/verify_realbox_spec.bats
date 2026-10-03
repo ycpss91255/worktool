@@ -638,6 +638,29 @@ STUB
     assert_output --partial "backup-removed=1"
 }
 
+@test "#433: 5.2 rejects an unresolvable dev namespace and restores" {
+    _fake_window_process
+    local _mode
+    for _mode in inspect-failed zero-pid empty-pid malformed-pid unreadable empty malformed; do
+        unset FAKE_DEV_INSPECT_RC FAKE_DEV_PID FAKE_DEV_NS_RC FAKE_DEV_NS
+        case "${_mode}" in
+            inspect-failed) export FAKE_DEV_INSPECT_RC=1 ;;
+            zero-pid) export FAKE_DEV_PID=0 ;;
+            empty-pid) export FAKE_DEV_PID='' ;;
+            malformed-pid) export FAKE_DEV_PID=unknown ;;
+            unreadable) export FAKE_DEV_NS_RC=1 ;;
+            empty) export FAKE_DEV_NS='' ;;
+            malformed) export FAKE_DEV_NS=unknown ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "window-evidence:"
+        assert_output --partial "restore-ok=1"
+        assert_output --partial "dev-gone=1"
+        assert_output --partial "backup-removed=1"
+    done
+}
+
 @test "5.2.1 happy path records every file setup can write and publishes the manifest" {
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1

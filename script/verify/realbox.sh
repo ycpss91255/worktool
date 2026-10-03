@@ -122,8 +122,8 @@ Items:
           write (Ghostty legacy config, config.ghostty, the worktool state file
           and distrobox.conf), apply the managed blocks, prove the user's own
           content survived, reload an already running Ghostty, then verify
-          the new fish mount namespace differs from the host at the terminal,
-          then restore everything and remove the box.
+          the new fish mount namespace differs from the host and matches this
+          run's dev container, then restore everything and remove the box.
   5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
   5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
           check the user's own content survived).
@@ -630,7 +630,7 @@ _52_dev_namespace() {
         || { guard_fail "cannot inspect dev init PID; check the container engine and re-run 5.2"; return 1; }
     [[ "${_init}" =~ ^[1-9][0-9]*$ ]] \
         || { guard_fail "invalid dev init PID; check the running box and re-run 5.2"; return 1; }
-    _ns="$(readlink "/proc/${_init}/ns/mnt")" \
+    _ns="$(guard_timed "${TIMEOUT_SHORT}" readlink "/proc/${_init}/ns/mnt")" \
         || { guard_fail "cannot read dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
     [[ "${_ns}" =~ ^mnt:\[[0-9]+\]$ ]] \
         || { guard_fail "invalid dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
