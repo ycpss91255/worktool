@@ -135,4 +135,3 @@ hook_subagent_call() {
     jq -e '.agent_id | type == "string" and length > 0' \
         <<<"${HOOK_INPUT}" >/dev/null 2>&1
 }
-
