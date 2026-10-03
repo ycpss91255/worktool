@@ -167,12 +167,10 @@ args 範例：
 交給維護者驗收前，agent 必須逐項完成並在 PR 說明附上證據：
 
 - [ ] 驗收 PR 已貼 `milestone-gate`，目前 head 的 CI 全部成功，包含兩種架構的 `verify-all` 與彙總 `ci-passed`；附上成功 run 的連結。CI 的 `verify-all` 實跑 `just verify all`，只涵蓋非實機項目，不含需要 `--allow-real-box` 的第 5 節。普通 PR 不要求這個 job。
-- [ ] milestone 每個目標都對應至少一個從使用者實際入口出發的測試或驗收項目；在 PR 說明列出下表，每列填入可查證的測試位置、驗收編號與輸出或 CI 連結。入口應是使用者會啟動的命令或操作，例如 setup 寫出的命令或正在執行的 Ghostty；只驗腳本接線或 stub 成功，不能當作目標已達成的證據。
+- [ ] milestone 每個目標都對應至少一個從使用者實際入口出發的測試或驗收項目；在 PR 說明列出目標對照表，每列填入可查證的測試位置、驗收編號與輸出或 CI 連結。入口應是使用者會啟動的命令或操作，例如 setup 寫出的命令或正在執行的 Ghostty；只驗腳本接線或 stub 成功，不能當作目標已達成的證據。
 - [ ] 第 5 節實機項目中，agent 能在 host 上安全執行、有備份與還原流程的項目，交出前先跑一次並貼出輸出與還原結果。無法安全執行的項目，列出原因與待維護者實跑的命令，不宣稱通過。
 
-| milestone 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
-|----------------|----------------|----------------|------|
-| 逐項填入目標 | 命令或操作 | spec／驗收編號 | 輸出或 CI 連結 |
+目標對照表統一使用[交出 milestone 驗收 PR](#交出-milestone-驗收-pr) 的範本；PR 說明與就緒留言使用相同格式。
 
 這份清單是交出前的責任；就緒留言的自動檢查另由 #365 處理。milestone 驗收 PR 的合併仍須維護者在該 PR 留下核准紀錄。
 
@@ -362,16 +360,16 @@ Workflow 腳本不能互相 import，因此各自保留一份與 `pr-loop` 相�
 `verify-all` job 已完成且結論為 `success`，並在留言附上成功 job 的連結。
 一般產品 CI 的綠燈不能取代這個 job；head 更新後要等新 head 的結果。
 
-留言須以自己的 agent 標記開頭，包含 `## 目標對照` 段落與三欄表格：
+留言須以自己的 agent 標記開頭，包含 `## 目標對照` 段落與下列四欄表格（唯一範本）：
 
-| 目標 | 測試或驗收項目 | 使用者入口 |
-|---|---|---|
-| milestone issue 的目標原文 | 對應 spec 或驗收項目 | 使用者實際命令或操作 |
+| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
+|---|---|---|---|
+| milestone issue 的目標原文 | 使用者實際命令或操作 | 對應 spec 或驗收項目 | 輸出或 CI 連結 |
 
 milestone issue 取自 PR 說明第一個 `Closes #N`（也接受 `Fixes`、`Resolves`）參照，
 因此驗收 PR 必須把 milestone issue 放在關閉參照的第一筆。
 目標來源支援 `目標:`／`目標：` 單行（以分號分隔）及 `## 目標` 的逐行清單。
-每個目標各一列，目標欄填原文（可略末尾句號），驗證項目與入口欄都不能空白或只填 `-`。
+每個目標各一列，目標欄須與擷取出的目標文字完全相同（目標來源擷取時略去末尾句號）；四欄都不能空白或只填 `-`。
 驗證應從使用者入口出發；表格只能檢查證據是否齊備，不能取代實際驗證。
 
 Claude 與 Codex 的 `enforce_milestone_ready_evidence.sh` 在留言送出前檢查上述條件。
@@ -379,3 +377,44 @@ Claude 與 Codex 的 `enforce_milestone_ready_evidence.sh` 在留言送出前檢
 命令解析共用 approval hook 的封閉規則；shell 展開、間接執行與無法靜態辨識的
 API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 approval hook 的已知限制。
 人類核准與合併仍走既有 milestone gate。
+
+## milestone-handover
+
+每次 milestone 驗收交出前，執行 `.claude/workflows/milestone-handover.js`。
+這個 workflow 不合併、不代寫維護者核准，也不自動張貼就緒留言。
+
+| 參數 | 必要 | 說明 |
+|---|---|---|
+| `repo` | 是 | `owner/name`；每個 gh 指令明寫 `--repo` |
+| `repoDir` | 是 | 本次 linked worktree 的絕對路徑；所有寫入限於這個 worktree |
+| `pr` | 是 | milestone 驗收 PR 的正整數編號 |
+| `milestoneIssue` | 否 | milestone issue 正整數；省略時取 PR 第一筆 Closes/Fixes/Resolves 參照 |
+| `safeRun` | 否 | 布林值，預設 `true`；為 `false` 時只列安全分類與待執行命令 |
+
+1. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
+   包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
+   缺少、查詢失敗或未綠即回報並停止。
+2. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
+   驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
+   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
+3. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
+   `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
+   codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
+   留言以 `[codex]` 開頭且包含一行
+   `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
+   非零結束、空結果、格式不符或 head 改變均停止。
+4. **Machine**：逐項檢查真機項目（M3 第 5 節），只有不發未標記 GitHub 留言、
+   修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
+   安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
+   worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
+5. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+   `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
+   採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
+   第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
+
+中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
+每次覆寫當次產物避免誤用舊結果。回傳 `status: prepared` 只代表文件已產生；
+負面判定或實跑／還原失敗的草稿明列阻擋，不能宣告就緒。
+
+就緒 hook 另要求同 head 的 `[codex]`「可交出」判定，其時間必須晚於該 SHA
+任何「不可交出」判定；查詢失敗、舊 SHA 或後續負面判定都拒絕。
