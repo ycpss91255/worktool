@@ -60,7 +60,7 @@ worktool/
 │   │   │   ├── 0008_spec.bats  不變量 5 的 issue、just 命令模型連結、引用案例與介面語意守門
 │   │   │   └── 0012_spec.bats  ADR 0012 的引用案例、議題與平台宣稱守門
 │   │   ├── contract_spec.bats    doc/contract.md 的形狀:六節依序、每條承諾一行「驗證:」、引用的測試檔存在、十條不變量依序列出負責寫 ADR 的 issue(#202-#211)、相對連結都存在、structure.md 目錄樹列出(#201)
-│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex Bash hook 清單一致、兩者註冊路徑跑得起來、
+│   │   ├── agent_config_spec.bats  repo 層級 agent 設定(#189,#282):.claude/* symlink、Claude/Codex 共用 Bash hook 清單與 Claude 身分例外、兩者註冊路徑跑得起來、
 │   │   │                           不依賴 initialization 路徑、memory 全是實體檔且索引齊全、skill 清單、
 │   │   │                           skill / memory 已改成 worktool 語境(doc/agent、doc/adr、無不存在的介面、無斷掉的 [[連結]]、無個人或本機資訊)
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同；含 Stop 回覆語言檢查 #281)
@@ -106,7 +106,7 @@ worktool/
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
 │   ├── hook/            agent hook(test-must-use-docker、enforce_long_job_timeout、check_main_fresh_before_worktree、
 │   │   │                remind_main_sync、enforce_gh_body_file、enforce_no_local_paths、enforce_milestone_gate_approval、
-│   │   │                enforce_main_checkout_readonly、
+│   │   │                enforce_main_checkout_readonly、enforce_main_session_coordinates_only(主 session 只協調,#416)、
 │   │   │                enforce_codex_round_cap、enforce_codex_via_workflow(主 session 派工限制與 agent_id 子代理例外,#366)、
 │   │   │                enforce_scope_on_guard_issues、enforce_issue_milestone、enforce_no_attribution、
 │   │   │                enforce_shellcheck_disable_approval、
@@ -133,7 +133,7 @@ worktool/
 ├── .gemini/
 │   └── settings.json    Gemini BeforeTool 留言 hook 註冊
 ├── .codex/
-│   └── hooks.json       Codex repo hook 註冊:Bash 共用全部 Claude PreToolUse Bash hook；apply_patch 經轉接層跑 Edit/Write hook
+│   └── hooks.json       Codex repo hook 註冊:Bash 共用 Claude PreToolUse Bash hook，但排除 Claude 主 session 身分 guard；apply_patch 經轉接層跑 Edit/Write hook
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
@@ -166,12 +166,14 @@ commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存�
 
 ## Agent hook
 
-`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡全部
-PreToolUse Bash hook；command 每次從 `git rev-parse --show-toplevel` 解析目前
+`.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡共用的
+PreToolUse Bash hook，但排除 `enforce_main_session_coordinates_only.sh`：Codex 的
+hook payload 沒有 Claude 的 `agent_id`，不能以此判斷主 session 與實作者。
+command 每次從 `git rev-parse --show-toplevel` 解析目前
 worktree 的 repo root，再執行同一份 `.agents/hook/` 腳本，不依賴
 `CLAUDE_PROJECT_DIR`。留言 guard 在 Codex command 末尾傳入 `codex`，
-Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 直接比較兩份 Bash 清單，
-所以 Claude 日後新增 Bash hook 卻漏登 Codex 時會失敗。
+Claude 預設傳入 `claude`。`test/unit/agent_config_spec.bats` 排除上述 Claude 身分
+guard 後比較兩份 Bash 清單，所以其他共用 hook 漏登 Codex 時會失敗。
 
 `.agents/hooks.json` 在 agy 的 `PreToolUse`／`run_command` 註冊
 `.agents/hook/agy_comment.sh`，把實測的 `toolCall.args.CommandLine`、`Cwd`
@@ -201,7 +203,9 @@ XDG_CONFIG_HOME，退出刪除暫存目錄。CODEX_HOME 保留供 Codex 自己�
 Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
 `.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
 Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現有
-Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
+Edit/Write hooks，但跳過依賴 Claude `agent_id` 的
+`enforce_main_session_coordinates_only.sh`。轉接層做格式轉換、dispatch 與此身分
+guard 的排除，不複製
 `enforce_shellcheck_disable_approval.sh`、`enforce_main_checkout_readonly.sh` 等 hook
 的判定；因此 Codex 對主 checkout 的 `apply_patch` 也會被同一規則擋下。
 
@@ -212,6 +216,35 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 裡會改動 working tree 的 git 指令同樣拒絕，包含經 `git -C`、`bash -c` 或
 `eval` 指定的呼叫。`git fetch`、`git pull --ff-only`、指定的 `git worktree`
 管理動作、唯讀 git 指令與 `gh` 仍可在主 checkout 執行。
+
+`.agents/hook/enforce_main_session_coordinates_only.sh` 在 PreToolUse 檢查 Bash 與
+Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agent_id`）只負責
+協調：禁止 `git commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply`、
+`git checkout -- <path>`、`just test ...`、Docker 裡的 bats，以及編輯主 checkout
+同層 `worktree/` 下的檔案。檔案路徑依 `cwd` 解讀、正規化並解析既有 symlink；
+從 Git 共用目錄定位主 checkout，因此從 linked worktree 呼叫也適用。
+
+仍允許 `gh` 留言、review、merge、issue 操作、唯讀 git、`git fetch`、
+`git pull --ff-only`（不得搭配改變合併模式的旗標）、`git worktree add|remove|prune|list`，
+以及 `.agents/memory/` 和 repo、`worktree/` 以外的工作檔。原有主 checkout 唯讀
+hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`、`milestone-fanout`
+或 `milestone-handover`。這個 guard 的 Bash 註冊只套用 Claude；Codex 的
+檔案編輯轉接沿用 Claude 的 Edit／Write 註冊，但明確跳過此 guard，避免把
+缺少 `agent_id` 的 Codex 實作者誤判成主 session。ShellCheck 與主 checkout
+唯讀 guard 仍照常執行。
+
+身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
+`hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；
+不讀 transcript，不採用環境變數或 `agent_type` 當身分。這是合作代理的守門規則，
+不提供身分認證。
+
+Bash 檢查沿用 `subcommand.sh` 的指令拆解；直接指令包含引號、常見 wrapper、
+`timeout` 與 git／just 全域選項仍會檢查。`eval`、`bash -c`、`xargs`、shell
+heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則；帶引號的 xargs
+指令也會拆解，影響 git／just 動作判定的參數有 shell 展開或未知全域旗標時拒絕；
+明確唯讀的 git 子指令與 `fetch` 的資料參數可展開，內嵌的指令替換仍會逐一檢查。
+間接執行的原始文字檢查可能連純文字提及也拒絕；無受限動作的日常指令放行。
+腳本檔內容、自訂 just recipe、編碼或執行時組出的指令不在靜態檢查範圍內。
 
 本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`
 在此 Codex 接線沒有對應事件，因此不註冊；`enforce_reply_language.sh` 只接 Claude

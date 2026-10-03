@@ -18,6 +18,8 @@ _run_edit_hooks() {
           end')"
 
     while IFS= read -r _command; do
+        # Codex payloads have no Claude agent_id; this identity guard is Claude-only.
+        [[ "${_command##*/}" != enforce_main_session_coordinates_only.sh ]] || continue
         _hook="${HOOK_REPO_ROOT}/.agents/hook/${_command##*/}"
         _rc=0
         _result="$(printf '%s' "${_payload}" | "${_hook}")" || _rc=$?
