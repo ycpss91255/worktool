@@ -2922,11 +2922,7 @@ _handover_replies() {
     jq -e '.calls[5].prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
     jq -e '[.calls[1:][].prompt] | all(contains("/tmp/acceptance"))' <<<"${output}"
-    local json="${output}"
-    run sed -n '/phases: \[/,/^  ],/p' "${WF_DIR}/milestone-handover.js"
-    assert_line --index 1 --partial "title: 'Sync'"
-    assert_line --index 2 --partial "title: 'Head'"
-    output="${json}"
+    jq -e '[.calls[].phase][0:2] == ["Sync","Head"]' <<<"${output}"
     refute_output --partial '允許合併'
     run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
     assert_success
