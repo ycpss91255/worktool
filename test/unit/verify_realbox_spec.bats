@@ -886,18 +886,20 @@ STUB
     assert_output "$(printf '%s\n' "${DISTROBOX_USER_LINES[@]}")"
 }
 
-@test "5.2: a managed block left in distrobox.conf fails the restore, exactly as one left in the ghostty config does" {
-    # blocks= counts every user-owned managed file: a restore that put the
-    # ghostty config back and forgot distrobox.conf used to print blocks=0.
+@test "5.2: existing distrobox blocks survive a successful baseline restore" {
     _seed_distrobox_conf
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
         >>"$(_distrobox_conf)"
+    cp "$(_distrobox_conf)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure
+    assert_success
     assert_line "blocks=1"
-    assert_output --partial "managed block still present in $(_distrobox_conf)"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline" "$(_distrobox_conf)"
+    assert_success
 }
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
