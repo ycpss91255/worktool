@@ -25,7 +25,7 @@ STUB
     printf '%s' '{"labels":[{"name":"milestone-gate"}],"headRefOid":"head123","body":"Closes #5"}' >"${READY_FIXTURE}/pr"
     printf '%s' '{"check_runs":[{"name":"verify-all (ubuntu-latest)","status":"completed","conclusion":"failure"},{"name":"verify-all (ubuntu-24.04-arm)","status":"completed","conclusion":"success"}]}' >"${READY_FIXTURE}/checks"
     printf '%s' '{"body":"目標: 開終端即在盒內;量測進盒延遲並達標。"}' >"${READY_FIXTURE}/issue"
-    printf '[claude] 就緒，請驗收\n\n## 目標對照\n\n| 目標 | 測試或驗收項目 | 使用者入口 |\n|---|---|---|\n| 開終端即在盒內 | setup spec | 開啟 Ghostty |\n| 量測進盒延遲並達標 | gate 2.3 | just box bench |\n' >"${READY_FIXTURE}/body"
+    printf '[claude] 就緒，請驗收\n\n## 目標對照\n\n| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |\n|---|---|---|---|\n| 開終端即在盒內 | 開啟 Ghostty | setup spec | CI run 123 |\n| 量測進盒延遲並達標 | just box bench | gate 2.3 | bench output |\n' >"${READY_FIXTURE}/body"
 }
 
 check_ready() {
@@ -150,4 +150,10 @@ STUB
     run_hook enforce_milestone_ready_evidence "$(hook_json "gh issue comment 365 --repo ycpss91255/worktool --body-file ${READY_FIXTURE}/body")"
     assert_failure 2
     assert_output --partial 'query'
+}
+
+@test "four-column goal mapping allows complete readiness evidence (#407)" {
+    successful_job
+    check_ready
+    assert_success
 }
