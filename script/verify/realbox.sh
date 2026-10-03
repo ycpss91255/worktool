@@ -74,6 +74,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/guard.sh"
 # shellcheck source=lib/manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source=lib/home.sh
+source "${LIB_DIR}/home.sh"
 # shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
@@ -619,8 +621,24 @@ _52_confirm_window() {
     _52_window_evidence "${_pid}"
 }
 
+_52_dev_namespace() {
+    local _manager _init _ns
+    _manager="$(_home_manager)" \
+        || { guard_fail "cannot resolve dev container engine; check distrobox config and re-run 5.2"; return 1; }
+    _init="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" inspect --type container \
+        --format '{{.State.Pid}}' "${BOX}")" \
+        || { guard_fail "cannot inspect dev init PID; check the container engine and re-run 5.2"; return 1; }
+    [[ "${_init}" =~ ^[1-9][0-9]*$ ]] \
+        || { guard_fail "invalid dev init PID; check the running box and re-run 5.2"; return 1; }
+    _ns="$(readlink "/proc/${_init}/ns/mnt")" \
+        || { guard_fail "cannot read dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+    [[ "${_ns}" =~ ^mnt:\[[0-9]+\]$ ]] \
+        || { guard_fail "invalid dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+    printf '%s\n' "${_ns}"
+}
+
 _52_window_evidence() {
-    local _pid="$1" _comm _host _window _before _name
+    local _pid="$1" _comm _host _window _dev _before _name
     guard_require ps readlink || return $?
     while read -r _before _name; do
         [[ "${_before}" != "${_pid}" ]] \
@@ -636,8 +654,9 @@ _52_window_evidence() {
         || { guard_fail "cannot read fish mount namespace (permissions or exited process)"; return 1; }
     [[ "${_host}" =~ ^mnt:\[[0-9]+\]$ && "${_window}" =~ ^mnt:\[[0-9]+\]$ ]] \
         || { guard_fail "invalid mount namespace evidence"; return 1; }
-    printf 'window-evidence: pid=%s comm=%s host=%s window=%s\n' \
-        "${_pid}" "${_comm}" "${_host}" "${_window}"
+    _dev="$(_52_dev_namespace)" || return 1
+    printf 'window-evidence: pid=%s comm=%s host=%s window=%s dev=%s\n' \
+        "${_pid}" "${_comm}" "${_host}" "${_window}" "${_dev}"
     [[ "${_window}" != "${_host}" ]] \
         || { guard_fail "fish remains in the host mount namespace"; return 1; }
 }

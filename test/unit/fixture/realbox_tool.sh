@@ -265,6 +265,11 @@ _fake_jq() {
 
 # --- dispatch ----------------------------------------------------------------
 case "${_ME}" in
+    docker)
+        [[ "$*" == "inspect --type container --format {{.State.Pid}} ${_BOX}" ]] || exit 2
+        printf '%s\n' "${FAKE_DEV_PID-4343}"
+        exit "${FAKE_DEV_INSPECT_RC:-0}"
+        ;;
     distrobox) _fake_distrobox "$@" ;;
     just) _fake_just "$@" ;;
     gh) _fake_gh "$@" ;;

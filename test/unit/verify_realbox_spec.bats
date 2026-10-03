@@ -533,6 +533,8 @@ STUB
 }
 
 _fake_window_process() {
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/docker"
+    export DBX_CONTAINER_MANAGER=docker
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -549,6 +551,9 @@ STUB
 set -euo pipefail
 case "$*" in
     /proc/self/ns/mnt) printf 'mnt:[100]\n' ;;
+    /proc/4343/ns/mnt)
+        printf '%s\n' "${FAKE_DEV_NS-mnt:[200]}"
+        exit "${FAKE_DEV_NS_RC:-0}" ;;
     /proc/4242/ns/mnt)
         printf '%s\n' "${FAKE_WINDOW_NS-mnt:[200]}"
         exit "${FAKE_WINDOW_NS_RC:-0}" ;;
@@ -596,11 +601,11 @@ STUB
     assert_output --partial "fish mount namespace"
 }
 
-@test "#362: 5.2 passes with measured fish namespace different from host" {
+@test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "0"
-    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200]"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
     refute_output --partial "container-marker=confirmed"
     assert_output --partial "restore-ok=1"
     local _mode
