@@ -3177,3 +3177,14 @@ _pl_retry_run() {
     jq -e '.calls[0].prompt | contains("git merge-base --is-ancestor origin/main HEAD") and
         contains("skip merge, local gates, push and CI waiting")' <<<"${output}"
 }
+
+@test "milestone-handover Sync continues bounded foreground waits beyond 1800 seconds before Head (#421)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and [.calls[].phase][0:2] == ["Sync","Head"] and
+        (.calls[0].prompt | contains("each at most 540 seconds") and
+            contains("total elapsed wall-clock cap of 7200 seconds") and
+            contains("A round expiring is not a CI timeout") and
+            contains("Re-query headRefOid at the start and end of every round") and
+            contains("never use Monitor/background"))' <<<"${output}"
+    assert_success
+}

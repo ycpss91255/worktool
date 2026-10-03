@@ -405,7 +405,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    衝突逐處記錄兩邊意圖、解法、理由與驗證；無法安全解決就列出路徑和原因並停止。
    在 Docker 前景依序跑 `just test guards`、合入變更涉及的 spec 和 `just test lint`，
    每次確認最多兩個 worktool-test container；失敗即停止，不推送。
-   推送後在前景最多等待 1800 秒，每輪確認同一 PR head；除了 `milestone-gate-approval`，
+   推送後分輪在前景等待，每輪最多 540 秒，從開始等待起以實際經過時間累計最多 7200 秒；
+   最後一輪只使用剩餘時間，單輪到期仍繼續下一輪，超過 1800 秒也不停止。
+   每輪開始、結束與每次 poll 都重新確認同一 PR head；除了 `milestone-gate-approval`，
    所有 check（含兩種架構的 `verify-all` 與 `ci-passed`）都須成功。
    失敗回報 job 名稱、連結與 log 的具體原因；缺 check、查詢失敗、head 改變或逾時均停止。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
