@@ -203,7 +203,9 @@ XDG_CONFIG_HOME，退出刪除暫存目錄。CODEX_HOME 保留供 Codex 自己�
 Codex 的檔案編輯以 `apply_patch` 傳入整份 patch；
 `.agents/hook/codex_apply_patch.sh` 將 Add、Update、Delete 與 Move 拆成逐檔的
 Claude-style `Write` / `Edit` payload，再依 `.claude/settings.json` 執行現有
-Edit/Write hooks。轉接層只做格式轉換與 dispatch，不複製
+Edit/Write hooks，但跳過依賴 Claude `agent_id` 的
+`enforce_main_session_coordinates_only.sh`。轉接層做格式轉換、dispatch 與此身分
+guard 的排除，不複製
 `enforce_shellcheck_disable_approval.sh`、`enforce_main_checkout_readonly.sh` 等 hook
 的判定；因此 Codex 對主 checkout 的 `apply_patch` 也會被同一規則擋下。
 
@@ -226,9 +228,10 @@ Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agen
 `git pull --ff-only`（不得搭配改變合併模式的旗標）、`git worktree add|remove|prune|list`，
 以及 `.agents/memory/` 和 repo、`worktree/` 以外的工作檔。原有主 checkout 唯讀
 hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`、`milestone-fanout`
-或 `milestone-handover`。這個 Bash guard 只在 Claude 註冊，不在 Codex 註冊，
-避免把缺少 `agent_id` 的 Codex 實作者誤判成主 session。Codex 的檔案編輯轉接
-沿用 Claude 的 Edit／Write 註冊。
+或 `milestone-handover`。這個 guard 的 Bash 註冊只套用 Claude；Codex 的
+檔案編輯轉接沿用 Claude 的 Edit／Write 註冊，但明確跳過此 guard，避免把
+缺少 `agent_id` 的 Codex 實作者誤判成主 session。ShellCheck 與主 checkout
+唯讀 guard 仍照常執行。
 
 身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
 `hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；
