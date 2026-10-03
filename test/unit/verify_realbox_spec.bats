@@ -964,7 +964,7 @@ STUB
     _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
         | sed -e 's/ (.*$//' -e 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
     _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
-        "${REPO_ROOT}/doc/acceptance.md" | sed -n '/預期看到資訊/p' | grep -o '`[^`]*`' \
+        "${REPO_ROOT}/doc/acceptance.md" | sed -n '/預期看到資訊/p' | grep -o "\`[^\`]*\`" \
         | sed 's/`//g' | grep -E "${_keys}")"
     assert_equal "${_documented}" "${_actual}"
 }
