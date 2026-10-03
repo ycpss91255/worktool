@@ -117,8 +117,38 @@ _fake_distrobox_rm() {
     return "${FAKE_DBX_RM_RC:-0}"
 }
 
+_record_distrobox_config() {
+    [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 ]] || return 0
+    local _conf="${XDG_CONFIG_HOME:-${HOME}/.config}/distrobox/distrobox.conf"
+    local _line _manager=podman
+    : >"${_DIR}/distrobox-config-$1"
+    if [[ -f "${_conf}" ]]; then
+        while IFS= read -r _line || [[ -n "${_line}" ]]; do
+            printf '%s\n' "${_line}" >>"${_DIR}/distrobox-config-$1"
+            case "${_line}" in container_manager=*) _manager="${_line#*=}" ;; esac
+        done <"${_conf}"
+    fi
+    printf '%s manager=%s\n' "$1" "${_manager}" >>"${_DIR}/distrobox-managers"
+}
+
+_record_container_config() {
+    [[ "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]] || return 0
+    local _config="${XDG_CONFIG_HOME:-${HOME}/.config}" _file _line
+    for _file in storage.conf containers.conf containers.conf.d/connection.conf; do
+        local _record="${_DIR}/container-config-$1-${_file##*/}"
+        : >"${_record}"
+        if [[ -f "${_config}/containers/${_file}" ]]; then
+            while IFS= read -r _line || [[ -n "${_line}" ]]; do
+                printf '%s\n' "${_line}" >>"${_record}"
+            done <"${_config}/containers/${_file}"
+        fi
+    done
+}
+
 _fake_distrobox() {
     local _verb="${1:-}"
+    _record_distrobox_config "${_verb}" || return 1
+    _record_container_config "${_verb}" || return 1
     shift || true
     case "${_verb}" in
         list) _fake_distrobox_list ;;
@@ -132,6 +162,22 @@ _fake_distrobox() {
     esac
 }
 
+# Opt-in adapter for assemble's real home/home.source state mutation.
+_fake_assemble_state() {
+    [[ "${FAKE_JUST_ASSEMBLE_WRITES_STATE:-0}" -eq 1 ]] || return 0
+    local _previous="" _arg _home=""
+    for _arg in "$@"; do
+        [[ "${_previous}" != --home ]] || _home="${_arg}"
+        _previous="${_arg}"
+    done
+    [[ -n "${_home}" ]] || return 1
+    # shellcheck source=lib/config.sh
+    source "${FAKE_WORKTOOL_LIB_DIR}/config.sh"
+    config_set home "${_home}" home.source user || return 1
+    config_get home >"${_DIR}/assemble-home" || return 1
+    config_xdg_dir >"${_DIR}/assemble-config-dir"
+}
+
 # --- just --------------------------------------------------------------------
 # argv always starts `box <verb>` (script/verify/realbox.sh only ever calls
 # the box namespace).
@@ -139,6 +185,10 @@ _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
+            if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 || "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]]; then
+                distrobox assemble create --file box/dev.ini || return 1
+            fi
+            _fake_assemble_state "$@" || return 1
             _rc="${FAKE_JUST_ASSEMBLE_RC:-0}"
             _out="${FAKE_JUST_ASSEMBLE_OUT-distrobox assemble create --file box/dev.ini}"
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"

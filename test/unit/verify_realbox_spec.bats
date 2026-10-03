@@ -87,6 +87,7 @@ setup() {
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
+    export FAKE_WORKTOOL_LIB_DIR="${REPO_ROOT}/lib"
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
@@ -788,15 +789,19 @@ STUB
     assert_output --partial "blocks= is not trustworthy"
 }
 
-@test "5.2.3: a managed block still in the config fails the item" {
+@test "5.2.3: existing Ghostty blocks survive a successful baseline restore" {
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
         >>"$(_ghostty_config)"
+    cp "$(_ghostty_config)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure
+    assert_success
     assert_line "blocks=1"
-    assert_output --partial "managed block still present"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline" "$(_ghostty_config)"
+    assert_success
 }
 
 @test "5.2.3: the owned box surviving removal fails the item" {
@@ -881,18 +886,20 @@ STUB
     assert_output "$(printf '%s\n' "${DISTROBOX_USER_LINES[@]}")"
 }
 
-@test "5.2: a managed block left in distrobox.conf fails the restore, exactly as one left in the ghostty config does" {
-    # blocks= counts every user-owned managed file: a restore that put the
-    # ghostty config back and forgot distrobox.conf used to print blocks=0.
+@test "5.2: existing distrobox blocks survive a successful baseline restore" {
     _seed_distrobox_conf
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
         >>"$(_distrobox_conf)"
+    cp "$(_distrobox_conf)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure
+    assert_success
     assert_line "blocks=1"
-    assert_output --partial "managed block still present in $(_distrobox_conf)"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline" "$(_distrobox_conf)"
+    assert_success
 }
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
@@ -1257,4 +1264,142 @@ STUB
     assert_equal "$(readlink "${_home}/profile-link")" '.profile'
     [ -S "${_home}/.cache/tmux/user" ]
     assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "5.1: assemble and cleanup retain the same user distrobox config while isolating state" {
+    local _config="${HOME}/custom-config" _verb
+    local _conf="${_config}/distrobox/distrobox.conf"
+    mkdir -p "${_config}/distrobox" "${_config}/worktool"
+    printf '%s\n' "${DISTROBOX_USER_LINES[@]}" \
+        '# BEGIN worktool managed block' 'unset TMUX TMUX_PANE' \
+        '# END worktool managed block' >"${_conf}"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    cp "${_conf}" "${STATE}/baseline-distrobox"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        run cmp "${STATE}/baseline-distrobox" "${STATE}/distrobox-config-${_verb}"
+        assert_success
+    done
+    run cat "${STATE}/distrobox-managers"
+    assert_line 'assemble manager=docker'
+    assert_line 'list manager=docker'
+    assert_line 'rm manager=docker'
+    refute_output --partial 'manager=podman'
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    run cmp "${STATE}/baseline-distrobox" "${_conf}"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: assemble list and rm see the same container config while isolating state" {
+    local _config="${HOME}/custom-config" _verb _file
+    mkdir -p "${_config}/containers/containers.conf.d" "${_config}/worktool"
+    printf '[storage]\ngraphroot = "/custom/store"\n' >"${_config}/containers/storage.conf"
+    printf '[engine]\nactive_service = "custom"\n' >"${_config}/containers/containers.conf"
+    printf '[engine.service_destinations.custom]\nuri = "ssh://custom/run/podman.sock"\n' \
+        >"${_config}/containers/containers.conf.d/connection.conf"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONTAINER_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        for _file in storage.conf containers.conf containers.conf.d/connection.conf; do
+            run cmp "${_config}/containers/${_file}" "${STATE}/container-config-${_verb}-${_file##*/}"
+            assert_success
+        done
+    done
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: assemble state writes leave existing real state byte-identical" {
+    export XDG_CONFIG_HOME="${HOME}/custom-config"
+    local _state="${XDG_CONFIG_HOME}/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${XDG_CONFIG_HOME}/worktool"
+    printf '# user state\r\nhome=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+    [ "$(cat "${STATE}/assemble-config-dir")" != "${XDG_CONFIG_HOME}" ]
+}
+
+@test "5.1: assemble state writes leave absent real state absent" {
+    local _state="${HOME}/.config/worktool/config"
+    [ ! -e "${_state}" ]
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    [ ! -e "${_state}" ]
+    [ ! -d "${HOME}/.config/worktool" ]
+}
+
+@test "5.1: assemble failure leaves real state byte-identical" {
+    local _state="${HOME}/.config/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${HOME}/.config/worktool"
+    printf 'home=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    assert_line 'cleanup-rc=0'
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+}
+
+@test "5.3: existing managed blocks match the pre-run baseline" {
+    local _file _files=("$(_ghostty_config)" "${HOME}/.config/ghostty/config.ghostty" "$(_distrobox_conf)") _i=0
+    mkdir -p "${HOME}/.config/distrobox"
+    for _file in "${_files[@]}"; do
+        printf '# BEGIN worktool managed block\nuser baseline\n# END worktool managed block\n' >>"${_file}"
+        cp "${_file}" "${STATE}/baseline-${_i}"
+        _i=$((_i + 1))
+    done
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'blocks=3'
+    assert_line 'backup-removed=1'
+    _i=0
+    for _file in "${_files[@]}"; do
+        run cmp "${STATE}/baseline-${_i}" "${_file}"
+        assert_success
+        _i=$((_i + 1))
+    done
+}
+
+@test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
+    export VERIFY_RESTORE_SOURCE
+    VERIFY_CP="$(cat "${STATE}/real/cp")"
+    export VERIFY_CP
+    cat >"${STUBS}/cp" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${VERIFY_CP}" "$@"
+if [[ "${3:-}" == "${VERIFY_RESTORE_SOURCE}" ]]; then
+    printf 'corrupted user content\n' >"${4}"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line 'restore-ok=0'
+    assert_line 'blocks=0'
+    assert_output --partial 'restored content checksum mismatch'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
 }

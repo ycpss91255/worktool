@@ -473,18 +473,34 @@ _51_publish() {
     return 0
 }
 
+_51_prepare_config() {
+    local _config="${XDG_CONFIG_HOME:-${HOME}/.config}" _entry
+    mkdir -p -- "${_51_W}/config" \
+        || { guard_fail "creating scratch config failed"; return 1; }
+    # Preserve all user config, including the container tool's store and
+    # connection settings; only worktool's state writes belong in scratch.
+    for _entry in "${_config}"/* "${_config}"/.[!.]* "${_config}"/..?*; do
+        [[ -e "${_entry}" || -L "${_entry}" ]] || continue
+        [[ "${_entry##*/}" != worktool ]] || continue
+        ln -s -- "${_entry}" "${_51_W}/config/${_entry##*/}" \
+            || { guard_fail "linking user config '${_entry}' failed"; return 1; }
+    done
+    return 0
+}
+
 _51_body() {
     local _tag='M3 5.1 real-machine bench' _stamp _run_id _brc _trc
     local -a _st
     _stamp="$(date -u +%Y%m%dT%H%M%SZ)" || { guard_fail "date failed"; return 1; }
     _run_id="m3-51-${_stamp}-$$"
+    _51_prepare_config || return 1
 
     # Ownership BEFORE the box can exist: the marker means "assemble was
     # ATTEMPTED", not "assemble returned 0", so an interrupt anywhere inside
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
@@ -505,7 +521,7 @@ _51_body() {
 }
 
 item_51() {
-    guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
+    guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
         || return 1
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \
