@@ -213,6 +213,14 @@ _stub_calls() {
 
 # --- Failures: plausible output, non-zero exit ------------------------------
 
+@test "errexit: a failed group probe preserves stdout and maps its status to FAIL" {
+    _stub_group ui 7
+    run bash -c '"$1" 2>/dev/null' _ "${ALL_SH}"
+    assert_failure 1
+    assert_output $'ui-output-ok\nverify all: ui FAIL (rc=7)\nverify all: VERDICT FAIL at ui (rc=7); passed: none; not run: gate setup diagram evidence'
+    assert_equal "$(_stub_calls)" 'ui.sh 0'
+}
+
 @test "gate exits 1 after printing plausible output -> exit 1, stops there, FAIL verdict" {
     _stub_group gate 1
     run "${ALL_SH}"
