@@ -453,6 +453,16 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     refute_output --partial "shell median 300.0 ms"
 }
 
+@test "5.1: a shell median of 300.1 ms, just over the --max-ms 300, is refused" {
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=300.1 max=315.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "shell median 300.1 ms exceeds the --max-ms 300"
+    refute_output --partial "posted="
+}
+
 @test "5.1: wc prints a plausible 3 but exits 1 (plausible output, non-zero exit)" {
     SHIM_WC_RC=1 SHIM_WC_OUT='3' run "${REALBOX}" --allow-real-box 5.1
     assert_failure
