@@ -844,6 +844,9 @@ EOF
 }
 
 @test "single source: system-real cases match declarations, gate selection and document" {
+    run grep -F "integration 與 system-real 的 \`ok\` 案例分別以 \`INTEGRATION_CASES\` 與 \`SYSTEM_REAL_CASES\` 清單為準" \
+        "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
     _stub_ci_tools
     _write_tier_blocks
     local _real="${BATS_TEST_TMPDIR}/real.names" _fixture="${BATS_TEST_TMPDIR}/fixture.names"
