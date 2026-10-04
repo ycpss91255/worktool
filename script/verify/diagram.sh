@@ -85,8 +85,9 @@
 #
 # EXIT CODES
 #   0  every requested item passed
-#   1  an item failed, or could not be run in this environment
+#   1  an item failed
 #   2  the command line was refused; nothing ran
+#   3  a required tool is unavailable
 #
 # Exit-code-contract script: default guards are `set -uo pipefail` (no -e,
 # see doc/adr/0007); every non-zero exit is explicit.
@@ -123,6 +124,9 @@ if ! source "${SELF_ROOT}/lib/log.sh"; then
     printf '[ERROR] diagram.sh: cannot source %s/lib/log.sh\n' "${SELF_ROOT}" >&2
     exit 1
 fi
+
+# shellcheck source=guard.sh
+source "${SELF_ROOT}/lib/guard.sh"
 
 # --- The items this script implements ----------------------------------------
 # The order a bare run uses. Every entry needs a branch in _run_item.
@@ -176,8 +180,8 @@ _usage() {
         '                 files - so the flag enables nothing and creates nothing.' \
         '  -h, --help     Show this help and exit.' \
         '' \
-        'Exit: 0 every requested item passed; 1 an item failed or could not be run' \
-        'here (never skipped silently); 2 the command line was refused, nothing ran.' \
+        'Exit: 0 every requested item passed; 1 an item failed; 2 the command line' \
+        'was refused, nothing ran; 3 a required tool is unavailable (never skipped silently).' \
         >&2
 }
 
@@ -211,11 +215,7 @@ _expect_eq() {
 # True iff external command $1 can be run here. A check that cannot run is
 # reported and fails; it is never skipped.
 _require_tool() {
-    if command -v -- "$1" >/dev/null 2>&1; then
-        return 0
-    fi
-    _item_error "$1 is not available here, so this item cannot be checked"
-    return 1
+    guard_require "$1"
 }
 
 # True iff $1 is a directory that can be listed.
@@ -387,7 +387,7 @@ _item_4_1() {
     local _flow="${_dir}/flow.drawio.svg"
     local _f _readme_refs _flow_wording _bad=0
 
-    _require_tool grep || return 1
+    _require_tool grep || return $?
     _require_dir "${_dir}" || return 1
     _collect_svgs "${_dir}" || return 1
     # Every file about to be counted - the globbed diagrams, the README and
@@ -523,8 +523,8 @@ diagram_run() {
         _run_item "${_item}"
         _rc=$?
         if [[ "${_rc}" -ne 0 ]]; then
-            log_error "${_item}: FAILED"
-            return 1
+            [[ "${_rc}" -eq 3 ]] || log_error "${_item}: FAILED"
+            return "${_rc}"
         fi
         log_info "${_item}: PASS"
     done
