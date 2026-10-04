@@ -61,12 +61,11 @@
 #   2  usage error (unknown option, unknown item)
 #   3  the check cannot run here (a required tool or file is missing)
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`),
-# per doc/adr/0007 - every failure below is surfaced explicitly, so a
-# non-zero exit is always intentional.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
 SCRIPT_NAME="ui.sh"

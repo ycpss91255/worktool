@@ -89,11 +89,11 @@
 #   2  the command line was refused; nothing ran
 #   3  a required tool is unavailable
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no -e,
-# see doc/adr/0007); every non-zero exit is explicit.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 # Resolved with shell builtins only (no `dirname`): grep is the ONE external

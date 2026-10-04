@@ -54,16 +54,16 @@
 #
 # EXIT CODES.
 #   0  every selected item passed
-#   1  an item failed, or it could not run here (missing tool, unusable
-#      environment) - a check that cannot run is a failure, not a skip
+#   1  an item failed
 #   2  the caller was refused before any check ran: unknown option, unknown
 #      item, a realbox item without --allow-realbox, or a pre-existing box
+#   3  a required tool is unavailable (never a silent skip)
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`),
-# per doc/adr/0007 - every status is read and acted on explicitly below.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

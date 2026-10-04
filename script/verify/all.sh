@@ -33,11 +33,10 @@
 #   2  usage error (unknown option, unexpected argument)
 #   3  a group could not run here (it exited 3, UNAVAILABLE)
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`),
-# like the group scripts - every group status is captured and handled
-# explicitly, so a non-zero exit is always intentional.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
-set -uo pipefail
+set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
 SCRIPT_NAME="all.sh"
