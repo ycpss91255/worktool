@@ -846,7 +846,7 @@ STUB
     assert_success
     assert_line "no-backup=1"
     assert_output "no-backup=1"
-    assert_equal "${stderr}" "[INFO] $(_backup_dir) absent; already restored, or step 1 never ran"
+    assert_equal "${stderr:-}" "[INFO] $(_backup_dir) absent; already restored, or step 1 never ran"
     assert_equal "$(_count_calls just)" "0"
 }
 
@@ -1005,7 +1005,7 @@ STUB
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
-    [[ "${stderr}" == *'[INFO] this run never created a box; leaving every box alone'* ]]
+    [[ "${stderr:-}" == *'[INFO] this run never created a box; leaving every box alone'* ]]
     _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
         | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
     _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
