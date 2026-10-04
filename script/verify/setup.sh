@@ -98,6 +98,10 @@ LIB_DIR="${REPO_ROOT}/lib"
 # shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source=guard.sh
+source "${LIB_DIR}/guard.sh"
+# shellcheck source=log.sh
+source "${LIB_DIR}/log.sh"
 
 # --- Item registry -----------------------------------------------------------
 # Every item belongs to exactly one group, and the group decides what the
@@ -322,7 +326,10 @@ _require_tools() {
 _resolve_exec() {
     local _name="$1" _why="$2" _p
     _p="$(command -v -- "${_name}")" || {
-        _unavailable "${_name} is not on PATH - ${_why}"
+        guard_require "${_name}" || {
+            log_info "${_why}"
+            return 3
+        }
         return 3
     }
     [[ "${_p}" == /* ]] || {
