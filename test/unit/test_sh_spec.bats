@@ -409,3 +409,15 @@ _prepare_lint_worktree() {
     assert_output --partial 'SC2164'
     assert_output --partial 'ShellCheck failed'
 }
+
+@test "lint falls back outside a Git work tree and explains why on stderr" {
+    _prepare_lint_worktree
+    mv "${LINT_ROOT}/.git" "${BATS_TEST_TMPDIR}/git-metadata"
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*not an accessible work tree}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
