@@ -142,7 +142,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
       輸出類型：動態示例（TAP 案例編號會隨案例增減位移）；固定判準為列出的案例敘述皆通過及 `rc=0`。
       ```text
       ok 1 preflight: a real docker engine is live inside the runner
-      ok 5 real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version
+      ok 5 real engine: enter.sh --box dev -- rg --version prints a ripgrep version after cold init
       ok 6 real engine: distrobox enter dev -- fzf --version prints a version
       ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
       ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
@@ -632,7 +632,7 @@ rc=0
       ```bash
       just verify gate 2.2; echo rc=$?
       ```
-  - [ ] 2.3 「開窗 -> 進盒 -> fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);並有防卡與假陽性兩個負向測試
+  - [ ] 2.3 「開窗 -> 進盒 -> fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);另有 #434 冷啟動：在尚未啟動的乾淨盒上執行 setup，讀回並在 PTY 終端原樣執行受管命令，以至少兩次變動的進度更新、初始化完成與盒內 fish 輸出判定成功；失敗與 timeout 則由 unit 的 setup 命令入口驗證有界非零結果、原因與復原訊息。並有防卡與假陽性兩個負向測試
     - 預期看到資訊(`just test` 的 integration 與 system-real 兩段,中間空一行;每段的 tier 輸出先整份收進檔案再 grep,所以「`just test` 失敗」和「grep 一行都沒對到」分得開,rc 反映的是上游 `just test` 的結果)
       輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
@@ -647,6 +647,8 @@ rc=0
       ok 11 after setup.sh --auto-enter no there is no enter command left for ghostty to run
       ok 12 +validate-config refuses a config ghostty cannot parse (the check bites)
 
+      # chain-cold: changing progress updates=42; setup command entered fish in dev
+      ok 5 ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish
       ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)
       # chain: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
       # chain-in-box: marker mntns=mnt:[1234] == dev container; host=ca83e9d035cd == docker inspect dev hostname

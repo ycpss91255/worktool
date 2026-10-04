@@ -211,6 +211,8 @@ _system_real_block() {
     _marker="$(diagnostic_chain_marker 4.2.1 /run/.containerenv 'mnt:[1234]' no ca83e9d035cd)"
     _ready="$(diagnostic_ready_marker 4.2.1 ca83e9d035cd)"
     {
+        printf '%s\n' '# chain-cold: changing progress updates=42; setup command entered fish in dev'
+        printf '%s\n' 'ok 5 ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish'
         printf '%s\n' 'ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)'
         diagnostic_lines chain "${_marker}" >/dev/null
         diagnostic_in_box chain 'mnt:[1234]' ca83e9d035cd >/dev/null
