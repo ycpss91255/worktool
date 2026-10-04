@@ -411,6 +411,7 @@ _prepare_lint_worktree() {
 }
 
 @test "lint falls back outside a Git work tree and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
     _prepare_lint_worktree
     mv "${LINT_ROOT}/.git" "${BATS_TEST_TMPDIR}/git-metadata"
     printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
@@ -419,5 +420,22 @@ _prepare_lint_worktree() {
     assert_output --partial 'scratch.sh'
     assert_output --partial 'SC2164'
     assert [ "${stderr}" != "${stderr#*not an accessible work tree}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
+
+@test "lint falls back without git and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname find mktemp rm shellcheck; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    PATH="${bin}" run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*git unavailable}" ]
     assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
 }
