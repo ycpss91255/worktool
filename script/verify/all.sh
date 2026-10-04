@@ -125,17 +125,15 @@ _run_group() {
 }
 
 main() {
-    local _arg
+    local _arg _help=0 _list=0
     while [[ "$#" -gt 0 ]]; do
         _arg="$1"
         case "${_arg}" in
             -h | --help)
-                _usage
-                exit 0
+                _help=1
                 ;;
             -l | --list)
-                printf '%s\n' "${VERIFY_GROUPS[@]}"
-                exit 0
+                _list=1
                 ;;
             -*)
                 _usage_error "unknown option '${_arg}'"
@@ -144,8 +142,21 @@ main() {
                 _usage_error "unexpected argument '${_arg}'"
                 ;;
         esac
+        shift
     done
 
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        printf '%s\n' "${VERIFY_GROUPS[@]}"
+        return 0
+    fi
+    _run_groups
+}
+
+_run_groups() {
     local _i _group _rc _passed=() _rest=()
     for _i in "${!VERIFY_GROUPS[@]}"; do
         _group="${VERIFY_GROUPS[${_i}]}"

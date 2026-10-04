@@ -297,6 +297,16 @@ _stub_calls() {
 
 # --- CLI contract ------------------------------------------------------------
 
+@test "CLI: help and list validate a trailing unknown option before serving output" {
+    local _option
+    for _option in --help --list; do
+        run "${ALL_SH}" "${_option}" --bogus
+        assert_failure 2
+        assert_output "all.sh: unknown option '--bogus' (see --help)"
+        assert_equal "$(_stub_calls)" ''
+    done
+}
+
 @test "--help exits 0, names the five groups and the realbox exclusion, runs nothing" {
     run "${ALL_SH}" --help
     assert_success
