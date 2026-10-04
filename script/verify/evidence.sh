@@ -666,17 +666,16 @@ _realbox_require_optin() {
 # a failed or empty listing is "cannot tell", and the caller refuses to
 # create or delete anything on a 2.
 _realbox_box_exists() {
-    local _out _rc
-    _out="$(timeout "${EVIDENCE_BOX_TIMEOUT}" distrobox list 2>/dev/null)"
-    _rc=$?
+    local _out _rc=0
+    _out="$(timeout "${EVIDENCE_BOX_TIMEOUT}" distrobox list 2>/dev/null)" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return 2
     # `distrobox list` always prints its header row, so no output at all
     # means the command did not do what it says, not "no boxes".
     [[ -n "${_out}" ]] || return 2
+    _rc=0
     awk -F'|' -v want="$1" '
         NR > 1 { n = $2; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n == want) f = 1 }
-        END { exit(f ? 0 : 1) }' <<<"${_out}"
-    _rc=$?
+        END { exit(f ? 0 : 1) }' <<<"${_out}" || _rc=$?
     case "${_rc}" in
         0) return 0 ;;
         1) return 1 ;;
@@ -693,8 +692,8 @@ _realbox_begin() {
     _realbox_require_optin "${_item}" || return 2
     _require_tools timeout distrobox awk mktemp cp rm || return $?
 
-    _realbox_box_exists "${EVIDENCE_REALBOX_BOX}"
-    _rc=$?
+    _rc=0
+    _realbox_box_exists "${EVIDENCE_REALBOX_BOX}" || _rc=$?
     case "${_rc}" in
         0)
             log_error "evidence.sh: a distrobox named '${EVIDENCE_REALBOX_BOX}' already exists - refusing. This item deletes the box it creates, so rename or remove yours by hand first."
@@ -707,8 +706,8 @@ _realbox_begin() {
     esac
     printf 'preexisting-dev=0\n'
 
-    EVIDENCE_REALBOX_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-evidence.XXXXXXXX")"
-    _rc=$?
+    _rc=0
+    EVIDENCE_REALBOX_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-evidence.XXXXXXXX")" || _rc=$?
     if [[ "${_rc}" -ne 0 || ! -d "${EVIDENCE_REALBOX_WORKDIR}" ]]; then
         EVIDENCE_REALBOX_WORKDIR=""
         log_error "evidence.sh: mktemp -d failed - refusing to touch this machine without a place to keep the backups"
@@ -780,7 +779,11 @@ _realbox_restore() {
         # The IFS prefix applies to this `read` only (a regular builtin), so
         # the shell's own IFS is untouched.
         IFS="${EVIDENCE_REALBOX_US}" read -r _type _path _slot _target _target_slot \
-            <<<"${_entry}"
+            <<<"${_entry}" || {
+                log_error "evidence.sh: cannot read backup record ${_index}"
+                _rc=1
+                continue
+            }
         # Never write through a link: clear the path first, then put the
         # recorded shape back.
         rm -rf "${_path}" || _rc=1
@@ -804,17 +807,21 @@ _realbox_cleanup() {
     _realbox_restore || _rc=1
     if [[ "${EVIDENCE_REALBOX_OWNED}" -eq 1 ]]; then
         timeout "${EVIDENCE_BOX_TIMEOUT}" distrobox rm -f "${EVIDENCE_REALBOX_BOX}" \
-            >/dev/null 2>&1
-        _realbox_box_exists "${EVIDENCE_REALBOX_BOX}"
-        _state=$?
+            >/dev/null 2>&1 \
+            || log_info "evidence.sh: distrobox rm failed; checking the final box state"
+        _state=0
+        _realbox_box_exists "${EVIDENCE_REALBOX_BOX}" || _state=$?
         [[ "${_state}" -eq 1 ]] || _rc=1
     fi
-    printf 'cleanup-rc=%s\n' "${_rc}"
     [[ "${_rc}" -eq 0 ]] \
         || log_error "evidence.sh: box '${EVIDENCE_REALBOX_BOX}' survived cleanup - remove it by hand"
     if [[ -n "${EVIDENCE_REALBOX_WORKDIR}" ]]; then
-        rm -rf "${EVIDENCE_REALBOX_WORKDIR}"
+        if ! rm -rf "${EVIDENCE_REALBOX_WORKDIR}"; then
+            log_error "evidence.sh: cannot remove cleanup directory ${EVIDENCE_REALBOX_WORKDIR}"
+            _rc=1
+        fi
     fi
+    printf 'cleanup-rc=%s\n' "${_rc}"
     return "${_rc}"
 }
 

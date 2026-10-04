@@ -883,6 +883,28 @@ _dispatch_realbox_item() {
     refute_output --partial "dev"
 }
 
+@test "errexit cleanup: an interrupted creation with no box still reports cleanup-rc=0" {
+    _stub_distrobox
+    cat >"${BIN}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    list) printf 'ID | NAME | STATUS | IMAGE\n' ;;
+    rm) exit 7 ;;
+esac
+STUB
+    chmod +x "${BIN}/distrobox"
+    run bash -c '
+        source "$1"
+        EVIDENCE_ALLOW_REALBOX=1
+        _realbox_begin 5.1
+        trap - EXIT INT TERM HUP
+        _realbox_cleanup
+    ' _ "${EVIDENCE}"
+    assert_success
+    assert_line 'preexisting-dev=0'
+    assert_line 'cleanup-rc=0'
+}
+
 @test "realbox: a box that survives cleanup fails the run" {
     _stub_distrobox
     FAKE_DISTROBOX_RM_NOOP=1 run bash -c '
