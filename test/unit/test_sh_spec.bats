@@ -412,6 +412,7 @@ _prepare_lint_worktree() {
 
 @test "lint falls back outside a Git work tree and explains why on stderr" {
     bats_require_minimum_version 1.5.0
+    local stderr=""
     _prepare_lint_worktree
     mv "${LINT_ROOT}/.git" "${BATS_TEST_TMPDIR}/git-metadata"
     printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
@@ -425,6 +426,7 @@ _prepare_lint_worktree() {
 
 @test "lint falls back without git and explains why on stderr" {
     bats_require_minimum_version 1.5.0
+    local stderr=""
     _prepare_lint_worktree
     local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
     mkdir -p "${bin}"
