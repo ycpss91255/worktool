@@ -639,6 +639,6 @@ host tmux server 的部分在 system-real):
   payload。enter 與 shell 在 host 計時,包含 wrapper 與首次啟動檢查;inbox
   仍只計盒內 shell 啟動。setup 準備不計時、不更動使用者設定。CI system-real
   以 `fish -c exit` 的 shell median 與 300 ms 門檻判定,指標與 gate 不變。
-- 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
+- 驗收:進盒延遲量測與達標(≤ 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。

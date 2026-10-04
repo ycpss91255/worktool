@@ -425,7 +425,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 
 ## M3 終端自動進盒 + 效能達標(審核中)
 
-- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
+- 自動:進盒延遲量測腳本回報 ≤ 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
   fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
   實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
   shell median 仍以 300 ms 判定。終端**不自動開 tmux**(issue #179:
@@ -602,7 +602,7 @@ rc=0
       [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
       ```
-      (本項把整條 `just test` 的輸出原樣串到你的終端 —— `[ci]` 那些行是 stderr,上面一起列出。數字是你機器的實測;判準 = `just test` **自己**回 0,加上 shell median < 300 且三行指標都在。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish < 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 fish」整條鏈由 2.3 在 CI 內驗證,實機主觀感受由 5.2 驗)
+      (本項把整條 `just test` 的輸出原樣串到你的終端 —— `[ci]` 那些行是 stderr,上面一起列出。數字是你機器的實測;判準 = `just test` **自己**回 0,加上 shell median ≤ 300 且三行指標都在。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish ≤ 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 fish」整條鏈由 2.3 在 CI 內驗證,實機主觀感受由 5.2 驗)
     - 驗收方式
       ```bash
       just verify gate 2.1; echo rc=$?
@@ -852,7 +852,7 @@ rc=0
   - [ ] 4.2 GitHub 上看得到圖(人類):開 https://github.com/ycpss91255/worktool#架構與流程,三張圖有文字、無 "Text is not SVG"
 
 - [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，並連結真實 config 目錄中除 `worktool/` 以外的所有頂層項目（含隱藏項目），讓 assemble、bench 與清理沿用相同的容器工具儲存位置、連線設定、container manager、使用者設定與 TMUX 隔離區塊；成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
-  - [ ] 5.1 進盒延遲 < 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。
+  - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
       preexisting-dev=0
@@ -865,7 +865,7 @@ rc=0
       cleanup-rc=0
       rc=0
       ````
-      (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於這一輪真的傳給 `bench` 的 `--max-ms`(300)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
+      (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於或等於這一輪真的傳給 `bench` 的 `--max-ms`(300;剛好等於門檻算通過,與 `bench` 及 #181 一致)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
       `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓本項 exit 非 0 並要你手動移除盒子。所有權標記在 `just box assemble` **之前**就寫下,意思是「這一輪動過 assemble」而不是「assemble 成功了」,所以 assemble 跑到一半被 Ctrl-C 一樣會清;反過來「標記在、盒子不在」是被接受的,清理只看最後盒子還在不在,`distrobox rm` 沒東西可刪不算失敗(round 10))
     - 驗收方式
       ```bash
