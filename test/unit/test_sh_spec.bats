@@ -41,8 +41,8 @@ setup() {
     unset FAKE_DOCKER_FAIL_ON
     mkdir -p "${FAKE_BIN}"
     _write_fake_docker
-    # The host dispatch test runs inside Docker: /source's worktree Git
-    # metadata is intentionally unavailable. Stub only that host listing.
+    # Stub only the host lint listing; its path snapshot is tested below
+    # against a separate real linked worktree.
     cat >"${FAKE_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == -C && "$2" == "${FAKE_GIT_ROOT}" && "$3" == ls-files ]]; then
@@ -278,7 +278,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source( -v .*:ro)? -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 @test "test.sh --unit forwards one spec path to the container gate" {
@@ -286,6 +286,41 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
+}
+
+_prepare_git_mount_repo() {
+    MOUNT_ROOT="${BATS_TEST_TMPDIR}/mount repo"
+    mkdir -p "${MOUNT_ROOT}/script/test"
+    cp "${TEST_SH}" "${MOUNT_ROOT}/script/test/test.sh"
+    git -C "${MOUNT_ROOT}" init -q
+    git -C "${MOUNT_ROOT}" add .
+    git -C "${MOUNT_ROOT}" -c user.name=Fixture \
+        -c user.email=1+fixture@users.noreply.github.com commit -qm fixture
+}
+
+@test "test.sh mounts linked-worktree common Git metadata read-only for bats gates" {
+    _prepare_git_mount_repo
+    local linked="${BATS_TEST_TMPDIR}/linked repo" tier
+    git -C "${MOUNT_ROOT}" worktree add -q -b linked "${linked}"
+    for tier in unit matrix integration system acceptance; do
+        : >"${FAKE_DOCKER_CALLS}"
+        run "${linked}/script/test/test.sh" "--${tier}"
+        assert_success
+        run cat "${FAKE_DOCKER_CALLS}"
+        assert_output --partial "-v ${MOUNT_ROOT}/.git:${MOUNT_ROOT}/.git:ro"
+    done
+}
+
+@test "test.sh keeps plain-clone bats gates free of extra Git mounts" {
+    _prepare_git_mount_repo
+    local tier
+    for tier in unit matrix integration system acceptance; do
+        : >"${FAKE_DOCKER_CALLS}"
+        run "${MOUNT_ROOT}/script/test/test.sh" "--${tier}"
+        assert_success
+        run cat "${FAKE_DOCKER_CALLS}"
+        refute_output --partial "-v ${MOUNT_ROOT}/.git:"
+    done
 }
 
 @test "test.sh --unit forwards multiple spec paths in order" {
