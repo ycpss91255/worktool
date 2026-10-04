@@ -42,6 +42,54 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     refute_output --partial '要驗的產品程式全在 main'
 }
 
+# Match only listed code paths (exact, directory or glob), or a listed ADR
+# number for files in doc/adr/. Prose mentioning a path is not coverage.
+_scope_covers_path() {
+    local _scope="$1" _path="$2" _entry _number
+    while IFS= read -r _entry; do
+        if [[ "${_path}" == ${_entry} ]]; then
+            return 0
+        fi
+        if [[ "${_entry}" == */ && "${_path}" == "${_entry}"* ]]; then
+            return 0
+        fi
+    done < <(printf '%s\n' "${_scope}" | grep -oE '`[^`]+`' | tr -d '`')
+    if [[ "${_path}" =~ ^doc/adr/([0-9]{4})-[^/]+\.md$ ]]; then
+        _number="${BASH_REMATCH[1]}"
+        [[ "${_scope}" =~ ADR[[:space:]]+[0-9]{4}(／[0-9]{4})* ]] || return 1
+        [[ "／${BASH_REMATCH[0]#ADR }／" == *"／${_number}／"* ]] && return 0
+    fi
+    return 1
+}
+
+@test "acceptance: PR 157 scope covers every real changed path relative to main" {
+    local _main _head _scope _path _missing="" _changed
+    if git -C "${REPO_ROOT}" rev-parse --verify origin/main^{commit} >/dev/null 2>&1; then
+        _main=origin/main
+    elif git -C "${REPO_ROOT}" rev-parse --verify main^{commit} >/dev/null 2>&1; then
+        _main=main
+    else
+        skip 'no main ref resolves'
+    fi
+    _head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+    [[ "${_head}" != "$(git -C "${REPO_ROOT}" rev-parse "${_main}")" ]] \
+        || skip 'HEAD is the main ref itself'
+    _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    run git -C "${REPO_ROOT}" diff --name-only "${_main}...HEAD"
+    assert_success
+    _changed="${output}"
+    while IFS= read -r _path; do
+        [[ -n "${_path}" ]] || continue
+        if ! _scope_covers_path "${_scope}" "${_path}"; then
+            _missing+="${_path}"$'\n'
+        fi
+    done <<<"${_changed}"
+    if [[ -n "${_missing}" ]]; then
+        printf 'Paths missing from PR 157 scope:\n%s' "${_missing}" >&2
+        return 1
+    fi
+}
+
 setup() {
     COPY="${BATS_TEST_TMPDIR}/copy"
     mkdir -p "${COPY}/script/verify"
