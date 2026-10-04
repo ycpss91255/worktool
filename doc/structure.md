@@ -30,9 +30,9 @@ worktool/
 │   └── box/             dev 盒生命週期(just box ...)
 │       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh(M3 再加 rm)
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --home / --help);建立時指定盒子獨立 HOME
-│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --box / --distrobox / --dry-run / --help;寫單一設定檔 + 受管區塊 `'<distrobox>' enter <盒>`(distrobox 寫已 quote 的絕對路徑;不開 tmux、不碰 ~/.tmux.conf,#179),每次另寫 distrobox.conf 受管區塊(進盒時丟掉 TMUX / TMUX_PANE,#179);見 enter.md)
-│       ├── enter.sh             手動進盒包裝層(just box enter):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
-│       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 distrobox 還跑不跑得起來(--help)
+│       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --box / --distrobox / --dry-run / --help;寫單一設定檔 + Ghostty 受管區塊 `command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<盒>'`(wrapper 與 distrobox 都是已 quote 的絕對路徑,#180;不開 tmux、不碰 ~/.tmux.conf,#179),每次另寫 distrobox.conf 受管區塊(進盒時丟掉 TMUX / TMUX_PANE,#179);見 enter.md)
+│       ├── enter.sh             Ghostty 受管命令與手動進盒共用的包裝層(just box enter):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
+│       └── status.sh            印出生效的進盒決策、來源(default / user)、受管區塊是否存在,以及受管 command 裡的 wrapper 與 distrobox 是否可執行;repo 搬走或 wrapper 不可執行時提示重跑 just box setup(--help)
 ├── test/
 │   ├── unit/            單元測試(bats):個別函式/腳本隔離測試
 │   │   ├── log_spec.bats

@@ -339,6 +339,17 @@ _listed_names() {
     done
 }
 
+@test "#446: README and structure describe the Ghostty command through the quoted entry wrapper" {
+    local _doc
+    for _doc in README.md doc/structure.md; do
+        run grep -F "'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '" "${REPO_ROOT}/${_doc}"
+        assert_success
+        assert_output --partial '已 quote 的絕對路徑'
+        run grep -F "'<distrobox>' enter <盒>" "${REPO_ROOT}/${_doc}"
+        assert_failure
+    done
+}
+
 # #161 (4): the docs describe the same five scripts the recipe runs.
 @test "README.md and doc/structure.md list all five scripts behind just box help, in order" {
     local _doc
