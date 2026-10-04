@@ -3169,13 +3169,20 @@ _pl_retry_run() {
     done
 }
 
-@test "milestone-handover skips merging unchanged main and proceeds to Head (#415)" {
+@test "milestone-handover unchanged main waits for green CI before Head (#441)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
-        "$( _handover_replies | jq '."sync:"={state:"unchanged",repoDir:"/tmp/acceptance",sha:("a" * 40)}')"
+        "$( _handover_replies | jq '."sync:".state="unchanged"')"
     jq -e '.result.status == "prepared" and [.calls[].role][0:2] == ["sync:","head:"] and
         ([.calls[1:][].prompt] | all(contains("/tmp/acceptance")))' <<<"${output}"
-    jq -e '.calls[0].prompt | contains("git merge-base --is-ancestor origin/main HEAD") and
-        contains("skip merge, local gates, push and CI waiting")' <<<"${output}"
+    run jq -e '.calls[0].prompt | contains("git merge-base --is-ancestor origin/main HEAD") and
+        contains("verify local HEAD equals PR headRefOid") and
+        contains("skip merge, local gates and push, then continue to the shared CI wait below") and
+        contains("For both unchanged and merged paths") and
+        contains("each at most 540 seconds") and
+        contains("total elapsed wall-clock cap of 7200 seconds") and
+        contains("Only after completed green CI") and
+        (contains("directly to Head") | not)' <<<"${output}"
+    assert_success
 }
 
 @test "milestone-handover Sync continues bounded foreground waits beyond 1800 seconds before Head (#421)" {
