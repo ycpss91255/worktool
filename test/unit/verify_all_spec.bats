@@ -26,6 +26,14 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "verify scripts enable errexit per ADR 0001" {
+    local _script
+    for _script in all ui diagram evidence; do
+        run grep -Fx 'set -euo pipefail' "${REPO_ROOT}/script/verify/${_script}.sh"
+        assert_success
+    done
+}
+
 @test "CI: test-unit and verify-all checkouts fetch full history for scope acceptance" {
     local _job
     # test-unit is a matrix leg of the gate job, sharing its checkout.
