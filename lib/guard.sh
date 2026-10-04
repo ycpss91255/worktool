@@ -52,7 +52,7 @@ guard_require() {
     local _c _missing=0
     for _c in "$@"; do
         command -v -- "${_c}" >/dev/null 2>&1 \
-            || { printf '[UNAVAILABLE] %s: missing command: %s\n' "${0##*/}" "${_c}" >&2; _missing=3; }
+            || { printf '[UNAVAILABLE] %s: %s not found on PATH\n' "${0##*/}" "${_c}" >&2; _missing=3; }
     done
     return "${_missing}"
 }

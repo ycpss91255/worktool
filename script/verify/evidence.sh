@@ -72,6 +72,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 
 # shellcheck source=log.sh
 source "${LIB_DIR}/log.sh"
+# shellcheck source=guard.sh
+source "${LIB_DIR}/guard.sh"
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
 
@@ -125,9 +127,8 @@ Environment:
   EVIDENCE_GH_TIMEOUT   seconds per gh query (default 120)
   EVIDENCE_BOX_TIMEOUT  seconds per local box query (default 60)
 
-Exit: 0 all selected items passed; 1 an item failed or could not run here
-(missing tool, unusable environment - never a silent skip); 2 the caller was
-refused before any check ran.
+Exit: 0 all selected items passed; 1 an item failed; 2 the caller was
+refused before any check ran; 3 a required tool is unavailable (never a silent skip).
 EOF
 }
 
@@ -148,16 +149,9 @@ _is_count() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
-# Refuse - never skip - when a tool an item needs is missing. Returns 1 and
-# names every missing tool.
+# Refuse - never skip - when a tool an item needs is missing. Returns 3.
 _require_tools() {
-    local _tool _missing=0
-    for _tool in "$@"; do
-        command -v "${_tool}" >/dev/null 2>&1 && continue
-        log_error "evidence.sh: ${_tool} not found on PATH - this check cannot run here (a check that cannot run is a failure, not a skip)"
-        _missing=1
-    done
-    return "${_missing}"
+    guard_require "$@"
 }
 
 # Split text $2 into the array named by $1, dropping empty lines. Pure shell:
@@ -248,9 +242,11 @@ _ITEM_6_1_NO_ARM_PR=152
 _ITEM_6_1_EXPECT_DISTINCT=10
 
 item_6_1() {
-    if ! _require_tools timeout gh jq grep; then
-        printf 'rc=1\n'
-        return 1
+    local _tool_rc=0
+    _require_tools timeout gh jq grep || _tool_rc=$?
+    if [[ "${_tool_rc}" -ne 0 ]]; then
+        printf 'rc=%s\n' "${_tool_rc}"
+        return "${_tool_rc}"
     fi
     local _fail=0 _pr _checks _body _type _total _nonpass _amd _arm _both
     local _matches _rc _closes _issue _match _number _amd_names _arm_names _name
@@ -404,9 +400,11 @@ _item_6_2_patterns() {
 }
 
 item_6_2() {
-    if ! _require_tools timeout gh grep; then
-        printf 'rc=1\n'
-        return 1
+    local _tool_rc=0
+    _require_tools timeout gh grep || _tool_rc=$?
+    if [[ "${_tool_rc}" -ne 0 ]]; then
+        printf 'rc=%s\n' "${_tool_rc}"
+        return "${_tool_rc}"
     fi
     local _fail=0 _issue _comments _rows _status _row _label _pattern _cell
     local _line _hits _rc
@@ -529,9 +527,11 @@ _item_6_3_word() {
 }
 
 item_6_3() {
-    if ! _require_tools timeout gh grep; then
-        printf 'rc=1\n'
-        return 1
+    local _tool_rc=0
+    _require_tools timeout gh grep || _tool_rc=$?
+    if [[ "${_tool_rc}" -ne 0 ]]; then
+        printf 'rc=%s\n' "${_tool_rc}"
+        return "${_tool_rc}"
     fi
     local _fail=0 _pr _verdict _rc _word _claude _follow _matches _match
     local _number _issue _prs _fix_pr _orig _fixed _ok
@@ -689,7 +689,7 @@ _realbox_box_exists() {
 _realbox_begin() {
     local _item="$1" _rc
     _realbox_require_optin "${_item}" || return 2
-    _require_tools timeout distrobox awk mktemp cp rm || return 1
+    _require_tools timeout distrobox awk mktemp cp rm || return $?
 
     _realbox_box_exists "${EVIDENCE_REALBOX_BOX}"
     _rc=$?
