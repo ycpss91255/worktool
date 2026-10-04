@@ -248,7 +248,7 @@ _stub_calls() {
             # Some verification tools are absent from the unit image. An
             # executable that fails keeps those unrelated guards satisfied
             # and prevents any verification work if a guard is bypassed.
-            _real="$(command -v "${_needed}")" || _real="$(command -v false)"
+            _real="$(command -v "${_needed}")" || _real=/bin/false
             ln -s "${_real}" "${_path}/${_needed}"
         done
         if [[ "${_group}" == realbox ]]; then
