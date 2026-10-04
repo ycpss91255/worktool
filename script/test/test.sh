@@ -277,7 +277,7 @@ _run_in_container() {
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
         _write_lint_paths "${_layout_paths}"
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
-    else
+    elif [[ -f "${REPO_ROOT}/.git" ]]; then
         local _git_common_dir
         _git_common_dir="$(git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
             rev-parse --path-format=absolute --git-common-dir)" \
