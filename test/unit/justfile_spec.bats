@@ -330,7 +330,7 @@ _listed_names() {
     for _doc in README.md doc/structure.md; do
         run grep -F '獨立 HOME' "${REPO_ROOT}/${_doc}"
         assert_success
-        run grep -F '~/<盒名>-box' "${REPO_ROOT}/${_doc}"
+        run grep -E '[~]/<盒名>-box' "${REPO_ROOT}/${_doc}"
         assert_success
         run grep -F '容器建立後要換 HOME 只能刪盒重建' "${REPO_ROOT}/${_doc}"
         assert_success
