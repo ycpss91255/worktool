@@ -354,12 +354,6 @@ _num_le() {
     ((10#0${_af} <= 10#0${_bf}))
 }
 
-# True when decimal $1 < decimal $2.
-_num_lt() {
-    _num_le "$2" "$1" && return 1
-    return 0
-}
-
 # The numbers of the three metric lines are internally consistent, and the
 # shell median is inside the budget the run actually handed to `bench`.
 #
@@ -368,7 +362,7 @@ _num_lt() {
 # passed. So min <= median <= max is asserted per metric, and the one
 # threshold the document publishes - the enter-latency budget, measured on
 # the shell median - is compared against ${BENCH_MAX_MS}, the same value
-# `--max-ms` was given.
+# `--max-ms` was given. A median equal to it passes, as in bench (#181).
 _51_check_metric_values() {
     local _line _metric _min _med _max _bad=0
     local _re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
@@ -387,8 +381,8 @@ _51_check_metric_values() {
             guard_fail "${_metric}: min=${_min} median=${_med} max=${_max} is not min <= median <= max, so it is not a measurement of ten runs"
             _bad=1
         fi
-        if [[ "${_metric}" == shell ]] && ! _num_lt "${_med}" "${BENCH_MAX_MS}"; then
-            guard_fail "shell median ${_med} ms is not below the --max-ms ${BENCH_MAX_MS} this run passed to bench"
+        if [[ "${_metric}" == shell ]] && ! _num_le "${_med}" "${BENCH_MAX_MS}"; then
+            guard_fail "shell median ${_med} ms exceeds the --max-ms ${BENCH_MAX_MS} this run passed to bench"
             _bad=1
         fi
     done <"${_51_W}/three.txt"

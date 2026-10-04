@@ -438,7 +438,7 @@ shell: min=143.8 median=400.5 max=515.5 ms
 inbox: min=14.9 median=17.5 max=25.4 ms' \
         run "${REALBOX}" --allow-real-box 5.1
     assert_failure
-    assert_output --partial "shell median 400.5 ms is not below the --max-ms 300"
+    assert_output --partial "shell median 400.5 ms exceeds the --max-ms 300"
     refute_output --partial "posted="
 }
 
