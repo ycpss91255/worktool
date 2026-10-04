@@ -328,6 +328,31 @@ _listed_names() {
     assert_equal "$(_last_argc)" "1"
 }
 
+@test "#446: README and structure describe an independent HOME fixed at box creation" {
+    local _doc
+    for _doc in README.md doc/structure.md; do
+        run grep -F '獨立 HOME' "${REPO_ROOT}/${_doc}"
+        assert_success
+        run grep -E '[~]/<盒名>-box' "${REPO_ROOT}/${_doc}"
+        assert_success
+        run grep -F '容器建立後要換 HOME 只能刪盒重建' "${REPO_ROOT}/${_doc}"
+        assert_success
+        run grep -E '共用的 HOME|尚未實作.*#198.*#199' "${REPO_ROOT}/${_doc}"
+        assert_failure
+    done
+}
+
+@test "#446: README and structure describe the Ghostty command through the quoted entry wrapper" {
+    local _doc
+    for _doc in README.md doc/structure.md; do
+        run grep -F "'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '" "${REPO_ROOT}/${_doc}"
+        assert_success
+        assert_output --partial '已 quote 的絕對路徑'
+        run grep -F "'<distrobox>' enter <盒>" "${REPO_ROOT}/${_doc}"
+        assert_failure
+    done
+}
+
 # #161 (4): the docs describe the same five scripts the recipe runs.
 @test "README.md and doc/structure.md list all five scripts behind just box help, in order" {
     local _doc

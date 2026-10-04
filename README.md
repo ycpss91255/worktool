@@ -2,8 +2,8 @@
 
 以 distrobox 為基礎的開發環境。開發用的 CLI/TUI 工具全部住在一個共用的
 distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);host 只保留
-驅動、docker、snapd、桌面 GUI app(以 install script 形式)與容器框架。設定檔
-留在共用的 HOME。
+驅動、docker、snapd、桌面 GUI app(以 install script 形式)與容器框架。盒子使用
+獨立 HOME,tool config 留在盒子 HOME,user config 以 symlink 從 host 帶入。
 
 這是 `init_ubuntu`(ycpss91255/initialization)的重設計繼任者,為新的大版本。
 
@@ -23,9 +23,14 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 
 host 只留驅動、docker、snapd、桌面 GUI install script 與 `just`;distrobox 在 host 的
 docker 上跑一個共用的 dev 盒(`ubuntu:26.04`),所有 CLI / TUI 工具(M5-M10)都在盒內;
-盒子有自己的 HOME,user config 以 symlink 從 host 帶入(決策見
-[ADR 0002](doc/adr/0002-box-owns-its-home.md),尚未實作,將由 #198、#199 實作);
-終端 ghostty(host)-> `script/box/enter.sh` wrapper -> `distrobox enter dev` -> 盒內 fish,不自動開 tmux(issue #179);
+盒子使用獨立 HOME,預設 `~/<盒名>-box`(dev 盒 = `~/dev-box`),建盒時可用
+`just box assemble --home <路徑>` 指定;容器建立後要換 HOME 只能刪盒重建。
+tool config 留在盒子 HOME,user config 以 symlink 從 host 帶入(決策見
+[ADR 0002](doc/adr/0002-box-owns-its-home.md),現行行為見
+[`doc/manifest.md`](doc/manifest.md)「盒子的 HOME」與「user config 連結」);
+終端 ghostty(host)-> `script/box/enter.sh` wrapper -> `'<distrobox>' enter dev` -> 盒內 fish;
+Ghostty 受管命令使用已 quote 的 wrapper 與 distrobox 絕對路徑,見下方 `just box setup`。
+終端不自動開 tmux(issue #179);
 盒內自己開的 tmux 用盒子自己的 server(`TMUX_TMPDIR`),不會連到 host 的 tmux。盒內
 目前的套件見 [`box/dev.ini`](box/dev.ini):M2 的 ripgrep、fzf,加上 M3 先裝的 tmux、
 fish(設定留 M5)。
