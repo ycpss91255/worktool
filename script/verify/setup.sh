@@ -308,15 +308,7 @@ _unavailable() {
 }
 
 _require_tools() {
-    local _t _missing=()
-    for _t in "$@"; do
-        command -v -- "${_t}" >/dev/null 2>&1 || _missing+=("${_t}")
-    done
-    if [[ "${#_missing[@]}" -gt 0 ]]; then
-        _unavailable "cannot run this check here: missing on PATH: ${_missing[*]}"
-        return 3
-    fi
-    return 0
+    guard_require "$@"
 }
 
 # Print the ABSOLUTE path of executable $1, or fail with $2 as the reason.

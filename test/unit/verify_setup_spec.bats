@@ -425,19 +425,16 @@ EOF
     done
 }
 
-@test "3.1: no just on PATH is reported and fails, never skipped" {
-    # A PATH holding every tool the check uses EXCEPT just, so the one
-    # thing missing is the one the message must name.
-    local _d="${BATS_TEST_TMPDIR}/nojust" _t
+@test "3.1: a missing generic tool reports the contract line through just" {
+    local _d="${BATS_TEST_TMPDIR}/no-sed" _t
     mkdir -p "${_d}"
-    for _t in env sed find wc mktemp grep ln chmod cat rm mkdir dirname sh bash awk distrobox; do
+    for _t in env just find wc mktemp grep ln chmod cat rm mkdir dirname sh bash awk distrobox; do
         ln -s "$(command -v "${_t}")" "${_d}/${_t}"
     done
     ln -s "${STUB}/ghostty" "${_d}/ghostty"
-    run env PATH="${_d}" "${VERIFY}" 3.1
+    run env PATH="${_d}" "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] setup.sh: cannot run this check here: missing on PATH"
-    assert_output --partial "just"
+    assert_line "[UNAVAILABLE] setup.sh: sed not found on PATH"
 }
 
 # --- 3.2 ----------------------------------------------------------------------
