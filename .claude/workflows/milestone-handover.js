@@ -108,9 +108,23 @@ const findings = decode(findingsResult)
 if (!findings?.file || findings.error) return { pr: A.pr, sha: head.sha, status: 'findings-failed', report: findings }
 const reviewInputs = await verifyArtifacts('Review', ['findings.md'])
 if (reviewInputs) return reviewInputs
+// Bounded foreground codex calls with literal paths (#453): detached
+// launches are denied by the auto-mode classifier as unsafe agents, and a
+// full review outlasts one call, so rc 124 resumes the same session.
+const CODEX_CALL_SECONDS = 570
+const CODEX_MAX_CONTINUES = 25
+const [CODEX_OUT, CODEX_LOG, CODEX_RC, CODEX_PROMPT, CODEX_CONT] = ['codex-result.json', 'codex-transcript.log', 'codex-exit.txt', 'codex-prompt.md', 'codex-continue.md'].map(f => sq(`${SCRATCH}/${f}`))
+const CODEX_LAUNCH = `rc=0; timeout ${CODEX_CALL_SECONDS} codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${CODEX_OUT} - < ${CODEX_PROMPT} > ${CODEX_LOG} 2>&1 || rc=$?; echo "$rc" > ${CODEX_RC}`
+const CODEX_RESUME = `rc=0; cd ${sq(A.repoDir)} && timeout ${CODEX_CALL_SECONDS} codex exec resume --skip-git-repo-check -o ${CODEX_OUT} <session-id> - < ${CODEX_CONT} >> ${CODEX_LOG} 2>&1 || rc=$?; echo "$rc" > ${CODEX_RC}`
+const LAUNCH_FORBIDDEN = 'Never use setsid, nohup, disown, a trailing &, run_in_background, Monitor, a bash -c wrapper, or a run script written and then executed; never change the command shapes.'
 const reviewResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: codex*.
-Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} with the following task as its prompt. Write the task verbatim to ${SCRATCH}/codex-prompt.md and pass it on stdin; keep nested gh commands out of the Claude shell command. Run in the foreground; capture transcript and exit code in ${SCRATCH}/codex-transcript.log and ${SCRATCH}/codex-exit.txt. Nonzero exit, empty output or malformed JSON fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
+Run an independent codex review with the following task as its prompt. With the Write tool, write the task verbatim to ${CODEX_PROMPT} and write this continuation prompt to ${CODEX_CONT}: "Continue the same review task from where you stopped. Inspect your earlier output and the scratch files first; do not redo finished steps or post a second comment." Keep nested gh commands out of the Claude shell command. Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
+${CODEX_LAUNCH}
+After every call read ${CODEX_RC}. rc 124 means the codex session is unfinished, not failed. Read its id from the first "session id: " line of ${CODEX_LOG} (grep -m1 '^session id: ' ${CODEX_LOG}) and resume that same session with this call, <session-id> replaced by the literal id:
+${CODEX_RESUME}
+Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it with the last 80 lines of ${CODEX_LOG}; never relaunch from scratch or detach.
+${LAUNCH_FORBIDDEN} Any other nonzero final exit, empty output or malformed JSON also fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
 BEGIN CODEX TASK
 ${CONTEXT}
 Only create or overwrite your own files: codex*.
