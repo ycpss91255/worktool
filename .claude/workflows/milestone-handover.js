@@ -108,9 +108,15 @@ const findings = decode(findingsResult)
 if (!findings?.file || findings.error) return { pr: A.pr, sha: head.sha, status: 'findings-failed', report: findings }
 const reviewInputs = await verifyArtifacts('Review', ['findings.md'])
 if (reviewInputs) return reviewInputs
+// One bounded foreground launch with literal paths (#453): detached
+// launches are denied by the auto-mode classifier as unsafe agents.
+const CODEX_LAUNCH = `rc=0; timeout 570 codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} - < ${sq(`${SCRATCH}/codex-prompt.md`)} > ${sq(`${SCRATCH}/codex-transcript.log`)} 2>&1 || rc=$?; echo "$rc" > ${sq(`${SCRATCH}/codex-exit.txt`)}`
+const LAUNCH_FORBIDDEN = 'Never use setsid, nohup, disown, a trailing &, run_in_background, Monitor, a bash -c wrapper, or a run script written and then executed; never change the command shape.'
 const reviewResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: codex*.
-Run an independent codex exec --skip-git-repo-check -C ${sq(A.repoDir)} -o ${sq(`${SCRATCH}/codex-result.json`)} with the following task as its prompt. Write the task verbatim to ${SCRATCH}/codex-prompt.md and pass it on stdin; keep nested gh commands out of the Claude shell command. Run in the foreground; capture transcript and exit code in ${SCRATCH}/codex-transcript.log and ${SCRATCH}/codex-exit.txt. Nonzero exit, empty output or malformed JSON fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
+Run an independent codex review with the following task as its prompt. Write the task verbatim with the Write tool to ${SCRATCH}/codex-prompt.md; keep nested gh commands out of the Claude shell command. Then run exactly this command as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms):
+${CODEX_LAUNCH}
+${LAUNCH_FORBIDDEN} Exit code 124 means codex exceeded the 570-second bound: do not relaunch or detach it; fail closed and report the last 80 lines of ${SCRATCH}/codex-transcript.log. Any other nonzero exit, empty output or malformed JSON also fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
 BEGIN CODEX TASK
 ${CONTEXT}
 Only create or overwrite your own files: codex*.

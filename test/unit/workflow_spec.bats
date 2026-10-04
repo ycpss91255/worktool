@@ -2928,6 +2928,18 @@ _handover_replies() {
     assert_success
 }
 
+@test "milestone-handover pins one bounded foreground codex launch with literal paths and forbids detaching (#453)" {
+    local scratch="/tmp/acceptance/.agents/state/milestone-handover-7-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local launch
+    launch="rc=0; timeout 570 codex exec --skip-git-repo-check -C '/tmp/acceptance' -o '${scratch}/codex-result.json' - < '${scratch}/codex-prompt.md' > '${scratch}/codex-transcript.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${scratch}/codex-exit.txt'"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    jq -e --arg launch "${launch}" '.calls[] | select(.role == "review:") | .prompt |
+        contains($launch) and contains("Bash tool timeout at its maximum (600000 ms)") and
+        contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+        contains("run_in_background") and contains("bash -c wrapper") and contains("run script") and
+        contains("124")' <<<"${output}"
+}
+
 @test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {
     local replies mutation
     replies="$(_handover_replies)"

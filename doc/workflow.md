@@ -427,6 +427,10 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
 5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
+   啟動方式固定為一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值：
+   `rc=0; timeout 570 codex exec --skip-git-repo-check -C <repoDir> -o <scratch>/codex-result.json - < <scratch>/codex-prompt.md > <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`；
+   禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行（#453）。
+   結束碼 124 表示超過 570 秒上限，不重啟、不轉背景，直接失敗並回報。
    codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
