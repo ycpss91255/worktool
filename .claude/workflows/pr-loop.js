@@ -77,8 +77,10 @@ const RELPATHS = `sed -E ${sq([
   `s#${ere(REPO_DIR)}/##g`,
 ].join(';'))}`
 const IMPLEMENT_OUT = `${SCRATCH}/implement.md`
-const CODEX_TIMEOUT_SECONDS = 14400
-const CODEX_WAIT_SECONDS = 540
+// Each codex call stays under the Bash tool's 600000 ms maximum (#453);
+// a longer run resumes the same session in at most 25 further calls.
+const CODEX_CALL_SECONDS = 570
+const CODEX_MAX_CONTINUES = 25
 
 const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, sha: { type: 'string' } }, required: ['pr', 'sha'] }
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
@@ -122,11 +124,20 @@ const IMPLEMENT_SNAPSHOT = `Before overwriting any output, run this foreground s
   if [ -e "$file" ]; then cp "$file" "$file.previous" || exit 1; fi
 done\``
 
-const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
-setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
-Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
-timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
-An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from both \`tail -n 80 ${out}.log\` and \`tail -n 80 ${out}\`; never treat it as success.`
+const LAUNCH_FORBIDDEN = 'Never use setsid, nohup, disown, a trailing &, run_in_background, Monitor, a bash -c wrapper, or a run script written and then executed; never change the command shapes.'
+// One bounded foreground codex call per Bash call, literal paths (#453).
+const CODEX_FOREGROUND_RUN = (stem) => {
+  const [out, log, rc, prompt, cont] = [`${stem}.md`, `${stem}.md.log`, `${stem}.rc`, `${stem}-prompt.md`, `${stem}-continue.md`].map(sq)
+  return `Create ${SCRATCH}. With the Write tool, write the brief below verbatim to ${prompt} and write this continuation prompt to ${cont}: "Continue the same task from where you stopped. Inspect git status, git log and your earlier output first; do not redo finished slices." Remove any stale ${rc} with rm -f.
+Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
+rc=0; timeout ${CODEX_CALL_SECONDS} codex exec --skip-git-repo-check -C ${sq(WT)} -o ${out} - < ${prompt} > ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+After every call, list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\`, then read ${rc}.
+rc 124 means the codex session is unfinished, not failed. Read its id from the first "session id: " line of ${log} (grep -m1 '^session id: ' ${log}) and resume that same session with this call, <session-id> replaced by the literal id:
+rc=0; cd ${sq(WT)} && timeout ${CODEX_CALL_SECONDS} codex exec resume --skip-git-repo-check -o ${out} <session-id> - < ${cont} >> ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it; never relaunch from scratch or detach.
+${LAUNCH_FORBIDDEN}
+If the final codex rc is non-zero, report failure and include the last 80 lines from both \`tail -n 80 ${log}\` and \`tail -n 80 ${out}\`; never treat it as success.`
+}
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
@@ -134,7 +145,7 @@ ${CODEX_RULES}
 
 First run: ${SETUP}.
 ${IMPLEMENT_SNAPSHOT}
-${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/implement`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
 brief:
@@ -178,7 +189,7 @@ const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the impl
 
 ${CODEX_RULES}
 
-${CODEX_DETACHED_RUN(`${SCRATCH}/fix-r${round}.md`, `${SCRATCH}/fix-r${round}.rc`)}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/fix-r${round}`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
 
 brief:

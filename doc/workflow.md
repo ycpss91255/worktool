@@ -81,7 +81,12 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 ## 既有分支接續
 
 本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；若目錄已刪除但登錄仍在，只移除該路徑的殘留登錄再重建，不清理其他 worktree。已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
-Locate 先檢查指定 worktree：工作目錄不乾淨時，一律判為 `implement`，在原 worktree 接續實作。只有 codex 實作路徑額外檢查 `.scratch/<name>/implement.rc` 非 `0` 或 `.scratch/<name>/implement.md` 不存在／為空；這些完成檔由 codex detached wrapper 寫入，light、Claude 實作與 `codex: "off"` 的 Claude 路徑不以它們判斷完成狀態。brief 要求檢查 `git log origin/<base>..HEAD`、`git status --short`、`git diff`、前次報告與 `implement.md.log`，保留既有 commit、未提交修改與 `.agents/state/` 的診斷及測試證據。codex 啟動前以 `.previous` 副本保存前次報告、rc 與 log，供實作方在新輸出覆寫原檔後繼續閱讀。
+Locate 先檢查指定 worktree：工作目錄不乾淨時，一律判為 `implement`，在原 worktree 接續實作。只有 codex 實作路徑額外檢查 `.scratch/<name>/implement.rc` 非 `0` 或 `.scratch/<name>/implement.md` 不存在／為空；這些完成檔由 codex 前景啟動指令寫入，light、Claude 實作與 `codex: "off"` 的 Claude 路徑不以它們判斷完成狀態。brief 要求檢查 `git log origin/<base>..HEAD`、`git status --short`、`git diff`、前次報告與 `implement.md.log`，保留既有 commit、未提交修改與 `.agents/state/` 的診斷及測試證據。codex 啟動前以 `.previous` 副本保存前次報告、rc 與 log，供實作方在新輸出覆寫原檔後繼續閱讀。
+codex 實作與 Fix 的啟動方式固定（#453）：每次一個前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值，
+`rc=0; timeout 570 codex exec --skip-git-repo-check -C <worktree> -o <scratch>/<stem>.md - < <scratch>/<stem>-prompt.md > <scratch>/<stem>.md.log 2>&1 || rc=$?; echo "$rc" > <scratch>/<stem>.rc`；
+rc 為 124 表示 session 未完成，從 log 第一行 `session id:` 取得 id，以 `codex exec resume <id>` 在 worktree 內接續同一個 session（輸出附加到同一份 log），
+最多接續 25 次，仍未完成或讀不到 session id 即失敗並回報，不重新從頭啟動。
+禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行。
 指定既有 `branch` 與 `pr` 且實作已完成、工作區乾淨時，跳過實作與開 PR，直接進入 CI／審查迴圈；需要接續實作時仍重用指定 PR，不另開 PR。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
