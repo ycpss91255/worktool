@@ -241,6 +241,137 @@ _ITEM_6_1_PRS=(152 153 154 155 156 165 166 167 168 169)
 _ITEM_6_1_NO_ARM_PR=152
 _ITEM_6_1_EXPECT_DISTINCT=10
 
+# These row helpers use the item runner's local counters and captured data
+# through Bash dynamic scope; only item_6_1 calls them.
+_item_6_1_queries() {
+    if ! _gh_capture _checks pr checks "${_pr}" --repo "${EVIDENCE_REPO}" \
+        --json name,bucket; then
+        printf '#%s gh-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    # gh exited 0 and said nothing. That is not "zero checks", it is no
+    # answer at all, and `length` over it would read as a plain 0.
+    if [[ -z "${_checks}" ]]; then
+        printf '#%s empty-checks\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    if ! _jq_capture _type "${_checks}" -r 'type'; then
+        printf '#%s jq-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    if [[ "${_type}" != "array" ]]; then
+        printf '#%s not-a-check-list\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    if ! _gh_capture _body pr view "${_pr}" --repo "${EVIDENCE_REPO}" \
+        --json body --jq .body; then
+        printf '#%s gh-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    # A body that never arrived must not be counted as a body with zero
+    # `Closes #` lines: both would print closes=0 otherwise.
+    if [[ -z "${_body}" ]]; then
+        printf '#%s empty-body\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+
+    return 0
+}
+
+_item_6_1_checks() {
+    _item_6_1_queries || return 1
+    if ! _jq_capture _total "${_checks}" 'length' \
+        || ! _jq_capture _nonpass "${_checks}" '[.[] | select(.bucket != "pass")] | length' \
+        || ! _jq_capture _amd_names "${_checks}" -r '.[].name | select(test("ubuntu-latest"))' \
+        || ! _jq_capture _arm_names "${_checks}" -r '.[].name | select(test("ubuntu-24.04-arm"))'; then
+        printf '#%s jq-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    if ! _is_count "${_total}" || ! _is_count "${_nonpass}"; then
+        printf '#%s bad-counts\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+
+    return 0
+}
+
+_item_6_1_architectures() {
+    # Distinct NAMES per architecture, and the overlap between the two
+    # sets. `amd` and `arm` are the sizes of two sets; `both` is how many
+    # names are in each of them, which a genuine two-architecture matrix
+    # answers with 0.
+    _lines_into _amd_lines "${_amd_names}"
+    _lines_into _arm_lines "${_arm_names}"
+    _amd_set=()
+    _arm_set=()
+    if [[ "${#_amd_lines[@]}" -gt 0 ]]; then
+        for _name in "${_amd_lines[@]}"; do _amd_set["${_name}"]=1; done
+    fi
+    if [[ "${#_arm_lines[@]}" -gt 0 ]]; then
+        for _name in "${_arm_lines[@]}"; do _arm_set["${_name}"]=1; done
+    fi
+    _amd="${#_amd_set[@]}"
+    _arm="${#_arm_set[@]}"
+    _both=0
+    if [[ "${_amd}" -gt 0 ]]; then
+        for _name in "${!_amd_set[@]}"; do
+            if [[ -n "${_arm_set["${_name}"]:-}" ]]; then
+                _both=$((_both + 1))
+            fi
+        done
+    fi
+
+    return 0
+}
+
+_item_6_1_closes() {
+    _rc=0
+    _grep_capture _matches "${_body}" -o '^Closes #[0-9][0-9]*' || _rc=$?
+    if [[ "${_rc}" -eq 2 ]]; then
+        printf '#%s grep-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    _lines_into _match_lines "${_matches}"
+    _closes="${#_match_lines[@]}"
+    _issue=""
+    for _match in "${_match_lines[@]}"; do
+        _number="${_match##*#}"
+        if ! _is_count "${_number}"; then
+            _issue=""
+            break
+        fi
+        _issue="${_issue:+${_issue},}#${_number}"
+    done
+
+    return 0
+}
+
+_item_6_1_pr() {
+    _item_6_1_checks || return 1
+    _item_6_1_architectures
+    _item_6_1_closes || return 1
+    printf '#%s total=%s nonpass=%s amd=%s arm=%s both=%s closes=%s issue=%s\n' \
+        "${_pr}" "${_total}" "${_nonpass}" "${_amd}" "${_arm}" "${_both}" \
+        "${_closes}" "${_issue}"
+
+    [[ -z "${_issue}" ]] || _distinct["${_issue}"]=1
+    [[ "${_total}" -gt 0 && "${_nonpass}" -eq 0 \
+        && "${_closes}" -eq 1 && -n "${_issue}" ]] || _fail=1
+    if [[ "${_pr}" != "${_ITEM_6_1_NO_ARM_PR}" ]]; then
+        [[ "${_amd}" -gt 0 && "${_amd}" -eq "${_arm}" && "${_both}" -eq 0 ]] || _fail=1
+    fi
+    return 0
+}
+
 item_6_1() {
     local _tool_rc=0
     _require_tools timeout gh jq grep || _tool_rc=$?
@@ -254,111 +385,7 @@ item_6_1() {
     declare -A _distinct=() _amd_set=() _arm_set=()
 
     for _pr in "${_ITEM_6_1_PRS[@]}"; do
-        if ! _gh_capture _checks pr checks "${_pr}" --repo "${EVIDENCE_REPO}" \
-            --json name,bucket; then
-            printf '#%s gh-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        # gh exited 0 and said nothing. That is not "zero checks", it is no
-        # answer at all, and `length` over it would read as a plain 0.
-        if [[ -z "${_checks}" ]]; then
-            printf '#%s empty-checks\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        if ! _jq_capture _type "${_checks}" -r 'type'; then
-            printf '#%s jq-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        if [[ "${_type}" != "array" ]]; then
-            printf '#%s not-a-check-list\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        if ! _gh_capture _body pr view "${_pr}" --repo "${EVIDENCE_REPO}" \
-            --json body --jq .body; then
-            printf '#%s gh-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        # A body that never arrived must not be counted as a body with zero
-        # `Closes #` lines: both would print closes=0 otherwise.
-        if [[ -z "${_body}" ]]; then
-            printf '#%s empty-body\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-
-        if ! _jq_capture _total "${_checks}" 'length' \
-            || ! _jq_capture _nonpass "${_checks}" '[.[] | select(.bucket != "pass")] | length' \
-            || ! _jq_capture _amd_names "${_checks}" -r '.[].name | select(test("ubuntu-latest"))' \
-            || ! _jq_capture _arm_names "${_checks}" -r '.[].name | select(test("ubuntu-24.04-arm"))'; then
-            printf '#%s jq-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        if ! _is_count "${_total}" || ! _is_count "${_nonpass}"; then
-            printf '#%s bad-counts\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-
-        # Distinct NAMES per architecture, and the overlap between the two
-        # sets. `amd` and `arm` are the sizes of two sets; `both` is how many
-        # names are in each of them, which a genuine two-architecture matrix
-        # answers with 0.
-        _lines_into _amd_lines "${_amd_names}"
-        _lines_into _arm_lines "${_arm_names}"
-        _amd_set=()
-        _arm_set=()
-        if [[ "${#_amd_lines[@]}" -gt 0 ]]; then
-            for _name in "${_amd_lines[@]}"; do _amd_set["${_name}"]=1; done
-        fi
-        if [[ "${#_arm_lines[@]}" -gt 0 ]]; then
-            for _name in "${_arm_lines[@]}"; do _arm_set["${_name}"]=1; done
-        fi
-        _amd="${#_amd_set[@]}"
-        _arm="${#_arm_set[@]}"
-        _both=0
-        if [[ "${_amd}" -gt 0 ]]; then
-            for _name in "${!_amd_set[@]}"; do
-                if [[ -n "${_arm_set["${_name}"]:-}" ]]; then
-                    _both=$((_both + 1))
-                fi
-            done
-        fi
-
-        _rc=0
-        _grep_capture _matches "${_body}" -o '^Closes #[0-9][0-9]*' || _rc=$?
-        if [[ "${_rc}" -eq 2 ]]; then
-            printf '#%s grep-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        _lines_into _match_lines "${_matches}"
-        _closes="${#_match_lines[@]}"
-        _issue=""
-        for _match in "${_match_lines[@]}"; do
-            _number="${_match##*#}"
-            if ! _is_count "${_number}"; then
-                _issue=""
-                break
-            fi
-            _issue="${_issue:+${_issue},}#${_number}"
-        done
-
-        printf '#%s total=%s nonpass=%s amd=%s arm=%s both=%s closes=%s issue=%s\n' \
-            "${_pr}" "${_total}" "${_nonpass}" "${_amd}" "${_arm}" "${_both}" \
-            "${_closes}" "${_issue}"
-
-        [[ -z "${_issue}" ]] || _distinct["${_issue}"]=1
-        [[ "${_total}" -gt 0 && "${_nonpass}" -eq 0 \
-            && "${_closes}" -eq 1 && -n "${_issue}" ]] || _fail=1
-        if [[ "${_pr}" != "${_ITEM_6_1_NO_ARM_PR}" ]]; then
-            [[ "${_amd}" -gt 0 && "${_amd}" -eq "${_arm}" && "${_both}" -eq 0 ]] || _fail=1
-        fi
+        _item_6_1_pr || _fail=1
     done
 
     printf 'distinct=%s\n' "${#_distinct[@]}"
@@ -401,6 +428,64 @@ _item_6_2_patterns() {
     esac
 }
 
+# Row helpers share item_6_2's local cell and failure state.
+_item_6_2_cells() {
+    _line=""
+    for _row in "${_row_lines[@]}"; do
+        _label="${_row%%|*}"
+        _pattern="${_row#*|}"
+        if [[ "${_status}" != ok ]]; then
+            _cell="${_status}"
+            _fail=1
+        else
+            _rc=0
+            _grep_capture _hits "${_comments}" -e "${_pattern}" || _rc=$?
+            case "${_rc}" in
+                0) _cell=1 ;;
+                1)
+                    _cell=0
+                    _fail=1
+                    ;;
+                *)
+                    _cell=grep-failed
+                    _fail=1
+                    ;;
+            esac
+        fi
+        _line="${_line} ${_label}:${_cell}"
+    done
+    printf '#%s%s\n' "${_issue}" "${_line}"
+    return 0
+}
+
+_item_6_2_issue() {
+    if ! _rows="$(_item_6_2_patterns "${_issue}")"; then
+        log_error "evidence.sh: no patterns declared for issue #${_issue}"
+        printf 'rc=1\n'
+        return 1
+    fi
+    _lines_into _row_lines "${_rows}"
+    if [[ "${#_row_lines[@]}" -eq 0 ]]; then
+        log_error "evidence.sh: issue #${_issue} declares zero patterns"
+        printf 'rc=1\n'
+        return 1
+    fi
+
+    if ! _gh_capture _comments api \
+        "repos/${EVIDENCE_REPO}/issues/${_issue}/comments" --paginate \
+        --jq '.[].body | select(startswith("[claude]"))'; then
+        _status=gh-failed
+    elif [[ -z "${_comments}" ]]; then
+        # No [claude] comment at all. Reporting 0 here would say "the
+        # decision is not recorded"; this says "there is nothing to read".
+        _status=no-comments
+    else
+        _status=ok
+    fi
+
+    _item_6_2_cells
+}
+
 item_6_2() {
     local _tool_rc=0
     _require_tools timeout gh grep || _tool_rc=$?
@@ -413,55 +498,7 @@ item_6_2() {
     local -a _row_lines=()
 
     for _issue in "${_ITEM_6_2_ISSUES[@]}"; do
-        if ! _rows="$(_item_6_2_patterns "${_issue}")"; then
-            log_error "evidence.sh: no patterns declared for issue #${_issue}"
-            printf 'rc=1\n'
-            return 1
-        fi
-        _lines_into _row_lines "${_rows}"
-        if [[ "${#_row_lines[@]}" -eq 0 ]]; then
-            log_error "evidence.sh: issue #${_issue} declares zero patterns"
-            printf 'rc=1\n'
-            return 1
-        fi
-
-        if ! _gh_capture _comments api \
-            "repos/${EVIDENCE_REPO}/issues/${_issue}/comments" --paginate \
-            --jq '.[].body | select(startswith("[claude]"))'; then
-            _status=gh-failed
-        elif [[ -z "${_comments}" ]]; then
-            # No [claude] comment at all. Reporting 0 here would say "the
-            # decision is not recorded"; this says "there is nothing to read".
-            _status=no-comments
-        else
-            _status=ok
-        fi
-
-        _line=""
-        for _row in "${_row_lines[@]}"; do
-            _label="${_row%%|*}"
-            _pattern="${_row#*|}"
-            if [[ "${_status}" != ok ]]; then
-                _cell="${_status}"
-                _fail=1
-            else
-                _rc=0
-                _grep_capture _hits "${_comments}" -e "${_pattern}" || _rc=$?
-                case "${_rc}" in
-                    0) _cell=1 ;;
-                    1)
-                        _cell=0
-                        _fail=1
-                        ;;
-                    *)
-                        _cell=grep-failed
-                        _fail=1
-                        ;;
-                esac
-            fi
-            _line="${_line} ${_label}:${_cell}"
-        done
-        printf '#%s%s\n' "${_issue}" "${_line}"
+        _item_6_2_issue || return 1
     done
 
     printf 'rc=%s\n' "${_fail}"
@@ -528,6 +565,96 @@ _item_6_3_word() {
     esac
 }
 
+# Blocked-row helpers share item_6_3's local evidence and distinct sets.
+_item_6_3_follow_up() {
+    if ! _gh_capture _claude api \
+        "repos/${EVIDENCE_REPO}/issues/${_pr}/comments" --paginate \
+        --jq '.[].body | select(startswith("[claude]"))'; then
+        printf '#%s gh-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    if [[ -z "${_claude}" ]]; then
+        printf '#%s no-claude-comment\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    _rc=0
+    _grep_capture _matches "${_claude}" -o 'follow-up issue #[0-9][0-9]*' || _rc=$?
+    if [[ "${_rc}" -eq 2 ]]; then
+        printf '#%s grep-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    _lines_into _match_lines "${_matches}"
+    _follow_seen=()
+    _follow=""
+    for _match in "${_match_lines[@]}"; do
+        _number="${_match##*#}"
+        _is_count "${_number}" || continue
+        _follow_seen["${_number}"]=1
+        [[ -n "${_follow}" ]] || _follow="${_number}"
+    done
+    if [[ "${#_follow_seen[@]}" -eq 0 ]]; then
+        printf '#%s no-follow-up\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+
+    return 0
+}
+
+_item_6_3_fix_pr() {
+    if ! _gh_capture _prs pr list --repo "${EVIDENCE_REPO}" \
+        --state merged --search "Closes #${_follow} in:body" \
+        --json number,body \
+        --jq ".[] | select(.body | test(\"^Closes #${_follow}\\\\b\"; \"m\")) | .number"; then
+        printf '#%s gh-failed\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    _lines_into _pr_lines "${_prs}"
+    if [[ "${#_pr_lines[@]}" -eq 0 ]]; then
+        printf '#%s no-fix-pr\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+    _fix_pr="${_pr_lines[0]}"
+    if ! _is_count "${_fix_pr}"; then
+        printf '#%s bad-fix-pr\n' "${_pr}"
+        _fail=1
+        return 1
+    fi
+
+    return 0
+}
+
+_item_6_3_blocked_pr() {
+    _item_6_3_follow_up || return 1
+    _item_6_3_fix_pr || return 1
+    _rc=0
+    _item_6_3_verdict "${_pr}" _verdict || _rc=$?
+    _orig="$(_item_6_3_word "${_verdict}" "${_rc}")"
+    _rc=0
+    _item_6_3_verdict "${_fix_pr}" _verdict || _rc=$?
+    _fixed="$(_item_6_3_word "${_verdict}" "${_rc}")"
+
+    _issue="${_follow}"
+    _follow_all["${_follow}"]=1
+    _fix_all["${_fix_pr}"]=1
+    _ok=BAD
+    if [[ "${_orig}" == blocked && "${_fixed}" == mergeable \
+        && "${#_follow_seen[@]}" -eq 1 && "${#_pr_lines[@]}" -eq 1 ]]; then
+        _ok=ok
+    else
+        _fail=1
+    fi
+    printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' \
+        "${_pr}" "${_orig}" "${_issue}" "${_fix_pr}" "${_issue}" \
+        "${_fixed}" "${_ok}"
+    return 0
+}
+
 item_6_3() {
     local _tool_rc=0
     _require_tools timeout gh grep || _tool_rc=$?
@@ -549,81 +676,7 @@ item_6_3() {
     done
 
     for _pr in "${_ITEM_6_3_BLOCKED_PRS[@]}"; do
-        if ! _gh_capture _claude api \
-            "repos/${EVIDENCE_REPO}/issues/${_pr}/comments" --paginate \
-            --jq '.[].body | select(startswith("[claude]"))'; then
-            printf '#%s gh-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        if [[ -z "${_claude}" ]]; then
-            printf '#%s no-claude-comment\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        _rc=0
-        _grep_capture _matches "${_claude}" -o 'follow-up issue #[0-9][0-9]*' || _rc=$?
-        if [[ "${_rc}" -eq 2 ]]; then
-            printf '#%s grep-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        _lines_into _match_lines "${_matches}"
-        _follow_seen=()
-        _follow=""
-        for _match in "${_match_lines[@]}"; do
-            _number="${_match##*#}"
-            _is_count "${_number}" || continue
-            _follow_seen["${_number}"]=1
-            [[ -n "${_follow}" ]] || _follow="${_number}"
-        done
-        if [[ "${#_follow_seen[@]}" -eq 0 ]]; then
-            printf '#%s no-follow-up\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-
-        if ! _gh_capture _prs pr list --repo "${EVIDENCE_REPO}" \
-            --state merged --search "Closes #${_follow} in:body" \
-            --json number,body \
-            --jq ".[] | select(.body | test(\"^Closes #${_follow}\\\\b\"; \"m\")) | .number"; then
-            printf '#%s gh-failed\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        _lines_into _pr_lines "${_prs}"
-        if [[ "${#_pr_lines[@]}" -eq 0 ]]; then
-            printf '#%s no-fix-pr\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-        _fix_pr="${_pr_lines[0]}"
-        if ! _is_count "${_fix_pr}"; then
-            printf '#%s bad-fix-pr\n' "${_pr}"
-            _fail=1
-            continue
-        fi
-
-        _rc=0
-        _item_6_3_verdict "${_pr}" _verdict || _rc=$?
-        _orig="$(_item_6_3_word "${_verdict}" "${_rc}")"
-        _rc=0
-        _item_6_3_verdict "${_fix_pr}" _verdict || _rc=$?
-        _fixed="$(_item_6_3_word "${_verdict}" "${_rc}")"
-
-        _issue="${_follow}"
-        _follow_all["${_follow}"]=1
-        _fix_all["${_fix_pr}"]=1
-        _ok=BAD
-        if [[ "${_orig}" == blocked && "${_fixed}" == mergeable \
-            && "${#_follow_seen[@]}" -eq 1 && "${#_pr_lines[@]}" -eq 1 ]]; then
-            _ok=ok
-        else
-            _fail=1
-        fi
-        printf '#%s %s -> follow-up #%s fixed-by PR #%s (closes #%s, %s) %s\n' \
-            "${_pr}" "${_orig}" "${_issue}" "${_fix_pr}" "${_issue}" \
-            "${_fixed}" "${_ok}"
+        _item_6_3_blocked_pr || _fail=1
     done
 
     # One follow-up issue and one fix PR cannot answer for four blocked PRs.
@@ -893,6 +946,11 @@ main() {
         return 0
     fi
 
+    _run_selected_items
+}
+
+# Uses main's local selection array after all options have been parsed.
+_run_selected_items() {
     if [[ "${#_ids[@]}" -eq 0 ]]; then
         # A bare run selects the default groups. realbox items are opt-in,
         # and saying which ones were left out on stderr is not a silent skip.

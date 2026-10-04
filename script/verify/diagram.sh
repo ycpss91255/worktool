@@ -502,6 +502,11 @@ diagram_run() {
         return 0
     fi
 
+    _diagram_selected_items
+}
+
+# Uses diagram_run's local root and item selection after parsing.
+_diagram_selected_items() {
     if [[ "${#_items[@]}" -eq 0 ]]; then
         _items=("${VERIFY_ITEMS[@]}")
     fi
