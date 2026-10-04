@@ -545,6 +545,18 @@ STUB
 
 # --- 6.2 ---------------------------------------------------------------------
 
+@test "errexit: an unmatched decision grep prints every zero cell and final rc through the CLI" {
+    _stub_all_ok
+    cat >"${BIN}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '[claude] nothing concrete here\n'
+STUB
+    chmod +x "${BIN}/gh"
+    run bash -c 'bash "$1" 6.2 2>/dev/null' _ "${EVIDENCE}"
+    assert_failure 1
+    assert_output $'#22 median-ms:0 runc:0\n#148 lts-only:0 arm-runner:0\n#21 default-enter:0 log:0\nrc=1'
+}
+
 @test "6.2: prints the document's lines and exits 0 when every decision is recorded" {
     _stub_all_ok
     _run_evidence_item item_6_2
@@ -869,6 +881,28 @@ _dispatch_realbox_item() {
     # unset for an empty capture and refute_line would error instead of pass.
     run cat "${FAKE_DISTROBOX_STATE}"
     refute_output --partial "dev"
+}
+
+@test "errexit cleanup: an interrupted creation with no box still reports cleanup-rc=0" {
+    _stub_distrobox
+    cat >"${BIN}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    list) printf 'ID | NAME | STATUS | IMAGE\n' ;;
+    rm) exit 7 ;;
+esac
+STUB
+    chmod +x "${BIN}/distrobox"
+    run bash -c '
+        source "$1"
+        EVIDENCE_ALLOW_REALBOX=1
+        _realbox_begin 5.1
+        trap - EXIT INT TERM HUP
+        _realbox_cleanup
+    ' _ "${EVIDENCE}"
+    assert_success
+    assert_line 'preexisting-dev=0'
+    assert_line 'cleanup-rc=0'
 }
 
 @test "realbox: a box that survives cleanup fails the run" {

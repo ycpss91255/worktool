@@ -32,7 +32,7 @@
 #
 #   - No pipelines at all. Every external call is a plain command whose
 #     status is read immediately, or a command substitution whose status is
-#     captured into a variable on the very next line (locals are declared
+#     captured explicitly (locals are declared
 #     before the assignment, never `local x=$(...)`, which would mask it).
 #   - grep's three statuses are triaged everywhere: 0 = matched,
 #     1 = matched nothing, >= 2 = grep itself failed. Only the first two are
@@ -89,11 +89,11 @@
 #   2  the command line was refused; nothing ran
 #   3  a required tool is unavailable
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no -e,
-# see doc/adr/0007); every non-zero exit is explicit.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
 # shellcheck source-path=SCRIPTDIR/../../lib
-set -uo pipefail
+set -euo pipefail
 
 # --- Paths -------------------------------------------------------------------
 # Resolved with shell builtins only (no `dirname`): grep is the ONE external
@@ -267,15 +267,14 @@ _require_file() {
 # always reports "no match" would turn foreignobject=0/3 into a false pass;
 # one that always reports a match would do the same to mxfile=3/3.
 _grep_selftest() {
-    local _f="$1" _rc
-    grep -q -e '' -- "${_f}"
-    _rc=$?
+    local _f="$1" _rc=0
+    grep -q -e '' -- "${_f}" || _rc=$?
     if [[ "${_rc}" -ne 0 ]]; then
         _item_error "grep exited ${_rc} on the always-matches probe over ${_f}; its answers cannot be trusted"
         return 1
     fi
-    grep -q -e "${GREP_SENTINEL}" -- "${_f}"
-    _rc=$?
+    _rc=0
+    grep -q -e "${GREP_SENTINEL}" -- "${_f}" || _rc=$?
     if [[ "${_rc}" -ne 1 ]]; then
         _item_error "grep exited ${_rc} on the never-matches probe over ${_f}; its answers cannot be trusted"
         return 1
@@ -305,7 +304,10 @@ _collect_svgs() {
     fi
     DIAGRAM_SVGS=("${_dir}"/*.drawio.svg)
     if [[ "${_had_nullglob}" -eq 0 ]]; then
-        shopt -u nullglob
+        if ! shopt -u nullglob; then
+            _item_error "cannot restore nullglob"
+            return 1
+        fi
     fi
     if [[ "${#DIAGRAM_SVGS[@]}" -eq 0 ]]; then
         _item_error "no .drawio.svg under ${_dir} (nothing to count: a failure, not an empty pass)"
@@ -332,8 +334,8 @@ _scan_files() {
     shift
     local _f _rc _hits=0 _scanned=0
     for _f in "$@"; do
-        grep -q -e "${_pat}" -- "${_f}"
-        _rc=$?
+        _rc=0
+        grep -q -e "${_pat}" -- "${_f}" || _rc=$?
         case "${_rc}" in
             0) _hits=$((_hits + 1)) ;;
             1) ;;
@@ -356,9 +358,8 @@ _scan_files() {
 # checked to be a number before anyone uses it as one, so a grep that
 # answers with something else cannot be read as a count.
 _count_lines() {
-    local _pat="$1" _file="$2" _out _rc
-    _out="$(grep -c -e "${_pat}" -- "${_file}")"
-    _rc=$?
+    local _pat="$1" _file="$2" _out _rc=0
+    _out="$(grep -c -e "${_pat}" -- "${_file}")" || _rc=$?
     if [[ "${_rc}" -gt 1 ]]; then
         _item_error "grep exited ${_rc} while counting '${_pat}' in ${_file}"
         return 1
@@ -501,6 +502,11 @@ diagram_run() {
         return 0
     fi
 
+    _diagram_selected_items
+}
+
+# Uses diagram_run's local root and item selection after parsing.
+_diagram_selected_items() {
     if [[ "${#_items[@]}" -eq 0 ]]; then
         _items=("${VERIFY_ITEMS[@]}")
     fi
@@ -520,8 +526,8 @@ diagram_run() {
     for _item in "${_items[@]}"; do
         VERIFY_ITEM="${_item}"
         log_info "${_item}: checking ${VERIFY_ROOT}"
-        _run_item "${_item}"
-        _rc=$?
+        _rc=0
+        _run_item "${_item}" || _rc=$?
         if [[ "${_rc}" -ne 0 ]]; then
             [[ "${_rc}" -eq 3 ]] || log_error "${_item}: FAILED"
             return "${_rc}"

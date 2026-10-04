@@ -26,6 +26,14 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "verify scripts enable errexit per ADR 0001" {
+    local _script
+    for _script in all ui diagram evidence; do
+        run grep -Fx 'set -euo pipefail' "${REPO_ROOT}/script/verify/${_script}.sh"
+        assert_success
+    done
+}
+
 @test "CI: test-unit and verify-all checkouts fetch full history for scope acceptance" {
     local _job
     # test-unit is a matrix leg of the gate job, sharing its checkout.
@@ -205,6 +213,14 @@ _stub_calls() {
 
 # --- Failures: plausible output, non-zero exit ------------------------------
 
+@test "errexit: a failed group probe preserves stdout and maps its status to FAIL" {
+    _stub_group ui 7
+    run bash -c '"$1" 2>/dev/null' _ "${ALL_SH}"
+    assert_failure 1
+    assert_output $'ui-output-ok\nverify all: ui FAIL (rc=7)\nverify all: VERDICT FAIL at ui (rc=7); passed: none; not run: gate setup diagram evidence'
+    assert_equal "$(_stub_calls)" 'ui.sh 0'
+}
+
 @test "gate exits 1 after printing plausible output -> exit 1, stops there, FAIL verdict" {
     _stub_group gate 1
     run "${ALL_SH}"
@@ -280,6 +296,16 @@ _stub_calls() {
 }
 
 # --- CLI contract ------------------------------------------------------------
+
+@test "CLI: help and list validate a trailing unknown option before serving output" {
+    local _option
+    for _option in --help --list; do
+        run "${ALL_SH}" "${_option}" --bogus
+        assert_failure 2
+        assert_output "all.sh: unknown option '--bogus' (see --help)"
+        assert_equal "$(_stub_calls)" ''
+    done
+}
 
 @test "--help exits 0, names the five groups and the realbox exclusion, runs nothing" {
     run "${ALL_SH}" --help

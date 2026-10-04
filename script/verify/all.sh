@@ -33,11 +33,10 @@
 #   2  usage error (unknown option, unexpected argument)
 #   3  a group could not run here (it exited 3, UNAVAILABLE)
 #
-# Exit-code-contract script: default guards are `set -uo pipefail` (no `-e`),
-# like the group scripts - every group status is captured and handled
-# explicitly, so a non-zero exit is always intentional.
+# Use errexit per doc/adr/0001-scripts-use-errexit.md. Expected non-zero
+# statuses are captured explicitly to preserve the exit-code contract.
 
-set -uo pipefail
+set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
 SCRIPT_NAME="all.sh"
@@ -126,17 +125,15 @@ _run_group() {
 }
 
 main() {
-    local _arg
+    local _arg _help=0 _list=0
     while [[ "$#" -gt 0 ]]; do
         _arg="$1"
         case "${_arg}" in
             -h | --help)
-                _usage
-                exit 0
+                _help=1
                 ;;
             -l | --list)
-                printf '%s\n' "${VERIFY_GROUPS[@]}"
-                exit 0
+                _list=1
                 ;;
             -*)
                 _usage_error "unknown option '${_arg}'"
@@ -145,8 +142,21 @@ main() {
                 _usage_error "unexpected argument '${_arg}'"
                 ;;
         esac
+        shift
     done
 
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        printf '%s\n' "${VERIFY_GROUPS[@]}"
+        return 0
+    fi
+    _run_groups
+}
+
+_run_groups() {
     local _i _group _rc _passed=() _rest=()
     for _i in "${!VERIFY_GROUPS[@]}"; do
         _group="${VERIFY_GROUPS[${_i}]}"
