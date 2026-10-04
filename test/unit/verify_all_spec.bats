@@ -30,7 +30,8 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     local _scope _path
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     run printf '%s\n' "${_scope}"
-    for _path in 'doc/acceptance.md' 'doc/evidence/' 'ADR 0008' '0010' \
+    for _path in 'doc/acceptance.md' 'doc/design.md' 'doc/enter.md' \
+        'doc/manifest.md' 'doc/evidence/' 'ADR 0008' '0010' \
         'script/verify/' 'justfile' 'lib/config_backup.sh' 'lib/guard.sh' \
         'lib/distrobox_manager.sh' 'lib/home.sh' 'test/unit/enter_spec.bats' \
         'script/test/test.sh' 'test/unit/verify_*_spec.bats' \
@@ -40,6 +41,91 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     done
     refute_output --partial '不動產品程式'
     refute_output --partial '要驗的產品程式全在 main'
+}
+
+# Match only listed code paths (exact, directory or glob), or a listed ADR
+# number for files in doc/adr/. Prose mentioning a path is not coverage.
+_scope_covers_path() {
+    local _scope="$1" _path="$2" _entry _number
+    while IFS= read -r _entry; do
+        if [[ "${_path}" == @(${_entry}) ]]; then
+            return 0
+        fi
+        if [[ "${_entry}" == */ && "${_path}" == "${_entry}"* ]]; then
+            return 0
+        fi
+    done < <(printf '%s\n' "${_scope}" | grep -oE "\`[^\`]+\`" | tr -d '`')
+    if [[ "${_path}" =~ ^doc/adr/([0-9]{4})-[^/]+\.md$ ]]; then
+        _number="${BASH_REMATCH[1]}"
+        [[ "${_scope}" =~ ADR[[:space:]]+[0-9]{4}(／[0-9]{4})* ]] || return 1
+        [[ "／${BASH_REMATCH[0]#ADR }／" == *"／${_number}／"* ]] && return 0
+    fi
+    return 1
+}
+
+# Docker runs as root while CI's checkout belongs to the runner user.
+# Trust only this checkout, without changing persistent Git configuration.
+_scope_git() {
+    git -c safe.directory="${REPO_ROOT}" -C "${REPO_ROOT}" "$@"
+}
+
+@test "acceptance: PR 157 scope covers every real changed path relative to main" {
+    local _main _head _scope _path _missing="" _changed
+    if _scope_git rev-parse --verify 'origin/main^{commit}' >/dev/null 2>&1; then
+        _main=origin/main
+    elif _scope_git rev-parse --verify 'main^{commit}' >/dev/null 2>&1; then
+        _main=main
+    else
+        skip 'no main ref resolves'
+    fi
+    _head="$(_scope_git rev-parse HEAD)"
+    [[ "${_head}" != "$(_scope_git rev-parse "${_main}")" ]] \
+        || skip 'HEAD is the main ref itself'
+    # This frozen scope belongs to PR 157, not to branches after its merge.
+    if _scope_git cat-file -e "${_main}:script/verify" 2>/dev/null; then
+        skip 'main already contains PR 157 verification'
+    fi
+    _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    run _scope_git diff --name-only "${_main}...HEAD"
+    assert_success
+    _changed="${output}"
+    while IFS= read -r _path; do
+        [[ -n "${_path}" ]] || continue
+        if ! _scope_covers_path "${_scope}" "${_path}"; then
+            _missing+="${_path}"$'\n'
+        fi
+    done <<<"${_changed}"
+    if [[ -n "${_missing}" ]]; then
+        printf 'Paths missing from PR 157 scope:\n%s' "${_missing}" >&2
+        return 1
+    fi
+}
+
+@test "acceptance: later PR skips PR 157 scope once main contains verification" {
+    local _repo="${BATS_TEST_TMPDIR}/later-pr" _spec
+    mkdir -p "${_repo}/test/unit" "${_repo}/test/helper" \
+        "${_repo}/script/verify" "${_repo}/doc" "${_repo}/.claude/workflows"
+    _spec="${_repo}/test/unit/verify_all_spec.bats"
+    cp "${BATS_TEST_FILENAME}" "${_spec}"
+    cp "${REPO_ROOT}/test/helper/common.bash" "${_repo}/test/helper/"
+    cp "${REPO_ROOT}/script/verify/all.sh" "${_repo}/script/verify/"
+    sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md" \
+        >"${_repo}/doc/acceptance.md"
+    git -C "${_repo}" init -q -b main
+    git -C "${_repo}" config user.name 'Scope test'
+    git -C "${_repo}" config user.email '1+scope-test@users.noreply.github.com'
+    git -C "${_repo}" add .
+    git -C "${_repo}" commit -qm 'Merge PR 157 acceptance'
+    git -C "${_repo}" update-ref refs/remotes/origin/main HEAD
+    git -C "${_repo}" checkout -qb later-pr
+    printf 'later PR change\n' >"${_repo}/.claude/workflows/pr-loop.js"
+    git -C "${_repo}" add .
+    git -C "${_repo}" commit -qm 'Change workflow in a later PR'
+
+    # Exercise the actual scope case against a real post-merge Git history.
+    run bats --formatter tap --filter 'every real changed path' "${_spec}"
+    assert_success
+    assert_output --partial '# skip main already contains PR 157 verification'
 }
 
 setup() {
