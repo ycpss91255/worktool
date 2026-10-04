@@ -424,17 +424,15 @@ _run_item() {
 }
 
 main() {
-    local _items=() _arg _id
+    local _items=() _arg _id _help=0 _list=0
     while [[ "$#" -gt 0 ]]; do
         _arg="$1"
         case "${_arg}" in
             -h | --help)
-                _usage
-                exit 0
+                _help=1
                 ;;
             -l | --list)
-                _list_items || exit "${EXIT_FAIL}"
-                exit 0
+                _list=1
                 ;;
             -*)
                 _usage_error "unknown option '${_arg}'"
@@ -447,6 +445,15 @@ main() {
         esac
         shift
     done
+
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        _list_items || exit "${EXIT_FAIL}"
+        return 0
+    fi
 
     if [[ "${#_items[@]}" -eq 0 ]]; then
         _items=("${ITEM_IDS[@]}")

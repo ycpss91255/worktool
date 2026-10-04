@@ -471,6 +471,15 @@ EOF
     assert_output --partial '3 the check cannot run'
 }
 
+@test "CLI: help and list reject a trailing unknown option before serving output" {
+    local _option
+    for _option in --help --list; do
+        run "${UI_SH}" "${_option}" --bogus
+        assert_failure 2
+        assert_output "ui.sh: unknown option '--bogus' (see --help)"
+    done
+}
+
 @test "cli: an unknown option exits 2 and names the option" {
     run "${UI_SH}" --bogus
     assert_failure 2
