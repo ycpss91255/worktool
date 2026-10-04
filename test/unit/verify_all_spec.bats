@@ -30,7 +30,8 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     local _scope _path
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     run printf '%s\n' "${_scope}"
-    for _path in 'doc/acceptance.md' 'doc/evidence/' 'ADR 0008' '0010' \
+    for _path in 'doc/acceptance.md' 'doc/design.md' 'doc/enter.md' \
+        'doc/manifest.md' 'doc/evidence/' 'ADR 0008' '0010' \
         'script/verify/' 'justfile' 'lib/config_backup.sh' 'lib/guard.sh' \
         'lib/distrobox_manager.sh' 'lib/home.sh' 'test/unit/enter_spec.bats' \
         'script/test/test.sh' 'test/unit/verify_*_spec.bats' \
