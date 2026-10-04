@@ -432,10 +432,13 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
 5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
-   啟動方式固定為一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值：
+   每次 codex 呼叫都是一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值；
+   提示與接續提示（`<scratch>/codex-continue.md`）以 Write 工具寫入。首次呼叫：
    `rc=0; timeout 570 codex exec --skip-git-repo-check -C <repoDir> -o <scratch>/codex-result.json - < <scratch>/codex-prompt.md > <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`；
+   完整複驗常超過 10 分鐘，結束碼 124 表示 session 未完成，從 transcript 第一行 `session id:` 取得 id，
+   以 `rc=0; cd <repoDir> && timeout 570 codex exec resume --skip-git-repo-check -o <scratch>/codex-result.json <session-id> - < <scratch>/codex-continue.md >> <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`
+   接續同一個 session，最多接續 25 次；仍為 124 或讀不到 session id 即失敗並回報，不從頭重啟、不轉背景。
    禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行（#453）。
-   結束碼 124 表示超過 570 秒上限，不重啟、不轉背景，直接失敗並回報。
    codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。

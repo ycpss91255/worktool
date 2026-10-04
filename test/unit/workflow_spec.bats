@@ -2967,6 +2967,24 @@ _handover_replies() {
         contains("124")' <<<"${output}"
 }
 
+@test "milestone-handover Review resumes the same codex session in bounded foreground calls and fails closed (#453)" {
+    local scratch="/tmp/acceptance/.agents/state/milestone-handover-7-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local again
+    again="rc=0; cd '/tmp/acceptance' && timeout 570 codex exec resume --skip-git-repo-check -o '${scratch}/codex-result.json' <session-id> - < '${scratch}/codex-continue.md' >> '${scratch}/codex-transcript.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${scratch}/codex-exit.txt'"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -c --arg again "${again}" --arg cont "${scratch}/codex-continue.md" '.calls[] | select(.role == "review:") | .prompt |
+        [contains($again),
+         (contains("With the Write tool") and contains($cont)),
+         contains("first \"session id: \" line"),
+         contains("at most 25 times"),
+         contains("If rc is still 124 after the last one, or no session id can be read, fail closed"),
+         contains("never relaunch from scratch or detach"),
+         (contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+          contains("run_in_background") and contains("bash -c wrapper") and contains("run script")),
+         (contains("exceeded the 570-second bound: do not relaunch") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true,true,true]'
+}
+
 @test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {
     local replies mutation
     replies="$(_handover_replies)"
