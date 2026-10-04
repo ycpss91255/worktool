@@ -232,6 +232,20 @@ EOF
     refute_output --partial 'five-usages'
 }
 
+@test "errexit: a failing count preserves the recipe criterion and failure diagnostic" {
+    _stub_just_documented 0
+    _stub wc <<'EOF'
+printf '5\n'
+exit 7
+EOF
+    PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
+    assert_failure 1
+    assert_line 'Available recipes:'
+    assert_line '[ERROR] ui.sh: wc -l failed (exit 7) - the count could not be made'
+    assert_line '[ERROR] ui.sh: item 1.1 FAILED'
+    refute_line 'five-usages'
+}
+
 @test "false-pass guard: wc printing 5 but exiting 1 fails" {
     _stub_just_documented 0
     _stub wc <<'EOF'
