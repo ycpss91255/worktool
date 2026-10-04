@@ -26,6 +26,26 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "CI: test-unit and verify-all checkouts fetch full history for scope acceptance" {
+    local _job
+    # test-unit is a matrix leg of the gate job, sharing its checkout.
+    for _job in gate verify-all; do
+        run awk -v job="${_job}" '
+            /^  [[:alnum:]_-]+:$/ { in_job = ($0 == "  " job ":") }
+            in_job && /^      - / { checkout = 0; with_options = 0 }
+            in_job && /^        uses: actions\/checkout@/ { checkout = 1 }
+            checkout && /^        with:$/ { with_options = 1; next }
+            checkout && /^        [^ ]/ { with_options = 0 }
+            in_job && checkout && with_options && /^          fetch-depth:/ {
+                print $2
+            }
+        ' "${REPO_ROOT}/.github/workflows/ci.yml"
+        assert_success
+        assert_equal "${_job} checkout fetch-depth: ${output}" \
+            "${_job} checkout fetch-depth: 0"
+    done
+}
+
 @test "acceptance: PR 157 scope includes verification, product support and tests" {
     local _scope _path
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
