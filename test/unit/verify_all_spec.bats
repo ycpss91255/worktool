@@ -32,6 +32,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     run printf '%s\n' "${_scope}"
     for _path in 'doc/acceptance.md' 'doc/evidence/' 'ADR 0008' '0010' \
         'script/verify/' 'justfile' 'lib/config_backup.sh' 'lib/guard.sh' \
+        'lib/distrobox_manager.sh' 'lib/home.sh' 'test/unit/enter_spec.bats' \
         'script/test/test.sh' 'test/unit/verify_*_spec.bats' \
         'test/unit/justfile_spec.bats' 'test/unit/fixture/' 'test/helper/' \
         'test/system/real_engine_spec.bats'; do
