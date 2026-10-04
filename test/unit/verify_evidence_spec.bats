@@ -517,8 +517,8 @@ STUB
 
 @test "6.1: a check outside the pass bucket fails the item (the assertion is not vacuous)" {
     _stub_all_ok
-    FAKE_GH_BUCKET=fail _run_evidence_item item_6_1
-    assert_failure
+    FAKE_GH_BUCKET=fail run bash "${EVIDENCE}" 6.1
+    assert_failure 1
     assert_line "#152 total=8 nonpass=8 amd=0 arm=0 both=0 closes=1 issue=#151"
     assert_line "rc=1"
 }
