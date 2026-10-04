@@ -139,23 +139,6 @@ _run_with_stub() {
 
 # --- Control: the fixture is good, and the block is the documented one ------
 
-@test "errexit: a negative grep probe and zero count preserve the complete criterion block" {
-    run bash -c '
-        source "$1"
-        _grep_selftest "$2/README.md"
-        _scan_files "${PAT_FOREIGNOBJECT}" "$2/doc/diagram/flow.drawio.svg"
-        _count_lines "pattern-that-is-absent" "$2/README.md"
-        diagram_run --root "$2" 4.1
-    ' _ "${SCRIPT}" "${FIXTURE_ROOT}"
-    assert_success
-    assert_line '0'
-    assert_line 'svg=3'
-    assert_line 'foreignobject=0/3'
-    assert_line 'mxfile=3/3'
-    assert_line 'readme=4'
-    assert_line 'flow-wording=1'
-}
-
 @test "4.1: the real checkout prints exactly the five documented lines on stdout" {
     _run_stdout --root "${REPO_ROOT}" 4.1
     assert_success
@@ -363,13 +346,16 @@ _run_with_stub() {
     assert_line --partial "readme: got '3', expected '4'"
 }
 
-@test "4.1: fails when the flow diagram lost the 'host 只需 docker + just' wording" {
+@test "4.1: a zero-match flow wording count exits 1 and preserves the complete criterion block" {
     sed -i 's/host 只需 docker + just/host 不裝任何套件/g' \
         "${FIXTURE_ROOT}/doc/diagram/flow.drawio.svg"
-    run bash "${SCRIPT}" --root "${FIXTURE_ROOT}" 4.1
-    assert_failure
-    assert_line "flow-wording=0"
-    assert_line --partial "flow-wording: got '0', expected '1'"
+    _run_stdout --root "${FIXTURE_ROOT}" 4.1
+    assert_failure 1
+    assert_output 'svg=3
+foreignobject=0/3
+mxfile=3/3
+readme=4
+flow-wording=0'
 }
 
 @test "4.1: a run that fails on a count still prints the whole five-line block first" {
