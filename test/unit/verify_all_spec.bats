@@ -81,6 +81,10 @@ _scope_git() {
     _head="$(_scope_git rev-parse HEAD)"
     [[ "${_head}" != "$(_scope_git rev-parse "${_main}")" ]] \
         || skip 'HEAD is the main ref itself'
+    # This frozen scope belongs to PR 157, not to branches after its merge.
+    if _scope_git cat-file -e "${_main}:script/verify" 2>/dev/null; then
+        skip 'main already contains PR 157 verification'
+    fi
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     run _scope_git diff --name-only "${_main}...HEAD"
     assert_success
@@ -95,6 +99,33 @@ _scope_git() {
         printf 'Paths missing from PR 157 scope:\n%s' "${_missing}" >&2
         return 1
     fi
+}
+
+@test "acceptance: later PR skips PR 157 scope once main contains verification" {
+    local _repo="${BATS_TEST_TMPDIR}/later-pr" _spec
+    mkdir -p "${_repo}/test/unit" "${_repo}/test/helper" \
+        "${_repo}/script/verify" "${_repo}/doc" "${_repo}/.claude/workflows"
+    _spec="${_repo}/test/unit/verify_all_spec.bats"
+    cp "${BATS_TEST_FILENAME}" "${_spec}"
+    cp "${REPO_ROOT}/test/helper/common.bash" "${_repo}/test/helper/"
+    cp "${REPO_ROOT}/script/verify/all.sh" "${_repo}/script/verify/"
+    sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md" \
+        >"${_repo}/doc/acceptance.md"
+    git -C "${_repo}" init -q -b main
+    git -C "${_repo}" config user.name 'Scope test'
+    git -C "${_repo}" config user.email '1+scope-test@users.noreply.github.com'
+    git -C "${_repo}" add .
+    git -C "${_repo}" commit -qm 'Merge PR 157 acceptance'
+    git -C "${_repo}" update-ref refs/remotes/origin/main HEAD
+    git -C "${_repo}" checkout -qb later-pr
+    printf 'later PR change\n' >"${_repo}/.claude/workflows/pr-loop.js"
+    git -C "${_repo}" add .
+    git -C "${_repo}" commit -qm 'Change workflow in a later PR'
+
+    # Exercise the actual scope case against a real post-merge Git history.
+    run bats --formatter tap --filter 'every real changed path' "${_spec}"
+    assert_success
+    assert_output --partial '# skip main already contains PR 157 verification'
 }
 
 setup() {
