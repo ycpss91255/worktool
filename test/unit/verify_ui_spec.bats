@@ -430,7 +430,7 @@ EOF
     PATH="${_stripped}" run "${UI_SH}" 1.1
     assert_failure 3
     assert_output --partial '[UNAVAILABLE]'
-    assert_output --partial 'just not found on PATH'
+    assert_line '[UNAVAILABLE] ui.sh: just not found on PATH'
     refute_output --partial 'five-usages'
 }
 

@@ -104,7 +104,7 @@ setup() {
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: jq"
+    assert_output --partial "[UNAVAILABLE] realbox.sh: jq not found on PATH"
     refute_output --partial "[FAIL]"
     assert_equal "$(_count_calls distrobox)" "0"
 }
@@ -117,7 +117,7 @@ setup() {
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: cp"
+    assert_output --partial "[UNAVAILABLE] realbox.sh: cp not found on PATH"
     assert_line 'decoy-cleanup-rc=0'
     [ ! -s "${STATE}/boxes" ]
 }
@@ -130,7 +130,7 @@ setup() {
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: distrobox"
+    assert_output --partial "[UNAVAILABLE] realbox.sh: distrobox not found on PATH"
     refute_output --partial "[FAIL] item 5.2 failed"
     assert_equal "$(_count_calls just)" "0"
 }
@@ -143,7 +143,7 @@ setup() {
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] realbox.sh: missing command: wc"
+    assert_output --partial "[UNAVAILABLE] realbox.sh: wc not found on PATH"
     assert_line 'decoy-cleanup-rc=0'
     [ ! -s "${STATE}/boxes" ]
 }

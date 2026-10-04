@@ -204,3 +204,26 @@ _stub_calls() {
     assert_line "all.sh: unexpected argument '1.1' (see --help)"
     assert_equal "$(_stub_calls)" ""
 }
+
+@test "real diagram and evidence missing tools aggregate as UNAVAILABLE with exit 3" {
+    local _group _tool _bash _stripped="${BATS_TEST_TMPDIR}/minimal-path"
+    _bash="$(command -v bash)"
+    mkdir -p "${_stripped}" "${COPY}/lib"
+    for _tool in bash dirname; do
+        ln -s "$(command -v "${_tool}")" "${_stripped}/${_tool}"
+    done
+    mkdir -p "${COPY}/box"
+    cp "${REPO_ROOT}/box/dev.ini" "${COPY}/box/dev.ini"
+    for _tool in guard log manifest; do
+        cp "${REPO_ROOT}/lib/${_tool}.sh" "${COPY}/lib/"
+    done
+    for _group in diagram evidence; do
+        cp "${REPO_ROOT}/script/verify/${_group}.sh" "${COPY}/script/verify/"
+        PATH="${_stripped}" run "${_bash}" "${ALL_SH}"
+        assert_failure 3
+        assert_line "verify all: ${_group} UNAVAILABLE (rc=3)"
+        refute_line "verify all: ${_group} FAIL (rc=1)"
+        refute_output --partial 'VERDICT PASS'
+        _stub_group "${_group}" 0
+    done
+}

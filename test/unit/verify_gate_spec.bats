@@ -94,6 +94,8 @@ _make_repo_copy() {
     cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
     cp "${REPO_ROOT}/script/verify/gate.sh" "${COPY}/script/verify/gate.sh"
     cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
+    mkdir -p "${COPY}/lib"
+    cp "${REPO_ROOT}/lib/guard.sh" "${COPY}/lib/guard.sh"
 }
 
 # _stub <name> - body on stdin. The body runs with $REAL set to the real
@@ -355,7 +357,7 @@ EOF
     PATH="${_stripped}" run "${COPY_GATE}" 2.4
     assert_failure 3
     assert_output --partial '[UNAVAILABLE]'
-    assert_output --partial 'awk not found on PATH'
+    assert_line '[UNAVAILABLE] gate.sh: awk not found on PATH'
 }
 
 # --- Item 2.2: the TDD evidence, and the ways it could read green -----------

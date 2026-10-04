@@ -67,6 +67,7 @@
 # per doc/adr/0007 - every failure below is surfaced explicitly, so a
 # non-zero exit is always intentional.
 
+# shellcheck source-path=SCRIPTDIR/../../lib
 set -uo pipefail
 
 # --- Constants ---------------------------------------------------------------
@@ -103,6 +104,9 @@ if ! REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"; then
         "${SCRIPT_NAME}" "${SCRIPT_DIR}" >&2
     exit "${EXIT_UNAVAILABLE}"
 fi
+
+# shellcheck source=guard.sh
+source "${REPO_ROOT}/lib/guard.sh"
 
 # --- Diagnostics -------------------------------------------------------------
 # Everything here goes to stderr: stdout is reserved for the lines
@@ -189,8 +193,7 @@ _list_items() {
 # EXIT_UNAVAILABLE (3) with a message naming what is missing, so "cannot
 # check" can never be mistaken for "checked and fine".
 _require_tool() {
-    command -v "$1" >/dev/null 2>&1 \
-        || _unavailable "$1 not found on PATH - $2 cannot be checked here"
+    guard_require "$1" || exit $?
 }
 
 _preconditions_ui() {

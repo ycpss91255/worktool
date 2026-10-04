@@ -424,8 +424,9 @@ _run_evidence_item() {
     run bash -c 'source "$1"; PATH=/nonexistent; item_6_1' _ "${EVIDENCE}"
     assert_failure
     assert_output --partial "gh not found on PATH"
-    assert_output --partial "a check that cannot run is a failure, not a skip"
-    assert_line "rc=1"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE]"
+    assert_line "rc=3"
 }
 
 @test "6.1: gh pr checks failing silently is gh-failed, not zero checks" {
@@ -516,8 +517,8 @@ STUB
 
 @test "6.1: a check outside the pass bucket fails the item (the assertion is not vacuous)" {
     _stub_all_ok
-    FAKE_GH_BUCKET=fail _run_evidence_item item_6_1
-    assert_failure
+    FAKE_GH_BUCKET=fail run bash "${EVIDENCE}" 6.1
+    assert_failure 1
     assert_line "#152 total=8 nonpass=8 amd=0 arm=0 both=0 closes=1 issue=#151"
     assert_line "rc=1"
 }
@@ -558,7 +559,9 @@ STUB
     run bash -c 'source "$1"; PATH=/nonexistent; item_6_2' _ "${EVIDENCE}"
     assert_failure
     assert_output --partial "gh not found on PATH"
-    assert_line "rc=1"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE]"
+    assert_line "rc=3"
 }
 
 @test "6.2: a failing comment query is gh-failed in every cell, never 0" {
@@ -653,7 +656,9 @@ STUB
     run bash -c 'source "$1"; PATH=/nonexistent; item_6_3' _ "${EVIDENCE}"
     assert_failure
     assert_output --partial "gh not found on PATH"
-    assert_line "rc=1"
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE]"
+    assert_line "rc=3"
 }
 
 @test "6.3: a failing codex query is gh-failed, never a verdict" {
@@ -932,4 +937,25 @@ _dispatch_realbox_item() {
     assert [ -L "${LINK}" ]
     run cat "${TARGET}"
     assert_line "original target"
+}
+
+@test "missing evidence tools exit 3 through the CLI with UNAVAILABLE and no verdict" {
+    _stub_all_ok
+    local _tool _needed _item _bash
+    _bash="$(command -v bash)"
+    for _tool in gh jq; do
+        mkdir -p "${BIN}/without-${_tool}"
+        for _needed in bash dirname timeout gh jq grep; do
+            [[ "${_needed}" == "${_tool}" ]] && continue
+            ln -s "$(command -v "${_needed}")" "${BIN}/without-${_tool}/${_needed}"
+        done
+        for _item in 6.1 6.2 6.3; do
+            [[ "${_tool}" == jq && "${_item}" != 6.1 ]] && continue
+            PATH="${BIN}/without-${_tool}" run "${_bash}" "${EVIDENCE}" "${_item}"
+            assert_failure 3
+            assert_line "[UNAVAILABLE] evidence.sh: ${_tool} not found on PATH"
+            assert_line 'rc=3'
+            refute_line 'rc=1'
+        done
+    done
 }

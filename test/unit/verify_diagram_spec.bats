@@ -244,8 +244,9 @@ _run_with_stub() {
 @test "4.1: says so and fails when grep is not available at all" {
     mkdir -p "${STUB_BIN}"
     run env PATH="${STUB_BIN}" "${BASH_BIN}" "${SCRIPT}" --root "${FIXTURE_ROOT}" 4.1
-    assert_failure
-    assert_line --partial "grep is not available here"
+    assert_failure 3
+    assert_line "[UNAVAILABLE] diagram.sh: grep not found on PATH"
+    refute_output --partial "FAILED"
 }
 
 @test "4.1: fails when grep never matches anything (would make foreignobject=0/3 a free pass)" {
