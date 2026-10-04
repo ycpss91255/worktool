@@ -48,9 +48,9 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 _scope_covers_path() {
     local _scope="$1" _path="$2" _entry _number
     while IFS= read -r _entry; do
-        case "${_path}" in
-            ${_entry}) return 0 ;;
-        esac
+        if [[ "${_path}" == @(${_entry}) ]]; then
+            return 0
+        fi
         if [[ "${_entry}" == */ && "${_path}" == "${_entry}"* ]]; then
             return 0
         fi
