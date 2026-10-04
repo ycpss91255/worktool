@@ -139,6 +139,23 @@ _run_with_stub() {
 
 # --- Control: the fixture is good, and the block is the documented one ------
 
+@test "errexit: a negative grep probe and zero count preserve the complete criterion block" {
+    run bash -c '
+        source "$1"
+        _grep_selftest "$2/README.md"
+        _scan_files "${PAT_FOREIGNOBJECT}" "$2/doc/diagram/flow.drawio.svg"
+        _count_lines "pattern-that-is-absent" "$2/README.md"
+        diagram_run --root "$2" 4.1
+    ' _ "${SCRIPT}" "${FIXTURE_ROOT}"
+    assert_success
+    assert_line '0'
+    assert_line 'svg=3'
+    assert_line 'foreignobject=0/3'
+    assert_line 'mxfile=3/3'
+    assert_line 'readme=4'
+    assert_line 'flow-wording=1'
+}
+
 @test "4.1: the real checkout prints exactly the five documented lines on stdout" {
     _run_stdout --root "${REPO_ROOT}" 4.1
     assert_success
