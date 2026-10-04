@@ -844,7 +844,8 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout \
+        verify_ui; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

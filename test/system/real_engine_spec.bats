@@ -31,7 +31,7 @@
 #   which does not list the host session.
 #
 #   M3 (issue #180): the FIRST enter runs through the delivered entry
-#   wrapper script/box/enter.sh (the manual just box enter command),
+#   setup-written command through script/box/enter.sh (issue #434),
 #   and asserts that a real first initialisation is observable - the
 #   first-launch notice, the host log path and progress lines on stderr -
 #   and that the host log file exists and is not empty.
@@ -237,51 +237,51 @@ _diag() {
     assert_output "ubuntu:26.04 distrobox"
 }
 
-# Evidence: echo the lines $2.. (a case passes its `${lines[@]}`) into the
-# TAP stream (fd 3 is bats' original stdout; `# ` keeps the stream
-# TAP-clean) and into the case's own output, prefixed with $1.
-_log_lines() {
-    local _tag="$1" _l
-    shift
-    for _l in "$@"; do
-        printf '# %s: %s\n' "${_tag}" "${_l}" >&3
-        echo "${_tag}: ${_l}"
-    done
-}
+# Shared evidence interface, also exercised by the acceptance gate fixtures.
+# shellcheck source=test/helper/diagnostics.bash
+source "${BATS_TEST_DIRNAME}/../helper/diagnostics.bash"
 
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
-# M3 (issue #180): the FIRST enter goes through the delivered entry wrapper
-# `script/box/enter.sh`, as a manual just box enter would, so a
-# real first initialisation is observable: stderr carries the first-launch
-# notice, the host log path and progress lines (the interval is shortened
-# to 5 s so even a fast CI init shows several), and the host log exists
-# and holds the init output. The progress lines go into the TAP stream as
-# evidence.
-@test "real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version" {
+# Issue #434: execute the command setup really writes before any first enter.
+# A PTY supplies fish input while preserving the terminal entry command.
+@test "ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish" {
     cd "${REPO_ROOT}"
-    local _log="${HOME}/.cache/worktool/dev-init.log"
+    run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --box dev
+    assert_success
+    local _body _command _log="${HOME}/.cache/worktool/dev-init.log"
+    _body="$(enter_block_body "$(enter_ghostty_target)")"
+    [[ "${_body}" == 'command = '* ]] || fail "setup wrote no managed command"
+    _command="${_body#command = }"
     run _docker inspect --type container -f '{{.State.StartedAt}}' dev
     assert_success
     assert_output --regexp '^0001-01-01'
-    WORKTOOL_INIT_INTERVAL=5 run timeout "${FIRST_ENTER_TIMEOUT}" \
-        "${ENTER}" --box dev --timeout "${FIRST_ENTER_TIMEOUT}" -- rg --version </dev/null
+    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT="${FIRST_ENTER_TIMEOUT}" run bash -c '
+        printf "%s\n" "$3" | timeout -k 5 "$1" script -qec "$2" /dev/null
+    ' _ "${FIRST_ENTER_TIMEOUT}" "${_command}" \
+        "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit"
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+    local _out _progress
+    _out="$(tr '\r' '\n' <<<"${output}")"
+    _progress="$(grep -E 'first launch: .+ - [0-9m]+s elapsed - ' <<<"${_out}" | sort -u | wc -l)" || _progress=0
+    [[ "${_progress}" -ge 2 ]] || fail "expected changing progress, got ${_progress}: ${_out}"
     assert_output --partial "first launch of box 'dev'"
     assert_output --partial "full init log: ${_log}"
-    assert_line --regexp '^\[INFO\] first launch: .+ - [0-9m]+s elapsed - '
-    assert_line --regexp 'first launch: initialisation complete after '
-    local _first=()
-    mapfile -t _first < <(printf '%s\n' "${lines[@]}" | grep -F 'first launch')
-    _log_lines first-launch "${_first[@]}"
+    assert_output --partial "initialisation complete after"
+    [[ "${_out}" =~ cold-fish=[0-9]+\.[0-9]+ ]] || fail "the command did not enter fish: ${_out}"
+    [[ "${_out}" == *"$(_dev_mntns)"* ]] || fail "fish did not run in the dev mount namespace"
     assert [ -s "${_log}" ]
     run grep -c 'container_setup_done' "${_log}"
     assert_success
-    # The box is now a running, initialised container.
-    run _docker inspect dev --format '{{.State.Status}}'
-    assert_output "running"
+    diagnostic_lines chain-cold "changing progress updates=${_progress}; setup command entered fish in dev"
+}
+
+@test "real engine: enter.sh --box dev -- rg --version prints a ripgrep version after cold init" {
+    run timeout -k 5 "${ENTER_TIMEOUT}" "${ENTER}" --box dev -- rg --version </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
 }
 
 @test "real engine: distrobox enter dev -- fzf --version prints a version" {
@@ -301,7 +301,7 @@ _log_lines() {
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^tmux [0-9]+\.[0-9]+'
-    _log_lines tmux "${lines[@]}"
+    diagnostic_lines tmux "${lines[@]}"
 }
 
 @test "real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)" {
@@ -310,7 +310,7 @@ _log_lines() {
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_line --regexp '^fish, version [0-9]+\.[0-9]+'
-    _log_lines fish "${lines[@]}"
+    diagnostic_lines fish "${lines[@]}"
 }
 
 # --- (c2) the box's own HOME (issue #198) -------------------------------------
@@ -323,7 +323,7 @@ _log_lines() {
     assert_success
     assert_equal "${lines[0]}" "${BOX_HOME}"
     assert_equal "${lines[1]}" "${HOME}"
-    _log_lines box-home "${lines[@]}"
+    diagnostic_lines box-home "${lines[@]}"
     # distrobox created the directory on the host side, and recorded it.
     assert [ -d "${BOX_HOME}" ]
     run grep -x "home=${BOX_HOME}" "${XDG_CONFIG_HOME}/worktool/config"
@@ -353,7 +353,7 @@ PROBE
     assert_line "home=${BOX_HOME}"
     assert_line "ssh=worktool-link-probe"
     assert_line "git=worktool-link-probe"
-    _log_lines link "${lines[@]}"
+    diagnostic_lines link "${lines[@]}"
 }
 
 # --- (d) enter latency: bench.sh gates the real box (--max-ms) ----------------
@@ -412,7 +412,7 @@ _assert_fish_timed() {
     _assert_quiet_host_evidence
     # The threshold was really evaluated (not merely accepted as an option).
     assert_line --regexp "^\[INFO\] shell median ${BENCH_NUM} ms within --max-ms ${ENTER_MAX_MS}$"
-    _log_lines bench "${lines[@]}"
+    diagnostic_lines bench "${lines[@]}"
 }
 
 @test "real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)" {
@@ -429,7 +429,7 @@ _assert_fish_timed() {
     _assert_quiet_host_evidence
     assert_line --regexp "^\[ERROR\] shell median ${BENCH_NUM} ms exceeds --max-ms 1$"
     refute_line --regexp '^\[INFO\] shell median .* within --max-ms'
-    _log_lines bench-gate "${lines[@]}"
+    diagnostic_lines bench-gate "${lines[@]}"
 }
 
 # --- (e) the ghostty chain: a real window enters the real box ----------------
@@ -507,7 +507,7 @@ for f in /run/.containerenv /.dockerenv
         break
     end
 end
-printf 'inbox-ok fish=%s ctrenv=%s mntns=%s tmux=%s host=%s\n' "\$FISH_VERSION" \$ctrenv (readlink /proc/self/ns/mnt) "\$under_tmux" (uname -n) \
+printf '${CHAIN_MARKER_FORMAT}' "\$FISH_VERSION" \$ctrenv (readlink /proc/self/ns/mnt) "\$under_tmux" (uname -n) \
     >$(_chain_marker)
 EOF
 }
@@ -546,7 +546,7 @@ _assert_chain_marker_in_box() {
     local _line _marker_ns _marker_host _box_host
     assert [ -f "$(_chain_marker)" ]
     _line="$(cat "$(_chain_marker)")"
-    _log_lines "$1" "${_line}"
+    diagnostic_lines "$1" "${_line}"
     [[ "${_line}" =~ ${CHAIN_OK} ]] \
         || fail "chain marker '${_line}' does not match ${CHAIN_OK}"
     assert_equal "$(sed -nE 's/^inbox-ok .* ctrenv=([^ ]+) .*$/\1/p' "$(_chain_marker)")" "$(_engine_ctrenv)"
@@ -557,7 +557,7 @@ _assert_chain_marker_in_box() {
     _marker_host="$(sed -nE 's/^inbox-ok .* host=(.+)$/\1/p' "$(_chain_marker)")"
     _box_host="$(_docker inspect dev --format '{{.Config.Hostname}}')"
     assert_equal "${_marker_host}" "${_box_host}"
-    _log_lines "$1-in-box" "marker mntns=${_marker_ns} == dev container; host=${_marker_host} == docker inspect dev hostname"
+    diagnostic_in_box "$1" "${_marker_ns}" "${_marker_host}"
 }
 
 # Write the fish payload of the deliberate-hang case. It announces that it
@@ -568,7 +568,7 @@ _assert_chain_marker_in_box() {
 # reached" (a different bug, and a false green if accepted here).
 _write_hang_script() {
     cat >"$(_hang_script)" <<EOF
-printf 'hang-ready fish=%s host=%s\n' "\$FISH_VERSION" (uname -n) >$(_hang_ready)
+printf '${HANG_READY_FORMAT}' "\$FISH_VERSION" (uname -n) >$(_hang_ready)
 exec sleep infinity
 EOF
 }
@@ -600,7 +600,7 @@ _ghostty_run() {
     run timeout -k 5 "${GHOSTTY_CLI_TIMEOUT}" ghostty +version
     assert_success
     assert_line --regexp '^Ghostty [0-9]+\.[0-9]+'
-    _log_lines ghostty "${lines[0]}"
+    diagnostic_lines ghostty "${lines[0]}"
     run command -v xvfb-run
     assert_success
     # The chain's evidence is "fish answered". The runner must not be able
@@ -612,7 +612,7 @@ _ghostty_run() {
     # the runner (the "host" here).
     run tmux -V
     assert_success
-    _log_lines host-tmux "${lines[0]}"
+    diagnostic_lines host-tmux "${lines[0]}"
 }
 
 @test "ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)" {
@@ -665,7 +665,7 @@ _ghostty_run() {
     run cat "$(_hang_ready)"
     assert_success
     assert_line --regexp '^hang-ready fish=[0-9]+\.[0-9]+.* host=.+$'
-    _log_lines hang-ready "${lines[@]}"
+    diagnostic_lines hang-ready "${lines[@]}"
 
     # (2) It was `timeout` that ended the run: 124 is its own "the bound
     # was reached" status, so the run was cut here and not left to the CI
@@ -682,7 +682,7 @@ _ghostty_run() {
     # (4) The chain marker of the previous case is gone and was not
     # recreated: this payload never got past the sleep.
     assert [ ! -f "$(_chain_marker)" ]
-    _log_lines hang "in-box command started, then timed out after ${_elapsed}s (budget ${GHOSTTY_HANG_TIMEOUT}s, status ${_hang_status})"
+    diagnostic_hang "${_elapsed}" "${GHOSTTY_HANG_TIMEOUT}" "${_hang_status}"
 }
 
 @test "ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)" {
@@ -690,7 +690,7 @@ _ghostty_run() {
     run timeout -k 5 "${GHOSTTY_CHAIN_TIMEOUT}" bash "${_probe}" \
         "${BATS_TEST_TMPDIR}/si" </dev/null
     assert_success
-    _log_lines single-instance "${lines[@]}"
+    diagnostic_lines single-instance "${lines[@]}"
     # The fixture OBSERVES every line below; none of them is a fixed echo.
     #   The primary was really running before the second launch ...
     assert_line 'PRIMARY=up'
@@ -772,7 +772,7 @@ _desktop_path() {
     # Without this the case could pass with the old bare-name command.
     run -127 env -i PATH="${_gui_path}" /bin/sh -c 'distrobox --version'
     assert_failure 127
-    _log_lines desktop-path "PATH=${_gui_path} has no distrobox by name"
+    diagnostic_lines desktop-path "PATH=${_gui_path} has no distrobox by name"
 
     # (2) The DELIVERED setup.sh resolves it and writes the managed block.
     # The program is read back with the delivered decoder, so the assertion
@@ -788,7 +788,7 @@ _desktop_path() {
     run grep -qxF "command = $(enter_sh_squote "${REPO_ROOT}/script/box/enter.sh") --distrobox $(enter_sh_squote "${_prog}") --box 'dev'" \
         "${_ghostty_config}"
     assert_success
-    _log_lines setup-command "${_command}"
+    diagnostic_lines setup-command "${_command}"
 
     # (3) The same distrobox program in the chain shape that ends by
     # itself, run by a real
@@ -858,7 +858,7 @@ _host_tmux_pid() {
     run env -u TMUX -u TMUX_TMPDIR tmux ls
     assert_success
     assert_line --regexp "^${HOST_TMUX_SESSION}: "
-    _log_lines host-tmux "${lines[@]}"
+    diagnostic_lines host-tmux "${lines[@]}"
 
     # The command exactly as the DELIVERED setup.sh writes it.
     run "${_setup}" --terminal ghostty --box dev
@@ -867,7 +867,7 @@ _host_tmux_pid() {
     _body="$(enter_block_body "${_file}")"
     [[ "${_body}" == "command = "*" --box 'dev'" ]] \
         || fail "setup.sh wrote an unexpected managed body: '${_body}'"
-    _log_lines setup-command "${_body}"
+    diagnostic_lines setup-command "${_body}"
 
     # Run it, verbatim, in a real window; type the payload into whatever
     # shell it lands in.
@@ -907,7 +907,7 @@ _host_tmux_pid() {
         'tmux -f /dev/null new-session -d -s box && tmux display-message -p -t box "#{pid} #{socket_path}" && tmux ls' </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    _log_lines box-tmux "${lines[@]}"
+    diagnostic_lines box-tmux "${lines[@]}"
     # It lists ITS session and not the host's.
     assert_line --regexp '^box: '
     refute_line --regexp "^${HOST_TMUX_SESSION}: "
@@ -929,7 +929,7 @@ _host_tmux_pid() {
     [[ "${_box_ns}" != "${_host_ns}" ]] || fail "box tmux server shares the host server's mount namespace (${_host_ns})"
     # ... whose filesystem holds the engine's container file.
     assert [ -e "/proc/${_box_pid}/root$(_engine_ctrenv)" ]
-    _log_lines box-tmux-ns "box pid=${_box_pid} mnt=${_box_ns} == dev init mnt; host pid=${_host_pid} mnt=${_host_ns}"
+    diagnostic_lines box-tmux-ns "box pid=${_box_pid} mnt=${_box_ns} == dev init mnt; host pid=${_host_pid} mnt=${_host_ns}"
 
     # The host server still lists only its own session.
     run env -u TMUX -u TMUX_TMPDIR tmux ls
@@ -1086,7 +1086,7 @@ _assert_cell() {
     local _tag="$1" _out="$2" _hs="$3" _pid="" _line _p _s _inv _host_pid=""
     local -a _ls
     mapfile -t _ls <<<"${_out}"
-    _log_lines "cell-${_tag}" "${_ls[@]}"
+    diagnostic_lines "cell-${_tag}" "${_ls[@]}"
     [[ "${_hs}" == "h1" ]] && _host_pid="$(_host_tmux_pid)"
     grep -qxF "${_tag} env TMUX= TMUX_PANE=" <<<"${_out}" \
         || fail "cell ${_tag}: the box saw a TMUX / TMUX_PANE: $(grep -F "${_tag} env " <<<"${_out}")"
@@ -1142,7 +1142,7 @@ _assert_cell() {
         run env -u TMUX -u TMUX_TMPDIR tmux ls
         assert_failure
     fi
-    _log_lines "cell-${_tag}-ok" "server pid=${_pid} socket=$(_box_sock) in the dev mount namespace"
+    diagnostic_lines "cell-${_tag}-ok" "server pid=${_pid} socket=$(_box_sock) in the dev mount namespace"
 }
 
 # Stop whatever a #179 tmux case (the two above, a matrix cell) left
@@ -1180,13 +1180,13 @@ _run_cell() {
         e5b) _out="$(env "${_env[@]}" timeout -k 5 "${ENTER_TIMEOUT}" distrobox enter dev -- fish -l -c "sh $(_matrix_probe) ${_tag}" </dev/null 2>&1)" || _rc=$? ;;
         e4)
             _real="$(_real_tmux)"
-            _log_lines "cell-${_tag}-real-tmux" "${_real}"
+            diagnostic_lines "cell-${_tag}-real-tmux" "${_real}"
             _out="$(_e4_cell "${_tag}" "${_real}" "${_env[@]}")" || _rc=$?
             ;;
     esac
     # A non-zero entry is not judged by itself: the probe's own lines say
     # which invocation failed, and _assert_cell names it.
-    _log_lines "cell-${_tag}-rc" "${_rc}"
+    diagnostic_lines "cell-${_tag}-rc" "${_rc}"
     _assert_cell "${_tag}" "${_out}" "${_hs}"
 }
 
@@ -1273,7 +1273,7 @@ _e4_cell() {
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     run stat -c '%a %u:%g' "${_dir}"
-    _log_lines tmux-tmpdir-after-restart "${output}"
+    diagnostic_lines tmux-tmpdir-after-restart "${output}"
     assert_output "700 $(id -u):$(id -g)"
 }
 
