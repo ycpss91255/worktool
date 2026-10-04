@@ -399,3 +399,13 @@ _prepare_lint_worktree() {
     refute_output --partial 'scratch.sh'
     assert [ -f "${LINT_ROOT}/.agents/state/scratch.sh" ]
 }
+
+@test "lint rejects an untracked non-ignored ShellCheck violation" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/new script.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'new script.sh'
+    assert_output --partial 'SC2164'
+    assert_output --partial 'ShellCheck failed'
+}
