@@ -34,10 +34,8 @@
 #     - a tool that is missing (nothing to run) is reported as UNAVAILABLE
 #       and exits non-zero - this script never skips a check silently.
 #
-#   For the same reason it deliberately does NOT source lib/log.sh: it is
-#   the checker of the delivery, so it must not fail (or pass) because of
-#   the tree it is checking. Its only dependencies are bash and the tools
-#   listed under PRECONDITIONS.
+#   Missing tools use lib/guard.sh; other environment reasons use lib/log.sh.
+#   Both helpers write diagnostics to stderr without a passing verdict.
 #
 # GROUPS
 #   Each item belongs to a group that names its preconditions. Item 1.1 is
@@ -107,6 +105,8 @@ fi
 
 # shellcheck source=guard.sh
 source "${REPO_ROOT}/lib/guard.sh"
+# shellcheck source=log.sh
+source "${REPO_ROOT}/lib/log.sh"
 
 # --- Diagnostics -------------------------------------------------------------
 # Everything here goes to stderr: stdout is reserved for the lines
@@ -122,7 +122,7 @@ _usage_error() {
 
 # A check that cannot run here is not a pass and not a skip.
 _unavailable() {
-    printf '[UNAVAILABLE] %s: %s\n' "${SCRIPT_NAME}" "$*" >&2
+    log_info "${SCRIPT_NAME}: $*"
     exit "${EXIT_UNAVAILABLE}"
 }
 
