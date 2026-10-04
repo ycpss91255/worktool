@@ -882,7 +882,7 @@ rc=0
       # 中斷時的還原手段：
       just verify realbox --allow-real-box 5.2.3; echo rc=$?
       ```
-      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 只印 `no-backup=1`。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
+      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host、等於本輪 dev 容器的 mount namespace。腳本依 distrobox 使用的容器引擎設定，以 `inspect --type container --format '{{.State.Pid}}' dev` 取得 init 的 host PID，再讀 `/proc/<init PID>/ns/mnt` 建立 dev 身分。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>] dev=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、另一個盒的新 fish、無法解析 dev namespace（含引擎不可用、inspect 失敗、init PID 無效）、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。視窗確實來自 Ghostty 與主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362、#433）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除

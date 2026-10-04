@@ -841,9 +841,12 @@ STUB
 # --- 5.2 step 3: restore -----------------------------------------------------
 
 @test "5.2.3 with no backup is a no-op that exits 0" {
-    run "${REALBOX}" --allow-real-box 5.2.3
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_success
-    assert_output --partial "no-backup=1"
+    assert_line "no-backup=1"
+    assert_output "no-backup=1"
+    assert_equal "${stderr}" "[INFO] $(_backup_dir) absent; already restored, or step 1 never ran"
     assert_equal "$(_count_calls just)" "0"
 }
 

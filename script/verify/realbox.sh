@@ -704,7 +704,8 @@ _52_step3_restore() {
     local _rc=0 _rrc
 
     if [[ ! -d "${CFGBK_B}" ]]; then
-        printf 'no-backup=1 (%s absent; already restored, or step 1 never ran)\n' "${CFGBK_B}"
+        printf 'no-backup=1\n'
+        log_info "${CFGBK_B} absent; already restored, or step 1 never ran"
         return 0
     fi
     if [[ ! -f "${CFGBK_B}/manifest" ]]; then
