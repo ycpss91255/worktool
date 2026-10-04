@@ -376,14 +376,14 @@ _pl_blocked_run() {
 @test "pr-loop (node): codex is the default implementer and Claude reviews with shared guardrails" {
     run _pl_run
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n -o /work/../worktree/.scratch/n/implement.md \"$(cat <暫存檔>)\" < /dev/null")), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C \u0027/work/../worktree/n\u0027 -o \u0027/work/../worktree/.scratch/n/implement.md\u0027 - < \u0027/work/../worktree/.scratch/n/implement-prompt.md\u0027")), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Work ONLY inside /work/../worktree/n")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification") | not)]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
 @test "pr-loop (node): codex wrapper creates the worktree before exec and omits setup from the brief" {
     run _pl_run
     assert_success
-    run jq -cr '(.calls[] | select(.role | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C /work/../worktree/n"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
+    run jq -cr '(.calls[] | select(.role | startswith("implement:")) | .prompt) as $p | (($p | index("git worktree add -b b /work/../worktree/n origin/main")) < ($p | index("codex exec --skip-git-repo-check -C \u0027/work/../worktree/n\u0027"))) and (($p | split("brief:\n")[1]) | contains("git worktree add") | not)' <<<"${output}"
     assert_output 'true'
 }
 
@@ -397,7 +397,7 @@ _pl_blocked_run() {
 @test "pr-loop (node): Fix rounds return to the selected implementer" {
     run _pl_blocked_run codex
     assert_success
-    run jq -r '.calls[] | select(.role | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C /work/../worktree/n")' <<<"${output}"
+    run jq -r '.calls[] | select(.role | startswith("fix:")) | .prompt | contains("codex exec --skip-git-repo-check -C \u0027/work/../worktree/n\u0027")' <<<"${output}"
     assert_output 'true'
 
     run _pl_blocked_run claude
@@ -551,16 +551,43 @@ _pl_blocked_run() {
     done
 }
 
-@test "pr-loop (node): codex implement and fix detach, wait in bounded chunks, clean containers, and fail on rc" {
+# _pl_launch_checks <stem> <role> <run-json> - checks on a codex implement/fix prompt:
+# the pinned first launch and same-session continuation (#453), both one
+# bounded foreground call with literal quoted paths, and no detaching.
+_pl_launch_checks() {
+    local s="/work/../worktree/.scratch/n/$1" wt="/work/../worktree/n"
+    local first="rc=0; timeout 570 codex exec --skip-git-repo-check -C '${wt}' -o '${s}.md' - < '${s}-prompt.md' > '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
+    local again="rc=0; cd '${wt}' && timeout 570 codex exec resume --skip-git-repo-check -o '${s}.md' <session-id> - < '${s}-continue.md' >> '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
+    local role="$2" json="$3"
+    jq -c --arg role "${role}" --arg first "${first}" --arg again "${again}" '.calls[] | select(.role | startswith($role)) | .prompt |
+        [contains($first), contains($again), contains("Bash tool timeout at its maximum (600000 ms)"),
+         (contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+          contains("run_in_background") and contains("bash -c wrapper") and contains("run script")),
+         (contains("setsid nohup bash -c") or contains("until [ -s") or contains("<暫存檔>") | not),
+         contains("at most 25"), (contains("docker ps") and contains("docker stop")), contains("tail -n 80")]' <<<"${json}"
+}
+
+@test "pr-loop (node): codex implement and fix run bounded foreground calls that resume the same session (#453)" {
     run _pl_run
     assert_success
-    run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("implement.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("implement.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
-    assert_output '[true,true,true,true,true,true]'
+    run _pl_launch_checks implement implement: "${output}"
+    assert_output '[true,true,true,true,true,true,true,true]'
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("setsid nohup")), (.prompt | contains("fix-r1.rc")), (.prompt | contains("timeout 540 bash -c")), (.prompt | contains("docker ps") and contains("/work/../worktree/n") and contains("docker stop")), (.prompt | contains("tail") and contains("fix-r1.md")), (.prompt | contains("run this exact command shape in the foreground") | not)]' <<<"${output}"
-    assert_output '[true,true,true,true,true,true]'
+    run _pl_launch_checks fix-r1 fix: "${output}"
+    assert_output '[true,true,true,true,true,true,true,true]'
+}
+
+@test "pr-loop (node): the codex review launch stays one pinned foreground call and forbids detaching (#453)" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -c '.calls[] | select(.role | startswith("review:")) | .prompt |
+        [contains("timeout 420 codex exec --skip-git-repo-check \"$(cat prompt-r1.txt)\" > out-r1.txt 2>&1"),
+         contains("ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms)"),
+         (contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+          contains("run_in_background") and contains("bash -c wrapper") and contains("run script"))]' <<<"${output}"
+    assert_output '[true,true,true]'
 }
 
 @test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
@@ -2926,6 +2953,36 @@ _handover_replies() {
     refute_output --partial '允許合併'
     run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
     assert_success
+}
+
+@test "milestone-handover pins one bounded foreground codex launch with literal paths and forbids detaching (#453)" {
+    local scratch="/tmp/acceptance/.agents/state/milestone-handover-7-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local launch
+    launch="rc=0; timeout 570 codex exec --skip-git-repo-check -C '/tmp/acceptance' -o '${scratch}/codex-result.json' - < '${scratch}/codex-prompt.md' > '${scratch}/codex-transcript.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${scratch}/codex-exit.txt'"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    jq -e --arg launch "${launch}" '.calls[] | select(.role == "review:") | .prompt |
+        contains($launch) and contains("Bash tool timeout at its maximum (600000 ms)") and
+        contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+        contains("run_in_background") and contains("bash -c wrapper") and contains("run script") and
+        contains("124")' <<<"${output}"
+}
+
+@test "milestone-handover Review resumes the same codex session in bounded foreground calls and fails closed (#453)" {
+    local scratch="/tmp/acceptance/.agents/state/milestone-handover-7-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local again
+    again="rc=0; cd '/tmp/acceptance' && timeout 570 codex exec resume --skip-git-repo-check -o '${scratch}/codex-result.json' <session-id> - < '${scratch}/codex-continue.md' >> '${scratch}/codex-transcript.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${scratch}/codex-exit.txt'"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -c --arg again "${again}" --arg cont "${scratch}/codex-continue.md" '.calls[] | select(.role == "review:") | .prompt |
+        [contains($again),
+         (contains("With the Write tool") and contains($cont)),
+         contains("first \"session id: \" line"),
+         contains("at most 25 times"),
+         contains("If rc is still 124 after the last one, or no session id can be read, fail closed"),
+         contains("never relaunch from scratch or detach"),
+         (contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+          contains("run_in_background") and contains("bash -c wrapper") and contains("run script")),
+         (contains("exceeded the 570-second bound: do not relaunch") | not)]' <<<"${output}"
+    assert_output '[true,true,true,true,true,true,true,true]'
 }
 
 @test "milestone-handover stops on missing checks or stale and malformed independent verdicts (#412)" {

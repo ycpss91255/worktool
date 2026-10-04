@@ -77,8 +77,10 @@ const RELPATHS = `sed -E ${sq([
   `s#${ere(REPO_DIR)}/##g`,
 ].join(';'))}`
 const IMPLEMENT_OUT = `${SCRATCH}/implement.md`
-const CODEX_TIMEOUT_SECONDS = 14400
-const CODEX_WAIT_SECONDS = 540
+// Each codex call stays under the Bash tool's 600000 ms maximum (#453);
+// a longer run resumes the same session in at most 25 further calls.
+const CODEX_CALL_SECONDS = 570
+const CODEX_MAX_CONTINUES = 25
 
 const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, sha: { type: 'string' } }, required: ['pr', 'sha'] }
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
@@ -122,11 +124,20 @@ const IMPLEMENT_SNAPSHOT = `Before overwriting any output, run this foreground s
   if [ -e "$file" ]; then cp "$file" "$file.previous" || exit 1; fi
 done\``
 
-const CODEX_DETACHED_RUN = (out, rc) => `Create ${SCRATCH}, write the brief below verbatim to <暫存檔>, and remove any stale ${rc}. Start codex detached with setsid nohup and this command; keep the codex exec command shape unchanged:
-setsid nohup bash -c 'timeout ${CODEX_TIMEOUT_SECONDS} codex exec --skip-git-repo-check -C ${WT} -o ${out} "$(cat <暫存檔>)" < /dev/null; rc=$?; printf "%s\\n" "$rc" > ${rc}' > ${out}.log 2>&1 &
-Do not use run_in_background or Monitor. Wait in repeated bounded foreground calls, each below ten minutes:
-timeout ${CODEX_WAIT_SECONDS} bash -c 'until [ -s ${rc} ]; do sleep 30; done'
-An exit 124 from a wait call only means to run that same wait call again. Once ${rc} exists, inspect its value. Then list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\` before continuing. If the codex rc is non-zero, including timeout rc 124, report failure and include the last 80 lines from both \`tail -n 80 ${out}.log\` and \`tail -n 80 ${out}\`; never treat it as success.`
+const LAUNCH_FORBIDDEN = 'Never use setsid, nohup, disown, a trailing &, run_in_background, Monitor, a bash -c wrapper, or a run script written and then executed; never change the command shapes.'
+// One bounded foreground codex call per Bash call, literal paths (#453).
+const CODEX_FOREGROUND_RUN = (stem) => {
+  const [out, log, rc, prompt, cont] = [`${stem}.md`, `${stem}.md.log`, `${stem}.rc`, `${stem}-prompt.md`, `${stem}-continue.md`].map(sq)
+  return `Create ${SCRATCH}. With the Write tool, write the brief below verbatim to ${prompt} and write this continuation prompt to ${cont}: "Continue the same task from where you stopped. Inspect git status, git log and your earlier output first; do not redo finished slices." Remove any stale ${rc} with rm -f.
+Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
+rc=0; timeout ${CODEX_CALL_SECONDS} codex exec --skip-git-repo-check -C ${sq(WT)} -o ${out} - < ${prompt} > ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+After every call, list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\`, then read ${rc}.
+rc 124 means the codex session is unfinished, not failed. Read its id from the first "session id: " line of ${log} (grep -m1 '^session id: ' ${log}) and resume that same session with this call, <session-id> replaced by the literal id:
+rc=0; cd ${sq(WT)} && timeout ${CODEX_CALL_SECONDS} codex exec resume --skip-git-repo-check -o ${out} <session-id> - < ${cont} >> ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it; never relaunch from scratch or detach.
+${LAUNCH_FORBIDDEN}
+If the final codex rc is non-zero, report failure and include the last 80 lines from both \`tail -n 80 ${log}\` and \`tail -n 80 ${out}\`; never treat it as success.`
+}
 
 const CODEX_IMPLEMENT = `Your job is to run codex as the implementer, wait for it, and verify its result. Do not implement the task yourself.
 
@@ -134,7 +145,7 @@ ${CODEX_RULES}
 
 First run: ${SETUP}.
 ${IMPLEMENT_SNAPSHOT}
-${CODEX_DETACHED_RUN(IMPLEMENT_OUT, `${SCRATCH}/implement.rc`)}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/implement`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
 
 brief:
@@ -151,7 +162,7 @@ const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Befo
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
 2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的寫法、延伸情境、假設性繞過與措辭一律列為非阻擋項。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。阻擋項列在「## 阻擋項」標題下、非阻擋項列在「## 非阻擋項」標題下,每項引用 diff 位置。最後一行只能是「可合併」或「不可合併:<原因>」。"
-3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\`; then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
+3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
 4. Post ONE PR comment through a body file: "[codex] 第 ${round} 輪複驗" + the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
 5. Return: verdict = "mergeable" if the LAST line of the answer is exactly 可合併, "blocked" if it starts with 不可合併, otherwise "blocked" too (unparseable is not a pass); blocking = the items under 「## 阻擋項」 (one string each, short); nonBlocking = items under 「## 非阻擋項」; answer = the verbatim answer.`
 
@@ -178,7 +189,7 @@ const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the impl
 
 ${CODEX_RULES}
 
-${CODEX_DETACHED_RUN(`${SCRATCH}/fix-r${round}.md`, `${SCRATCH}/fix-r${round}.rc`)}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/fix-r${round}`)}
 Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
 
 brief:
