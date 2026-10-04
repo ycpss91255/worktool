@@ -377,3 +377,25 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
         rm -f "${FAKE_DOCKER_SNAPSHOT}".*
     done
 }
+
+_prepare_lint_worktree() {
+    LINT_ROOT="${BATS_TEST_TMPDIR}/lint repo"
+    mkdir -p "${LINT_ROOT}/script/test" "${LINT_ROOT}/.agents/state"
+    cp "${TEST_SH}" "${LINT_ROOT}/script/test/test.sh"
+    cp "${REPO_ROOT}/script/test/check-script-layout.sh" "${LINT_ROOT}/script/test/"
+    mkdir -p "${LINT_ROOT}/lib"
+    cp "${REPO_ROOT}/lib/log.sh" "${LINT_ROOT}/lib/"
+    printf '.agents/state/\n' >"${LINT_ROOT}/.gitignore"
+    git -C "${LINT_ROOT}" init -q
+    git -C "${LINT_ROOT}" add .
+}
+
+@test "lint ignores a gitignored ShellCheck violation in .agents/state" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_success
+    assert_output --partial 'ShellCheck OK'
+    refute_output --partial 'scratch.sh'
+    assert [ -f "${LINT_ROOT}/.agents/state/scratch.sh" ]
+}

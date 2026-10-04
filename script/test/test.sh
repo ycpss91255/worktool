@@ -275,10 +275,7 @@ _run_in_container() {
     if [[ "${_flag}" == --ci-lint ]]; then
         mkdir -p "${REPO_ROOT}/.agents/state"
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
-        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
-            rm -f "${_layout_paths}"
-            _die "could not enumerate repository paths for lint"
-        fi
+        _write_lint_paths "${_layout_paths}"
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
     docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
@@ -345,12 +342,35 @@ _run_system_real_in_runner() {
 
 # --- Container side: gates ----------------------------------------------------
 
-# Emit NUL-delimited lintable shell scripts. -print0 keeps paths with odd
-# characters intact.
+# Write repository-relative paths, NUL-delimited to preserve odd characters.
+# A per-command safe.directory permits root to inspect the mounted checkout.
+_write_lint_paths() {
+    local _destination="$1" _path
+    if ! command -v git >/dev/null 2>&1; then
+        _info "git unavailable; falling back to filesystem lint discovery"
+    elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+        ls-files --cached --others --exclude-standard -z >"${_destination}" 2>/dev/null; then
+        return 0
+    else
+        _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
+    fi
+    while IFS= read -r -d '' _path; do
+        printf '%s\0' "${_path#"${REPO_ROOT}/"}"
+    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0) >"${_destination}"
+}
+
+# Emit existing regular shell scripts from the selected path snapshot.
 _find_lintable_sh() {
-    find "${REPO_ROOT}" \
-        -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.sh' -print0
+    local _path
+    while IFS= read -r -d '' _path; do
+        case "${_path}" in
+            *.sh|*.bats)
+                if [[ -f "${REPO_ROOT}/${_path}" && ! -L "${REPO_ROOT}/${_path}" ]]; then
+                    printf '%s\0' "${REPO_ROOT}/${_path}"
+                fi ;;
+        esac
+    done <"${WORKTOOL_LAYOUT_PATHS}"
 }
 
 _run_shellcheck() {
@@ -359,12 +379,6 @@ _run_shellcheck() {
     while IFS= read -r -d '' _f; do
         _files+=("${_f}")
     done < <(_find_lintable_sh)
-    # *.bats are bash under the hood; check them too (info-level findings
-    # still fail the gate, matching init_ubuntu's lint policy).
-    while IFS= read -r -d '' _f; do
-        _files+=("${_f}")
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.bats' -print0)
 
     if [[ "${#_files[@]}" -eq 0 ]]; then
         _info "  (no shell scripts to check - skipping)"
@@ -376,6 +390,23 @@ _run_shellcheck() {
         || _die "ShellCheck failed - see violations above"
     _info "ShellCheck OK"
 }
+
+# Host lint supplies a snapshot when linked-worktree metadata is outside
+# /source. Direct container callers create their own, with filesystem fallback.
+_run_lint() (
+    if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]]; then
+        WORKTOOL_LAYOUT_PATHS="$(mktemp)"
+        trap 'rm -f "${WORKTOOL_LAYOUT_PATHS}"' EXIT
+        _write_lint_paths "${WORKTOOL_LAYOUT_PATHS}"
+    fi
+    [[ -r "${WORKTOOL_LAYOUT_PATHS}" ]] || _die "lint path snapshot unreadable"
+    export WORKTOOL_LAYOUT_PATHS
+    _run_shellcheck
+    _info "Checking script layout and process artifacts"
+    "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+        || _die "Script layout check failed"
+    _info "Script layout OK"
+)
 
 # Check the captured TAP stream of tier $1 in file $2 after the run: a plan
 # was emitted, at least one case ran (no "1..0"), the plan covers at least
@@ -642,11 +673,7 @@ _run_ci_gate() {
     shift
     case "${_flag}" in
         --ci-lint)
-            _run_shellcheck
-            _info "Checking script layout and process artifacts"
-            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
-                || _die "Script layout check failed"
-            _info "Script layout OK"
+            _run_lint
             ;;
         --ci-unit)         _run_unit "$@" ;;
         --ci-matrix)       _run_matrix "$@" ;;
