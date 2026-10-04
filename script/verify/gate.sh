@@ -215,6 +215,9 @@ if ! REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"; then
     exit 3
 fi
 
+# shellcheck source=guard.sh
+source "${REPO_ROOT}/lib/guard.sh"
+
 TDD_SH="${REPO_ROOT}/doc/evidence/tdd.sh"
 TDD_AWK="${REPO_ROOT}/doc/evidence/tdd.awk"
 NEGATIVE_DIR="${REPO_ROOT}/doc/evidence/negative"
@@ -320,8 +323,7 @@ _list_items() {
 # EXIT_UNAVAILABLE (3) with a message naming what is missing, so "cannot
 # check" can never be mistaken for "checked and fine".
 _require_tool() {
-    command -v "$1" >/dev/null 2>&1 \
-        || _unavailable "$1 not found on PATH - $2 cannot be checked here"
+    guard_require "$1" || exit $?
 }
 
 _require_file() {
