@@ -438,7 +438,28 @@ shell: min=143.8 median=400.5 max=515.5 ms
 inbox: min=14.9 median=17.5 max=25.4 ms' \
         run "${REALBOX}" --allow-real-box 5.1
     assert_failure
-    assert_output --partial "shell median 400.5 ms is not below the --max-ms 300"
+    assert_output --partial "shell median 400.5 ms exceeds the --max-ms 300"
+    refute_output --partial "posted="
+}
+
+@test "5.1: a shell median exactly at the --max-ms 300 passes (#181: <= passes)" {
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=300.0 max=315.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line "rc=0"
+    assert_line --partial "posted=1 comment=9001 run=m3-51-"
+    refute_output --partial "shell median 300.0 ms"
+}
+
+@test "5.1: a shell median of 300.1 ms, just over the --max-ms 300, is refused" {
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=300.1 max=315.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "shell median 300.1 ms exceeds the --max-ms 300"
     refute_output --partial "posted="
 }
 

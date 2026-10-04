@@ -410,7 +410,7 @@ shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 
 這支工具**只量測、只在 `--max-ms` 明確給定時才判定**;本工具是 issue #22 從中拆出來
 的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
-維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
+維持 docker + 預設 runc)。「進盒 ≤ 300 ms」的達標**由系統層 real-engine 組強制**
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
 的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
 --max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
