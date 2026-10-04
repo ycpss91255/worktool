@@ -579,8 +579,8 @@ rc=0
       just verify ui 1.1; echo rc=$?
       ```
 
-- [ ] 2. 自動測試:六道 gate 全綠(含 300 ms 進盒延遲 gate)
-  - [ ] 2.1 裸 `just test` 跑完六層;system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
+- [ ] 2. 自動測試:七個階段全綠(含 300 ms 進盒延遲 gate)
+  - [ ] 2.1 裸 `just test` 跑完七個階段(依序為 lint、unit、matrix、integration、system、acceptance、system-real);system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
     - 預期看到資訊(完整入口請預留至少一小時，負載下實測約 65 分鐘（見上方說明）;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
       輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
       ```text
