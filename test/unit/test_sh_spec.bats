@@ -377,3 +377,67 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
         rm -f "${FAKE_DOCKER_SNAPSHOT}".*
     done
 }
+
+_prepare_lint_worktree() {
+    LINT_ROOT="${BATS_TEST_TMPDIR}/lint repo"
+    mkdir -p "${LINT_ROOT}/script/test" "${LINT_ROOT}/.agents/state"
+    cp "${TEST_SH}" "${LINT_ROOT}/script/test/test.sh"
+    cp "${REPO_ROOT}/script/test/check-script-layout.sh" "${LINT_ROOT}/script/test/"
+    mkdir -p "${LINT_ROOT}/lib"
+    cp "${REPO_ROOT}/lib/log.sh" "${LINT_ROOT}/lib/"
+    printf '.agents/state/\n' >"${LINT_ROOT}/.gitignore"
+    git -C "${LINT_ROOT}" init -q
+    git -C "${LINT_ROOT}" add .
+}
+
+@test "lint ignores a gitignored ShellCheck violation in .agents/state" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_success
+    assert_output --partial 'ShellCheck OK'
+    refute_output --partial 'scratch.sh'
+    assert [ -f "${LINT_ROOT}/.agents/state/scratch.sh" ]
+}
+
+@test "lint rejects an untracked non-ignored ShellCheck violation" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/new script.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'new script.sh'
+    assert_output --partial 'SC2164'
+    assert_output --partial 'ShellCheck failed'
+}
+
+@test "lint falls back outside a Git work tree and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    mv "${LINT_ROOT}/.git" "${BATS_TEST_TMPDIR}/git-metadata"
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*not an accessible work tree}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
+
+@test "lint falls back without git and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname find mktemp rm shellcheck; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    PATH="${bin}" run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*git unavailable}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
