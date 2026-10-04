@@ -882,7 +882,7 @@ rc=0
       # 中斷時的還原手段：
       just verify realbox --allow-real-box 5.2.3; echo rc=$?
       ```
-      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 只印 `no-backup=1`。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
+      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host、等於本輪 dev 容器的 mount namespace。腳本依 distrobox 使用的容器引擎設定，以 `inspect --type container --format '{{.State.Pid}}' dev` 取得 init 的 host PID，再讀 `/proc/<init PID>/ns/mnt` 建立 dev 身分。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>] dev=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、另一個盒的新 fish、無法解析 dev namespace（含引擎不可用、inspect 失敗、init PID 無效）、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。視窗確實來自 Ghostty 與主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362、#433）。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
@@ -892,7 +892,7 @@ rc=0
       just verify realbox --allow-real-box 5.3; echo rc=$?
       ```
       預期 `rc=0`；本項最初就遇到既有 dev 時直接拒絕，不取得所有權。
-  PR #228 後盒 HOME 獨立且建盒後固定。5.1 用本輪 scratch 下的 `box-home`；5.2 用備份目錄下的 `box-home`；5.3 的 decoy 也用本輪 scratch 下的 `box-home`。user config 連結只落在該 HOME。realbox 在建盒前記錄 host 預設目錄（`~/<盒名>-box`，dev 為 `~/dev-box`）的既有項目；還原時先刪除本輪建立的盒子，再回報 host 預設目錄的清理前／後新增項目數，僅移除基準清單之外的項目，不跟隨 symlink，保留既有目錄、檔案與 socket。5.2.3 若沒有 `created-box` 所有權標記（本輪未啟動 assemble），只印 `dev-untouched=1` 與 `host-state untouched: new=<新增項目數>`，不清理 host 預設目錄；5.2.1 之後由使用者新增的檔案、symlink、目錄與 socket 全部保留，新增項目不視為本輪殘留。自訂盒 HOME（含 `.cache/tmux` 下的 socket 目錄）也回報清理前／後是否存在，清理後必須不存在。刪盒或狀態清理失敗會回非零並保留尚未清除的盒 HOME 與備份供重試；`leftover-dirs=0` 只代表受管設定目錄，不能單獨證明盒內狀態已清乾淨。產品預設 HOME 與 config 的保存／回報由 3.2 驗。
+  PR #228 後盒 HOME 獨立且建盒後固定。5.1 用本輪 scratch 下的 `box-home`；5.2 用備份目錄下的 `box-home`；5.3 的 decoy 也用本輪 scratch 下的 `box-home`。user config 連結只落在該 HOME。realbox 在建盒前記錄 host 預設目錄（`~/<盒名>-box`，dev 為 `~/dev-box`）的既有項目；還原時先刪除本輪建立的盒子，再回報 host 預設目錄的清理前／後新增項目數，僅移除基準清單之外的項目，不跟隨 symlink，保留既有目錄、檔案與 socket。5.2.3 若沒有 `created-box` 所有權標記（本輪未啟動 assemble），stdout 只印 `dev-untouched=1` 與 `host-state untouched: new=<新增項目數>`，不清理 host 預設目錄；本輪未建盒、保留所有盒的說明以 `[INFO]` 寫到 stderr，5.3 的還原也相同；5.2.1 之後由使用者新增的檔案、symlink、目錄與 socket 全部保留，新增項目不視為本輪殘留。自訂盒 HOME（含 `.cache/tmux` 下的 socket 目錄）也回報清理前／後是否存在，清理後必須不存在。刪盒或狀態清理失敗會回非零並保留尚未清除的盒 HOME 與備份供重試；`leftover-dirs=0` 只代表受管設定目錄，不能單獨證明盒內狀態已清乾淨。產品預設 HOME 與 config 的保存／回報由 3.2 驗。
 
 - [ ] 6. CI 與流程(gh / grep 查外部證據)
   - [ ] 6.1 一個 sub-issue 一個 PR、兩架構 CI:10 個 PR 各恰好一行 `Closes #`(互不相同);每個 PR 有 checks 且全 pass;#153 起每個 PR 同時有 amd64(ubuntu-latest)與 arm64(ubuntu-24.04-arm)的 check,兩邊的 check 名稱數量相等且完全不重疊

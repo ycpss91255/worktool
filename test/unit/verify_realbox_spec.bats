@@ -841,9 +841,12 @@ STUB
 # --- 5.2 step 3: restore -----------------------------------------------------
 
 @test "5.2.3 with no backup is a no-op that exits 0" {
-    run "${REALBOX}" --allow-real-box 5.2.3
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_success
-    assert_output --partial "no-backup=1"
+    assert_line "no-backup=1"
+    assert_output "no-backup=1"
+    assert_equal "${stderr:-}" "[INFO] $(_backup_dir) absent; already restored, or step 1 never ran"
     assert_equal "$(_count_calls just)" "0"
 }
 
@@ -996,12 +999,15 @@ STUB
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
 
 @test "5.3: documented refusal and restore lines follow the actual output order" {
+    bats_require_minimum_version 1.5.0
     local _actual _documented _keys
     _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
-    run "${REALBOX}" --allow-real-box 5.3
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
+    assert_line "dev-untouched=1"
+    [[ "${stderr:-}" == *'[INFO] this run never created a box; leaving every box alone'* ]]
     _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
-        | sed -e 's/ (.*$//' -e 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+        | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
     _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
         "${REPO_ROOT}/doc/acceptance.md" | sed -n '/預期看到資訊/p' | grep -o "\`[^\`]*\`" \
         | sed 's/`//g' | grep -E "${_keys}")"
@@ -1022,7 +1028,7 @@ STUB
     assert_line "restore-ok=1"
     assert_line "blocks=0"
     assert_line "leftover-dirs=0"
-    assert_line --partial "dev-untouched=1"
+    assert_line "dev-untouched=1"
     assert_line "backup-removed=1"
     assert_line "still-there=dev"
     assert_line "decoy-cleanup-rc=0"
@@ -1360,7 +1366,7 @@ STUB
     [ ! -e "$(_backup_dir)/created-box" ]
     run "${REALBOX}" --allow-real-box 5.2.3
     assert_success
-    assert_output --partial 'dev-untouched=1'
+    assert_line 'dev-untouched=1'
     assert_line 'host-state untouched: new=7'
     refute_output --partial 'host-state after-cleanup:'
     assert_equal "$(cat "${_home}/.profile")" 'user config'

@@ -669,7 +669,8 @@ _52_window_evidence() {
 # assemble, so it can outlive an interrupt that left no box.
 _52_remove_owned_box() {
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
-        printf 'dev-untouched=1 (this run never created a box; leaving every box alone)\n'
+        printf 'dev-untouched=1\n'
+        log_info "this run never created a box; leaving every box alone"
         return 0
     fi
     if _drop_owned_box; then
@@ -704,7 +705,8 @@ _52_step3_restore() {
     local _rc=0 _rrc
 
     if [[ ! -d "${CFGBK_B}" ]]; then
-        printf 'no-backup=1 (%s absent; already restored, or step 1 never ran)\n' "${CFGBK_B}"
+        printf 'no-backup=1\n'
+        log_info "${CFGBK_B} absent; already restored, or step 1 never ran"
         return 0
     fi
     if [[ ! -f "${CFGBK_B}/manifest" ]]; then
