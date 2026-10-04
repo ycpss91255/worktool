@@ -67,9 +67,8 @@
 # per doc/adr/0007 - every failure below is surfaced explicitly, so a
 # non-zero exit is always intentional.
 
-set -uo pipefail
-
 # shellcheck source-path=SCRIPTDIR/../../lib
+set -uo pipefail
 
 # --- Constants ---------------------------------------------------------------
 SCRIPT_NAME="ui.sh"

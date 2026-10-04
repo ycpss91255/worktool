@@ -81,6 +81,7 @@
 #
 # Expected failures are handled explicitly; checks run in conditionals so
 # their own exit codes and diagnostics decide the acceptance verdict.
+# shellcheck source-path=SCRIPTDIR/../../lib
 set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
