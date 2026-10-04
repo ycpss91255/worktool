@@ -218,6 +218,8 @@ fi
 
 # shellcheck source=guard.sh
 source "${REPO_ROOT}/lib/guard.sh"
+# shellcheck source=log.sh
+source "${REPO_ROOT}/lib/log.sh"
 
 TDD_SH="${REPO_ROOT}/doc/evidence/tdd.sh"
 TDD_AWK="${REPO_ROOT}/doc/evidence/tdd.awk"
@@ -237,7 +239,7 @@ _usage_error() {
 
 # A check that cannot run here is not a pass and not a skip.
 _unavailable() {
-    printf '[UNAVAILABLE] %s: %s\n' "${SCRIPT_NAME}" "$*" >&2
+    log_info "${SCRIPT_NAME}: $*"
     exit "${EXIT_UNAVAILABLE}"
 }
 

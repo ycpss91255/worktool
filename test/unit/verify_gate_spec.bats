@@ -95,7 +95,7 @@ _make_repo_copy() {
     cp "${REPO_ROOT}/script/verify/gate.sh" "${COPY}/script/verify/gate.sh"
     cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
     mkdir -p "${COPY}/lib"
-    cp "${REPO_ROOT}/lib/guard.sh" "${COPY}/lib/guard.sh"
+    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${COPY}/lib/"
 }
 
 # _stub <name> - body on stdin. The body runs with $REAL set to the real
@@ -343,7 +343,8 @@ EOF
     rm -f "${COPY}/doc/evidence/negative/empty-red-block.md"
     run "${COPY_GATE}" 2.4
     assert_failure 3
-    assert_output --partial '[UNAVAILABLE]'
+    assert_line "[INFO] gate.sh: ${COPY}/doc/evidence/negative/empty-red-block.md is missing - item 2.4 cannot be checked here"
+    refute_output --partial '[UNAVAILABLE]'
     assert_output --partial 'empty-red-block.md is missing'
 }
 
