@@ -76,6 +76,28 @@ source "${BATS_TEST_DIRNAME}/../helper/diagnostics.bash"
 
 GATE_SH="${REPO_ROOT}/script/verify/gate.sh"
 
+@test "acceptance doc: bare just test stage count and order match the runner" {
+    # Source the real runner in a separate shell; its direct-execution guard
+    # leaves HOST_STEPS available without starting any test stages.
+    run bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' \
+        _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    local -a stages=("${lines[@]}")
+    local -a counts=(零 一 二 三 四 五 六 七 八 九 十)
+    [ "${#stages[@]}" -gt 0 ]
+    [ "${#stages[@]}" -lt "${#counts[@]}" ]
+    local count="${counts[${#stages[@]}]}" order="" stage
+    for stage in "${stages[@]}"; do
+        order+="${order:+、}${stage}"
+    done
+
+    run grep -E '^(- \[ \] 2\.|  - \[ \] 2\.1 )' \
+        "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_line --partial "2. 自動測試:${count}個階段全綠"
+    assert_line --partial "2.1 裸 \`just test\` 跑完${count}個階段(依序為 ${order});"
+}
+
 setup() {
     BIN="${BATS_TEST_TMPDIR}/bin"
     COPY="${BATS_TEST_TMPDIR}/copy"
