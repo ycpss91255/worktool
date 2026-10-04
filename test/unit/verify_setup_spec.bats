@@ -721,7 +721,8 @@ _stub_system_path_distrobox() {
     for _item in 3.5 3.6; do
         run "${VERIFY}" "${_item}"
         assert_failure 3
-        assert_output --partial "[UNAVAILABLE] setup.sh: ${_item}: environment unfit: distrobox is still on the restricted PATH"
+        assert_line "[INFO] setup.sh: ${_item}: environment unfit: distrobox is still on the restricted PATH"
+        refute_output --partial "[UNAVAILABLE]"
         refute_output --partial "${_item} PASS"
     done
 }

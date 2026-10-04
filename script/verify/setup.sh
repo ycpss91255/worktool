@@ -303,7 +303,7 @@ _list_items() {
 # Prints every missing name, so one run tells the maintainer everything to
 # install instead of one name per attempt.
 _unavailable() {
-    printf '[UNAVAILABLE] setup.sh: %s\n' "$*" >&2
+    log_info "setup.sh: $*"
     return 3
 }
 
