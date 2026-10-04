@@ -98,9 +98,9 @@ LIB_DIR="${REPO_ROOT}/lib"
 # shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
-# shellcheck source=guard.sh
+# shellcheck source=lib/guard.sh
 source "${LIB_DIR}/guard.sh"
-# shellcheck source=log.sh
+# shellcheck source=lib/log.sh
 source "${LIB_DIR}/log.sh"
 
 # --- Item registry -----------------------------------------------------------

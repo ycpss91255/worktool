@@ -419,7 +419,7 @@ EOF
         run --separate-stderr env PATH="${_path}" "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
         assert_failure 3
         assert_equal "${output}" ""
-        run printf '%s\n' "${stderr}"
+        run printf '%s\n' "${stderr:?}"
         assert_line "[UNAVAILABLE] setup.sh: ${_tool} not found on PATH"
         assert_line "[INFO] ${_reason}"
     done

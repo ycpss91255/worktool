@@ -233,12 +233,12 @@ _stub_calls() {
     _just="$(command -v just)"
     for _group in ui gate setup diagram evidence realbox; do
         case "${_group}" in
-            ui) _tool=grep; _item=1.1 ;;
-            gate) _tool=grep; _item=2.1 ;;
-            setup) _tool=sed; _item=3.1 ;;
-            diagram) _tool=grep; _item=4.1 ;;
-            evidence) _tool=gh; _item=6.1 ;;
-            realbox) _tool=distrobox; _item=5.1 ;;
+            ui) _tool="grep"; _item=1.1 ;;
+            gate) _tool="grep"; _item=2.1 ;;
+            setup) _tool="sed"; _item=3.1 ;;
+            diagram) _tool="grep"; _item=4.1 ;;
+            evidence) _tool="gh"; _item=6.1 ;;
+            realbox) _tool="distrobox"; _item=5.1 ;;
         esac
         _path="${BATS_TEST_TMPDIR}/without-${_group}-${_tool}"
         mkdir -p "${_path}"
