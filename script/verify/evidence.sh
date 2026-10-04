@@ -178,8 +178,8 @@ _gh_capture() {
     local -n _gh_ref="$1"
     shift
     local _stdout _rc
-    _stdout="$(timeout "${EVIDENCE_GH_TIMEOUT}" gh "$@")"
-    _rc=$?
+    _rc=0
+    _stdout="$(timeout "${EVIDENCE_GH_TIMEOUT}" gh "$@")" || _rc=$?
     _gh_ref="${_stdout}"
     [[ "${_rc}" -eq 0 ]] || return 1
     return 0
@@ -192,8 +192,8 @@ _jq_capture() {
     local _json="$2"
     shift 2
     local _stdout _rc
-    _stdout="$(jq "$@" <<<"${_json}")"
-    _rc=$?
+    _rc=0
+    _stdout="$(jq "$@" <<<"${_json}")" || _rc=$?
     _jq_ref="${_stdout}"
     [[ "${_rc}" -eq 0 ]] || return 1
     return 0
@@ -213,8 +213,8 @@ _grep_capture() {
     local _text="$2"
     shift 2
     local _stdout _rc
-    _stdout="$(grep "$@" <<<"${_text}")"
-    _rc=$?
+    _rc=0
+    _stdout="$(grep "$@" <<<"${_text}")" || _rc=$?
     _grep_ref="${_stdout}"
     [[ "${_rc}" -eq 0 ]] && return 0
     [[ "${_rc}" -eq 1 && -z "${_stdout}" ]] && return 1
@@ -324,12 +324,14 @@ item_6_1() {
         _both=0
         if [[ "${_amd}" -gt 0 ]]; then
             for _name in "${!_amd_set[@]}"; do
-                [[ -n "${_arm_set["${_name}"]:-}" ]] && _both=$((_both + 1))
+                if [[ -n "${_arm_set["${_name}"]:-}" ]]; then
+                    _both=$((_both + 1))
+                fi
             done
         fi
 
-        _grep_capture _matches "${_body}" -o '^Closes #[0-9][0-9]*'
-        _rc=$?
+        _rc=0
+        _grep_capture _matches "${_body}" -o '^Closes #[0-9][0-9]*' || _rc=$?
         if [[ "${_rc}" -eq 2 ]]; then
             printf '#%s grep-failed\n' "${_pr}"
             _fail=1
@@ -443,8 +445,8 @@ item_6_2() {
                 _cell="${_status}"
                 _fail=1
             else
-                _grep_capture _hits "${_comments}" -e "${_pattern}"
-                _rc=$?
+                _rc=0
+                _grep_capture _hits "${_comments}" -e "${_pattern}" || _rc=$?
                 case "${_rc}" in
                     0) _cell=1 ;;
                     1)
@@ -503,8 +505,8 @@ _item_6_3_verdict() {
     if [[ -z "${_body}" || "${_body}" == "null" ]]; then
         return 3
     fi
-    _grep_capture _line "${_body}" -E '^(可合併|不可合併|mergeable|blocked)'
-    _rc=$?
+    _rc=0
+    _grep_capture _line "${_body}" -E '^(可合併|不可合併|mergeable|blocked)' || _rc=$?
     [[ "${_rc}" -eq 2 ]] && return 2
     [[ "${_rc}" -eq 1 ]] && return 1
     # The verdict is the LAST such line (a comment may quote earlier ones).
@@ -539,8 +541,8 @@ item_6_3() {
     declare -A _follow_seen=() _follow_all=() _fix_all=()
 
     for _pr in "${_ITEM_6_3_MERGEABLE_PRS[@]}"; do
-        _item_6_3_verdict "${_pr}" _verdict
-        _rc=$?
+        _rc=0
+        _item_6_3_verdict "${_pr}" _verdict || _rc=$?
         _word="$(_item_6_3_word "${_verdict}" "${_rc}")"
         printf '#%s %s\n' "${_pr}" "${_word}"
         [[ "${_word}" == mergeable ]] || _fail=1
@@ -559,8 +561,8 @@ item_6_3() {
             _fail=1
             continue
         fi
-        _grep_capture _matches "${_claude}" -o 'follow-up issue #[0-9][0-9]*'
-        _rc=$?
+        _rc=0
+        _grep_capture _matches "${_claude}" -o 'follow-up issue #[0-9][0-9]*' || _rc=$?
         if [[ "${_rc}" -eq 2 ]]; then
             printf '#%s grep-failed\n' "${_pr}"
             _fail=1
@@ -602,11 +604,11 @@ item_6_3() {
             continue
         fi
 
-        _item_6_3_verdict "${_pr}" _verdict
-        _rc=$?
+        _rc=0
+        _item_6_3_verdict "${_pr}" _verdict || _rc=$?
         _orig="$(_item_6_3_word "${_verdict}" "${_rc}")"
-        _item_6_3_verdict "${_fix_pr}" _verdict
-        _rc=$?
+        _rc=0
+        _item_6_3_verdict "${_fix_pr}" _verdict || _rc=$?
         _fixed="$(_item_6_3_word "${_verdict}" "${_rc}")"
 
         _issue="${_follow}"
@@ -901,9 +903,11 @@ main() {
         return 1
     fi
 
+    # Items report expected failures themselves; the conditional call keeps
+    # errexit disabled inside them while their complete criterion is printed.
     for _id in "${_ids[@]}"; do
-        _run_item "${_id}"
-        _rc=$?
+        _rc=0
+        _run_item "${_id}" || _rc=$?
         [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     done
     return 0

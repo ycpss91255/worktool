@@ -545,6 +545,18 @@ STUB
 
 # --- 6.2 ---------------------------------------------------------------------
 
+@test "errexit: an unmatched decision grep prints every zero cell and final rc through the CLI" {
+    _stub_all_ok
+    cat >"${BIN}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '[claude] nothing concrete here\n'
+STUB
+    chmod +x "${BIN}/gh"
+    run bash -c 'bash "$1" 6.2 2>/dev/null' _ "${EVIDENCE}"
+    assert_failure 1
+    assert_output $'#22 median-ms:0 runc:0\n#148 lts-only:0 arm-runner:0\n#21 default-enter:0 log:0\nrc=1'
+}
+
 @test "6.2: prints the document's lines and exits 0 when every decision is recorded" {
     _stub_all_ok
     _run_evidence_item item_6_2
