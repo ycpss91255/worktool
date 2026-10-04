@@ -48,13 +48,13 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 _scope_covers_path() {
     local _scope="$1" _path="$2" _entry _number
     while IFS= read -r _entry; do
-        if [[ "${_path}" == ${_entry} ]]; then
-            return 0
-        fi
+        case "${_path}" in
+            ${_entry}) return 0 ;;
+        esac
         if [[ "${_entry}" == */ && "${_path}" == "${_entry}"* ]]; then
             return 0
         fi
-    done < <(printf '%s\n' "${_scope}" | grep -oE '`[^`]+`' | tr -d '`')
+    done < <(printf '%s\n' "${_scope}" | grep -oE "\`[^\`]+\`" | tr -d '`')
     if [[ "${_path}" =~ ^doc/adr/([0-9]{4})-[^/]+\.md$ ]]; then
         _number="${BASH_REMATCH[1]}"
         [[ "${_scope}" =~ ADR[[:space:]]+[0-9]{4}(／[0-9]{4})* ]] || return 1
@@ -63,20 +63,26 @@ _scope_covers_path() {
     return 1
 }
 
+# Docker runs as root while CI's checkout belongs to the runner user.
+# Trust only this checkout, without changing persistent Git configuration.
+_scope_git() {
+    git -c safe.directory="${REPO_ROOT}" -C "${REPO_ROOT}" "$@"
+}
+
 @test "acceptance: PR 157 scope covers every real changed path relative to main" {
     local _main _head _scope _path _missing="" _changed
-    if git -C "${REPO_ROOT}" rev-parse --verify origin/main^{commit} >/dev/null 2>&1; then
+    if _scope_git rev-parse --verify 'origin/main^{commit}' >/dev/null 2>&1; then
         _main=origin/main
-    elif git -C "${REPO_ROOT}" rev-parse --verify main^{commit} >/dev/null 2>&1; then
+    elif _scope_git rev-parse --verify 'main^{commit}' >/dev/null 2>&1; then
         _main=main
     else
         skip 'no main ref resolves'
     fi
-    _head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-    [[ "${_head}" != "$(git -C "${REPO_ROOT}" rev-parse "${_main}")" ]] \
+    _head="$(_scope_git rev-parse HEAD)"
+    [[ "${_head}" != "$(_scope_git rev-parse "${_main}")" ]] \
         || skip 'HEAD is the main ref itself'
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
-    run git -C "${REPO_ROOT}" diff --name-only "${_main}...HEAD"
+    run _scope_git diff --name-only "${_main}...HEAD"
     assert_success
     _changed="${output}"
     while IFS= read -r _path; do
