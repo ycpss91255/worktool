@@ -579,6 +579,17 @@ _pl_launch_checks() {
     assert_output '[true,true,true,true,true,true,true,true]'
 }
 
+@test "pr-loop (node): the codex review launch stays one pinned foreground call and forbids detaching (#453)" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -c '.calls[] | select(.role | startswith("review:")) | .prompt |
+        [contains("timeout 420 codex exec --skip-git-repo-check \"$(cat prompt-r1.txt)\" > out-r1.txt 2>&1"),
+         contains("ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms)"),
+         (contains("setsid") and contains("nohup") and contains("disown") and contains("trailing &") and
+          contains("run_in_background") and contains("bash -c wrapper") and contains("run script"))]' <<<"${output}"
+    assert_output '[true,true,true]'
+}
+
 @test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
     run _pl_run
     assert_success
