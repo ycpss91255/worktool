@@ -98,6 +98,10 @@ LIB_DIR="${REPO_ROOT}/lib"
 # shellcheck source-path=SCRIPTDIR/../../lib
 # shellcheck source=manifest.sh
 source "${LIB_DIR}/manifest.sh"
+# shellcheck source=lib/guard.sh
+source "${LIB_DIR}/guard.sh"
+# shellcheck source=lib/log.sh
+source "${LIB_DIR}/log.sh"
 
 # --- Item registry -----------------------------------------------------------
 # Every item belongs to exactly one group, and the group decides what the
@@ -299,20 +303,12 @@ _list_items() {
 # Prints every missing name, so one run tells the maintainer everything to
 # install instead of one name per attempt.
 _unavailable() {
-    printf '[UNAVAILABLE] setup.sh: %s\n' "$*" >&2
+    log_info "setup.sh: $*"
     return 3
 }
 
 _require_tools() {
-    local _t _missing=()
-    for _t in "$@"; do
-        command -v -- "${_t}" >/dev/null 2>&1 || _missing+=("${_t}")
-    done
-    if [[ "${#_missing[@]}" -gt 0 ]]; then
-        _unavailable "cannot run this check here: missing on PATH: ${_missing[*]}"
-        return 3
-    fi
-    return 0
+    guard_require "$@"
 }
 
 # Print the ABSOLUTE path of executable $1, or fail with $2 as the reason.
@@ -322,7 +318,10 @@ _require_tools() {
 _resolve_exec() {
     local _name="$1" _why="$2" _p
     _p="$(command -v -- "${_name}")" || {
-        _unavailable "${_name} is not on PATH - ${_why}"
+        guard_require "${_name}" || {
+            log_info "${_why}"
+            return 3
+        }
         return 3
     }
     [[ "${_p}" == /* ]] || {

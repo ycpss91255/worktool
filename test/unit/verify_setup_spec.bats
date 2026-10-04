@@ -403,32 +403,38 @@ EOF
     assert_output --partial "mktemp -d failed"
 }
 
-@test "3.1: no ghostty on PATH is reported and fails, never skipped" {
-    rm -f "${STUB}/ghostty"
-    run "${VERIFY}" 3.1
-    assert_failure 3
-    assert_output --partial "[UNAVAILABLE] setup.sh: ghostty is not on PATH"
+@test "3.1: missing resolved tools report the contract line and reason through just" {
+    bats_require_minimum_version 1.5.0
+    local _tool _reason _path
+    for _tool in ghostty distrobox; do
+        if [[ "${_tool}" == ghostty ]]; then
+            rm -f "${STUB}/ghostty"
+            _path="${PATH}"
+            _reason='setup resolves it to log how the terminal default was decided'
+        else
+            _stub ghostty '#!/bin/sh' 'exit 0'
+            _path="${NO_DISTROBOX_PATH}"
+            _reason='setup writes its absolute path into the managed command'
+        fi
+        run --separate-stderr env PATH="${_path}" "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
+        assert_failure 3
+        assert_equal "${output}" ""
+        run printf '%s\n' "${stderr:?}"
+        assert_line "[UNAVAILABLE] setup.sh: ${_tool} not found on PATH"
+        assert_line "[INFO] ${_reason}"
+    done
 }
 
-@test "3.1: no distrobox on PATH is reported and fails, never skipped" {
-    run env PATH="${NO_DISTROBOX_PATH}" "${VERIFY}" 3.1
-    assert_failure
-    assert_output --partial "distrobox is not on PATH"
-}
-
-@test "3.1: no just on PATH is reported and fails, never skipped" {
-    # A PATH holding every tool the check uses EXCEPT just, so the one
-    # thing missing is the one the message must name.
-    local _d="${BATS_TEST_TMPDIR}/nojust" _t
+@test "3.1: a missing generic tool reports the contract line through just" {
+    local _d="${BATS_TEST_TMPDIR}/no-sed" _t
     mkdir -p "${_d}"
-    for _t in env sed find wc mktemp grep ln chmod cat rm mkdir dirname sh bash awk distrobox; do
+    for _t in env just find wc mktemp grep ln chmod cat rm mkdir dirname sh bash awk distrobox; do
         ln -s "$(command -v "${_t}")" "${_d}/${_t}"
     done
     ln -s "${STUB}/ghostty" "${_d}/ghostty"
-    run env PATH="${_d}" "${VERIFY}" 3.1
+    run env PATH="${_d}" "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
     assert_failure 3
-    assert_output --partial "[UNAVAILABLE] setup.sh: cannot run this check here: missing on PATH"
-    assert_output --partial "just"
+    assert_line "[UNAVAILABLE] setup.sh: sed not found on PATH"
 }
 
 # --- 3.2 ----------------------------------------------------------------------
@@ -715,7 +721,8 @@ _stub_system_path_distrobox() {
     for _item in 3.5 3.6; do
         run "${VERIFY}" "${_item}"
         assert_failure 3
-        assert_output --partial "[UNAVAILABLE] setup.sh: ${_item}: environment unfit: distrobox is still on the restricted PATH"
+        assert_line "[INFO] setup.sh: ${_item}: environment unfit: distrobox is still on the restricted PATH"
+        refute_output --partial "[UNAVAILABLE]"
         refute_output --partial "${_item} PASS"
     done
 }

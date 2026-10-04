@@ -227,3 +227,36 @@ _stub_calls() {
         _stub_group "${_group}" 0
     done
 }
+
+@test "every verify group reports an exact missing-tool line and exits 3 through just" {
+    local _group _tool _needed _path _just _item _real
+    _just="$(command -v just)"
+    for _group in ui gate setup diagram evidence realbox; do
+        case "${_group}" in
+            ui) _tool="grep"; _item=1.1 ;;
+            gate) _tool="grep"; _item=2.1 ;;
+            setup) _tool="sed"; _item=3.1 ;;
+            diagram) _tool="grep"; _item=4.1 ;;
+            evidence) _tool="gh"; _item=6.1 ;;
+            realbox) _tool="distrobox"; _item=5.1 ;;
+        esac
+        _path="${BATS_TEST_TMPDIR}/without-${_group}-${_tool}"
+        mkdir -p "${_path}"
+        for _needed in bash sh dirname env just timeout grep sort wc sed find mktemp \
+            docker gh jq awk cut tee date uname mkdir ln distrobox; do
+            [[ "${_needed}" == "${_tool}" ]] && continue
+            # Some verification tools are absent from the unit image. An
+            # executable that fails keeps those unrelated guards satisfied
+            # and prevents any verification work if a guard is bypassed.
+            _real="$(command -v "${_needed}")" || _real=/bin/false
+            ln -s "${_real}" "${_path}/${_needed}"
+        done
+        if [[ "${_group}" == realbox ]]; then
+            run env PATH="${_path}" "${_just}" --justfile "${REPO_ROOT}/justfile" verify "${_group}" --allow-real-box "${_item}"
+        else
+            run env PATH="${_path}" "${_just}" --justfile "${REPO_ROOT}/justfile" verify "${_group}" "${_item}"
+        fi
+        assert_failure 3
+        assert_line "[UNAVAILABLE] ${_group}.sh: ${_tool} not found on PATH"
+    done
+}
