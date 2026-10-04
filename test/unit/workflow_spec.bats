@@ -3185,6 +3185,19 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "milestone-handover unchanged Sync blocks without completed green CI (#441)" {
+    local mutation replies
+    for mutation in 'del(."sync:".checks)' '."sync:".checks=[]' \
+        '."sync:".checks[0].status="IN_PROGRESS" | ."sync:".checks[0].conclusion=null' \
+        '."sync:".checks[0].conclusion="FAILURE"' \
+        '."sync:".checks += [{name:"extra",status:"QUEUED",conclusion:null}]'; do
+        replies="$(_handover_replies | jq ".\"sync:\".state=\"unchanged\" | ${mutation}")"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "sync-blocked" and [.calls[].role] == ["sync:"]' <<<"${output}"
+        assert_success
+    done
+}
+
 @test "milestone-handover Sync continues bounded foreground waits beyond 1800 seconds before Head (#421)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and [.calls[].phase][0:2] == ["Sync","Head"] and

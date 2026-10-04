@@ -56,9 +56,9 @@ const sync = decode(syncResult)
 if (!sync || sync.error || !['synced', 'unchanged'].includes(sync.state) ||
     typeof sync.repoDir !== 'string' || !sync.repoDir.startsWith('/') ||
     /[\u0000-\u001f\u007f`]/.test(sync.repoDir) || !/^[0-9a-f]{40}$/.test(sync.sha) ||
-    (sync.state === 'synced' && (!Array.isArray(sync.checks) ||
+    (!Array.isArray(sync.checks) ||
       !requiredChecks.every(n => sync.checks.some(c => c.name === n && green(c))) ||
-      !sync.checks.every(c => c.name === 'milestone-gate-approval' || green(c))))) {
+      !sync.checks.every(c => c.name === 'milestone-gate-approval' || green(c)))) {
   return { pr: A.pr, status: 'sync-blocked', report: sync || 'Sync query failed' }
 }
 A.repoDir = sync.repoDir
