@@ -616,18 +616,13 @@ _52_confirm_window() {
 }
 
 _52_dev_namespace() {
-    local _manager _init _ns
+    local _manager _ns
     _manager="$(distrobox_manager "${XDG_CONFIG_HOME:-${HOME}/.config}")" \
         || { guard_fail "cannot resolve dev container engine; check distrobox config and re-run 5.2"; return 1; }
-    _init="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" inspect --type container \
-        --format '{{.State.Pid}}' "${BOX}")" \
-        || { guard_fail "cannot inspect dev init PID; check the container engine and re-run 5.2"; return 1; }
-    [[ "${_init}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "invalid dev init PID; check the running box and re-run 5.2"; return 1; }
-    _ns="$(guard_timed "${TIMEOUT_SHORT}" readlink "/proc/${_init}/ns/mnt")" \
-        || { guard_fail "cannot read dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+    _ns="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" exec "${BOX}" readlink /proc/self/ns/mnt)" \
+        || { guard_fail "cannot read dev mount namespace; check the container engine and re-run 5.2"; return 1; }
     [[ "${_ns}" =~ ^mnt:\[[0-9]+\]$ ]] \
-        || { guard_fail "invalid dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+        || { guard_fail "invalid dev mount namespace; check the running box and re-run 5.2"; return 1; }
     printf '%s\n' "${_ns}"
 }
 

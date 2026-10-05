@@ -554,7 +554,14 @@ STUB
 }
 
 _fake_window_process() {
-    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/docker"
+    cat >"${STUBS}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'exec dev readlink /proc/self/ns/mnt' ]] || exit 2
+printf '%s\n' "${FAKE_DEV_NS-mnt:[200]}"
+exit "${FAKE_DEV_NS_RC:-0}"
+STUB
+    chmod +x "${STUBS}/docker"
     export DBX_CONTAINER_MANAGER=docker
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
@@ -622,6 +629,31 @@ STUB
     assert_output --partial "fish mount namespace"
 }
 
+_fake_unreadable_dev_init() {
+    _fake_window_process
+    export FAKE_DEV_NS=''
+    cat >"${STUBS}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    'inspect --type container --format {{.State.Pid}} dev') printf '4343\n' ;;
+    'exec dev readlink /proc/self/ns/mnt')
+        printf '%s\n' "${FAKE_ENGINE_NS-mnt:[200]}"
+        exit "${FAKE_ENGINE_EXEC_RC:-0}" ;;
+    *) exit 2 ;;
+esac
+STUB
+}
+
+@test "#469: 5.2 accepts matching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
@@ -661,13 +693,9 @@ STUB
 @test "#433: 5.2 rejects an unresolvable dev namespace and restores" {
     _fake_window_process
     local _mode
-    for _mode in inspect-failed zero-pid empty-pid malformed-pid unreadable empty malformed; do
-        unset FAKE_DEV_INSPECT_RC FAKE_DEV_PID FAKE_DEV_NS_RC FAKE_DEV_NS
+    for _mode in unreadable empty malformed; do
+        unset FAKE_DEV_NS_RC FAKE_DEV_NS
         case "${_mode}" in
-            inspect-failed) export FAKE_DEV_INSPECT_RC=1 ;;
-            zero-pid) export FAKE_DEV_PID=0 ;;
-            empty-pid) export FAKE_DEV_PID='' ;;
-            malformed-pid) export FAKE_DEV_PID=unknown ;;
             unreadable) export FAKE_DEV_NS_RC=1 ;;
             empty) export FAKE_DEV_NS='' ;;
             malformed) export FAKE_DEV_NS=unknown ;;
