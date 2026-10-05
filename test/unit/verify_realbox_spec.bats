@@ -999,6 +999,27 @@ STUB
 
 # --- 5.2 step 2: re-validate, then apply -------------------------------------
 
+@test "#487: 5.2 apply overrides saved terminal none and restores the original state bytes" {
+    local _repo _state="${HOME}/.config/worktool/config"
+    _repo="$(_repo_copy)"
+    _seed_shared_state
+    printf 'terminal=none\nterminal.source=user\n\n' >>"${_state}"
+    cp "${_state}" "${STATE}/baseline-state"
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    run grep '^command = .*script/box/enter.sh' "$(_ghostty_config)"
+    assert_success
+    run grep -F 'box setup --terminal ghostty' "${STATE}/calls.log"
+    assert_success
+    run _restore_input 4242
+    assert_success
+    assert_line 'restore-ok=1'
+    run cmp "${STATE}/baseline-state" "${_state}"
+    assert_success
+}
+
 @test "5.2.2 happy path re-validates the published backup and applies" {
     _realbox_quiet 5.2.1
     run "${REALBOX}" --allow-real-box 5.2.2
