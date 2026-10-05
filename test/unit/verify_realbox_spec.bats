@@ -363,7 +363,7 @@ STUB
         run --separate-stderr "${REALBOX}" --help --comment-tag "${_tag}"
         assert_failure 2
         assert_equal "${output}" ''
-        [[ "${stderr}" == "realbox.sh: invalid --comment-tag '${_tag}' (see --help)" ]]
+        [[ "${stderr:?}" == "realbox.sh: invalid --comment-tag '${_tag}' (see --help)" ]]
     done
     run "${REALBOX}" --help --comment-tag
     assert_failure 2
