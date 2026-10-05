@@ -701,8 +701,54 @@ _52_confirm_restore() {
     IFS= read -r _pid || { guard_fail "reading the restored window PID failed"; return 1; }
     [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
         || { guard_fail "expected a shell PID; a typed yes is not objective reload evidence"; return 1; }
-    guard_fail "restored window evidence is not confirmed"
+    _52_restored_window_evidence "${_pid}"
+}
+
+_52_restored_window_evidence() {
+    local _pid="$1" _before _name _comm _host _window
+    while read -r _before _name; do
+        [[ "${_before}" != "${_pid}" ]] \
+            || { guard_fail "PID ${_pid} existed before reload confirmation; open a new window"; return 1; }
+    done <"${CFGBK_B}/processes-before-restore-window"
+    _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
+        || { guard_fail "cannot inspect restored window PID ${_pid}"; return 1; }
+    [[ -n "${_comm}" ]] || { guard_fail "empty restored window process evidence"; return 1; }
+    _host="$(readlink /proc/self/ns/mnt)" \
+        || { guard_fail "cannot read host mount namespace"; return 1; }
+    _window="$(readlink "/proc/${_pid}/ns/mnt")" \
+        || { guard_fail "cannot read restored window mount namespace"; return 1; }
+    [[ "${_host}" =~ ^mnt:\[[0-9]+\]$ && "${_window}" == "${_host}" ]] \
+        || { guard_fail "restored window is not in the host mount namespace"; return 1; }
+    _52_restored_window_chain "${_pid}" || return 1
+    printf 'restore-window-evidence: pid=%s comm=%s host=%s window=%s enter=absent\n' \
+        "${_pid}" "${_comm}" "${_host}" "${_window}"
+}
+
+_52_restored_window_chain() {
+    local _pid="$1" _row _parent _args _depth
+    for ((_depth=0; _depth<64; _depth++)); do
+        _row="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o ppid=,args=)" \
+            || { guard_fail "cannot inspect restored window ancestry"; return 1; }
+        read -r _parent _args <<<"${_row}"
+        [[ "${_parent}" =~ ^[1-9][0-9]*$ && -n "${_args}" ]] \
+            || { guard_fail "invalid restored window ancestry"; return 1; }
+        if [[ "${_args%% *}" == */ghostty || "${_args%% *}" == ghostty ]]; then
+            return 0
+        fi
+        _pid="${_parent}"
+    done
+    guard_fail "restored window ancestry does not reach Ghostty"
     return 1
+}
+
+_52_report_restore_window() {
+    [[ -f "${CFGBK_B}/processes-before" ]] || return 0
+    if _52_confirm_restore; then
+        printf 'restore-window-ok=1\n'
+    else
+        printf 'restore-window-ok=0\n'
+        return 1
+    fi
 }
 
 _52_step3_restore() {
@@ -738,13 +784,8 @@ _52_step3_restore() {
 
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
-    if [[ "${_rc}" -eq 0 && -f "${CFGBK_B}/processes-before" ]]; then
-        if _52_confirm_restore; then
-            printf 'restore-window-ok=1\n'
-        else
-            printf 'restore-window-ok=0\n'
-            _rc=1
-        fi
+    if [[ "${_rc}" -eq 0 ]]; then
+        _52_report_restore_window || _rc=1
     fi
     _52_cleanup_state || _rc=1
 

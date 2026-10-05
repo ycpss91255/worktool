@@ -1613,3 +1613,47 @@ STUB
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }
+
+_restore_input() {
+    export REALBOX
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    '-e -o pid=,comm=') printf '1 init\n' ;;
+    '-p 4242 -o comm=') printf 'fish\n' ;;
+    '-p 4242 -o ppid=,args=') printf '900 /usr/bin/fish\n' ;;
+    '-p 900 -o ppid=,args=') printf '1 /usr/bin/ghostty\n' ;;
+    *) exit 1 ;;
+esac
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4242/ns/mnt ]]; then
+    exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" /proc/self/ns/mnt
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" "$@"
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+    cat >"${STATE}/restore-run" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+"${REALBOX}" --allow-real-box 5.2.3 || rc=$?
+printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/restore-rc"
+STUB
+    printf '%s\n' "$1" | script -q -c "bash '${STATE}/restore-run'" /dev/null | tr -d '\r'
+    return "$(cat "${STATE}/restore-rc")"
+}
+
+@test "#471: a clean post-restore Ghostty window completes restore" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run _restore_input 4242
+    assert_success
+    assert_output --partial 'restore-window-evidence: pid=4242 comm=fish'
+    assert_line 'restore-window-ok=1'
+    assert_line 'backup-removed=1'
+    [ ! -e "$(_backup_dir)" ]
+}
