@@ -552,9 +552,31 @@ item_51() {
 # =============================================================================
 
 # --- step 1 ------------------------------------------------------------------
+# A restored managed command can correctly enter an existing box, which cannot
+# satisfy the host-window evidence. Refuse that baseline before any writes.
+_52_baseline_ghostty() {
+    local _name _file _count _rc
+    for _name in ghostty ghostty-modern; do
+        _file="$(cfgbk_file_of "${_name}")" || return 1
+        [[ -f "${_file}" ]] || continue
+        _rc=0
+        _count="$(grep -cxF "${CFGBK_BLOCK_BEGIN}" -- "${_file}")" || _rc=$?
+        if (( _rc > 1 )) || [[ ! "${_count}" =~ ^[0-9]+$ ]]; then
+            guard_fail "cannot read Ghostty baseline ${_file}; refusing to back up"
+            return 1
+        fi
+        if [[ "${_count}" != 0 ]]; then
+            printf 'baseline-managed-ghostty=1\n'
+            guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove it first with just box setup --terminal none, then re-run 5.2"
+            return 1
+        fi
+    done
+}
+
 _52_step1_backup() {
     guard_require sha256sum cp mv mkdir rm readlink grep cut id || return $?
     cfgbk_paths || return 1
+    _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
     # backed up: this item rewrites the maintainer's real configuration, and
     # a file with no backup has no way back (see lib/config_backup.sh).
