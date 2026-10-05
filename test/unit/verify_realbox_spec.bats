@@ -1344,14 +1344,15 @@ EOF
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_home}/.cache/tmux/tmux-1000/default"
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
+    assert_failure 1
+    assert_line "host-state kept-unknown=1"
     assert_line "host-state before-cleanup: new=1"
-    assert_line "host-state after-cleanup: new=0"
+    assert_line "host-state after-cleanup: new=1"
     assert_equal "$(cat "${_home}/notes")" "updated user data"
     assert_equal "$(stat -c %a "${_home}/notes")" "600"
     assert_equal "$(readlink "${_home}/notes-link")" "notes"
     [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
-    [ ! -e "${_home}/.cache/tmux/tmux-1000/default" ]
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
 }
 
 @test "5.3: decoy box state uses an isolated HOME and is removed" {
