@@ -1325,30 +1325,44 @@ EOF
     [ ! -e "${_home}" ]
 }
 
-@test "5.2.3: new host default socket state is checked before and after cleanup" {
+@test "5.2.3: unrelated host file and socket survive while owned HOME is removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    mkdir -p "${HOME}/dev-box/.cache/tmux/tmux-1000"
+    local _home="${HOME}/dev-box" _owned
+    _owned="$(_backup_dir)/box-home"
+    mkdir -p "${_home}" "${_owned}/.cache/tmux"
+    printf 'unrelated host data\n' >"${_home}/notes"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
-        "${HOME}/dev-box/.cache/tmux/tmux-1000/default"
-    run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
-    assert_line "host-state before-cleanup: new=5"
-    assert_line "host-state after-cleanup: new=0"
-    [ ! -e "${HOME}/dev-box" ]
+        "${_home}/host-socket"
+    printf 'run state\n' >"${_owned}/owned"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_owned}/.cache/tmux/default"
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line "host-state before-cleanup: new=3"
+    assert_line "host-state kept-unknown=3"
+    assert_line "host-state after-cleanup: new=3"
+    [[ "${stderr}" == *"${_home}/notes"* ]]
+    [[ "${stderr}" == *"${_home}/host-socket"* ]]
+    assert_equal "$(cat "${_home}/notes")" 'unrelated host data'
+    [ -S "${_home}/host-socket" ]
+    [ ! -e "${_owned}" ]
+    [ -d "$(_backup_dir)" ]
 }
 
-@test "5.2.3: retry after failed host cleanup removes owned leftovers before deleting the backup" {
+@test "5.2.3: retry after failed owned HOME cleanup removes owned leftovers before deleting the backup" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    local _home="${HOME}/dev-box" _backup
+    local _home _backup
+    _home="$(_backup_dir)/box-home"
     _backup="$(_backup_dir)"
     mkdir -p "${_home}"
     printf 'owned state\n' >"${_home}/leftover"
-    SHIM_RM_ON="-f -- ${_home}/leftover" SHIM_RM_RC=1 \
+    SHIM_RM_ON="-rf -- ${_home}" SHIM_RM_RC=1 \
         run "${REALBOX}" --allow-real-box 5.2.3
     assert_failure 1
-    assert_line "host-state after-cleanup: new=2"
+    assert_line "box-state after-cleanup: home=1 tmux=0"
     assert_output --partial 'fix the errors above and re-run 5.2.3'
     refute_output --partial 'backup-removed=1'
     [ -d "${_backup}" ]
@@ -1359,7 +1373,7 @@ EOF
     assert_success
     refute_output --partial 'dev-untouched=1'
     refute_output --partial 'host-state untouched:'
-    assert_line "host-state before-cleanup: new=2"
+    assert_line "host-state before-cleanup: new=0"
     assert_line "host-state after-cleanup: new=0"
     assert_line 'backup-removed=1'
     [ ! -e "${_home}" ]
@@ -1382,14 +1396,15 @@ EOF
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_home}/.cache/tmux/tmux-1000/default"
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
+    assert_failure 1
+    assert_line "host-state kept-unknown=1"
     assert_line "host-state before-cleanup: new=1"
-    assert_line "host-state after-cleanup: new=0"
+    assert_line "host-state after-cleanup: new=1"
     assert_equal "$(cat "${_home}/notes")" "updated user data"
     assert_equal "$(stat -c %a "${_home}/notes")" "600"
     assert_equal "$(readlink "${_home}/notes-link")" "notes"
     [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
-    [ ! -e "${_home}/.cache/tmux/tmux-1000/default" ]
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
 }
 
 @test "5.3: decoy box state uses an isolated HOME and is removed" {
