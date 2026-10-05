@@ -694,7 +694,8 @@ _52_confirm_restore() {
     printf 'Reload the RESTORED Ghostty config (Linux default Ctrl+Shift+,).\n'
     printf 'Reload is asynchronous: wait for evidence that the restored config was read (e.g. Ghostty logs).\n'
     printf 'Never close or modify your existing windows or Ghostty process.\n'
-    printf 'After reload, open a NEW Ghostty window and run: echo $fish_pid (fish) or echo $$ (POSIX shell).\n'
+    printf 'After reload, open a NEW Ghostty window and run: echo %s (fish) or echo %s (POSIX shell).\n' \
+        "\$fish_pid" "\$\$"
     [[ -t 0 ]] \
         || { guard_fail "stdin is not a tty; re-run 5.2.3 from an interactive shell to confirm reload"; return 1; }
     printf 'Enter the shell PID from the new window after reload: '
