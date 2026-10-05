@@ -567,7 +567,7 @@ _52_baseline_ghostty() {
         fi
         if [[ "${_count}" != 0 ]]; then
             printf 'baseline-managed-ghostty=1\n'
-            guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove it first with just box setup --terminal none, then re-run 5.2"
+            guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove the block first (e.g. just box setup --terminal none), then re-run 5.2; apply explicitly enables Ghostty auto-enter for the manifest box and restores your original choices afterwards"
             return 1
         fi
     done
@@ -617,7 +617,8 @@ _52_step2_apply() {
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
         || { guard_fail "cannot inventory processes before setup"; return 1; }
-    _just box setup || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
+    _just box setup --terminal ghostty --auto-enter yes --box "${MANIFEST_BOX}" \
+        || { guard_fail "just box setup failed -- run 5.2.3 to restore"; return 1; }
     _just box status || { guard_fail "just box status failed -- run 5.2.3 to restore"; return 1; }
     printf 'setup-rc=0\n'
     # The claim no exit code and no `status` line can make: the maintainer's

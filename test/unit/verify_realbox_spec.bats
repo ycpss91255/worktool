@@ -999,6 +999,51 @@ STUB
 
 # --- 5.2 step 2: re-validate, then apply -------------------------------------
 
+@test "#487: 5.2 apply overrides saved terminal none and restores the original state bytes" {
+    local _repo _state="${HOME}/.config/worktool/config"
+    _repo="$(_repo_copy)"
+    _seed_shared_state
+    printf 'terminal=none\nterminal.source=user\n\n' >>"${_state}"
+    cp "${_state}" "${STATE}/baseline-state"
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    run grep '^command = .*script/box/enter.sh' "$(_ghostty_config)"
+    assert_success
+    run grep -F 'box setup --terminal ghostty' "${STATE}/calls.log"
+    assert_success
+    run _restore_input 4242
+    assert_success
+    assert_line 'restore-ok=1'
+    run cmp "${STATE}/baseline-state" "${_state}"
+    assert_success
+}
+
+@test "#487: 5.2 apply overrides saved auto-enter no and box with the manifest decisions" {
+    local _repo _state="${HOME}/.config/worktool/config"
+    _repo="$(_repo_copy)"
+    sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
+    export FAKE_BOX_NAME=acceptance-box
+    _seed_shared_state
+    printf 'auto-enter=no\nauto-enter.source=user\nbox=other-box\nbox.source=user\n\n' >>"${_state}"
+    cp "${_state}" "${STATE}/baseline-state"
+    run "${_repo}/script/verify/realbox.sh" --allow-real-box 5.2.1
+    assert_success
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${_repo}/script/verify/realbox.sh" --allow-real-box 5.2.2
+    assert_success
+    run grep '^command = .*script/box/enter.sh.*--box.*acceptance-box' "$(_ghostty_config)"
+    assert_success
+    run grep -F 'box setup --terminal ghostty --auto-enter yes --box acceptance-box' "${STATE}/calls.log"
+    assert_success
+    REALBOX="${_repo}/script/verify/realbox.sh" run _restore_input 4242
+    assert_success
+    assert_line 'restore-ok=1'
+    run cmp "${STATE}/baseline-state" "${_state}"
+    assert_success
+}
+
 @test "5.2.2 happy path re-validates the published backup and applies" {
     _realbox_quiet 5.2.1
     run "${REALBOX}" --allow-real-box 5.2.2
