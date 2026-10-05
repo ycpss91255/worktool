@@ -1110,19 +1110,21 @@ STUB
     assert_output --partial "blocks= is not trustworthy"
 }
 
-@test "5.2.3: existing Ghostty blocks survive a successful baseline restore" {
-    printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
+@test "5.2.1: managed legacy Ghostty baseline refuses without backup or file changes" {
+    source "${REPO_ROOT}/lib/enter.sh"
+    printf '%s\n' "${ENTER_BLOCK_BEGIN}" 'command = existing-box' "${ENTER_BLOCK_END}" \
         >>"$(_ghostty_config)"
-    cp "$(_ghostty_config)" "${STATE}/baseline"
-    _realbox_quiet 5.2.1
-    _realbox_quiet 5.2.2
-    run _restore_input 4242
+    cp -a "${HOME}/.config" "${STATE}/baseline"
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure 1
+    assert_output 'baseline-managed-ghostty=1'
+    [[ "${stderr}" == *'restore'* ]]
+    [[ "${stderr}" == *'just box setup --terminal none'* ]]
+    [ ! -e "$(_backup_dir)" ]
+    [ ! -L "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline" "${HOME}/.config"
     assert_success
-    assert_line "blocks=1"
-    assert_line "restore-ok=1"
-    assert_line "backup-removed=1"
-    run cmp "${STATE}/baseline" "$(_ghostty_config)"
-    assert_success
+    assert_equal "$(_count_calls just)" '0'
 }
 
 @test "5.2.3: the owned box surviving removal fails the item" {
