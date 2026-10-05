@@ -79,9 +79,6 @@ source "${LIB_DIR}/distrobox_manager.sh"
 # shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
-# shellcheck source=lib/enter.sh
-source "${LIB_DIR}/enter.sh"
-
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
 ISSUE="22"
@@ -558,11 +555,16 @@ item_51() {
 # A restored managed command can correctly enter an existing box, which cannot
 # satisfy the host-window evidence. Refuse that baseline before any writes.
 _52_baseline_ghostty() {
-    local _name _file _count
+    local _name _file _count _rc
     for _name in ghostty ghostty-modern; do
         _file="$(cfgbk_file_of "${_name}")" || return 1
-        _count="$(enter_block_count "${_file}")" \
-            || { guard_fail "cannot read Ghostty baseline ${_file}; refusing to back up"; return 1; }
+        [[ -f "${_file}" ]] || continue
+        _rc=0
+        _count="$(grep -cxF "${CFGBK_BLOCK_BEGIN}" -- "${_file}")" || _rc=$?
+        if (( _rc > 1 )) || [[ ! "${_count}" =~ ^[0-9]+$ ]]; then
+            guard_fail "cannot read Ghostty baseline ${_file}; refusing to back up"
+            return 1
+        fi
         if [[ "${_count}" != 0 ]]; then
             printf 'baseline-managed-ghostty=1\n'
             guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove it first with just box setup --terminal none, then re-run 5.2"
