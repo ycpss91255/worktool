@@ -75,7 +75,7 @@ setup() {
 
     local _t
     # Resolve the real tools BEFORE PATH changes; the shim execs these.
-    for _t in just "${REALBOX_SHIMMED_TOOLS[@]}"; do
+    for _t in just jq "${REALBOX_SHIMMED_TOOLS[@]}"; do
         command -v -- "${_t}" >"${STATE}/real/${_t}"
     done
     for _t in "${REALBOX_FAKED_TOOLS[@]}"; do
@@ -321,6 +321,74 @@ FRAG
 }
 
 # --- 5.1 real-machine bench --------------------------------------------------
+
+@test "5.1: --comment-tag prefixes the first body.md line" {
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    local _first
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    [[ "${_first}" == '[claude] M3 5.1 real-machine bench ('* ]]
+}
+
+@test "5.1: read-back requires the comment tag at the start of the body" {
+    # Exercise the actual jq verdict with this run's posted body and metrics.
+    cp "${STUBS}/gh" "${STATE}/gh"
+    ln -sf "$(cat "${STATE}/real/jq")" "${STUBS}/jq"
+    cat >"${STUBS}/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == api ]]; then
+    jq -n --rawfile body "${FAKE_STATE_DIR}/last-comment-body" \
+        --arg prefix "${READ_BACK_PREFIX:-}" \
+        '{issue_url: "https://api.github.com/repos/ycpss91255/worktool/issues/22",
+          body: ($prefix + $body)}'
+else
+    exec "${FAKE_STATE_DIR}/gh" "$@"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    assert_line --partial 'posted=1 comment=9001'
+    READ_BACK_PREFIX='unexpected text ' \
+        run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_failure 1
+    assert_line --partial 'posted=0 comment=9001'
+    assert_line 'cleanup-rc=0'
+}
+
+@test "5.1: invalid comment tags exit 2 on stderr before help or side effects" {
+    bats_require_minimum_version 1.5.0
+    local _tag
+    for _tag in '' claude '[Claude]' '[claude] extra' '[123]' '[允許合併]'; do
+        run --separate-stderr "${REALBOX}" --help --comment-tag "${_tag}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr:?}" == "realbox.sh: invalid --comment-tag '${_tag}' (see --help)" ]]
+    done
+    run "${REALBOX}" --help --comment-tag
+    assert_failure 2
+    assert_output --partial 'realbox.sh: --comment-tag needs a value (see --help)'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
+@test "5.1: omitting --comment-tag preserves the original comment body" {
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local _first _rid _expected="${STATE}/expected-body"
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    _rid="${_first##*, run }"
+    _rid="${_rid%)}"
+    [[ "${_rid}" == m3-51-* ]]
+    printf 'M3 5.1 real-machine bench (%s, run %s)\n\n```text\n' \
+        "$(uname -sm)" "${_rid}" >"${_expected}"
+    printf '%s\n' \
+        'enter: min=136.1 median=171.1 max=197.0 ms' \
+        'shell: min=143.8 median=176.9 max=215.5 ms' \
+        'inbox: min=14.9 median=17.5 max=25.4 ms' '```' >>"${_expected}"
+    run diff -u "${_expected}" "${STATE}/last-comment-body"
+    assert_success
+}
 
 @test "5.1 happy path prints the documented lines and exits 0" {
     run "${REALBOX}" --allow-real-box 5.1
