@@ -82,7 +82,8 @@ source "${SCRIPT_DIR}/config_backup_paths.sh"
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
 ISSUE="22"
-BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
+MANIFEST_BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
+BOX="${MANIFEST_BOX}"
 DECOY_IMAGE="ubuntu:24.04"
 OPT_IN=0
 COMMENT_TAG=""
@@ -969,6 +970,8 @@ _set_option() {
             ;;
         --box)
             [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] || { _usage_error "invalid --box '$2'"; return 1; }
+            [[ "$2" == "${MANIFEST_BOX}" ]] \
+                || { _usage_error "--box '$2' differs from box/dev.ini; the manifest decides the box name '${MANIFEST_BOX}'"; return 1; }
             BOX="$2"
             ;;
         --image)

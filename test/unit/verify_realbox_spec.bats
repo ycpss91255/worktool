@@ -311,6 +311,21 @@ FRAG
     assert_equal "$(_count_calls distrobox)" "0"
 }
 
+@test "a --box different from the delivered manifest exits 2 without side effects" {
+    bats_require_minimum_version 1.5.0
+    local _item
+    for _item in 5.1 5.2 5.3; do
+        run --separate-stderr "${REALBOX}" --allow-real-box --box work "${_item}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr:?}" == "realbox.sh: "*"manifest decides the box name 'dev'"* ]]
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls gh)" '0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+}
+
 @test "without --allow-real-box the realbox group refuses and touches nothing" {
     run "${REALBOX}" 5.1
     assert_equal "${status}" "2"
