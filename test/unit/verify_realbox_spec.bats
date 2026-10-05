@@ -554,7 +554,14 @@ STUB
 }
 
 _fake_window_process() {
-    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/docker"
+    cat >"${STUBS}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'exec dev readlink /proc/self/ns/mnt' ]] || exit 2
+printf '%s\n' "${FAKE_DEV_NS-mnt:[200]}"
+exit "${FAKE_DEV_NS_RC:-0}"
+STUB
+    chmod +x "${STUBS}/docker"
     export DBX_CONTAINER_MANAGER=docker
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
@@ -622,6 +629,55 @@ STUB
     assert_output --partial "fish mount namespace"
 }
 
+_fake_unreadable_dev_init() {
+    _fake_window_process
+    export FAKE_DEV_NS=''
+    cat >"${STUBS}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    'inspect --type container --format {{.State.Pid}} dev') printf '4343\n' ;;
+    'exec dev readlink /proc/self/ns/mnt')
+        printf '%s\n' "${FAKE_ENGINE_NS-mnt:[200]}"
+        exit "${FAKE_ENGINE_EXEC_RC:-0}" ;;
+    *) exit 2 ;;
+esac
+STUB
+}
+
+@test "#469: 5.2 accepts matching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#469: 5.2 rejects mismatching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_NS='mnt:[300]'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#469: 5.2 rejects failed engine exec despite matching output and unreadable host dev init" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_EXEC_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot read dev mount namespace; check the container engine and re-run 5.2"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
@@ -661,13 +717,9 @@ STUB
 @test "#433: 5.2 rejects an unresolvable dev namespace and restores" {
     _fake_window_process
     local _mode
-    for _mode in inspect-failed zero-pid empty-pid malformed-pid unreadable empty malformed; do
-        unset FAKE_DEV_INSPECT_RC FAKE_DEV_PID FAKE_DEV_NS_RC FAKE_DEV_NS
+    for _mode in unreadable empty malformed; do
+        unset FAKE_DEV_NS_RC FAKE_DEV_NS
         case "${_mode}" in
-            inspect-failed) export FAKE_DEV_INSPECT_RC=1 ;;
-            zero-pid) export FAKE_DEV_PID=0 ;;
-            empty-pid) export FAKE_DEV_PID='' ;;
-            malformed-pid) export FAKE_DEV_PID=unknown ;;
             unreadable) export FAKE_DEV_NS_RC=1 ;;
             empty) export FAKE_DEV_NS='' ;;
             malformed) export FAKE_DEV_NS=unknown ;;
@@ -1273,30 +1325,44 @@ EOF
     [ ! -e "${_home}" ]
 }
 
-@test "5.2.3: new host default socket state is checked before and after cleanup" {
+@test "5.2.3: unrelated host file and socket survive while owned HOME is removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    mkdir -p "${HOME}/dev-box/.cache/tmux/tmux-1000"
+    local _home="${HOME}/dev-box" _owned
+    _owned="$(_backup_dir)/box-home"
+    mkdir -p "${_home}" "${_owned}/.cache/tmux"
+    printf 'unrelated host data\n' >"${_home}/notes"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
-        "${HOME}/dev-box/.cache/tmux/tmux-1000/default"
-    run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
-    assert_line "host-state before-cleanup: new=5"
-    assert_line "host-state after-cleanup: new=0"
-    [ ! -e "${HOME}/dev-box" ]
+        "${_home}/host-socket"
+    printf 'run state\n' >"${_owned}/owned"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_owned}/.cache/tmux/default"
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line "host-state before-cleanup: new=3"
+    assert_line "host-state kept-unknown=3"
+    assert_line "host-state after-cleanup: new=3"
+    [[ "${stderr}" == *"${_home}/notes"* ]]
+    [[ "${stderr}" == *"${_home}/host-socket"* ]]
+    assert_equal "$(cat "${_home}/notes")" 'unrelated host data'
+    [ -S "${_home}/host-socket" ]
+    [ ! -e "${_owned}" ]
+    [ -d "$(_backup_dir)" ]
 }
 
-@test "5.2.3: retry after failed host cleanup removes owned leftovers before deleting the backup" {
+@test "5.2.3: retry after failed owned HOME cleanup removes owned leftovers before deleting the backup" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    local _home="${HOME}/dev-box" _backup
+    local _home _backup
+    _home="$(_backup_dir)/box-home"
     _backup="$(_backup_dir)"
     mkdir -p "${_home}"
     printf 'owned state\n' >"${_home}/leftover"
-    SHIM_RM_ON="-f -- ${_home}/leftover" SHIM_RM_RC=1 \
+    SHIM_RM_ON="-rf -- ${_home}" SHIM_RM_RC=1 \
         run "${REALBOX}" --allow-real-box 5.2.3
     assert_failure 1
-    assert_line "host-state after-cleanup: new=2"
+    assert_line "box-state after-cleanup: home=1 tmux=0"
     assert_output --partial 'fix the errors above and re-run 5.2.3'
     refute_output --partial 'backup-removed=1'
     [ -d "${_backup}" ]
@@ -1307,7 +1373,7 @@ EOF
     assert_success
     refute_output --partial 'dev-untouched=1'
     refute_output --partial 'host-state untouched:'
-    assert_line "host-state before-cleanup: new=2"
+    assert_line "host-state before-cleanup: new=0"
     assert_line "host-state after-cleanup: new=0"
     assert_line 'backup-removed=1'
     [ ! -e "${_home}" ]
@@ -1330,14 +1396,15 @@ EOF
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_home}/.cache/tmux/tmux-1000/default"
     run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
+    assert_failure 1
+    assert_line "host-state kept-unknown=1"
     assert_line "host-state before-cleanup: new=1"
-    assert_line "host-state after-cleanup: new=0"
+    assert_line "host-state after-cleanup: new=1"
     assert_equal "$(cat "${_home}/notes")" "updated user data"
     assert_equal "$(stat -c %a "${_home}/notes")" "600"
     assert_equal "$(readlink "${_home}/notes-link")" "notes"
     [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
-    [ ! -e "${_home}/.cache/tmux/tmux-1000/default" ]
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
 }
 
 @test "5.3: decoy box state uses an isolated HOME and is removed" {

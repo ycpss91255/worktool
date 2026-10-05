@@ -248,21 +248,20 @@ _host_state_report() {
 }
 
 _host_state_cleanup() {
-    local _dir="$1" _path _rc=0
+    local _dir="$1" _path _n=0 _rc=0
     _host_state_report "${_dir}" before-cleanup || return 1
-    # Depth order removes children first; never recursively remove a directory
-    # that could contain pre-existing user data. Symlinks are never followed.
+    # Ownership is limited to the explicitly supplied, run-private box-home
+    # (cleaned by _box_state_cleanup). Neither a baseline delta nor the
+    # created-box marker proves ownership under the host default HOME: no
+    # product/distrobox paths are attributed there when --home is supplied.
+    # Keep every new path, including directories and sockets, for inspection.
     while IFS= read -r -d '' _path; do
-        if [[ -d "${_path}" && ! -L "${_path}" ]]; then
-            rmdir -- "${_path}" || _rc=1
-        else
-            rm -f -- "${_path}" || _rc=1
-        fi
+        _n=$((_n + 1))
+        log_warn "host-state kept unknown path: ${_path}"
     done <"${_dir}/host-state-new"
+    printf 'host-state kept-unknown=%s\n' "${_n}"
     _host_state_report "${_dir}" after-cleanup || _rc=1
-    sort -z "${_dir}/host-state-current" >"${_dir}/host-state-after" || return 1
-    cmp -s "${_dir}/host-state-baseline" "${_dir}/host-state-after" || _rc=1
-    [[ "${_rc}" -eq 0 ]] || guard_fail "host default HOME did not return to its baseline"
+    [[ "${_rc}" -eq 0 ]] || guard_fail "host default HOME contains unattributed new paths; preserved for inspection"
     return "${_rc}"
 }
 
@@ -326,8 +325,8 @@ _51_cleanup() {
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
-        _host_state_cleanup "${_51_W}" || return 1
         _box_state_cleanup "${_51_W}/box-home" || return 1
+        _host_state_cleanup "${_51_W}" || return 1
         rm -rf -- "${_51_W}" || _crc=1
     fi
     return "${_crc}"
@@ -616,18 +615,13 @@ _52_confirm_window() {
 }
 
 _52_dev_namespace() {
-    local _manager _init _ns
+    local _manager _ns
     _manager="$(distrobox_manager "${XDG_CONFIG_HOME:-${HOME}/.config}")" \
         || { guard_fail "cannot resolve dev container engine; check distrobox config and re-run 5.2"; return 1; }
-    _init="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" inspect --type container \
-        --format '{{.State.Pid}}' "${BOX}")" \
-        || { guard_fail "cannot inspect dev init PID; check the container engine and re-run 5.2"; return 1; }
-    [[ "${_init}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "invalid dev init PID; check the running box and re-run 5.2"; return 1; }
-    _ns="$(guard_timed "${TIMEOUT_SHORT}" readlink "/proc/${_init}/ns/mnt")" \
-        || { guard_fail "cannot read dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+    _ns="$(guard_timed "${TIMEOUT_SHORT}" "${_manager}" exec "${BOX}" readlink /proc/self/ns/mnt)" \
+        || { guard_fail "cannot read dev mount namespace; check the container engine and re-run 5.2"; return 1; }
     [[ "${_ns}" =~ ^mnt:\[[0-9]+\]$ ]] \
-        || { guard_fail "invalid dev mount namespace; check host PID visibility and re-run 5.2"; return 1; }
+        || { guard_fail "invalid dev mount namespace; check the running box and re-run 5.2"; return 1; }
     printf '%s\n' "${_ns}"
 }
 
@@ -779,8 +773,8 @@ _53_cleanup() {
     [[ "${_crc}" -eq 0 ]] \
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
-        _host_state_cleanup "${_53_W}" || return 1
         _box_state_cleanup "${_53_W}/box-home" || return 1
+        _host_state_cleanup "${_53_W}" || return 1
         rm -rf -- "${_53_W}" || _crc=1
     fi
     return "${_crc}"
