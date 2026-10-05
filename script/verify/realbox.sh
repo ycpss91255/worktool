@@ -953,7 +953,11 @@ _dispatch_item() {
 
 _set_option() {
     case "$1" in
-        --comment-tag) COMMENT_TAG="$2" ;;
+        --comment-tag)
+            [[ "$2" =~ ^\[[a-z]+\]$ ]] \
+                || { _usage_error "invalid --comment-tag '$2'"; return 1; }
+            COMMENT_TAG="$2"
+            ;;
         --repo)
             [[ "$2" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
                 || { _usage_error "invalid --repo '$2'"; return 1; }

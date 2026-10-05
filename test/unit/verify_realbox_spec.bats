@@ -356,6 +356,22 @@ STUB
     assert_line 'cleanup-rc=0'
 }
 
+@test "5.1: invalid comment tags exit 2 on stderr before help or side effects" {
+    bats_require_minimum_version 1.5.0
+    local _tag
+    for _tag in '' claude '[Claude]' '[claude] extra' '[123]' '[允許合併]'; do
+        run --separate-stderr "${REALBOX}" --help --comment-tag "${_tag}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr}" == "realbox.sh: invalid --comment-tag '${_tag}' (see --help)" ]]
+    done
+    run "${REALBOX}" --help --comment-tag
+    assert_failure 2
+    assert_output --partial 'realbox.sh: --comment-tag needs a value (see --help)'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
 @test "5.1 happy path prints the documented lines and exits 0" {
     run "${REALBOX}" --allow-real-box 5.1
     assert_success
