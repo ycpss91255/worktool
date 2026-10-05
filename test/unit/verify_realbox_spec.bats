@@ -335,6 +335,27 @@ FRAG
     assert_equal "$(_count_calls gh)" "0"
 }
 
+@test "5.1: matching --box and omission preserve assembly, bench and cleanup" {
+    local _args
+    for _args in omitted explicit; do
+        if [[ "${_args}" == explicit ]]; then
+            run "${REALBOX}" --allow-real-box --box dev 5.1
+        else
+            run "${REALBOX}" --allow-real-box 5.1
+        fi
+        assert_success
+        assert_line 'preexisting-dev=0'
+        assert_line --partial 'posted=1 comment=9001 run=m3-51-'
+        assert_line 'cleanup-rc=0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+    assert_equal "$(_count_calls 'just box assemble')" '2'
+    assert_equal "$(_count_calls 'just box bench')" '2'
+    run grep -c '^distrobox rm -f dev$' "${STATE}/calls.log"
+    assert_success
+    assert_output '2'
+}
+
 # --- 5.1 real-machine bench --------------------------------------------------
 
 @test "5.1: --comment-tag prefixes the first body.md line" {
