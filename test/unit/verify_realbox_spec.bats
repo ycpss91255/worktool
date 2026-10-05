@@ -289,6 +289,17 @@ FRAG
     assert_output --partial "Usage: realbox.sh"
 }
 
+@test "--help explains that the delivered manifest decides the box name" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial '--box NAME'
+    assert_output --partial 'Must match the box name in box/dev.ini'
+    assert_output --partial 'manifest decides the box name'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
 @test "an unknown option exits 2 with a message naming it, and nothing runs" {
     run "${REALBOX}" --allow-real-box --bogus 5.1
     assert_equal "${status}" "2"
@@ -311,6 +322,21 @@ FRAG
     assert_equal "$(_count_calls distrobox)" "0"
 }
 
+@test "a --box different from the delivered manifest exits 2 without side effects" {
+    bats_require_minimum_version 1.5.0
+    local _item
+    for _item in 5.1 5.2 5.3; do
+        run --separate-stderr "${REALBOX}" --allow-real-box --box work "${_item}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr:?}" == "realbox.sh: "*"manifest decides the box name 'dev'"* ]]
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls gh)" '0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+}
+
 @test "without --allow-real-box the realbox group refuses and touches nothing" {
     run "${REALBOX}" 5.1
     assert_equal "${status}" "2"
@@ -318,6 +344,27 @@ FRAG
     assert_equal "$(_count_calls distrobox)" "0"
     assert_equal "$(_count_calls just)" "0"
     assert_equal "$(_count_calls gh)" "0"
+}
+
+@test "5.1: matching --box and omission preserve assembly, bench and cleanup" {
+    local _args
+    for _args in omitted explicit; do
+        if [[ "${_args}" == explicit ]]; then
+            run "${REALBOX}" --allow-real-box --box dev 5.1
+        else
+            run "${REALBOX}" --allow-real-box 5.1
+        fi
+        assert_success
+        assert_line 'preexisting-dev=0'
+        assert_line --partial 'posted=1 comment=9001 run=m3-51-'
+        assert_line 'cleanup-rc=0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+    assert_equal "$(_count_calls 'just box assemble')" '2'
+    assert_equal "$(_count_calls 'just box bench')" '2'
+    run grep -c '^distrobox rm -f dev$' "${STATE}/calls.log"
+    assert_success
+    assert_output '2'
 }
 
 # --- 5.1 real-machine bench --------------------------------------------------

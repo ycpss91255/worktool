@@ -82,7 +82,8 @@ source "${SCRIPT_DIR}/config_backup_paths.sh"
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
 ISSUE="22"
-BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
+MANIFEST_BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
+BOX="${MANIFEST_BOX}"
 DECOY_IMAGE="ubuntu:24.04"
 OPT_IN=0
 COMMENT_TAG=""
@@ -141,7 +142,9 @@ Options:
   --issue N          Issue number 5.1 posts to (default: 22).
   --comment-tag TAG  Prefix the 5.1 comment with TAG (e.g. '[codex]').
                      Agents must pass their own tag; omitted keeps the body.
-  --box NAME         Box name (default: dev).
+  --box NAME         Must match the box name in box/dev.ini (shipped: dev).
+                     The manifest decides the box name; omission uses it.
+                     A mismatch exits 2 before any side effect.
   --image REF        Image 5.3 builds its decoy box from (default: ubuntu:24.04).
   -h, --help         Show this help and exit 0.
 
@@ -969,6 +972,8 @@ _set_option() {
             ;;
         --box)
             [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] || { _usage_error "invalid --box '$2'"; return 1; }
+            [[ "$2" == "${MANIFEST_BOX}" ]] \
+                || { _usage_error "--box '$2' differs from box/dev.ini; the manifest decides the box name '${MANIFEST_BOX}'"; return 1; }
             BOX="$2"
             ;;
         --image)
