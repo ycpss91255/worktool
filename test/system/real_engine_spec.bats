@@ -220,7 +220,7 @@ _diag() {
     printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
     printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
     cd "${REPO_ROOT}"
-    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
+    run env SHELL=/bin/bash timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_output --partial "Distrobox 'dev' successfully created."
@@ -243,6 +243,53 @@ source "${BATS_TEST_DIRNAME}/../helper/diagnostics.bash"
 
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
+# Observe the login process from the runner before typing any input.
+# A unique inherited environment token identifies this enter's shell;
+# docker exec allocates a separate container PTY, so tty numbers cannot.
+_wait_default_login() {
+    local _token="$1" _deadline=$((SECONDS + FIRST_ENTER_TIMEOUT))
+    local _ns _pid _comm
+    while [[ "${SECONDS}" -lt "${_deadline}" ]]; do
+        if _ns="$(_dev_mntns)"; then
+            while read -r _pid _comm; do
+                case "${_comm}" in fish|bash) ;; *) continue ;; esac
+                [[ "$(readlink "/proc/${_pid}/ns/mnt")" == "${_ns}" ]] || continue
+                if ! tr '\0' '\n' <"/proc/${_pid}/environ" \
+                    | grep -qxF "WORKTOOL_COLD_LOGIN_TOKEN=${_token}"; then
+                    continue
+                fi
+                printf 'default-login comm=%s namespace=%s\n' "${_comm}" "${_ns}"
+                [[ "${_comm}" == fish ]] || return 1
+                return 0
+            done < <(ps -eo pid=,comm=)
+        fi
+        sleep 1
+    done
+    echo "default login process did not appear before timeout" >&2
+    return 1
+}
+
+# Keep stdin open but empty until the external process observation passes.
+_cold_default_login() (
+    local _fifo="${HOME}/cold-input" _output="${HOME}/cold-output"
+    local _child _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
+    mkfifo "${_fifo}"
+    exec 9<>"${_fifo}"
+    WORKTOOL_COLD_LOGIN_TOKEN="${_token}" \
+        timeout -k 5 "${FIRST_ENTER_TIMEOUT}" script -qec "$1" /dev/null \
+        <"${_fifo}" >"${_output}" 2>&1 &
+    _child=$!
+    trap 'exec 9>&-; if kill -0 "${_child}" 2>/dev/null; then kill "${_child}"; fi; rm -f "${_fifo}"' EXIT
+    if ! _wait_default_login "${_token}"; then
+        cat "${_output}"
+        return 1
+    fi
+    printf '%s\n' "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit" >&9
+    wait "${_child}" || _rc=$?
+    cat "${_output}"
+    return "${_rc}"
+)
+
 # Issue #434: execute the command setup really writes before any first enter.
 # A PTY supplies fish input while preserving the terminal entry command.
 @test "ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish" {
@@ -256,16 +303,15 @@ source "${BATS_TEST_DIRNAME}/../helper/diagnostics.bash"
     run _docker inspect --type container -f '{{.State.StartedAt}}' dev
     assert_success
     assert_output --regexp '^0001-01-01'
-    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT="${FIRST_ENTER_TIMEOUT}" run bash -c '
-        printf "%s\n" "$3" | timeout -k 5 "$1" script -qec "$2" /dev/null
-    ' _ "${FIRST_ENTER_TIMEOUT}" "${_command}" \
-        "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit"
+    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT="${FIRST_ENTER_TIMEOUT}" \
+        run _cold_default_login "${_command}"
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     local _out _progress
     _out="$(tr '\r' '\n' <<<"${output}")"
     _progress="$(grep -E 'first launch: .+ - [0-9m]+s elapsed - ' <<<"${_out}" | sort -u | wc -l)" || _progress=0
     [[ "${_progress}" -ge 2 ]] || fail "expected changing progress, got ${_progress}: ${_out}"
+    assert_output --partial "default-login comm=fish namespace="
     assert_output --partial "first launch of box 'dev'"
     assert_output --partial "full init log: ${_log}"
     assert_output --partial "initialisation complete after"
