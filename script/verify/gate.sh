@@ -12,7 +12,7 @@
 #   and the EXPECTED OUTPUT, which is what the human gate reads.
 #
 # ITEMS
-#   2.1  the bare six-tier `just test` run is green
+#   2.1  the bare seven-stage `just test` run is green
 #   2.2  every M3 sub-issue PR body shows RED evidence before GREEN
 #        evidence (the check itself is doc/evidence/tdd.sh, kept where it
 #        is: it is the implementation this item has always used)
@@ -88,7 +88,7 @@ set -euo pipefail
 SCRIPT_NAME="gate.sh"
 
 # Seconds a single `just test ...` run may take before it is killed. The
-# six-tier run builds images and drives docker-in-docker, so this is
+# seven-stage run builds images and drives docker-in-docker, so this is
 # deliberately generous; it exists to turn a hang into a reported failure.
 GATE_TIMEOUT="${GATE_TIMEOUT:-5400}"
 
@@ -298,7 +298,7 @@ _item_fn() {
 
 _item_title() {
     case "$1" in
-        2.1) printf '%s\n' "the bare six-tier just test run is green" ;;
+        2.1) printf '%s\n' "the bare seven-stage just test run is green" ;;
         2.2) printf '%s\n' "every sub-issue PR body shows RED evidence before GREEN" ;;
         2.3) printf '%s\n' "CI proves the window -> box -> fish chain" ;;
         2.4) printf '%s\n' "the acceptance machinery's own negative bites" ;;
@@ -564,7 +564,7 @@ _item_2_1() {
         return 1
     fi
     if [[ "${_rc}" -ne 0 ]]; then
-        _err "\`just test\` exited ${_rc} - the six-tier gate is not green"
+        _err "\`just test\` exited ${_rc} - the seven-stage gate is not green"
         return 1
     fi
     return 0

@@ -39,9 +39,10 @@ fish(設定留 M5)。
 
 ### 流程
 
-clone -> `just test`(六道 gate,全部在 Docker)-> `just box assemble` -> 進盒
+clone -> `just test`(七道 gate,全部在 Docker)-> `just box assemble` -> 進盒
 (ghostty profile,使用者可選、預設開)-> 日常使用;CI 以 amd64 / arm64 matrix 跑
 同一套 `just test <tier>`,`ci-passed` 彙總。
+裸 `just test` 依序跑 lint、unit、matrix、integration、system、acceptance、system-real。
 
 [![流程圖](doc/diagram/flow.drawio.svg)](https://app.diagrams.net/?url=https://raw.githubusercontent.com/ycpss91255/worktool/main/doc/diagram/flow.drawio.svg)
 

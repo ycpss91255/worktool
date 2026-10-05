@@ -5,19 +5,19 @@
 # WHAT THIS PROVES
 #   The workflow has a runner dimension on every leg-carrying job:
 #
-#   - build-image, gate (lint / test-unit / test-integration / test-system /
+#   - build-image, gate (lint / test-unit / test-matrix / test-integration / test-system /
 #     test-acceptance) and test-system-real each `runs-on` the matrix runner
 #     and their `runner:` dimension is EXACTLY the set {ubuntu-latest
 #     (amd64), ubuntu-24.04-arm (arm64)} - no job hardcodes one
 #     architecture, and a third runner (in the flow list or smuggled in
 #     through `include:`) turns this spec red (issue #164);
-#   - the `gate:` dimension is EXACTLY the set {lint, test-unit,
+#   - the `gate:` dimension is EXACTLY the set {lint, test-unit, test-matrix,
 #     test-integration, test-system, test-acceptance}, and the `include:`
-#     that maps each gate to its `just test` tier names exactly those five
-#     - a sixth gate anywhere turns this spec red (issue #164);
-#   - the matrix `include:` is EXACTLY five entries and each entry is
+#     that maps each gate to its `just test` tier names exactly those six
+#     - a seventh gate anywhere turns this spec red (issue #164);
+#   - the matrix `include:` is EXACTLY six entries and each entry is
 #     EXACTLY one `gate` plus one `tier`, the entry set being {lint=lint,
-#     test-unit=unit, test-integration=integration, test-system=system,
+#     test-unit=unit, test-matrix=matrix, test-integration=integration, test-system=system,
 #     test-acceptance=acceptance}: a swapped or wrong tier, an entry
 #     without a tier or with two, an extra key inside an entry, or an
 #     extra entry that names no gate at all (`- experimental: true`) turns
@@ -292,7 +292,7 @@ _trigger_branches() {
     done
 }
 
-@test "gate runs every one of the six gates on the runner dimension" {
+@test "gate job runs every configured non-privileged tier on the runner dimension" {
     local _gate
     run _job_block gate
     assert_success
@@ -303,7 +303,7 @@ _trigger_branches() {
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
 }
 
-@test "the gate dimension is EXACTLY the six gates (a seventh turns red)" {
+@test "the gate dimension matches the configured non-privileged tiers (an extra turns red)" {
     # The flow list, as a sorted set: nothing extra, nothing missing.
     run _flow_items gate '        ' gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -314,7 +314,7 @@ _trigger_branches() {
     assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
 }
 
-@test "gate's matrix include maps EXACTLY the six gates to a tier and adds no runner" {
+@test "gate job matrix include maps every non-privileged gate to its tier and adds no runner" {
     # One `- gate: <name>` include entry per gate, no more, no less.
     run _include_values gate gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -328,7 +328,7 @@ _trigger_branches() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "the include is EXACTLY six entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+@test "the gate job include has one entry per non-privileged tier (an extra entry, key or tier turns red)" {
     local _pair _entries=()
     for _pair in "${TIERS[@]}"; do
         _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")
