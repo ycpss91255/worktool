@@ -1622,7 +1622,8 @@ set -euo pipefail
 case "$*" in
     '-e -o pid=,comm=') printf '1 init\n' ;;
     '-p 4242 -o comm=') printf 'fish\n' ;;
-    '-p 4242 -o ppid=,args=') printf '900 /usr/bin/fish\n' ;;
+    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-900 /usr/bin/fish}" ;;
+    '-p 800 -o ppid=,args=') printf "900 /bin/sh -c '/repo/script/box/enter.sh' --box dev\n" ;;
     '-p 900 -o ppid=,args=') printf '1 /usr/bin/ghostty\n' ;;
     *) exit 1 ;;
 esac
@@ -1656,4 +1657,15 @@ STUB
     assert_line 'restore-window-ok=1'
     assert_line 'backup-removed=1'
     [ ! -e "$(_backup_dir)" ]
+}
+
+@test "#471: a post-restore window still running enter.sh fails" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_RESTORE_PARENT='800 /usr/bin/fish' run _restore_input 4242
+    assert_failure 1
+    assert_output --partial 'restored window still runs script/box/enter.sh'
+    assert_line 'restore-window-ok=0'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
 }

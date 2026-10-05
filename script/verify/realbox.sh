@@ -730,6 +730,8 @@ _52_restored_window_chain() {
         _row="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o ppid=,args=)" \
             || { guard_fail "cannot inspect restored window ancestry"; return 1; }
         read -r _parent _args <<<"${_row}"
+        [[ "${_args}" != *script/box/enter.sh* ]] \
+            || { guard_fail "restored window still runs script/box/enter.sh; reload the restored config and retry"; return 1; }
         [[ "${_parent}" =~ ^[1-9][0-9]*$ && -n "${_args}" ]] \
             || { guard_fail "invalid restored window ancestry"; return 1; }
         if [[ "${_args%% *}" == */ghostty || "${_args%% *}" == ghostty ]]; then
