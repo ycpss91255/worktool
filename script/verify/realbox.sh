@@ -758,7 +758,6 @@ _52_step3_restore() {
         || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
-
     if [[ ! -d "${CFGBK_B}" ]]; then
         printf 'no-backup=1\n'
         log_info "${CFGBK_B} absent; already restored, or step 1 never ran"
@@ -782,13 +781,13 @@ _52_step3_restore() {
         || { guard_fail "just box setup --auto-enter no exited ${_rrc}"; _rc=1; }
 
     cfgbk_restore_all || _rc=1
-    if [[ "${_rc}" -eq 0 ]]; then printf 'restore-ok=1\n'; else printf 'restore-ok=0\n'; fi
-
-    cfgbk_report_blocks || _rc=1
-    cfgbk_report_leftover_dirs || _rc=1
+    if [[ "${_rc}" -eq 0 ]]; then printf 'restore-files-ok=1\n'; else printf 'restore-files-ok=0\n'; fi
     if [[ "${_rc}" -eq 0 ]]; then
         _52_report_restore_window || _rc=1
     fi
+    if [[ "${_rc}" -eq 0 ]]; then printf 'restore-ok=1\n'; else printf 'restore-ok=0\n'; fi
+    cfgbk_report_blocks || _rc=1
+    cfgbk_report_leftover_dirs || _rc=1
     _52_cleanup_state || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then
