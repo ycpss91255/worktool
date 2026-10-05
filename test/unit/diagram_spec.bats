@@ -618,3 +618,18 @@ _write_fixture_wording_moved() {
     assert_success
     assert_output "${source}"
 }
+
+@test "flow CI architecture labels count every HOST_STEPS stage" {
+    run bash -c 'source "$1"; printf "%s\n" "${#HOST_STEPS[@]}"' \
+        _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    local count="${output}" cell
+    for cell in ci_amd64 ci_arm64; do
+        run _cell_label_lines "$(_svg flow)" "${cell}"
+        assert_success
+        assert_line "just test &lt;tier&gt; x ${count}"
+        run _source_cell "$(_svg flow)" "${cell}"
+        assert_success
+        assert_output --partial "just test &amp;lt;tier&amp;gt; x ${count}"
+    done
+}
