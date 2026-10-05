@@ -71,6 +71,15 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     refute_output --partial '要驗的產品程式全在 main'
 }
 
+@test "acceptance: 5.2 obtains the dev mount namespace inside the box" {
+    local _section
+    _section="$(sed -n '/^  - \[ \] 5\.2 /,/^  - \[ \] 5\.3 /p' \
+        "${REPO_ROOT}/doc/acceptance.md")"
+    run printf '%s\n' "${_section}"
+    assert_output --partial '/proc/self/ns/mnt'
+    refute_output --regexp 'inspect.*init|init.*inspect|/proc/<init PID>/ns/mnt'
+}
+
 # Match only listed code paths (exact, directory or glob), or a listed ADR
 # number for files in doc/adr/. Prose mentioning a path is not coverage.
 _scope_covers_path() {
