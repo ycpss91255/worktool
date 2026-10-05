@@ -666,6 +666,18 @@ STUB
     assert_output --partial "backup-removed=1"
 }
 
+@test "#469: 5.2 rejects failed engine exec despite matching output and unreadable host dev init" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_EXEC_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot read dev mount namespace; check the container engine and re-run 5.2"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
