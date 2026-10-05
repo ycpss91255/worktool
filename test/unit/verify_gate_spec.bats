@@ -582,7 +582,7 @@ EOF
     assert_output --partial 'gh not found on PATH'
 }
 
-# --- Item 2.1: the six-tier run is judged by its own status ------------------
+# --- Item 2.1: the seven-stage run is judged by its own status ------------------
 
 @test "control: a just test exiting 0 passes item 2.1" {
     _stub_ci_tools
@@ -596,7 +596,7 @@ EOF
     assert_line '[ci] system-real bats OK'
 }
 
-@test "false-pass guard: a just test printing a whole green run but exiting 1 fails 2.1" {
+@test "false-pass guard: the seven-stage just test run exiting 1 fails 2.1" {
     _stub_ci_tools
     _stub just <<'EOF'
 printf '[ci] ShellCheck OK\n'
@@ -606,7 +606,7 @@ exit 1
 EOF
     PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.1
     assert_failure 1
-    assert_output --partial 'exited 1 - the six-tier gate is not green'
+    assert_output --partial 'exited 1 - the seven-stage gate is not green'
 }
 
 @test "false-pass guard: a just test that never returns is killed and fails 2.1" {
