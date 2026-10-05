@@ -863,7 +863,6 @@ STUB
 
 @test "5.2.3 with no backup is a no-op that exits 0" {
     bats_require_minimum_version 1.5.0
-    bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_success
     assert_line "no-backup=1"
@@ -1024,7 +1023,6 @@ STUB
     bats_require_minimum_version 1.5.0
     local _actual _documented _keys
     _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
-    bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
