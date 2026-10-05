@@ -1276,7 +1276,8 @@ EOF
 @test "5.2.3: unrelated host file and socket survive while owned HOME is removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    local _home="${HOME}/dev-box" _owned="$(_backup_dir)/box-home"
+    local _home="${HOME}/dev-box" _owned
+    _owned="$(_backup_dir)/box-home"
     mkdir -p "${_home}" "${_owned}/.cache/tmux"
     printf 'unrelated host data\n' >"${_home}/notes"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
@@ -1301,7 +1302,8 @@ EOF
 @test "5.2.3: retry after failed owned HOME cleanup removes owned leftovers before deleting the backup" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    local _home="$(_backup_dir)/box-home" _backup
+    local _home _backup
+    _home="$(_backup_dir)/box-home"
     _backup="$(_backup_dir)"
     mkdir -p "${_home}"
     printf 'owned state\n' >"${_home}/leftover"
