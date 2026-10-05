@@ -372,6 +372,24 @@ STUB
     assert_equal "$(_count_calls gh)" '0'
 }
 
+@test "5.1: omitting --comment-tag preserves the original comment body" {
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local _first _rid _expected="${STATE}/expected-body"
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    _rid="${_first##*, run }"
+    _rid="${_rid%)}"
+    [[ "${_rid}" == m3-51-* ]]
+    printf 'M3 5.1 real-machine bench (%s, run %s)\n\n```text\n' \
+        "$(uname -sm)" "${_rid}" >"${_expected}"
+    printf '%s\n' \
+        'enter: min=136.1 median=171.1 max=197.0 ms' \
+        'shell: min=143.8 median=176.9 max=215.5 ms' \
+        'inbox: min=14.9 median=17.5 max=25.4 ms' '```' >>"${_expected}"
+    run diff -u "${_expected}" "${STATE}/last-comment-body"
+    assert_success
+}
+
 @test "5.1 happy path prints the documented lines and exits 0" {
     run "${REALBOX}" --allow-real-box 5.1
     assert_success
