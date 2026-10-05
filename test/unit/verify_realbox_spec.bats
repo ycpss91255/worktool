@@ -1300,17 +1300,17 @@ EOF
     [ -d "$(_backup_dir)" ]
 }
 
-@test "5.2.3: retry after failed host cleanup removes owned leftovers before deleting the backup" {
+@test "5.2.3: retry after failed owned HOME cleanup removes owned leftovers before deleting the backup" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    local _home="${HOME}/dev-box" _backup
+    local _home="$(_backup_dir)/box-home" _backup
     _backup="$(_backup_dir)"
     mkdir -p "${_home}"
     printf 'owned state\n' >"${_home}/leftover"
-    SHIM_RM_ON="-f -- ${_home}/leftover" SHIM_RM_RC=1 \
+    SHIM_RM_ON="-rf -- ${_home}" SHIM_RM_RC=1 \
         run "${REALBOX}" --allow-real-box 5.2.3
     assert_failure 1
-    assert_line "host-state after-cleanup: new=2"
+    assert_line "box-state after-cleanup: home=1 tmux=0"
     assert_output --partial 'fix the errors above and re-run 5.2.3'
     refute_output --partial 'backup-removed=1'
     [ -d "${_backup}" ]
@@ -1321,7 +1321,7 @@ EOF
     assert_success
     refute_output --partial 'dev-untouched=1'
     refute_output --partial 'host-state untouched:'
-    assert_line "host-state before-cleanup: new=2"
+    assert_line "host-state before-cleanup: new=0"
     assert_line "host-state after-cleanup: new=0"
     assert_line 'backup-removed=1'
     [ ! -e "${_home}" ]
