@@ -875,18 +875,19 @@ rc=0
     - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`；`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。集合來源是 [config_backup_paths.sh](../script/verify/config_backup_paths.sh) 的 `CFGBK_NAMES`；3.x 的 `tmux.conf=intact` 是不得改動使用者檔案的判準，不代表它列入 5.2 備份。
     - 預期看到資訊：`backup-covers=4/4`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
       `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
-      還原成功依序印 `restore-rc=0`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。
+      還原先印 `restore-rc=0`、`restore-files-ok=1`，接著在 stdout 提示重新載入還原後的 Ghostty 設定（Linux 預設 `Ctrl+Shift+,`），等待使用者確認 reload 後新視窗的 shell PID。成功依序印 `restore-window-evidence: pid=<PID> comm=<shell> host=mnt:[<host>] window=mnt:[<host>] enter=absent`、`restore-window-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。還原失敗保留備份。`restore-files-ok=1` 只代表磁碟檔案已還原；reload 證據未通過時印 `restore-window-ok=0`、`restore-ok=0`，回非零，不印 `backup-removed=1`。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.2; echo rc=$?
       # 中斷時的還原手段：
       just verify realbox --allow-real-box 5.2.3; echo rc=$?
       ```
-      預期 `rc=0`。5.2 需互動 tty 輸入新視窗的 fish PID；沒有 tty 回非零並仍執行還原。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
+      預期 `rc=0`。5.2 套用與 5.2.3 還原都需互動 tty 輸入新視窗 PID；沒有 tty 回非零，仍還原磁碟檔案並清理本輪擁有的盒子，但保留備份供互動重試。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權記錄先於 assemble，清理會判斷盒是否真的消失。
       先讓 Ghostty 保持執行，再由本項套用設定，以涵蓋「Ghostty 已在執行時套用」的情境。套用後先重新載入設定（Linux 預設 `Ctrl+Shift+,`）；重新載入是非同步的，等 Ghostty log 等證據確認已讀入 `config.ghostty` 再開新視窗，也可啟動新的 Ghostty 行程。不得關閉使用者既有視窗。
       新視窗中執行 `echo $fish_pid`，把 PID 輸入驗收提示。腳本從 host 探測 `ps -p <PID> -o comm=` 與 `/proc/<PID>/ns/mnt`，必須是套用前行程清單中不存在的 fish，且 mount namespace 不同於 host、等於本輪 dev 容器的 mount namespace。腳本依 distrobox 使用的容器引擎設定，以 `inspect --type container --format '{{.State.Pid}}' dev` 取得 init 的 host PID，再讀 `/proc/<init PID>/ns/mnt` 建立 dev 身分。成功輸出 `window-evidence: pid=<PID> comm=fish host=mnt:[<host>] window=mnt:[<box>] dev=mnt:[<box>]`；只回答 `yes`、既有行程、host namespace、另一個盒的新 fish、無法解析 dev namespace（含引擎不可用、inspect 失敗、init PID 無效）、讀取失敗（含權限不足或行程已結束）、空值或格式錯誤都回非零並還原。視窗確實來自 Ghostty 與主觀無明顯延遲仍由人觀察，但不能代替客觀進盒證據（#362、#433）。
+      還原後也必須 reload：等 Ghostty log 等證據確認已讀入還原後設定，再從執行中的 Ghostty 開新視窗。fish 執行 `echo $fish_pid`，POSIX shell 執行 `echo $$`，將 PID 輸入還原提示；輸入 PID 同時確認已完成 reload 與開新視窗，僅回答 `yes` 不算證據。腳本要求 PID 不在還原提示前的行程清單中、mount namespace 等於 host，並以 `ps -p <PID> -o ppid=,args=` 逐層追查至 Ghostty；祖先鏈含 `script/box/enter.sh`、仍在盒內、既有 PID 或無法讀取證據均 FAIL。這裡不以 process list 猜測 Ghostty PID 發送訊號，也不關閉或改動既有視窗或行程；沒有套用紀錄的備份還原（例如 5.3 拒絕套用）無須 reload 新視窗驗證。
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除
-    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，印 `52-rc=1`。接著還原依序印 `restore-rc=0`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`，最後確認既有盒仍在，印 `still-there=dev`；本項最後只清除自己建的 decoy。
+    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=4/4`），`revalidate=1` 後套用拒絕，印 `52-rc=1`。接著還原依序印 `restore-rc=0`、`restore-files-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`，最後確認既有盒仍在，印 `still-there=dev`；本項最後只清除自己建的 decoy。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.3; echo rc=$?

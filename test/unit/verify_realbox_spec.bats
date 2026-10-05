@@ -530,6 +530,43 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
 
 # --- 5.2 step 1: back up -----------------------------------------------------
 
+_install_restore_window_tools() {
+    [[ ! -f "${STATE}/restore-apply/ps" ]] || return 0
+    mkdir -p "${STATE}/restore-apply"
+    if [[ -f "${STUBS}/ps" ]]; then
+        cp "${STUBS}/ps" "${STATE}/restore-apply/ps"
+    else
+        export REAL_WINDOW_PS
+        REAL_WINDOW_PS="$(command -v ps)"
+        cat >"${STATE}/restore-apply/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${REAL_WINDOW_PS}" "$@"
+STUB
+        chmod +x "${STATE}/restore-apply/ps"
+    fi
+    cp "${STUBS}/readlink" "${STATE}/restore-apply/readlink"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    '-p 4344 -o comm=') printf 'fish\n' ;;
+    '-p 4344 -o ppid=,args=') printf '900 /usr/bin/fish\n' ;;
+    '-p 900 -o ppid=,args=') printf '1 /usr/bin/ghostty\n' ;;
+    *) exec "${FAKE_STATE_DIR}/restore-apply/ps" "$@" ;;
+esac
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4344/ns/mnt ]]; then
+    exec "${FAKE_STATE_DIR}/restore-apply/readlink" /proc/self/ns/mnt
+fi
+exec "${FAKE_STATE_DIR}/restore-apply/readlink" "$@"
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+}
+
 _window_input() {
     cat >"${STATE}/window-run" <<'STUB'
 #!/usr/bin/env bash
@@ -539,7 +576,8 @@ rc=0
 printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/window-rc"
 STUB
     chmod +x "${STATE}/window-run"
-    printf '%s\n' "$1" | script -q -c \
+    _install_restore_window_tools
+    printf '%s\n' "$1" 4344 | script -q -c \
         "\"${STATE}/window-run\"" /dev/null
 }
 
@@ -603,7 +641,8 @@ STUB
     run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "1"
     assert_output --partial "cannot inventory processes before setup"
-    assert_output --partial "restore-ok=1"
+    assert_output --partial "restore-files-ok=1"
+    assert_output --partial "restore-ok=0"
 }
 
 @test "#362: 5.2 explains asynchronous reload for an already running Ghostty" {
@@ -660,7 +699,7 @@ STUB
     run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "1"
     assert_output --partial "fish mount namespace does not match dev"
-    refute_output --partial "window-evidence:"
+    refute_output --partial "window-evidence: pid=4242"
     assert_output --partial "restore-ok=1"
     assert_output --partial "dev-gone=1"
     assert_output --partial "backup-removed=1"
@@ -672,7 +711,7 @@ STUB
     run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "1"
     assert_output --partial "cannot read dev mount namespace; check the container engine and re-run 5.2"
-    refute_output --partial "window-evidence:"
+    refute_output --partial "window-evidence: pid=4242"
     assert_output --partial "restore-ok=1"
     assert_output --partial "dev-gone=1"
     assert_output --partial "backup-removed=1"
@@ -708,7 +747,7 @@ STUB
     FAKE_WINDOW_NS='mnt:[300]' run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" "1"
     assert_output --partial "fish mount namespace does not match dev"
-    refute_output --partial "window-evidence:"
+    refute_output --partial "window-evidence: pid=4242"
     assert_output --partial "restore-ok=1"
     assert_output --partial "dev-gone=1"
     assert_output --partial "backup-removed=1"
@@ -726,7 +765,7 @@ STUB
         esac
         run _window_input 4242
         assert_equal "$(cat "${STATE}/window-rc")" "1"
-        refute_output --partial "window-evidence:"
+        refute_output --partial "window-evidence: pid=4242"
         assert_output --partial "restore-ok=1"
         assert_output --partial "dev-gone=1"
         assert_output --partial "backup-removed=1"
@@ -925,16 +964,16 @@ STUB
 
 @test "5.2.3: a backup dir with no published manifest is reported, not restored" {
     mkdir -p "$(_backup_dir)"
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_failure
     assert_output --partial "incomplete-backup=1"
     assert_equal "$(_count_calls just)" "0"
 }
 
-@test "5.2.3 happy path prints the six documented lines and removes the box it owned" {
+@test "5.2.3 happy path prints the documented restore evidence and removes the box it owned" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     assert_line "restore-rc=0"
     assert_line "restore-ok=1"
@@ -949,7 +988,7 @@ STUB
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     SHIM_GREP_ON='BEGIN worktool managed block' SHIM_GREP_RC=2 SHIM_GREP_OUT='0' \
-        run "${REALBOX}" --allow-real-box 5.2.3
+        run _restore_input 4242
     assert_failure
     assert_line "blocks=-1"
     refute_line "blocks=0"
@@ -962,7 +1001,7 @@ STUB
     cp "$(_ghostty_config)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     assert_line "blocks=1"
     assert_line "restore-ok=1"
@@ -974,7 +1013,7 @@ STUB
 @test "5.2.3: the owned box surviving removal fails the item" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.2.3
+    FAKE_DBX_RM_REMOVES=0 run _restore_input 4242
     assert_failure
     assert_line "dev-gone=0"
     refute_output --partial "backup-removed=1"
@@ -983,7 +1022,7 @@ STUB
 @test "5.2.3: a backup that cannot be removed is never reported as removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    SHIM_RM_ON='-rf --' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.2.3
+    SHIM_RM_ON='-rf --' SHIM_RM_RC=1 run _restore_input 4242
     assert_failure
     assert_line "dev-gone=1"
     refute_output --partial "backup-removed=1"
@@ -997,10 +1036,11 @@ STUB
     assert_failure
     assert_output --partial "stdin is not a tty"
     # The restore ran anyway: the config is back and the box is gone.
-    assert_line "restore-ok=1"
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=0"
     assert_line "dev-gone=1"
-    assert_line "backup-removed=1"
-    [ ! -e "$(_backup_dir)" ]
+    refute_line "backup-removed=1"
+    [ -d "$(_backup_dir)" ]
 }
 
 # --- 5.2 and the user's own content (GAP A) ----------------------------------
@@ -1021,7 +1061,8 @@ STUB
     assert_line "backup-covers=4/4"
     assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
     assert_output --partial "stdin is not a tty"
-    assert_line "restore-ok=1"
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=0"
     assert_line "blocks=0"
 }
 
@@ -1044,9 +1085,10 @@ STUB
     assert_output --partial "lost content the user had before this run"
     assert_output --partial "run 5.2.3 to restore it from the backup"
     # The subjective check is never reached; the restore still runs.
-    refute_output --partial "stdin is not a tty"
-    assert_line "restore-ok=1"
-    assert_line "backup-removed=1"
+    assert_output --partial "re-run 5.2.3 from an interactive shell"
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=0"
+    refute_line "backup-removed=1"
     # And the file is back, byte for byte - only possible because the backup
     # set covers distrobox.conf.
     run cat "$(_distrobox_conf)"
@@ -1060,7 +1102,7 @@ STUB
     cp "$(_distrobox_conf)" "${STATE}/baseline"
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     assert_line "blocks=1"
     assert_line "restore-ok=1"
@@ -1161,7 +1203,7 @@ STUB
     assert_line "distrobox-conf=regular"
     printf 'changed\n' >"${HOME}/.config/ghostty/config.ghostty"
     printf 'changed\n' >"${HOME}/.config/distrobox/distrobox.conf"
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     run cat "${HOME}/.config/ghostty/config.ghostty"
     assert_output 'font-size = 17'
@@ -1175,7 +1217,8 @@ STUB
     assert_output --partial "echo \$fish_pid"
     assert_output --partial "Open a NEW ghostty window"
     refute_output --partial "tmux display"
-    assert_line "restore-ok=1"
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=0"
 }
 
 @test "5.2.2: acceptance uses an owned box HOME inside its backup" {
@@ -1318,7 +1361,7 @@ EOF
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_home}/.cache/tmux/tmux-1000/default"
     [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     assert_line "box-state before-cleanup: home=1 tmux=1"
     assert_line "box-state after-cleanup: home=0 tmux=0"
@@ -1360,7 +1403,7 @@ EOF
     mkdir -p "${_home}"
     printf 'owned state\n' >"${_home}/leftover"
     SHIM_RM_ON="-rf -- ${_home}" SHIM_RM_RC=1 \
-        run "${REALBOX}" --allow-real-box 5.2.3
+        run _restore_input 4242
     assert_failure 1
     assert_line "box-state after-cleanup: home=1 tmux=0"
     assert_output --partial 'fix the errors above and re-run 5.2.3'
@@ -1369,7 +1412,7 @@ EOF
     [ -f "${_home}/leftover" ]
     [ ! -s "${STATE}/boxes" ]
 
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     refute_output --partial 'dev-untouched=1'
     refute_output --partial 'host-state untouched:'
@@ -1395,7 +1438,7 @@ EOF
     printf 'updated user data\n' >"${_home}/notes"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_home}/.cache/tmux/tmux-1000/default"
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_failure 1
     assert_line "host-state kept-unknown=1"
     assert_line "host-state before-cleanup: new=1"
@@ -1452,7 +1495,7 @@ STUB
     assert_failure 1
     assert_output --partial "already exists -- refusing"
     [ ! -e "$(_backup_dir)/created-box" ]
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_success
     assert_line 'dev-untouched=1'
     assert_line 'host-state untouched: new=7'
@@ -1593,11 +1636,80 @@ if [[ "${3:-}" == "${VERIFY_RESTORE_SOURCE}" ]]; then
     printf 'corrupted user content\n' >"${4}"
 fi
 STUB
-    run "${REALBOX}" --allow-real-box 5.2.3
+    run _restore_input 4242
     assert_failure 1
     assert_line 'restore-ok=0'
     assert_line 'blocks=0'
     assert_output --partial 'restored content checksum mismatch'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
+
+@test "#471: restore cannot complete before reload evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_output --partial 'Reload the RESTORED Ghostty config'
+    assert_output --partial 'Ctrl+Shift+,'
+    refute_line 'restore-ok=1'
+    assert_line 'restore-window-ok=0'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
+
+_restore_input() {
+    export REALBOX
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    '-e -o pid=,comm=') printf '1 init\n' ;;
+    '-p 4242 -o comm=') printf 'fish\n' ;;
+    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-900 /usr/bin/fish}" ;;
+    '-p 800 -o ppid=,args=') printf "900 /bin/sh -c '/repo/script/box/enter.sh' --box dev\n" ;;
+    '-p 900 -o ppid=,args=') printf '1 /usr/bin/ghostty\n' ;;
+    *) exit 1 ;;
+esac
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4242/ns/mnt ]]; then
+    exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" /proc/self/ns/mnt
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" "$@"
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+    cat >"${STATE}/restore-run" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+rc=0
+"${REALBOX}" --allow-real-box 5.2.3 || rc=$?
+printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/restore-rc"
+STUB
+    printf '%s\n' "$1" | script -q -c "bash '${STATE}/restore-run'" /dev/null | tr -d '\r'
+    return "$(cat "${STATE}/restore-rc")"
+}
+
+@test "#471: a clean post-restore Ghostty window completes restore" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run _restore_input 4242
+    assert_success
+    assert_output --partial 'restore-window-evidence: pid=4242 comm=fish'
+    assert_line 'restore-window-ok=1'
+    assert_line 'backup-removed=1'
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "#471: a post-restore window still running enter.sh fails" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_RESTORE_PARENT='800 /usr/bin/fish' run _restore_input 4242
+    assert_failure 1
+    assert_output --partial 'restored window still runs script/box/enter.sh'
+    assert_line 'restore-window-ok=0'
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }
