@@ -289,6 +289,17 @@ FRAG
     assert_output --partial "Usage: realbox.sh"
 }
 
+@test "--help explains that the delivered manifest decides the box name" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial '--box NAME'
+    assert_output --partial 'Must match the box name in box/dev.ini'
+    assert_output --partial 'manifest decides the box name'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
 @test "an unknown option exits 2 with a message naming it, and nothing runs" {
     run "${REALBOX}" --allow-real-box --bogus 5.1
     assert_equal "${status}" "2"
