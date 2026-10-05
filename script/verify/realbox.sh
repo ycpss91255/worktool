@@ -453,10 +453,12 @@ _51_publish() {
     # jq's status is checked separately from its answer: a jq that died
     # half-way must not be read as "posted=0", or as anything else.
     _posted="$(jq -r --arg rid "${_run_id}" --arg tag "${_tag}" --arg iss "${ISSUE}" \
+        --arg comment_tag "${COMMENT_TAG}" \
         --rawfile three "${_51_W}/three.txt" '
             ($three | rtrimstr("\n") | split("\n")) as $lines
             | if (.issue_url | endswith("/issues/" + $iss))
                  and (.body | contains($tag)) and (.body | contains($rid))
+                 and ($comment_tag == "" or (.body | startswith($comment_tag + " ")))
                  and ([$lines[] as $l | (.body | contains($l))] | all)
               then 1 else 0 end' "${_51_W}/posted.json")" \
         || { guard_fail "judging comment ${_cid} failed"; return 1; }

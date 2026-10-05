@@ -75,7 +75,7 @@ setup() {
 
     local _t
     # Resolve the real tools BEFORE PATH changes; the shim execs these.
-    for _t in just "${REALBOX_SHIMMED_TOOLS[@]}"; do
+    for _t in just jq "${REALBOX_SHIMMED_TOOLS[@]}"; do
         command -v -- "${_t}" >"${STATE}/real/${_t}"
     done
     for _t in "${REALBOX_FAKED_TOOLS[@]}"; do
@@ -328,6 +328,32 @@ FRAG
     local _first
     IFS= read -r _first <"${STATE}/last-comment-body"
     [[ "${_first}" == '[claude] M3 5.1 real-machine bench ('* ]]
+}
+
+@test "5.1: read-back requires the comment tag at the start of the body" {
+    # Exercise the actual jq verdict with this run's posted body and metrics.
+    cp "${STUBS}/gh" "${STATE}/gh"
+    ln -sf "$(cat "${STATE}/real/jq")" "${STUBS}/jq"
+    cat >"${STUBS}/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == api ]]; then
+    jq -n --rawfile body "${FAKE_STATE_DIR}/last-comment-body" \
+        --arg prefix "${READ_BACK_PREFIX:-}" \
+        '{issue_url: "https://api.github.com/repos/ycpss91255/worktool/issues/22",
+          body: ($prefix + $body)}'
+else
+    exec "${FAKE_STATE_DIR}/gh" "$@"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    assert_line --partial 'posted=1 comment=9001'
+    READ_BACK_PREFIX='unexpected text ' \
+        run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_failure 1
+    assert_line --partial 'posted=0 comment=9001'
+    assert_line 'cleanup-rc=0'
 }
 
 @test "5.1 happy path prints the documented lines and exits 0" {
