@@ -863,6 +863,7 @@ STUB
 
 @test "5.2.3 with no backup is a no-op that exits 0" {
     bats_require_minimum_version 1.5.0
+    bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_success
     assert_line "no-backup=1"
@@ -1023,6 +1024,7 @@ STUB
     bats_require_minimum_version 1.5.0
     local _actual _documented _keys
     _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
+    bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
@@ -1273,17 +1275,29 @@ EOF
     [ ! -e "${_home}" ]
 }
 
-@test "5.2.3: new host default socket state is checked before and after cleanup" {
+@test "5.2.3: unrelated host file and socket survive while owned HOME is removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    mkdir -p "${HOME}/dev-box/.cache/tmux/tmux-1000"
+    local _home="${HOME}/dev-box" _owned="$(_backup_dir)/box-home"
+    mkdir -p "${_home}" "${_owned}/.cache/tmux"
+    printf 'unrelated host data\n' >"${_home}/notes"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
-        "${HOME}/dev-box/.cache/tmux/tmux-1000/default"
-    run "${REALBOX}" --allow-real-box 5.2.3
-    assert_success
-    assert_line "host-state before-cleanup: new=5"
-    assert_line "host-state after-cleanup: new=0"
-    [ ! -e "${HOME}/dev-box" ]
+        "${_home}/host-socket"
+    printf 'run state\n' >"${_owned}/owned"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_owned}/.cache/tmux/default"
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line "host-state before-cleanup: new=3"
+    assert_line "host-state kept-unknown=3"
+    assert_line "host-state after-cleanup: new=3"
+    [[ "${stderr}" == *"${_home}/notes"* ]]
+    [[ "${stderr}" == *"${_home}/host-socket"* ]]
+    assert_equal "$(cat "${_home}/notes")" 'unrelated host data'
+    [ -S "${_home}/host-socket" ]
+    [ ! -e "${_owned}" ]
+    [ -d "$(_backup_dir)" ]
 }
 
 @test "5.2.3: retry after failed host cleanup removes owned leftovers before deleting the backup" {
