@@ -64,7 +64,7 @@ DIAGRAM_NAMES=(architecture flow milestone)
 
 # The four label lines of the flow diagram's `just test` node, in order.
 F_TEST_LINE_1="2. just test"
-F_TEST_LINE_2="六道 gate,全部在 Docker"
+F_TEST_LINE_2="七道 gate,全部在 Docker"
 F_TEST_LINE_3="測試依賴皆在 Docker 內"
 F_TEST_LINE_4="(host 只需 docker + just)"
 OLD_F_TEST_WORDING="host 不裝任何套件"
@@ -572,4 +572,49 @@ _write_fixture_wording_moved() {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "README and flow diagram stage count and order match HOST_STEPS" {
+    run bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' \
+        _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    local -a stages=("${lines[@]}") counts=(零 一 二 三 四 五 六 七 八 九 十)
+    local count="${counts[${#stages[@]}]}" order="" stage cell
+    for stage in "${stages[@]}"; do
+        order+="${order:+、}${stage}"
+    done
+    run cat "${README}"
+    assert_success
+    assert_output --partial "${count}道 gate"
+    assert_output --partial "${order}"
+    run _cell_label_lines "$(_svg flow)" f_test
+    assert_success
+    assert_line "${count}道 gate,全部在 Docker"
+    run _source_cell "$(_svg flow)" f_test
+    assert_success
+    assert_output --partial "${count}道 gate,全部在 Docker"
+    run _cell_label_lines "$(_svg flow)" gates
+    assert_success
+    assert_output --partial "${count}道 gate"
+    run _source_cell "$(_svg flow)" gates
+    assert_success
+    assert_output --partial "${count}道 gate"
+    local rendered="" source=""
+    for stage in "${stages[@]}"; do
+        case "${stage}" in system-real) cell=g_real ;; *) cell="g_${stage}" ;; esac
+        run _cell_label_lines "$(_svg flow)" "${cell}"
+        assert_success
+        assert_line "${stage}"
+        rendered+="${rendered:+ }${cell}"
+        run _source_cell "$(_svg flow)" "${cell}"
+        assert_success
+        assert_output --partial "value=&quot;${stage}"
+        source+="${source:+ }${cell}"
+    done
+    run bash -c 'grep -oE "data-cell-id=\"g_[^\"]+\"" "$1" | sed -E "s/data-cell-id=\"([^\"]+)\"/\1/" | paste -sd " "' _ "$(_svg flow)"
+    assert_success
+    assert_output "${rendered}"
+    run bash -c 'grep -oE "id=&quot;g_[^&]+&quot;" "$1" | sed -E "s/id=&quot;([^&]+)&quot;/\1/" | paste -sd " "' _ "$(_svg flow)"
+    assert_success
+    assert_output "${source}"
 }
