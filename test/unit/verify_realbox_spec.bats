@@ -1127,6 +1127,26 @@ STUB
     assert_equal "$(_count_calls just)" '0'
 }
 
+@test "5.2.1: managed modern Ghostty baseline refuses without backup or file changes" {
+    source "${REPO_ROOT}/lib/enter.sh"
+    _seed_distrobox_conf
+    _seed_shared_state
+    printf '%s\n' 'font-size = 14' "${ENTER_BLOCK_BEGIN}" \
+        'command = existing-box' "${ENTER_BLOCK_END}" \
+        >"${HOME}/.config/ghostty/config.ghostty"
+    cp -a "${HOME}/.config" "${STATE}/baseline"
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure 1
+    assert_output 'baseline-managed-ghostty=1'
+    [[ "${stderr}" == *'restore'* ]]
+    [[ "${stderr}" == *'just box setup --terminal none'* ]]
+    [ ! -e "$(_backup_dir)" ]
+    [ ! -L "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline" "${HOME}/.config"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+}
+
 @test "5.2.3: the owned box surviving removal fails the item" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2

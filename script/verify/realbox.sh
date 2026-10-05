@@ -558,15 +558,17 @@ item_51() {
 # A restored managed command can correctly enter an existing box, which cannot
 # satisfy the host-window evidence. Refuse that baseline before any writes.
 _52_baseline_ghostty() {
-    local _file _count
-    _file="$(cfgbk_file_of ghostty)" || return 1
-    _count="$(enter_block_count "${_file}")" \
-        || { guard_fail "cannot read Ghostty baseline ${_file}; refusing to back up"; return 1; }
-    if [[ "${_count}" != 0 ]]; then
-        printf 'baseline-managed-ghostty=1\n'
-        guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove it first with just box setup --terminal none, then re-run 5.2"
-        return 1
-    fi
+    local _name _file _count
+    for _name in ghostty ghostty-modern; do
+        _file="$(cfgbk_file_of "${_name}")" || return 1
+        _count="$(enter_block_count "${_file}")" \
+            || { guard_fail "cannot read Ghostty baseline ${_file}; refusing to back up"; return 1; }
+        if [[ "${_count}" != 0 ]]; then
+            printf 'baseline-managed-ghostty=1\n'
+            guard_fail "Ghostty baseline ${_file} has a worktool managed block; restore cannot prove a host window. Remove it first with just box setup --terminal none, then re-run 5.2"
+            return 1
+        fi
+    done
 }
 
 _52_step1_backup() {
