@@ -1021,7 +1021,7 @@ STUB
 }
 
 @test "#487: 5.2 apply overrides saved auto-enter no and box with the manifest decisions" {
-    local _repo _state="${HOME}/.config/worktool/config"
+    local _repo REALBOX _state="${HOME}/.config/worktool/config"
     _repo="$(_repo_copy)"
     sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
     REALBOX="${_repo}/script/verify/realbox.sh"
