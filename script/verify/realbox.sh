@@ -686,6 +686,25 @@ _52_cleanup_state() {
         || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 
+_52_confirm_restore() {
+    local _pid
+    guard_require ps readlink || return $?
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before-restore-window" \
+        || { guard_fail "cannot inventory processes before restore window"; return 1; }
+    printf 'Reload the RESTORED Ghostty config (Linux default Ctrl+Shift+,).\n'
+    printf 'Reload is asynchronous: wait for evidence that the restored config was read (e.g. Ghostty logs).\n'
+    printf 'Never close or modify your existing windows or Ghostty process.\n'
+    printf 'After reload, open a NEW Ghostty window and run: echo $fish_pid (fish) or echo $$ (POSIX shell).\n'
+    [[ -t 0 ]] \
+        || { guard_fail "stdin is not a tty; re-run 5.2.3 from an interactive shell to confirm reload"; return 1; }
+    printf 'Enter the shell PID from the new window after reload: '
+    IFS= read -r _pid || { guard_fail "reading the restored window PID failed"; return 1; }
+    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
+        || { guard_fail "expected a shell PID; a typed yes is not objective reload evidence"; return 1; }
+    guard_fail "restored window evidence is not confirmed"
+    return 1
+}
+
 _52_step3_restore() {
     guard_require distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
         || return $?
@@ -719,6 +738,14 @@ _52_step3_restore() {
 
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
+    if [[ "${_rc}" -eq 0 && -f "${CFGBK_B}/processes-before" ]]; then
+        if _52_confirm_restore; then
+            printf 'restore-window-ok=1\n'
+        else
+            printf 'restore-window-ok=0\n'
+            _rc=1
+        fi
+    fi
     _52_cleanup_state || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then

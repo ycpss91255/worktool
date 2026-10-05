@@ -1601,3 +1601,15 @@ STUB
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }
+
+@test "#471: restore cannot complete before reload evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_output --partial 'Reload the RESTORED Ghostty config'
+    assert_output --partial 'Ctrl+Shift+,'
+    assert_line 'restore-window-ok=0'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
