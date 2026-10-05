@@ -654,6 +654,18 @@ STUB
     assert_output --partial "backup-removed=1"
 }
 
+@test "#469: 5.2 rejects mismatching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_NS='mnt:[300]'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence:"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
 @test "#433: 5.2 passes with a new fish in this runs dev namespace" {
     _fake_window_process
     run _window_input 4242
