@@ -85,6 +85,7 @@ ISSUE="22"
 BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
 DECOY_IMAGE="ubuntu:24.04"
 OPT_IN=0
+COMMENT_TAG=""
 
 # Every external call is wrapped in `timeout`, so a hung distrobox / just / gh
 # fails the run instead of stalling it forever.
@@ -138,6 +139,8 @@ Options:
                      configs under $XDG_CONFIG_HOME, and comments on an issue.
   --repo OWNER/NAME  GitHub repository for 5.1 (default: ycpss91255/worktool).
   --issue N          Issue number 5.1 posts to (default: 22).
+  --comment-tag TAG  Prefix the 5.1 comment with TAG (e.g. '[codex]').
+                     Agents must pass their own tag; omitted keeps the body.
   --box NAME         Box name (default: dev).
   --image REF        Image 5.3 builds its decoy box from (default: ubuntu:24.04).
   -h, --help         Show this help and exit 0.
@@ -421,6 +424,7 @@ _51_collect_metrics() {
 _51_write_body() {
     local _tag="$1" _run_id="$2" _fence='```' _host
     _host="$(uname -sm)" || { guard_fail "uname failed"; return 1; }
+    [[ -z "${COMMENT_TAG}" ]] || _tag="${COMMENT_TAG} ${_tag}"
     printf '%s (%s, run %s)\n\n%stext\n' "${_tag}" "${_host}" "${_run_id}" "${_fence}" \
         >"${_51_W}/body.md" || { guard_fail "writing the comment body failed"; return 1; }
     cat -- "${_51_W}/three.txt" >>"${_51_W}/body.md" \
@@ -947,6 +951,7 @@ _dispatch_item() {
 
 _set_option() {
     case "$1" in
+        --comment-tag) COMMENT_TAG="$2" ;;
         --repo)
             [[ "$2" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
                 || { _usage_error "invalid --repo '$2'"; return 1; }
@@ -979,13 +984,13 @@ realbox_run() {
         case "$1" in
             -h | --help) _help=1 ;;
             --allow-real-box) OPT_IN=1 ;;
-            --repo | --issue | --box | --image)
+            --repo | --issue | --box | --image | --comment-tag)
                 _opt="$1"
                 shift
                 [[ $# -gt 0 ]] || { _usage_error "${_opt} needs a value"; return 2; }
                 _set_option "${_opt}" "$1" || return 2
                 ;;
-            --repo=* | --issue=* | --box=* | --image=*)
+            --repo=* | --issue=* | --box=* | --image=* | --comment-tag=*)
                 _set_option "${1%%=*}" "${1#*=}" || return 2
                 ;;
             -*) _usage_error "unknown option '$1'"; return 2 ;;

@@ -322,6 +322,14 @@ FRAG
 
 # --- 5.1 real-machine bench --------------------------------------------------
 
+@test "5.1: --comment-tag prefixes the first body.md line" {
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    local _first
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    [[ "${_first}" == '[claude] M3 5.1 real-machine bench ('* ]]
+}
+
 @test "5.1 happy path prints the documented lines and exits 0" {
     run "${REALBOX}" --allow-real-box 5.1
     assert_success
