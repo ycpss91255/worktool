@@ -548,11 +548,17 @@ _psi_sample() {
         _psi_read "${PSI_PATH}" || _rc=1
         _own="${PSI_VAL}"
         _psi_peak PSI_PEAK "$1"
-        log_info "psi $1: ${PSI_PATH} some avg10=${_own:-?}"
+        if [[ "$1" != wait* ]]; then
+            log_info "psi $1: ${PSI_PATH} some avg10=${_own:-?}"
+        fi
     fi
     if [[ -n "${BOX_PSI_PATH}" ]] && _psi_read "${BOX_PSI_PATH}"; then
         _psi_peak BOX_PSI_PEAK "$1"
-        log_info "psi $1: ${BOX_PSI_PATH} some avg10=${PSI_VAL}"
+        if [[ "$1" == wait* ]]; then
+            log_info "box psi $1: ${BOX_PSI_PATH} some avg10=${PSI_VAL}"
+        else
+            log_info "psi $1: ${BOX_PSI_PATH} some avg10=${PSI_VAL}"
+        fi
         if [[ -z "${_own}" ]] || ! _dec_le "${PSI_VAL}" "${_own}"; then
             PSI_JUDGE_PATH="${BOX_PSI_PATH}"
         else
