@@ -1256,7 +1256,7 @@ EOF
             mkdir -p "${_cg}${_rel}"
             printf '0::%s\n' "${_rel}" >"${_proc}/4321/cgroup"
             _psi 7.25 "${_cg}${_rel%/}/cpu.pressure"
-            run env DBX_CONTAINER_MANAGER="${_engine}" bash -c \
+            DBX_CONTAINER_MANAGER="${_engine}" run bash -c \
                 'unset BENCH_BOX_PSI_FILE; source "$1"; CGROUP_FS="$2"; PROC_ROOT="$3"; bench_run --runs 1 --warmup 0 --max-ms 300 --max-wait 5' \
                 _ "${BENCH}" "${_cg}" "${_proc}"
             assert_failure 3
