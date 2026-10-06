@@ -669,7 +669,7 @@ _box_psi_summary() {
         local _missing
         printf -v _missing '%s; ' "${BOX_PSI_MISSING[@]}"
         log_warn "box cgroup PSI not checked at: ${_missing%; }"
-    elif [[ -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
+    elif [[ "${1:-0}" == 0 && -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
         _loadavg
         log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
@@ -774,6 +774,7 @@ _bench_exec() {
     fi
     local -a _shell_argv _enter_us=() _shell_us=() _inbox_us=()
     local -a _e_stats _s_stats _i_stats
+    local _rc
     read -r -a _shell_argv <<<"${OPT_SHELL}"
     MANAGED_COMMAND="$(_managed_command)" || return 1
     # Ghostty executes this shell source; append only the metric payload,
@@ -782,11 +783,12 @@ _bench_exec() {
     _host_precondition || return $?
 
     _run_metric enter _enter_us _time_cmd \
-        "${_managed[@]}" true || return $?
+        "${_managed[@]}" true || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     _run_metric shell _shell_us _time_cmd \
-        "${_managed[@]}" "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" "${_shell_argv[@]}" || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     _run_metric inbox _inbox_us _inbox_cmd \
-        "${_managed[@]}" bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" \
+        || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     if [[ -n "${PSI_PATH}" ]]; then
         _loadavg
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"

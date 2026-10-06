@@ -1386,3 +1386,15 @@ _run_cold_box() {
     assert_equal "$(_calls | wc -l | tr -d ' ')" "6"
     assert_equal "$(_sleeps)" "5"
 }
+
+@test "cold box PSI: unresolved box reports unchecked boundaries when a run fails" {
+    _install_cold_box 0.00
+    rm "${TMP}/proc/4321/cgroup"
+    FAKE_DBX_EXIT=4 run _run_cold_box --runs 1 --warmup 1
+    assert_failure 1
+    assert_line --partial 'measurement aborted'
+    assert_line '[WARN] box cgroup PSI unreadable (unresolved) - box cgroup check skipped'
+    assert_line '[WARN] box cgroup PSI not checked at: before enter run 1; after enter run 1'
+    refute_output --regexp '^shell: min='
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
+}
