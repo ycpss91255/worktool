@@ -224,7 +224,7 @@ printf '%s\n' "$(( _now + _ms * 1000 ))" >"${FAKE_CLOCK_FILE}"
 # a PSI of FAKE_DBX_PSI_VALUE behind (read by bench.sh after the run).
 if [[ -n "${FAKE_DBX_PSI_AT:-}" ]] \
     && (( $(wc -l <"${FAKE_DBX_CALLS}") == FAKE_DBX_PSI_AT )); then
-    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${FAKE_DBX_PSI_VALUE}" >"${BENCH_PSI_FILE}"
+    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${FAKE_DBX_PSI_VALUE}" >"${FAKE_DBX_PSI_FILE:-${BENCH_PSI_FILE}}"
 fi
 _rc="${FAKE_DBX_EXIT:-0}"
 [[ "${_kind}" == shell && -n "${FAKE_DBX_EXIT_SHELL:-}" ]] && _rc="${FAKE_DBX_EXIT_SHELL}"
@@ -1265,4 +1265,19 @@ EOF
         done
     done
     assert_equal "$(_calls)" ""
+}
+
+@test "box PSI: a failed warmup that makes the box busy voids the batch before a latency verdict" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 0.00 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_PSI_FILE="${_box}" \
+        FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=2.001 FAKE_DBX_EXIT=4 \
+        "${BENCH}" --runs 1 --warmup 1 --max-ms 300
+    assert_failure 3
+    assert_line "[INFO] psi before enter run 1: ${_box} some avg10=0.00"
+    assert_line "[INFO] psi after enter run 1: ${_box} some avg10=2.001"
+    assert_line --partial "${_box} some avg10=2.001 after enter run 1"
+    refute_output --partial "measurement aborted"
+    refute_output --regexp '^shell: min='
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
 }
