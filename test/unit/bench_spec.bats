@@ -1302,3 +1302,40 @@ EOF
     assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
     refute_output --partial "host stayed quiet: ${_box}"
 }
+
+# A stopped engine reports PID 0 until the first enter starts the box.
+_install_cold_box() {
+    export DBX_CONTAINER_MANAGER=docker
+    export FAKE_ENGINE_CALLS="${TMP}/engine.calls"
+    mkdir -p "${TMP}/proc/4321" "${TMP}/cgfs/box.scope"
+    printf '0::/box.scope\n' >"${TMP}/proc/4321/cgroup"
+    _psi "$1" "${TMP}/cgfs/box.scope/cpu.pressure"
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == "inspect --format {{.State.Pid}} dev" ]] || exit 1
+printf 'inspect\n' >>"${FAKE_ENGINE_CALLS}"
+if [[ -s "${FAKE_DBX_CALLS}" ]]; then
+    printf '4321\n'
+else
+    printf '0\n'
+fi
+EOF
+    chmod +x "${MOCKBIN}/docker"
+}
+
+_run_cold_box() {
+    bash -c 'unset BENCH_BOX_PSI_FILE; source "$1"; CGROUP_FS="$2"; PROC_ROOT="$3"; shift 3; bench_run "$@"' \
+        _ "${BENCH}" "${TMP}/cgfs" "${TMP}/proc" "$@"
+}
+
+@test "cold box PSI: busy box resolved after first enter voids the second warmup" {
+    _install_cold_box 7.25
+    FAKE_DBX_SLEEP_MS=400 run _run_cold_box --runs 1 --warmup 2 --max-ms 300
+    assert_failure 3
+    assert_line "[INFO] psi before enter run 2: ${TMP}/cgfs/box.scope/cpu.pressure some avg10=7.25"
+    assert_line --partial "${TMP}/cgfs/box.scope/cpu.pressure some avg10=7.25 before enter run 2"
+    refute_output --regexp '^shell: min='
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
+    assert_equal "$(_sleeps)" "5"
+}

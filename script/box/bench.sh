@@ -412,6 +412,7 @@ _run_metric() {
     fi
     _shown="${_shown//"${INBOX_TIMER}"/<timer>}"
     for (( _i = 0; _i < OPT_WARMUP + OPT_RUNS; _i++ )); do
+        [[ -n "${BOX_PSI_PATH}" ]] || _box_psi_resolve
         _psi_guard "before ${_name} run $(( _i + 1 ))" || return 3
         RUN_ERR=""
         _rc=0
