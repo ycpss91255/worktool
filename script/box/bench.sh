@@ -138,6 +138,7 @@ PSI_PEAK=""            # highest reading of the batch, as printed
 BOX_PSI_PATH=""
 BOX_PSI_PEAK=""
 BOX_PSI_COMPLETE=1
+BOX_PSI_MISSING=()
 PSI_JUDGE_PATH=""      # source of the maximum reading
 LOADAVG="n/a"
 
@@ -568,7 +569,7 @@ _psi_sample() {
         fi
     else
         if [[ -n "${BOX_PSI_PATH}" ]]; then
-            BOX_PSI_COMPLETE=0
+            _box_psi_missing "$1"
             log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH}) - box cgroup check skipped at $1"
         fi
         PSI_VAL="${_own}"
@@ -631,6 +632,7 @@ _host_precondition() {
 # the whole batch is void - when it is above the limit or unreadable.
 # Tracks the batch's peak reading. A no-op when no PSI is in use.
 _psi_guard() {
+    [[ -n "${BOX_PSI_PATH}" ]] || _box_psi_missing "$1"
     [[ -n "${PSI_PATH}" || -n "${BOX_PSI_PATH}" ]] || return 0
     if _psi_sample "$1" && _psi_quiet; then
         return 0
@@ -638,6 +640,24 @@ _psi_guard() {
     _loadavg
     log_error "host too busy mid-run (inconclusive): ${PSI_JUDGE_PATH} some avg10=${PSI_VAL:-?} $1; loadavg=${LOADAVG}; batch void, re-run when idle"
     return 3
+}
+
+# Preserve the exact unchecked boundaries, including warmups and lost files.
+_box_psi_missing() {
+    [[ "$1" != wait* ]] || return 0
+    BOX_PSI_COMPLETE=0
+    BOX_PSI_MISSING+=("$1")
+}
+
+_box_psi_summary() {
+    if (( ${#BOX_PSI_MISSING[@]} > 0 )); then
+        local _missing
+        printf -v _missing '%s; ' "${BOX_PSI_MISSING[@]}"
+        log_warn "box cgroup PSI not checked at: ${_missing%; }"
+    elif [[ -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
+        _loadavg
+        log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
+    fi
 }
 
 # --- Statistics and output ---------------------------------------------------
@@ -757,10 +777,7 @@ _bench_exec() {
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
 
-    if [[ -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
-        _loadavg
-        log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
-    fi
+    _box_psi_summary
 
     _stats _enter_us _e_stats
     _stats _shell_us _s_stats

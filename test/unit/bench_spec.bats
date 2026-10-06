@@ -1339,3 +1339,24 @@ _run_cold_box() {
     assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
     assert_equal "$(_sleeps)" "5"
 }
+
+@test "cold box PSI: late quiet resolution logs every later boundary and names unchecked runs" {
+    _install_cold_box 1.25
+    FAKE_DBX_SLEEP_MS=300 run _run_cold_box --runs 1 --warmup 2 --max-ms 300
+    assert_success
+    assert_line --partial 'box cgroup PSI not checked at: before enter run 1; after enter run 1'
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
+    local _metric _run _boundary
+    for _metric in enter shell inbox; do
+        for _run in 1 2 3; do
+            [[ "${_metric} ${_run}" != 'enter 1' ]] || continue
+            for _boundary in before after; do
+                assert_line "[INFO] psi ${_boundary} ${_metric} run ${_run}: ${TMP}/cgfs/box.scope/cpu.pressure some avg10=1.25"
+            done
+        done
+    done
+    assert_line --partial 'shell median 300.0 ms within --max-ms 300'
+    assert_equal "$(wc -l <"${FAKE_ENGINE_CALLS}" | tr -d ' ')" "3"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "9"
+    assert_equal "$(_sleeps)" "5"
+}
