@@ -108,6 +108,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 # shellcheck source=enter.sh
 source "${LIB_DIR}/enter.sh"
+# shellcheck source=distrobox_manager.sh
+source "${LIB_DIR}/distrobox_manager.sh"
 
 # --- Defaults (overridden by the command line; see _parse_args) --------------
 OPT_BOX="dev"
@@ -126,6 +128,7 @@ PSI_QUIET_S=5          # consecutive quiet seconds before the first run
 # replaces the whole lookup below.
 CGROUP_FS="/sys/fs/cgroup"
 PROC_SELF_CGROUP="/proc/self/cgroup"
+PROC_ROOT="/proc"
 PROC_PSI="/proc/pressure/cpu"
 LOADAVG_FILE="/proc/loadavg"
 PSI_PATH=""            # the PSI file in use; empty = none readable
@@ -481,13 +484,33 @@ _psi_resolve() {
     fi
 }
 
-# The box PSI injection replaces discovery (tests only).
+# Resolve the engine's main PID in the reader's proc/cgroup namespace.
+_box_cgroup_psi() {
+    local _engine _pid _line _rel=""
+    _engine="$(distrobox_manager "${XDG_CONFIG_HOME:-${HOME}/.config}")" || return 1
+    _pid="$("${_engine}" inspect --format '{{.State.Pid}}' "${OPT_BOX}" 2>/dev/null)" || return 1
+    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ -r "${PROC_ROOT}/${_pid}/cgroup" ]] || return 1
+    while IFS= read -r _line; do
+        if [[ "${_line}" == 0::* ]]; then _rel="${_line#0::}"; fi
+    done <"${PROC_ROOT}/${_pid}/cgroup"
+    # A cgroup outside the reader's namespace cannot be read under its mount.
+    [[ "${_rel}" == /* && "/${_rel}/" != */../* ]] || return 1
+    BOX_PSI_PATH="${CGROUP_FS}${_rel%/}/cpu.pressure"
+}
+
+# The box PSI injection replaces discovery (tests only). A missing source
+# is explicit and leaves the bench's own PSI check in place.
 _box_psi_resolve() {
     BOX_PSI_PATH=""
-    if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]] && _psi_read "${BENCH_BOX_PSI_FILE}"; then
+    if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]]; then
         BOX_PSI_PATH="${BENCH_BOX_PSI_FILE}"
-    else
-        log_warn "box cgroup PSI unreadable (${BENCH_BOX_PSI_FILE:-unresolved}) - box cgroup check skipped"
+    elif ! _box_cgroup_psi; then
+        BOX_PSI_PATH=""
+    fi
+    if [[ -z "${BOX_PSI_PATH}" ]] || ! _psi_read "${BOX_PSI_PATH}"; then
+        log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH:-unresolved}) - box cgroup check skipped"
+        BOX_PSI_PATH=""
     fi
 }
 
