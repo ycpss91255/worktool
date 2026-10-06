@@ -1360,3 +1360,29 @@ _run_cold_box() {
     assert_equal "$(_calls | wc -l | tr -d ' ')" "9"
     assert_equal "$(_sleeps)" "5"
 }
+
+@test "cold box PSI: never resolved warns once, lists every unchecked run and retains latency judgement" {
+    _install_cold_box 0.00
+    rm "${TMP}/proc/4321/cgroup"
+    FAKE_DBX_SLEEP_MS=400 run _run_cold_box --runs 1 --warmup 1 --max-ms 300
+    assert_failure 1
+    assert_line '[WARN] box cgroup PSI unreadable (unresolved) - box cgroup check skipped'
+    local _metric _run _missing='' _line _warnings=0
+    for _metric in enter shell inbox; do
+        for _run in 1 2; do
+            _missing+="before ${_metric} run ${_run}; after ${_metric} run ${_run}; "
+        done
+    done
+    assert_line "[WARN] box cgroup PSI not checked at: ${_missing%; }"
+    for _line in "${lines[@]}"; do
+        if [[ "${_line}" == *'box cgroup PSI unreadable'* ]]; then
+            _warnings=$(( _warnings + 1 ))
+        fi
+    done
+    assert_equal "${_warnings}" "1"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    assert_line --partial 'shell median 400.0 ms exceeds --max-ms 300'
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "6"
+    assert_equal "$(_sleeps)" "5"
+}

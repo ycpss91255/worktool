@@ -136,6 +136,7 @@ PSI_PATH=""            # the PSI file in use; empty = none readable
 PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
 BOX_PSI_PATH=""
+BOX_PSI_UNREADABLE="unresolved"
 BOX_PSI_PEAK=""
 BOX_PSI_COMPLETE=1
 BOX_PSI_MISSING=()
@@ -529,7 +530,7 @@ _box_psi_resolve() {
         BOX_PSI_PATH=""
     fi
     if [[ -z "${BOX_PSI_PATH}" ]] || ! _psi_read "${BOX_PSI_PATH}"; then
-        log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH:-unresolved}) - box cgroup check skipped"
+        BOX_PSI_UNREADABLE="${BOX_PSI_PATH:-unresolved}"
         BOX_PSI_PATH=""
     fi
 }
@@ -624,7 +625,10 @@ _host_precondition() {
         log_warn "no CPU pressure (PSI) readable (cgroup v2 cpu.pressure, ${PROC_PSI}) - quiet-host check skipped, measuring anyway; loadavg=${LOADAVG}"
         return 0
     fi
-    _wait_quiet
+    local _rc=0
+    _wait_quiet || _rc=$?
+    if (( _rc != 0 )); then _box_psi_warn; fi
+    return "${_rc}"
 }
 
 # Read PSI at the sample boundary $1 names ("before enter run 3"), record
@@ -649,7 +653,14 @@ _box_psi_missing() {
     BOX_PSI_MISSING+=("$1")
 }
 
+_box_psi_warn() {
+    if [[ -z "${BOX_PSI_PATH}" ]]; then
+        log_warn "box cgroup PSI unreadable (${BOX_PSI_UNREADABLE}) - box cgroup check skipped"
+    fi
+}
+
 _box_psi_summary() {
+    _box_psi_warn
     if (( ${#BOX_PSI_MISSING[@]} > 0 )); then
         local _missing
         printf -v _missing '%s; ' "${BOX_PSI_MISSING[@]}"
