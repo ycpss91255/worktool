@@ -372,9 +372,14 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 - **cgroup 的盲點**:盒內行程跑在盒子的 cgroup,並非 bench 自身的 cgroup;只檢查
   bench 的 PSI 會漏掉盒內任務的 CPU 排隊。#491 補上盒子來源,前置等待與執行前後
   都比較兩者,理由見 ADR 0003。不刪樣本、不加重試。
-- **盒子 PSI 讀不到**:PID 或 cgroup 無法解析、壓力檔讀不到或沒有合法數值時,
+- **冷啟動查找**:開始時盒子尚未啟動而解析不到來源,每次執行前(含暖身)重新解析,
+  直到成功;從成功的該次起,每個 PSI 邊界都納入盒子來源並記錄路徑與數值。
+  這不重試量測,前置等待規則不變。
+- **盒子 PSI 讀不到**:整批仍無法解析 PID 或 cgroup、壓力檔讀不到或沒有合法數值時,
   警告 `box cgroup PSI unreadable (<路徑或 unresolved>) - box cgroup check skipped`,
-  仍保留 bench 自身來源的判定;量測途中讀不到也逐次警告。
+  仍保留 bench 自身來源的判定;已解析的壓力檔在量測途中讀不到也逐次警告。
+  結尾以 `box cgroup PSI not checked at: before enter run 1; after enter run 1`
+  格式列出所有缺少盒子讀值的執行前後邊界(含暖身),不宣稱盒子全程安靜。
 - **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
   量完為每個全程可讀的來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
 - **沒有 PSI**:bench 的兩個候選來源與盒子 PSI 都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,

@@ -38,6 +38,9 @@
 # It waits at most --max-wait seconds (60, or 120 when
 # CI is set); a host that does not get quiet in time is exit 3
 # (inconclusive: no verdict, nothing on stdout, distrobox never called).
+# If the stopped box cannot be resolved initially, discovery is repeated
+# before every run (warmups included) until it succeeds. Missing box
+# boundaries are listed in the final summary, never called quiet.
 # PSI is read again and recorded (one stderr line: `psi before|after
 # <metric> run <k>: <path> some avg10=<value>`) before and after every
 # run, a failed run included; one reading above the limit voids the whole
@@ -136,8 +139,10 @@ PSI_PATH=""            # the PSI file in use; empty = none readable
 PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
 BOX_PSI_PATH=""
+BOX_PSI_UNREADABLE="unresolved"
 BOX_PSI_PEAK=""
 BOX_PSI_COMPLETE=1
+BOX_PSI_MISSING=()
 PSI_JUDGE_PATH=""      # source of the maximum reading
 LOADAVG="n/a"
 
@@ -208,7 +213,8 @@ stderr before and after every run, a failed one included: one reading
 above the limit voids the whole batch (exit 3, even over a failed run).
 The limit is exact (2.001 is above it). No readable PSI: a warning, and
 the measurement runs unguarded. Unreadable box PSI warns and keeps the
-bench PSI check.
+bench PSI check. Unresolved box discovery repeats before each run (warmups
+included) until successful; the summary lists boundaries without box PSI.
 
 Exit codes:
   0    measured, and the shell median is within --max-ms (if given)
@@ -412,6 +418,7 @@ _run_metric() {
     fi
     _shown="${_shown//"${INBOX_TIMER}"/<timer>}"
     for (( _i = 0; _i < OPT_WARMUP + OPT_RUNS; _i++ )); do
+        [[ -n "${BOX_PSI_PATH}" ]] || _box_psi_resolve
         _psi_guard "before ${_name} run $(( _i + 1 ))" || return 3
         RUN_ERR=""
         _rc=0
@@ -517,8 +524,8 @@ _box_cgroup_psi() {
     BOX_PSI_PATH="${CGROUP_FS}${_rel%/}/cpu.pressure"
 }
 
-# The box PSI injection replaces discovery (tests only). A missing source
-# is explicit and leaves the bench's own PSI check in place.
+# The box PSI injection replaces discovery (tests only). An unresolved
+# source is tried again before each run; warn only if it never resolves.
 _box_psi_resolve() {
     BOX_PSI_PATH=""
     if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]]; then
@@ -527,7 +534,7 @@ _box_psi_resolve() {
         BOX_PSI_PATH=""
     fi
     if [[ -z "${BOX_PSI_PATH}" ]] || ! _psi_read "${BOX_PSI_PATH}"; then
-        log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH:-unresolved}) - box cgroup check skipped"
+        BOX_PSI_UNREADABLE="${BOX_PSI_PATH:-unresolved}"
         BOX_PSI_PATH=""
     fi
 }
@@ -567,7 +574,7 @@ _psi_sample() {
         fi
     else
         if [[ -n "${BOX_PSI_PATH}" ]]; then
-            BOX_PSI_COMPLETE=0
+            _box_psi_missing "$1"
             log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH}) - box cgroup check skipped at $1"
         fi
         PSI_VAL="${_own}"
@@ -622,7 +629,10 @@ _host_precondition() {
         log_warn "no CPU pressure (PSI) readable (cgroup v2 cpu.pressure, ${PROC_PSI}) - quiet-host check skipped, measuring anyway; loadavg=${LOADAVG}"
         return 0
     fi
-    _wait_quiet
+    local _rc=0
+    _wait_quiet || _rc=$?
+    if (( _rc != 0 )); then _box_psi_warn; fi
+    return "${_rc}"
 }
 
 # Read PSI at the sample boundary $1 names ("before enter run 3"), record
@@ -630,6 +640,7 @@ _host_precondition() {
 # the whole batch is void - when it is above the limit or unreadable.
 # Tracks the batch's peak reading. A no-op when no PSI is in use.
 _psi_guard() {
+    [[ -n "${BOX_PSI_PATH}" ]] || _box_psi_missing "$1"
     [[ -n "${PSI_PATH}" || -n "${BOX_PSI_PATH}" ]] || return 0
     if _psi_sample "$1" && _psi_quiet; then
         return 0
@@ -637,6 +648,31 @@ _psi_guard() {
     _loadavg
     log_error "host too busy mid-run (inconclusive): ${PSI_JUDGE_PATH} some avg10=${PSI_VAL:-?} $1; loadavg=${LOADAVG}; batch void, re-run when idle"
     return 3
+}
+
+# Preserve the exact unchecked boundaries, including warmups and lost files.
+_box_psi_missing() {
+    [[ "$1" != wait* ]] || return 0
+    BOX_PSI_COMPLETE=0
+    BOX_PSI_MISSING+=("$1")
+}
+
+_box_psi_warn() {
+    if [[ -z "${BOX_PSI_PATH}" ]]; then
+        log_warn "box cgroup PSI unreadable (${BOX_PSI_UNREADABLE}) - box cgroup check skipped"
+    fi
+}
+
+_box_psi_summary() {
+    _box_psi_warn
+    if (( ${#BOX_PSI_MISSING[@]} > 0 )); then
+        local _missing
+        printf -v _missing '%s; ' "${BOX_PSI_MISSING[@]}"
+        log_warn "box cgroup PSI not checked at: ${_missing%; }"
+    elif [[ "${1:-0}" == 0 && -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
+        _loadavg
+        log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
+    fi
 }
 
 # --- Statistics and output ---------------------------------------------------
@@ -738,6 +774,7 @@ _bench_exec() {
     fi
     local -a _shell_argv _enter_us=() _shell_us=() _inbox_us=()
     local -a _e_stats _s_stats _i_stats
+    local _rc
     read -r -a _shell_argv <<<"${OPT_SHELL}"
     MANAGED_COMMAND="$(_managed_command)" || return 1
     # Ghostty executes this shell source; append only the metric payload,
@@ -746,20 +783,18 @@ _bench_exec() {
     _host_precondition || return $?
 
     _run_metric enter _enter_us _time_cmd \
-        "${_managed[@]}" true || return $?
+        "${_managed[@]}" true || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     _run_metric shell _shell_us _time_cmd \
-        "${_managed[@]}" "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" "${_shell_argv[@]}" || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     _run_metric inbox _inbox_us _inbox_cmd \
-        "${_managed[@]}" bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" || return $?
+        "${_managed[@]}" bash -c "${INBOX_TIMER}" bench-inbox "${_shell_argv[@]}" \
+        || { _rc=$?; _box_psi_summary "${_rc}"; return "${_rc}"; }
     if [[ -n "${PSI_PATH}" ]]; then
         _loadavg
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
 
-    if [[ -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
-        _loadavg
-        log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
-    fi
+    _box_psi_summary
 
     _stats _enter_us _e_stats
     _stats _shell_us _s_stats
