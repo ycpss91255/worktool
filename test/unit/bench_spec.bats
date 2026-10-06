@@ -1281,3 +1281,12 @@ EOF
     refute_output --regexp '^shell: min='
     assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
 }
+
+@test "box PSI: help names both sources and the test-only box injection" {
+    run "${BENCH}" --help
+    assert_success
+    assert_output --partial "BENCH_BOX_PSI_FILE"
+    assert_output --partial "maximum of both"
+    assert_output --partial "box cgroup"
+    assert_output --partial "tests only"
+}

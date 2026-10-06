@@ -34,7 +34,8 @@
 # before the first run the script waits until CPU pressure (PSI) `some
 # avg10 <= 2.00` has held for 5 consecutive seconds (one poll a second),
 # read from this process's own cgroup v2 cpu.pressure, else from
-# /proc/pressure/cpu. It waits at most --max-wait seconds (60, or 120 when
+# /proc/pressure/cpu, plus the measured box cgroup; the maximum decides.
+# It waits at most --max-wait seconds (60, or 120 when
 # CI is set); a host that does not get quiet in time is exit 3
 # (inconclusive: no verdict, nothing on stdout, distrobox never called).
 # PSI is read again and recorded (one stderr line: `psi before|after
@@ -190,14 +191,23 @@ prints `<metric>: min=<ms> median=<ms> max=<ms> ms` (one line each).
                  measuring (default: 60; 120 when CI is set).
   -h, --help     Show this help and exit.
 
+EOF
+    _usage_rules
+    _usage_env
+}
+
+_usage_rules() {
+    cat <<'EOF'
 Quiet host: measuring starts once CPU pressure (PSI) some avg10 <= 2.00
 has held for 5 consecutive seconds, read from this process's cgroup v2
-cpu.pressure, else /proc/pressure/cpu (the path read is printed; loadavg
+cpu.pressure, else /proc/pressure/cpu, plus the measured box cgroup.
+The maximum of both decides (each path and value is printed; loadavg
 is printed too, it never decides). PSI is read again and recorded on
 stderr before and after every run, a failed one included: one reading
 above the limit voids the whole batch (exit 3, even over a failed run).
 The limit is exact (2.001 is above it). No readable PSI: a warning, and
-the measurement runs unguarded.
+the measurement runs unguarded. Unreadable box PSI warns and keeps the
+bench PSI check.
 
 Exit codes:
   0    measured, and the shell median is within --max-ms (if given)
@@ -207,9 +217,16 @@ Exit codes:
        busy mid-run (no verdict, no metric line)
   127  distrobox not on PATH
 
+EOF
+}
+
+_usage_env() {
+    cat <<'EOF'
 Environment (tests only):
   BENCH_PSI_FILE  read the PSI from this file instead of the cgroup /
                   /proc/pressure/cpu lookup.
+  BENCH_BOX_PSI_FILE  read the box PSI from this file instead of resolving
+                      the engine inspect PID and /proc/<pid>/cgroup.
   BENCH_CLOCK     run this program for the host clock (it prints the time
                   in microseconds) instead of reading EPOCHREALTIME; a
                   failing clock or a non-integer aborts the run (exit 1).
