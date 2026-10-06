@@ -38,6 +38,9 @@
 # It waits at most --max-wait seconds (60, or 120 when
 # CI is set); a host that does not get quiet in time is exit 3
 # (inconclusive: no verdict, nothing on stdout, distrobox never called).
+# If the stopped box cannot be resolved initially, discovery is repeated
+# before every run (warmups included) until it succeeds. Missing box
+# boundaries are listed in the final summary, never called quiet.
 # PSI is read again and recorded (one stderr line: `psi before|after
 # <metric> run <k>: <path> some avg10=<value>`) before and after every
 # run, a failed run included; one reading above the limit voids the whole
@@ -210,7 +213,8 @@ stderr before and after every run, a failed one included: one reading
 above the limit voids the whole batch (exit 3, even over a failed run).
 The limit is exact (2.001 is above it). No readable PSI: a warning, and
 the measurement runs unguarded. Unreadable box PSI warns and keeps the
-bench PSI check.
+bench PSI check. Unresolved box discovery repeats before each run (warmups
+included) until successful; the summary lists boundaries without box PSI.
 
 Exit codes:
   0    measured, and the shell median is within --max-ms (if given)
@@ -520,8 +524,8 @@ _box_cgroup_psi() {
     BOX_PSI_PATH="${CGROUP_FS}${_rel%/}/cpu.pressure"
 }
 
-# The box PSI injection replaces discovery (tests only). A missing source
-# is explicit and leaves the bench's own PSI check in place.
+# The box PSI injection replaces discovery (tests only). An unresolved
+# source is tried again before each run; warn only if it never resolves.
 _box_psi_resolve() {
     BOX_PSI_PATH=""
     if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]]; then
