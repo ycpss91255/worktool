@@ -131,6 +131,8 @@ LOADAVG_FILE="/proc/loadavg"
 PSI_PATH=""            # the PSI file in use; empty = none readable
 PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
+BOX_PSI_PATH=""
+PSI_JUDGE_PATH=""      # source of the maximum reading
 LOADAVG="n/a"
 
 # --- Input validation rules (what keeps --json valid JSON) -------------------
@@ -478,6 +480,36 @@ _psi_resolve() {
     fi
 }
 
+# The box PSI injection replaces discovery (tests only).
+_box_psi_resolve() {
+    BOX_PSI_PATH=""
+    if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]] && _psi_read "${BENCH_BOX_PSI_FILE}"; then
+        BOX_PSI_PATH="${BENCH_BOX_PSI_FILE}"
+    fi
+}
+
+# Read both sources and judge the maximum, retaining the source for errors.
+_psi_sample() {
+    local _own="" _rc=0
+    PSI_JUDGE_PATH="${PSI_PATH}"
+    if [[ -n "${PSI_PATH}" ]]; then
+        _psi_read "${PSI_PATH}" || _rc=1
+        _own="${PSI_VAL}"
+        log_info "psi $1: ${PSI_PATH} some avg10=${_own:-?}"
+    fi
+    if [[ -n "${BOX_PSI_PATH}" ]] && _psi_read "${BOX_PSI_PATH}"; then
+        log_info "psi $1: ${BOX_PSI_PATH} some avg10=${PSI_VAL}"
+        if [[ -z "${_own}" ]] || ! _dec_le "${PSI_VAL}" "${_own}"; then
+            PSI_JUDGE_PATH="${BOX_PSI_PATH}"
+        else
+            PSI_VAL="${_own}"
+        fi
+    else
+        PSI_VAL="${_own}"
+    fi
+    return "${_rc}"
+}
+
 # Set LOADAVG to the 1 / 5 / 15 minute load averages ("n/a" when
 # unreadable). Recorded as evidence next to every PSI verdict, never judged.
 _loadavg() {
@@ -494,19 +526,19 @@ _loadavg() {
 _wait_quiet() {
     local _streak=-1 _waited=0
     while :; do
-        if _psi_read "${PSI_PATH}" && _psi_quiet; then
+        if _psi_sample "wait ${_waited}s" && _psi_quiet; then
             _streak=$(( _streak + 1 ))
         else
             _streak=-1
         fi
         if (( _streak >= PSI_QUIET_S )); then
             _loadavg
-            log_info "host quiet: ${PSI_PATH} some avg10=${PSI_VAL} <= 2.00 for ${PSI_QUIET_S}s; loadavg=${LOADAVG}"
+            log_info "host quiet: ${PSI_JUDGE_PATH} some avg10=${PSI_VAL} <= 2.00 for ${PSI_QUIET_S}s; loadavg=${LOADAVG}"
             return 0
         fi
         if (( _waited >= OPT_MAX_WAIT )); then
             _loadavg
-            log_error "host too busy to measure (inconclusive): ${PSI_PATH} some avg10=${PSI_VAL:-?} for ${_waited}s; loadavg=${LOADAVG}; re-run when idle"
+            log_error "host too busy to measure (inconclusive): ${PSI_JUDGE_PATH} some avg10=${PSI_VAL:-?} for ${_waited}s; loadavg=${LOADAVG}; re-run when idle"
             return 3
         fi
         sleep 1
@@ -519,7 +551,8 @@ _wait_quiet() {
 # out loud and measured unguarded - never a silent pass, never a hang.
 _host_precondition() {
     _psi_resolve
-    if [[ -z "${PSI_PATH}" ]]; then
+    _box_psi_resolve
+    if [[ -z "${PSI_PATH}" && -z "${BOX_PSI_PATH}" ]]; then
         _loadavg
         log_warn "no CPU pressure (PSI) readable (cgroup v2 cpu.pressure, ${PROC_PSI}) - quiet-host check skipped, measuring anyway; loadavg=${LOADAVG}"
         return 0
@@ -532,16 +565,15 @@ _host_precondition() {
 # the whole batch is void - when it is above the limit or unreadable.
 # Tracks the batch's peak reading. A no-op when no PSI is in use.
 _psi_guard() {
-    [[ -n "${PSI_PATH}" ]] || return 0
-    if _psi_read "${PSI_PATH}" && _psi_quiet; then
-        log_info "psi $1: ${PSI_PATH} some avg10=${PSI_VAL}"
+    [[ -n "${PSI_PATH}" || -n "${BOX_PSI_PATH}" ]] || return 0
+    if _psi_sample "$1" && _psi_quiet; then
         if [[ -z "${PSI_PEAK}" ]] || ! _dec_le "${PSI_VAL}" "${PSI_PEAK}"; then
             PSI_PEAK="${PSI_VAL}"
         fi
         return 0
     fi
     _loadavg
-    log_error "host too busy mid-run (inconclusive): ${PSI_PATH} some avg10=${PSI_VAL:-?} $1; loadavg=${LOADAVG}; batch void, re-run when idle"
+    log_error "host too busy mid-run (inconclusive): ${PSI_JUDGE_PATH} some avg10=${PSI_VAL:-?} $1; loadavg=${LOADAVG}; batch void, re-run when idle"
     return 3
 }
 

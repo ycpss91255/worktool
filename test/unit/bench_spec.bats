@@ -1195,3 +1195,14 @@ _manifest_gate_paragraph() {
     assert_failure 1
     assert_output --partial "inbox: 'bash -c exit 4' exited 4 on run 1 - measurement aborted"
 }
+
+@test "box PSI: busy box with quiet bench is inconclusive instead of a latency verdict" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 7.25 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=400 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 300 --max-wait 5
+    assert_failure 3
+    assert_output --partial "${_box} some avg10=7.25"
+    assert_equal "$(_calls)" ""
+    assert_equal "$(_sleeps)" "5"
+}
