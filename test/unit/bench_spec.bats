@@ -1226,3 +1226,17 @@ _manifest_gate_paragraph() {
     assert_failure 1
     assert_line --partial "shell median 300.0 ms exceeds --max-ms 1"
 }
+
+@test "box PSI: unreadable box warns and retains the bench quiet-host check" {
+    local _box="${TMP}/absent.box.pressure"
+    run env BENCH_BOX_PSI_FILE="${_box}" "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --partial "[WARN] box cgroup PSI unreadable (${_box}) - box cgroup check skipped"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    _psi 7.25
+    run env BENCH_BOX_PSI_FILE="${_box}" "${BENCH}" --runs 1 --warmup 0 --max-wait 5
+    assert_failure 3
+    assert_line --partial "box cgroup check skipped"
+    assert_line --partial "${BENCH_PSI_FILE} some avg10=7.25"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "3"
+}

@@ -486,6 +486,8 @@ _box_psi_resolve() {
     BOX_PSI_PATH=""
     if [[ -n "${BENCH_BOX_PSI_FILE+set}" ]] && _psi_read "${BENCH_BOX_PSI_FILE}"; then
         BOX_PSI_PATH="${BENCH_BOX_PSI_FILE}"
+    else
+        log_warn "box cgroup PSI unreadable (${BENCH_BOX_PSI_FILE:-unresolved}) - box cgroup check skipped"
     fi
 }
 
@@ -517,6 +519,9 @@ _psi_sample() {
             PSI_VAL="${_own}"
         fi
     else
+        if [[ -n "${BOX_PSI_PATH}" ]]; then
+            log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH}) - box cgroup check skipped at $1"
+        fi
         PSI_VAL="${_own}"
     fi
     return "${_rc}"
