@@ -132,6 +132,7 @@ PSI_PATH=""            # the PSI file in use; empty = none readable
 PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
 BOX_PSI_PATH=""
+BOX_PSI_PEAK=""
 PSI_JUDGE_PATH=""      # source of the maximum reading
 LOADAVG="n/a"
 
@@ -488,6 +489,15 @@ _box_psi_resolve() {
     fi
 }
 
+# Track each source's batch peak, excluding the pre-wait readings.
+_psi_peak() {
+    local -n _peak="$1"
+    [[ "$2" != wait* && -n "${PSI_VAL}" ]] || return 0
+    if [[ -z "${_peak}" ]] || ! _dec_le "${PSI_VAL}" "${_peak}"; then
+        _peak="${PSI_VAL}"
+    fi
+}
+
 # Read both sources and judge the maximum, retaining the source for errors.
 _psi_sample() {
     local _own="" _rc=0
@@ -495,9 +505,11 @@ _psi_sample() {
     if [[ -n "${PSI_PATH}" ]]; then
         _psi_read "${PSI_PATH}" || _rc=1
         _own="${PSI_VAL}"
+        _psi_peak PSI_PEAK "$1"
         log_info "psi $1: ${PSI_PATH} some avg10=${_own:-?}"
     fi
     if [[ -n "${BOX_PSI_PATH}" ]] && _psi_read "${BOX_PSI_PATH}"; then
+        _psi_peak BOX_PSI_PEAK "$1"
         log_info "psi $1: ${BOX_PSI_PATH} some avg10=${PSI_VAL}"
         if [[ -z "${_own}" ]] || ! _dec_le "${PSI_VAL}" "${_own}"; then
             PSI_JUDGE_PATH="${BOX_PSI_PATH}"
@@ -567,9 +579,6 @@ _host_precondition() {
 _psi_guard() {
     [[ -n "${PSI_PATH}" || -n "${BOX_PSI_PATH}" ]] || return 0
     if _psi_sample "$1" && _psi_quiet; then
-        if [[ -z "${PSI_PEAK}" ]] || ! _dec_le "${PSI_VAL}" "${PSI_PEAK}"; then
-            PSI_PEAK="${PSI_VAL}"
-        fi
         return 0
     fi
     _loadavg
@@ -692,6 +701,11 @@ _bench_exec() {
     if [[ -n "${PSI_PATH}" ]]; then
         _loadavg
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
+    fi
+
+    if [[ -n "${BOX_PSI_PATH}" ]]; then
+        _loadavg
+        log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
 
     _stats _enter_us _e_stats

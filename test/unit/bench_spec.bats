@@ -1206,3 +1206,23 @@ _manifest_gate_paragraph() {
     assert_equal "$(_calls)" ""
     assert_equal "$(_sleeps)" "5"
 }
+
+@test "box PSI: quiet box keeps the latency gate and records every boundary and peak" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 1.25 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=300 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 300
+    assert_success
+    local _metric _boundary
+    for _metric in enter shell inbox; do
+        for _boundary in before after; do
+            assert_line "[INFO] psi ${_boundary} ${_metric} run 1: ${_box} some avg10=1.25"
+        done
+    done
+    assert_line --partial "host stayed quiet: ${_box} some avg10 peak=1.25"
+    assert_line --partial "shell median 300.0 ms within --max-ms 300"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=300 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 1
+    assert_failure 1
+    assert_line --partial "shell median 300.0 ms exceeds --max-ms 1"
+}
