@@ -876,7 +876,7 @@ _item_3_2() {
 _item_3_3() {
     _require_tools env just sed grep mktemp || return $?
     _item_begin || return 1
-    local _g _d _blocks _before _bad=0
+    local _g _d _blocks _before _remove_rc _bad=0
     _g="$(_resolve_exec ghostty 'setup resolves it to log how the terminal default was decided')" || return $?
     _d="$(_resolve_exec distrobox 'setup writes its absolute path into the managed command')" || return $?
     NORM_G="${_g}"
@@ -905,6 +905,7 @@ _item_3_3() {
     fi
 
     _run_norm "${_env[@]}" just box setup --auto-enter no || return 1
+    _remove_rc="${LAST_RC}"
     # Every removal is reported by name, and the removed block is named with
     # the command it held; the tmux.conf line is the "there was nothing to
     # undo" half of the same report.
@@ -920,7 +921,7 @@ _item_3_3() {
     # decision line here. An implementation that resolved one anyway would
     # be doing work it must not need.
     _refute_line 3.3 '[INFO] distrobox:' || _bad=1
-    printf 'rc=%s\n' "${LAST_RC}"
+    printf 'rc=%s\n' "${_remove_rc}"
 
     _blocks="$(_count_matching 'BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
     printf 'blocks=%s\n' "${_blocks}"
@@ -933,8 +934,8 @@ _item_3_3() {
     # user's own lines are counted again on the far side of the removal.
     _expect_user_content 3.3 after-removal || _bad=1
 
-    if [[ "${LAST_RC}" -ne 0 ]]; then
-        _fail "3.3: just box setup --auto-enter no exited ${LAST_RC}, expected 0"
+    if [[ "${_remove_rc}" -ne 0 ]]; then
+        _fail "3.3: just box setup --auto-enter no exited ${_remove_rc}, expected 0"
         _bad=1
     fi
     if [[ "${_blocks}" -ne 0 ]]; then

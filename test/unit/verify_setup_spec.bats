@@ -528,6 +528,25 @@ EOF
 
 # --- 3.3 ----------------------------------------------------------------------
 
+@test "3.3: only the removal exiting 1 refuses the public entry even when setup and status succeed" {
+    _stub just \
+        '#!/bin/sh' \
+        'set -eu' \
+        "\"${REAL_JUST}\" \"\$@\"" \
+        "printf '%s rc=0\\n' \"\$*\" >>\"\${JUST_CALL_LOG}\"" \
+        'case "$*" in "box setup --auto-enter no") exit 1 ;; esac'
+    export JUST_CALL_LOG="${BATS_TEST_TMPDIR}/just-calls"
+
+    run "${REAL_JUST}" verify setup 3.3
+    assert_failure
+    assert_line "blocks-before=1"
+    assert_line "blocks=0"
+    assert_line "ghostty: <H>/.config/ghostty/config (managed block: absent)"
+    assert_output --partial "just box setup --auto-enter no exited 1, expected 0"
+    refute_output --partial "3.3 PASS"
+    assert_equal "$(cat "${JUST_CALL_LOG}")" $'box setup rc=0\nbox setup --auto-enter no rc=0\nbox status rc=0'
+}
+
 @test "3.3: a just that prints the documented removal lines but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.3
