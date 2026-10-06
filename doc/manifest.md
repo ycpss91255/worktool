@@ -353,30 +353,36 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 - **安靜判準**:CPU pressure(PSI)的 `some avg10 <= 2.00`(含 2.00),**連續 5 秒**
   成立(每秒讀一次,t .. t+5 都成立)。PSI 優先讀 bench.sh **自己所在 cgroup v2** 的
   `cpu.pressure`(`/proc/self/cgroup` 的 `0::<路徑>` 對到 `/sys/fs/cgroup<路徑>/cpu.pressure`),
-  讀不到才讀 `/proc/pressure/cpu`。loadavg(`/proc/loadavg`)**只記錄、不判定**。
+  讀不到才讀 `/proc/pressure/cpu`。另以 engine `inspect --format '{{.State.Pid}}' <box>`
+  取得盒子主 PID,解析 `/proc/<pid>/cgroup` 的 `0::<路徑>`,相對於讀取者的
+  cgroup namespace 對應 `/sys/fs/cgroup<路徑>/cpu.pressure`;以兩個來源的**較大值**判定。
+  loadavg(`/proc/loadavg`)**只記錄、不判定**。
 - **最多等待**:`--max-wait` 秒,預設 60;有設 `CI` 環境變數時預設 120
   (`script/test/test.sh` 以 `-e CI` 把它傳進 system-real 的 DinD runner)。逾時 →
   exit 3,STDERR 印
   `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
   STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
 - **量測途中**:每一次執行(暖身也算、失敗的那一次也算)的**前後**都讀取並**記錄** PSI
-  (每個邊界在 STDERR 印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
+  (每個邊界在 STDERR 為每個可讀來源各印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
   STDOUT 不變);任何一次超標(精確比較、不截斷小數:`2.001` 算超標),
   **整批作廢** → exit 3,STDERR 印
   `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
   不印任何指標行、不判 `--max-ms`;同一次執行本身失敗時也是 exit 3、不是 1。讀不到
   數值時 `<值>` 印 `?`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
-- **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
-  幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
-  擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、
-  整批作廢(見 ADR 0003「影響」的實跑數字)。
+- **cgroup 的盲點**:盒內行程跑在盒子的 cgroup,並非 bench 自身的 cgroup;只檢查
+  bench 的 PSI 會漏掉盒內任務的 CPU 排隊。#491 補上盒子來源,前置等待與執行前後
+  都比較兩者,理由見 ADR 0003。不刪樣本、不加重試。
+- **盒子 PSI 讀不到**:PID 或 cgroup 無法解析、壓力檔讀不到或沒有合法數值時,
+  警告 `box cgroup PSI unreadable (<路徑或 unresolved>) - box cgroup check skipped`,
+  仍保留 bench 自身來源的判定;量測途中讀不到也逐次警告。
 - **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
-  量完印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
-- **沒有 PSI**:兩個來源都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
+  量完為每個全程可讀的來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+- **沒有 PSI**:bench 的兩個候選來源與盒子 PSI 都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
   印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
   並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。
 - **測試專用**:環境變數 `BENCH_PSI_FILE` 取代上述查找,直接讀指定檔案(`--help` 標為
-  tests only);單元測試以假 PSI 檔與假 `sleep` 驅動等待。
+  tests only);`BENCH_BOX_PSI_FILE` 則取代盒子 PSI 查找。單元測試以假 PSI 檔與假
+  `sleep` 驅動等待。
 
 CI 與實機同一套規則、同一個入口:CI 上的 3 一樣讓 job 失敗,不因 runner 忙而跳過 gate;
 300 ms 門檻不變。

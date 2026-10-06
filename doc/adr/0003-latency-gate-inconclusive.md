@@ -16,10 +16,10 @@ M3 實機驗收（PR #157）時，同一個 commit、同一台機器，只因主
    - `1`：量測有效但超過 `--max-ms`（退化），或量測本身失敗（既有契約不變）。
    - `3`（新增）：量測環境不合格，**未判定**。不給通過，也不給退化。
    - `2` 用法錯誤、`127` 沒有 distrobox 不變。
-2. 量測前先等主機安靜：CPU pressure（PSI）`some avg10 <= 2.00` 連續成立 5 秒。PSI 優先讀 bench.sh 自己所在 cgroup v2 的 `cpu.pressure`，讀不到才讀 `/proc/pressure/cpu`；loadavg 只記錄、不判定。最多等 60 秒，有設 `CI` 時 120 秒，都可用 `--max-wait` 覆寫；逾時 → `3`。
-3. 每一次執行（暖身也算，失敗的那一次也算）的前後都讀取並**記錄** PSI：每個邊界在 stderr 印一行 `psi <before|after> <指標> run <k>: <路徑> some avg10=<值>`，stdout 不變。量測途中任何一次超標，整批作廢 → `3`；即使同一次執行本身也失敗，仍是 `3` 而非 `1`（忙碌主機上的失敗不是盒子壞掉的證據）。`2.00` 的比較是精確的，不截斷小數（`2.001` 算超標）。不刪慢樣本。
+2. 量測前先等主機安靜：CPU pressure（PSI）`some avg10 <= 2.00` 連續成立 5 秒。PSI 優先讀 bench.sh 自己所在 cgroup v2 的 `cpu.pressure`，讀不到才讀 `/proc/pressure/cpu`，另讀被量測盒子 cgroup 的 `cpu.pressure`，以兩者較大值判定；loadavg 只記錄、不判定。最多等 60 秒，有設 `CI` 時 120 秒，都可用 `--max-wait` 覆寫；逾時 → `3`。
+3. 每一次執行（暖身也算，失敗的那一次也算）的前後都讀取並**記錄** PSI：每個邊界在 stderr 為每個可讀來源各印一行 `psi <before|after> <指標> run <k>: <路徑> some avg10=<值>`，stdout 不變。量測途中任何一次超標，整批作廢 → `3`；即使同一次執行本身也失敗，仍是 `3` 而非 `1`（忙碌主機上的失敗不是盒子壞掉的證據）。`2.00` 的比較是精確的，不截斷小數（`2.001` 算超標）。不刪慢樣本。
 4. 每次輸出都印出所讀 PSI 的路徑、數值與 loadavg，作為診斷證據。
-5. 兩個 PSI 來源都讀不到時，警告並照常量測、照常判定：說出「沒有檢查」，而不是假裝檢查過，也不無止境地等。
+5. bench 自身的兩個候選來源與盒子 PSI 都讀不到時，警告並照常量測、照常判定：說出「沒有檢查」，而不是假裝檢查過，也不無止境地等。
 6. CI 與實機同一套規則、同一個入口；CI 上的 `3` 一樣讓 job 失敗，不因 runner 忙而跳過 gate。
 7. 300 ms 門檻不放寬；樣本數維持 2 warmup + 5 runs + median，之後依收集到的分佈再議。
 
@@ -31,7 +31,9 @@ M3 實機驗收（PR #157）時，同一個 commit、同一台機器，只因主
 - 單元測試以測試專用的環境變數 `BENCH_PSI_FILE` 注入假 PSI 檔，並以假 `sleep` 讓等待不花真實時間、每一次輪詢都可計數。
 - `script/test/test.sh` 以 `-e CI` 把 `CI` 傳進 system-real 的 DinD runner，讓 CI 上的 real-engine gate 用 120 秒的等待上限；`test/system/real_engine_spec.bats` 要求前置條件的證據行，且只接受各案例自己的判定碼，所以 `3` 在 CI 上一樣是紅。
 - 呼叫 bench.sh 的其他入口（例如 PR #157 分支上的 `just verify gate`）要把 `3` 呈現為「未判定、請在閒置時重跑」，不得當成通過；在該分支恢復時一併處理。
-- cgroup 的 PSI 只計入該 cgroup 內的任務：量測開始前 cgroup 裡幾乎沒有可執行的任務，所以前置等待在 cgroup 上很快就會通過，即使整台主機很忙（本 PR 實跑 system-real 時，runner 的 cgroup 在量測前是 `some avg10=1.11`，主機的 `/proc/pressure/cpu` 同時約 45）。真正擋下忙碌主機的是每次執行前後的檢查：量測一開始，bench 自己的任務就要排隊等 CPU，壓力隨即超標（同一次實跑在 `after enter run 4` 讀到 5.62 → 3）。
+- #491 機制修正（2026-10-07）：cgroup PSI 只計入該 cgroup 內的任務。先前假設量測開始後 bench 自己的任務排隊就足以偵測壓力，但 `engine exec` 啟動的盒內行程跑在盒子的 cgroup，並非 bench 的 cgroup；#491 的 Rust 編譯負載下，bench PSI peak 只有 0.65，卻給出 shell median 327.1 ms 的退化判決。因此除了 bench 自身來源，還透過 distrobox 使用的 engine `inspect --format '{{.State.Pid}}' <box>` 取得盒子主 PID，解析 `/proc/<pid>/cgroup` 的 `0::<路徑>`，相對於讀取者 cgroup namespace 對應到 `/sys/fs/cgroup<路徑>/cpu.pressure`。rootful engine、DinD 與 podman 都沿用此查找方式。
+- 前置等待與每次執行前後都讀兩個來源，取較大值精確比較；stderr 逐次記錄各來源路徑與數值，整批 peak 也分開記錄；盒子 PSI 途中讀不到時，不宣稱盒子全程安靜。盒子 cgroup 無法解析、無法讀取或沒有合法數值時，明確警告 `box cgroup check skipped`，保留 bench 自身的檢查；不假裝已檢查盒子。`BENCH_BOX_PSI_FILE` 僅供測試注入盒子 PSI。
+- 此修正只補足壓力來源的機制，不變量不變：忙碌環境的數字不是通過或退化的證據。2.00、連續 5 秒、`--max-wait`、逐次前後檢查（含失敗與暖身）、exit 3、不刪樣本、300 ms 與所有負例（含 `--max-ms 1`）維持原樣，不加重試。
 - 沒有 PSI 的核心上，gate 退回到沒有前置條件的舊行為，但會留下警告。
 
 ## 被否決的方案
