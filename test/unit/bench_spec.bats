@@ -176,12 +176,14 @@ EOF
 
 # A bounded CPU worker, used only inside the test container. timeout owns
 # the process group so an interrupted fixture cannot leave a busy loop behind.
+# Publish ready before the deadline starts, even if the child never gets CPU time.
 _install_cpu_load() {
     cat >"${MOCKBIN}/cpu-load" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'ready\n' >"$2"
 rc=0
-timeout "$1" bash -c 'printf "ready\n" >"$1"; while :; do :; done' _ "$2" || rc=$?
+timeout "$1" bash -c 'while :; do :; done' || rc=$?
 if (( rc == 124 )); then
     exit 0
 fi
@@ -556,6 +558,25 @@ _run_matrix() {
 }
 
 # The load fixture must stop itself even if the matrix fails or is interrupted.
+@test "artificial CPU load is ready even when timeout kills bash before its command starts" {
+    # Non-interactive bash sources BASH_ENV before executing its command.
+    # Stall only the bounded child, so timeout kills it before it can write ready.
+    cat >"${TMP}/stall-child.bash" <<'EOF'
+if [[ -n "${BASH_EXECUTION_STRING:-}" ]]; then
+    while :; do :; done
+fi
+EOF
+    run env BASH_ENV="${TMP}/stall-child.bash" \
+        timeout 3 "${MOCKBIN}/cpu-load" 0.15 "${TMP}/load.ready"
+    assert_success
+    run cat "${TMP}/load.ready"
+    assert_success
+    assert_output "ready"
+    _run_matrix enter 1
+    _run_matrix shell 1
+    _run_matrix inbox 1
+}
+
 @test "artificial CPU load stops on its own within a short deadline" {
     run timeout 3 "${MOCKBIN}/cpu-load" 1 "${TMP}/load.ready"
     assert_success
