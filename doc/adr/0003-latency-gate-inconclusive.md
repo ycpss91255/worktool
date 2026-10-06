@@ -32,7 +32,7 @@ M3 實機驗收（PR #157）時，同一個 commit、同一台機器，只因主
 - `script/test/test.sh` 以 `-e CI` 把 `CI` 傳進 system-real 的 DinD runner，讓 CI 上的 real-engine gate 用 120 秒的等待上限；`test/system/real_engine_spec.bats` 要求前置條件的證據行，且只接受各案例自己的判定碼，所以 `3` 在 CI 上一樣是紅。
 - 呼叫 bench.sh 的其他入口（例如 PR #157 分支上的 `just verify gate`）要把 `3` 呈現為「未判定、請在閒置時重跑」，不得當成通過；在該分支恢復時一併處理。
 - #491 機制修正（2026-10-07）：cgroup PSI 只計入該 cgroup 內的任務。先前假設量測開始後 bench 自己的任務排隊就足以偵測壓力，但 `engine exec` 啟動的盒內行程跑在盒子的 cgroup，並非 bench 的 cgroup；#491 的 Rust 編譯負載下，bench PSI peak 只有 0.65，卻給出 shell median 327.1 ms 的退化判決。因此除了 bench 自身來源，還透過 distrobox 使用的 engine `inspect --format '{{.State.Pid}}' <box>` 取得盒子主 PID，解析 `/proc/<pid>/cgroup` 的 `0::<路徑>`，相對於讀取者 cgroup namespace 對應到 `/sys/fs/cgroup<路徑>/cpu.pressure`。rootful engine、DinD 與 podman 都沿用此查找方式。
-- 前置等待與每次執行前後都讀兩個來源，取較大值精確比較；stderr 逐次記錄各來源路徑與數值，整批 peak 也分開記錄。盒子 cgroup 無法解析、無法讀取或沒有合法數值時，明確警告 `box cgroup check skipped`，保留 bench 自身的檢查；不假裝已檢查盒子。`BENCH_BOX_PSI_FILE` 僅供測試注入盒子 PSI。
+- 前置等待與每次執行前後都讀兩個來源，取較大值精確比較；stderr 逐次記錄各來源路徑與數值，整批 peak 也分開記錄；盒子 PSI 途中讀不到時，不宣稱盒子全程安靜。盒子 cgroup 無法解析、無法讀取或沒有合法數值時，明確警告 `box cgroup check skipped`，保留 bench 自身的檢查；不假裝已檢查盒子。`BENCH_BOX_PSI_FILE` 僅供測試注入盒子 PSI。
 - 此修正只補足壓力來源的機制，不變量不變：忙碌環境的數字不是通過或退化的證據。2.00、連續 5 秒、`--max-wait`、逐次前後檢查（含失敗與暖身）、exit 3、不刪樣本、300 ms 與所有負例（含 `--max-ms 1`）維持原樣，不加重試。
 - 沒有 PSI 的核心上，gate 退回到沒有前置條件的舊行為，但會留下警告。
 

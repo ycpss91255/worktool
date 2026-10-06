@@ -1290,3 +1290,15 @@ EOF
     assert_output --partial "box cgroup"
     assert_output --partial "tests only"
 }
+
+@test "box PSI: lost box readings warn and never claim the box stayed quiet" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 0.00 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_PSI_FILE="${_box}" \
+        FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=garbage \
+        "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --partial "box cgroup PSI unreadable (${_box}) - box cgroup check skipped at after enter run 1"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    refute_output --partial "host stayed quiet: ${_box}"
+}

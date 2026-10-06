@@ -376,7 +376,7 @@ inbox: min=<ms> median=<ms> max=<ms> ms
   警告 `box cgroup PSI unreadable (<路徑或 unresolved>) - box cgroup check skipped`,
   仍保留 bench 自身來源的判定;量測途中讀不到也逐次警告。
 - **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
-  量完為每個可讀來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+  量完為每個全程可讀的來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
 - **沒有 PSI**:bench 的兩個候選來源與盒子 PSI 都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
   印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
   並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。

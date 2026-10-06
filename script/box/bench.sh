@@ -137,6 +137,7 @@ PSI_VAL=""             # last `some avg10`, as printed; empty = no reading
 PSI_PEAK=""            # highest reading of the batch, as printed
 BOX_PSI_PATH=""
 BOX_PSI_PEAK=""
+BOX_PSI_COMPLETE=1
 PSI_JUDGE_PATH=""      # source of the maximum reading
 LOADAVG="n/a"
 
@@ -566,6 +567,7 @@ _psi_sample() {
         fi
     else
         if [[ -n "${BOX_PSI_PATH}" ]]; then
+            BOX_PSI_COMPLETE=0
             log_warn "box cgroup PSI unreadable (${BOX_PSI_PATH}) - box cgroup check skipped at $1"
         fi
         PSI_VAL="${_own}"
@@ -754,7 +756,7 @@ _bench_exec() {
         log_info "host stayed quiet: ${PSI_PATH} some avg10 peak=${PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
 
-    if [[ -n "${BOX_PSI_PATH}" ]]; then
+    if [[ -n "${BOX_PSI_PATH}" && "${BOX_PSI_COMPLETE}" == 1 ]]; then
         _loadavg
         log_info "host stayed quiet: ${BOX_PSI_PATH} some avg10 peak=${BOX_PSI_PEAK} over every run; loadavg=${LOADAVG}"
     fi
