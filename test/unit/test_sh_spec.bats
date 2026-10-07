@@ -476,3 +476,15 @@ _prepare_lint_worktree() {
     assert [ "${stderr}" != "${stderr#*git unavailable}" ]
     assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
 }
+
+@test "test.sh labels every test container with the enclosing verify run identity" {
+    local tier
+    for tier in unit integration system-real; do
+        WORKTOOL_TEST_RUN_ID=owned-run run "${TEST_SH}" "--${tier}"
+        assert_success
+    done
+    local calls
+    calls="$(grep '^docker run ' "${FAKE_DOCKER_CALLS}")"
+    [ "$(printf '%s\n' "${calls}" | wc -l)" -eq 4 ]
+    [ "$(printf '%s\n' "${calls}" | grep -c -- '--label worktool.verify-run=owned-run')" -eq 4 ]
+}

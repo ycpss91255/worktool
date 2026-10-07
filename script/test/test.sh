@@ -26,7 +26,7 @@
 #   real-engine (--system-real) test/system/real_engine_spec.bats only;
 #               needs a live docker daemon, so it runs in the dedicated
 #               docker-in-docker runner image (dockerfile/Dockerfile.system-real)
-#               started with `docker run --rm --privileged`, whose entry
+#               started with `docker run --rm "${TEST_RUN_LABEL[@]}" --privileged`, whose entry
 #               (script/test/system-real-entry.sh) starts dockerd and then
 #               calls back into --ci-system-real. --privileged is used ONLY
 #               here.
@@ -73,6 +73,12 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
+
+# Only verification-owned containers carry the cleanup identity.
+TEST_RUN_LABEL=()
+if [[ -n "${WORKTOOL_TEST_RUN_ID:-}" ]]; then
+    TEST_RUN_LABEL=(--label "worktool.verify-run=${WORKTOOL_TEST_RUN_ID}")
+fi
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -284,7 +290,7 @@ _run_in_container() {
             || _die "cannot resolve Git common directory"
         _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -312,7 +318,7 @@ _run_ghostty_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_ghostty_image
     _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
-    docker run --rm \
+    docker run --rm "${TEST_RUN_LABEL[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${GHOSTTY_IMAGE}" \
@@ -339,7 +345,7 @@ _run_system_real_in_runner() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged -e CI \
+    docker run --rm "${TEST_RUN_LABEL[@]}" --privileged -e CI \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
