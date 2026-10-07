@@ -72,6 +72,8 @@ LIB_DIR="${REPO_ROOT}/lib"
 
 # shellcheck source=lib/guard.sh
 source "${LIB_DIR}/guard.sh"
+# shellcheck source=lib/verify_run.sh
+source "${LIB_DIR}/verify_run.sh"
 # shellcheck source=lib/manifest.sh
 source "${LIB_DIR}/manifest.sh"
 # shellcheck source=lib/distrobox_manager.sh
@@ -158,7 +160,7 @@ EOF
 # `just` always runs from the repo root, so the root justfile is the one found
 # whatever directory the maintainer invoked this script from.
 _just() {
-    (cd -- "${REPO_ROOT}" && timeout -k 10 "${TIMEOUT_LONG}" just "$@")
+    (cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@")
 }
 
 # Refuse before creating anything: a box we did not make is never ours to

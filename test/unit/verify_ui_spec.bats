@@ -535,9 +535,30 @@ EOF
     local _copy="${BATS_TEST_TMPDIR}/copy"
     mkdir -p "${_copy}/script/verify" "${_copy}/lib"
     cp "${UI_SH}" "${_copy}/script/verify/ui.sh"
-    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${_copy}/lib/"
+    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" \
+        "${REPO_ROOT}/lib/verify_run.sh" "${_copy}/lib/"
     run "${_copy}/script/verify/ui.sh" 1.1
     assert_failure 3
     assert_line "[INFO] ui.sh: no justfile at ${_copy} - item 1.1 cannot be checked here"
     refute_output --partial '[UNAVAILABLE]'
+}
+
+@test "timeout cleanup: ui kills a TERM-ignoring descendant before returning" {
+    _stub just <<'EOF'
+bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
+wait
+EOF
+    local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
+    ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" VERIFY_TIMEOUT=0.2 PATH="${FAKE_BIN}:${PATH}" run "${UI_SH}" 1.1
+    assert_failure 1
+    assert_output --partial 'did not finish within 0.2s (timeout)'
+    local pid
+    pid="$(cat "${pid_file}")"
+    local alive=0
+    if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+        alive=1
+        kill -KILL "${pid}"
+    fi
+    [ "${alive}" -eq 0 ]
+    [ ! -e "${marker}" ]
 }

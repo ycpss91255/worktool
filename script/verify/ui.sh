@@ -106,6 +106,8 @@ fi
 source "${REPO_ROOT}/lib/guard.sh"
 # shellcheck source=log.sh
 source "${REPO_ROOT}/lib/log.sh"
+# shellcheck source=verify_run.sh
+source "${REPO_ROOT}/lib/verify_run.sh"
 
 # --- Diagnostics -------------------------------------------------------------
 # Everything here goes to stderr: stdout is reserved for the lines
@@ -216,7 +218,7 @@ _just_capture() {
     local -n _out_ref="$1"
     shift
     local _label="just $*" _rc=0
-    _out_ref="$(timeout "${VERIFY_TIMEOUT}" just "$@" 2>&1)" || _rc=$?
+    _out_ref="$(verify_run "${VERIFY_TIMEOUT}" just "$@" 2>&1)" || _rc=$?
     if [[ "${_rc}" -eq 124 ]]; then
         _err "\`${_label}\` did not finish within ${VERIFY_TIMEOUT}s (timeout)"
         return 1

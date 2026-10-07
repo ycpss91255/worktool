@@ -2017,3 +2017,27 @@ STUB
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }
+
+@test "timeout cleanup: realbox kills a TERM-ignoring just descendant" {
+    local timeout_real
+    timeout_real="$(command -v timeout)"
+    printf '#!/usr/bin/env bash\nshift 3\nexec %q -k 1 0.2 "$@"\n' "${timeout_real}" >"${STUBS}/timeout"
+    chmod +x "${STUBS}/timeout"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
+wait
+STUB
+    local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
+    ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    local pid alive=0
+    pid="$(cat "${pid_file}")"
+    if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+        alive=1
+        kill -KILL "${pid}"
+    fi
+    [ "${alive}" -eq 0 ]
+    [ ! -e "${marker}" ]
+}
