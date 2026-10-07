@@ -527,6 +527,7 @@ _51_body() {
 
 item_51() {
     guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
+        cat rm find cmp \
         || return $?
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \

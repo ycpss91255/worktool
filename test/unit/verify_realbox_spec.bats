@@ -191,6 +191,31 @@ EOF
 
 # --- helpers (pure bash: the shims may be told to break coreutils) -----------
 
+_path_without() {
+    local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
+    mkdir -p "${_path}"
+    for _tool in bash dirname ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        [[ "${_tool}" != "$1" ]] || continue
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    printf '%s\n' "${_path}"
+}
+
+@test "5.1: missing report or cleanup tools refuses before scratch or box creation" {
+    local _tool _path
+    for _tool in cat rm find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+    done
+}
+
 # Number of logged calls whose line starts with "$1 ".
 _count_calls() {
     local _n=0 _l
