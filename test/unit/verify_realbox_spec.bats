@@ -194,7 +194,7 @@ EOF
 _path_without() {
     local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
     mkdir -p "${_path}"
-    for _tool in bash dirname ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
         [[ "${_tool}" != "$1" ]] || continue
         ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
@@ -275,6 +275,18 @@ _path_without() {
         assert_equal "$(_count_calls distrobox)" '0'
         assert_equal "$(_count_calls just)" '0'
     done
+}
+
+@test "5.2.2: missing engine path resolver refuses before revalidation or apply" {
+    local _path
+    _path="$(_path_without realpath)"
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 3
+    assert_output --partial '[UNAVAILABLE] realbox.sh: realpath not found on PATH'
+    refute_output --partial 'revalidate=1'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    [ ! -e "$(_backup_dir)" ]
 }
 
 # Number of logged calls whose line starts with "$1 ".

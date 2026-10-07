@@ -598,7 +598,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_step2_apply() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps || return $?
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -840,7 +840,7 @@ _52_step3_restore() {
 
 item_52() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps || return $?
+        grep cut id cat find sort cmp ps realpath || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
@@ -942,7 +942,7 @@ _53_body() {
 
 item_53() {
     guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
-        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps || return $?
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \
