@@ -261,6 +261,22 @@ _path_without() {
     done
 }
 
+@test "5.2: missing later step tools refuses the full chain before backup creation" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in distrobox just timeout awk ps rmdir; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+    done
+}
+
 # Number of logged calls whose line starts with "$1 ".
 _count_calls() {
     local _n=0 _l

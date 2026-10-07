@@ -839,7 +839,8 @@ _52_step3_restore() {
 }
 
 item_52() {
-    guard_require ghostty id || return $?
+    guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
+        grep cut id cat find sort cmp ps || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
