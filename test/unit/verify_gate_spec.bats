@@ -989,3 +989,31 @@ EOF
     [ "${alive}" -eq 0 ]
     [ ! -e "${marker}" ]
 }
+
+@test "timeout cleanup: removes only containers labeled by this run" {
+    _stub docker <<'EOF'
+printf '%s\n' "$*" >>"$CLEANUP_CALLS"
+if [[ "$1" == ps ]]; then
+    [[ "$*" == *"label=worktool.verify-run=$(cat "$RUN_ID")"* ]] || exit 1
+    echo owned-container
+elif [[ "$1" == rm ]]; then
+    [[ "$*" == 'rm -f -v owned-container' ]] || exit 1
+    touch "$CONTAINER_STOPPED"
+fi
+EOF
+    _stub just <<'EOF'
+printf '%s' "${WORKTOOL_TEST_RUN_ID:-}" >"$RUN_ID"
+sleep 5
+EOF
+    local id="${BATS_TEST_TMPDIR}/id" stopped="${BATS_TEST_TMPDIR}/stopped"
+    local calls="${BATS_TEST_TMPDIR}/cleanup"
+    RUN_ID="${id}" CONTAINER_STOPPED="${stopped}" CLEANUP_CALLS="${calls}" \
+        GATE_TIMEOUT=0.2 PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.1
+    assert_failure 1
+    assert_output --partial 'did not finish within 0.2s (timeout)'
+    [ -s "${id}" ]
+    [ -e "${stopped}" ]
+    run cat "${calls}"
+    assert_line 'rm -f -v owned-container'
+    refute_output --partial prune
+}
