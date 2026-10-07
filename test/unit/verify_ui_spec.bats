@@ -535,7 +535,8 @@ EOF
     local _copy="${BATS_TEST_TMPDIR}/copy"
     mkdir -p "${_copy}/script/verify" "${_copy}/lib"
     cp "${UI_SH}" "${_copy}/script/verify/ui.sh"
-    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${_copy}/lib/"
+    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" \
+        "${REPO_ROOT}/lib/verify_run.sh" "${_copy}/lib/"
     run "${_copy}/script/verify/ui.sh" 1.1
     assert_failure 3
     assert_line "[INFO] ui.sh: no justfile at ${_copy} - item 1.1 cannot be checked here"
@@ -561,4 +562,3 @@ EOF
     [ "${alive}" -eq 0 ]
     [ ! -e "${marker}" ]
 }
-
