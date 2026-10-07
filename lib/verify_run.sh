@@ -8,12 +8,12 @@ verify_run() {
     if [[ "$1" == just && "${2:-}" == test ]]; then
         run_id="${state##*/}"
     fi
-    WORKTOOL_TEST_RUN_ID="${run_id}" state="${state}" timeout -k 1 "${budget}" bash -c '
-        mark_deadline() { touch "$state/deadline"; }
+    WORKTOOL_TEST_RUN_ID="${run_id}" state="${state}" timeout -k 1 "${budget}" bash -c "
+        mark_deadline() { touch \"\${state}/deadline\"; }
         trap mark_deadline TERM
-        "$@" &
-        wait "$!"
-    ' _ "$@" &
+        \"\$@\" &
+        wait \"\$!\"
+    " _ "$@" &
     monitor=$!
     wait "${monitor}" || rc=$?
     if [[ "${rc}" -eq 124 || -e "${state}/deadline" ]]; then
