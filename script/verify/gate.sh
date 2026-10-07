@@ -220,6 +220,8 @@ fi
 source "${REPO_ROOT}/lib/guard.sh"
 # shellcheck source=log.sh
 source "${REPO_ROOT}/lib/log.sh"
+# shellcheck source=verify_run.sh
+source "${REPO_ROOT}/lib/verify_run.sh"
 
 TDD_SH="${REPO_ROOT}/doc/evidence/tdd.sh"
 TDD_AWK="${REPO_ROOT}/doc/evidence/tdd.awk"
@@ -558,7 +560,7 @@ _check_tier_order() {
 # decides, not the last line it happened to print.
 _item_2_1() {
     local _rc=0
-    timeout "${GATE_TIMEOUT}" just test || _rc=$?
+    verify_run "${GATE_TIMEOUT}" just test || _rc=$?
     if [[ "${_rc}" -eq 124 ]]; then
         _err "\`just test\` did not finish within ${GATE_TIMEOUT}s (timeout)"
         return 1

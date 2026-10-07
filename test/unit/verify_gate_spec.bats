@@ -117,7 +117,7 @@ _make_repo_copy() {
     cp "${REPO_ROOT}/script/verify/gate.sh" "${COPY}/script/verify/gate.sh"
     cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
     mkdir -p "${COPY}/lib"
-    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${COPY}/lib/"
+    cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${REPO_ROOT}/lib/verify_run.sh" "${COPY}/lib/"
 }
 
 # _stub <name> - body on stdin. The body runs with $REAL set to the real
@@ -946,4 +946,25 @@ EOF
         | awk '/^ *```text/ {text=1; next} /^ *```/ {text=0} text {print}' >"${_doc}"
     run grep -E '\[ci\]|\[system-real\]|\[INFO\]|\[ERROR\]|^ *(PASS|FAIL)|^ *distrobox assemble|^ *assemble.sh:' "${_doc}"
     assert_failure 1
+}
+
+@test "timeout cleanup: item 2.1 kills a TERM-ignoring descendant before returning" {
+    _stub_ci_tools
+    _stub just <<'EOF'
+bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
+wait
+EOF
+    local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
+    ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" GATE_TIMEOUT=0.2 PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.1
+    assert_failure 1
+    assert_output --partial 'did not finish within 0.2s (timeout)'
+    local pid
+    pid="$(cat "${pid_file}")"
+    local alive=0
+    if kill -0 "${pid}" 2>/dev/null && [[ "$(ps -o stat= -p "${pid}")" != Z* ]]; then
+        alive=1
+        kill -KILL "${pid}"
+    fi
+    [ "${alive}" -eq 0 ]
+    [ ! -e "${marker}" ]
 }
