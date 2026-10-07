@@ -940,7 +940,8 @@ _53_body() {
 }
 
 item_53() {
-    guard_require distrobox just gh jq timeout awk grep || return $?
+    guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \

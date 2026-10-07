@@ -133,7 +133,7 @@ setup() {
     done
 }
 
-@test "5.3: missing backup tool remains unavailable through decoy cleanup" {
+@test "5.3: missing backup tool is unavailable before decoy creation" {
     local _path="${BATS_TEST_TMPDIR}/no-cp" _tool
     mkdir -p "${_path}"
     for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir ghostty; do
@@ -142,7 +142,7 @@ setup() {
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
     assert_output --partial "[UNAVAILABLE] realbox.sh: cp not found on PATH"
-    assert_line 'decoy-cleanup-rc=0'
+    assert_equal "$(_count_calls distrobox)" '0'
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -159,7 +159,7 @@ setup() {
     assert_equal "$(_count_calls just)" "0"
 }
 
-@test "5.3: an unavailable refusal check cannot count as a product refusal" {
+@test "5.3: an unavailable refusal check refuses before decoy creation" {
     local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
     mkdir -p "${_path}"
     for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
@@ -168,7 +168,7 @@ setup() {
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
     assert_output --partial "[UNAVAILABLE] realbox.sh: wc not found on PATH"
-    assert_line 'decoy-cleanup-rc=0'
+    assert_equal "$(_count_calls distrobox)" '0'
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -240,6 +240,25 @@ _path_without() {
     assert_success
     assert_equal "$(_count_calls just)" '0'
     assert_equal "$(_count_calls distrobox)" '0'
+}
+
+@test "5.3: missing nested item tools refuses before any decoy or backup side effect" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in ghostty mktemp cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        [ ! -s "${STATE}/boxes" ]
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+    done
 }
 
 # Number of logged calls whose line starts with "$1 ".
