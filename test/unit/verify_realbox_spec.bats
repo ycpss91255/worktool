@@ -84,6 +84,7 @@ setup() {
     for _t in "${REALBOX_SHIMMED_TOOLS[@]}"; do
         install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_shim.sh" "${STUBS}/${_t}"
     done
+    ln -s "$(command -v true)" "${STUBS}/ghostty"
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
@@ -109,10 +110,33 @@ setup() {
     assert_equal "$(_count_calls distrobox)" "0"
 }
 
+@test "5.2: missing Ghostty refuses every step before backups or config writes" {
+    local _path="${BATS_TEST_TMPDIR}/no-ghostty" _tool _item
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just timeout grep cut sort mkdir find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    _seed_shared_state
+    printf 'set -g status off\n' >"${HOME}/.tmux.conf"
+    printf 'font-size = 14\n' >"${HOME}/.config/ghostty/config.ghostty"
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _item in 5.2 5.2.1 5.2.2 5.2.3; do
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box "${_item}"
+        assert_failure 3
+        assert_output --partial '[UNAVAILABLE] realbox.sh: ghostty not found on PATH'
+        refute_output --partial '[FAIL]'
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+    done
+}
+
 @test "5.3: missing backup tool remains unavailable through decoy cleanup" {
     local _path="${BATS_TEST_TMPDIR}/no-cp" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir; do
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
@@ -125,7 +149,7 @@ setup() {
 @test "5.2: missing apply tool stays unavailable when restore also cannot run" {
     local _path="${BATS_TEST_TMPDIR}/no-distrobox" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
@@ -138,7 +162,7 @@ setup() {
 @test "5.3: an unavailable refusal check cannot count as a product refusal" {
     local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3

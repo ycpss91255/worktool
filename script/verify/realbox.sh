@@ -574,7 +574,7 @@ _52_baseline_ghostty() {
 }
 
 _52_step1_backup() {
-    guard_require sha256sum cp mv mkdir rm readlink grep cut id || return $?
+    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id || return $?
     cfgbk_paths || return 1
     _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
@@ -597,7 +597,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_step2_apply() {
-    guard_require distrobox just timeout awk sha256sum grep cut readlink id ps || return $?
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -659,7 +659,7 @@ _52_dev_namespace() {
 
 _52_window_evidence() {
     local _pid="$1" _comm _host _window _dev _before _name
-    guard_require ps readlink || return $?
+    guard_require ghostty ps readlink || return $?
     while read -r _before _name; do
         [[ "${_before}" != "${_pid}" ]] \
             || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
@@ -720,7 +720,7 @@ _52_cleanup_state() {
 
 _52_confirm_restore() {
     local _pid
-    guard_require ps readlink || return $?
+    guard_require ghostty ps readlink || return $?
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before-restore-window" \
         || { guard_fail "cannot inventory processes before restore window"; return 1; }
     printf 'Reload the RESTORED Ghostty config (Linux default Ctrl+Shift+,).\n'
@@ -787,7 +787,7 @@ _52_report_restore_window() {
 }
 
 _52_step3_restore() {
-    guard_require distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
         || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
@@ -837,6 +837,7 @@ _52_step3_restore() {
 }
 
 item_52() {
+    guard_require ghostty id || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
