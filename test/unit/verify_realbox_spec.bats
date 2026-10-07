@@ -84,6 +84,7 @@ setup() {
     for _t in "${REALBOX_SHIMMED_TOOLS[@]}"; do
         install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_shim.sh" "${STUBS}/${_t}"
     done
+    ln -s "$(type -P true)" "${STUBS}/ghostty"
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
@@ -109,23 +110,46 @@ setup() {
     assert_equal "$(_count_calls distrobox)" "0"
 }
 
-@test "5.3: missing backup tool remains unavailable through decoy cleanup" {
+@test "5.2: missing Ghostty refuses every step before backups or config writes" {
+    local _path="${BATS_TEST_TMPDIR}/no-ghostty" _tool _item
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just timeout grep cut sort mkdir find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    _seed_shared_state
+    printf 'set -g status off\n' >"${HOME}/.tmux.conf"
+    printf 'font-size = 14\n' >"${HOME}/.config/ghostty/config.ghostty"
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _item in 5.2 5.2.1 5.2.2 5.2.3; do
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box "${_item}"
+        assert_failure 3
+        assert_output --partial '[UNAVAILABLE] realbox.sh: ghostty not found on PATH'
+        refute_output --partial '[FAIL]'
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+    done
+}
+
+@test "5.3: missing backup tool is unavailable before decoy creation" {
     local _path="${BATS_TEST_TMPDIR}/no-cp" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir; do
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
     assert_output --partial "[UNAVAILABLE] realbox.sh: cp not found on PATH"
-    assert_line 'decoy-cleanup-rc=0'
+    assert_equal "$(_count_calls distrobox)" '0'
     [ ! -s "${STATE}/boxes" ]
 }
 
 @test "5.2: missing apply tool stays unavailable when restore also cannot run" {
     local _path="${BATS_TEST_TMPDIR}/no-distrobox" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
@@ -135,16 +159,16 @@ setup() {
     assert_equal "$(_count_calls just)" "0"
 }
 
-@test "5.3: an unavailable refusal check cannot count as a product refusal" {
+@test "5.3: an unavailable refusal check refuses before decoy creation" {
     local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
     mkdir -p "${_path}"
-    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
         ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
     assert_failure 3
     assert_output --partial "[UNAVAILABLE] realbox.sh: wc not found on PATH"
-    assert_line 'decoy-cleanup-rc=0'
+    assert_equal "$(_count_calls distrobox)" '0'
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -166,6 +190,104 @@ EOF
 }
 
 # --- helpers (pure bash: the shims may be told to break coreutils) -----------
+
+_path_without() {
+    local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
+    mkdir -p "${_path}"
+    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        [[ "${_tool}" != "$1" ]] || continue
+        ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    printf '%s\n' "${_path}"
+}
+
+@test "5.1: missing report or cleanup tools refuses before scratch or box creation" {
+    local _tool _path
+    for _tool in cat rm find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+    done
+}
+
+@test "5.2: missing backup or restore tools leaves configs and published backup untouched" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in cat find sort cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    _realbox_quiet 5.2.1
+    cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
+    for _tool in ps find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        run diff -r "${STATE}/baseline-backup" "$(_backup_dir)"
+        assert_success
+    done
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+}
+
+@test "5.3: missing nested item tools refuses before any decoy or backup side effect" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in ghostty mktemp cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        [ ! -s "${STATE}/boxes" ]
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+    done
+}
+
+@test "5.2: missing later step tools refuses the full chain before backup creation" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in distrobox just timeout awk ps rmdir; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+    done
+}
+
+@test "5.2.2: missing engine path resolver refuses before revalidation or apply" {
+    local _path
+    _path="$(_path_without realpath)"
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 3
+    assert_output --partial '[UNAVAILABLE] realbox.sh: realpath not found on PATH'
+    refute_output --partial 'revalidate=1'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    [ ! -e "$(_backup_dir)" ]
+}
 
 # Number of logged calls whose line starts with "$1 ".
 _count_calls() {
