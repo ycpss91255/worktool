@@ -9,7 +9,8 @@ verify_run() {
         run_id="${state##*/}"
     fi
     WORKTOOL_TEST_RUN_ID="${run_id}" state="${state}" timeout -k 1 "${budget}" bash -c '
-        trap '\''touch "$state/deadline"'\'' TERM
+        mark_deadline() { touch "$state/deadline"; }
+        trap mark_deadline TERM
         "$@" &
         wait "$!"
     ' _ "$@" &
@@ -20,7 +21,7 @@ verify_run() {
             : # The process group may already have exited.
         fi
         if [[ -n "${run_id}" ]]; then
-            verify_cleanup_containers "${run_id}"
+            verify_cleanup_containers "${run_id}" || rc=$?
         fi
         rc=124
     fi
