@@ -379,7 +379,7 @@ _just_test_into() {
     shift 2
     local _label="just test $*"
     _rc_ref=0
-    timeout "${GATE_TIMEOUT}" just test "$@" >"${_file}" 2>&1 || _rc_ref=$?
+    verify_run "${GATE_TIMEOUT}" just test "$@" >"${_file}" 2>&1 || _rc_ref=$?
     if [[ "${_rc_ref}" -eq 124 ]]; then
         _err "\`${_label}\` did not finish within ${GATE_TIMEOUT}s (timeout)"
         return 1

@@ -961,7 +961,28 @@ EOF
     local pid
     pid="$(cat "${pid_file}")"
     local alive=0
-    if kill -0 "${pid}" 2>/dev/null && [[ "$(ps -o stat= -p "${pid}")" != Z* ]]; then
+    if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+        alive=1
+        kill -KILL "${pid}"
+    fi
+    [ "${alive}" -eq 0 ]
+    [ ! -e "${marker}" ]
+}
+
+@test "timeout cleanup: item 2.3 kills a TERM-ignoring descendant before returning" {
+    _stub_ci_tools
+    _stub just <<'EOF'
+bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
+wait
+EOF
+    local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
+    ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" GATE_TIMEOUT=0.2 PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'did not finish within 0.2s (timeout)'
+    local pid
+    pid="$(cat "${pid_file}")"
+    local alive=0
+    if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
         alive=1
         kill -KILL "${pid}"
     fi
