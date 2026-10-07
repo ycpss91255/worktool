@@ -575,7 +575,7 @@ _52_baseline_ghostty() {
 }
 
 _52_step1_backup() {
-    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id || return $?
+    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp || return $?
     cfgbk_paths || return 1
     _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
@@ -789,6 +789,7 @@ _52_report_restore_window() {
 
 _52_step3_restore() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
+        ps find cmp \
         || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc

@@ -84,7 +84,7 @@ setup() {
     for _t in "${REALBOX_SHIMMED_TOOLS[@]}"; do
         install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_shim.sh" "${STUBS}/${_t}"
     done
-    ln -s "$(command -v true)" "${STUBS}/ghostty"
+    ln -s "$(type -P true)" "${STUBS}/ghostty"
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
@@ -196,7 +196,7 @@ _path_without() {
     mkdir -p "${_path}"
     for _tool in bash dirname ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
         [[ "${_tool}" != "$1" ]] || continue
-        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+        ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     printf '%s\n' "${_path}"
 }
@@ -214,6 +214,32 @@ _path_without() {
         assert_success
         assert_output ''
     done
+}
+
+@test "5.2: missing backup or restore tools leaves configs and published backup untouched" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in cat find sort cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    _realbox_quiet 5.2.1
+    cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
+    for _tool in ps find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        run diff -r "${STATE}/baseline-backup" "$(_backup_dir)"
+        assert_success
+    done
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
 }
 
 # Number of logged calls whose line starts with "$1 ".
