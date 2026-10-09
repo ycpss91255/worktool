@@ -26,7 +26,7 @@
 #   real-engine (--system-real) test/system/real_engine_spec.bats only;
 #               needs a live docker daemon, so it runs in the dedicated
 #               docker-in-docker runner image (dockerfile/Dockerfile.system-real)
-#               started with `docker run --rm --privileged`, whose entry
+#               started with `docker run --rm "${TEST_RUN_LABEL[@]}" --privileged`, whose entry
 #               (script/test/system-real-entry.sh) starts dockerd and then
 #               calls back into --ci-system-real. --privileged is used ONLY
 #               here.
@@ -73,6 +73,12 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
+
+# Only verification-owned containers carry the cleanup identity.
+TEST_RUN_LABEL=()
+if [[ -n "${WORKTOOL_TEST_RUN_ID:-}" ]]; then
+    TEST_RUN_LABEL=(--label "worktool.verify-run=${WORKTOOL_TEST_RUN_ID}")
+fi
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -271,18 +277,21 @@ _run_in_container() {
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
     local _layout_paths="" _rc=0
-    local _layout_env=()
+    local _layout_env=() _git_mount=()
     if [[ "${_flag}" == --ci-lint ]]; then
         mkdir -p "${REPO_ROOT}/.agents/state"
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
-        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
-            rm -f "${_layout_paths}"
-            _die "could not enumerate repository paths for lint"
-        fi
+        _write_lint_paths "${_layout_paths}"
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    elif [[ -f "${REPO_ROOT}/.git" ]]; then
+        local _git_common_dir
+        _git_common_dir="$(git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+            rev-parse --path-format=absolute --git-common-dir)" \
+            || _die "cannot resolve Git common directory"
+        _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
-        -v "${REPO_ROOT}:/source" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
+        -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \
         ./script/test/test.sh "${_flag}" "$@" || _rc=$?
@@ -309,7 +318,7 @@ _run_ghostty_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_ghostty_image
     _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
-    docker run --rm \
+    docker run --rm "${TEST_RUN_LABEL[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${GHOSTTY_IMAGE}" \
@@ -336,7 +345,7 @@ _run_system_real_in_runner() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged -e CI \
+    docker run --rm "${TEST_RUN_LABEL[@]}" --privileged -e CI \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -345,12 +354,35 @@ _run_system_real_in_runner() {
 
 # --- Container side: gates ----------------------------------------------------
 
-# Emit NUL-delimited lintable shell scripts. -print0 keeps paths with odd
-# characters intact.
+# Write repository-relative paths, NUL-delimited to preserve odd characters.
+# A per-command safe.directory permits root to inspect the mounted checkout.
+_write_lint_paths() {
+    local _destination="$1" _path
+    if ! command -v git >/dev/null 2>&1; then
+        _info "git unavailable; falling back to filesystem lint discovery"
+    elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+        ls-files --cached --others --exclude-standard -z >"${_destination}" 2>/dev/null; then
+        return 0
+    else
+        _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
+    fi
+    while IFS= read -r -d '' _path; do
+        printf '%s\0' "${_path#"${REPO_ROOT}/"}"
+    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0) >"${_destination}"
+}
+
+# Emit existing regular shell scripts from the selected path snapshot.
 _find_lintable_sh() {
-    find "${REPO_ROOT}" \
-        -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.sh' -print0
+    local _path
+    while IFS= read -r -d '' _path; do
+        case "${_path}" in
+            *.sh|*.bats)
+                if [[ -f "${REPO_ROOT}/${_path}" && ! -L "${REPO_ROOT}/${_path}" ]]; then
+                    printf '%s\0' "${REPO_ROOT}/${_path}"
+                fi ;;
+        esac
+    done <"${WORKTOOL_LAYOUT_PATHS}"
 }
 
 _run_shellcheck() {
@@ -359,12 +391,6 @@ _run_shellcheck() {
     while IFS= read -r -d '' _f; do
         _files+=("${_f}")
     done < <(_find_lintable_sh)
-    # *.bats are bash under the hood; check them too (info-level findings
-    # still fail the gate, matching init_ubuntu's lint policy).
-    while IFS= read -r -d '' _f; do
-        _files+=("${_f}")
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.bats' -print0)
 
     if [[ "${#_files[@]}" -eq 0 ]]; then
         _info "  (no shell scripts to check - skipping)"
@@ -376,6 +402,23 @@ _run_shellcheck() {
         || _die "ShellCheck failed - see violations above"
     _info "ShellCheck OK"
 }
+
+# Host lint supplies a snapshot when linked-worktree metadata is outside
+# /source. Direct container callers create their own, with filesystem fallback.
+_run_lint() (
+    if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]]; then
+        WORKTOOL_LAYOUT_PATHS="$(mktemp)"
+        trap 'rm -f "${WORKTOOL_LAYOUT_PATHS}"' EXIT
+        _write_lint_paths "${WORKTOOL_LAYOUT_PATHS}"
+    fi
+    [[ -r "${WORKTOOL_LAYOUT_PATHS}" ]] || _die "lint path snapshot unreadable"
+    export WORKTOOL_LAYOUT_PATHS
+    _run_shellcheck
+    _info "Checking script layout and process artifacts"
+    "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+        || _die "Script layout check failed"
+    _info "Script layout OK"
+)
 
 # Check the captured TAP stream of tier $1 in file $2 after the run: a plan
 # was emitted, at least one case ran (no "1..0"), the plan covers at least
@@ -642,11 +685,7 @@ _run_ci_gate() {
     shift
     case "${_flag}" in
         --ci-lint)
-            _run_shellcheck
-            _info "Checking script layout and process artifacts"
-            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
-                || _die "Script layout check failed"
-            _info "Script layout OK"
+            _run_lint
             ;;
         --ci-unit)         _run_unit "$@" ;;
         --ci-matrix)       _run_matrix "$@" ;;
@@ -844,7 +883,8 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout \
+        verify_ui; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

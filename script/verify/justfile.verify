@@ -1,0 +1,83 @@
+# justfile.verify - the `verify` namespace of the worktool just interface.
+#
+# `mod?`d by the root justfile as `verify`: `just verify` lists the verify
+# verbs, `just verify ui [args]` forwards to ./script/verify/ui.sh,
+# `just verify gate [args]` to ./script/verify/gate.sh, `just verify setup
+# [args]` to ./script/verify/setup.sh, `just verify diagram [args]` to
+# ./script/verify/diagram.sh, `just verify realbox [args]` to
+# ./script/verify/realbox.sh, `just verify evidence [args]` to
+# ./script/verify/evidence.sh and `just verify all [args]` to
+# ./script/verify/all.sh, which runs every non-real-machine group (ui,
+# gate, setup, diagram, evidence) in order and is the one that verifies.
+# Bare `just verify` only lists and says so (#182): its rc=0 is not a pass.
+# Base model (ycpss91255-docker/base
+# ADR-00000005/10/11): thin forwarders only - `set positional-arguments` +
+# "$@" hands the arguments over VERBATIM (argv boundaries intact), nothing
+# is validated here and no usage text lives here: `just verify help` runs
+# each script's --help in turn, and an unknown option or an unknown item is
+# refused by the script itself (`<script>.sh: unknown option '<x>' (see
+# --help)`, exit 2).
+#
+# These are the acceptance checks of doc/acceptance.md: the checklist no
+# longer carries shell logic, every 驗收方式 block is one `just verify ...`
+# call. `just verify <verb>` with no item runs every item of that script in
+# order and stops at the first failure; `just verify <verb> <item>` runs one.
+#
+# The one-line comment above each recipe is what `just --list` shows.
+
+# Recipes run from the repo root (relative ./script/..., doc/evidence/...),
+# whether reached via the `verify` module or a direct `just -f`. `../..` is
+# relative to this file's directory (script/verify), i.e. the repo root.
+set working-directory := '../..'
+
+# Expose the recipe arguments as "$@" so `*args` is forwarded per argument,
+# not re-split by the shell.
+set positional-arguments
+
+# source_file() is THIS module's file: inside a mod?'d module `justfile`
+# resolves to the root entry, so listing that would show the namespaces
+# instead of the verify verbs.
+# List the verify verbs (verifies nothing; `just verify all` does).
+default:
+    @just --justfile '{{source_file()}}' --list
+    @echo 'NOTE: this only lists the verify groups - nothing has been verified. Run `just verify all` to verify every non-real-machine group (realbox needs --allow-real-box on a real host).'
+
+# Every non-real-machine group in order (ui gate setup diagram evidence), stop at the first failure, one verdict (args: --list, --help).
+all *args:
+    ./script/verify/all.sh "$@"
+
+# Acceptance item 1.1: the box namespace user interface (args: ITEM, --list, --help).
+ui *args:
+    ./script/verify/ui.sh "$@"
+
+# Acceptance items 2.1-2.4: the automated gates, the TDD evidence and their own negatives (args: ITEM, --list, --help).
+gate *args:
+    ./script/verify/gate.sh "$@"
+
+# Acceptance items 3.1-3.9: auto-enter setup and status, each under a throwaway HOME (args: ITEM, --list, --help).
+setup *args:
+    ./script/verify/setup.sh "$@"
+
+# Acceptance item 4.1: the three README draw.io diagrams (args: ITEM, --root <repo>, --help).
+diagram *args:
+    ./script/verify/diagram.sh "$@"
+
+# Acceptance items 5.1-5.3: the real machine; needs --allow-real-box (args: ITEM, --allow-real-box, --repo, --issue, --box, --image, --help).
+realbox *args:
+    ./script/verify/realbox.sh "$@"
+
+# Acceptance items 6.1-6.3: the external CI and process evidence, through gh (args: ITEM, --list, --help).
+evidence *args:
+    ./script/verify/evidence.sh "$@"
+
+alias h := help
+
+# Show every verify script's help (ui.sh, gate.sh, setup.sh, diagram.sh, realbox.sh, evidence.sh, all.sh --help).
+help:
+    ./script/verify/ui.sh --help
+    ./script/verify/gate.sh --help
+    ./script/verify/setup.sh --help
+    ./script/verify/diagram.sh --help
+    ./script/verify/realbox.sh --help
+    ./script/verify/evidence.sh --help
+    ./script/verify/all.sh --help

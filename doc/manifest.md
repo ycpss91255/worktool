@@ -353,30 +353,41 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 - **安靜判準**:CPU pressure(PSI)的 `some avg10 <= 2.00`(含 2.00),**連續 5 秒**
   成立(每秒讀一次,t .. t+5 都成立)。PSI 優先讀 bench.sh **自己所在 cgroup v2** 的
   `cpu.pressure`(`/proc/self/cgroup` 的 `0::<路徑>` 對到 `/sys/fs/cgroup<路徑>/cpu.pressure`),
-  讀不到才讀 `/proc/pressure/cpu`。loadavg(`/proc/loadavg`)**只記錄、不判定**。
+  讀不到才讀 `/proc/pressure/cpu`。另以 engine `inspect --format '{{.State.Pid}}' <box>`
+  取得盒子主 PID,解析 `/proc/<pid>/cgroup` 的 `0::<路徑>`,相對於讀取者的
+  cgroup namespace 對應 `/sys/fs/cgroup<路徑>/cpu.pressure`;以兩個來源的**較大值**判定。
+  loadavg(`/proc/loadavg`)**只記錄、不判定**。
 - **最多等待**:`--max-wait` 秒,預設 60;有設 `CI` 環境變數時預設 120
   (`script/test/test.sh` 以 `-e CI` 把它傳進 system-real 的 DinD runner)。逾時 →
   exit 3,STDERR 印
   `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
   STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
 - **量測途中**:每一次執行(暖身也算、失敗的那一次也算)的**前後**都讀取並**記錄** PSI
-  (每個邊界在 STDERR 印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
+  (每個邊界在 STDERR 為每個可讀來源各印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
   STDOUT 不變);任何一次超標(精確比較、不截斷小數:`2.001` 算超標),
   **整批作廢** → exit 3,STDERR 印
   `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
   不印任何指標行、不判 `--max-ms`;同一次執行本身失敗時也是 exit 3、不是 1。讀不到
   數值時 `<值>` 印 `?`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
-- **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
-  幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
-  擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、
-  整批作廢(見 ADR 0003「影響」的實跑數字)。
+- **cgroup 的盲點**:盒內行程跑在盒子的 cgroup,並非 bench 自身的 cgroup;只檢查
+  bench 的 PSI 會漏掉盒內任務的 CPU 排隊。#491 補上盒子來源,前置等待與執行前後
+  都比較兩者,理由見 ADR 0003。不刪樣本、不加重試。
+- **冷啟動查找**:開始時盒子尚未啟動而解析不到來源,每次執行前(含暖身)重新解析,
+  直到成功;從成功的該次起,每個 PSI 邊界都納入盒子來源並記錄路徑與數值。
+  這不重試量測,前置等待規則不變。
+- **盒子 PSI 讀不到**:整批仍無法解析 PID 或 cgroup、壓力檔讀不到或沒有合法數值時,
+  警告 `box cgroup PSI unreadable (<路徑或 unresolved>) - box cgroup check skipped`,
+  仍保留 bench 自身來源的判定;已解析的壓力檔在量測途中讀不到也逐次警告。
+  結尾以 `box cgroup PSI not checked at: before enter run 1; after enter run 1`
+  格式列出所有缺少盒子讀值的執行前後邊界(含暖身),不宣稱盒子全程安靜。
 - **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
-  量完印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
-- **沒有 PSI**:兩個來源都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
+  量完為每個全程可讀的來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+- **沒有 PSI**:bench 的兩個候選來源與盒子 PSI 都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
   印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
   並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。
 - **測試專用**:環境變數 `BENCH_PSI_FILE` 取代上述查找,直接讀指定檔案(`--help` 標為
-  tests only);單元測試以假 PSI 檔與假 `sleep` 驅動等待。
+  tests only);`BENCH_BOX_PSI_FILE` 則取代盒子 PSI 查找。單元測試以假 PSI 檔與假
+  `sleep` 驅動等待。
 
 CI 與實機同一套規則、同一個入口:CI 上的 3 一樣讓 job 失敗,不因 runner 忙而跳過 gate;
 300 ms 門檻不變。
@@ -410,7 +421,7 @@ shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 
 這支工具**只量測、只在 `--max-ms` 明確給定時才判定**;本工具是 issue #22 從中拆出來
 的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
-維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
+維持 docker + 預設 runc)。「進盒 ≤ 300 ms」的達標**由系統層 real-engine 組強制**
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
 的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
 --max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
