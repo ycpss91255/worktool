@@ -151,7 +151,8 @@ Options:
   -h, --help         Show this help and exit 0.
 
 Exit: 0 pass, 1 a check failed, 2 bad command line or missing --allow-real-box,
-3 a required tool is unavailable.
+3 a required tool is unavailable or the 5.1 bench is inconclusive.
+Cleanup failure takes precedence over an inconclusive bench (exit 1).
 EOF
 }
 
