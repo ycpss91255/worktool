@@ -622,6 +622,18 @@ STUB
     [ ! -s "${STATE}/boxes" ]
 }
 
+@test "5.1: cleanup failure takes precedence over an inconclusive bench" {
+    FAKE_JUST_BENCH_RC=3 FAKE_DBX_RM_REMOVES=0 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle'
+    assert_line 'cleanup-rc=1'
+    assert_output --partial 'survived cleanup'
+    assert_line '[FAIL] item 5.1 failed'
+    assert_equal "$(_count_calls gh)" '0'
+    [ -s "${STATE}/boxes" ]
+}
+
 @test "5.1: bench exit 1 remains a functional failure after cleanup without posting" {
     FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
     assert_failure 1
