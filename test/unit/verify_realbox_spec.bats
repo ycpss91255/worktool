@@ -610,6 +610,18 @@ STUB
     assert_output --partial "assemble returned 0 but box 'dev' is not listed"
 }
 
+@test "5.1: busy-host bench is inconclusive, does not post and still cleans up" {
+    FAKE_JUST_BENCH_RC=3 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 3
+    assert_line '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle'
+    refute_output --partial '[FAIL]'
+    refute_output --partial 'posted='
+    assert_equal "$(_count_calls gh)" '0'
+    assert_line 'cleanup-rc=0'
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: bench prints the three metric lines but exits 1 (plausible output, non-zero exit)" {
     FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
     assert_failure

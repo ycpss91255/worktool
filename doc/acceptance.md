@@ -868,6 +868,14 @@ rc=0
       ````
       (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於或等於這一輪真的傳給 `bench` 的 `--max-ms`(300;剛好等於門檻算通過,與 `bench` 及 #181 一致)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
       `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓本項 exit 非 0 並要你手動移除盒子。所有權標記在 `just box assemble` **之前**就寫下,意思是「這一輪動過 assemble」而不是「assemble 成功了」,所以 assemble 跑到一半被 Ctrl-C 一樣會清;反過來「標記在、盒子不在」是被接受的,清理只看最後盒子還在不在,`distrobox rm` 沒東西可刪不算失敗(round 10))
+    - 主機忙碌時，bench 依 ADR 0003 回 3，代表未判定。本項仍清理本輪建立的盒子，不發 #22 留言；清理成功時不印 `[FAIL]`，整項 exit 3。預期輸出包含以下各行（清理的狀態行照常穿插，最後一行為 `echo rc=$?`）：
+      ```text
+      rc=3
+      [INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle
+      cleanup-rc=0
+      rc=3
+      ```
+      清理失敗優先：即使 bench 未判定，仍印清理失敗診斷並以 exit 1 結束；bench 回 1（有效量測超標或量測失敗）也維持功能失敗、exit 1。300 ms 判準、PSI 門檻 2.00、不重試與不刪樣本均不變；未判定須等主機閒置後另行重跑，不算通過或退化。
     - 驗收方式：維護者本人執行可省略標記；agent 必須加 `--comment-tag '[codex]'`（換成自己的名稱標記，例如 `[claude]`）。標記須符合 `^\[[a-z]+\]$`，否則 exit 2。指定時留言第一行以 `<標記> ` 接原本的 `M3 5.1 real-machine bench` 開頭；省略時本文維持原樣。讀回判準也必須確認本文以指定標記開頭。
       ```bash
       just verify realbox --allow-real-box 5.1; echo rc=$?

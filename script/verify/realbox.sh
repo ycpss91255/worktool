@@ -58,7 +58,7 @@
 # `realbox.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
 #
 # Exit codes: 0 pass, 1 a check failed, 2 the command line or the opt-in is
-# wrong (nothing ran); 3 a required tool is unavailable.
+# wrong (nothing ran); 3 a required tool is unavailable or bench is inconclusive.
 #
 # Expected failures are handled explicitly; checks run in conditionals so
 # their own exit codes and diagnostics decide the acceptance verdict.
@@ -517,6 +517,10 @@ _51_body() {
     _brc="${_st[0]}"
     _trc="${_st[1]}"
     printf 'rc=%s\n' "${_brc}"
+    if [[ "${_brc}" -eq 3 ]]; then
+        printf '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle\n' >&2
+        return 3
+    fi
     [[ "${_brc}" -eq 0 ]] || { guard_fail "just box bench exited ${_brc}"; return 1; }
     # tee is the only reason bench.txt exists; a failed tee means the file the
     # next checks read is not what bench printed.
@@ -545,7 +549,8 @@ item_51() {
     _host_state_snapshot "${_51_W}" || return $?
     _cleanup_push 51
     local _rc=0
-    _51_body || _rc=1
+    _51_body || _rc=$?
+    # Cleanup failure takes precedence over an inconclusive bench result.
     _cleanup_pop_run || _rc=1
     return "${_rc}"
 }
