@@ -622,6 +622,17 @@ STUB
     [ ! -s "${STATE}/boxes" ]
 }
 
+@test "5.1: bench exit 1 remains a functional failure after cleanup without posting" {
+    FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[FAIL] just box bench exited 1'
+    assert_line '[FAIL] item 5.1 failed'
+    refute_output --partial '[INCONCLUSIVE]'
+    assert_equal "$(_count_calls gh)" '0'
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: bench prints the three metric lines but exits 1 (plausible output, non-zero exit)" {
     FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
     assert_failure
