@@ -2296,3 +2296,19 @@ _assert_data_unchanged() {
 @test "#516: 5.3 preserves absent and existing host desktop entries and icons including mtimes" {
     _assert_data_unchanged 5.3
 }
+
+@test "#516: 5.2 apply desktop exports stay in the backup and are removed on restore" {
+    _realbox_quiet 5.2.1
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    local data
+    read -r data <"${STATE}/data-path"
+    [[ "${data}" == "$(_backup_dir)/"* ]]
+    [ -s "${data}/applications/dev.desktop" ]
+    [ -s "${data}/icons/distrobox/ubuntu.png" ]
+    [ ! -e "${HOME}/.local/share/applications" ]
+    [ ! -e "${HOME}/.local/share/icons/distrobox" ]
+    run _restore_input 4242
+    assert_success
+    [ ! -e "${data}" ]
+}

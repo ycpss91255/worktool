@@ -637,7 +637,7 @@ _52_step2_apply() {
     # something that says "this run touched assemble".
     : >"${CFGBK_B}/created-box" \
         || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
@@ -727,7 +727,7 @@ _52_remove_owned_box() {
         log_info "this run never created a box; leaving every box alone"
         return 0
     fi
-    if _drop_owned_box; then
+    if XDG_DATA_HOME="${CFGBK_B}/data" _drop_owned_box; then
         printf 'dev-gone=1\n'
         _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         return 0
