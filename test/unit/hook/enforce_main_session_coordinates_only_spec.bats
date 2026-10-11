@@ -121,6 +121,35 @@ _edit() {
     assert_success
 }
 
+@test "main session delegates literal scripts with just options or multiple spaces" {
+    local body command
+    for body in 'just -q verify all' 'just --justfile x test unit' \
+        'just   verify all' 'just   test unit'; do
+        printf '%s\n' "${body}" >"${WORK}/checks.sh"
+        for command in 'bash checks.sh' 'sh checks.sh'; do
+            _check "${command}"
+            assert_equal "${status}" 2
+            assert_output --partial 'script tests or verification'
+            _check "${command}" agent-workflow
+            assert_success
+        done
+    done
+}
+
+@test "main session fails closed on expanded shell script paths and options" {
+    printf 'echo ready\n' >"${WORK}/safe.sh"
+    local command
+    for command in "bash \"\$X/run.sh\"" "sh \"\$X/run.sh\"" \
+        "bash \"\$OPTIONS\" safe.sh" "bash -o \"\$OPTION\" safe.sh" \
+        "bash --rcfile \"\$CONFIG\" safe.sh"; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'Expanded shell script arguments cannot be checked.'
+        _check "${command}" agent-workflow
+        assert_success
+    done
+}
+
 @test "main session fails closed when literal script files cannot be read" {
     local command
     for command in 'bash missing.sh' 'sh missing.sh' 'bash .' \
