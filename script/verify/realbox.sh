@@ -514,7 +514,6 @@ _51_prepare_config() {
 
 _51_body() {
     local _tag='M3 5.1 real-machine bench' _stamp _run_id _brc _trc
-    local -a _st
     _stamp="$(date -u +%Y%m%dT%H%M%SZ)" || { guard_fail "date failed"; return 1; }
     _run_id="m3-51-${_stamp}-$$"
     _51_prepare_config || return 1
@@ -529,18 +528,18 @@ _51_body() {
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
     _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
-        --max-ms "${BENCH_MAX_MS}" | tee "${_51_W}/bench.txt"
-    _st=("${PIPESTATUS[@]}")
-    _brc="${_st[0]}"
-    _trc="${_st[1]}"
+        --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
+    _brc=$?
+    # A signalled tee can finish the pipeline before _just stops its group.
+    # Wait for _just itself, then publish the captured metrics.
+    tee "${_51_W}/bench.txt" <"${_51_W}/bench-capture.txt"
+    _trc=$?
     printf 'rc=%s\n' "${_brc}"
     if [[ "${_brc}" -eq 3 ]]; then
         printf '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle\n' >&2
         return 3
     fi
     [[ "${_brc}" -eq 0 ]] || { guard_fail "just box bench exited ${_brc}"; return 1; }
-    # tee is the only reason bench.txt exists; a failed tee means the file the
-    # next checks read is not what bench printed.
     [[ "${_trc}" -eq 0 ]] \
         || { guard_fail "tee into ${_51_W}/bench.txt exited ${_trc} -- the captured bench output is not trustworthy"; return 1; }
     _51_collect_metrics || return 1
