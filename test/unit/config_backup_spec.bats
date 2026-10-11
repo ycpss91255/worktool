@@ -48,3 +48,22 @@ setup() {
     assert_output 'blocks=0'
     assert_equal "${stderr}" ''
 }
+
+@test "#523: dangling Ghostty config has intact empty user content after restore" {
+    local config="${XDG_CONFIG_HOME}/ghostty/config"
+    ln -s missing-config "${config}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    rm "${config}"
+    printf 'temporary config\n' >"${config}"
+    cfgbk_restore_one ghostty
+
+    run --separate-stderr cfgbk_report_user_content after-restore
+
+    assert_success
+    assert_output 'user-content after-restore: ghostty=intact tmux.conf=intact'
+    assert_equal "${stderr}" ''
+    assert [ -L "${config}" ]
+    assert [ ! -e "${config}" ]
+}
