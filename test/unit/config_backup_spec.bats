@@ -9,9 +9,9 @@ setup() {
     export XDG_CONFIG_HOME="${HOME}/.config"
     export TMPDIR="${BATS_TEST_TMPDIR}"
     mkdir -p "${XDG_CONFIG_HOME}/ghostty"
-    # shellcheck source=../../lib/guard.sh
+    # shellcheck source=lib/guard.sh
     source "${LIB_DIR}/guard.sh"
-    # shellcheck source=../../lib/config_backup.sh
+    # shellcheck source=lib/config_backup.sh
     source "${LIB_DIR}/config_backup.sh"
     cfgbk_paths
 }
