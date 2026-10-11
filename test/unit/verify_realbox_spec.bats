@@ -2381,7 +2381,8 @@ _assert_data_unchanged() {
 # Exercise the shipped 5.2 backup/apply/restore chain, including a write
 # through the original link target after setup replaces the config path.
 _assert_symlink_roundtrip() {
-    local link="$(_ghostty_config)" target="${HOME}/original-ghostty"
+    local link target="${HOME}/original-ghostty"
+    link="$(_ghostty_config)"
     local baseline="${STATE}/symlink-baseline" link_text="$1" repo
     repo="$(_repo_copy)"
     printf 'font-size = 12\n# original target\n' >"${target}"
