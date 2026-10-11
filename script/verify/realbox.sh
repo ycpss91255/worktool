@@ -294,13 +294,20 @@ _cleanup_run() {
     case "$1" in
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
-        52-restore) _52_step3_restore ;;
+        52-restore) _52_cleanup_report ;;
         53) _53_cleanup ;;
         *) guard_fail "internal: unknown cleanup token '$1'"; return 1 ;;
     esac
 }
 
 # Pop the top token and run it; returns its status (0 when the stack is empty).
+_52_cleanup_report() {
+    local _rc=0
+    _52_step3_restore || _rc=$?
+    printf 'cleanup-rc=%s\n' "${_rc}"
+    return "${_rc}"
+}
+
 _cleanup_pop_run() {
     local _n="${#CLEANUP_STACK[@]}" _tok
     [[ "${_n}" -gt 0 ]] || return 0
