@@ -59,19 +59,28 @@ STUB
     assert_equal "$(_count_calls gh)" "0"
 }
 
-@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+_assert_group_interrupt() {
+    local signal="$1" expected="$2" phase="$3" item="${4:-5.1}" cleanup="${5:-0}"
+    _prepare_group_interrupt "${phase}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" "${signal}" bash \
+        "${REALBOX}" --allow-real-box "${item}"
+    _check_group_interrupt "${expected}" "${cleanup}"
+}
+
+_prepare_group_interrupt() {
+    export INTERRUPT_PHASE="$1"
     export SIGNAL_STATE="${STATE}"
     cp "${STUBS}/just" "${STATE}/just"
     cp "${STUBS}/distrobox" "${STATE}/distrobox"
     cat >"${STUBS}/just" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == assemble ]]; then
+if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
     finish() {
         echo finished >>"${SIGNAL_STATE}/events"
         exec "${SIGNAL_STATE}/just" "$@"
     }
-    trap 'sleep 0.2; finish "$@"' INT
+    trap 'sleep 0.2; finish "$@"' INT TERM HUP
     echo "$$" >"${SIGNAL_STATE}/child.pid"
     touch "${SIGNAL_STATE}/ready"
     sleep 3
@@ -84,14 +93,24 @@ STUB
 set -euo pipefail
 if [[ "${1:-}" == rm ]]; then
     echo cleanup >>"${SIGNAL_STATE}/events"
+    if [[ "${SIGNAL_REPEAT:-0}" == 1 ]]; then
+        touch "${SIGNAL_STATE}/cleanup-ready"
+        sleep 0.2
+    fi
 fi
 exec "${SIGNAL_STATE}/distrobox" "$@"
 STUB
-    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
-        "${BATS_TEST_DIRNAME}/fixture/realbox_signal_caller.sh" "${REALBOX}" --allow-real-box 5.1
+}
+
+_check_group_interrupt() {
+    local expected="$1" cleanup="$2"
     assert_success
-    assert_line 'rc=130'
-    assert_line 'cleanup-rc=0'
+    assert_line 'exit-signal=none'
+    assert_line "rc=${expected}"
+    assert_line "cleanup-rc=${cleanup}"
+    [[ "${cleanup}" -eq 0 ]] || return 0
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
     run cat "${SIGNAL_STATE}/events"
     assert_output $'finished\ncleanup'
     [ ! -s "${STATE}/boxes" ]
@@ -99,6 +118,70 @@ STUB
     read -r pid <"${STATE}/child.pid"
     run kill -0 "${pid}"
     assert_failure 1
+}
+
+@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+    _assert_group_interrupt INT 130 assemble
+}
+
+@test "5.1: group INT during bench reports realbox cleanup and exits normally" {
+    _assert_group_interrupt INT 130 bench
+}
+
+@test "5.2: group INT during apply reports cleanup and exits normally" {
+    _assert_group_interrupt INT 130 assemble 5.2
+}
+
+@test "5.1: interrupted cleanup failure takes precedence over signal status" {
+    export FAKE_DBX_RM_REMOVES=0
+    _assert_group_interrupt INT 1 assemble 5.1 1
+    [ -s "${STATE}/boxes" ]
+}
+
+@test "5.1: group TERM during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 assemble 5.1
+}
+
+@test "5.1: group TERM during bench reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 bench 5.1
+}
+
+@test "5.1: group HUP during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 assemble 5.1
+}
+
+@test "5.1: group HUP during bench reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 bench 5.1
+}
+
+@test "5.2: group TERM during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 assemble 5.2
+}
+
+@test "5.2: group HUP during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 assemble 5.2
+}
+
+@test "5.1: real just forwards group INT without killing realbox cleanup" {
+    _prepare_group_interrupt assemble
+    printf 'set positional-arguments\nrealbox:\n    %s --allow-real-box 5.1\n' "${REALBOX}" >"${STATE}/outer.just"
+    local real_just
+    read -r real_just <"${STATE}/real/just"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT \
+        "${real_just}" --justfile "${STATE}/outer.just"
+    refute_output --partial 'by signal 2'
+    _check_group_interrupt 130 0
+}
+
+@test "5.1: a second group TERM during cleanup cannot terminate realbox" {
+    export SIGNAL_REPEAT=1
+    _assert_group_interrupt TERM 143 assemble
+}
+
+@test "5.2.2: group INT during standalone apply restores and reports cleanup" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    _assert_group_interrupt INT 130 assemble 5.2.2
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)

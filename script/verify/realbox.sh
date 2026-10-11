@@ -161,7 +161,13 @@ EOF
 # `just` always runs from the repo root, so the root justfile is the one found
 # whatever directory the maintainer invoked this script from.
 _just() {
-    (cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@")
+    (
+        # Subshells reset active handlers; install them before verify_run saves them.
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+        cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@"
+    )
 }
 
 # Refuse before creating anything: a box we did not make is never ours to
@@ -288,10 +294,18 @@ _cleanup_run() {
     case "$1" in
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
-        52-restore) _52_step3_restore ;;
+        52-restore) _52_cleanup_report ;;
         53) _53_cleanup ;;
         *) guard_fail "internal: unknown cleanup token '$1'"; return 1 ;;
     esac
+}
+
+# Report the full restore result, including owned box and host state.
+_52_cleanup_report() {
+    local _rc=0
+    _52_step3_restore || _rc=$?
+    printf 'cleanup-rc=%s\n' "${_rc}"
+    return "${_rc}"
 }
 
 # Pop the top token and run it; returns its status (0 when the stack is empty).
@@ -312,12 +326,15 @@ _cleanup_drop() {
 
 _on_exit() {
     local _st=$? _crc=0
-    trap - EXIT INT TERM HUP
+    trap - EXIT
+    trap '' INT TERM HUP
+    # EXIT may run inside assemble's redirection or bench's pipeline.
+    exec 1>&"${REALBOX_REPORT_FD}"
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
     done
-    [[ "${_st}" -eq 0 ]] || exit "${_st}"
-    exit "${_crc}"
+    [[ "${_crc}" -eq 0 ]] || exit 1
+    exit "${_st}"
 }
 
 # =============================================================================
@@ -498,7 +515,6 @@ _51_prepare_config() {
 
 _51_body() {
     local _tag='M3 5.1 real-machine bench' _stamp _run_id _brc _trc
-    local -a _st
     _stamp="$(date -u +%Y%m%dT%H%M%SZ)" || { guard_fail "date failed"; return 1; }
     _run_id="m3-51-${_stamp}-$$"
     _51_prepare_config || return 1
@@ -513,18 +529,18 @@ _51_body() {
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
     _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
-        --max-ms "${BENCH_MAX_MS}" | tee "${_51_W}/bench.txt"
-    _st=("${PIPESTATUS[@]}")
-    _brc="${_st[0]}"
-    _trc="${_st[1]}"
+        --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
+    _brc=$?
+    # A signalled tee can finish the pipeline before _just stops its group.
+    # Wait for _just itself, then publish the captured metrics.
+    tee "${_51_W}/bench.txt" <"${_51_W}/bench-capture.txt"
+    _trc=$?
     printf 'rc=%s\n' "${_brc}"
     if [[ "${_brc}" -eq 3 ]]; then
         printf '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle\n' >&2
         return 3
     fi
     [[ "${_brc}" -eq 0 ]] || { guard_fail "just box bench exited ${_brc}"; return 1; }
-    # tee is the only reason bench.txt exists; a failed tee means the file the
-    # next checks read is not what bench printed.
     [[ "${_trc}" -eq 0 ]] \
         || { guard_fail "tee into ${_51_W}/bench.txt exited ${_trc} -- the captured bench output is not trustworthy"; return 1; }
     _51_collect_metrics || return 1
@@ -636,6 +652,15 @@ _52_step2_apply() {
     # it was only supposed to undo.
     cfgbk_report_user_content after-apply \
         || { guard_fail "the apply destroyed user content -- run 5.2.3 to restore it from the backup"; return 1; }
+}
+
+# Keep the backup and applied config on normal return; interrupts must restore.
+_52_apply_only() {
+    local _rc=0
+    _cleanup_push 52-restore
+    _52_step2_apply || _rc=$?
+    _cleanup_drop
+    return "${_rc}"
 }
 
 # --- objective new-window check ---------------------------------------------
@@ -983,7 +1008,7 @@ _dispatch_item() {
         5.1) item_51 ;;
         5.2) item_52 ;;
         5.2.1) _52_step1_backup ;;
-        5.2.2) _52_step2_apply ;;
+        5.2.2) _52_apply_only ;;
         5.2.3) _52_step3_restore ;;
         5.3) item_53 ;;
         *) guard_fail "internal: unknown item '$1'"; return 1 ;;
@@ -1065,6 +1090,7 @@ realbox_run() {
 }
 
 _run_requested_items() {
+    exec {REALBOX_REPORT_FD}>&1
     trap _on_exit EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
