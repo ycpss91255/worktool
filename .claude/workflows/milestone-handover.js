@@ -167,6 +167,21 @@ END TASK`, { label: `${RUN_ID} independent-codex:`, phase: 'Independent Codex', 
 if (typeof codexAcceptance !== 'string' || !codexAcceptance.trim()) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex' }
 const claudeAcceptance = await agent(acceptancePrompt, { label: `${RUN_ID} independent-claude:`, phase: 'Independent Claude', agentType: 'general-purpose' })
 if (typeof claudeAcceptance !== 'string' || !claudeAcceptance.trim()) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude' }
+const assessedRaw = await agent(`${CONTEXT}
+Classify these two completed independent reports without rewriting them:
+${JSON.stringify({ codex: codexAcceptance, claude: claudeAcceptance })}
+Return {codex: {defects: string[], insufficientEvidence: string[], pendingHuman: string[]}, claude: {defects: string[], insufficientEvidence: string[], pendingHuman: string[]}}.
+Retain every defect and evidence gap, including uncertain or unverified required behaviour, as an actionable issue to open. An explicit report of missing/insufficient evidence is blocking. Only items explicitly reserved for the maintainer's human interaction belong in pendingHuman; they do not block. Do not reclassify a defect or missing agent-obtainable evidence as human pending. If a report cannot be classified, return error, never empty success arrays.`,
+{ label: `${RUN_ID} independent-assess:`, phase: 'Independent acceptance assessment', agentType: 'general-purpose' })
+const assessed = decode(assessedRaw)
+const validAssessment = value => value && ['defects', 'insufficientEvidence', 'pendingHuman'].every(key =>
+  Array.isArray(value[key]) && value[key].every(item => typeof item === 'string' && item.trim()))
+if (!assessed || assessed.error || !validAssessment(assessed.codex) || !validAssessment(assessed.claude)) {
+  return { pr: A.pr, sha: head.sha, status: 'independent-failed', verdict: verdicts[1], report: assessed }
+}
+const issues = [...new Set([assessed.codex, assessed.claude].flatMap(r => [...r.defects, ...r.insufficientEvidence]))]
+const pendingHuman = [...new Set([assessed.codex, assessed.claude].flatMap(r => r.pendingHuman))]
+const verdict = issues.length || review.line === verdicts[1] ? verdicts[1] : verdicts[0]
 const evidenceFiles = [...reviewFiles, 'machine.md']
 const evidenceInputs = await verifyArtifacts('Evidence', evidenceFiles)
 if (evidenceInputs) return evidenceInputs
@@ -176,9 +191,9 @@ Read doc/workflow.md's single evidence template, milestone goals, ${SCRATCH}/fin
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|
-Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. If verdict is negative (${review.line}) or any required run/restore failed, draft clearly states blocked and cannot declare readiness. Otherwise link the independent verdict and explain pending human items. Return {evidence: absolute evidence.md path, draft: absolute ready.md path, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', agentType: 'general-purpose' })
+Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. If verdict is negative (${verdict}) or any required run/restore failed, draft clearly states blocked and cannot declare readiness. Otherwise link the independent verdict. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {evidence: absolute evidence.md path, draft: absolute ready.md path, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', agentType: 'general-purpose' })
 const evidence = decode(evidenceResult)
 if (!evidence?.evidence || !evidence.draft || evidence.error) return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidence }
 const preparedFiles = await verifyArtifacts('Prepared', [...evidenceFiles, 'evidence.md', 'ready.md'])
 if (preparedFiles) return preparedFiles
-return { pr: A.pr, sha: head.sha, status: 'prepared', verdict: review.line, comment: review.url, ...evidence }
+return { pr: A.pr, sha: head.sha, status: 'prepared', verdict, issues, pendingHuman, comment: review.url, ...evidence }

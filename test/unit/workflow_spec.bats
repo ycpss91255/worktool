@@ -2936,13 +2936,14 @@ _handover_replies() {
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
+        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
 }
 
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","independent-assess:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
@@ -3336,7 +3337,7 @@ _pl_retry_run() {
     json="${output}"
     run jq -e '.result.status == "prepared" and
         [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review",
-            "review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+            "review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","independent-assess:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
     [ ! -e "${scratch}/stale.md" ]
@@ -3372,11 +3373,31 @@ _pl_retry_run() {
 
 @test "milestone-handover runs fresh acceptance reviewers sequentially and stops after a failed first reviewer (#505)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
-    run jq -e '[.calls[] | select(.role | startswith("independent-")) | [.role,.phase]] ==
+    run jq -e '[.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:") | [.role,.phase]] ==
         [["independent-codex:","Independent Codex"],["independent-claude:","Independent Claude"]]' <<<"${output}"
     assert_success
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
         "$(_handover_replies | jq '."independent-codex:"=null')"
     jq -e '.result.status == "independent-failed" and .result.reviewer == "codex" and
         ([.calls[].role] | index("independent-claude:") == null)' <<<"${output}"
+}
+
+@test "milestone-handover blocks either independent defect or insufficient evidence and retains human pending items (#505)" {
+    local reviewer kind replies
+    for reviewer in codex claude; do
+        for kind in defects insufficientEvidence; do
+            replies="$(_handover_replies | jq --arg r "${reviewer}" --arg k "${kind}" '
+                .["independent-"+$r+":"]="R7: missing evidence or defect" |
+                ."independent-assess:"[$r][$k]=["R7: missing evidence or defect"]')"
+            _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+            run jq -e '.result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+                .result.issues == ["R7: missing evidence or defect"]' <<<"${output}"
+            assert_success
+        done
+    done
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$(_handover_replies | jq '."independent-assess:".claude.pendingHuman=["桌面互動待維護者"]')"
+    jq -e '.result.verdict == ("交出判定：可交出 head=" + ("a" * 40)) and
+        .result.pendingHuman == ["桌面互動待維護者"] and
+        (.calls[] | select(.role == "evidence:") | .prompt | contains("桌面互動待維護者"))' <<<"${output}"
 }
