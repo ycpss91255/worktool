@@ -593,6 +593,7 @@ cfgbk_report_user_content() {
 # Report managed blocks in every user-owned managed file. Existing blocks
 # belong to the pre-run baseline; cfgbk_restore_one verifies its checksum.
 # A failed read is not a zero count and must still fail the item.
+# Absent paths and dangling symlinks have no content to count.
 cfgbk_report_blocks() {
     local _n _f _c _b=0
     for _n in "${CFGBK_USER_NAMES[@]}"; do
@@ -600,7 +601,7 @@ cfgbk_report_blocks() {
             printf 'blocks=-1\n'
             return 1
         fi
-        [[ "$(guard_path_type "${_f}")" != absent ]] || continue
+        [[ -e "${_f}" ]] || continue
         _c="$(guard_count_lines "${_f}" 'BEGIN worktool managed block')" || {
             printf 'blocks=-1\n'
             guard_fail "cannot read ${_f} -- blocks= is not trustworthy"
