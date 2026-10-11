@@ -72,6 +72,24 @@ verify_stop_group() {
     if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
         : # The process group may already have exited.
     fi
+    while verify_group_running "${monitor}"; do
+        sleep 0.01
+    done
+}
+
+# Orphaned zombies cannot run or hold resources; their reaping belongs to init.
+verify_group_running() {
+    local file row status parent group rest
+    for file in /proc/[0-9]*/stat; do
+        if ! IFS= read -r row <"${file}" 2>/dev/null; then
+            continue
+        fi
+        read -r status parent group rest <<<"${row##*) }"
+        if [[ "${group}" == "$1" && "${status}" != Z && "${status}" != X ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # The daemon owns container lifetimes independently of the killed client.

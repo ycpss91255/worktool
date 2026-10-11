@@ -82,3 +82,19 @@ teardown() {
 @test "verify_run: HUP waits for the child before caller cleanup and exits 129" {
     assert_signal_cleanup HUP 129
 }
+
+@test "verify_run: a signal-ignoring child is killed within the grace period" {
+    sed -i "s/^trap .*/trap '' INT TERM HUP/" "${SIGNAL_STATE}/child"
+    local start="${SECONDS}"
+    run signal_caller INT
+    assert_success
+    assert_line 'rc=130'
+    [ "$((SECONDS - start))" -lt 3 ]
+    [ "$(cat "${SIGNAL_STATE}/events")" = cleanup ]
+    local pid
+    read -r pid <"${SIGNAL_STATE}/child.pid"
+    if kill -0 "${pid}" 2>/dev/null; then
+        run grep -E '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"
+        assert_success
+    fi
+}
