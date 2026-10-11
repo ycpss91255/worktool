@@ -134,6 +134,10 @@ _check_group_interrupt() {
     [ -s "${STATE}/boxes" ]
 }
 
+@test "5.1: group TERM during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 assemble 5.1
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
