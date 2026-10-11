@@ -346,7 +346,7 @@ _51_CREATED=0
 _51_cleanup() {
     local _crc=0
     if [[ "${_51_CREATED}" -eq 1 ]]; then
-        _drop_owned_box || _crc=1
+        XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
@@ -524,11 +524,11 @@ _51_body() {
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
-    XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
     _brc=$?
     # A signalled tee can finish the pipeline before _just stops its group.

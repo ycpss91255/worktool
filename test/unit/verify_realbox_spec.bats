@@ -217,7 +217,7 @@ setup() {
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
-    unset XDG_CONFIG_HOME XDG_CACHE_HOME
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -2263,4 +2263,32 @@ STUB
     [ -s "${STATE}/cache-written" ]
     [ ! -e "${HOME}/.cache/worktool" ]
     [ ! -e "${cache}" ]
+}
+
+_assert_data_unchanged() {
+    local item="$1" root="${HOME}/.local/share" data
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    [ ! -e "${root}/icons/distrobox" ]
+    [ ! -e "${root}/applications" ]
+    mkdir -p "${root}/icons/distrobox" "${root}/applications"
+    printf 'original icon\n' >"${root}/icons/distrobox/ubuntu.png"
+    printf 'original entry\n' >"${root}/applications/dev.desktop"
+    touch -t 200101010101 "${root}/icons/distrobox/ubuntu.png" "${root}/applications/dev.desktop" \
+        "${root}/icons/distrobox" "${root}/applications"
+    cp -a "${root}" "${STATE}/data-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-mtimes"
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    run diff -r "${STATE}/data-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-after"
+    run cmp "${STATE}/data-mtimes" "${STATE}/data-after"
+    assert_success
+    read -r data <"${STATE}/data-path"
+    [ ! -e "${data}" ]
+}
+
+@test "#516: 5.1 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.1
 }
