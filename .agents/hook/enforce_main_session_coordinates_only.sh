@@ -58,6 +58,7 @@ check_git() {
 
 check_tests() {
     local tool="$1" word skip=0 recipe='' text=''
+    local -a args=()
     shift
     for word in "$@"; do
         text+=" $(hook_word "${word}")"
@@ -68,7 +69,10 @@ check_tests() {
             skip=$((skip - 1))
             continue
         fi
-        [[ -z "${recipe}" ]] || continue
+        if [[ -n "${recipe}" ]]; then
+            args+=("${word}")
+            continue
+        fi
         case "${word}" in
             -f|--justfile|-d|--working-directory|--chooser|--shell) skip=1 ;;
             --set) skip=2 ;;
@@ -81,6 +85,10 @@ check_tests() {
         refuse 'Main-session tests belong in a Workflow.'
     fi
     if [[ "${tool}" == just && ( "${recipe}" == verify || "${recipe}" == verify::* ) ]]; then
+        if [[ "${recipe}" == verify && ( "${#args[@]}" == 0 || \
+            ( "${#args[@]}" == 1 && "${args[0]}" == --help ) ) ]]; then
+            return 0
+        fi
         refuse 'Main-session verification belongs in a Workflow.'
     fi
     if [[ "${tool}" == docker && "${text}" =~ (^|[[:space:]\"\'])([^[:space:]\"\']*/)?bats([[:space:]\"\']|$) ]]; then

@@ -85,6 +85,21 @@ _edit() {
     done
 }
 
+@test "main session permits only verify listing and its exact help invocation" {
+    local command
+    for command in 'just verify' 'just verify --help' \
+        'just --justfile justfile verify' 'just -d /tmp verify --help'; do
+        _check "${command}"
+        assert_success
+    done
+    for command in 'just verify --help all' 'just verify all --help' \
+        'just verify::all --help' 'just verify --help --unknown' \
+        'just verify --help test unit'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do

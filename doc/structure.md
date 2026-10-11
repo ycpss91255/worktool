@@ -220,7 +220,8 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 `.agents/hook/enforce_main_session_coordinates_only.sh` 在 PreToolUse 檢查 Bash 與
 Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agent_id`）只負責
 協調：禁止 `git commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply`、
-`git checkout -- <path>`、`just test ...`、Docker 裡的 bats，以及編輯主 checkout
+`git checkout -- <path>`、`just test ...`、`just verify ...`（含 `verify::*` 與
+recipe 前的 just 選項）、Docker 裡的 bats，以及編輯主 checkout
 同層 `worktree/` 下的檔案。檔案路徑依 `cwd` 解讀、正規化並解析既有 symlink；
 從 Git 共用目錄定位主 checkout，因此從 linked worktree 呼叫也適用。
 
@@ -232,6 +233,10 @@ hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`�
 檔案編輯轉接沿用 Claude 的 Edit／Write 註冊，但明確跳過此 guard，避免把
 缺少 `agent_id` 的 Codex 實作者誤判成主 session。ShellCheck 與主 checkout
 唯讀 guard 仍照常執行。
+
+裸 `just verify` 只列清單、精確的 `just verify --help` 只印用法，因此放行；
+兩者可帶既有支援的 just 全域選項。`verify::*` 不套用此例外，`--help` 帶其他
+recipe 參數也不放行，以免用 help 掩蓋驗收執行或未驗證的命令列。
 
 身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
 `hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；
