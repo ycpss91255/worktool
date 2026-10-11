@@ -1201,7 +1201,7 @@ STUB
     mkdir -p "$(_distrobox_conf)"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "neither a regular file nor a symlink"
     assert_output --partial "refusing to apply anything"
     [ ! -e "$(_backup_dir)" ]
@@ -1216,7 +1216,7 @@ STUB
     ln -s "${BATS_TEST_TMPDIR}/not-a-file" "$(_distrobox_conf)"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "is not a regular file -- handle it by hand"
     [ ! -e "$(_backup_dir)" ]
 }
@@ -1275,7 +1275,7 @@ STUB
     ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
     SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "cannot resolve the link"
     [ ! -e "$(_backup_dir)" ]
 }
