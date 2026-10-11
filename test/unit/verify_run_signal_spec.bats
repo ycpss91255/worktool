@@ -128,3 +128,25 @@ verify_run 0.1 bash -c 'trap "" TERM; sleep 3'
 PROBE
     assert_failure 124
 }
+
+@test "verify_run: default TERM propagates instead of becoming caller failure 1" {
+    cat >"${SIGNAL_STATE}/caller" <<'CALLER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "${LIB_DIR}/verify_run.sh"
+if verify_run 10 "${SIGNAL_STATE}/child"; then
+    exit 0
+else
+    exit 1
+fi
+CALLER
+    run signal_caller TERM
+    assert_success
+    assert_line 'rc=143'
+    run cat "${SIGNAL_STATE}/events"
+    assert_output finished
+    local pid
+    read -r pid <"${SIGNAL_STATE}/child.pid"
+    run kill -0 "${pid}"
+    assert_failure 1
+}

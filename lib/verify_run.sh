@@ -48,16 +48,13 @@ verify_run() {
 }
 
 verify_restore_signals() {
-    local interrupted="$1" saved=""
+    local interrupted="$1"
     trap - INT TERM HUP
     eval "$2"
     eval "$3"
     eval "$4"
     if [[ -n "${interrupted}" ]]; then
-        case "${interrupted}" in INT) saved="$2" ;; TERM) saved="$3" ;; HUP) saved="$4" ;; esac
-        if [[ -n "${saved}" ]]; then
-            kill -s "${interrupted}" "${BASHPID}"
-        fi
+        kill -s "${interrupted}" "${BASHPID}"
         case "${interrupted}" in INT) return 130 ;; TERM) return 143 ;; HUP) return 129 ;; esac
     fi
 }
