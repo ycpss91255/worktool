@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# script/verify/setup.sh - the M3 acceptance items 3.1-3.9, as a script.
+# script/verify/setup.sh - the M3 acceptance items 3.1-3.13, as a script.
 #
 # doc/acceptance.md item 3 ("進盒設定") used to carry six shell blocks the
 # maintainer pasted by hand. Shell logic in a document cannot be linted,
@@ -110,12 +110,12 @@ source "${LIB_DIR}/log.sh"
 #   temphome  throwaway HOME only; no box, no daemon, nothing installed.
 #   realbox   builds the real box on this machine (see the guard below).
 #
-# All nine items of doc/acceptance.md item 3 are `temphome`.
-VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9)
+# All registered items of doc/acceptance.md item 3 are `temphome`.
+VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11 3.12 3.13)
 
 _item_group() {
     case "$1" in
-        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9) printf '%s\n' 'temphome' ;;
+        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11 | 3.12 | 3.13) printf '%s\n' 'temphome' ;;
         *) return 1 ;;
     esac
 }
@@ -131,6 +131,10 @@ _item_title() {
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
+        3.13) printf '%s\n' 'identical decisions report unchanged blocks without replacement' ;;
+        3.12) printf '%s\n' 'dry-run removal reports a real block and writes nothing' ;;
+        3.11) printf '%s\n' 'existing managed files preserve 0644 and 0600 through all operations' ;;
+        3.10) printf '%s\n' 'atomic profile failure preserves bytes, cleans up and recovers' ;;
         *) return 1 ;;
     esac
 }
@@ -140,6 +144,7 @@ OPT_ALLOW_REAL_BOX=0
 
 # --- Per-item state ----------------------------------------------------------
 # Set by _item_begin; read by the guarded primitives below.
+VERIFY_SETUP_PATH="${PATH}" # The original tool path, before any isolated PATH probes.
 ITEM_T=""  # the item's own mktemp directory (scratch; never counted)
 ITEM_H=""  # the throwaway HOME inside it
 LAST_RC=0  # the exit status of the last command _run_norm ran
@@ -273,11 +278,15 @@ Items:
   3.7  distrobox.conf isolates host TMUX and keeps user content
   3.8  --terminal none removes the profile and preserves isolation
   3.9  existing config.ghostty receives the legacy block without content loss
+  3.10 atomic profile failure preserves bytes, cleans up and recovers
+  3.11 existing managed files preserve 0644 and 0600 through all operations
+  3.12 dry-run removal reports a real block and writes nothing
+  3.13 identical decisions report unchanged blocks without replacement
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
                     real box on this machine) to run. Items in group
-                    `temphome` - which is all of 3.1-3.9 - never need it.
+                    `temphome` - which is all of 3.1-3.13 - never need it.
   --list            List the items with their group and exit.
   -h, --help        Show this help and exit.
 
@@ -657,7 +666,7 @@ _norm_line() {
 
 # --- Group `realbox`: the real-machine protocol -------------------------------
 #
-# No item in this file is `realbox` today: 3.1-3.9 all run against a
+# No item in this file is `realbox` today: 3.1-3.13 all run against a
 # throwaway HOME. The guard is what any real-machine item must pass before
 # the dispatcher will run it, and it is enforced by the dispatcher rather
 # than by the item, so a new item cannot forget it:
@@ -1428,6 +1437,185 @@ _item_3_9() {
 }
 
 
+# Shared fixture for the additional setup paths: all commands remain real
+# just box calls, with the same independently pinned paths and markers.
+_setup_path_begin() {
+    _require_tools env just sed grep mktemp cmp find stat || return $?
+    _item_begin || return 1
+    _seed_user_content "$1" || return 1
+    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return $?
+}
+
+_path_setup() {
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" \
+        just box setup --terminal ghostty "$@" || return 1
+    printf 'setup-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 0 ]]
+}
+
+_path_status() {
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" just box status || return 1
+    printf 'status-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 0 ]] || return 1
+    _expect_lines "$1" "ghostty: <H>/.config/ghostty/${3:-config} (managed block: $2)" \
+        'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)'
+}
+
+# Fail only the final rename of the Ghostty profile. State and isolation
+# writes use the real mv; the recovery run does too. No product is patched.
+_atomic_failure_shim() {
+    mkdir "${ITEM_T}/bin" || return 1
+    cat >"${ITEM_T}/bin/mv" <<'EOF'
+#!/bin/sh
+for target do :; done
+if [ "${target}" = "${VERIFY_FAIL_TARGET}" ]; then
+    exit 1
+fi
+exec "${VERIFY_REAL_MV}" "$@"
+EOF
+    chmod +x "${ITEM_T}/bin/mv"
+}
+
+_item_3_10() {
+    _setup_path_begin 3.10 || return $?
+    local _file="${ITEM_H}/.config/ghostty/config" _mv _count
+    _mv="$(command -v mv)" || return 1
+    cp "${_file}" "${ITEM_T}/original" || return 1
+    _atomic_failure_shim || return 1
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" \
+        "PATH=${ITEM_T}/bin:${VERIFY_SETUP_PATH}" "VERIFY_REAL_MV=${_mv}" "VERIFY_FAIL_TARGET=${_file}" \
+        just box setup --terminal ghostty || return 1
+    printf 'setup-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 1 ]] || return 1
+    _expect_lines 3.10 '[ERROR] failed to write <H>/.config/ghostty/config' \
+        '[INFO] wrote: <H>/.config/worktool/config' || return 1
+    _count="$(_count_matching '^\[ERROR\]' "${ITEM_T}/run.out")" || return 1
+    [[ "${_count}" -eq 1 ]] || return 1
+    cmp -s "${_file}" "${ITEM_T}/original" || return 1
+    find "${ITEM_H}/.config/ghostty" -name 'config.??????' >"${ITEM_T}/temps" || return 1
+    [[ ! -s "${ITEM_T}/temps" ]] || return 1
+    printf 'original=intact temp-files=0\n'
+    _path_status 3.10 absent || return 1
+    _path_setup || return 1
+    _expect_lines 3.10 "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" || return 1
+    _expect_user_content 3.10 after-recovery || return 1
+    _path_status 3.10 present
+}
+
+_mode_paths() {
+    local _mode="$1" _name="$2" _phase="$3" _ghostty _distrobox _state
+    _ghostty="$(stat -c %a "${ITEM_H}/.config/ghostty/${_name}")" || return 1
+    _distrobox="$(stat -c %a "${ITEM_H}/.config/distrobox/distrobox.conf")" || return 1
+    _state="$(stat -c %a "${ITEM_H}/.config/worktool/config")" || return 1
+    printf 'mode %s %s %s: ghostty=%s distrobox=%s state=%s\n' \
+        "${_mode}" "${_name}" "${_phase}" "${_ghostty}" "${_distrobox}" "${_state}"
+    [[ "${_ghostty}" == "${_mode}" && "${_distrobox}" == "${_mode}" && "${_state}" == "${_mode}" ]] || return 1
+    _check_user_content 3.11 "${_phase}" "${_name}" "${ITEM_H}/.config/ghostty/${_name}" \
+        "${GHOSTTY_USER_LINES[@]}" || return 1
+    _check_user_content 3.11 "${_phase}" distrobox.conf "${ITEM_H}/.config/distrobox/distrobox.conf" \
+        '# acceptance isolation' || return 1
+    grep -qxF '# acceptance state' "${ITEM_H}/.config/worktool/config"
+}
+
+_mode_round() {
+    local _mode="$1" _name="$2" _file
+    _setup_path_begin 3.11 || return $?
+    _file="${ITEM_H}/.config/ghostty/${_name}"
+    if [[ "${_name}" == config.ghostty ]]; then
+        mv "${ITEM_H}/.config/ghostty/config" "${_file}" || return 1
+    fi
+    mkdir -p "${ITEM_H}/.config/distrobox" "${ITEM_H}/.config/worktool" || return 1
+    printf '# acceptance isolation\n' >"${ITEM_H}/.config/distrobox/distrobox.conf" || return 1
+    printf '# acceptance state\n' >"${ITEM_H}/.config/worktool/config" || return 1
+    chmod "${_mode}" "${_file}" "${ITEM_H}/.config/distrobox/distrobox.conf" \
+        "${ITEM_H}/.config/worktool/config" || return 1
+    _path_setup --box dev || return 1
+    _expect_lines 3.11 "[INFO] wrote: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-write || return 1
+    _path_setup --box second || return 1
+    _expect_lines 3.11 "[INFO] wrote: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD/dev/second})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-rewrite || return 1
+    _path_setup --auto-enter no || return 1
+    _expect_lines 3.11 "[INFO] removed: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD/dev/second})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-removal || return 1
+    _path_status 3.11 absent "${_name}"
+}
+
+_item_3_11() {
+    local _mode _name
+    for _mode in 644 600; do
+        for _name in config config.ghostty; do
+            _mode_round "${_mode}" "${_name}" || return $?
+        done
+    done
+}
+
+# Snapshots include the state file, not just the block files. The independent
+# comparison must also catch a dry-run that saves its proposed decisions.
+_path_snapshot() {
+    mkdir "${ITEM_T}/snapshot" || return 1
+    cp "${ITEM_H}/.config/ghostty/config" "${ITEM_T}/snapshot/ghostty" || return 1
+    cp "${ITEM_H}/.config/distrobox/distrobox.conf" "${ITEM_T}/snapshot/distrobox" || return 1
+    cp "${ITEM_H}/.config/worktool/config" "${ITEM_T}/snapshot/state"
+}
+
+_path_identical() {
+    cmp -s "${ITEM_H}/.config/ghostty/config" "${ITEM_T}/snapshot/ghostty" || return 1
+    cmp -s "${ITEM_H}/.config/distrobox/distrobox.conf" "${ITEM_T}/snapshot/distrobox" || return 1
+    cmp -s "${ITEM_H}/.config/worktool/config" "${ITEM_T}/snapshot/state"
+}
+
+_item_3_12() {
+    _setup_path_begin 3.12 || return $?
+    _path_setup || return 1
+    _expect_user_content 3.12 after-write || return 1
+    local _file="${ITEM_H}/.config/ghostty/config" _before _after
+    _before="$(_count_matching '^# BEGIN worktool managed block' "${_file}")" || return 1
+    [[ "${_before}" -eq 1 ]] || return 1
+    _path_snapshot || return 1
+    _path_setup --dry-run --auto-enter no || return 1
+    _expect_lines 3.12 '[INFO] auto-enter: no (user)' \
+        '[INFO] dry-run: would write <H>/.config/worktool/config' \
+        '[INFO] dry-run: would remove managed block from <H>/.config/ghostty/config' || return 1
+    _refute_line 3.12 '[INFO] removed:' || return 1
+    _after="$(_count_matching '^# BEGIN worktool managed block' "${_file}")" || return 1
+    printf 'ghostty-blocks-before=%s ghostty-blocks-after=%s\n' "${_before}" "${_after}"
+    [[ "${_after}" -eq 1 ]] || return 1
+    _path_identical || return 1
+    printf 'dry-run-files=identical\n'
+    _expect_user_content 3.12 after-dry-run || return 1
+    _path_status 3.12 present || return 1
+    _expect_lines 3.12 'auto-enter: yes (default)'
+}
+
+_path_block_inodes() {
+    stat -c %i "${ITEM_H}/.config/ghostty/config" "${ITEM_H}/.config/distrobox/distrobox.conf"
+}
+
+_item_3_13() {
+    _setup_path_begin 3.13 || return $?
+    _path_setup || return 1
+    _expect_user_content 3.13 after-write || return 1
+    _path_snapshot || return 1
+    local _before _after _ghostty _distrobox
+    _before="$(_path_block_inodes)" || return 1
+    _path_setup || return 1
+    _expect_lines 3.13 '[INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)' \
+        '[INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)' || return 1
+    _refute_line 3.13 '[INFO] wrote: <H>/.config/ghostty/' || return 1
+    _refute_line 3.13 '[INFO] wrote: <H>/.config/distrobox/' || return 1
+    _path_identical || return 1
+    _after="$(_path_block_inodes)" || return 1
+    [[ "${_before}" == "${_after}" ]] || return 1
+    printf 'unchanged-inodes=identical\n'
+    _ghostty="$(_count_matching '^# BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
+    _distrobox="$(_count_matching '^# BEGIN worktool managed block' "${ITEM_H}/.config/distrobox/distrobox.conf")" || return 1
+    printf 'unchanged-files=identical ghostty-blocks=%s distrobox-blocks=%s\n' "${_ghostty}" "${_distrobox}"
+    [[ "${_ghostty}" -eq 1 && "${_distrobox}" -eq 1 ]] || return 1
+    _expect_user_content 3.13 after-unchanged || return 1
+    _path_status 3.13 present
+}
+
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
     local _item="$1" _group _rc
@@ -1451,6 +1639,10 @@ _run_item() {
         3.7) _item_3_7 ;;
         3.8) _item_3_8 ;;
         3.9) _item_3_9 ;;
+        3.10) _item_3_10 ;;
+        3.11) _item_3_11 ;;
+        3.12) _item_3_12 ;;
+        3.13) _item_3_13 ;;
         *)
             _fail "no implementation for item '${_item}'"
             return 1

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/verify_setup_spec.bats - script/verify/setup.sh (M3 acceptance
-# items 3.1-3.9, moved out of doc/acceptance.md)
+# items 3.1-3.13, moved out of doc/acceptance.md)
 #
 # WHAT THIS PROVES
 #   The one property the move exists to buy: A FAILURE CANNOT READ AS A
@@ -302,7 +302,7 @@ EOF
 
 # --- Control ------------------------------------------------------------------
 
-@test "control: with every tool behaving, all nine items pass (so the failure cases below are not vacuous)" {
+@test "control: with every tool behaving, all registered items pass (so the failure cases below are not vacuous)" {
     run "${VERIFY}"
     assert_success
     assert_output --partial "3.1 PASS"
@@ -314,6 +314,10 @@ EOF
     assert_output --partial "3.7 PASS"
     assert_output --partial "3.8 PASS"
     assert_output --partial "3.9 PASS"
+    assert_output --partial "3.10 PASS"
+    assert_output --partial "3.11 PASS"
+    assert_output --partial "3.12 PASS"
+    assert_output --partial "3.13 PASS"
 }
 
 # --- CLI ----------------------------------------------------------------------
@@ -337,7 +341,7 @@ EOF
     assert_output --partial "verify/setup.sh: unknown item '9.9' (see --help)"
 }
 
-@test "cli: --list prints the nine items with their group" {
+@test "cli: --list prints all registered items with their group" {
     run "${VERIFY}" --list
     assert_success
     assert_line --index 0 --partial "3.1  temphome"
@@ -345,7 +349,8 @@ EOF
     assert_line --index 6 --partial "3.7  temphome"
     assert_line --index 7 --partial "3.8  temphome"
     assert_line --index 8 --partial "3.9  temphome"
-    [ "${#lines[@]}" -eq 9 ]
+    assert_line --index 12 --partial "3.13  temphome"
+    [ "${#lines[@]}" -eq 13 ]
 }
 
 # --- 3.1 ----------------------------------------------------------------------
@@ -1158,4 +1163,112 @@ FRAG
     run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" "${REAL_JUST}" box setup --dry-run
     assert_success
     assert_equal "${_fixture}" "${output}"
+}
+
+@test "setup acceptance controls do not write agent state into the checkout" {
+    local _repo _item
+    _repo="$(_repo_copy)"
+    local REPO_ROOT="${_repo}"
+    cd "${REPO_ROOT}"
+    for _item in 3.10 3.11 3.12 3.13; do
+        _setup_acceptance_control "${_item}"
+        assert [ ! -e "${REPO_ROOT}/.agents" ]
+    done
+}
+
+# Verify the real control output without writing into the checkout.
+_setup_acceptance_control() {
+    local _item="$1"
+    output=""
+    run just verify setup "${_item}"
+    assert_success
+}
+
+# Every other registered item must remain green on the same degraded copy.
+_setup_acceptance_others() {
+    local _repo="$1" _except="$2" _item _rest=()
+    output=""
+    run just --justfile "${_repo}/justfile" verify setup --list
+    assert_success
+    while read -r _item _; do
+        [[ "${_item}" == 3.* && "${_item}" != "${_except}" ]] && _rest+=("${_item}")
+    done <<<"${output}"
+    run just --justfile "${_repo}/justfile" verify setup "${_rest[@]}"
+    assert_success
+}
+
+# Replace exactly one product call site inside the named function.
+_degrade_setup_line() {
+    local _file="$1" _function="$2" _old="$3" _new="$4"
+    MUTANT_OLD="${_old}" MUTANT_NEW="${_new}" awk -v fn="${_function}" '
+        $0 == fn "() {" { inside = 1 }
+        inside && $0 == ENVIRON["MUTANT_OLD"] {
+            print ENVIRON["MUTANT_NEW"]; changed++; next
+        }
+        { print }
+        /^}/ { inside = 0 }
+        END { if (changed != 1) exit 1 }
+    ' "${_file}" >"${_file}.mutant" || return 1
+    cat "${_file}.mutant" >"${_file}"
+    rm "${_file}.mutant"
+}
+
+@test "3.10: atomic profile failure is reported once, leaves no debris, and reruns to completion" {
+    _setup_acceptance_control 3.10
+    assert_line 'original=intact temp-files=0'
+    assert_line 'setup-rc=1'
+    assert_line 'ghostty: <H>/.config/ghostty/config (managed block: absent)'
+    assert_line 'ghostty: <H>/.config/ghostty/config (managed block: present)'
+    local _repo
+    _repo="$(_repo_copy)"
+    # Degrade only the failed block-write diagnostic, not config/removal errors.
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
+        "        log_error \"failed to write \${_file}\"" '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.10
+    assert_failure 1
+    refute_output --partial '3.10 PASS'
+    _setup_acceptance_others "${_repo}" 3.10
+}
+
+@test "3.11: existing managed files retain 0644 and 0600 through write, rewrite and removal" {
+    _setup_acceptance_control 3.11
+    assert_line 'mode 644 config after-write: ghostty=644 distrobox=644 state=644'
+    assert_line 'mode 600 config.ghostty after-removal: ghostty=600 distrobox=600 state=600'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/lib/config.sh" _config_replace \
+        "    if \"\$@\" >\"\${_tmp}\" && _config_copy_mode \"\${_target}\" \"\${_tmp}\" \\" \
+        "    if \"\$@\" >\"\${_tmp}\" && : \\"
+    run just --justfile "${_repo}/justfile" verify setup 3.11
+    assert_failure 1
+    refute_output --partial '3.11 PASS'
+    _setup_acceptance_others "${_repo}" 3.11
+}
+
+@test "3.12: dry-run removal reports an existing block and preserves all managed files byte for byte" {
+    _setup_acceptance_control 3.12
+    assert_line 'ghostty-blocks-before=1 ghostty-blocks-after=1'
+    assert_line 'dry-run-files=identical'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_remove \
+        "        log_info \"dry-run: would remove managed block from \${_file}\"" '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.12
+    assert_failure 1
+    refute_output --partial '3.12 PASS'
+    _setup_acceptance_others "${_repo}" 3.12
+}
+
+@test "3.13: identical decisions twice report unchanged blocks without rewriting their content" {
+    _setup_acceptance_control 3.13
+    assert_line '[INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)'
+    assert_line 'unchanged-files=identical ghostty-blocks=1 distrobox-blocks=1'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
+        "        log_info \"unchanged: \${_file} (managed block already up to date)\"" '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.13
+    assert_failure 1
+    refute_output --partial '3.13 PASS'
+    _setup_acceptance_others "${_repo}" 3.13
 }
