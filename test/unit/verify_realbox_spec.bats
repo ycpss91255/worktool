@@ -2312,3 +2312,20 @@ _assert_data_unchanged() {
     assert_success
     [ ! -e "${data}" ]
 }
+
+@test "#516: 5.2.3 restores the existing Ghostty init log byte-identical with its mtime" {
+    export XDG_CACHE_HOME="${HOME}/custom-cache"
+    local log="${XDG_CACHE_HOME}/worktool/dev-init.log"
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -t 200101010101 "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    _realbox_quiet 5.2.1
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+}

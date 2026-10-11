@@ -6,6 +6,9 @@
 # shellcheck source=lib/config_backup.sh
 source "${REPO_ROOT}/lib/config_backup.sh"
 CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
+if [[ -e "${XDG_CACHE_HOME:-${HOME}/.cache}/worktool/${MANIFEST_BOX:-dev}-init.log" ]]; then
+    CFGBK_NAMES+=(init-log)
+fi
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
 
 cfgbk_file_of() {
@@ -14,6 +17,7 @@ cfgbk_file_of() {
         ghostty-modern) printf '%s/ghostty/config.ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool/config\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox/distrobox.conf\n' "${CFGBK_C}" ;;
+        init-log) printf '%s/worktool/%s-init.log\n' "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}" "${BOX}" ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac
 }
@@ -23,6 +27,7 @@ cfgbk_dir_of() {
         ghostty | ghostty-modern) printf '%s/ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox\n' "${CFGBK_C}" ;;
+        init-log) printf '\n' ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac
 }
