@@ -73,6 +73,18 @@ _edit() {
     done
 }
 
+@test "main session delegates verify execution including namespaces and leading options" {
+    local command
+    for command in 'just verify all' 'just verify realbox box 5.1' \
+        'just verify::all' 'just --justfile justfile verify all' \
+        'just -d /tmp verify all' 'just --set box demo --quiet verify all' \
+        'timeout 60 env just verify all'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'Workflow'
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do

@@ -80,6 +80,9 @@ check_tests() {
     if [[ "${tool}" == just && ( "${recipe}" == test || "${recipe}" == test::* ) ]]; then
         refuse 'Main-session tests belong in a Workflow.'
     fi
+    if [[ "${tool}" == just && ( "${recipe}" == verify || "${recipe}" == verify::* ) ]]; then
+        refuse 'Main-session verification belongs in a Workflow.'
+    fi
     if [[ "${tool}" == docker && "${text}" =~ (^|[[:space:]\"\'])([^[:space:]\"\']*/)?bats([[:space:]\"\']|$) ]]; then
         refuse 'Main-session Docker bats execution belongs in a Workflow.'
     fi
