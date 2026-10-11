@@ -400,6 +400,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 | `base` | 是 | 驗收分支名稱（例如 `m3/5-acceptance`）；拒絕不合法的分支名稱 |
 | `pr` | 是 | milestone 驗收 PR 的正整數編號 |
 | `milestoneIssue` | 否 | milestone issue 正整數；省略時取 PR 第一筆 Closes/Fixes/Resolves 參照 |
+| `maintainerSentence` | 否 | 維護者原句，原文傳給兩位獨立驗收者；省略時使用含 PR URL 與 milestone issue 編號的開放式驗證句 |
 | `safeRun` | 否 | 布林值，預設 `true`；為 `false` 時只列安全分類與待執行命令 |
 
 1. **Sync**：從 `git worktree list --porcelain` 找到 `base` 的 linked worktree，
@@ -447,16 +448,35 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    修改 live user config 有內建備份與還原、不需人類桌面互動、無同名盒子才安全。
    安全且 `safeRun=true` 才實跑，保留輸出、退出碼與還原結果；最多兩個
    worktool-test container，不停止別人的容器。不安全或停用實跑的項目附理由及維護者命令。
-7. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+7. **Independent Codex → Independent Claude**：先啟動全新 Codex session，完成且確認
+   真實設定已還原後，才啟動全新 Claude agent；同一時間只有一位驗收者操作真實設定。
+   兩者只收到 `maintainerSentence`（或預設開放式驗證句）及操作／安全限制：
+   真實設定先備份、所有退出路徑還原並核對；除文件規定且有 agent 標記的 #22 發文外
+   不寫 GitHub；不寫維護者核准片語；長指令背景執行並輪詢到完成；報告不含本機路徑。
+   repo 操作仍透過 just，測試只在 Docker，禁止 host 安裝與本機整個 tier。
+   Codex 的 launcher 本身遵守前景、字面路徑與 bounded call 限制；不沿用 Review session。
+   不傳 Findings、Machine、Review 產物、驗收清單或預期答案；Claude 也不收到 Codex 報告。
+   任一驗收失敗、報告為空或設定還原無法確認就停止，不啟動後續驗收。
+8. **獨立報告彙整與發布**：兩者完成後才分類缺陷、證據不足與待維護者人工項目。
+   任一報告有缺陷或證據不足就判「不可交出」，列出要開的 issue；分類失敗也不能判成功。
+   明確保留給維護者的人工操作不單獨阻擋，但不能把 agent 可取得的證據缺口改列人工待驗。
+   workflow 以 `[claude]` 身分前綴分別原文貼出兩份完整報告，逐次確認 frozen head，
+   讀回留言核對原文；不改寫報告，含本機路徑或核准片語的報告拒絕發布。
+   再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
+   原 Review 的負面判定仍阻擋；最終正面判定必須在獨立驗收之後，不能只引用早期 Review。
+   任一發布或核對失敗即停止，不宣告就緒。
+9. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
-   第 5 節的輸出／還原／待驗項目。不自動更新 PR 說明或張貼草稿。
+   第 5 節的輸出／還原／待驗項目、兩份獨立報告與最終判定連結。ready 留言必須明列全部
+   待維護者人工項目及待開 issue，即使判定可交出也不省略人工項目。不自動更新 PR 說明或張貼草稿。
 
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
 各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
-Machine 的 `machine.md` 與 `machine/` 子目錄、Evidence 的 `evidence.md` 與 `ready.md`。
+Machine 的 `machine.md` 與 `machine/` 子目錄、獨立驗收的 `independent-*`、Evidence 的 `evidence.md` 與 `ready.md`。
 所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。Review 前以獨立 agent 在前景執行 `test -s` 確認 `findings.md`；Machine 前確認
-`findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`。
+`findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`，以及兩份獨立報告
+`independent-codex-report.md`、`independent-claude-report.md` 與最終 `independent-verdict.md`。
 Evidence 完成後也確認全部前段產物及 `evidence.md`、`ready.md`，才回傳 prepared。
 任一檔案不存在或為空即停止，回傳 `status: artifacts-missing`、被阻擋的階段及缺檔完整路徑；
 檢查失敗或回傳格式不符也停止並列出無法確認的檔案，不補寫或重編 F 編號。
