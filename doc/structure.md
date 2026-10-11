@@ -220,7 +220,8 @@ Codex 的 `apply_patch` 不得寫入其中（僅 `.agents/memory/` 例外）；l
 `.agents/hook/enforce_main_session_coordinates_only.sh` 在 PreToolUse 檢查 Bash 與
 Edit、Write、MultiEdit、NotebookEdit。主 session（沒有非空字串 `agent_id`）只負責
 協調：禁止 `git commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply`、
-`git checkout -- <path>`、`just test ...`、Docker 裡的 bats，以及編輯主 checkout
+`git checkout -- <path>`、`just test ...`、`just verify ...`（含 `verify::*` 與
+recipe 前的 just 選項）、Docker 裡的 bats，以及編輯主 checkout
 同層 `worktree/` 下的檔案。檔案路徑依 `cwd` 解讀、正規化並解析既有 symlink；
 從 Git 共用目錄定位主 checkout，因此從 linked worktree 呼叫也適用。
 
@@ -233,6 +234,10 @@ hook 繼續限制主 checkout 的寫入。拒絕訊息指出應使用 `pr-loop`�
 缺少 `agent_id` 的 Codex 實作者誤判成主 session。ShellCheck 與主 checkout
 唯讀 guard 仍照常執行。
 
+裸 `just verify` 只列清單、精確的 `just verify --help` 只印用法，因此放行；
+兩者可帶既有支援的 just 全域選項。`verify::*` 不套用此例外，`--help` 帶其他
+recipe 參數也不放行，以免用 help 掩蓋驗收執行或未驗證的命令列。
+
 身分例外與 `enforce_codex_via_workflow.sh` 共用 `hook_bootstrap.sh` 的
 `hook_subagent_call`：只以 hook 輸入的非空字串 `agent_id` 放行 workflow／sub-agent；
 不讀 transcript，不採用環境變數或 `agent_type` 當身分。這是合作代理的守門規則，
@@ -243,8 +248,17 @@ Bash 檢查沿用 `subcommand.sh` 的指令拆解；直接指令包含引號、�
 heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則；帶引號的 xargs
 指令也會拆解，影響 git／just 動作判定的參數有 shell 展開或未知全域旗標時拒絕；
 明確唯讀的 git 子指令與 `fetch` 的資料參數可展開，內嵌的指令替換仍會逐一檢查。
-間接執行的原始文字檢查可能連純文字提及也拒絕；無受限動作的日常指令放行。
-腳本檔內容、自訂 just recipe、編碼或執行時組出的指令不在靜態檢查範圍內。
+間接執行的 raw-text tripwire 涵蓋 `just ... test` 與 `just ... verify`（含
+namespace 與 recipe 前的選項），可能連純文字提及或 help 也拒絕；上述唯讀
+verify 例外只適用於可直接解析的呼叫。無受限動作的日常指令放行。
+`bash`／`sh` 的腳本路徑或路徑前的選項（含選項值）有 shell 展開時一律拒絕。
+執行字面路徑的腳本時，依 payload 的 `cwd` 讀取該檔；內容以與 raw-text tripwire
+共用的正規表示式檢查 `just ... verify`／`just ... test`，含 just 選項、多個空白、
+註解與 help 文字。符合就拒絕，檔案不存在、不是一般檔案或讀取失敗也拒絕。
+不相關的字面路徑腳本放行，不執行、不遞迴追查腳本內容；workflow／sub-agent
+仍依上述 `agent_id` 例外放行。已知限制：腳本再呼叫別的腳本、經 python 等其他
+直譯器執行檔案、自訂 just recipe、編碼或執行時
+組出的指令仍不在靜態檢查範圍內。
 
 本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`
 在此 Codex 接線沒有對應事件，因此不註冊；`enforce_reply_language.sh` 只接 Claude
