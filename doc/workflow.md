@@ -455,6 +455,14 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    不寫 GitHub；不寫維護者核准片語；長指令背景執行並輪詢到完成；報告不含本機路徑。
    repo 操作仍透過 just，測試只在 Docker，禁止 host 安裝與本機整個 tier。
    Codex 的 launcher 本身遵守前景、字面路徑與 bounded call 限制；不沿用 Review session。
+   每次呼叫上限 570 秒，rc 124 以 transcript 首筆 session id 續跑同一個獨立 session，
+   最多續跑 25 次；耗盡上限、session id 缺失或其他非零退出均停止，不重新啟動驗收。
+   啟動前建立獨立 recovery journal；任何設定變更前持久保存備份與原狀態，
+   背景工作先登錄 PID、啟動時間及專屬 process group，再允許變更設定。
+   所有 Codex 結果（含逾時耗盡、啟動失敗及空報告）都進入獨立清理階段：
+   確認 launcher 退出，核對行程身分，只終止自己的子行程並等待它們結束，才還原設定；
+   核對內容、symlink 與 metadata 的原狀態，保存清理證據與備份。
+   journal、子行程退出或還原無法確認時封閉失敗；兩個驗證旗標都必須為 true 才啟動 Claude。
    不傳 Findings、Machine、Review 產物、驗收清單或預期答案；Claude 也不收到 Codex 報告。
    任一驗收失敗、報告為空或設定還原無法確認就停止，不啟動後續驗收。
 8. **獨立報告彙整與發布**：兩者完成後才分類缺陷、證據不足與待維護者人工項目。
