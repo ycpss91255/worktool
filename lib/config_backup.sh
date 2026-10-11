@@ -508,13 +508,19 @@ cfgbk_restore_one() {
 # against, so the reference is the BACKUP step 1 published: what the file
 # held outside every managed block before anything was applied.
 
-# Print the lines of file $1 that lie OUTSIDE every managed block. Returns 1
+# Print the lines of file $1 that lie OUTSIDE every managed block, preserving
+# whether the final line has a newline. Returns 1
 # when the file cannot be read - never an empty answer, which would certify
 # an unreadable file as "the user had nothing".
 cfgbk_user_lines() {
-    local _f="$1" _line _skip=0
+    local _f="$1" _line _newline _skip=0
     [[ -f "${_f}" && -r "${_f}" ]] || return 1
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+    while :; do
+        _newline=$'\n'
+        if ! IFS= read -r _line; then
+            [[ -n "${_line}" ]] || break
+            _newline=""
+        fi
         if [[ "${_line}" == "${CFGBK_BLOCK_BEGIN}" ]]; then
             _skip=1
             continue
@@ -524,7 +530,7 @@ cfgbk_user_lines() {
             continue
         fi
         [[ "${_skip}" -eq 1 ]] && continue
-        printf '%s\n' "${_line}"
+        printf '%s%s' "${_line}" "${_newline}"
     done <"${_f}"
     return 0
 }

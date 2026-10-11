@@ -52,6 +52,26 @@ setup() {
     assert_equal "${stderr}" ''
 }
 
+@test "#525: changing final-newline presence in either direction reports LOST" {
+    local config="${XDG_CONFIG_HOME}/ghostty/config"
+    printf 'font-size = 13\n' >"${config}"
+    printf 'set -g mouse on' >"${HOME}/.tmux.conf"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    printf 'font-size = 13' >"${config}"
+    printf 'set -g mouse on\n' >"${HOME}/.tmux.conf"
+
+    run --separate-stderr cfgbk_report_user_content after-apply
+
+    assert_failure 1
+    assert_output 'user-content after-apply: ghostty=LOST tmux.conf=LOST'
+    [[ "${stderr}" == *'font-size = 13\n'* ]]
+    [[ "${stderr}" == *'font-size\ =\ 13'* ]]
+    [[ "${stderr}" == *'set -g mouse on\n'* ]]
+    [[ "${stderr}" == *'set\ -g\ mouse\ on'* ]]
+}
+
 @test "#523: an existing unreadable Ghostty target still fails the block report" {
     local dir
     dir="$(mktemp -d /tmp/cfgbk-unreadable.XXXXXX)"
