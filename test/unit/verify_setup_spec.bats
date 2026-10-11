@@ -1165,14 +1165,23 @@ FRAG
     assert_equal "${_fixture}" "${output}"
 }
 
-# Record the real control output for the published acceptance criteria.
+@test "setup acceptance controls do not write agent state into the checkout" {
+    local _repo _item
+    _repo="$(_repo_copy)"
+    local REPO_ROOT="${_repo}"
+    cd "${REPO_ROOT}"
+    for _item in 3.10 3.11 3.12 3.13; do
+        _setup_acceptance_control "${_item}"
+        assert [ ! -e "${REPO_ROOT}/.agents" ]
+    done
+}
+
+# Verify the real control output without writing into the checkout.
 _setup_acceptance_control() {
     local _item="$1"
     output=""
     run just verify setup "${_item}"
     assert_success
-    mkdir -p "${REPO_ROOT}/.agents/state/231"
-    printf '%s\n' "${output}" >"${REPO_ROOT}/.agents/state/231/${_item}.out"
 }
 
 # Every other registered item must remain green on the same degraded copy.
