@@ -16,5 +16,6 @@ const watchdog = setTimeout(() => process.kill(-p.pid, 'SIGKILL'), 6000);
 p.on('exit', (code, signal) => {
     clearInterval(timer);
     clearTimeout(watchdog);
+    console.log('exit-signal=' + (signal || 'none'));
     console.log('rc=' + (code === null ? 128 + constants.signals[signal] : code));
 });

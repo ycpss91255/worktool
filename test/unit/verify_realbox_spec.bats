@@ -88,10 +88,13 @@ fi
 exec "${SIGNAL_STATE}/distrobox" "$@"
 STUB
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
-        "${BATS_TEST_DIRNAME}/fixture/realbox_signal_caller.sh" "${REALBOX}" --allow-real-box 5.1
+        "${REALBOX}" --allow-real-box 5.1
     assert_success
+    assert_line 'exit-signal=none'
     assert_line 'rc=130'
     assert_line 'cleanup-rc=0'
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
     run cat "${SIGNAL_STATE}/events"
     assert_output $'finished\ncleanup'
     [ ! -s "${STATE}/boxes" ]
