@@ -59,19 +59,21 @@ STUB
     assert_equal "$(_count_calls gh)" "0"
 }
 
-@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+_assert_group_interrupt() {
+    local signal="$1" expected="$2" phase="$3" item="${4:-5.1}"
+    export INTERRUPT_PHASE="${phase}"
     export SIGNAL_STATE="${STATE}"
     cp "${STUBS}/just" "${STATE}/just"
     cp "${STUBS}/distrobox" "${STATE}/distrobox"
     cat >"${STUBS}/just" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == assemble ]]; then
+if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
     finish() {
         echo finished >>"${SIGNAL_STATE}/events"
         exec "${SIGNAL_STATE}/just" "$@"
     }
-    trap 'sleep 0.2; finish "$@"' INT
+    trap 'sleep 0.2; finish "$@"' INT TERM HUP
     echo "$$" >"${SIGNAL_STATE}/child.pid"
     touch "${SIGNAL_STATE}/ready"
     sleep 3
@@ -87,11 +89,11 @@ if [[ "${1:-}" == rm ]]; then
 fi
 exec "${SIGNAL_STATE}/distrobox" "$@"
 STUB
-    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
-        "${REALBOX}" --allow-real-box 5.1
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" "${signal}" bash \
+        "${REALBOX}" --allow-real-box "${item}"
     assert_success
     assert_line 'exit-signal=none'
-    assert_line 'rc=130'
+    assert_line "rc=${expected}"
     assert_line 'cleanup-rc=0'
     assert_line 'box-state after-cleanup: home=0 tmux=0'
     assert_line 'host-state after-cleanup: new=0'
@@ -102,6 +104,14 @@ STUB
     read -r pid <"${STATE}/child.pid"
     run kill -0 "${pid}"
     assert_failure 1
+}
+
+@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+    _assert_group_interrupt INT 130 assemble
+}
+
+@test "5.1: group INT during bench reports realbox cleanup and exits normally" {
+    _assert_group_interrupt INT 130 bench
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
