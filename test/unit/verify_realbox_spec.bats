@@ -1581,7 +1581,7 @@ STUB
 @test "5.3: documented refusal and restore lines follow the actual output order" {
     bats_require_minimum_version 1.5.0
     local _actual _documented _keys
-    _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
+    _keys='^(backup-covers|52-rc|restore-rc|restore-files-ok|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|cleanup-rc|still-there)='
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
