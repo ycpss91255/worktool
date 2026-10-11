@@ -2214,3 +2214,26 @@ STUB
     [ ! -e "${cache}" ]
     [ ! -e "${box_home%/*}" ]
 }
+
+@test "#511: 5.1 bench preserves existing real cache bytes and mtimes" {
+    local root="${HOME}/.cache/worktool" cache box_home
+    mkdir -p "${root}/nested"
+    printf 'original dev init log\n' >"${root}/dev-init.log"
+    printf 'other cache\n' >"${root}/nested/keep"
+    touch -t 200101010101 "${root}/dev-init.log" "${root}/nested/keep" "${root}/nested" "${root}"
+    cp -a "${root}" "${STATE}/cache-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes"
+    FAKE_CACHE_WRITE_PHASE=bench FAKE_JUST_ASSEMBLE_WRITES_STATE=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    run diff -r "${STATE}/cache-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes-after"
+    run cmp "${STATE}/cache-mtimes" "${STATE}/cache-mtimes-after"
+    assert_success
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/assemble-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${cache}" ]
+}

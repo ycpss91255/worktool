@@ -214,6 +214,7 @@ _fake_just() {
             return "${_rc}"
             ;;
         bench)
+            _fake_init_cache bench "$@" || return 1
             _out="${FAKE_JUST_BENCH_OUT-${_DEFAULT_BENCH}}"
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
             return "${FAKE_JUST_BENCH_RC:-0}"

@@ -528,7 +528,7 @@ _51_body() {
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
-    _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
+    XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
     _brc=$?
     # A signalled tee can finish the pipeline before _just stops its group.
