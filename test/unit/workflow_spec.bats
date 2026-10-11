@@ -2935,13 +2935,14 @@ _handover_replies() {
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
+        "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
 }
 
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
@@ -3335,7 +3336,7 @@ _pl_retry_run() {
     json="${output}"
     run jq -e '.result.status == "prepared" and
         [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review",
-            "review:","artifact-check:Machine","machine:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+            "review:","artifact-check:Machine","machine:","independent-codex:","independent-claude:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
     [ ! -e "${scratch}/stale.md" ]
@@ -3357,4 +3358,14 @@ _pl_retry_run() {
             assert_success
         done
     done
+}
+
+@test "milestone-handover independent acceptance receives only the maintainer sentence and safety limits (#505)" {
+    local sentence='請到 https://github.com/o/r/pull/7，幫我驗證這個 pr 是否正確, 以及是否有不符合 M3 要求。'
+    _handover_run "$(jq -cn --arg s "${sentence}" '{repo:"o/r",repoDir:"/tmp/w",base:"m3/5-acceptance",pr:7,maintainerSentence:$s}')" "$(_handover_replies)"
+    run jq -e --arg s "${sentence}" '[.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:")] |
+        length == 2 and all(.prompt | contains($s) and contains("backup") and contains("restore") and
+            contains("#22") and contains("detached") and contains("poll") and contains("local paths") and
+            (test("findings|F1|checklist|machine.md|codex.md|expected output|可交出") | not))' <<<"${output}"
+    assert_success
 }
