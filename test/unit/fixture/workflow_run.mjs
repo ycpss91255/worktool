@@ -123,6 +123,7 @@ const playHandoverFiles = (role, prompt) => {
   const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
   const files = {
     'findings:': ['findings.md'], 'review:': ['codex.md', 'codex-result.json'],
+    'independent-publish:': ['independent-codex-report.md', 'independent-claude-report.md', 'independent-verdict.md'],
     'machine:': ['machine.md'], 'evidence:': ['evidence.md', 'ready.md'],
   }[role]
   if (files) {
