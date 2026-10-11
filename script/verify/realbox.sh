@@ -524,7 +524,7 @@ _51_body() {
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 

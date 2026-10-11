@@ -217,7 +217,7 @@ setup() {
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
-    unset XDG_CONFIG_HOME
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -2200,4 +2200,17 @@ STUB
     fi
     [ "${alive}" -eq 0 ]
     [ ! -e "${marker}" ]
+}
+
+@test "#511: 5.1 assemble cache stays in scratch and absent real cache stays absent" {
+    FAKE_CACHE_WRITE_PHASE=assemble run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local cache box_home
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+    [ ! -e "${box_home%/*}" ]
 }
