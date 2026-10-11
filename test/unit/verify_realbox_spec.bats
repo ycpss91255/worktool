@@ -1027,6 +1027,21 @@ STUB
     export REALBOX
 }
 
+@test "#513: 5.2 documented backup and restore lines follow the actual output order" {
+    local _actual _documented _keys
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    _keys='^(backup-covers|restore-rc|restore-files-ok|restore-window-ok|restore-ok|blocks|leftover-dirs|dev-gone|backup-removed|cleanup-rc)='
+    _actual="$(printf '%s\n' "${output}" | tr -d '\r' | grep -E "${_keys}" \
+        | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+    _documented="$(sed -n '/^  - \[ \] 5\.2 開終端/,/^  - \[ \] 5\.3 先建/p' \
+        "${REPO_ROOT}/doc/acceptance.md" \
+        | sed -n '/預期看到資訊/p; /成功依序印/s/。還原判準.*//p' \
+        | grep -o "\`[^\`]*\`" | sed 's/`//g' | grep -E "${_keys}")"
+    assert_equal "${_documented}" "${_actual}"
+}
+
 @test "#362: 5.2 refuses an existing fish process as new-window evidence" {
     _fake_window_process
     export FAKE_WINDOW_BASELINE='4242 fish'
@@ -1581,7 +1596,7 @@ STUB
 @test "5.3: documented refusal and restore lines follow the actual output order" {
     bats_require_minimum_version 1.5.0
     local _actual _documented _keys
-    _keys='^(52-rc|restore-rc|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|still-there)='
+    _keys='^(backup-covers|52-rc|restore-rc|restore-files-ok|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|cleanup-rc|still-there)='
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
@@ -2159,6 +2174,23 @@ printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/restore-rc"
 STUB
     printf '%s\n' "$1" | script -q -c "bash '${STATE}/restore-run'" /dev/null | tr -d '\r'
     return "$(cat "${STATE}/restore-rc")"
+}
+
+@test "#513: the interactive restore prompt explains Ctrl-D on stderr" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    export ORIGINAL_REALBOX="${REALBOX}" RESTORE_STDERR="${STATE}/restore-stderr"
+    cat >"${STATE}/restore-with-stderr" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${ORIGINAL_REALBOX}" "$@" 2>"${RESTORE_STDERR}"
+STUB
+    chmod +x "${STATE}/restore-with-stderr"
+    REALBOX="${STATE}/restore-with-stderr" run _restore_input 4242
+    assert_success
+    run cat "${RESTORE_STDERR}"
+    assert_success
+    assert_line --partial 'Ctrl-D skips confirmation'
 }
 
 @test "#471: a clean post-restore Ghostty window completes restore" {
