@@ -151,6 +151,18 @@ _edit() {
     done
 }
 
+@test "shell startup flags cannot hide a literal script execution" {
+    printf 'just verify all\n' >"${WORK}/checks.sh"
+    local command
+    for command in 'bash --norc checks.sh' 'bash --posix checks.sh' \
+        'bash --noprofile --verbose checks.sh' 'bash +x checks.sh' \
+        'bash --rcfile config checks.sh'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'script tests or verification'
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do

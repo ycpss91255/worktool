@@ -109,8 +109,10 @@ check_script() {
             case "${word}" in
                 --) options=0; continue ;;
                 -o|+o|-O|+O|--rcfile|--init-file) skip=1; continue ;;
-                --help|--version|-*c*|-*s*) return 0 ;;
-                -*) continue ;;
+                --help|--version) return 0 ;;
+                --*) continue ;;
+                -*c*|-*s*) return 0 ;;
+                -*|+*) continue ;;
             esac
         fi
         path="${word}"
