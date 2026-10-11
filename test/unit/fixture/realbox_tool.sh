@@ -91,6 +91,7 @@ _fake_distrobox_list() {
 }
 
 _fake_distrobox_create() {
+    _fake_init_cache create "$@" || return 1
     local _name="" _prev=""
     local _a
     for _a in "$@"; do
@@ -178,6 +179,23 @@ _fake_assemble_state() {
     config_xdg_dir >"${_DIR}/assemble-config-dir"
 }
 
+# Opt-in cache-writing collaborator: model enter.sh's host init log write.
+_fake_init_cache() {
+    [[ "${FAKE_CACHE_WRITE_PHASE:-}" == "$1" ]] || return 0
+    local _phase="$1" _previous="" _arg _home=""
+    shift
+    for _arg in "$@"; do
+        [[ "${_previous}" != --home ]] || _home="${_arg}"
+        _previous="${_arg}"
+    done
+    local _cache="${XDG_CACHE_HOME:-${HOME}/.cache}"
+    printf '%s\n' "${_cache}" >"${_DIR}/cache-path"
+    printf '%s\n' "${_home}" >"${_DIR}/cache-box-home"
+    mkdir -p "${_cache}/worktool" || return 1
+    printf 'init from %s\n' "${_phase}" >"${_cache}/worktool/${_BOX}-init.log" || return 1
+    printf 'written\n' >"${_DIR}/cache-written"
+}
+
 # --- just --------------------------------------------------------------------
 # argv always starts `box <verb>` (script/verify/realbox.sh only ever calls
 # the box namespace).
@@ -188,6 +206,7 @@ _fake_just() {
             if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 || "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]]; then
                 distrobox assemble create --file box/dev.ini || return 1
             fi
+            _fake_init_cache assemble "$@" || return 1
             _fake_assemble_state "$@" || return 1
             _rc="${FAKE_JUST_ASSEMBLE_RC:-0}"
             _out="${FAKE_JUST_ASSEMBLE_OUT-distrobox assemble create --file box/dev.ini}"
@@ -196,6 +215,7 @@ _fake_just() {
             return "${_rc}"
             ;;
         bench)
+            _fake_init_cache bench "$@" || return 1
             _out="${FAKE_JUST_BENCH_OUT-${_DEFAULT_BENCH}}"
             [[ -n "${_out}" ]] && printf '%s\n' "${_out}"
             return "${FAKE_JUST_BENCH_RC:-0}"

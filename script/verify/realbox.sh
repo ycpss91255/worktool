@@ -524,11 +524,11 @@ _51_body() {
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
-    _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
+    XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
     _brc=$?
     # A signalled tee can finish the pipeline before _just stops its group.
@@ -637,7 +637,7 @@ _52_step2_apply() {
     # something that says "this run touched assemble".
     : >"${CFGBK_B}/created-box" \
         || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
@@ -921,7 +921,7 @@ _53_cleanup() {
 
 _53_make_decoy() {
     local _e
-    guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
+    XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
         --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".

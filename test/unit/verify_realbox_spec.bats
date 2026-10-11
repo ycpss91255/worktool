@@ -217,7 +217,7 @@ setup() {
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
-    unset XDG_CONFIG_HOME
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -2200,4 +2200,67 @@ STUB
     fi
     [ "${alive}" -eq 0 ]
     [ ! -e "${marker}" ]
+}
+
+@test "#511: 5.1 assemble cache stays in scratch and absent real cache stays absent" {
+    FAKE_CACHE_WRITE_PHASE=assemble run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local cache box_home
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+    [ ! -e "${box_home%/*}" ]
+}
+
+@test "#511: 5.1 bench preserves existing real cache bytes and mtimes" {
+    local root="${HOME}/.cache/worktool" cache box_home
+    mkdir -p "${root}/nested"
+    printf 'original dev init log\n' >"${root}/dev-init.log"
+    printf 'other cache\n' >"${root}/nested/keep"
+    touch -t 200101010101 "${root}/dev-init.log" "${root}/nested/keep" "${root}/nested" "${root}"
+    cp -a "${root}" "${STATE}/cache-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes"
+    FAKE_CACHE_WRITE_PHASE=bench FAKE_JUST_ASSEMBLE_WRITES_STATE=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    run diff -r "${STATE}/cache-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes-after"
+    run cmp "${STATE}/cache-mtimes" "${STATE}/cache-mtimes-after"
+    assert_success
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/assemble-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${cache}" ]
+}
+
+@test "#511: 5.2 failed assemble cache is isolated and removed with its backup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=assemble FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 1
+    assert_line 'backup-removed=1'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+}
+
+@test "#511: 5.3 decoy cache stays in scratch and is removed on cleanup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=create run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'decoy-cleanup-rc=0'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
 }
