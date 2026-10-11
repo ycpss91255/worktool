@@ -78,6 +78,16 @@ setup() {
     assert_equal "${stderr}" ''
 }
 
+@test "#523: dangling Ghostty config with missing target directories reports zero blocks" {
+    ln -s ../../dotfiles/ghostty/config "${XDG_CONFIG_HOME}/ghostty/config"
+
+    run --separate-stderr cfgbk_report_blocks
+
+    assert_success
+    assert_output 'blocks=0'
+    assert_equal "${stderr}" ''
+}
+
 @test "#523: dangling Ghostty config has intact empty user content after restore" {
     local config="${XDG_CONFIG_HOME}/ghostty/config"
     ln -s missing-config "${config}"
