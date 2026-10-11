@@ -853,7 +853,7 @@ rc=0
 
 - [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，並連結真實 config 目錄中除 `worktool/` 以外的所有頂層項目（含隱藏項目），讓 assemble、bench 與清理沿用相同的容器工具儲存位置、連線設定、container manager、使用者設定與 TMUX 隔離區塊；成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的四個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
   - 盒名由交付的 `box/dev.ini` manifest 決定（目前為 `[dev]`），不支援自訂 manifest。省略 `--box` 時沿用該盒名；`--box <name>` 只能指定相同名稱。若不一致（例如 `--box work`），在任何副作用前以 exit 2 拒絕，stderr 的 `realbox.sh: ...` 訊息會說明 manifest 決定盒名；不呼叫 assemble、distrobox 或 gh。5.3 的 decoy 仍使用 manifest 的盒名。
-  - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。
+  - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。assemble 或 bench 中斷時，腳本先停止本輪子行程群組，再自行清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理失敗優先，以 exit 1 結束。
     - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
       ````text
       preexisting-dev=0
@@ -880,7 +880,7 @@ rc=0
       ```bash
       just verify realbox --allow-real-box 5.1; echo rc=$?
       ```
-  - [ ] 5.2 開終端即在盒內 fish，主觀無明顯延遲；一次呼叫依序備份、套用、確認新視窗、還原。中斷後單獨跑 5.2.3 還原。
+  - [ ] 5.2 開終端即在盒內 fish，主觀無明顯延遲；一次呼叫依序備份、套用、確認新視窗、還原。套用期間收到 SIGINT／SIGTERM／SIGHUP 時先停止本輪子行程群組，再自行還原、清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理成功時回 130／143／129，還原或清理失敗時回 1、保留備份，單獨跑 5.2.3 重試還原。
     - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`；`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。集合來源是 [config_backup_paths.sh](../script/verify/config_backup_paths.sh) 的 `CFGBK_NAMES`；3.x 的 `tmux.conf=intact` 是不得改動使用者檔案的判準，不代表它列入 5.2 備份。
     - 5.2.1 備份前先檢查兩份 Ghostty 設定檔（legacy `config` 與 `config.ghostty`）：任一份含 worktool 受管區塊就拒絕，stdout 只印 `baseline-managed-ghostty=1`，回非零；不建立任何備份、不套用、不改動任何設定檔。stderr 說明此基準還原後可能正確進入原本的盒子，無法符合 host 新視窗判準，並指示先移除受管區塊（例如執行 `just box setup --terminal none`），再重跑 5.2。5.2 套用時明確執行 `just box setup --terminal ghostty --auto-enter yes --box <manifest 盒名>`，啟用 Ghostty 自動進入 manifest 的盒子，不沿用已保存的 terminal、auto-enter 或盒名選擇；結束後由既有四檔備份還原原本的設定與使用者選擇，狀態檔仍須與備份前逐 byte 相同。受管區塊以外的內容與其他設定檔的既有內容仍照原規則保留、備份與還原。
     - 預期看到資訊（無 Ghostty 受管區塊的基準）：`backup-covers=4/4`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。

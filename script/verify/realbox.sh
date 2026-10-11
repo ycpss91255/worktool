@@ -300,7 +300,7 @@ _cleanup_run() {
     esac
 }
 
-# Pop the top token and run it; returns its status (0 when the stack is empty).
+# Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
     local _rc=0
     _52_step3_restore || _rc=$?
@@ -308,6 +308,7 @@ _52_cleanup_report() {
     return "${_rc}"
 }
 
+# Pop the top token and run it; returns its status (0 when the stack is empty).
 _cleanup_pop_run() {
     local _n="${#CLEANUP_STACK[@]}" _tok
     [[ "${_n}" -gt 0 ]] || return 0
@@ -651,6 +652,15 @@ _52_step2_apply() {
     # it was only supposed to undo.
     cfgbk_report_user_content after-apply \
         || { guard_fail "the apply destroyed user content -- run 5.2.3 to restore it from the backup"; return 1; }
+}
+
+# Keep the backup and applied config on normal return; interrupts must restore.
+_52_apply_only() {
+    local _rc=0
+    _cleanup_push 52-restore
+    _52_step2_apply || _rc=$?
+    _cleanup_drop
+    return "${_rc}"
 }
 
 # --- objective new-window check ---------------------------------------------
@@ -998,7 +1008,7 @@ _dispatch_item() {
         5.1) item_51 ;;
         5.2) item_52 ;;
         5.2.1) _52_step1_backup ;;
-        5.2.2) _52_step2_apply ;;
+        5.2.2) _52_apply_only ;;
         5.2.3) _52_step3_restore ;;
         5.3) item_53 ;;
         *) guard_fail "internal: unknown item '$1'"; return 1 ;;
