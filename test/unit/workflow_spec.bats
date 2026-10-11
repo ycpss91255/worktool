@@ -3369,3 +3369,14 @@ _pl_retry_run() {
             (test("findings|F1|checklist|machine.md|codex.md|expected output|可交出") | not))' <<<"${output}"
     assert_success
 }
+
+@test "milestone-handover runs fresh acceptance reviewers sequentially and stops after a failed first reviewer (#505)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '[.calls[] | select(.role | startswith("independent-")) | [.role,.phase]] ==
+        [["independent-codex:","Independent Codex"],["independent-claude:","Independent Claude"]]' <<<"${output}"
+    assert_success
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$(_handover_replies | jq '."independent-codex:"=null')"
+    jq -e '.result.status == "independent-failed" and .result.reviewer == "codex" and
+        ([.calls[].role] | index("independent-claude:") == null)' <<<"${output}"
+}
