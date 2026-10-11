@@ -2237,3 +2237,17 @@ STUB
     [ -s "${STATE}/cache-written" ]
     [ ! -e "${cache}" ]
 }
+
+@test "#511: 5.2 failed assemble cache is isolated and removed with its backup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=assemble FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 1
+    assert_line 'backup-removed=1'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+}

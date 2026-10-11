@@ -637,7 +637,7 @@ _52_step2_apply() {
     # something that says "this run touched assemble".
     : >"${CFGBK_B}/created-box" \
         || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
