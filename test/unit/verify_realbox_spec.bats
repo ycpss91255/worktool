@@ -1173,7 +1173,7 @@ STUB
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "ghostty=regular"
     assert_line --partial "ghostty.sha="
     assert_line "worktool=absent-dir"
@@ -1189,7 +1189,7 @@ STUB
 @test "5.2.1: an absent distrobox directory is recorded for removal" {
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "distrobox-conf=absent-dir"
 }
 
@@ -1522,7 +1522,7 @@ STUB
         run "${REALBOX}" --allow-real-box 5.2
     # The item still ends at the subjective check, which needs a tty.
     assert_failure
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
     assert_output --partial "stdin is not a tty"
     assert_line "restore-files-ok=1"
@@ -1662,7 +1662,7 @@ STUB
     printf 'container_manager=docker\n' >"${HOME}/.config/distrobox/distrobox.conf"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "ghostty-modern=regular"
     assert_line "distrobox-conf=regular"
     printf 'changed\n' >"${HOME}/.config/ghostty/config.ghostty"
@@ -1709,6 +1709,8 @@ STUB
     _actual="$(find "${_home}" -type f | sort)"
     source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
     CFGBK_C="${_home}/.config"
+    # The window init log is additional to the files setup writes.
+    CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
     _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
     assert_equal "${_expected}" "${_actual}"
 }
@@ -2328,4 +2330,15 @@ _assert_data_unchanged() {
     run cmp "${STATE}/init-baseline" "${log}"
     assert_success
     assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+}
+
+@test "#516: 5.2.3 removes the Ghostty init log when originally absent" {
+    local log="${HOME}/.cache/worktool/dev-init.log"
+    _realbox_quiet 5.2.1
+    mkdir -p "${log%/*}"
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    [ ! -e "${log}" ]
 }

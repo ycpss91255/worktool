@@ -5,10 +5,7 @@
 # shellcheck source-path=.
 # shellcheck source=lib/config_backup.sh
 source "${REPO_ROOT}/lib/config_backup.sh"
-CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
-if [[ -e "${XDG_CACHE_HOME:-${HOME}/.cache}/worktool/${MANIFEST_BOX:-dev}-init.log" ]]; then
-    CFGBK_NAMES+=(init-log)
-fi
+CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf init-log)
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
 
 cfgbk_file_of() {
