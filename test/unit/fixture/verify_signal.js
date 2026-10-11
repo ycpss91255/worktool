@@ -12,9 +12,16 @@ const timer = setInterval(() => {
         process.kill(-p.pid, 'SIGKILL');
     }
 }, 10);
+const repeat = setInterval(() => {
+    if (process.env.SIGNAL_REPEAT === '1' && fs.existsSync(process.env.SIGNAL_STATE + '/cleanup-ready')) {
+        clearInterval(repeat);
+        process.kill(-p.pid, 'SIG' + process.argv[2]);
+    }
+}, 10);
 const watchdog = setTimeout(() => process.kill(-p.pid, 'SIGKILL'), 6000);
 p.on('exit', (code, signal) => {
     clearInterval(timer);
+    clearInterval(repeat);
     clearTimeout(watchdog);
     console.log('exit-signal=' + (signal || 'none'));
     console.log('rc=' + (code === null ? 128 + constants.signals[signal] : code));

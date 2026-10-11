@@ -93,6 +93,10 @@ STUB
 set -euo pipefail
 if [[ "${1:-}" == rm ]]; then
     echo cleanup >>"${SIGNAL_STATE}/events"
+    if [[ "${SIGNAL_REPEAT:-0}" == 1 ]]; then
+        touch "${SIGNAL_STATE}/cleanup-ready"
+        sleep 0.2
+    fi
 fi
 exec "${SIGNAL_STATE}/distrobox" "$@"
 STUB
@@ -167,6 +171,11 @@ _check_group_interrupt() {
         "${real_just}" --justfile "${STATE}/outer.just"
     refute_output --partial 'by signal 2'
     _check_group_interrupt 130 0
+}
+
+@test "5.1: a second group TERM during cleanup cannot terminate realbox" {
+    export SIGNAL_REPEAT=1
+    _assert_group_interrupt TERM 143 assemble
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
