@@ -63,6 +63,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
         'script/verify/' 'lib/verify_run.sh' 'justfile' \
         'lib/config_backup.sh' 'lib/guard.sh' \
         'lib/distrobox_manager.sh' 'lib/home.sh' 'test/unit/enter_spec.bats' \
+        'test/unit/config_backup_spec.bats' \
         'script/test/test.sh' 'test/unit/verify_*_spec.bats' \
         'test/unit/justfile_spec.bats' 'test/unit/fixture/' 'test/helper/' \
         'test/system/real_engine_spec.bats'; do
