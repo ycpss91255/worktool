@@ -217,7 +217,7 @@ setup() {
     export FAKE_STATE_DIR="${STATE}"
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
-    unset XDG_CONFIG_HOME XDG_CACHE_HOME
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -1054,12 +1054,13 @@ STUB
     assert_output --partial "echo \$fish_pid"
 }
 
-@test "#362: realbox help names the four actual backup files" {
+@test "#362: realbox help names the five actual backup files" {
     run "${REALBOX}" --help
     assert_success
     assert_output --partial "Ghostty legacy config"
     assert_output --partial "config.ghostty"
     assert_output --partial "worktool state file"
+    assert_output --partial "init log"
     assert_output --partial "distrobox.conf"
     refute_output --partial ".tmux.conf"
     assert_output --partial "fish mount namespace"
@@ -1173,7 +1174,7 @@ STUB
     _seed_distrobox_conf
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "ghostty=regular"
     assert_line --partial "ghostty.sha="
     assert_line "worktool=absent-dir"
@@ -1189,7 +1190,7 @@ STUB
 @test "5.2.1: an absent distrobox directory is recorded for removal" {
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "distrobox-conf=absent-dir"
 }
 
@@ -1200,7 +1201,7 @@ STUB
     mkdir -p "$(_distrobox_conf)"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "neither a regular file nor a symlink"
     assert_output --partial "refusing to apply anything"
     [ ! -e "$(_backup_dir)" ]
@@ -1215,7 +1216,7 @@ STUB
     ln -s "${BATS_TEST_TMPDIR}/not-a-file" "$(_distrobox_conf)"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "is not a regular file -- handle it by hand"
     [ ! -e "$(_backup_dir)" ]
 }
@@ -1274,7 +1275,7 @@ STUB
     ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
     SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' run "${REALBOX}" --allow-real-box 5.2.1
     assert_failure
-    assert_line "backup-covers=3/4"
+    assert_line "backup-covers=4/5"
     assert_output --partial "cannot resolve the link"
     [ ! -e "$(_backup_dir)" ]
 }
@@ -1522,7 +1523,7 @@ STUB
         run "${REALBOX}" --allow-real-box 5.2
     # The item still ends at the subjective check, which needs a tty.
     assert_failure
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
     assert_output --partial "stdin is not a tty"
     assert_line "restore-files-ok=1"
@@ -1662,7 +1663,7 @@ STUB
     printf 'container_manager=docker\n' >"${HOME}/.config/distrobox/distrobox.conf"
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
-    assert_line "backup-covers=4/4"
+    assert_line "backup-covers=5/5"
     assert_line "ghostty-modern=regular"
     assert_line "distrobox-conf=regular"
     printf 'changed\n' >"${HOME}/.config/ghostty/config.ghostty"
@@ -1709,7 +1710,11 @@ STUB
     _actual="$(find "${_home}" -type f | sort)"
     source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
     CFGBK_C="${_home}/.config"
-    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
+    # The window init log is additional to the files setup writes.
+    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do
+        [[ "${_name}" != init-log ]] || continue
+        cfgbk_file_of "${_name}"
+    done | sort)"
     assert_equal "${_expected}" "${_actual}"
 }
 
@@ -2263,4 +2268,80 @@ STUB
     [ -s "${STATE}/cache-written" ]
     [ ! -e "${HOME}/.cache/worktool" ]
     [ ! -e "${cache}" ]
+}
+
+_assert_data_unchanged() {
+    local item="$1" root="${HOME}/.local/share" data
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    [ ! -e "${root}/icons/distrobox" ]
+    [ ! -e "${root}/applications" ]
+    mkdir -p "${root}/icons/distrobox" "${root}/applications"
+    printf 'original icon\n' >"${root}/icons/distrobox/ubuntu.png"
+    printf 'original entry\n' >"${root}/applications/dev.desktop"
+    touch -t 200101010101 "${root}/icons/distrobox/ubuntu.png" "${root}/applications/dev.desktop" \
+        "${root}/icons/distrobox" "${root}/applications"
+    cp -a "${root}" "${STATE}/data-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-mtimes"
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    run diff -r "${STATE}/data-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-after"
+    run cmp "${STATE}/data-mtimes" "${STATE}/data-after"
+    assert_success
+    read -r data <"${STATE}/data-path"
+    [ ! -e "${data}" ]
+}
+
+@test "#516: 5.1 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.1
+}
+
+@test "#516: 5.3 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.3
+}
+
+@test "#516: 5.2 apply desktop exports stay in the backup and are removed on restore" {
+    _realbox_quiet 5.2.1
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    local data
+    read -r data <"${STATE}/data-path"
+    [[ "${data}" == "$(_backup_dir)/"* ]]
+    [ -s "${data}/applications/dev.desktop" ]
+    [ -s "${data}/icons/distrobox/ubuntu.png" ]
+    [ ! -e "${HOME}/.local/share/applications" ]
+    [ ! -e "${HOME}/.local/share/icons/distrobox" ]
+    run _restore_input 4242
+    assert_success
+    [ ! -e "${data}" ]
+}
+
+@test "#516: 5.2.3 restores the existing Ghostty init log byte-identical with its mtime" {
+    export XDG_CACHE_HOME="${HOME}/custom-cache"
+    local log="${XDG_CACHE_HOME}/worktool/dev-init.log"
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -t 200101010101 "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    _realbox_quiet 5.2.1
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+}
+
+@test "#516: 5.2.3 removes the Ghostty init log when originally absent" {
+    local log="${HOME}/.cache/worktool/dev-init.log"
+    _realbox_quiet 5.2.1
+    mkdir -p "${log%/*}"
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    [ ! -e "${log}" ]
 }

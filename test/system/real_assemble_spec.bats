@@ -288,3 +288,67 @@ _trim() {
     _create="$(_argv_file_of create)"
     assert [ -f "${_create}" ]
 }
+
+_install_entry_manager() {
+    export ENTRY_MANAGER_BASE="${SHIM}" ENTRY_MANAGER_STATE="${CM_LOG}/created"
+    rm "${SHIMBIN}/docker"
+    cat >"${SHIMBIN}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    inspect)
+        if [[ -f "${ENTRY_MANAGER_STATE}" && "$*" == *'--type container'* ]]; then
+            printf '{}\n'
+            exit 0
+        fi
+        ;;
+    cp) printf 'ID=ubuntu\n' >"${@: -1}"; exit 0 ;;
+    create)
+        "${ENTRY_MANAGER_BASE}" "$@"
+        touch "${ENTRY_MANAGER_STATE}"
+        exit 0
+        ;;
+esac
+exec "${ENTRY_MANAGER_BASE}" "$@"
+STUB
+    cat >"${SHIMBIN}/curl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'downloaded Ubuntu icon\n'
+STUB
+    cat >"${SHIMBIN}/sudo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$@"
+STUB
+    # Create only generates entries for a non-root user.
+    cat >"${SHIMBIN}/id" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    -ru | -rg) printf '1001\n' ;;
+    *) exec /usr/bin/id "$@" ;;
+esac
+STUB
+    chmod +x "${SHIMBIN}/docker" "${SHIMBIN}/curl" "${SHIMBIN}/sudo" "${SHIMBIN}/id"
+}
+
+@test "#516: pinned distrobox 1.8 create exports the desktop entry and Ubuntu icon into XDG_DATA_HOME" {
+    _install_entry_manager
+    export DBX_CONTAINER_GENERATE_ENTRY=1
+    export XDG_DATA_HOME="${BATS_TEST_TMPDIR}/scratch/data"
+    run distrobox --version
+    assert_success
+    assert_output 'distrobox: 1.8.2.5'
+    run distrobox create --name dev --image ubuntu:24.04 --yes
+    assert_success
+    [ -f "${XDG_DATA_HOME}/applications/dev.desktop" ]
+    run cat "${XDG_DATA_HOME}/icons/distrobox/ubuntu.png"
+    assert_success
+    assert_output 'downloaded Ubuntu icon'
+    run grep -F "Icon=${XDG_DATA_HOME}/icons/distrobox/ubuntu.png" \
+        "${XDG_DATA_HOME}/applications/dev.desktop"
+    assert_success
+    [ ! -e "${HOME}/.local/share/applications" ]
+    [ ! -e "${HOME}/.local/share/icons/distrobox" ]
+}

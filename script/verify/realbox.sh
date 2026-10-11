@@ -124,7 +124,8 @@ Items:
           back. Removes the box it created, on success and on interrupt.
   5.2     Ghostty window chain: back up every config `just box setup` can
           write (Ghostty legacy config, config.ghostty, the worktool state file
-          and distrobox.conf), apply the managed blocks, prove the user's own
+          and distrobox.conf) plus the Ghostty init log under $XDG_CACHE_HOME,
+          apply the managed blocks, prove the user's own
           content survived, reload an already running Ghostty, then verify
           the new fish mount namespace differs from the host and matches this
           run's dev container, then restore everything and remove the box.
@@ -346,7 +347,7 @@ _51_CREATED=0
 _51_cleanup() {
     local _crc=0
     if [[ "${_51_CREATED}" -eq 1 ]]; then
-        _drop_owned_box || _crc=1
+        XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
@@ -524,11 +525,11 @@ _51_body() {
     # assemble still hands cleanup the box. A marker with no box is the safe
     # direction, and cleanup tolerates it.
     _51_CREATED=1
-    XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
-    XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
     _brc=$?
     # A signalled tee can finish the pipeline before _just stops its group.
@@ -637,7 +638,7 @@ _52_step2_apply() {
     # something that says "this run touched assemble".
     : >"${CFGBK_B}/created-box" \
         || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
+    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
@@ -727,7 +728,7 @@ _52_remove_owned_box() {
         log_info "this run never created a box; leaving every box alone"
         return 0
     fi
-    if _drop_owned_box; then
+    if XDG_DATA_HOME="${CFGBK_B}/data" _drop_owned_box; then
         printf 'dev-gone=1\n'
         _box_state_cleanup "${CFGBK_B}/box-home" || return 1
         return 0
@@ -906,7 +907,7 @@ _53_W=""
 _53_cleanup() {
     local _crc=0
     if [[ "${_53_CREATED}" -eq 1 ]]; then
-        _drop_owned_box || _crc=1
+        XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] \
@@ -921,7 +922,7 @@ _53_cleanup() {
 
 _53_make_decoy() {
     local _e
-    XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
+    XDG_DATA_HOME="${_53_W}/data" XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
         --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".

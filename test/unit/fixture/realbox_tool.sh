@@ -92,6 +92,7 @@ _fake_distrobox_list() {
 
 _fake_distrobox_create() {
     _fake_init_cache create "$@" || return 1
+    _fake_data_export || return 1
     local _name="" _prev=""
     local _a
     for _a in "$@"; do
@@ -197,6 +198,16 @@ _fake_init_cache() {
 }
 
 # --- just --------------------------------------------------------------------
+# Model distrobox-generate-entry's XDG data writes at the tool seam.
+_fake_data_export() {
+    [[ "${FAKE_DATA_EXPORT:-0}" == 1 ]] || return 0
+    local data="${XDG_DATA_HOME:-${HOME}/.local/share}"
+    mkdir -p "${data}/applications" "${data}/icons/distrobox" || return 1
+    printf 'exported icon\n' >"${data}/icons/distrobox/ubuntu.png" || return 1
+    printf 'exported entry\n' >"${data}/applications/${_BOX}.desktop" || return 1
+    printf '%s\n' "${data}" >"${_DIR}/data-path"
+}
+
 # argv always starts `box <verb>` (script/verify/realbox.sh only ever calls
 # the box namespace).
 _fake_just() {
@@ -207,6 +218,7 @@ _fake_just() {
                 distrobox assemble create --file box/dev.ini || return 1
             fi
             _fake_init_cache assemble "$@" || return 1
+            _fake_data_export || return 1
             _fake_assemble_state "$@" || return 1
             _rc="${FAKE_JUST_ASSEMBLE_RC:-0}"
             _out="${FAKE_JUST_ASSEMBLE_OUT-distrobox assemble create --file box/dev.ini}"

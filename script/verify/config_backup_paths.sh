@@ -1,11 +1,12 @@
 # Acceptance backup paths for the current setup contract (PR #232 / #351).
 # The manifest and byte-preserving backup machinery remain shared, while
 # the acceptance layer owns this file set. verify_realbox_spec.bats compares
-# it with the files written by real setup in both Ghostty target states.
+# its config subset with files written by real setup in both Ghostty states.
+# The real Ghostty window also writes the init log; preserve it separately.
 # shellcheck source-path=.
 # shellcheck source=lib/config_backup.sh
 source "${REPO_ROOT}/lib/config_backup.sh"
-CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
+CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf init-log)
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
 
 cfgbk_file_of() {
@@ -14,6 +15,7 @@ cfgbk_file_of() {
         ghostty-modern) printf '%s/ghostty/config.ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool/config\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox/distrobox.conf\n' "${CFGBK_C}" ;;
+        init-log) printf '%s/worktool/%s-init.log\n' "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}" "${BOX}" ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac
 }
@@ -23,6 +25,7 @@ cfgbk_dir_of() {
         ghostty | ghostty-modern) printf '%s/ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox\n' "${CFGBK_C}" ;;
+        init-log) printf '\n' ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac
 }
