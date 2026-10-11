@@ -32,6 +32,26 @@ setup() {
     [[ "${stderr}" == *'font-size = 13\n\n\n'* ]]
 }
 
+@test "#525: identical user content including trailing blanks remains intact" {
+    local config="${XDG_CONFIG_HOME}/ghostty/config"
+    printf '%s\n' "${CFGBK_BLOCK_BEGIN}" 'old managed content' \
+        "${CFGBK_BLOCK_END}" >"${config}"
+    printf 'font-size = 13\n\n\n' >>"${config}"
+    printf 'set -g mouse on' >"${HOME}/.tmux.conf"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    printf '%s\n' "${CFGBK_BLOCK_BEGIN}" 'new managed content' \
+        "${CFGBK_BLOCK_END}" >"${config}"
+    printf 'font-size = 13\n\n\n' >>"${config}"
+
+    run --separate-stderr cfgbk_report_user_content after-apply
+
+    assert_success
+    assert_output 'user-content after-apply: ghostty=intact tmux.conf=intact'
+    assert_equal "${stderr}" ''
+}
+
 @test "#523: an existing unreadable Ghostty target still fails the block report" {
     local dir
     dir="$(mktemp -d /tmp/cfgbk-unreadable.XXXXXX)"
