@@ -72,6 +72,27 @@ setup() {
     [[ "${stderr}" == *'set\ -g\ mouse\ on'* ]]
 }
 
+@test "#525: appending a managed block to user content without a final newline remains intact" {
+    # shellcheck source=lib/enter.sh
+    source "${LIB_DIR}/enter.sh"
+    local config="${XDG_CONFIG_HOME}/ghostty/config" path
+    printf 'font-size = 13' >"${config}"
+    printf 'set -g mouse on' >"${HOME}/.tmux.conf"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    for path in "${config}" "${HOME}/.tmux.conf"; do
+        enter_block_compose "${path}" 'new managed content' >"${path}.new"
+        mv "${path}.new" "${path}"
+    done
+
+    run --separate-stderr cfgbk_report_user_content after-apply
+
+    assert_success
+    assert_output 'user-content after-apply: ghostty=intact tmux.conf=intact'
+    assert_equal "${stderr}" ''
+}
+
 @test "#523: an existing unreadable Ghostty target still fails the block report" {
     local dir
     dir="$(mktemp -d /tmp/cfgbk-unreadable.XXXXXX)"

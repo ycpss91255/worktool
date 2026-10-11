@@ -561,6 +561,18 @@ _cfgbk_user_live() {
 }
 
 CFGBK_USER_STATE=""
+# A final managed block needs a separator after the last user line. Only
+# accept that added newline when no user line follows the block, so real
+# final-newline changes at the user's EOF still fail the byte comparison.
+_cfgbk_user_has_block_separator() {
+    awk -v b="${CFGBK_BLOCK_BEGIN}" -v e="${CFGBK_BLOCK_END}" '
+        $0 == b { if (user) separator = 1; skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { user = 1; separator = 0 }
+        END { exit !separator }
+    ' "$1"
+}
+
 _cfgbk_user_state() {
     local _n="$1" _p _want _got
     CFGBK_USER_STATE="UNREADABLE"
@@ -573,6 +585,11 @@ _cfgbk_user_state() {
         || { guard_fail "${_n}: cannot read ${_p} to check the user's own content survived"; return 1; }
     _want="${_want%.}" _got="${_got%.}"
     if [[ "${_got}" == "${_want}" ]]; then
+        CFGBK_USER_STATE="intact"
+        return 0
+    fi
+    if [[ -n "${_want}" && "${_want}" != *$'\n' && "${_got}" == "${_want}"$'\n' ]] \
+        && _cfgbk_user_has_block_separator "${_p}"; then
         CFGBK_USER_STATE="intact"
         return 0
     fi
