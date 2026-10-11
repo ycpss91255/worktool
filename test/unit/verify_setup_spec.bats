@@ -366,6 +366,15 @@ EOF
     assert_output --partial '3.1 PASS'
 }
 
+@test "3.1: HOME paths with regex metacharacters are normalised literally" {
+    TMPDIR="${BATS_TEST_TMPDIR}/literal.[x]*^\$|&\\tmp"
+    mkdir -p "${TMPDIR}"
+    run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
+    assert_success
+    assert_line '[INFO] dry-run: would write <H>/.config/worktool/config'
+    assert_output --partial '3.1 PASS'
+}
+
 @test "3.1: a just that prints the documented decision lines but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.1

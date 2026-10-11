@@ -372,13 +372,26 @@ _item_begin() {
     return 0
 }
 
-# Replace the machine-specific paths with <G> / <D> / <H> so the printed
-# lines match doc/acceptance.md wherever ghostty and distrobox are
-# installed. Reads stdin, writes stdout.
+# Encode a literal path for a sed BRE using | as the delimiter.
+_norm_literal_pattern() {
+    local _path="$1" _pattern='' _char _i
+    # Escape BRE operators and our delimiter; replacement labels are fixed.
+    for ((_i = 0; _i < ${#_path}; _i++)); do
+        _char="${_path:_i:1}"
+        case "${_char}" in
+            '\'|'.'|'['|'*'|'^'|'$'|'|') _pattern+="\\${_char}" ;;
+            *) _pattern+="${_char}" ;;
+        esac
+    done
+    printf '%s' "${_pattern}"
+}
+
+# Replace machine-specific paths with <repo> / <G> / <D> / <H> so the
+# printed lines match doc/acceptance.md. Reads stdin, writes stdout.
 _norm() {
     local _paths=("${REPO_ROOT}" "${NORM_G}" "${NORM_D}" "${NORM_H}")
     local _labels=('<repo>' '<G>' '<D>' '<H>') _script=()
-    local _i _longest _round
+    local _i _longest _round _pattern
     # A nested HOME or tool must be replaced before its repo prefix.
     for ((_round = 0; _round < ${#_paths[@]}; _round++)); do
         _longest=0
@@ -388,7 +401,8 @@ _norm() {
             fi
         done
         [[ -n "${_paths[_longest]}" ]] || break
-        _script+=(-e "s|${_paths[_longest]}|${_labels[_longest]}|g")
+        _pattern="$(_norm_literal_pattern "${_paths[_longest]}")" || return 1
+        _script+=(-e "s|${_pattern}|${_labels[_longest]}|g")
         _paths[_longest]=''
     done
     sed "${_script[@]}"
