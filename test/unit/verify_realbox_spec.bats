@@ -59,6 +59,48 @@ STUB
     assert_equal "$(_count_calls gh)" "0"
 }
 
+@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+    export SIGNAL_STATE="${STATE}"
+    cp "${STUBS}/just" "${STATE}/just"
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == assemble ]]; then
+    finish() {
+        echo finished >>"${SIGNAL_STATE}/events"
+        exec "${SIGNAL_STATE}/just" "$@"
+    }
+    trap 'sleep 0.2; finish "$@"' INT
+    echo "$$" >"${SIGNAL_STATE}/child.pid"
+    touch "${SIGNAL_STATE}/ready"
+    sleep 3
+    finish "$@"
+fi
+exec "${SIGNAL_STATE}/just" "$@"
+STUB
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == rm ]]; then
+    echo cleanup >>"${SIGNAL_STATE}/events"
+fi
+exec "${SIGNAL_STATE}/distrobox" "$@"
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+        "${BATS_TEST_DIRNAME}/fixture/realbox_signal_caller.sh" "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'rc=130'
+    assert_line 'cleanup-rc=0'
+    run cat "${SIGNAL_STATE}/events"
+    assert_output $'finished\ncleanup'
+    [ ! -s "${STATE}/boxes" ]
+    local pid
+    read -r pid <"${STATE}/child.pid"
+    run kill -0 "${pid}"
+    assert_failure 1
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
