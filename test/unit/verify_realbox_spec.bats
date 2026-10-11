@@ -2176,6 +2176,23 @@ STUB
     return "$(cat "${STATE}/restore-rc")"
 }
 
+@test "#513: the interactive restore prompt explains Ctrl-D on stderr" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    export ORIGINAL_REALBOX="${REALBOX}" RESTORE_STDERR="${STATE}/restore-stderr"
+    cat >"${STATE}/restore-with-stderr" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${ORIGINAL_REALBOX}" "$@" 2>"${RESTORE_STDERR}"
+STUB
+    chmod +x "${STATE}/restore-with-stderr"
+    REALBOX="${STATE}/restore-with-stderr" run _restore_input 4242
+    assert_success
+    run cat "${RESTORE_STDERR}"
+    assert_success
+    assert_line --partial 'Ctrl-D skips confirmation'
+}
+
 @test "#471: a clean post-restore Ghostty window completes restore" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2

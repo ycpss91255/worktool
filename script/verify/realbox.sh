@@ -765,6 +765,7 @@ _52_confirm_restore() {
         "\$fish_pid" "\$\$"
     [[ -t 0 ]] \
         || { guard_fail "stdin is not a tty; re-run 5.2.3 from an interactive shell to confirm reload"; return 1; }
+    printf 'Ctrl-D skips confirmation; the backup is kept for a 5.2.3 retry.\n' >&2
     printf 'Enter the shell PID from the new window after reload: '
     IFS= read -r _pid || { guard_fail "reading the restored window PID failed"; return 1; }
     [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
