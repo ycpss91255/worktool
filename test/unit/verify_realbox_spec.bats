@@ -60,8 +60,15 @@ STUB
 }
 
 _assert_group_interrupt() {
-    local signal="$1" expected="$2" phase="$3" item="${4:-5.1}"
-    export INTERRUPT_PHASE="${phase}"
+    local signal="$1" expected="$2" phase="$3" item="${4:-5.1}" cleanup="${5:-0}"
+    _prepare_group_interrupt "${phase}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" "${signal}" bash \
+        "${REALBOX}" --allow-real-box "${item}"
+    _check_group_interrupt "${expected}" "${cleanup}"
+}
+
+_prepare_group_interrupt() {
+    export INTERRUPT_PHASE="$1"
     export SIGNAL_STATE="${STATE}"
     cp "${STUBS}/just" "${STATE}/just"
     cp "${STUBS}/distrobox" "${STATE}/distrobox"
@@ -89,12 +96,15 @@ if [[ "${1:-}" == rm ]]; then
 fi
 exec "${SIGNAL_STATE}/distrobox" "$@"
 STUB
-    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" "${signal}" bash \
-        "${REALBOX}" --allow-real-box "${item}"
+}
+
+_check_group_interrupt() {
+    local expected="$1" cleanup="$2"
     assert_success
     assert_line 'exit-signal=none'
     assert_line "rc=${expected}"
-    assert_line 'cleanup-rc=0'
+    assert_line "cleanup-rc=${cleanup}"
+    [[ "${cleanup}" -eq 0 ]] || return 0
     assert_line 'box-state after-cleanup: home=0 tmux=0'
     assert_line 'host-state after-cleanup: new=0'
     run cat "${SIGNAL_STATE}/events"
@@ -116,6 +126,12 @@ STUB
 
 @test "5.2: group INT during apply reports cleanup and exits normally" {
     _assert_group_interrupt INT 130 assemble 5.2
+}
+
+@test "5.1: interrupted cleanup failure takes precedence over signal status" {
+    export FAKE_DBX_RM_REMOVES=0
+    _assert_group_interrupt INT 1 assemble 5.1 1
+    [ -s "${STATE}/boxes" ]
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
