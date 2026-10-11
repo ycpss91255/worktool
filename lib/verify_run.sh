@@ -29,13 +29,15 @@ verify_run() {
         wait "${monitor}" || rc=$?
     fi
     if [[ -n "${interrupted}" || "${rc}" -eq 124 || -e "${state}/deadline" ]]; then
-        if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
-            : # The process group may already have exited.
+        if [[ -z "${interrupted}" ]]; then
+            if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
+                : # The process group may already have exited.
+            fi
         fi
         if [[ -n "${run_id}" ]]; then
             verify_cleanup_containers "${run_id}" || rc=$?
         fi
-        rc=124
+        [[ -n "${interrupted}" ]] || rc=124
     fi
     rm -rf "${state}"
     verify_restore_signals "${interrupted}" "${saved_int}" "${saved_term}" "${saved_hup}" || rc=$?

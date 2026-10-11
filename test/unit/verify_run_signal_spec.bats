@@ -98,3 +98,32 @@ teardown() {
         assert_success
     fi
 }
+
+@test "verify_run: interruption removes only this test run's labelled containers" {
+    cp "${SIGNAL_STATE}/child" "${SIGNAL_STATE}/just"
+    sed -i '/^touch /i printf "%s\\n" "${WORKTOOL_TEST_RUN_ID}" >"${SIGNAL_STATE}/run-id"' "${SIGNAL_STATE}/just"
+    sed -i 's@verify_run 10 "${SIGNAL_STATE}/child"@verify_run 10 just test@' "${SIGNAL_STATE}/caller"
+    cat >"${SIGNAL_STATE}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    ps)
+        [[ "$*" == "ps -aq --filter label=worktool.verify-run=$(cat "${SIGNAL_STATE}/run-id")" ]]
+        echo owned-container
+        ;;
+    rm)
+        [[ "$*" == 'rm -f -v owned-container' ]]
+        echo containers-cleaned >>"${SIGNAL_STATE}/events"
+        ;;
+    *) exit 2 ;;
+esac
+STUB
+    chmod +x "${SIGNAL_STATE}/docker"
+    export PATH="${SIGNAL_STATE}:${PATH}"
+    run signal_caller INT
+    assert_success
+    assert_line 'rc=130'
+    [ -s "${SIGNAL_STATE}/run-id" ]
+    run cat "${SIGNAL_STATE}/events"
+    assert_output $'finished\ncontainers-cleaned\ncleanup'
+}
