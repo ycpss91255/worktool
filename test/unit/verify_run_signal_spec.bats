@@ -8,6 +8,7 @@ setup() {
 set -euo pipefail
 trap 'sleep 0.2; echo finished >>"${SIGNAL_STATE}/events"; exit 0' INT TERM HUP
 printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
+printf '%s\n' "${WORKTOOL_TEST_RUN_ID:-}" >"${SIGNAL_STATE}/run-id"
 touch "${SIGNAL_STATE}/ready"
 sleep 3
 echo finished >>"${SIGNAL_STATE}/events"
@@ -21,7 +22,15 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 trap 'echo cleanup >>"${SIGNAL_STATE}/events"' EXIT
-_just() { (verify_run 10 "${SIGNAL_STATE}/child"); }
+_just() {
+    (
+        if [[ "${SIGNAL_TEST:-0}" == 1 ]]; then
+            verify_run 10 just test
+        else
+            verify_run 10 "${SIGNAL_STATE}/child"
+        fi
+    )
+}
 _just
 CALLER
 }
@@ -81,8 +90,6 @@ teardown() {
 
 @test "verify_run: interruption removes only this test run's labelled containers" {
     cp "${SIGNAL_STATE}/child" "${SIGNAL_STATE}/just"
-    sed -i '/^touch /i printf "%s\\n" "${WORKTOOL_TEST_RUN_ID}" >"${SIGNAL_STATE}/run-id"' "${SIGNAL_STATE}/just"
-    sed -i 's@verify_run 10 "${SIGNAL_STATE}/child"@verify_run 10 just test@' "${SIGNAL_STATE}/caller"
     cat >"${SIGNAL_STATE}/docker" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -99,6 +106,7 @@ case "$1" in
 esac
 STUB
     chmod +x "${SIGNAL_STATE}/docker"
+    export SIGNAL_TEST=1
     export PATH="${SIGNAL_STATE}:${PATH}"
     run signal_caller INT
     assert_success

@@ -97,7 +97,8 @@ STUB
     [ ! -s "${STATE}/boxes" ]
     local pid
     read -r pid <"${STATE}/child.pid"
-    ! kill -0 "${pid}" 2>/dev/null
+    run kill -0 "${pid}"
+    assert_failure 1
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)

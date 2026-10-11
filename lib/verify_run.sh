@@ -81,12 +81,12 @@ verify_stop_group() {
 
 # Orphaned zombies cannot run or hold resources; their reaping belongs to init.
 verify_group_running() {
-    local file row status parent group rest
+    local file row status _parent group rest
     for file in /proc/[0-9]*/stat; do
         if ! IFS= read -r row <"${file}" 2>/dev/null; then
             continue
         fi
-        read -r status parent group rest <<<"${row##*) }"
+        read -r status _parent group rest <<<"${row##*) }"
         if [[ "${group}" == "$1" && "${status}" != Z && "${status}" != X ]]; then
             return 0
         fi
