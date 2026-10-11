@@ -875,6 +875,43 @@ rc=0
       home: not recorded (run: just box assemble)
       status-rc=0
       ```
+  - [ ] 3.11 既有受管檔案的 0644／0600 模式不變
+    - 驗收方式：`just verify setup 3.11`。各以 legacy `config` 與 `config.ghostty` 當目標，種下使用者內容及 0644／0600，真的寫入 dev、改寫成 second、再以 `--auto-enter no` 移除 Ghostty 區塊；每步以 `stat -c %a` 比較 Ghostty、distrobox.conf 與 worktool 狀態檔。後兩檔在移除操作中仍保留；host tmux.conf 不受管理。
+    - 下列為 Docker 實跑輸出的判準行（依原順序）；各步 setup／status exit 0，區塊以外的使用者內容保持完整。
+      ```text
+      setup-rc=0
+      mode 644 config after-write: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config after-rewrite: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config after-removal: ghostty=644 distrobox=644 state=644
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 644 config.ghostty after-write: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config.ghostty after-rewrite: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config.ghostty after-removal: ghostty=644 distrobox=644 state=644
+      ghostty: <H>/.config/ghostty/config.ghostty (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 600 config after-write: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config after-rewrite: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config after-removal: ghostty=600 distrobox=600 state=600
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 600 config.ghostty after-write: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config.ghostty after-rewrite: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config.ghostty after-removal: ghostty=600 distrobox=600 state=600
+      ghostty: <H>/.config/ghostty/config.ghostty (managed block: absent)
+      status-rc=0
+      ```
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)

@@ -111,11 +111,11 @@ source "${LIB_DIR}/log.sh"
 #   realbox   builds the real box on this machine (see the guard below).
 #
 # All nine items of doc/acceptance.md item 3 are `temphome`.
-VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10)
+VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11)
 
 _item_group() {
     case "$1" in
-        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10) printf '%s\n' 'temphome' ;;
+        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11) printf '%s\n' 'temphome' ;;
         *) return 1 ;;
     esac
 }
@@ -131,6 +131,7 @@ _item_title() {
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
+        3.11) printf '%s\n' 'existing managed files preserve 0644 and 0600 through all operations' ;;
         3.10) printf '%s\n' 'atomic profile failure preserves bytes, cleans up and recovers' ;;
         *) return 1 ;;
     esac
@@ -275,6 +276,7 @@ Items:
   3.8  --terminal none removes the profile and preserves isolation
   3.9  existing config.ghostty receives the legacy block without content loss
   3.10 atomic profile failure preserves bytes, cleans up and recovers
+  3.11 existing managed files preserve 0644 and 0600 through all operations
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
@@ -1450,7 +1452,7 @@ _path_status() {
     _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" just box status || return 1
     printf 'status-rc=%s\n' "${LAST_RC}"
     [[ "${LAST_RC}" -eq 0 ]] || return 1
-    _expect_lines "$1" "ghostty: <H>/.config/ghostty/config (managed block: $2)" \
+    _expect_lines "$1" "ghostty: <H>/.config/ghostty/${3:-config} (managed block: $2)" \
         'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)'
 }
 
@@ -1495,6 +1497,54 @@ _item_3_10() {
     _path_status 3.10 present
 }
 
+_mode_paths() {
+    local _mode="$1" _name="$2" _phase="$3" _ghostty _distrobox _state
+    _ghostty="$(stat -c %a "${ITEM_H}/.config/ghostty/${_name}")" || return 1
+    _distrobox="$(stat -c %a "${ITEM_H}/.config/distrobox/distrobox.conf")" || return 1
+    _state="$(stat -c %a "${ITEM_H}/.config/worktool/config")" || return 1
+    printf 'mode %s %s %s: ghostty=%s distrobox=%s state=%s\n' \
+        "${_mode}" "${_name}" "${_phase}" "${_ghostty}" "${_distrobox}" "${_state}"
+    [[ "${_ghostty}" == "${_mode}" && "${_distrobox}" == "${_mode}" && "${_state}" == "${_mode}" ]] || return 1
+    _check_user_content 3.11 "${_phase}" "${_name}" "${ITEM_H}/.config/ghostty/${_name}" \
+        "${GHOSTTY_USER_LINES[@]}" || return 1
+    _check_user_content 3.11 "${_phase}" distrobox.conf "${ITEM_H}/.config/distrobox/distrobox.conf" \
+        '# acceptance isolation' || return 1
+    grep -qxF '# acceptance state' "${ITEM_H}/.config/worktool/config"
+}
+
+_mode_round() {
+    local _mode="$1" _name="$2" _file
+    _setup_path_begin 3.11 || return $?
+    _file="${ITEM_H}/.config/ghostty/${_name}"
+    if [[ "${_name}" == config.ghostty ]]; then
+        mv "${ITEM_H}/.config/ghostty/config" "${_file}" || return 1
+    fi
+    mkdir -p "${ITEM_H}/.config/distrobox" "${ITEM_H}/.config/worktool" || return 1
+    printf '# acceptance isolation\n' >"${ITEM_H}/.config/distrobox/distrobox.conf" || return 1
+    printf '# acceptance state\n' >"${ITEM_H}/.config/worktool/config" || return 1
+    chmod "${_mode}" "${_file}" "${ITEM_H}/.config/distrobox/distrobox.conf" \
+        "${ITEM_H}/.config/worktool/config" || return 1
+    _path_setup --box dev || return 1
+    _expect_lines 3.11 "[INFO] wrote: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-write || return 1
+    _path_setup --box second || return 1
+    _expect_lines 3.11 "[INFO] wrote: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD/dev/second})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-rewrite || return 1
+    _path_setup --auto-enter no || return 1
+    _expect_lines 3.11 "[INFO] removed: <H>/.config/ghostty/${_name} (managed block: ${MANAGED_CMD/dev/second})" || return 1
+    _mode_paths "${_mode}" "${_name}" after-removal || return 1
+    _path_status 3.11 absent "${_name}"
+}
+
+_item_3_11() {
+    local _mode _name
+    for _mode in 644 600; do
+        for _name in config config.ghostty; do
+            _mode_round "${_mode}" "${_name}" || return $?
+        done
+    done
+}
+
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
     local _item="$1" _group _rc
@@ -1519,6 +1569,7 @@ _run_item() {
         3.8) _item_3_8 ;;
         3.9) _item_3_9 ;;
         3.10) _item_3_10 ;;
+        3.11) _item_3_11 ;;
         *)
             _fail "no implementation for item '${_item}'"
             return 1

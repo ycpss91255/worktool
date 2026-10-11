@@ -1213,3 +1213,18 @@ _degrade_setup_line() {
     refute_output --partial '3.10 PASS'
     _setup_acceptance_others "${_repo}" 3.10
 }
+
+@test "3.11: existing managed files retain 0644 and 0600 through write, rewrite and removal" {
+    _setup_acceptance_control 3.11
+    assert_line 'mode 644 config after-write: ghostty=644 distrobox=644 state=644'
+    assert_line 'mode 600 config.ghostty after-removal: ghostty=600 distrobox=600 state=600'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/lib/config.sh" _config_replace \
+        '    if "$@" >"${_tmp}" && _config_copy_mode "${_target}" "${_tmp}" \' \
+        '    if "$@" >"${_tmp}" && : \'
+    run just --justfile "${_repo}/justfile" verify setup 3.11
+    assert_failure 1
+    refute_output --partial '3.11 PASS'
+    _setup_acceptance_others "${_repo}" 3.11
+}
