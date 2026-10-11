@@ -158,6 +158,17 @@ _check_group_interrupt() {
     _assert_group_interrupt HUP 129 assemble 5.2
 }
 
+@test "5.1: real just forwards group INT without killing realbox cleanup" {
+    _prepare_group_interrupt assemble
+    printf 'set positional-arguments\nrealbox:\n    %s --allow-real-box 5.1\n' "${REALBOX}" >"${STATE}/outer.just"
+    local real_just
+    read -r real_just <"${STATE}/real/just"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT \
+        "${real_just}" --justfile "${STATE}/outer.just"
+    refute_output --partial 'by signal 2'
+    _check_group_interrupt 130 0
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
