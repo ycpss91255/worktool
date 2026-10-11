@@ -139,9 +139,9 @@ _edit() {
 @test "main session fails closed on expanded shell script paths and options" {
     printf 'echo ready\n' >"${WORK}/safe.sh"
     local command
-    for command in 'bash "$X/run.sh"' 'sh "$X/run.sh"' \
-        'bash "$OPTIONS" safe.sh' 'bash -o "$OPTION" safe.sh' \
-        'bash --rcfile "$CONFIG" safe.sh'; do
+    for command in "bash \"\$X/run.sh\"" "sh \"\$X/run.sh\"" \
+        "bash \"\$OPTIONS\" safe.sh" "bash -o \"\$OPTION\" safe.sh" \
+        "bash --rcfile \"\$CONFIG\" safe.sh"; do
         _check "${command}"
         assert_equal "${status}" 2
         assert_output --partial 'Expanded shell script arguments cannot be checked.'
