@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# script/verify/setup.sh - the M3 acceptance items 3.1-3.9, as a script.
+# script/verify/setup.sh - the M3 acceptance items 3.1-3.13, as a script.
 #
 # doc/acceptance.md item 3 ("進盒設定") used to carry six shell blocks the
 # maintainer pasted by hand. Shell logic in a document cannot be linted,
@@ -110,12 +110,12 @@ source "${LIB_DIR}/log.sh"
 #   temphome  throwaway HOME only; no box, no daemon, nothing installed.
 #   realbox   builds the real box on this machine (see the guard below).
 #
-# All nine items of doc/acceptance.md item 3 are `temphome`.
-VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11 3.12)
+# All registered items of doc/acceptance.md item 3 are `temphome`.
+VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11 3.12 3.13)
 
 _item_group() {
     case "$1" in
-        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11 | 3.12) printf '%s\n' 'temphome' ;;
+        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11 | 3.12 | 3.13) printf '%s\n' 'temphome' ;;
         *) return 1 ;;
     esac
 }
@@ -131,6 +131,7 @@ _item_title() {
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
+        3.13) printf '%s\n' 'identical decisions report unchanged blocks without replacement' ;;
         3.12) printf '%s\n' 'dry-run removal reports a real block and writes nothing' ;;
         3.11) printf '%s\n' 'existing managed files preserve 0644 and 0600 through all operations' ;;
         3.10) printf '%s\n' 'atomic profile failure preserves bytes, cleans up and recovers' ;;
@@ -279,11 +280,12 @@ Items:
   3.10 atomic profile failure preserves bytes, cleans up and recovers
   3.11 existing managed files preserve 0644 and 0600 through all operations
   3.12 dry-run removal reports a real block and writes nothing
+  3.13 identical decisions report unchanged blocks without replacement
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
                     real box on this machine) to run. Items in group
-                    `temphome` - which is all of 3.1-3.9 - never need it.
+                    `temphome` - which is all of 3.1-3.13 - never need it.
   --list            List the items with their group and exit.
   -h, --help        Show this help and exit.
 
@@ -663,7 +665,7 @@ _norm_line() {
 
 # --- Group `realbox`: the real-machine protocol -------------------------------
 #
-# No item in this file is `realbox` today: 3.1-3.9 all run against a
+# No item in this file is `realbox` today: 3.1-3.13 all run against a
 # throwaway HOME. The guard is what any real-machine item must pass before
 # the dispatcher will run it, and it is enforced by the dispatcher rather
 # than by the item, so a new item cannot forget it:
@@ -1585,6 +1587,34 @@ _item_3_12() {
     _expect_lines 3.12 'auto-enter: yes (default)'
 }
 
+_path_block_inodes() {
+    stat -c %i "${ITEM_H}/.config/ghostty/config" "${ITEM_H}/.config/distrobox/distrobox.conf"
+}
+
+_item_3_13() {
+    _setup_path_begin 3.13 || return $?
+    _path_setup || return 1
+    _expect_user_content 3.13 after-write || return 1
+    _path_snapshot || return 1
+    local _before _after _ghostty _distrobox
+    _before="$(_path_block_inodes)" || return 1
+    _path_setup || return 1
+    _expect_lines 3.13 '[INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)' \
+        '[INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)' || return 1
+    _refute_line 3.13 '[INFO] wrote: <H>/.config/ghostty/' || return 1
+    _refute_line 3.13 '[INFO] wrote: <H>/.config/distrobox/' || return 1
+    _path_identical || return 1
+    _after="$(_path_block_inodes)" || return 1
+    [[ "${_before}" == "${_after}" ]] || return 1
+    printf 'unchanged-inodes=identical\n'
+    _ghostty="$(_count_matching '^# BEGIN worktool managed block' "${ITEM_H}/.config/ghostty/config")" || return 1
+    _distrobox="$(_count_matching '^# BEGIN worktool managed block' "${ITEM_H}/.config/distrobox/distrobox.conf")" || return 1
+    printf 'unchanged-files=identical ghostty-blocks=%s distrobox-blocks=%s\n' "${_ghostty}" "${_distrobox}"
+    [[ "${_ghostty}" -eq 1 && "${_distrobox}" -eq 1 ]] || return 1
+    _expect_user_content 3.13 after-unchanged || return 1
+    _path_status 3.13 present
+}
+
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
     local _item="$1" _group _rc
@@ -1611,6 +1641,7 @@ _run_item() {
         3.10) _item_3_10 ;;
         3.11) _item_3_11 ;;
         3.12) _item_3_12 ;;
+        3.13) _item_3_13 ;;
         *)
             _fail "no implementation for item '${_item}'"
             return 1

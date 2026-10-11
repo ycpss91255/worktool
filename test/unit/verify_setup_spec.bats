@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # test/unit/verify_setup_spec.bats - script/verify/setup.sh (M3 acceptance
-# items 3.1-3.9, moved out of doc/acceptance.md)
+# items 3.1-3.13, moved out of doc/acceptance.md)
 #
 # WHAT THIS PROVES
 #   The one property the move exists to buy: A FAILURE CANNOT READ AS A
@@ -302,7 +302,7 @@ EOF
 
 # --- Control ------------------------------------------------------------------
 
-@test "control: with every tool behaving, all nine items pass (so the failure cases below are not vacuous)" {
+@test "control: with every tool behaving, all registered items pass (so the failure cases below are not vacuous)" {
     run "${VERIFY}"
     assert_success
     assert_output --partial "3.1 PASS"
@@ -314,6 +314,10 @@ EOF
     assert_output --partial "3.7 PASS"
     assert_output --partial "3.8 PASS"
     assert_output --partial "3.9 PASS"
+    assert_output --partial "3.10 PASS"
+    assert_output --partial "3.11 PASS"
+    assert_output --partial "3.12 PASS"
+    assert_output --partial "3.13 PASS"
 }
 
 # --- CLI ----------------------------------------------------------------------
@@ -337,7 +341,7 @@ EOF
     assert_output --partial "verify/setup.sh: unknown item '9.9' (see --help)"
 }
 
-@test "cli: --list prints the nine items with their group" {
+@test "cli: --list prints all registered items with their group" {
     run "${VERIFY}" --list
     assert_success
     assert_line --index 0 --partial "3.1  temphome"
@@ -345,7 +349,8 @@ EOF
     assert_line --index 6 --partial "3.7  temphome"
     assert_line --index 7 --partial "3.8  temphome"
     assert_line --index 8 --partial "3.9  temphome"
-    [ "${#lines[@]}" -eq 9 ]
+    assert_line --index 12 --partial "3.13  temphome"
+    [ "${#lines[@]}" -eq 13 ]
 }
 
 # --- 3.1 ----------------------------------------------------------------------
@@ -1192,7 +1197,7 @@ _degrade_setup_line() {
         { print }
         /^}/ { inside = 0 }
         END { if (changed != 1) exit 1 }
-    ' "${_file}" >"${_file}.mutant"
+    ' "${_file}" >"${_file}.mutant" || return 1
     cat "${_file}.mutant" >"${_file}"
     rm "${_file}.mutant"
 }
@@ -1241,4 +1246,18 @@ _degrade_setup_line() {
     assert_failure 1
     refute_output --partial '3.12 PASS'
     _setup_acceptance_others "${_repo}" 3.12
+}
+
+@test "3.13: identical decisions twice report unchanged blocks without rewriting their content" {
+    _setup_acceptance_control 3.13
+    assert_line '[INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)'
+    assert_line 'unchanged-files=identical ghostty-blocks=1 distrobox-blocks=1'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
+        '        log_info "unchanged: ${_file} (managed block already up to date)"' '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.13
+    assert_failure 1
+    refute_output --partial '3.13 PASS'
+    _setup_acceptance_others "${_repo}" 3.13
 }

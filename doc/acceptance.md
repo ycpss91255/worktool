@@ -939,6 +939,28 @@ rc=0
       home: not recorded (run: just box assemble)
       status-rc=0
       ```
+  - [ ] 3.13 同決策連跑兩次，受管區塊 unchanged
+    - 驗收方式：`just verify setup 3.13`。兩次真的呼叫同一組 setup 決策，第二次兩個受管區塊都逐行回報 unchanged、各只有一塊，沒有 Ghostty／distrobox.conf 的 wrote 行。比對三份檔案的 bytes 與兩個區塊檔的 inode，證明 unchanged 沒有重新 rename；worktool 狀態檔仍可照正常流程回報 wrote，但內容相同。
+    - 下列判準取自 Docker 實跑的第二次 setup 與 status；setup／status／本項皆 exit 0。
+      ```text
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)
+      setup-rc=0
+      unchanged-inodes=identical
+      unchanged-files=identical ghostty-blocks=1 distrobox-blocks=1
+      user-content after-unchanged: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)
