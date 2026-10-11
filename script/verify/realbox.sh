@@ -332,8 +332,8 @@ _on_exit() {
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
     done
-    [[ "${_st}" -eq 0 ]] || exit "${_st}"
-    exit "${_crc}"
+    [[ "${_crc}" -eq 0 ]] || exit 1
+    exit "${_st}"
 }
 
 # =============================================================================
