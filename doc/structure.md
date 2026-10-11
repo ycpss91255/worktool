@@ -251,10 +251,13 @@ heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則�
 間接執行的 raw-text tripwire 涵蓋 `just ... test` 與 `just ... verify`（含
 namespace 與 recipe 前的選項），可能連純文字提及或 help 也拒絕；上述唯讀
 verify 例外只適用於可直接解析的呼叫。無受限動作的日常指令放行。
-`bash`／`sh` 執行字面路徑的腳本時，依 payload 的 `cwd` 讀取該檔；文字含
-`just verify` 或 `just test` 就拒絕（包括註解與 help 文字），檔案不存在、不是
-一般檔案或讀取失敗也拒絕。其他腳本放行，不執行、不遞迴追查腳本內容。
-腳本再呼叫別的腳本、其他直譯器執行檔案、自訂 just recipe、編碼或執行時
+`bash`／`sh` 的腳本路徑或路徑前的選項（含選項值）有 shell 展開時一律拒絕。
+執行字面路徑的腳本時，依 payload 的 `cwd` 讀取該檔；內容以與 raw-text tripwire
+共用的正規表示式檢查 `just ... verify`／`just ... test`，含 just 選項、多個空白、
+註解與 help 文字。符合就拒絕，檔案不存在、不是一般檔案或讀取失敗也拒絕。
+不相關的字面路徑腳本放行，不執行、不遞迴追查腳本內容；workflow／sub-agent
+仍依上述 `agent_id` 例外放行。已知限制：腳本再呼叫別的腳本、經 python 等其他
+直譯器執行檔案、自訂 just recipe、編碼或執行時
 組出的指令仍不在靜態檢查範圍內。
 
 本次對齊仍有事件差異：Claude 的 `UserPromptSubmit`、`WorktreeCreate` 與 `Stop`

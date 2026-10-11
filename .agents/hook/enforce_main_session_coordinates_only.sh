@@ -96,6 +96,11 @@ check_tests() {
     fi
 }
 
+mentions_tests() {
+    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*(test|verify)([^[:alnum:]_.-]|$)'
+    [[ "$1" =~ ${tests} ]]
+}
+
 check_script() {
     local word path='' cwd text skip='' options=1
     for word in "$@"; do
@@ -128,7 +133,7 @@ check_script() {
     if ! text="$(cat -- "${path}")"; then
         refuse 'Main-session script file cannot be read (fail closed); use a Workflow.'
     fi
-    if [[ "${text}" == *'just verify'* || "${text}" == *'just test'* ]]; then
+    if mentions_tests "${text}"; then
         refuse 'Main-session script tests or verification belong in a Workflow.'
     fi
 }
@@ -162,10 +167,9 @@ check_indirect() {
     local indirect='(^|[^[:alnum:]_.-])(eval|xargs|bash|sh|dash|zsh|ksh|fish|python[0-9.]*|perl|ruby|node|php|awk)([^[:alnum:]_.-]|$)'
     local git_write='(^|[^[:alnum:]_.-])git[[:space:]]+([^;|&]*[[:space:]])?(commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply)([^[:alnum:]_.-]|$)'
     local checkout='(^|[^[:alnum:]_.-])git[[:space:]][^;|&]*checkout[[:space:]][^;|&]*--([[:space:]]|$)'
-    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*(test|verify)([^[:alnum:]_.-]|$)'
     local docker='(^|[^[:alnum:]_.-])docker[[:space:]][^;|&]*bats([^[:alnum:]_.-]|$)'
     if [[ "${text}" =~ ${indirect} ]] && \
-        [[ "${text}" =~ ${git_write} || "${text}" =~ ${checkout} || "${text}" =~ ${tests} || "${text}" =~ ${docker} ]]; then
+        { [[ "${text}" =~ ${git_write} || "${text}" =~ ${checkout} || "${text}" =~ ${docker} ]] || mentions_tests "${text}"; }; then
         refuse 'Indirect execution mentions a restricted main-session action.'
     fi
 }
