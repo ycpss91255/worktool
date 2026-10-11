@@ -78,3 +78,7 @@ teardown() {
 @test "verify_run: TERM waits for the child before caller cleanup and exits 143" {
     assert_signal_cleanup TERM 143
 }
+
+@test "verify_run: HUP waits for the child before caller cleanup and exits 129" {
+    assert_signal_cleanup HUP 129
+}

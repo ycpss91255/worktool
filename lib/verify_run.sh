@@ -14,6 +14,7 @@ verify_run() {
     fi
     trap 'interrupted=INT' INT
     trap 'interrupted=TERM' TERM
+    trap 'interrupted=HUP' HUP
     WORKTOOL_TEST_RUN_ID="${run_id}" state="${state}" timeout -k 1 "${budget}" bash -c "
         mark_deadline() { touch \"\${state}/deadline\"; }
         trap mark_deadline TERM
