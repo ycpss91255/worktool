@@ -124,7 +124,8 @@ Items:
           back. Removes the box it created, on success and on interrupt.
   5.2     Ghostty window chain: back up every config `just box setup` can
           write (Ghostty legacy config, config.ghostty, the worktool state file
-          and distrobox.conf), apply the managed blocks, prove the user's own
+          and distrobox.conf) plus the Ghostty init log under $XDG_CACHE_HOME,
+          apply the managed blocks, prove the user's own
           content survived, reload an already running Ghostty, then verify
           the new fish mount namespace differs from the host and matches this
           run's dev container, then restore everything and remove the box.
