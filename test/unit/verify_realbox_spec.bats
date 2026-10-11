@@ -1711,8 +1711,10 @@ STUB
     source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
     CFGBK_C="${_home}/.config"
     # The window init log is additional to the files setup writes.
-    CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf)
-    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do cfgbk_file_of "${_name}"; done | sort)"
+    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do
+        [[ "${_name}" != init-log ]] || continue
+        cfgbk_file_of "${_name}"
+    done | sort)"
     assert_equal "${_expected}" "${_actual}"
 }
 
