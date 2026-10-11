@@ -1168,6 +1168,7 @@ FRAG
 # Record the real control output for the published acceptance criteria.
 _setup_acceptance_control() {
     local _item="$1"
+    output=""
     run just verify setup "${_item}"
     assert_success
     mkdir -p "${REPO_ROOT}/.agents/state/231"
@@ -1177,6 +1178,7 @@ _setup_acceptance_control() {
 # Every other registered item must remain green on the same degraded copy.
 _setup_acceptance_others() {
     local _repo="$1" _except="$2" _item _rest=()
+    output=""
     run just --justfile "${_repo}/justfile" verify setup --list
     assert_success
     while read -r _item _; do
@@ -1212,7 +1214,7 @@ _degrade_setup_line() {
     _repo="$(_repo_copy)"
     # Degrade only the failed block-write diagnostic, not config/removal errors.
     _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
-        '        log_error "failed to write ${_file}"' '        :'
+        "        log_error \"failed to write \${_file}\"" '        :'
     run just --justfile "${_repo}/justfile" verify setup 3.10
     assert_failure 1
     refute_output --partial '3.10 PASS'
@@ -1226,8 +1228,8 @@ _degrade_setup_line() {
     local _repo
     _repo="$(_repo_copy)"
     _degrade_setup_line "${_repo}/lib/config.sh" _config_replace \
-        '    if "$@" >"${_tmp}" && _config_copy_mode "${_target}" "${_tmp}" \' \
-        '    if "$@" >"${_tmp}" && : \'
+        "    if \"\$@\" >\"\${_tmp}\" && _config_copy_mode \"\${_target}\" \"\${_tmp}\" \\" \
+        "    if \"\$@\" >\"\${_tmp}\" && : \\"
     run just --justfile "${_repo}/justfile" verify setup 3.11
     assert_failure 1
     refute_output --partial '3.11 PASS'
@@ -1241,7 +1243,7 @@ _degrade_setup_line() {
     local _repo
     _repo="$(_repo_copy)"
     _degrade_setup_line "${_repo}/script/box/setup.sh" _block_remove \
-        '        log_info "dry-run: would remove managed block from ${_file}"' '        :'
+        "        log_info \"dry-run: would remove managed block from \${_file}\"" '        :'
     run just --justfile "${_repo}/justfile" verify setup 3.12
     assert_failure 1
     refute_output --partial '3.12 PASS'
@@ -1255,7 +1257,7 @@ _degrade_setup_line() {
     local _repo
     _repo="$(_repo_copy)"
     _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
-        '        log_info "unchanged: ${_file} (managed block already up to date)"' '        :'
+        "        log_info \"unchanged: \${_file} (managed block already up to date)\"" '        :'
     run just --justfile "${_repo}/justfile" verify setup 3.13
     assert_failure 1
     refute_output --partial '3.13 PASS'

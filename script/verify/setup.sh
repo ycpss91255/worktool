@@ -144,6 +144,7 @@ OPT_ALLOW_REAL_BOX=0
 
 # --- Per-item state ----------------------------------------------------------
 # Set by _item_begin; read by the guarded primitives below.
+VERIFY_SETUP_PATH="${PATH}" # The original tool path, before any isolated PATH probes.
 ITEM_T=""  # the item's own mktemp directory (scratch; never counted)
 ITEM_H=""  # the throwaway HOME inside it
 LAST_RC=0  # the exit status of the last command _run_norm ran
@@ -1482,7 +1483,7 @@ _item_3_10() {
     cp "${_file}" "${ITEM_T}/original" || return 1
     _atomic_failure_shim || return 1
     _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" \
-        "PATH=${ITEM_T}/bin:${PATH}" "VERIFY_REAL_MV=${_mv}" "VERIFY_FAIL_TARGET=${_file}" \
+        "PATH=${ITEM_T}/bin:${VERIFY_SETUP_PATH}" "VERIFY_REAL_MV=${_mv}" "VERIFY_FAIL_TARGET=${_file}" \
         just box setup --terminal ghostty || return 1
     printf 'setup-rc=%s\n' "${LAST_RC}"
     [[ "${LAST_RC}" -eq 1 ]] || return 1
