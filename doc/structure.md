@@ -248,7 +248,9 @@ Bash 檢查沿用 `subcommand.sh` 的指令拆解；直接指令包含引號、�
 heredoc／here-string 或 inline 直譯器含有受限動作時採封閉規則；帶引號的 xargs
 指令也會拆解，影響 git／just 動作判定的參數有 shell 展開或未知全域旗標時拒絕；
 明確唯讀的 git 子指令與 `fetch` 的資料參數可展開，內嵌的指令替換仍會逐一檢查。
-間接執行的原始文字檢查可能連純文字提及也拒絕；無受限動作的日常指令放行。
+間接執行的 raw-text tripwire 涵蓋 `just ... test` 與 `just ... verify`（含
+namespace 與 recipe 前的選項），可能連純文字提及或 help 也拒絕；上述唯讀
+verify 例外只適用於可直接解析的呼叫。無受限動作的日常指令放行。
 `bash`／`sh` 執行字面路徑的腳本時，依 payload 的 `cwd` 讀取該檔；文字含
 `just verify` 或 `just test` 就拒絕（包括註解與 help 文字），檔案不存在、不是
 一般檔案或讀取失敗也拒絕。其他腳本放行，不執行、不遞迴追查腳本內容。

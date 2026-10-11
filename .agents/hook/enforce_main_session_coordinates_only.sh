@@ -160,7 +160,7 @@ check_indirect() {
     local indirect='(^|[^[:alnum:]_.-])(eval|xargs|bash|sh|dash|zsh|ksh|fish|python[0-9.]*|perl|ruby|node|php|awk)([^[:alnum:]_.-]|$)'
     local git_write='(^|[^[:alnum:]_.-])git[[:space:]]+([^;|&]*[[:space:]])?(commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply)([^[:alnum:]_.-]|$)'
     local checkout='(^|[^[:alnum:]_.-])git[[:space:]][^;|&]*checkout[[:space:]][^;|&]*--([[:space:]]|$)'
-    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*test([^[:alnum:]_.-]|$)'
+    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*(test|verify)([^[:alnum:]_.-]|$)'
     local docker='(^|[^[:alnum:]_.-])docker[[:space:]][^;|&]*bats([^[:alnum:]_.-]|$)'
     if [[ "${text}" =~ ${indirect} ]] && \
         [[ "${text}" =~ ${git_write} || "${text}" =~ ${checkout} || "${text}" =~ ${tests} || "${text}" =~ ${docker} ]]; then

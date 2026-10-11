@@ -132,6 +132,25 @@ _edit() {
     done
 }
 
+@test "raw indirect execution mentioning just verify is delegated with workflow exemption" {
+    local command
+    for command in "eval \"\$CMD\" # just --quiet verify all" \
+        "python3 -c 'print(\"just -d /tmp verify::all\")'" \
+        $'sh <<SCRIPT\njust --justfile justfile verify all\nSCRIPT' \
+        "bash -c 'echo ready' # just verify all"; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        _check "${command}" agent-workflow
+        assert_success
+    done
+    printf 'just verify all\njust test unit\n' >"${WORK}/checks.sh"
+    for command in 'just verify all' 'just verify::all' 'bash checks.sh' \
+        'sh missing.sh'; do
+        _check "${command}" agent-workflow
+        assert_success
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do
