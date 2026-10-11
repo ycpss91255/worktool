@@ -1159,3 +1159,57 @@ FRAG
     assert_success
     assert_equal "${_fixture}" "${output}"
 }
+
+# Record the real control output for the published acceptance criteria.
+_setup_acceptance_control() {
+    local _item="$1"
+    run just verify setup "${_item}"
+    assert_success
+    mkdir -p "${REPO_ROOT}/.agents/state/231"
+    printf '%s\n' "${output}" >"${REPO_ROOT}/.agents/state/231/${_item}.out"
+}
+
+# Every other registered item must remain green on the same degraded copy.
+_setup_acceptance_others() {
+    local _repo="$1" _except="$2" _item _rest=()
+    run just --justfile "${_repo}/justfile" verify setup --list
+    assert_success
+    while read -r _item _; do
+        [[ "${_item}" == 3.* && "${_item}" != "${_except}" ]] && _rest+=("${_item}")
+    done <<<"${output}"
+    run just --justfile "${_repo}/justfile" verify setup "${_rest[@]}"
+    assert_success
+}
+
+# Replace exactly one product call site inside the named function.
+_degrade_setup_line() {
+    local _file="$1" _function="$2" _old="$3" _new="$4"
+    MUTANT_OLD="${_old}" MUTANT_NEW="${_new}" awk -v fn="${_function}" '
+        $0 == fn "() {" { inside = 1 }
+        inside && $0 == ENVIRON["MUTANT_OLD"] {
+            print ENVIRON["MUTANT_NEW"]; changed++; next
+        }
+        { print }
+        /^}/ { inside = 0 }
+        END { if (changed != 1) exit 1 }
+    ' "${_file}" >"${_file}.mutant"
+    cat "${_file}.mutant" >"${_file}"
+    rm "${_file}.mutant"
+}
+
+@test "3.10: atomic profile failure is reported once, leaves no debris, and reruns to completion" {
+    _setup_acceptance_control 3.10
+    assert_line 'original=intact temp-files=0'
+    assert_line 'setup-rc=1'
+    assert_line 'ghostty: <H>/.config/ghostty/config (managed block: absent)'
+    assert_line 'ghostty: <H>/.config/ghostty/config (managed block: present)'
+    local _repo
+    _repo="$(_repo_copy)"
+    # Degrade only the failed block-write diagnostic, not config/removal errors.
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_write \
+        '        log_error "failed to write ${_file}"' '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.10
+    assert_failure 1
+    refute_output --partial '3.10 PASS'
+    _setup_acceptance_others "${_repo}" 3.10
+}

@@ -827,6 +827,54 @@ rc=0
       ```
       預期 `rc=0`。先確認 legacy 確實有一個區塊，再建立新檔、搬移並比較兩份檔案的使用者內容。3.1–3.8 沒有新檔時仍使用 legacy fallback；兩檔驗證與損壞／多區塊拒絕由 3.4 檢查。
       host Ghostty 低於 1.3.0 且選用新檔時，必須有 `[WARN] ghostty <版本> does not read <H>/.config/ghostty/config.ghostty (requires 1.3.0 or newer)`；host 沒有執行檔就不查版本（PR #351）。
+  - [ ] 3.10 原子寫入失敗不破壞原檔；status 報 absent，重跑補完
+    - 驗收方式：`just verify setup 3.10`。只讓 Ghostty profile 的最後 rename 失敗，worktool 狀態檔與 distrobox.conf 仍照實寫入。錯誤必須恰好一次、setup exit 1；原檔逐 byte 相同，沒有 `config.XXXXXX` 殘留。status exit 0 且報 absent，移除故障後 setup exit 0、區塊 present、使用者內容保留。
+    - 下列判準取自 Docker 內實際執行輸出；路徑以 `<H>`／`<D>`／`<repo>` 正規化。進度與 just 的 recipe echo 不列入判準；本項最後 exit 0。
+      ```text
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] wrote: <H>/.config/distrobox/distrobox.conf (managed block: _worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != 'dev' ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v)
+      [ERROR] failed to write <H>/.config/ghostty/config
+      error: Recipe `setup` failed on line 45 with exit code 1
+      setup-rc=1
+      original=intact temp-files=0
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      distrobox: <D> (on PATH; no managed block records one)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev')
+      [INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open.
+      setup-rc=0
+      user-content after-recovery: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)

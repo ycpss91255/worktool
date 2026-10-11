@@ -111,11 +111,11 @@ source "${LIB_DIR}/log.sh"
 #   realbox   builds the real box on this machine (see the guard below).
 #
 # All nine items of doc/acceptance.md item 3 are `temphome`.
-VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9)
+VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10)
 
 _item_group() {
     case "$1" in
-        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9) printf '%s\n' 'temphome' ;;
+        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10) printf '%s\n' 'temphome' ;;
         *) return 1 ;;
     esac
 }
@@ -131,6 +131,7 @@ _item_title() {
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
+        3.10) printf '%s\n' 'atomic profile failure preserves bytes, cleans up and recovers' ;;
         *) return 1 ;;
     esac
 }
@@ -273,6 +274,7 @@ Items:
   3.7  distrobox.conf isolates host TMUX and keeps user content
   3.8  --terminal none removes the profile and preserves isolation
   3.9  existing config.ghostty receives the legacy block without content loss
+  3.10 atomic profile failure preserves bytes, cleans up and recovers
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
@@ -1428,6 +1430,71 @@ _item_3_9() {
 }
 
 
+# Shared fixture for the additional setup paths: all commands remain real
+# just box calls, with the same independently pinned paths and markers.
+_setup_path_begin() {
+    _require_tools env just sed grep mktemp cmp find stat || return $?
+    _item_begin || return 1
+    _seed_user_content "$1" || return 1
+    NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return $?
+}
+
+_path_setup() {
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" \
+        just box setup --terminal ghostty "$@" || return 1
+    printf 'setup-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 0 ]]
+}
+
+_path_status() {
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" just box status || return 1
+    printf 'status-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 0 ]] || return 1
+    _expect_lines "$1" "ghostty: <H>/.config/ghostty/config (managed block: $2)" \
+        'distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)'
+}
+
+# Fail only the final rename of the Ghostty profile. State and isolation
+# writes use the real mv; the recovery run does too. No product is patched.
+_atomic_failure_shim() {
+    mkdir "${ITEM_T}/bin" || return 1
+    cat >"${ITEM_T}/bin/mv" <<'EOF'
+#!/bin/sh
+for target do :; done
+if [ "${target}" = "${VERIFY_FAIL_TARGET}" ]; then
+    exit 1
+fi
+exec "${VERIFY_REAL_MV}" "$@"
+EOF
+    chmod +x "${ITEM_T}/bin/mv"
+}
+
+_item_3_10() {
+    _setup_path_begin 3.10 || return $?
+    local _file="${ITEM_H}/.config/ghostty/config" _mv _count
+    _mv="$(command -v mv)" || return 1
+    cp "${_file}" "${ITEM_T}/original" || return 1
+    _atomic_failure_shim || return 1
+    _run_norm env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config" \
+        "PATH=${ITEM_T}/bin:${PATH}" "VERIFY_REAL_MV=${_mv}" "VERIFY_FAIL_TARGET=${_file}" \
+        just box setup --terminal ghostty || return 1
+    printf 'setup-rc=%s\n' "${LAST_RC}"
+    [[ "${LAST_RC}" -eq 1 ]] || return 1
+    _expect_lines 3.10 '[ERROR] failed to write <H>/.config/ghostty/config' \
+        '[INFO] wrote: <H>/.config/worktool/config' || return 1
+    _count="$(_count_matching '^\[ERROR\]' "${ITEM_T}/run.out")" || return 1
+    [[ "${_count}" -eq 1 ]] || return 1
+    cmp -s "${_file}" "${ITEM_T}/original" || return 1
+    find "${ITEM_H}/.config/ghostty" -name 'config.??????' >"${ITEM_T}/temps" || return 1
+    [[ ! -s "${ITEM_T}/temps" ]] || return 1
+    printf 'original=intact temp-files=0\n'
+    _path_status 3.10 absent || return 1
+    _path_setup || return 1
+    _expect_lines 3.10 "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_CMD})" || return 1
+    _expect_user_content 3.10 after-recovery || return 1
+    _path_status 3.10 present
+}
+
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
     local _item="$1" _group _rc
@@ -1451,6 +1518,7 @@ _run_item() {
         3.7) _item_3_7 ;;
         3.8) _item_3_8 ;;
         3.9) _item_3_9 ;;
+        3.10) _item_3_10 ;;
         *)
             _fail "no implementation for item '${_item}'"
             return 1
