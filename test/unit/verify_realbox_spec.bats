@@ -2377,3 +2377,41 @@ _assert_data_unchanged() {
     assert_line 'restore-files-ok=1'
     [ ! -e "${log}" ]
 }
+
+# Exercise the shipped 5.2 backup/apply/restore chain, including a write
+# through the original link target after setup replaces the config path.
+_assert_symlink_roundtrip() {
+    local link="$(_ghostty_config)" target="${HOME}/original-ghostty"
+    local baseline="${STATE}/symlink-baseline" link_text="$1" repo
+    repo="$(_repo_copy)"
+    printf 'font-size = 12\n# original target\n' >"${target}"
+    chmod 640 "${target}"
+    cp -a "${target}" "${baseline}"
+    rm "${link}"
+    ln -s "${link_text}" "${link}"
+    local link_mode
+    link_mode="$(stat -c %a "${link}")"
+
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/ghostty.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/ghostty.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ ! -L "${link}" ]
+    printf 'clobbered target\n' >"${target}"
+    chmod 600 "${target}"
+
+    run _restore_input 4242
+    assert [ -L "${link}" ]
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert_equal "$(stat -c %a "${link}")" "${link_mode}"
+    assert_equal "$(stat -c %a "${target}")" "$(stat -c %a "${baseline}")"
+    run cmp "${baseline}" "${target}"
+    assert_success
+}
+
+@test "#517: 5.2 relative symlink round-trip preserves link, target bytes and modes" {
+    _assert_symlink_roundtrip '../../original-ghostty'
+}
