@@ -161,7 +161,13 @@ EOF
 # `just` always runs from the repo root, so the root justfile is the one found
 # whatever directory the maintainer invoked this script from.
 _just() {
-    (cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@")
+    (
+        # Subshells reset active handlers; install them before verify_run saves them.
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+        cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@"
+    )
 }
 
 # Refuse before creating anything: a box we did not make is never ours to
@@ -312,7 +318,10 @@ _cleanup_drop() {
 
 _on_exit() {
     local _st=$? _crc=0
-    trap - EXIT INT TERM HUP
+    trap - EXIT
+    trap '' INT TERM HUP
+    # EXIT may run inside assemble's redirection or bench's pipeline.
+    exec 1>&"${REALBOX_REPORT_FD}"
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
     done
@@ -1065,6 +1074,7 @@ realbox_run() {
 }
 
 _run_requested_items() {
+    exec {REALBOX_REPORT_FD}>&1
     trap _on_exit EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
