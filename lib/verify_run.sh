@@ -19,7 +19,10 @@ verify_run() {
         mark_deadline() { touch \"\${state}/deadline\"; }
         trap mark_deadline TERM
         trap ':' INT HUP
-        \"\$@\"
+        # Background jobs inherit ignored INT; restore command signal defaults.
+        env --default-signal=INT,TERM,HUP \"\$@\" &
+        child=\$!
+        wait \"\${child}\"
     " _ "$@" &
     monitor=$!
     wait "${monitor}" || rc=$?

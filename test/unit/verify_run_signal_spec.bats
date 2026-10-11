@@ -115,3 +115,16 @@ STUB
     run cat "${SIGNAL_STATE}/events"
     assert_output $'finished\ncontainers-cleaned\ncleanup'
 }
+
+@test "verify_run: deadline KILL is 124 while a command's own 137 is preserved" {
+    run bash <<'PROBE'
+source "${LIB_DIR}/verify_run.sh"
+verify_run 5 bash -c 'exit 137'
+PROBE
+    assert_failure 137
+    run bash <<'PROBE'
+source "${LIB_DIR}/verify_run.sh"
+verify_run 0.1 bash -c 'trap "" TERM; sleep 3'
+PROBE
+    assert_failure 124
+}
