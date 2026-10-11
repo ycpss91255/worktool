@@ -53,7 +53,7 @@ JS
 assert_signal_cleanup() {
     run signal_caller "$1"
     assert_success
-    assert_output "rc=$2"
+    assert_line "rc=$2"
     run cat "${SIGNAL_STATE}/events"
     assert_output $'finished\ncleanup'
     local pid
@@ -73,4 +73,8 @@ teardown() {
 
 @test "verify_run: INT waits for the child before caller cleanup and exits 130" {
     assert_signal_cleanup INT 130
+}
+
+@test "verify_run: TERM waits for the child before caller cleanup and exits 143" {
+    assert_signal_cleanup TERM 143
 }

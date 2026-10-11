@@ -13,6 +13,7 @@ verify_run() {
         run_id="${state##*/}"
     fi
     trap 'interrupted=INT' INT
+    trap 'interrupted=TERM' TERM
     WORKTOOL_TEST_RUN_ID="${run_id}" state="${state}" timeout -k 1 "${budget}" bash -c "
         mark_deadline() { touch \"\${state}/deadline\"; }
         trap mark_deadline TERM
@@ -36,15 +37,23 @@ verify_run() {
         rc=124
     fi
     rm -rf "${state}"
-    trap - INT TERM HUP
-    eval "${saved_int}"
-    eval "${saved_term}"
-    eval "${saved_hup}"
-    if [[ -n "${interrupted}" ]]; then
-        kill -s "${interrupted}" "${BASHPID}"
-        case "${interrupted}" in INT) rc=130 ;; TERM) rc=143 ;; HUP) rc=129 ;; esac
-    fi
+    verify_restore_signals "${interrupted}" "${saved_int}" "${saved_term}" "${saved_hup}" || rc=$?
     return "${rc}"
+}
+
+verify_restore_signals() {
+    local interrupted="$1" saved=""
+    trap - INT TERM HUP
+    eval "$2"
+    eval "$3"
+    eval "$4"
+    if [[ -n "${interrupted}" ]]; then
+        case "${interrupted}" in INT) saved="$2" ;; TERM) saved="$3" ;; HUP) saved="$4" ;; esac
+        if [[ -n "${saved}" ]]; then
+            kill -s "${interrupted}" "${BASHPID}"
+        fi
+        case "${interrupted}" in INT) return 130 ;; TERM) return 143 ;; HUP) return 129 ;; esac
+    fi
 }
 
 # timeout owns this group; its leader may exit before its descendants do.
