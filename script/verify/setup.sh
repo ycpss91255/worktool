@@ -376,14 +376,21 @@ _item_begin() {
 # lines match doc/acceptance.md wherever ghostty and distrobox are
 # installed. Reads stdin, writes stdout.
 _norm() {
-    local _script=(-e "s|${REPO_ROOT}|<repo>|g")
-    [[ -n "${NORM_G}" ]] && _script+=(-e "s|${NORM_G}|<G>|g")
-    [[ -n "${NORM_D}" ]] && _script+=(-e "s|${NORM_D}|<D>|g")
-    [[ -n "${NORM_H}" ]] && _script+=(-e "s|${NORM_H}|<H>|g")
-    if [[ "${#_script[@]}" -eq 0 ]]; then
-        cat
-        return
-    fi
+    local _paths=("${REPO_ROOT}" "${NORM_G}" "${NORM_D}" "${NORM_H}")
+    local _labels=('<repo>' '<G>' '<D>' '<H>') _script=()
+    local _i _longest _round
+    # A nested HOME or tool must be replaced before its repo prefix.
+    for ((_round = 0; _round < ${#_paths[@]}; _round++)); do
+        _longest=0
+        for _i in "${!_paths[@]}"; do
+            if [[ "${#_paths[_i]}" -gt "${#_paths[_longest]}" ]]; then
+                _longest="${_i}"
+            fi
+        done
+        [[ -n "${_paths[_longest]}" ]] || break
+        _script+=(-e "s|${_paths[_longest]}|${_labels[_longest]}|g")
+        _paths[_longest]=''
+    done
     sed "${_script[@]}"
 }
 

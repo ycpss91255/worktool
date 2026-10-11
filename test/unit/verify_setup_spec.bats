@@ -355,6 +355,17 @@ EOF
 
 # --- 3.1 ----------------------------------------------------------------------
 
+@test "3.1: HOME under the repo normalises to H before the repo prefix" {
+    local _repo
+    _repo="$(_repo_copy)"
+    mkdir -p "${_repo}/audit/tmp"
+    run env TMPDIR="${_repo}/audit/tmp" "${REAL_JUST}" \
+        --justfile "${_repo}/justfile" verify setup 3.1
+    assert_success
+    assert_line '[INFO] dry-run: would write <H>/.config/worktool/config'
+    assert_output --partial '3.1 PASS'
+}
+
 @test "3.1: a just that prints the documented decision lines but exits 1 cannot pass" {
     _stub_just_plausible 1
     run "${VERIFY}" 3.1
