@@ -73,6 +73,96 @@ _edit() {
     done
 }
 
+@test "main session delegates verify execution including namespaces and leading options" {
+    local command
+    for command in 'just verify all' 'just verify realbox box 5.1' \
+        'just verify::all' 'just --justfile justfile verify all' \
+        'just -d /tmp verify all' 'just --set box demo --quiet verify all' \
+        'timeout 60 env just verify all'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'Workflow'
+    done
+}
+
+@test "main session permits only verify listing and its exact help invocation" {
+    local command
+    for command in 'just verify' 'just verify --help' \
+        'just --justfile justfile verify' 'just -d /tmp verify --help'; do
+        _check "${command}"
+        assert_success
+    done
+    for command in 'just verify --help all' 'just verify all --help' \
+        'just verify::all --help' 'just verify --help --unknown' \
+        'just verify --help test unit'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+    done
+}
+
+@test "main session delegates literal bash and sh scripts mentioning verify or test" {
+    local body command
+    mkdir -p "${WORK}/scripts"
+    for body in 'just verify all' 'just test unit' '# just verify --help'; do
+        printf '%s\n' "${body}" >"${WORK}/scripts/run checks.sh"
+        for command in "bash 'scripts/run checks.sh'" \
+            "sh '${WORK}/scripts/run checks.sh'" \
+            "timeout 60 env bash -eu -- 'scripts/run checks.sh'" \
+            "bash -o errexit 'scripts/run checks.sh'"; do
+            _check "${command}"
+            assert_equal "${status}" 2
+            assert_output --partial 'Workflow'
+        done
+    done
+    printf 'echo ready\n' >"${WORK}/safe.sh"
+    _check 'sh safe.sh'
+    assert_success
+    _check "bash -c 'echo ready'"
+    assert_success
+}
+
+@test "main session fails closed when literal script files cannot be read" {
+    local command
+    for command in 'bash missing.sh' 'sh missing.sh' 'bash .' \
+        'bash --rcfile config missing.sh' 'sh -- missing.sh'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'cannot be read'
+        assert_output --partial 'Workflow'
+    done
+}
+
+@test "raw indirect execution mentioning just verify is delegated with workflow exemption" {
+    local command
+    for command in "eval \"\$CMD\" # just --quiet verify all" \
+        "python3 -c 'print(\"just -d /tmp verify::all\")'" \
+        $'sh <<SCRIPT\njust --justfile justfile verify all\nSCRIPT' \
+        "bash -c 'echo ready' # just verify all"; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        _check "${command}" agent-workflow
+        assert_success
+    done
+    printf 'just verify all\njust test unit\n' >"${WORK}/checks.sh"
+    for command in 'just verify all' 'just verify::all' 'bash checks.sh' \
+        'sh missing.sh'; do
+        _check "${command}" agent-workflow
+        assert_success
+    done
+}
+
+@test "shell startup flags cannot hide a literal script execution" {
+    printf 'just verify all\n' >"${WORK}/checks.sh"
+    local command
+    for command in 'bash --norc checks.sh' 'bash --posix checks.sh' \
+        'bash --noprofile --verbose checks.sh' 'bash +x checks.sh' \
+        'bash --rcfile config checks.sh'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'script tests or verification'
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do

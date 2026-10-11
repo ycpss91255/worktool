@@ -58,6 +58,7 @@ check_git() {
 
 check_tests() {
     local tool="$1" word skip=0 recipe='' text=''
+    local -a args=()
     shift
     for word in "$@"; do
         text+=" $(hook_word "${word}")"
@@ -68,7 +69,10 @@ check_tests() {
             skip=$((skip - 1))
             continue
         fi
-        [[ -z "${recipe}" ]] || continue
+        if [[ -n "${recipe}" ]]; then
+            args+=("${word}")
+            continue
+        fi
         case "${word}" in
             -f|--justfile|-d|--working-directory|--chooser|--shell) skip=1 ;;
             --set) skip=2 ;;
@@ -80,8 +84,52 @@ check_tests() {
     if [[ "${tool}" == just && ( "${recipe}" == test || "${recipe}" == test::* ) ]]; then
         refuse 'Main-session tests belong in a Workflow.'
     fi
+    if [[ "${tool}" == just && ( "${recipe}" == verify || "${recipe}" == verify::* ) ]]; then
+        if [[ "${recipe}" == verify && ( "${#args[@]}" == 0 || \
+            ( "${#args[@]}" == 1 && "${args[0]}" == --help ) ) ]]; then
+            return 0
+        fi
+        refuse 'Main-session verification belongs in a Workflow.'
+    fi
     if [[ "${tool}" == docker && "${text}" =~ (^|[[:space:]\"\'])([^[:space:]\"\']*/)?bats([[:space:]\"\']|$) ]]; then
         refuse 'Main-session Docker bats execution belongs in a Workflow.'
+    fi
+}
+
+check_script() {
+    local word path='' cwd text skip='' options=1
+    for word in "$@"; do
+        if [[ -n "${skip}" ]]; then
+            skip=''
+            continue
+        fi
+        hook_word_has_expansion "${word}" && return 0
+        word="$(hook_word "${word}")"
+        if [[ "${options}" == 1 ]]; then
+            case "${word}" in
+                --) options=0; continue ;;
+                -o|+o|-O|+O|--rcfile|--init-file) skip=1; continue ;;
+                --help|--version) return 0 ;;
+                --*) continue ;;
+                -*c*|-*s*) return 0 ;;
+                -*|+*) continue ;;
+            esac
+        fi
+        path="${word}"
+        break
+    done
+    [[ -n "${path}" && "${path}" != - ]] || return 0
+    cwd="$(hook_field '.cwd')"
+    [[ -n "${cwd}" ]] || cwd="${HOOK_REPO_ROOT}"
+    [[ "${path}" == /* ]] || path="${cwd}/${path}"
+    if [[ ! -f "${path}" || ! -r "${path}" ]]; then
+        refuse 'Main-session script file cannot be read (fail closed); use a Workflow.'
+    fi
+    if ! text="$(cat -- "${path}")"; then
+        refuse 'Main-session script file cannot be read (fail closed); use a Workflow.'
+    fi
+    if [[ "${text}" == *'just verify'* || "${text}" == *'just test'* ]]; then
+        refuse 'Main-session script tests or verification belong in a Workflow.'
     fi
 }
 
@@ -104,6 +152,8 @@ check_launch() {
         check_git "${words[@]:1}"
     elif [[ "${tool##*/}" == just || "${tool##*/}" == docker ]]; then
         check_tests "${tool##*/}" "${words[@]:1}"
+    elif [[ "${tool##*/}" == bash || "${tool##*/}" == sh ]]; then
+        check_script "${words[@]:1}"
     fi
 }
 
@@ -112,7 +162,7 @@ check_indirect() {
     local indirect='(^|[^[:alnum:]_.-])(eval|xargs|bash|sh|dash|zsh|ksh|fish|python[0-9.]*|perl|ruby|node|php|awk)([^[:alnum:]_.-]|$)'
     local git_write='(^|[^[:alnum:]_.-])git[[:space:]]+([^;|&]*[[:space:]])?(commit|merge|rebase|push|cherry-pick|revert|am|reset|restore|stash|apply)([^[:alnum:]_.-]|$)'
     local checkout='(^|[^[:alnum:]_.-])git[[:space:]][^;|&]*checkout[[:space:]][^;|&]*--([[:space:]]|$)'
-    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*test([^[:alnum:]_.-]|$)'
+    local tests='(^|[^[:alnum:]_.-])just[[:space:]][^;|&]*(test|verify)([^[:alnum:]_.-]|$)'
     local docker='(^|[^[:alnum:]_.-])docker[[:space:]][^;|&]*bats([^[:alnum:]_.-]|$)'
     if [[ "${text}" =~ ${indirect} ]] && \
         [[ "${text}" =~ ${git_write} || "${text}" =~ ${checkout} || "${text}" =~ ${tests} || "${text}" =~ ${docker} ]]; then
