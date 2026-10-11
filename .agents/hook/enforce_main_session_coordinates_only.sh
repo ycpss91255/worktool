@@ -96,6 +96,36 @@ check_tests() {
     fi
 }
 
+check_script() {
+    local word path='' cwd text skip='' options=1
+    for word in "$@"; do
+        if [[ -n "${skip}" ]]; then
+            skip=''
+            continue
+        fi
+        hook_word_has_expansion "${word}" && return 0
+        word="$(hook_word "${word}")"
+        if [[ "${options}" == 1 ]]; then
+            case "${word}" in
+                --) options=0; continue ;;
+                --help|--version|-*c*|-*s*) return 0 ;;
+                -o|+o|-O|+O|--rcfile|--init-file) skip=1; continue ;;
+                -*) continue ;;
+            esac
+        fi
+        path="${word}"
+        break
+    done
+    [[ -n "${path}" && "${path}" != - ]] || return 0
+    cwd="$(hook_field '.cwd')"
+    [[ -n "${cwd}" ]] || cwd="${HOOK_REPO_ROOT}"
+    [[ "${path}" == /* ]] || path="${cwd}/${path}"
+    text="$(cat -- "${path}")"
+    if [[ "${text}" == *'just verify'* || "${text}" == *'just test'* ]]; then
+        refuse 'Main-session script tests or verification belong in a Workflow.'
+    fi
+}
+
 check_launch() {
     local launch="$1" lead tool index
     local -a words=()
@@ -115,6 +145,8 @@ check_launch() {
         check_git "${words[@]:1}"
     elif [[ "${tool##*/}" == just || "${tool##*/}" == docker ]]; then
         check_tests "${tool##*/}" "${words[@]:1}"
+    elif [[ "${tool##*/}" == bash || "${tool##*/}" == sh ]]; then
+        check_script "${words[@]:1}"
     fi
 }
 

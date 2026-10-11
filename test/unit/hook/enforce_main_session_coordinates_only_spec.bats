@@ -100,6 +100,27 @@ _edit() {
     done
 }
 
+@test "main session delegates literal bash and sh scripts mentioning verify or test" {
+    local body command
+    mkdir -p "${WORK}/scripts"
+    for body in 'just verify all' 'just test unit' '# just verify --help'; do
+        printf '%s\n' "${body}" >"${WORK}/scripts/run checks.sh"
+        for command in "bash 'scripts/run checks.sh'" \
+            "sh '${WORK}/scripts/run checks.sh'" \
+            "timeout 60 env bash -eu -- 'scripts/run checks.sh'" \
+            "bash -o errexit 'scripts/run checks.sh'"; do
+            _check "${command}"
+            assert_equal "${status}" 2
+            assert_output --partial 'Workflow'
+        done
+    done
+    printf 'echo ready\n' >"${WORK}/safe.sh"
+    _check 'sh safe.sh'
+    assert_success
+    _check "bash -c 'echo ready'"
+    assert_success
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do
