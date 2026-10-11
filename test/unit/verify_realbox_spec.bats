@@ -2415,3 +2415,7 @@ _assert_symlink_roundtrip() {
 @test "#517: 5.2 relative symlink round-trip preserves link, target bytes and modes" {
     _assert_symlink_roundtrip '../../original-ghostty'
 }
+
+@test "#517: 5.2 absolute symlink round-trip preserves link, target bytes and modes" {
+    _assert_symlink_roundtrip "${HOME}/original-ghostty"
+}
