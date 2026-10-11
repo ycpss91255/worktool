@@ -367,9 +367,10 @@ EOF
 }
 
 @test "3.1: HOME paths with regex metacharacters are normalised literally" {
-    TMPDIR="${BATS_TEST_TMPDIR}/literal.[x]*^\$|&\\tmp"
-    mkdir -p "${TMPDIR}"
-    run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify setup 3.1
+    local _tmp="${BATS_TEST_TMPDIR}/literal.[x]*^\$|&\\tmp"
+    mkdir -p "${_tmp}"
+    run env TMPDIR="${_tmp}" "${REAL_JUST}" \
+        --justfile "${REPO_ROOT}/justfile" verify setup 3.1
     assert_success
     assert_line '[INFO] dry-run: would write <H>/.config/worktool/config'
     assert_output --partial '3.1 PASS'

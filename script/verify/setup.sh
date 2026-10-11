@@ -379,7 +379,7 @@ _norm_literal_pattern() {
     for ((_i = 0; _i < ${#_path}; _i++)); do
         _char="${_path:_i:1}"
         case "${_char}" in
-            '\'|'.'|'['|'*'|'^'|'$'|'|') _pattern+="\\${_char}" ;;
+            "\\"|'.'|'['|'*'|'^'|'$'|'|') _pattern+="\\${_char}" ;;
             *) _pattern+="${_char}" ;;
         esac
     done
