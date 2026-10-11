@@ -99,11 +99,11 @@ check_tests() {
 check_script() {
     local word path='' cwd text skip='' options=1
     for word in "$@"; do
+        hook_word_has_expansion "${word}" && refuse 'Expanded shell script arguments cannot be checked.'
         if [[ -n "${skip}" ]]; then
             skip=''
             continue
         fi
-        hook_word_has_expansion "${word}" && return 0
         word="$(hook_word "${word}")"
         if [[ "${options}" == 1 ]]; then
             case "${word}" in
