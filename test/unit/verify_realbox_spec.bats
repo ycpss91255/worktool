@@ -142,6 +142,10 @@ _check_group_interrupt() {
     _assert_group_interrupt TERM 143 bench 5.1
 }
 
+@test "5.1: group HUP during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 assemble 5.1
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
