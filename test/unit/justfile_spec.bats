@@ -206,6 +206,13 @@ _listed_names() {
     assert_equal "$(_stub_calls)" ""
 }
 
+@test "#513: bare just verify lists the realbox comment tag option" {
+    _just verify
+    assert_success
+    assert_line --regexp '^ +realbox .*--comment-tag'
+    assert_equal "$(_stub_calls)" ""
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {
