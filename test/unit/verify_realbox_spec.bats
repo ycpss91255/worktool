@@ -2419,3 +2419,25 @@ _assert_symlink_roundtrip() {
 @test "#517: 5.2 absolute symlink round-trip preserves link, target bytes and modes" {
     _assert_symlink_roundtrip "${HOME}/original-ghostty"
 }
+
+@test "#517: 5.2 dangling symlink round-trip preserves the link without creating its target" {
+    local link="${HOME}/.config/worktool/config" link_text='../../missing-state' repo
+    repo="$(_repo_copy)"
+    mkdir -p "$(dirname "${link}")"
+    ln -s "${link_text}" "${link}"
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/worktool.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/worktool.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ -f "${link}" ]
+    assert [ ! -L "${link}" ]
+
+    run _restore_input 4242
+    assert [ -L "${link}" ]
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert [ ! -e "${link}" ]
+    assert [ ! -e "${HOME}/missing-state" ]
+}
