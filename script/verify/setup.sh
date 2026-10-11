@@ -111,11 +111,11 @@ source "${LIB_DIR}/log.sh"
 #   realbox   builds the real box on this machine (see the guard below).
 #
 # All nine items of doc/acceptance.md item 3 are `temphome`.
-VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11)
+VERIFY_ITEMS=(3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 3.10 3.11 3.12)
 
 _item_group() {
     case "$1" in
-        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11) printf '%s\n' 'temphome' ;;
+        3.1 | 3.2 | 3.3 | 3.4 | 3.5 | 3.6 | 3.7 | 3.8 | 3.9 | 3.10 | 3.11 | 3.12) printf '%s\n' 'temphome' ;;
         *) return 1 ;;
     esac
 }
@@ -131,6 +131,7 @@ _item_title() {
         3.7) printf '%s\n' 'distrobox.conf isolates host TMUX and keeps user content' ;;
         3.8) printf '%s\n' '--terminal none removes the profile and preserves isolation' ;;
         3.9) printf '%s\n' 'existing config.ghostty receives the legacy block without content loss' ;;
+        3.12) printf '%s\n' 'dry-run removal reports a real block and writes nothing' ;;
         3.11) printf '%s\n' 'existing managed files preserve 0644 and 0600 through all operations' ;;
         3.10) printf '%s\n' 'atomic profile failure preserves bytes, cleans up and recovers' ;;
         *) return 1 ;;
@@ -277,6 +278,7 @@ Items:
   3.9  existing config.ghostty receives the legacy block without content loss
   3.10 atomic profile failure preserves bytes, cleans up and recovers
   3.11 existing managed files preserve 0644 and 0600 through all operations
+  3.12 dry-run removal reports a real block and writes nothing
 
 Options:
   --allow-real-box  Allow items in group `realbox` (items that build the
@@ -1545,6 +1547,44 @@ _item_3_11() {
     done
 }
 
+# Snapshots include the state file, not just the block files. The independent
+# comparison must also catch a dry-run that saves its proposed decisions.
+_path_snapshot() {
+    mkdir "${ITEM_T}/snapshot" || return 1
+    cp "${ITEM_H}/.config/ghostty/config" "${ITEM_T}/snapshot/ghostty" || return 1
+    cp "${ITEM_H}/.config/distrobox/distrobox.conf" "${ITEM_T}/snapshot/distrobox" || return 1
+    cp "${ITEM_H}/.config/worktool/config" "${ITEM_T}/snapshot/state"
+}
+
+_path_identical() {
+    cmp -s "${ITEM_H}/.config/ghostty/config" "${ITEM_T}/snapshot/ghostty" || return 1
+    cmp -s "${ITEM_H}/.config/distrobox/distrobox.conf" "${ITEM_T}/snapshot/distrobox" || return 1
+    cmp -s "${ITEM_H}/.config/worktool/config" "${ITEM_T}/snapshot/state"
+}
+
+_item_3_12() {
+    _setup_path_begin 3.12 || return $?
+    _path_setup || return 1
+    _expect_user_content 3.12 after-write || return 1
+    local _file="${ITEM_H}/.config/ghostty/config" _before _after
+    _before="$(_count_matching '^# BEGIN worktool managed block' "${_file}")" || return 1
+    [[ "${_before}" -eq 1 ]] || return 1
+    _path_snapshot || return 1
+    _path_setup --dry-run --auto-enter no || return 1
+    _expect_lines 3.12 '[INFO] auto-enter: no (user)' \
+        '[INFO] dry-run: would write <H>/.config/worktool/config' \
+        '[INFO] dry-run: would remove managed block from <H>/.config/ghostty/config' || return 1
+    _refute_line 3.12 '[INFO] removed:' || return 1
+    _after="$(_count_matching '^# BEGIN worktool managed block' "${_file}")" || return 1
+    printf 'ghostty-blocks-before=%s ghostty-blocks-after=%s\n' "${_before}" "${_after}"
+    [[ "${_after}" -eq 1 ]] || return 1
+    _path_identical || return 1
+    printf 'dry-run-files=identical\n'
+    _expect_user_content 3.12 after-dry-run || return 1
+    _path_status 3.12 present || return 1
+    _expect_lines 3.12 'auto-enter: yes (default)'
+}
+
 # --- Dispatcher ---------------------------------------------------------------
 _run_item() {
     local _item="$1" _group _rc
@@ -1570,6 +1610,7 @@ _run_item() {
         3.9) _item_3_9 ;;
         3.10) _item_3_10 ;;
         3.11) _item_3_11 ;;
+        3.12) _item_3_12 ;;
         *)
             _fail "no implementation for item '${_item}'"
             return 1

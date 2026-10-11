@@ -912,6 +912,33 @@ rc=0
       ghostty: <H>/.config/ghostty/config.ghostty (managed block: absent)
       status-rc=0
       ```
+  - [ ] 3.12 已有區塊的 dry-run 移除不寫檔
+    - 驗收方式：`just verify setup 3.12`。先真的寫入一個 Ghostty 區塊，再跑 `--dry-run --auto-enter no`；不是以空檔案的無事可做當作通過。Ghostty、distrobox.conf、worktool 狀態檔均與第一次寫入後逐 byte 相同；status 仍讀到原本的 yes 決策與 present 區塊。host tmux.conf 的使用者內容也不變。
+    - 下列判準取自 Docker 實跑的 dry-run 與其後 status；setup／status／本項皆 exit 0。
+      ```text
+      [INFO] auto-enter: no (user)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] dry-run: would write <H>/.config/worktool/config
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] dry-run: would remove managed block from <H>/.config/ghostty/config
+      setup-rc=0
+      ghostty-blocks-before=1 ghostty-blocks-after=1
+      dry-run-files=identical
+      user-content after-dry-run: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
 - [ ] 4. README 圖(draw.io,可編輯)
   - [ ] 4.1 `doc/diagram/` 恰好三張 `.drawio.svg`、都無 foreignObject、都內嵌 mxfile;README 引用三張圖(3 個圖片 + 1 個編輯連結說明 = 4 處);流程圖測試節點寫「host 只需 docker + just」
     - 預期看到資訊(依序:svg 總數、含 foreignObject 的、含 mxfile 的、README 引用、流程圖措辭)

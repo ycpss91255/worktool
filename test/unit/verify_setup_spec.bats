@@ -1228,3 +1228,17 @@ _degrade_setup_line() {
     refute_output --partial '3.11 PASS'
     _setup_acceptance_others "${_repo}" 3.11
 }
+
+@test "3.12: dry-run removal reports an existing block and preserves all managed files byte for byte" {
+    _setup_acceptance_control 3.12
+    assert_line 'ghostty-blocks-before=1 ghostty-blocks-after=1'
+    assert_line 'dry-run-files=identical'
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_setup_line "${_repo}/script/box/setup.sh" _block_remove \
+        '        log_info "dry-run: would remove managed block from ${_file}"' '        :'
+    run just --justfile "${_repo}/justfile" verify setup 3.12
+    assert_failure 1
+    refute_output --partial '3.12 PASS'
+    _setup_acceptance_others "${_repo}" 3.12
+}
