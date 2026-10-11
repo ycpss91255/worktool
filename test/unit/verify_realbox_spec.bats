@@ -2251,3 +2251,16 @@ STUB
     [ ! -e "${HOME}/.cache/worktool" ]
     [ ! -e "${cache}" ]
 }
+
+@test "#511: 5.3 decoy cache stays in scratch and is removed on cleanup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=create run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'decoy-cleanup-rc=0'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+}

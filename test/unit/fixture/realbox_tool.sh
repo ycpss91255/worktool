@@ -91,6 +91,7 @@ _fake_distrobox_list() {
 }
 
 _fake_distrobox_create() {
+    _fake_init_cache create "$@" || return 1
     local _name="" _prev=""
     local _a
     for _a in "$@"; do

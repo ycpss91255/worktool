@@ -921,7 +921,7 @@ _53_cleanup() {
 
 _53_make_decoy() {
     local _e
-    guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
+    XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
         --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".
