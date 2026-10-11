@@ -46,8 +46,8 @@
 #            and edits the caller's real config files. Refused unless
 #            --allow-realbox is given, refused when a box of that name
 #            already exists, ownership claimed before anything is created,
-#            and restored plus cleaned up on EXIT INT TERM HUP
-#            (_realbox_begin / _realbox_backup / _realbox_trap). Items 6.1 -
+#            and cleaned up on EXIT INT TERM HUP
+#            (_realbox_begin / _realbox_trap). Items 6.1 -
 #            6.3 are all group `gh`; the realbox guards are the contract the
 #            real-machine items (M3 5.1 / 5.2) plug into, and the dispatcher
 #            enforces them for any item declared realbox.
@@ -703,11 +703,6 @@ EVIDENCE_REALBOX_BOX="$(manifest_name "${REPO_ROOT}/box/dev.ini")" || exit 1
 EVIDENCE_REALBOX_OWNED=0
 EVIDENCE_REALBOX_WORKDIR=""
 EVIDENCE_REALBOX_CLAIM=""
-# Records of backed-up paths, one per entry, fields separated by US (0x1f)
-# because a path may legitimately contain any printable character:
-#   <type>US<path>US<slot>US<link target>US<target slot>
-EVIDENCE_REALBOX_BACKUPS=()
-EVIDENCE_REALBOX_US=$'\x1f'
 
 _realbox_require_optin() {
     [[ "${EVIDENCE_ALLOW_REALBOX}" -eq 1 ]] && return 0
@@ -763,10 +758,9 @@ _realbox_begin() {
     EVIDENCE_REALBOX_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-evidence.XXXXXXXX")" || _rc=$?
     if [[ "${_rc}" -ne 0 || ! -d "${EVIDENCE_REALBOX_WORKDIR}" ]]; then
         EVIDENCE_REALBOX_WORKDIR=""
-        log_error "evidence.sh: mktemp -d failed - refusing to touch this machine without a place to keep the backups"
+        log_error "evidence.sh: mktemp -d failed - refusing to touch this machine without a place to keep the ownership claim"
         return 1
     fi
-    EVIDENCE_REALBOX_BACKUPS=()
     EVIDENCE_REALBOX_CLAIM="${EVIDENCE_REALBOX_WORKDIR}/owned"
     # Ownership is claimed BEFORE anything can exist. The claim means "this
     # run reached the point where it may create the box", NOT "the box was
@@ -781,83 +775,12 @@ _realbox_begin() {
     return 0
 }
 
-# Back path $1 up so cleanup can put it back. `cp -a` (never -L) keeps a
-# symlink a symlink; when $1 is one, the file it points at is backed up as
-# well and restored with it (M3 5.2, issue #176 item 2). A path that does not
-# exist is recorded too: cleanup then removes whatever the run created there.
-_realbox_backup() {
-    local _path="$1" _slot _target="" _target_slot="" _type _index
-    if [[ -z "${EVIDENCE_REALBOX_WORKDIR}" ]]; then
-        log_error "evidence.sh: _realbox_backup called with no realbox run in progress"
-        return 1
-    fi
-    _index="${#EVIDENCE_REALBOX_BACKUPS[@]}"
-    _slot="${EVIDENCE_REALBOX_WORKDIR}/backup.${_index}"
-    if [[ -L "${_path}" ]]; then
-        _type=symlink
-    elif [[ -e "${_path}" ]]; then
-        _type=regular
-    else
-        _type=absent
-    fi
-    if [[ "${_type}" != absent ]]; then
-        if ! cp -a "${_path}" "${_slot}"; then
-            log_error "evidence.sh: backing up ${_path} failed"
-            return 1
-        fi
-    fi
-    if [[ "${_type}" == symlink && -e "${_path}" ]]; then
-        if ! _target="$(readlink -f "${_path}")"; then
-            log_error "evidence.sh: cannot resolve the link target of ${_path}"
-            return 1
-        fi
-        _target_slot="${EVIDENCE_REALBOX_WORKDIR}/target.${_index}"
-        if ! cp -a "${_target}" "${_target_slot}"; then
-            log_error "evidence.sh: backing up the link target ${_target} failed"
-            return 1
-        fi
-    fi
-    EVIDENCE_REALBOX_BACKUPS+=("${_type}${EVIDENCE_REALBOX_US}${_path}${EVIDENCE_REALBOX_US}${_slot}${EVIDENCE_REALBOX_US}${_target}${EVIDENCE_REALBOX_US}${_target_slot}")
-    return 0
-}
-
-# Put every backed-up path back, newest first. Returns 1 if any restore
-# failed; every entry is still attempted, so one bad path does not strand the
-# rest.
-_realbox_restore() {
-    local _index _entry _rc=0
-    local _type _path _slot _target _target_slot
-    for ((_index = ${#EVIDENCE_REALBOX_BACKUPS[@]} - 1; _index >= 0; _index--)); do
-        _entry="${EVIDENCE_REALBOX_BACKUPS[${_index}]}"
-        # The IFS prefix applies to this `read` only (a regular builtin), so
-        # the shell's own IFS is untouched.
-        IFS="${EVIDENCE_REALBOX_US}" read -r _type _path _slot _target _target_slot \
-            <<<"${_entry}" || {
-                log_error "evidence.sh: cannot read backup record ${_index}"
-                _rc=1
-                continue
-            }
-        # Never write through a link: clear the path first, then put the
-        # recorded shape back.
-        rm -rf "${_path}" || _rc=1
-        if [[ "${_type}" != absent ]]; then
-            mkdir -p "$(dirname -- "${_path}")" || _rc=1
-            cp -a "${_slot}" "${_path}" || _rc=1
-        fi
-        if [[ "${_type}" == symlink && -n "${_target_slot}" ]]; then
-            cp -a "${_target_slot}" "${_target}" || _rc=1
-        fi
-    done
-    return "${_rc}"
-}
-
-# Restore, then remove the box this run claimed, then report. `distrobox rm`
+# Remove the box this run claimed, then report. `distrobox rm`
 # legitimately fails when there is nothing to remove (interrupted before the
 # box existed), so only the FINAL state decides. Prints `cleanup-rc=<n>` the
 # way M3 5.1 does, and returns non-zero when anything was left behind.
 _realbox_cleanup() {
     local _rc=0 _state
-    _realbox_restore || _rc=1
     if [[ "${EVIDENCE_REALBOX_OWNED}" -eq 1 ]]; then
         timeout "${EVIDENCE_BOX_TIMEOUT}" distrobox rm -f "${EVIDENCE_REALBOX_BOX}" \
             >/dev/null 2>&1 \

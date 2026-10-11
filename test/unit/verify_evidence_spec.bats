@@ -918,61 +918,6 @@ STUB
     assert_output --partial "survived cleanup - remove it by hand"
 }
 
-@test "realbox: a file backed up before the run is restored on the way out" {
-    _stub_distrobox
-    CONF="${BATS_TEST_TMPDIR}/config"
-    printf 'original\n' >"${CONF}"
-    run bash -c '
-        source "$1"
-        EVIDENCE_ALLOW_REALBOX=1
-        _realbox_begin 5.1 || exit 9
-        _realbox_backup "$2" || exit 8
-        printf "clobbered\n" >"$2"
-    ' _ "${EVIDENCE}" "${CONF}"
-    assert_success
-    assert_line "cleanup-rc=0"
-    run cat "${CONF}"
-    assert_line "original"
-    refute_line "clobbered"
-}
-
-@test "realbox: a path that did not exist before the run is removed again on the way out" {
-    _stub_distrobox
-    CONF="${BATS_TEST_TMPDIR}/new-config"
-    run bash -c '
-        source "$1"
-        EVIDENCE_ALLOW_REALBOX=1
-        _realbox_begin 5.1 || exit 9
-        _realbox_backup "$2" || exit 8
-        printf "written by the run\n" >"$2"
-    ' _ "${EVIDENCE}" "${CONF}"
-    assert_success
-    assert_line "cleanup-rc=0"
-    assert [ ! -e "${CONF}" ]
-}
-
-@test "realbox: a symlink is restored as a symlink, with the file it points at" {
-    _stub_distrobox
-    TARGET="${BATS_TEST_TMPDIR}/target"
-    LINK="${BATS_TEST_TMPDIR}/link"
-    printf 'original target\n' >"${TARGET}"
-    ln -s "${TARGET}" "${LINK}"
-    run bash -c '
-        source "$1"
-        EVIDENCE_ALLOW_REALBOX=1
-        _realbox_begin 5.1 || exit 9
-        _realbox_backup "$2" || exit 8
-        rm -f "$2"
-        printf "a regular file now\n" >"$2"
-        printf "clobbered target\n" >"$3"
-    ' _ "${EVIDENCE}" "${LINK}" "${TARGET}"
-    assert_success
-    assert_line "cleanup-rc=0"
-    assert [ -L "${LINK}" ]
-    run cat "${TARGET}"
-    assert_line "original target"
-}
-
 @test "missing evidence tools exit 3 through the CLI with UNAVAILABLE and no verdict" {
     _stub_all_ok
     local _tool _needed _item _bash
