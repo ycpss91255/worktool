@@ -595,13 +595,22 @@ cfgbk_report_user_content() {
 # A failed read is not a zero count and must still fail the item.
 # Absent paths and dangling symlinks have no content to count.
 cfgbk_report_blocks() {
-    local _n _f _c _b=0
+    local _n _f _c _target _b=0
     for _n in "${CFGBK_USER_NAMES[@]}"; do
         if ! _f="$(cfgbk_file_of "${_n}")"; then
             printf 'blocks=-1\n'
             return 1
         fi
-        [[ -e "${_f}" ]] || continue
+        if [[ ! -e "${_f}" ]]; then
+            [[ -L "${_f}" ]] || continue
+            # A failed stat can mean EACCES. Only skip a missing link target
+            # when its resolved parent can actually be searched.
+            if _target="$(readlink -f -- "${_f}")" \
+                && [[ -d "${_target%/*}" && -x "${_target%/*}" \
+                    && ! -e "${_target}" && ! -L "${_target}" ]]; then
+                continue
+            fi
+        fi
         _c="$(guard_count_lines "${_f}" 'BEGIN worktool managed block')" || {
             printf 'blocks=-1\n'
             guard_fail "cannot read ${_f} -- blocks= is not trustworthy"

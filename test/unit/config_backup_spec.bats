@@ -42,6 +42,32 @@ setup() {
     [[ "${stderr}" == *"[FAIL] cannot read ${dir}/ghostty/config -- blocks= is not trustworthy"* ]]
 }
 
+@test "#523: a Ghostty target in an unsearchable directory fails the block report" {
+    local dir
+    dir="$(mktemp -d /tmp/cfgbk-unsearchable.XXXXXX)"
+    chmod 755 "${dir}"
+    mkdir "${dir}/ghostty" "${dir}/private"
+    printf 'font-size = 12\n' >"${dir}/private/target"
+    ln -s ../private/target "${dir}/ghostty/config"
+    chmod 000 "${dir}/private"
+    export CFGBK_UNSEARCHABLE_CONFIG="${dir}"
+    local -a as_user=(bash -c)
+    if [[ "$(id -u)" -eq 0 ]]; then as_user=(su nobody -s /bin/bash -c); fi
+
+    run --separate-stderr "${as_user[@]}" "
+        source \"\${LIB_DIR}/guard.sh\"
+        source \"\${LIB_DIR}/config_backup.sh\"
+        CFGBK_C=\"\${CFGBK_UNSEARCHABLE_CONFIG}\"
+        cfgbk_report_blocks
+    "
+    chmod 755 "${dir}/private"
+    rm -rf "${dir}"
+
+    assert_failure 1
+    assert_output 'blocks=-1'
+    [[ "${stderr}" == *"[FAIL] cannot read ${dir}/ghostty/config -- blocks= is not trustworthy"* ]]
+}
+
 @test "#523: dangling Ghostty config reports zero managed blocks successfully" {
     ln -s missing-config "${XDG_CONFIG_HOME}/ghostty/config"
 
