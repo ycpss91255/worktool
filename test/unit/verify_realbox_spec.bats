@@ -2442,3 +2442,28 @@ _assert_symlink_roundtrip() {
     assert [ ! -e "${link}" ]
     assert [ ! -e "${HOME}/missing-state" ]
 }
+
+@test "#523: 5.2 dangling Ghostty config passes backup, restore and block checks" {
+    local link link_text='../../missing-ghostty' repo
+    link="$(_ghostty_config)"
+    repo="$(_repo_copy)"
+    rm "${link}"
+    ln -s "${link_text}" "${link}"
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/ghostty.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/ghostty.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ -f "${link}" ]
+    assert [ ! -L "${link}" ]
+
+    run _restore_input 4242
+
+    assert_success
+    assert_line 'blocks=0'
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert [ -L "${link}" ]
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert [ ! -e "${link}" ]
+    assert [ ! -e "${HOME}/missing-ghostty" ]
+}

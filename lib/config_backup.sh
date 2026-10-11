@@ -590,9 +590,27 @@ cfgbk_report_user_content() {
     return "${_bad}"
 }
 
+# Confirm a missing link target through its deepest existing ancestor.
+# Stop at symlinks too: unresolved loops must remain read failures.
+_cfgbk_missing_link_target() {
+    local _target _ancestor
+    _target="$(readlink -m -- "$1")" || return 1
+    [[ ! -e "${_target}" && ! -L "${_target}" ]] || return 1
+    _ancestor="${_target%/*}"
+    _ancestor="${_ancestor:-/}"
+    while [[ ! -e "${_ancestor}" && ! -L "${_ancestor}" ]]; do
+        _ancestor="${_ancestor%/*}"
+        _ancestor="${_ancestor:-/}"
+    done
+    # Resolving with -e also checks traversal through all earlier ancestors.
+    readlink -e -- "${_ancestor}" >/dev/null || return 1
+    [[ -d "${_ancestor}" && -x "${_ancestor}" ]]
+}
+
 # Report managed blocks in every user-owned managed file. Existing blocks
 # belong to the pre-run baseline; cfgbk_restore_one verifies its checksum.
 # A failed read is not a zero count and must still fail the item.
+# Absent paths and dangling symlinks have no content to count.
 cfgbk_report_blocks() {
     local _n _f _c _b=0
     for _n in "${CFGBK_USER_NAMES[@]}"; do
@@ -600,7 +618,11 @@ cfgbk_report_blocks() {
             printf 'blocks=-1\n'
             return 1
         fi
-        [[ "$(guard_path_type "${_f}")" != absent ]] || continue
+        if [[ ! -e "${_f}" ]]; then
+            [[ -L "${_f}" ]] || continue
+            # A failed stat can mean EACCES, not just missing directories.
+            if _cfgbk_missing_link_target "${_f}"; then continue; fi
+        fi
         _c="$(guard_count_lines "${_f}" 'BEGIN worktool managed block')" || {
             printf 'blocks=-1\n'
             guard_fail "cannot read ${_f} -- blocks= is not trustworthy"
