@@ -114,6 +114,10 @@ STUB
     _assert_group_interrupt INT 130 bench
 }
 
+@test "5.2: group INT during apply reports cleanup and exits normally" {
+    _assert_group_interrupt INT 130 assemble 5.2
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
