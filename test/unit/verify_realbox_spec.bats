@@ -1027,6 +1027,21 @@ STUB
     export REALBOX
 }
 
+@test "#513: 5.2 documented backup and restore lines follow the actual output order" {
+    local _actual _documented _keys
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    _keys='^(backup-covers|restore-rc|restore-files-ok|restore-window-ok|restore-ok|blocks|leftover-dirs|dev-gone|backup-removed|cleanup-rc)='
+    _actual="$(printf '%s\n' "${output}" | tr -d '\r' | grep -E "${_keys}" \
+        | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+    _documented="$(sed -n '/^  - \[ \] 5\.2 開終端/,/^  - \[ \] 5\.3 先建/p' \
+        "${REPO_ROOT}/doc/acceptance.md" \
+        | sed -n '/預期看到資訊/p; /成功依序印/s/。還原判準.*//p' \
+        | grep -o "\`[^\`]*\`" | sed 's/`//g' | grep -E "${_keys}")"
+    assert_equal "${_documented}" "${_actual}"
+}
+
 @test "#362: 5.2 refuses an existing fish process as new-window evidence" {
     _fake_window_process
     export FAKE_WINDOW_BASELINE='4242 fish'
