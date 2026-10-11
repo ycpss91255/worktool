@@ -559,15 +559,21 @@ _cfgbk_user_state() {
     local _n="$1" _p _want _got
     CFGBK_USER_STATE="UNREADABLE"
     _p="$(cfgbk_file_of "${_n}")" || return 1
-    _want="$(_cfgbk_user_reference "${_n}")" \
+    # A sentinel keeps command substitution from stripping trailing newlines.
+    # Preserve read failures before printing it, even when errexit is disabled.
+    _want="$(_cfgbk_user_reference "${_n}" || exit 1; printf '.')" \
         || { guard_fail "${_n}: cannot read what the backup recorded of the user's own content"; return 1; }
-    _got="$(_cfgbk_user_live "${_p}")" \
+    _got="$(_cfgbk_user_live "${_p}" || exit 1; printf '.')" \
         || { guard_fail "${_n}: cannot read ${_p} to check the user's own content survived"; return 1; }
+    _want="${_want%.}" _got="${_got%.}"
     if [[ "${_got}" == "${_want}" ]]; then
         CFGBK_USER_STATE="intact"
         return 0
     fi
     CFGBK_USER_STATE="LOST"
+    # Shell-escaped content makes blank lines and final newlines visible.
+    printf -v _want '%q' "${_want}"
+    printf -v _got '%q' "${_got}"
     guard_fail "${_n}: ${_p} lost content the user had before this run.
 Outside the managed block it must still hold exactly what the backup recorded:
 ${_want}

@@ -16,6 +16,22 @@ setup() {
     cfgbk_paths
 }
 
+@test "#525: removing user trailing blank lines reports LOST and fails" {
+    local config="${XDG_CONFIG_HOME}/ghostty/config"
+    printf 'font-size = 13\n\n\n' >"${config}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    printf 'font-size = 13\n' >"${config}"
+
+    run --separate-stderr cfgbk_report_user_content after-apply
+
+    assert_failure 1
+    assert_output 'user-content after-apply: ghostty=LOST tmux.conf=intact'
+    [[ "${stderr}" == *"lost content the user had before this run"* ]]
+    [[ "${stderr}" == *'font-size = 13\n\n\n'* ]]
+}
+
 @test "#523: an existing unreadable Ghostty target still fails the block report" {
     local dir
     dir="$(mktemp -d /tmp/cfgbk-unreadable.XXXXXX)"
