@@ -2292,3 +2292,7 @@ _assert_data_unchanged() {
 @test "#516: 5.1 preserves absent and existing host desktop entries and icons including mtimes" {
     _assert_data_unchanged 5.1
 }
+
+@test "#516: 5.3 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.3
+}

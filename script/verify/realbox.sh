@@ -906,7 +906,7 @@ _53_W=""
 _53_cleanup() {
     local _crc=0
     if [[ "${_53_CREATED}" -eq 1 ]]; then
-        _drop_owned_box || _crc=1
+        XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] \
@@ -921,7 +921,7 @@ _53_cleanup() {
 
 _53_make_decoy() {
     local _e
-    XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
+    XDG_DATA_HOME="${_53_W}/data" XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
         --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
     # `create` returning 0 is not proof the box is there; ask `list`, whose
     # own failure is tri-stated so "cannot tell" never reads as "created".
