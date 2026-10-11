@@ -121,6 +121,17 @@ _edit() {
     assert_success
 }
 
+@test "main session fails closed when literal script files cannot be read" {
+    local command
+    for command in 'bash missing.sh' 'sh missing.sh' 'bash .' \
+        'bash --rcfile config missing.sh' 'sh -- missing.sh'; do
+        _check "${command}"
+        assert_equal "${status}" 2
+        assert_output --partial 'cannot be read'
+        assert_output --partial 'Workflow'
+    done
+}
+
 @test "main session file tools cannot edit the sibling worktree directory" {
     local tool path
     for tool in Write Edit MultiEdit NotebookEdit; do

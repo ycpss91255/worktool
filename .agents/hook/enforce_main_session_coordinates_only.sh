@@ -108,8 +108,8 @@ check_script() {
         if [[ "${options}" == 1 ]]; then
             case "${word}" in
                 --) options=0; continue ;;
-                --help|--version|-*c*|-*s*) return 0 ;;
                 -o|+o|-O|+O|--rcfile|--init-file) skip=1; continue ;;
+                --help|--version|-*c*|-*s*) return 0 ;;
                 -*) continue ;;
             esac
         fi
@@ -120,7 +120,12 @@ check_script() {
     cwd="$(hook_field '.cwd')"
     [[ -n "${cwd}" ]] || cwd="${HOOK_REPO_ROOT}"
     [[ "${path}" == /* ]] || path="${cwd}/${path}"
-    text="$(cat -- "${path}")"
+    if [[ ! -f "${path}" || ! -r "${path}" ]]; then
+        refuse 'Main-session script file cannot be read (fail closed); use a Workflow.'
+    fi
+    if ! text="$(cat -- "${path}")"; then
+        refuse 'Main-session script file cannot be read (fail closed); use a Workflow.'
+    fi
     if [[ "${text}" == *'just verify'* || "${text}" == *'just test'* ]]; then
         refuse 'Main-session script tests or verification belong in a Workflow.'
     fi
