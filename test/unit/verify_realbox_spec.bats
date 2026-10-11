@@ -178,6 +178,12 @@ _check_group_interrupt() {
     _assert_group_interrupt TERM 143 assemble
 }
 
+@test "5.2.2: group INT during standalone apply restores and reports cleanup" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    _assert_group_interrupt INT 130 assemble 5.2.2
+}
+
 REALBOX_FAKED_TOOLS=(distrobox just gh jq)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
