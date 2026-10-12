@@ -50,3 +50,13 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     run "$JOB" status "$NAME" --help --bogus
     assert_failure 2
 }
+@test "help cannot hide invalid wait values or extra status arguments" {
+    run "$JOB" wait "$NAME" --max-seconds banana --help
+    assert_failure 2
+    run "$JOB" wait "$NAME" --max-seconds --help
+    assert_failure 2
+    run "$JOB" status "$NAME" extra --help
+    assert_failure 2
+    run "$JOB" wait "$NAME" --max-seconds 0 --help
+    assert_success
+}

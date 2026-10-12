@@ -31,9 +31,10 @@ state() {
     return 124
 }
 wait_job() {
-    local deadline=$((SECONDS + MAX_SECONDS))
+    local deadline=0
+    [[ -z "${MAX_SECONDS}" ]] || deadline=$((SECONDS + MAX_SECONDS))
     while [[ ! -f "${DIR}/rc" ]]; do
-        if [[ "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
+        if [[ -n "${MAX_SECONDS}" && "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
         sleep 1
     done
     state
@@ -44,37 +45,47 @@ wait_job() {
     fi
     [[ "${RC}" == 0 ]] || exit 1
 }
-main() {
-    local arg help=0
-    local -a args=()
-    for arg in "$@"; do
-        if [[ "$arg" == -- ]]; then args+=("$arg"); shift; args+=("$@"); break; fi
-        case "$arg" in
-            --help|-h) help=1 ;;
-            --max-seconds) args+=("$arg") ;;
-            -*) bad "unknown option '$arg'" ;;
-            *) args+=("$arg") ;;
+parse_args() {
+    HELP=0
+    ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --) ARGS+=("$@"); break ;;
+            --help|-h) HELP=1 ;;
+            --max-seconds)
+                [[ $# -ge 2 && "$2" =~ ^[0-9]+$ && ${#2} -le 6 ]] || bad 'invalid max-seconds'
+                ARGS+=("$1" "$2"); shift ;;
+            -*) bad "unknown option '$1'" ;;
+            *) ARGS+=("$1") ;;
         esac
         shift
     done
-    if [[ "$help" == 1 ]]; then usage; exit 0; fi
-    set -- "${args[@]}"
-    local verb="${1:-}"; [[ $# -gt 0 ]] && shift
-    NAME="${1:-}"; [[ $# -gt 0 ]] && shift
-    [[ "${NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || bad 'invalid job name'
-    DIR="${ROOT}/.agents/state/job/${NAME}"
-    case "${verb}" in
-        start) [[ "${1:-}" == -- && $# -gt 1 ]] || bad 'start requires -- <cmd...>'; shift; start_job "$@" ;;
+}
+validate_args() {
+    VERB="${1:-}"; NAME="${2:-}"
+    [[ -z "$NAME" && "$HELP" == 1 ]] || [[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || bad 'invalid job name'
+    MAX_SECONDS=''
+    case "$VERB" in
+        start)
+            [[ $# -le 2 && "$HELP" == 1 ]] && return 0
+            [[ "${3:-}" == -- && $# -ge 4 ]] || bad 'start requires -- <cmd...>' ;;
         wait)
-            MAX_SECONDS=86400
-            if [[ "${1:-}" == --max-seconds && $# == 2 ]]; then
-                [[ "$2" =~ ^[0-9]+$ && ${#2} -le 6 ]] || bad 'invalid max-seconds'
-                MAX_SECONDS=$((10#$2)); shift 2
-            fi
-            [[ $# == 0 ]] || bad "unknown option '$1'"
-            [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
-        status) [[ $# == 0 ]] || bad "unknown option '$1'"; state ;;
-        *) bad "unknown option '${verb}'" ;;
+            if [[ "${3:-}" == --max-seconds && $# == 4 ]]; then MAX_SECONDS=$((10#$4))
+            elif [[ $# -gt 2 ]]; then bad "unknown option '$3'"; fi ;;
+        status) [[ $# -le 2 ]] || bad "unknown option '$3'" ;;
+        '') [[ "$HELP" == 1 ]] || bad 'missing command' ;;
+        *) bad "unknown option '$VERB'" ;;
+    esac
+}
+main() {
+    parse_args "$@"
+    validate_args "${ARGS[@]}"
+    if [[ "$HELP" == 1 ]]; then usage; exit 0; fi
+    DIR="${ROOT}/.agents/state/job/${NAME}"
+    case "$VERB" in
+        start) start_job "${ARGS[@]:3}" ;;
+        wait) [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
+        status) state ;;
     esac
 }
 main "$@"
