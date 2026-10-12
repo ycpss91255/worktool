@@ -2427,6 +2427,21 @@ STUB
     assert_line --partial 'Ctrl-D skips confirmation'
 }
 
+@test "5.2.3: retry after box cleanup does not reclaim the removed box" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line 'dev-gone=1'
+    assert_line 'restore-window-ok=0'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+}
+
 @test "#471: a clean post-restore Ghostty window completes restore" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2

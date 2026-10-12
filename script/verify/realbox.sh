@@ -789,7 +789,7 @@ _52_cleanup_state() {
     _52_remove_owned_box || return 1
     _host_state_cleanup "${CFGBK_B}" || return 1
     # Keep ownership across retries until all owned state is clean.
-    rm -f -- "${CFGBK_B}/created-box" \
+    rm -f -- "${CFGBK_B}/created-box" "${CFGBK_B}/assemble-success" \
         || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 
