@@ -824,8 +824,7 @@ _52_report_restore_window() {
 
 _52_step3_restore() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch \
-        || return $?
+        ps find cmp stat touch || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
     if [[ ! -d "${CFGBK_B}" ]]; then
