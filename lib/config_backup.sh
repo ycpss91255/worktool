@@ -318,17 +318,22 @@ cfgbk_backup_body() {
     printf 'backup=%s ok=1\n' "${CFGBK_B}"
 }
 
-# NUL pairs preserve spaces and newlines in paths. Record existing ancestors
-# through HOME, including parents of absent files and resolved link targets.
+# NUL pairs preserve spaces and newlines in paths. Outside HOME, a resolved
+# link target's direct parent is its root; never walk into shared ancestors.
 _cfgbk_backup_parent_dirs() {
-    local _p="${1%/*}" _mtime
-    [[ "${_p}" == /* ]] || _p="${PWD}/${_p}"
+    local _p _root _home _mtime
+    _p="$(readlink -m -- "${1%/*}")" || return 1
+    _home="$(readlink -m -- "${CFGBK_H}")" || return 1
+    _root="${_p}"
+    if [[ "${_p}" == "${_home}" || "${_p}" == "${_home}/"* ]]; then
+        _root="${_home}"
+    fi
     while [[ -n "${_p}" && "${_p}" != / ]]; do
         if [[ -d "${_p}" ]]; then
             _mtime="$(stat -L -c %y -- "${_p}")" || return 1
             printf '%s\0%s\0' "${_p}" "${_mtime}" >>"${CFGBK_B}/directories" || return 1
         fi
-        [[ "${_p}" != "${CFGBK_H}" ]] || break
+        [[ "${_p}" != "${_root}" ]] || break
         _p="${_p%/*}"
     done
 }

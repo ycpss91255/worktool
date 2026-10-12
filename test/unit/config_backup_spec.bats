@@ -16,6 +16,35 @@ setup() {
     cfgbk_paths
 }
 
+@test "#536: external symlink target protects its parent without recording or restoring ancestors" {
+    local root="${BATS_TEST_TMPDIR}/opt" target config
+    target="${root}/user config/ghostty"
+    config="${XDG_CONFIG_HOME}/ghostty/config"
+    mkdir -p "${target%/*}"
+    printf 'original\n' >"${target}"
+    ln -s "${target}" "${config}"
+    touch -d '2001-01-01' "${target%/*}" "${root}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    touch -d '2002-02-02' "${root}"
+    # An unrelated writer above the target root cannot invalidate the backup.
+    run cfgbk_dirs_ok
+    assert_success
+    local path mtime
+    while IFS= read -r -d '' path; do
+        IFS= read -r -d '' mtime
+        [[ "${path}" == "${HOME}" || "${path}" == "${HOME}/"* || "${path}" == "${target%/*}" ]]
+    done <"${CFGBK_B}/directories"
+    printf 'changed\n' >"${target}"
+    touch -d '2003-03-03' "${target%/*}"
+    cfgbk_restore_one ghostty
+    cfgbk_restore_dirs
+    assert_equal "$(cat "${target}")" original
+    assert_equal "$(stat -c %y "${target%/*}")" '2001-01-01 00:00:00.000000000 +0000'
+    assert_equal "$(stat -c %y "${root}")" '2002-02-02 00:00:00.000000000 +0000'
+}
+
 @test "#526: unchanged regular file, symlink and target keep their inodes on restore" {
     local config="${XDG_CONFIG_HOME}/ghostty/config" target="${HOME}/original"
     printf 'font-size = 13\n' >"${target}"
