@@ -22,18 +22,6 @@ STUB
     export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
 }
 
-@test "diagram --list lists documented item 4.1 without running checks" {
-    _assert_documented_list ui '1.1'
-    _assert_documented_list gate $'2.1\n2.2\n2.3\n2.4'
-    _assert_documented_list setup $'3.1\n3.2\n3.3\n3.4\n3.5\n3.6\n3.7\n3.8\n3.9\n3.10\n3.11\n3.12\n3.13'
-    _assert_documented_list evidence $'6.1\n6.2\n6.3'
-    run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify diagram --list
-    assert_success
-    assert_equal "${#lines[@]}" 2
-    assert_line --index 1 --regexp '^4\.1([[:space:]]|$)'
-    [ ! -e "${CALLS}" ]
-}
-
 # Verify the existing actions alongside diagram and realbox: doc/acceptance.md
 # publishes these six item groups, with one numbered item per output line.
 _assert_documented_list() {
@@ -44,6 +32,18 @@ _assert_documented_list() {
         actual+="${line%% *}"$'\n'
     done
     assert_equal "${actual%$'\n'}" "${expected}"
+    [ ! -e "${CALLS}" ]
+}
+
+@test "diagram --list lists documented item 4.1 without running checks" {
+    _assert_documented_list ui '1.1'
+    _assert_documented_list gate $'2.1\n2.2\n2.3\n2.4'
+    _assert_documented_list setup $'3.1\n3.2\n3.3\n3.4\n3.5\n3.6\n3.7\n3.8\n3.9\n3.10\n3.11\n3.12\n3.13'
+    _assert_documented_list evidence $'6.1\n6.2\n6.3'
+    run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify diagram --list
+    assert_success
+    assert_equal "${#lines[@]}" 2
+    assert_line --index 1 --regexp '^4\.1([[:space:]]|$)'
     [ ! -e "${CALLS}" ]
 }
 
