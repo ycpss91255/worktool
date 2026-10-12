@@ -221,6 +221,11 @@ setup() {
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
     export XDG_SESSION_ID=graphical-test
+    export XDG_RUNTIME_DIR="${STATE}/runtime" WAYLAND_DISPLAY=wayland-test
+    unset DISPLAY
+    mkdir -p "${XDG_RUNTIME_DIR}"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -962,6 +967,19 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output --partial "backup-removed=1"
     refute_output --partial "[INCONCLUSIVE]"
     refute_output --partial "cannot determine session lock state"
+}
+
+@test "#529: missing display is inconclusive without backup or config changes" {
+    run env -u WAYLAND_DISPLAY -u DISPLAY "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
 }
 
 # --- 5.2 step 1: back up -----------------------------------------------------

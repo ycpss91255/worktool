@@ -888,6 +888,10 @@ _52_desktop_preflight() {
         no) ;;
         *) log_warn "item 5.2: cannot determine session lock state; proceeding" ;;
     esac
+    if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+        printf '[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display; an unlocked desktop is needed, re-run from its graphical session\n' >&2
+        return 3
+    fi
 }
 
 item_52() {
