@@ -1,5 +1,8 @@
 set working-directory := '../..'
 set positional-arguments
+# List shared job actions.
+default:
+    @just --justfile '{{source_file()}}' --list
 # Start a detached job.
 start *args:
     ./.agents/script/job.sh start "$@"

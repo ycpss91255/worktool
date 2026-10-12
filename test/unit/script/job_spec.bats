@@ -69,3 +69,10 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     assert_failure 1
     assert_output --partial 'failed (exit 1)'
 }
+@test "bare just job lists the shared runner actions" {
+    run just -f "${REPO_ROOT}/justfile" job
+    assert_success
+    assert_output --partial 'start'
+    assert_output --partial 'wait'
+    assert_output --partial 'status'
+}
