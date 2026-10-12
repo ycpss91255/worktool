@@ -83,10 +83,17 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 本機 `branch` 已存在時自動接續，不需額外 mode 旗標。worktree 不存在時，以 `git worktree add <worktree> <branch>` 重建；若目錄已刪除但登錄仍在，只移除該路徑的殘留登錄再重建，不清理其他 worktree。已存在時確認它屬於此 repo 且位於指定分支，錯誤不覆寫。
 Locate 先檢查指定 worktree：工作目錄不乾淨時，一律判為 `implement`，在原 worktree 接續實作。只有 codex 實作路徑額外檢查 `.scratch/<name>/implement.rc` 非 `0` 或 `.scratch/<name>/implement.md` 不存在／為空；這些完成檔由 codex 前景啟動指令寫入，light、Claude 實作與 `codex: "off"` 的 Claude 路徑不以它們判斷完成狀態。brief 要求檢查 `git log origin/<base>..HEAD`、`git status --short`、`git diff`、前次報告與 `implement.md.log`，保留既有 commit、未提交修改與 `.agents/state/` 的診斷及測試證據。codex 啟動前以 `.previous` 副本保存前次報告、rc 與 log，供實作方在新輸出覆寫原檔後繼續閱讀。
 codex 實作與 Fix 的啟動方式固定（#453）：每次一個前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值，
-`rc=0; timeout 570 codex exec --skip-git-repo-check -C <worktree> -o <scratch>/<stem>.md - < <scratch>/<stem>-prompt.md > <scratch>/<stem>.md.log 2>&1 || rc=$?; echo "$rc" > <scratch>/<stem>.rc`；
+`rc=0; WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec --skip-git-repo-check -C <worktree> -o <scratch>/<stem>.md - < <scratch>/<stem>-prompt.md > <scratch>/<stem>.md.log 2>&1 || rc=$?; echo "$rc" > <scratch>/<stem>.rc`；
 rc 為 124 表示 session 未完成，從 log 第一行 `session id:` 取得 id，以 `codex exec resume <id>` 在 worktree 內接續同一個 session（輸出附加到同一份 log），
 最多接續 25 次，仍未完成或讀不到 session id 即失敗並回報，不重新從頭啟動。
 禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行。
+所有 pr-loop 的 codex exec（包括 resume 與複驗）都帶 `WORKTOOL_AGENT_ROLE=pr-loop`。
+實作 codex 只跑切片 spec 與 `just test lint`，完成後提交，不守長 gate、不等待、不發布。
+workflow 另開低 effort gate stage，以 `just job start <name> -- <gate...>` 與一次 `just job wait <name>`
+收集結果；紅時只把失敗摘要交回 codex 修正，再跑 gate，綠後才由發布 stage 推送與開／更新 PR。
+完整 log 留在 `.agents/state/job/<name>/log`，綠的結果尾段逐字交給發布 stage 作為測試證據。
+CI 的本機 gate 與有 timeout 的 `gh pr checks --watch` 同樣走 job；一般未帶標記的獨立驗收 session
+仍可跑 `just verify all`、`just verify realbox` 與 `just test`（長工作仍遵守 timeout 規則）。見 ADR-0015。
 指定既有 `branch` 與 `pr` 且實作已完成、工作區乾淨時，跳過實作與開 PR，直接進入 CI／審查迴圈；需要接續實作時仍重用指定 PR，不另開 PR。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
@@ -98,7 +105,7 @@ CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR he
 
 ## 實作暫時性錯誤
 
-full 模式的 implement 階段會讀取實作方的結構化完成狀態與失敗原因；codex 非零退出時，原因包含退出碼、報告與 `implement.md.log` 的錯誤輸出。遇到 `at capacity`、rate limit 或 HTTP 5xx（含 HTTP 版本格式）時，初次執行後最多再重試三次，分別在前景等待 30、60、90 秒。每次都使用同一個 worktree、保留既有工作，不再次建立分支或 worktree，並附上接續 brief 與前次輸出。成功後繼續 Locate／CI；耗盡重試、非暫時性錯誤或沒有失敗原因時，停止並在 `blockingLeft` 回報原因，不進入 CI／審查。light 模式維持原有失敗回報，不套用 codex 重試。
+full 模式的 implement 階段會讀取實作方的結構化完成狀態與失敗原因；codex 非零退出時，原因包含退出碼、報告與 `implement.md.log` 的錯誤輸出。遇到 `at capacity`、rate limit 或 HTTP 5xx（含 HTTP 版本格式）時，初次執行後最多再重試三次，分別由低 effort agent 透過 job start／wait 等待 30、60、90 秒，不直接執行前景長 sleep。每次都使用同一個 worktree、保留既有工作，不再次建立分支或 worktree，並附上接續 brief 與前次輸出。成功後繼續 Locate／CI；耗盡重試、非暫時性錯誤或沒有失敗原因時，停止並在 `blockingLeft` 回報原因，不進入 CI／審查。light 模式維持原有失敗回報，不套用 codex 重試。
 
 ## light 模式
 
@@ -435,7 +442,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    每次 codex 呼叫都是一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值；
    提示與接續提示（`<scratch>/codex-continue.md`）以 Write 工具寫入。首次呼叫：
-   `rc=0; timeout 570 codex exec --skip-git-repo-check -C <repoDir> -o <scratch>/codex-result.json - < <scratch>/codex-prompt.md > <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`；
+   `rc=0; WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec --skip-git-repo-check -C <repoDir> -o <scratch>/codex-result.json - < <scratch>/codex-prompt.md > <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`；
    完整複驗常超過 10 分鐘，結束碼 124 表示 session 未完成，從 transcript 第一行 `session id:` 取得 id，
    以 `rc=0; cd <repoDir> && timeout 570 codex exec resume --skip-git-repo-check -o <scratch>/codex-result.json <session-id> - < <scratch>/codex-continue.md >> <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`
    接續同一個 session，最多接續 25 次；仍為 124 或讀不到 session id 即失敗並回報，不從頭重啟、不轉背景。

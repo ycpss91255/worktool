@@ -18,6 +18,10 @@
 # dropped), and a sub-command led by a text carrier (git, gh, grep, echo,
 # ...) is never a launch. The timeout(1) bound is judged per sub-command.
 #
+# Pure foreground waits/polling are blocked even with a time bound. Job
+# result collection and harness background notifications are the shared
+# alternatives. The pr-loop role delegates long gates and every wait to
+# its separate workflow agent, regardless of timeout/background settings.
 # Exit codes: 0 = allow, 2 = block.
 
 # shellcheck source-path=SCRIPTDIR/lib

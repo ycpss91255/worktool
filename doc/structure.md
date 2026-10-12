@@ -115,6 +115,7 @@ worktool/
 │   │   │                worktree_create、remind_workflow_tdd、remind_no_emoji、enforce_reply_language(Claude Stop 回覆語言,#281)、
 │   │   │                codex_apply_patch(Codex 編輯轉接層,#282))
 │   │   └── lib/         hook 共用 lib(hook_bootstrap.sh、subcommand.sh、issue_body.sh);hook 以自身位置 source,不碰 repo 的 lib/
+│   ├── script/job.sh    共用脫離行程的 job start／wait／status；justfile.job 提供 just job，state 在 .agents/state/job/<name>/
 │   ├── script/monitor/  agent 用的 Monitor 腳本:wait-pr-ci.sh(等 PR 的 ci-passed)、watch-user-replies.sh
 │   │                    (state 預設在被 gitignore 的 .agents/state/)
 │   ├── script/worktree/ prune-merged.sh：先 fetch origin；預設 dry-run，--apply 才清除已合併且乾淨的 linked worktree（#392）
@@ -137,7 +138,7 @@ worktool/
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
-├── justfile             使用者介面入口:三行 `mod?`(test / box / agent)+ `default`(= just --list)
+├── justfile             使用者介面入口:五個 `mod?`(test / box / agent / worktree / job)+ `default`(= just --list)
 └── .github/workflows/
     ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
@@ -147,7 +148,8 @@ worktool/
 `box/`、`tool/`、`dockerfile/`。`script/` 之下依**動作**分目錄(`test/`、
 `box/`),而不是依 ci/cd 之類的流程角色。
 `script/` 與 `.agents/script/` 的可執行腳本必須放在類型子目錄內，
-不得直接放在頂層；agent 的 Monitor 腳本放在 `.agents/script/monitor/`。
+不得直接放在頂層；#550 指定的共用 `.agents/script/job.sh` 是唯一例外。
+agent 的 Monitor 腳本放在 `.agents/script/monitor/`。
 `just test lint` 在 Docker 內檢查此規則，違反時列出檔名並失敗；
 `just test script-layout [--root <repo>]` 可指定檢查目錄，參數驗證與 help 由腳本負責。
 
@@ -291,6 +293,11 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | 指令 | 實際執行 |
 |------|----------|
 | `just` | `just --list`(列出命名空間) |
+| `just job` | 列出共用 job 動作 |
+| `just job start <name> -- <cmd...>` | 脫離行程啟動工作；pid、log、rc 在 `.agents/state/job/<name>/`，名稱不得覆寫 |
+| `just job wait <name> [--max-seconds N]` | 單次阻塞收集結果與尾段／失敗段落；成功 0、失敗 1、仍執行 124、參數錯誤 2 |
+| `just job status <name>` | 不阻塞回報 success／failed／running；退出碼分別 0／1／124 |
+| `just job help [args...]` | job.sh 驗證整份參數後顯示 help |
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
