@@ -306,6 +306,7 @@ cfgbk_backup_body() {
     for _n in "${CFGBK_NAMES[@]}"; do
         _cfgbk_backup_one "${_n}" || return 1
     done
+    _cfgbk_backup_dirs || return 1
     cfgbk_states_ok "${CFGBK_B}/manifest.partial" || return 1
     # Publishing is the atomic commit point: step 2 trusts this file and
     # nothing else, least of all a variable left over from this shell.
@@ -313,6 +314,52 @@ cfgbk_backup_body() {
         || { guard_fail "publishing the manifest failed"; return 1; }
     cat -- "${CFGBK_B}/manifest" || { guard_fail "cannot read the published manifest"; return 1; }
     printf 'backup=%s ok=1\n' "${CFGBK_B}"
+}
+
+# NUL pairs preserve spaces and newlines in paths. Record existing ancestors
+# through HOME, including parents of absent files and resolved link targets.
+_cfgbk_backup_parent_dirs() {
+    local _p="${1%/*}" _mtime
+    while [[ -n "${_p}" && "${_p}" != / ]]; do
+        if [[ -d "${_p}" ]]; then
+            _mtime="$(stat -L -c %y -- "${_p}")" || return 1
+            printf '%s\0%s\0' "${_p}" "${_mtime}" >>"${CFGBK_B}/directories" || return 1
+        fi
+        [[ "${_p}" != "${CFGBK_H}" ]] || break
+        _p="${_p%/*}"
+    done
+}
+
+_cfgbk_backup_dirs() {
+    local _n _p
+    : >"${CFGBK_B}/directories" || return 1
+    for _n in "${CFGBK_NAMES[@]}"; do
+        _p="$(cfgbk_file_of "${_n}")" || return 1
+        _cfgbk_backup_parent_dirs "${_p}" || return 1
+        if [[ -L "${_p}" && -e "${_p}" ]]; then
+            _p="$(readlink -f -- "${_p}")" || return 1
+            _cfgbk_backup_parent_dirs "${_p}" || return 1
+        fi
+    done
+}
+
+# Called after all file restores: deleting a new directory can also change
+# an existing ancestor. A failed timestamp restore must fail restore-ok.
+cfgbk_restore_dirs() {
+    local _p _mtime _got
+    [[ -f "${CFGBK_B}/directories" ]] \
+        || { guard_fail "directory mtime backup missing"; return 1; }
+    while IFS= read -r -d '' _p; do
+        IFS= read -r -d '' _mtime \
+            || { guard_fail "incomplete directory mtime backup"; return 1; }
+        [[ -d "${_p}" ]] \
+            || { guard_fail "backed-up directory ${_p} is missing"; return 1; }
+        touch -d "${_mtime}" -- "${_p}" \
+            || { guard_fail "cannot restore directory mtime: ${_p}"; return 1; }
+        _got="$(stat -L -c %y -- "${_p}")" || return 1
+        [[ "${_got}" == "${_mtime}" ]] \
+            || { guard_fail "directory mtime mismatch: ${_p}"; return 1; }
+    done <"${CFGBK_B}/directories"
 }
 
 # --- step 2: re-validate the published backup --------------------------------

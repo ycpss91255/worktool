@@ -52,5 +52,6 @@ cfgbk_restore_all() {
     for _n in "${CFGBK_NAMES[@]}"; do
         cfgbk_restore_one "${_n}" || _rc=1
     done
+    cfgbk_restore_dirs || _rc=1
     return "${_rc}"
 }

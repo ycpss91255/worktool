@@ -460,6 +460,34 @@ _ghostty_config() { printf '%s\n' "${HOME}/.config/ghostty/config"; }
 
 _backup_dir() { printf '%s\n' "${TMPDIR}/worktool-m3-52-backup.$(id -u)"; }
 
+@test "#526: 5.2 apply and restore recover parent mtimes including originally absent files" {
+    local repo dir target="${HOME}/targets/ghostty" link
+    repo="$(_repo_copy)"
+    link="$(_ghostty_config)"
+    mkdir -p "${HOME}/targets" "${HOME}/.cache/worktool"
+    mv "${link}" "${target}"
+    ln -s "${target}" "${link}"
+    local dirs=("${HOME}" "${HOME}/targets" "${HOME}/.config"
+        "${HOME}/.config/ghostty" "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    printf 'new log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    rm "${target}"
+    printf 'changed target\n' >"${target}"
+
+    run _restore_input 4242
+
+    assert_success
+    assert_line 'restore-ok=1'
+    assert [ ! -e "${HOME}/.cache/worktool/dev-init.log" ]
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
 # Run realbox.sh for real (not under `run`), so $output stays whatever the
 # case under test put there.
 _realbox_quiet() { "${REALBOX}" --allow-real-box "$@" >/dev/null 2>&1; }
