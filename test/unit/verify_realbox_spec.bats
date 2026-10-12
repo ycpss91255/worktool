@@ -1602,6 +1602,22 @@ STUB
     refute_output --partial "revalidate=1"
 }
 
+@test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    [ ! -e "$(_backup_dir)/created-box" ]
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    run cat "${STATE}/boxes"
+    assert_output dev
+}
+
 @test "5.2.2: a pre-existing dev box is refused after revalidate=1 and before assemble" {
     _realbox_quiet 5.2.1
     _seed_box dev

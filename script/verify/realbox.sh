@@ -660,14 +660,9 @@ _52_step2_apply() {
         || return 1
     printf 'preexisting-dev=0\n'
 
-    # The marker is written BEFORE assemble and persisted to disk, so step 3
-    # works in a fresh shell and an interrupt inside assemble still leaves
-    # something that says "this run touched assemble".
-    : >"${CFGBK_B}/created-box" \
-        || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
-        || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    # Persist confirmed ownership for step 3, including a fresh invocation.
+    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" \
+        _assemble_owned_box "${CFGBK_B}" >/dev/null || return 1
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
         || { guard_fail "cannot inventory processes before setup"; return 1; }
     _just box setup --terminal ghostty --auto-enter yes --box "${MANIFEST_BOX}" \
@@ -747,8 +742,7 @@ _52_window_evidence() {
 
 # --- step 3 ------------------------------------------------------------------
 
-# Only a box this run created may be removed. The marker says step 2 STARTED
-# assemble, so it can outlive an interrupt that left no box.
+# Only a box confirmed created by this run may be removed.
 _52_remove_owned_box() {
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         printf 'dev-untouched=1\n'
@@ -769,7 +763,7 @@ _52_cleanup_state() {
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         _52_remove_owned_box || return 1
         # Separate invocations allow user-owned state to appear after backup.
-        # Without an assemble marker, none of it belongs to this run.
+        # Without confirmed ownership, none of it belongs to this run.
         _host_state_report "${CFGBK_B}" untouched
         return $?
     fi
