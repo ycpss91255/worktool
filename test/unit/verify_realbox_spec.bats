@@ -733,6 +733,13 @@ FRAG
     done
 }
 
+@test "guard: a valid empty table means absent" {
+    export FAKE_DBX_LIST_OUT=' ID | NAME | STATUS | IMAGE '
+    run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+}
+
 @test "5.1: --comment-tag prefixes the first body.md line" {
     run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
     assert_success
