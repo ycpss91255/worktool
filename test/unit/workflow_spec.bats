@@ -3456,3 +3456,14 @@ _pl_retry_run() {
     jq -e '.result.status == "independent-publish-failed" and
         ([.calls[].role] | index("evidence:") == null)' <<<"${output}"
 }
+
+@test "pr-loop marks every codex launch and restricts its brief to slice specs and lint (#550)" {
+    run _pl_run
+    assert_success
+    run jq -e '.calls[] | select(.role | startswith("implement:")) | .prompt |
+        contains("WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec") and
+        contains("WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec resume") and
+        contains("Run only slice specs and just test lint") and
+        contains("Do not push or open a PR; the workflow owns long gates and publication")' <<<"${output}"
+    assert_success
+}
