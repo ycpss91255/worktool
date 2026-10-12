@@ -132,10 +132,101 @@ STUB
     run "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
     assert_line --partial 'cannot create interrupt capture'
+    assert_line 'interrupt assemble INT: FAIL (cannot create interrupt capture)'
     assert_line 'interrupt-matrix: FAIL'
     refute_output --partial 'observable event missed'
     refute_output --partial 'interrupt-matrix: PASS'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/home" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: outer interruption records the stopped child's nonzero status" {
+    export SIGNAL_STATE="${MATRIX_STATE}"
+    cat >"${MATRIX_STATE}/child" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 143' TERM
+touch "${SIGNAL_STATE}/ready"
+while :; do sleep 0.1; done
+STUB
+    cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/setsid bash "${MATRIX_STATE}/child"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/setsid"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=143'
+    assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: a preexisting box reports the refused cell and remains untouched" {
+    printf 'dev\n' >"${MATRIX_STATE}/boxes"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt assemble INT: FAIL (preexisting box refused or box query failed)'
+    assert_line 'interrupt-matrix: FAIL'
+    assert_equal "$(cat "${MATRIX_STATE}/boxes")" dev
+    [ ! -e "${MATRIX_STATE}/home" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: a failed initial comment snapshot reports the cell before starting" {
+    cat >"${MATRIX_STATE}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+echo '[]'
+exit 1
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt assemble INT: FAIL (cannot snapshot issue comments)'
+    assert_line 'interrupt-matrix: FAIL'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/home" ]
+}
+
+@test "5.4: changed comment IDs fail the cell even with successful cleanup" {
+    cat >"${MATRIX_STATE}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${MATRIX_STATE}/snapshot-taken" ]]; then
+    echo '["new-comment-id"]'
+else
+    touch "${MATRIX_STATE}/snapshot-taken"
+    echo '[]'
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
+@test "5.4: a posted capture line fails the cell even with unchanged comment IDs" {
+    mkdir -p "${MATRIX_STATE}/original"
+    install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" "${MATRIX_STATE}/original/just"
+    cat >"${MATRIX_STATE}/bin/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == assemble ]]; then
+    echo 'posted=1 comment=unexpected' >&2
+fi
+exec "${MATRIX_STATE}/original/just" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'posted=1 comment=unexpected'
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
 }

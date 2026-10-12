@@ -5,9 +5,15 @@ _54_PID=""
 _54_POLL_FD=""
 
 _54_cleanup() {
+    local rc=0
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
-        wait "${_54_PID}" || :
+        # Terminating the owned child normally yields a signal exit status.
+        # Cleanup judges surviving processes, not the interrupted child's verdict.
+        wait "${_54_PID}" || rc=$?
+        if [[ "${rc}" -ne 0 ]]; then
+            log_info "interrupt cleanup: stopped child rc=${rc} (expected after termination)"
+        fi
         _54_stop_session "${_54_PID}"
         _54_PID=""
     fi
@@ -120,15 +126,38 @@ _54_failure_report() {
         "${phase}" "${signal}" "${rc}" "${cleanup}" "${dir}"
 }
 
+_54_prestart_failure() {
+    printf 'interrupt %s %s: FAIL (%s)\n' "$1" "$2" "$3"
+    return 1
+}
+
+_54_prepare() {
+    local phase="$1" signal="$2" dir="$3" capture="$3/capture"
+    mkdir -p -- "${dir}" || {
+        _54_prestart_failure "${phase}" "${signal}" 'cannot create cell evidence directory'
+        return 1
+    }
+    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || {
+        _54_prestart_failure "${phase}" "${signal}" 'preexisting box refused or box query failed'
+        return 1
+    }
+    _54_comments "${dir}/comments-before" || {
+        _54_prestart_failure "${phase}" "${signal}" 'cannot snapshot issue comments'
+        return 1
+    }
+    # Prepare evidence before forking so the observer always has a capture.
+    : >"${capture}" || {
+        guard_fail 'cannot create interrupt capture'
+        _54_prestart_failure "${phase}" "${signal}" 'cannot create interrupt capture'
+        return 1
+    }
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
-    mkdir -p -- "${dir}" || return 1
     capture="${dir}/capture"
-    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
-    _54_comments "${dir}/comments-before" || return 1
-    # Prepare evidence before forking so the observer always has a capture.
-    : >"${capture}" || { guard_fail 'cannot create interrupt capture'; return 1; }
+    _54_prepare "${phase}" "${signal}" "${dir}" || return 1
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" 5.1 >>"${capture}" 2>&1 &
@@ -158,7 +187,6 @@ _54_cell() {
 
 item_54() {
     guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm mkfifo || return $?
-    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
     _54_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-54.XXXXXXXX")" || return 1
     _cleanup_push 54
     mkfifo "${_54_W}/poll" || return 1
