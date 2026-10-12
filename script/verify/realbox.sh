@@ -40,7 +40,8 @@
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
 #     - ownership requires successful assemble and a confirmed listed box;
-#       the claim is recorded before propagating an interrupt to cleanup;
+#       success is recorded before propagating an interrupt to cleanup,
+#       which confirms ownership after signal forwarding has stopped;
 #     - cleanup and restore run on EXIT INT TERM HUP, and a failed cleanup
 #       fails the whole run.
 #
@@ -179,28 +180,41 @@ _just() {
     )
 }
 
-# Record success inside the supervised group, before _just's signal status
-# could hide the assemble result. A failed command never grants ownership.
+# Success is evidence, not ownership: confirm outside the signalled group.
+_confirm_box_ownership() {
+    local dir="$1"
+    [[ ! -e "${dir}/created-box" ]] || return 0
+    [[ -e "${dir}/assemble-success" ]] || return 0
+    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || {
+        guard_fail "assemble returned 0 but box '${BOX}' is not listed"
+        return 1
+    }
+    : >"${dir}/created-box" || {
+        guard_fail "cannot record box ownership at ${dir}/created-box"
+        return 1
+    }
+}
+
+# Keep the actual assemble result even when supervision returns a signal.
 _assemble_owned_box() {
     (
         trap 'exit 130' INT
         trap 'exit 143' TERM
         trap 'exit 129' HUP
         cd -- "${REPO_ROOT}" || exit 1
-        verify_run "${TIMEOUT_LONG}" bash -c '
-            trap ":" INT TERM HUP
-            source "$1/lib/guard.sh"
-            dir="$2" box="$3" secs="$4"
-            just box assemble --home "${dir}/box-home" || {
-                guard_fail "just box assemble failed"; exit 1;
+        verify_run "${TIMEOUT_LONG}" bash -c "
+            set -euo pipefail
+            trap ':' INT TERM HUP
+            source \"\$1/lib/guard.sh\"
+            dir=\"\$2\"
+            just box assemble --home \"\${dir}/box-home\" || {
+                guard_fail 'just box assemble failed'; exit 1;
             }
-            guard_box_exists "${box}" "${secs}" || {
-                guard_fail "assemble returned 0 but box '\''${box}'\'' is not listed"; exit 1;
+            : >\"\${dir}/assemble-success\" || {
+                guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
             }
-            : >"${dir}/created-box" || {
-                guard_fail "cannot record box ownership at ${dir}/created-box"; exit 1;
-            }
-        ' _ "${REPO_ROOT}" "$1" "${BOX}" "${TIMEOUT_SHORT}"
+        " _ "${REPO_ROOT}" "$1" || exit $?
+        _confirm_box_ownership "$1"
     )
 }
 
@@ -379,6 +393,9 @@ _51_W=""
 
 _51_cleanup() {
     local _crc=0
+    if [[ -n "${_51_W}" ]]; then
+        _confirm_box_ownership "${_51_W}" || _crc=1
+    fi
     if [[ -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
@@ -744,6 +761,7 @@ _52_window_evidence() {
 
 # Only a box confirmed created by this run may be removed.
 _52_remove_owned_box() {
+    _confirm_box_ownership "${CFGBK_B}" || return 1
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         printf 'dev-untouched=1\n'
         log_info "this run never created a box; leaving every box alone"
@@ -760,6 +778,7 @@ _52_remove_owned_box() {
 }
 
 _52_cleanup_state() {
+    _confirm_box_ownership "${CFGBK_B}" || return 1
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         _52_remove_owned_box || return 1
         # Separate invocations allow user-owned state to appear after backup.
