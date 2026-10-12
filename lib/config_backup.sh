@@ -508,13 +508,19 @@ cfgbk_restore_one() {
 # against, so the reference is the BACKUP step 1 published: what the file
 # held outside every managed block before anything was applied.
 
-# Print the lines of file $1 that lie OUTSIDE every managed block. Returns 1
+# Print the lines of file $1 that lie OUTSIDE every managed block, preserving
+# whether the final line has a newline. Returns 1
 # when the file cannot be read - never an empty answer, which would certify
 # an unreadable file as "the user had nothing".
 cfgbk_user_lines() {
-    local _f="$1" _line _skip=0
+    local _f="$1" _line _newline _skip=0
     [[ -f "${_f}" && -r "${_f}" ]] || return 1
-    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+    while :; do
+        _newline=$'\n'
+        if ! IFS= read -r _line; then
+            [[ -n "${_line}" ]] || break
+            _newline=""
+        fi
         if [[ "${_line}" == "${CFGBK_BLOCK_BEGIN}" ]]; then
             _skip=1
             continue
@@ -524,7 +530,7 @@ cfgbk_user_lines() {
             continue
         fi
         [[ "${_skip}" -eq 1 ]] && continue
-        printf '%s\n' "${_line}"
+        printf '%s%s' "${_line}" "${_newline}"
     done <"${_f}"
     return 0
 }
@@ -555,19 +561,41 @@ _cfgbk_user_live() {
 }
 
 CFGBK_USER_STATE=""
+# Once compose has run, a gained final newline is product-caused, not loss
+# of user content: compose prints every user line, wherever the block sits.
+# A live managed block permits only that gain; other byte changes still fail.
+_cfgbk_user_has_managed_block() {
+    awk -v b="${CFGBK_BLOCK_BEGIN}" -v e="${CFGBK_BLOCK_END}" '
+        $0 == b { inside = 1; next }
+        $0 == e && inside { found = 1 }
+        END { exit !found }
+    ' "$1"
+}
+
 _cfgbk_user_state() {
     local _n="$1" _p _want _got
     CFGBK_USER_STATE="UNREADABLE"
     _p="$(cfgbk_file_of "${_n}")" || return 1
-    _want="$(_cfgbk_user_reference "${_n}")" \
+    # A sentinel keeps command substitution from stripping trailing newlines.
+    # Preserve read failures before printing it, even when errexit is disabled.
+    _want="$(_cfgbk_user_reference "${_n}" || exit 1; printf '.')" \
         || { guard_fail "${_n}: cannot read what the backup recorded of the user's own content"; return 1; }
-    _got="$(_cfgbk_user_live "${_p}")" \
+    _got="$(_cfgbk_user_live "${_p}" || exit 1; printf '.')" \
         || { guard_fail "${_n}: cannot read ${_p} to check the user's own content survived"; return 1; }
+    _want="${_want%.}" _got="${_got%.}"
     if [[ "${_got}" == "${_want}" ]]; then
         CFGBK_USER_STATE="intact"
         return 0
     fi
+    if [[ -n "${_want}" && "${_want}" != *$'\n' && "${_got}" == "${_want}"$'\n' ]] \
+        && _cfgbk_user_has_managed_block "${_p}"; then
+        CFGBK_USER_STATE="intact"
+        return 0
+    fi
     CFGBK_USER_STATE="LOST"
+    # Shell-escaped content makes blank lines and final newlines visible.
+    printf -v _want '%q' "${_want}"
+    printf -v _got '%q' "${_got}"
     guard_fail "${_n}: ${_p} lost content the user had before this run.
 Outside the managed block it must still hold exactly what the backup recorded:
 ${_want}
