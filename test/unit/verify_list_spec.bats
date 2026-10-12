@@ -74,3 +74,18 @@ _assert_documented_list() {
     done
     [ ! -e "${CALLS}" ]
 }
+
+@test "diagram and realbox --list include a title after each item id" {
+    local action line
+    for action in diagram realbox; do
+        run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify "${action}" --list
+        assert_success
+        for line in "${lines[@]:1}"; do
+            [[ "${line}" =~ ^[0-9]+(\.[0-9]+)+\ \ [^[:space:]].* ]]
+        done
+        run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify "${action}" --help
+        assert_success
+        assert_output --partial 'List the item ids and their titles'
+    done
+    [ ! -e "${CALLS}" ]
+}

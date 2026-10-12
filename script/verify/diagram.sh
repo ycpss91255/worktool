@@ -175,7 +175,7 @@ _usage() {
         '' \
         '  --root <repo>  worktool checkout to verify (default: the one this script' \
         '                 lives in).' \
-        '  -l, --list     List the item ids and exit without running checks.' \
+        '  -l, --list     List the item ids and their titles, then exit without running checks.' \
         '  --realbox      Accepted so every verify script shares one command line.' \
         '                 This script declares NO real-machine items - it only reads' \
         '                 files - so the flag enables nothing and creates nothing.' \
@@ -505,7 +505,8 @@ diagram_run() {
         return 0
     fi
     if [[ "${_list}" -eq 1 ]]; then
-        printf '%s\n' "${VERIFY_ITEMS[@]}"
+        printf '%s  %s\n' 4.1 \
+            'doc/diagram/ draw.io files, embedded mxfile sources and README references'
         return 0
     fi
 

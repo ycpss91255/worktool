@@ -146,7 +146,7 @@ Items:
           No keyboard input; refuses existing boxes; preserves failed evidence.
 
 Options:
-  -l, --list         List the item ids and exit without running checks.
+  -l, --list         List the item ids and their titles, then exit without running checks.
                      No --allow-real-box is needed; no box or config is touched.
   --allow-real-box   Required to run checks. Says you accept that this run creates and
                      removes a distrobox, rewrites the ghostty and worktool
@@ -1062,6 +1062,17 @@ _is_item() {
     return 1
 }
 
+_list_items() {
+    printf '%s  %s\n' \
+        5.1 'Real-machine bench: build the box and measure the enter latency' \
+        5.2 'Ghostty window chain: back up, apply, verify and restore configs' \
+        5.2.1 '5.2 step 1 only (back up)' \
+        5.2.2 '5.2 step 2 only (apply and check preserved user content)' \
+        5.2.3 '5.2 step 3 only (restore)' \
+        5.3 'Negative: a pre-existing dev box is refused, never deleted' \
+        5.4 'Automatic interrupt matrix: assemble/bench x INT/TERM/HUP'
+}
+
 _dispatch_item() {
     case "$1" in
         5.1) item_51 ;;
@@ -1140,7 +1151,7 @@ realbox_run() {
         return 0
     fi
     if [[ "${_list}" -eq 1 ]]; then
-        printf '%s\n' 5.1 5.2 5.2.1 5.2.2 5.2.3 5.3 5.4
+        _list_items
         return 0
     fi
     [[ "${#_items[@]}" -gt 0 ]] || _items=("${ITEMS_ALL[@]}")
