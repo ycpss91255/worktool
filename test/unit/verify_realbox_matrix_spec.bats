@@ -69,3 +69,27 @@ STUB
         done
     done
 }
+
+_copy_matrix_repo() {
+    local repo="${MATRIX_STATE}/repo"
+    mkdir -p "${repo}"
+    cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${repo}/"
+    REALBOX="${repo}/script/verify/realbox.sh"
+}
+
+@test "5.4: a copy without signal forwarding turns the interrupt cell red" {
+    _copy_matrix_repo
+    sed -i 's/verify_stop_group "${monitor}" "${interrupted}"/if [[ "${TMPDIR}" != *"${MATRIX_DEGRADE_CELL}"* ]]; then verify_stop_group "${monitor}" "${interrupted}"; fi/' "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
+    local phase signal
+    for phase in assemble bench; do
+        for signal in INT TERM HUP; do
+            export MATRIX_DEGRADE_CELL="${phase}-${signal}"
+            run "${REALBOX}" --allow-real-box 5.4
+            assert_failure 1
+            assert_line --partial "interrupt ${phase} ${signal}: FAIL ("
+            assert_line 'interrupt-matrix: FAIL'
+            refute_output --partial 'interrupt-matrix: PASS'
+        done
+    done
+}

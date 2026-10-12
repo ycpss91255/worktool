@@ -2,6 +2,7 @@
 # Event-driven supervisor for the real-machine 5.1 interrupt matrix.
 _54_W=""
 _54_PID=""
+_54_POLL_FD=""
 
 _54_cleanup() {
     if [[ -n "${_54_PID}" ]]; then
@@ -10,6 +11,7 @@ _54_cleanup() {
         _54_stop_session "${_54_PID}"
         _54_PID=""
     fi
+    if [[ -n "${_54_POLL_FD}" ]]; then exec {_54_POLL_FD}>&-; fi
     [[ -z "${_54_W}" ]] || rm -rf -- "${_54_W}"
 }
 
@@ -36,14 +38,23 @@ _54_stop_session() {
     local groups group
     groups="$(_54_session_groups "$1")" || return 1
     while IFS= read -r group; do
-        [[ -n "${group}" ]] || continue
+        [[ -n "${group}" && "${group}" != "$1" ]] || continue
         verify_stop_group "${group}" TERM
     done <<<"${groups}"
+    verify_stop_group "$1" TERM
 }
 
 _54_comments() {
     guard_timed "${TIMEOUT_SHORT}" gh issue view "${ISSUE}" --repo "${REPO}" \
         --json comments --jq '[.comments[].id] | sort' >"$1"
+}
+
+# A private FIFO provides a bounded observation wait without loading the CPU
+# (bench itself waits for a quiet host). Only observed events select a signal.
+_54_poll() {
+    local line rc=0
+    read -r -t 0.05 -u "${_54_POLL_FD}" line || rc=$?
+    [[ "${rc}" -eq 0 || "${rc}" -gt 128 ]]
 }
 
 # A deadline limits observation; elapsed time alone never triggers a signal.
@@ -63,6 +74,7 @@ _54_event() {
             [[ "${rc}" -le 1 ]] || return 1
             [[ "${rc}" -ne 0 ]] || return 0
         fi
+        _54_poll || return 1
     done
     return 1
 }
@@ -84,6 +96,18 @@ _54_assert() {
     done
     _54_comments "${dir}/comments-after" || return 1
     cmp -s "${dir}/comments-before" "${dir}/comments-after"
+}
+
+_54_wait() {
+    local deadline=$((SECONDS + TIMEOUT_SHORT))
+    while kill -0 "${_54_PID}" 2>/dev/null; do
+        if ((SECONDS >= deadline)); then
+            guard_fail "interrupt response deadline exceeded; stopping owned session"
+            _54_stop_session "${_54_PID}"
+            return 1
+        fi
+        _54_poll || return 1
+    done
 }
 
 _54_failure_report() {
@@ -115,6 +139,7 @@ _54_cell() {
         rc=1
     fi
     local child_rc=0
+    _54_wait || rc=1
     wait "${_54_PID}" || child_rc=$?
     _54_assert "${capture}" "${dir}" "${child_rc}" "${expected}" || rc=1
     _54_session_clear "${_54_PID}" || rc=1
@@ -130,10 +155,12 @@ _54_cell() {
 }
 
 item_54() {
-    guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm || return $?
+    guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm mkfifo || return $?
     _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
     _54_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-54.XXXXXXXX")" || return 1
     _cleanup_push 54
+    mkfifo "${_54_W}/poll" || return 1
+    exec {_54_POLL_FD}<>"${_54_W}/poll"
     local phase signal expected rc=0
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
