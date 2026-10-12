@@ -437,6 +437,27 @@ _seed_box() { printf '%s\n' "$1" >>"${STATE}/boxes"; }
 
 _ghostty_config() { printf '%s\n' "${HOME}/.config/ghostty/config"; }
 
+@test "#526: 5.3 refused apply preserves every pre-existing parent directory mtime" {
+    mkdir -p "${HOME}/.cache/worktool" "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+    printf 'original log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    printf 'original state\n' >"${HOME}/.config/worktool/config"
+    local dir
+    local dirs=("${HOME}" "${HOME}/.config" "${HOME}/.config/ghostty"
+        "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+        "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+
+    run "${REALBOX}" --allow-real-box 5.3
+
+    assert_success
+    assert_line 'restore-ok=1'
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
 _backup_dir() { printf '%s\n' "${TMPDIR}/worktool-m3-52-backup.$(id -u)"; }
 
 # Run realbox.sh for real (not under `run`), so $output stays whatever the

@@ -425,6 +425,15 @@ cfgbk_revalidate() {
 
 # --- step 3: restore ---------------------------------------------------------
 
+_cfgbk_same_regular() {
+    local _p="$1" _bp="$2" _mode _bmode
+    [[ "$(guard_path_type "${_p}")" == regular ]] || return 1
+    _mode="$(stat -c %a -- "${_p}")" || return 1
+    _bmode="$(stat -c %a -- "${_bp}")" || return 1
+    [[ "${_mode}" == "${_bmode}" ]] || return 1
+    cmp -s -- "${_p}" "${_bp}"
+}
+
 _cfgbk_restore_link() {
     local _n="$1" _p="$2" _plink _mlink _tp _sha _msha
     _plink="$(readlink -- "${_p}")" \
@@ -454,9 +463,11 @@ _cfgbk_restore_file() {
         mkdir -p -- "${_d}" \
             || { guard_fail "${_n}: cannot recreate ${_d}"; return 1; }
     fi
-    # Clear first: never write THROUGH a symlink.
-    rm -f -- "${_p}" || { guard_fail "${_n}: cannot clear ${_p}"; return 1; }
-    cp -a -- "${_bp}" "${_p}" || { guard_fail "${_n}: restore copy failed"; return 1; }
+    if [[ "${_s}" != regular ]] || ! _cfgbk_same_regular "${_p}" "${_bp}"; then
+        # Clear first: never write THROUGH a symlink.
+        rm -f -- "${_p}" || { guard_fail "${_n}: cannot clear ${_p}"; return 1; }
+        cp -a -- "${_bp}" "${_p}" || { guard_fail "${_n}: restore copy failed"; return 1; }
+    fi
     _t="$(guard_path_type "${_p}")"
     [[ "${_t}" == "${_s}" ]] \
         || { guard_fail "${_n}: restored as ${_t}, expected ${_s}"; return 1; }
