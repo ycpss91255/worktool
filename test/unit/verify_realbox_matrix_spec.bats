@@ -114,3 +114,20 @@ _copy_matrix_repo() {
         done
     done
 }
+
+@test "5.4: the event wait tolerates a capture the child has not opened yet" {
+    # shellcheck source=lib/realbox_interrupt.sh
+    source "${REPO_ROOT}/lib/realbox_interrupt.sh"
+    local work="${BATS_TEST_TMPDIR}/event" child
+    mkdir -p "${work}"
+    mkfifo "${work}/poll"
+    exec {_54_POLL_FD}<>"${work}/poll"
+    sleep 30 3>&- &
+    child=$!
+    _54_PID="${child}"
+    (sleep 0.5 && printf '[INFO] psi before enter run 1: x\n' >"${work}/capture") 3>&- &
+    TIMEOUT_LONG=10 run _54_event bench "${work}/capture"
+    kill "${child}"
+    assert_success
+    refute_output --partial 'No such file'
+}

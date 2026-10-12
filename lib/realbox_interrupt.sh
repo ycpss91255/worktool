@@ -62,6 +62,11 @@ _54_event() {
     local phase="$1" capture="$2" deadline=$((SECONDS + TIMEOUT_LONG)) rc
     while ((SECONDS < deadline)); do
         kill -0 "${_54_PID}" 2>/dev/null || return 1
+        # The child opens its capture after fork; absence means not yet.
+        if [[ ! -e "${capture}" ]]; then
+            _54_poll || return 1
+            continue
+        fi
         if [[ "${phase}" == assemble ]]; then
             if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
             rc=0
