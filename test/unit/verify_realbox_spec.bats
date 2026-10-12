@@ -714,6 +714,25 @@ FRAG
 
 # --- 5.1 real-machine bench --------------------------------------------------
 
+@test "guard: successful unparsable listings are unknown and preserve existing boxes" {
+    _seed_box dev
+    local listing
+    for listing in 'unexpected output without a table' '' \
+        $'ID | NAME | STATUS | IMAGE\nbroken row' \
+        $'ID | NAME | STATUS | IMAGE\n0000 | dev | Up | ubuntu:24.04\nbroken row'; do
+        export FAKE_DBX_LIST_OUT="${listing}"
+        run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+        assert_failure 2
+        FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.1
+        assert_failure
+        assert_output --partial "cannot tell whether 'dev' exists"
+        assert_equal "$(_count_calls 'just box assemble')" '0'
+        assert_equal "$(_count_calls 'distrobox rm')" '0'
+        run cat "${STATE}/boxes"
+        assert_output dev
+    done
+}
+
 @test "5.1: --comment-tag prefixes the first body.md line" {
     run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
     assert_success
