@@ -158,9 +158,11 @@ _54_cell() {
     dir="${_54_W}/${phase}-${signal}"
     capture="${dir}/capture"
     _54_prepare "${phase}" "${signal}" "${dir}" || return 1
+    local -a comment_args=()
+    [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
-        --issue "${ISSUE}" --box "${BOX}" 5.1 >>"${capture}" 2>&1 &
+        --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
     if _54_event "${phase}" "${capture}"; then
         kill -s "${signal}" -- "-${_54_PID}" || rc=1

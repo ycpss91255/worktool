@@ -26,6 +26,33 @@ STUB
     REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
 }
 
+@test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
+    cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '<%s>' "$@" >>"${MATRIX_STATE}/child-argv"
+printf '\n' >>"${MATRIX_STATE}/child-argv"
+exec /usr/bin/setsid "$@"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/setsid"
+    run "${REALBOX}" --allow-real-box --comment-tag '[codex]' 5.4
+    assert_success
+    run cat "${MATRIX_STATE}/child-argv"
+    assert_success
+    [ "${#lines[@]}" -eq 6 ]
+    local line
+    for line in "${lines[@]}"; do
+        [[ "${line}" == *'<--comment-tag><[codex]>'* ]]
+    done
+    : >"${MATRIX_STATE}/child-argv"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    run cat "${MATRIX_STATE}/child-argv"
+    assert_success
+    [ "${#lines[@]}" -eq 6 ]
+    refute_output --partial '<--comment-tag>'
+}
+
 @test "5.4: all six event-driven interrupts have pinned passing output" {
     run "${REALBOX}" --allow-real-box 5.4
     assert_success
