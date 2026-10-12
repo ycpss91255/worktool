@@ -175,3 +175,18 @@ STUB
     [ ! -e "${MATRIX_STATE}/home" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
+
+@test "5.4: a failed initial comment snapshot reports the cell before starting" {
+    cat >"${MATRIX_STATE}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+echo '[]'
+exit 1
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt assemble INT: FAIL (cannot snapshot issue comments)'
+    assert_line 'interrupt-matrix: FAIL'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/home" ]
+}

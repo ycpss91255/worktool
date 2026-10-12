@@ -131,22 +131,33 @@ _54_prestart_failure() {
     return 1
 }
 
-_54_cell() {
-    local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
-    dir="${_54_W}/${phase}-${signal}"
-    mkdir -p -- "${dir}" || return 1
-    capture="${dir}/capture"
+_54_prepare() {
+    local phase="$1" signal="$2" dir="$3" capture="$3/capture"
+    mkdir -p -- "${dir}" || {
+        _54_prestart_failure "${phase}" "${signal}" 'cannot create cell evidence directory'
+        return 1
+    }
     _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || {
         _54_prestart_failure "${phase}" "${signal}" 'preexisting box refused or box query failed'
         return 1
     }
-    _54_comments "${dir}/comments-before" || return 1
+    _54_comments "${dir}/comments-before" || {
+        _54_prestart_failure "${phase}" "${signal}" 'cannot snapshot issue comments'
+        return 1
+    }
     # Prepare evidence before forking so the observer always has a capture.
     : >"${capture}" || {
         guard_fail 'cannot create interrupt capture'
         _54_prestart_failure "${phase}" "${signal}" 'cannot create interrupt capture'
         return 1
     }
+}
+
+_54_cell() {
+    local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
+    dir="${_54_W}/${phase}-${signal}"
+    capture="${dir}/capture"
+    _54_prepare "${phase}" "${signal}" "${dir}" || return 1
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" 5.1 >>"${capture}" 2>&1 &

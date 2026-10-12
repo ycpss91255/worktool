@@ -1046,7 +1046,7 @@ rc=0
       預期 `rc=0`；本項最初就遇到既有 dev 時直接拒絕，不取得所有權。
   - [ ] 5.4 自動完成 assemble／bench × SIGINT／SIGTERM／SIGHUP 實機中斷矩陣，不需要人按鍵。每格在獨立 session／行程群組啟動原有 5.1；assemble 以 distrobox list 觀察盒子出現（若已進入 bench 就判失敗），bench 以實際 `[INFO] psi before enter run ...` 或 `[INFO] enter: ... done` 診斷行決定時點。觀察 deadline 為 1800 秒，中斷後須在 180 秒內完成，逾時即失敗並停止本輪 session；deadline 只限制等待，絕不依 sleep 或經過時間送出訊號。每格先拒絕既有同名盒，5.1 保持只刪本輪盒與 #511／#516 的 XDG 隔離。
     - 每格必須回 130／143／129，捕捉到 `cleanup-rc=0`、`box-state after-cleanup: home=0 tmux=0`、`host-state after-cleanup: new=0`，再次查詢確認盒已移除、獨立 HOME 不存在，並確認該 session 無仍能執行的子行程。訊號前後以 `gh issue view --json comments` 比對完整留言 ID 集合，集合不變且沒有 `posted=` 回報才算沒有發出 #22 留言；若其他使用者同時留言也會失敗，須重跑。查詢失敗不能當作集合為空。
-    - stdout 成功輸出固定如下（每格逐行比對）。任一格失敗即停止、回 1，印該格 `FAIL (rc=...; cleanup-rc=...; evidence=...)` 與 `interrupt-matrix: FAIL`；原始 5.1 輸出送到 stderr，本輪證據與尚存的盒／HOME 保留供檢查。不宣稱涵蓋每行指令間的中斷，也不替代人類 Ctrl-C 主觀體驗。
+    - stdout 成功輸出固定如下（每格逐行比對）。任一格失敗即停止、回 1，印該格 `FAIL (rc=...; cleanup-rc=...; evidence=...)` 與 `interrupt-matrix: FAIL`；子行程啟動前失敗（既有同名盒被拒或盒狀態查詢失敗、留言快照查詢失敗、證據目錄或 capture 建立失敗）也印 `interrupt <phase> <signal>: FAIL (<reason>)` 與 `interrupt-matrix: FAIL`，不啟動 5.1。原始 5.1 輸出送到 stderr，本輪證據與尚存的盒／HOME 保留供檢查。不宣稱涵蓋每行指令間的中斷，也不替代人類 Ctrl-C 主觀體驗。
       ```text
       interrupt assemble INT: rc=130 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
       interrupt assemble TERM: rc=143 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
