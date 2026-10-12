@@ -164,3 +164,14 @@ STUB
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
+
+@test "5.4: a preexisting box reports the refused cell and remains untouched" {
+    printf 'dev\n' >"${MATRIX_STATE}/boxes"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt assemble INT: FAIL (preexisting box refused or box query failed)'
+    assert_line 'interrupt-matrix: FAIL'
+    assert_equal "$(cat "${MATRIX_STATE}/boxes")" dev
+    [ ! -e "${MATRIX_STATE}/home" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}

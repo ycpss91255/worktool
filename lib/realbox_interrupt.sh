@@ -136,7 +136,10 @@ _54_cell() {
     dir="${_54_W}/${phase}-${signal}"
     mkdir -p -- "${dir}" || return 1
     capture="${dir}/capture"
-    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
+    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || {
+        _54_prestart_failure "${phase}" "${signal}" 'preexisting box refused or box query failed'
+        return 1
+    }
     _54_comments "${dir}/comments-before" || return 1
     # Prepare evidence before forking so the observer always has a capture.
     : >"${capture}" || {
@@ -173,7 +176,6 @@ _54_cell() {
 
 item_54() {
     guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm mkfifo || return $?
-    _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
     _54_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-54.XXXXXXXX")" || return 1
     _cleanup_push 54
     mkfifo "${_54_W}/poll" || return 1
