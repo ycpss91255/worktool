@@ -86,6 +86,16 @@ _54_assert() {
     cmp -s "${dir}/comments-before" "${dir}/comments-after"
 }
 
+_54_failure_report() {
+    local phase="$1" signal="$2" rc="$3" dir="$4" line cleanup=missing
+    while IFS= read -r line; do
+        case "${line}" in cleanup-rc=*) cleanup="${line#cleanup-rc=}" ;; esac
+    done <"${dir}/capture"
+    cat "${dir}/capture" >&2
+    printf 'interrupt %s %s: FAIL (rc=%s; cleanup-rc=%s; evidence=%s)\n' \
+        "${phase}" "${signal}" "${rc}" "${cleanup}" "${dir}"
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -111,8 +121,7 @@ _54_cell() {
     if [[ "${rc}" -ne 0 ]]; then
         _54_stop_session "${_54_PID}"
         _54_PID=""
-        cat "${capture}" >&2
-        printf 'interrupt %s %s: FAIL (rc=%s; evidence=%s)\n' "${phase}" "${signal}" "${child_rc}" "${dir}"
+        _54_failure_report "${phase}" "${signal}" "${child_rc}" "${dir}"
         return 1
     fi
     _54_PID=""
