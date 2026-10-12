@@ -2461,6 +2461,25 @@ _assert_data_unchanged() {
     assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
 }
 
+@test "#526: 5.2.3 restores the mtime of an identical rewritten init log without replacing its inode" {
+    local log="${HOME}/.cache/worktool/dev-init.log" inode
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2001-01-01 01:01:01.123456789' "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    inode="$(stat -c %i "${log}")"
+    _realbox_quiet 5.2.1
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2002-02-02 02:02:02.987654321' "${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+    assert_equal "$(stat -c %i "${log}")" "${inode}"
+}
+
 @test "#516: 5.2.3 removes the Ghostty init log when originally absent" {
     local log="${HOME}/.cache/worktool/dev-init.log"
     _realbox_quiet 5.2.1

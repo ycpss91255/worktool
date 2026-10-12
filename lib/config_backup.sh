@@ -509,16 +509,35 @@ _cfgbk_same_file() {
     esac
 }
 
+_cfgbk_restore_mtime() {
+    local _p="$1" _bp="$2" _mtime _got
+    # stat and touch -h operate on the link itself, including dangling links.
+    _mtime="$(stat -c %y -- "${_bp}")" \
+        || { guard_fail "cannot read backup mtime: ${_bp}"; return 1; }
+    _got="$(stat -c %y -- "${_p}")" \
+        || { guard_fail "cannot read restored mtime: ${_p}"; return 1; }
+    if [[ "${_got}" != "${_mtime}" ]]; then
+        touch -h -m -d "${_mtime}" -- "${_p}" \
+            || { guard_fail "cannot restore file mtime: ${_p}"; return 1; }
+        _got="$(stat -c %y -- "${_p}")" \
+            || { guard_fail "cannot verify restored mtime: ${_p}"; return 1; }
+    fi
+    [[ "${_got}" == "${_mtime}" ]] \
+        || { guard_fail "restored file mtime mismatch: ${_p}"; return 1; }
+}
+
 _cfgbk_restore_copy() {
     local _p="$1" _bp="$2"
     if _cfgbk_same_file "${_p}" "${_bp}"; then
-        return 0
+        _cfgbk_restore_mtime "${_p}" "${_bp}"
+        return
     fi
     # Clear first: never write through a live symlink, including target paths.
     rm -f -- "${_p}" || { guard_fail "cannot clear ${_p}"; return 1; }
     cp -a -- "${_bp}" "${_p}" || { guard_fail "restore copy failed: ${_p}"; return 1; }
     _cfgbk_same_file "${_p}" "${_bp}" \
         || { guard_fail "restored type, content, mode or link mismatch: ${_p}"; return 1; }
+    _cfgbk_restore_mtime "${_p}" "${_bp}"
 }
 
 _cfgbk_restore_link() {
