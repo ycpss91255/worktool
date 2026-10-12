@@ -139,3 +139,27 @@ STUB
     [ ! -e "${MATRIX_STATE}/home" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
+
+@test "5.4: outer interruption records the stopped child's nonzero status" {
+    export SIGNAL_STATE="${MATRIX_STATE}"
+    cat >"${MATRIX_STATE}/child" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 143' TERM
+touch "${SIGNAL_STATE}/ready"
+while :; do sleep 0.1; done
+STUB
+    cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/setsid bash "${MATRIX_STATE}/child"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/setsid"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=143'
+    assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}

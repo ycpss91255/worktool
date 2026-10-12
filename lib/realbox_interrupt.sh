@@ -5,9 +5,15 @@ _54_PID=""
 _54_POLL_FD=""
 
 _54_cleanup() {
+    local rc=0
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
-        wait "${_54_PID}" || :
+        # Terminating the owned child normally yields a signal exit status.
+        # Cleanup judges surviving processes, not the interrupted child's verdict.
+        wait "${_54_PID}" || rc=$?
+        if [[ "${rc}" -ne 0 ]]; then
+            log_info "interrupt cleanup: stopped child rc=${rc} (expected after termination)"
+        fi
         _54_stop_session "${_54_PID}"
         _54_PID=""
     fi
