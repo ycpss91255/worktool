@@ -37,7 +37,11 @@ wait_job() {
         sleep 1
     done
     state
-    tail -n 40 "${DIR}/log"
+    if [[ "${RC}" == 0 ]]; then
+        tail -n 40 "${DIR}/log"
+    else
+        awk '/^(not ok|FAIL|ERROR|Error|error:|\[ERROR\])/ { left=15 } left > 0 { print; left--; found=1; count++; if (count >= 80) exit } END { if (!found) exit 1 }' "${DIR}/log" || tail -n 40 "${DIR}/log"
+    fi
     [[ "${RC}" == 0 ]] || exit 1
 }
 main() {

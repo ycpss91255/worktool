@@ -27,3 +27,12 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     run "$JOB" wait "$NAME" --max-seconds 5
     assert_success
 }
+@test "failed jobs return one and retain the failure section instead of the whole log" {
+    run "$JOB" start "$NAME" -- bash -c 'echo secret-prefix; for i in {1..100}; do echo filler; done; echo "not ok 1 gate failed"; for i in {1..100}; do echo trailing; done; exit 7'
+    assert_success
+    run "$JOB" wait "$NAME"
+    assert_failure 1
+    assert_output --partial 'failed (exit 7)'
+    assert_output --partial 'not ok 1 gate failed'
+    refute_output --partial 'secret-prefix'
+}
