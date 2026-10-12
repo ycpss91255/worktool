@@ -40,6 +40,17 @@ _implementer_payload() {
     done
 }
 
+@test "implementer pr-loop still blocks long gates and waits without a timeout field" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'just test changed' 'tail --pid=1 -n 0 -f /dev/null'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_failure 2
+        assert_output --partial 'pr-loop: delegate'
+    done
+}
+
 # --- blocked -----------------------------------------------------------------
 
 @test "blocks 'just test unit' with no bound" {
