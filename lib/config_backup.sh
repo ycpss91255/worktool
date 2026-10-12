@@ -37,6 +37,8 @@
 #   cfgbk_states_ok             exactly one valid state line per name
 #   cfgbk_revalidate            re-check disk against the published manifest
 #   cfgbk_restore_one <name>    put one config back the way it was
+#   cfgbk_restore_dirs          restore existing parent mtimes after ALL files
+#   cfgbk_dirs_ok               verify every recorded directory mtime
 #   cfgbk_user_lines <file>     the lines outside every managed block
 #   cfgbk_report_user_content <when>
 #                               print `user-content <when>: <n>=<state> ...`,
