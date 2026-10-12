@@ -1107,12 +1107,13 @@ _set_option() {
 }
 
 realbox_run() {
-    local _help=0 _opt _i
+    local _help=0 _list=0 _opt _i
     local _items=()
     # The WHOLE command line is parsed before anything runs.
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h | --help) _help=1 ;;
+            -l | --list) _list=1 ;;
             --allow-real-box) OPT_IN=1 ;;
             --repo | --issue | --box | --image | --comment-tag)
                 _opt="$1"
@@ -1134,6 +1135,10 @@ realbox_run() {
 
     if [[ "${_help}" -eq 1 ]]; then
         _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        printf '%s\n' 5.1 5.2 5.2.1 5.2.2 5.2.3 5.3 5.4
         return 0
     fi
     [[ "${#_items[@]}" -gt 0 ]] || _items=("${ITEMS_ALL[@]}")

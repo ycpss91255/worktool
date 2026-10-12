@@ -6,7 +6,10 @@ setup() {
     REAL_JUST="$(command -v just)"
     CALLS="${BATS_TEST_TMPDIR}/calls"
     export CALLS
-    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    export HOME="${BATS_TEST_TMPDIR}/home"
+    export XDG_CONFIG_HOME="${HOME}/.config" XDG_CACHE_HOME="${HOME}/.cache"
+    export XDG_DATA_HOME="${HOME}/.local/share"
+    mkdir -p "${BATS_TEST_TMPDIR}/bin" "${HOME}"
     local tool
     for tool in distrobox docker gh grep; do
         cat >"${BATS_TEST_TMPDIR}/bin/${tool}" <<'STUB'
@@ -25,4 +28,17 @@ STUB
     assert_equal "${#lines[@]}" 2
     assert_line --index 1 --regexp '^4\.1([[:space:]]|$)'
     [ ! -e "${CALLS}" ]
+}
+
+@test "realbox --list lists documented items without opt-in or external calls" {
+    run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify realbox --list
+    assert_success
+    assert_equal "${#lines[@]}" 8
+    local index=1 item
+    for item in 5.1 5.2 5.2.1 5.2.2 5.2.3 5.3 5.4; do
+        assert_equal "${lines[index]%% *}" "${item}"
+        index=$((index + 1))
+    done
+    [ ! -e "${CALLS}" ]
+    assert_equal "$(find "${HOME}" -mindepth 1 -print)" ""
 }
