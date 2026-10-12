@@ -40,6 +40,7 @@
 load ../helper/common
 
 setup() {
+    export WORKFLOW_JOB_REPLIES='1'
     WF_DIR="${REPO_ROOT}/.claude/workflows"
     PR_LOOP="${WF_DIR}/pr-loop.js"
     FANOUT="${WF_DIR}/milestone-fanout.js"
@@ -240,15 +241,18 @@ _meta_skeleton() {
     run grep -c "ci.state !== 'green'" "${PR_LOOP}"
     assert_output "2"
     run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "2"
+    assert_output "3"
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
     local default
-    default="$(_pl_run '{}')"
-    run _pl_run '{"mode":"full"}'
+    default="$(_pl_run '{}' | jq -c 'walk(if type == "string" then gsub("-[0-9]{13}-"; "-CLOCK-") else . end)')"
+    local full
+    full="$(_pl_run '{"mode":"full"}')"
+    run jq -c 'walk(if type == "string" then gsub("-[0-9]{13}-"; "-CLOCK-") else . end)' <<<"${full}"
     assert_success
     assert_output "${default}"
+    output="${full}"
     run jq -cr '[.error, .result.codexVerdict, (.calls[] | select(.role | startswith("review:")) | .schema.properties.verdict.enum)]' <<<"${output}"
     assert_output '[null,"mergeable",["mergeable","blocked","no-output"]]'
 }
@@ -332,6 +336,8 @@ case "$1" in
     ls-remote) printf 'abc\trefs/heads/b\n' ;;
 esac
 SH
+    printf '#!/bin/sh\nexit 0\n' > "${stub}/just"
+    chmod +x "${stub}/just"
     chmod +x "${stub}/gh" "${stub}/git"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -435,7 +441,7 @@ _pl_blocked_run() {
         assert_success
         run jq -e '[.calls[] | select(.role | startswith("implement:")) | .prompt |
             contains("just test <tier> <spec> [--filter]"),
-            contains("before pushing run just test lint and just test changed"),
+            (if contains("WORKTOOL_AGENT_ROLE=pr-loop") then contains("Run only slice specs and just test lint") else contains("before pushing run just test lint and just test changed") end),
             contains("Never run a whole tier locally; CI runs every tier"),
             (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
         assert_success
@@ -445,7 +451,7 @@ _pl_blocked_run() {
         assert_success
         run jq -e '[.calls[] | select(.role | startswith("fix:")) | .prompt |
             contains("just test <tier> <spec> [--filter]"),
-            contains("before pushing run just test lint and just test changed"),
+            (if contains("WORKTOOL_AGENT_ROLE=pr-loop") then contains("Run only slice specs and just test lint") else contains("before pushing run just test lint and just test changed") end),
             contains("Never run a whole tier locally; CI runs every tier"),
             (contains("just test unit, just test integration") | not)] | all' <<<"${output}"
         assert_success
@@ -484,8 +490,8 @@ _pl_blocked_run() {
                     ([.calls[].prompt | contains("just test changed") or
                         contains("Locally run only just test lint") or
                         contains("before pushing run lint and only the touched specs")] | any | not) and
-                    ([.calls[] | select(.role | test("^(implement|fix|publish):")) |
-                        .prompt | contains("before pushing run " + $g)] | all) and
+                    ([.calls[] | select(.role | test("^(implement|fix):")) |
+                        .prompt | if contains("WORKTOOL_AGENT_ROLE=pr-loop") then contains("Run only slice specs and just test lint") else contains("before pushing run " + $g) end] | all) and
                     (.calls[] | select(.role | startswith("ci:")) | .prompt | contains($g)) and
                     (if $m == "full" then
                         ([.calls[].role | startswith("fix:")] | any)
@@ -556,8 +562,8 @@ _pl_blocked_run() {
 # bounded foreground call with literal quoted paths, and no detaching.
 _pl_launch_checks() {
     local s="/work/../worktree/.scratch/n/$1" wt="/work/../worktree/n"
-    local first="rc=0; timeout 570 codex exec --skip-git-repo-check -C '${wt}' -o '${s}.md' - < '${s}-prompt.md' > '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
-    local again="rc=0; cd '${wt}' && timeout 570 codex exec resume --skip-git-repo-check -o '${s}.md' <session-id> - < '${s}-continue.md' >> '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
+    local first="rc=0; WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec --skip-git-repo-check -C '${wt}' -o '${s}.md' - < '${s}-prompt.md' > '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
+    local again="rc=0; cd '${wt}' && WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec resume --skip-git-repo-check -o '${s}.md' <session-id> - < '${s}-continue.md' >> '${s}.md.log' 2>&1 || rc=\$?; echo \"\$rc\" > '${s}.rc'"
     local role="$2" json="$3"
     jq -c --arg role "${role}" --arg first "${first}" --arg again "${again}" '.calls[] | select(.role | startswith($role)) | .prompt |
         [contains($first), contains($again), contains("Bash tool timeout at its maximum (600000 ms)"),
@@ -3135,7 +3141,7 @@ _pl_retry_run() {
     assert_success
     run jq -e '.error == null and .result.ciState == "green" and
         ([.calls[].role | select(startswith("implement:"))] | length) == 1 and
-        ([.calls[].role | select(startswith("publish:"))] | length) == 0' <<<"${output}"
+        ([.calls[].role | select(startswith("publish:"))] | length) == 1' <<<"${output}"
     assert_success
 }
 

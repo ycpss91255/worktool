@@ -34,7 +34,16 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
-const replies = JSON.parse(repliesJson)
+// Existing pr-loop scenarios model successful external gates/publication by
+// default. Individual scenarios override either reply (including null).
+const replies = {
+  ...(process.env.WORKFLOW_JOB_REPLIES ? {
+    'gates:': { state: 'green', detail: 'success' },
+    'publish:Implement': { pr: 7, sha: 'abc' },
+    'publish:Fix': { pr: 7, sha: 'def' },
+  } : {}),
+  ...JSON.parse(repliesJson),
+}
 const calls = []
 const ran = []
 const workflowCalls = []
