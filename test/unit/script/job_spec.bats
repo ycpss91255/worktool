@@ -36,3 +36,17 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     assert_output --partial 'not ok 1 gate failed'
     refute_output --partial 'secret-prefix'
 }
+@test "arguments are validated before help and names cannot escape state" {
+    run "$JOB" --help
+    assert_success
+    assert_output --partial 'Usage:'
+    run "$JOB" --help --bogus
+    assert_failure 2
+    assert_output --partial "unknown option '--bogus' (see --help)"
+    run "$JOB" start ../escape -- true
+    assert_failure 2
+    run "$JOB" wait "$NAME" --max-seconds -1
+    assert_failure 2
+    run "$JOB" status "$NAME" --help --bogus
+    assert_failure 2
+}

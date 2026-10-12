@@ -45,6 +45,20 @@ wait_job() {
     [[ "${RC}" == 0 ]] || exit 1
 }
 main() {
+    local arg help=0
+    local -a args=()
+    for arg in "$@"; do
+        if [[ "$arg" == -- ]]; then args+=("$arg"); shift; args+=("$@"); break; fi
+        case "$arg" in
+            --help|-h) help=1 ;;
+            --max-seconds) args+=("$arg") ;;
+            -*) bad "unknown option '$arg'" ;;
+            *) args+=("$arg") ;;
+        esac
+        shift
+    done
+    if [[ "$help" == 1 ]]; then usage; exit 0; fi
+    set -- "${args[@]}"
     local verb="${1:-}"; [[ $# -gt 0 ]] && shift
     NAME="${1:-}"; [[ $# -gt 0 ]] && shift
     [[ "${NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || bad 'invalid job name'
