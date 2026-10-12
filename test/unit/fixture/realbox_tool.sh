@@ -302,6 +302,11 @@ case "${_ME}" in
         printf '%s\n' "${FAKE_DEV_PID-4343}"
         exit "${FAKE_DEV_INSPECT_RC:-0}"
         ;;
+    loginctl)
+        [[ "$*" == 'show-session graphical-test --property=LockedHint --value' ]] || exit 2
+        printf '%s\n' "${FAKE_LOCKED_HINT-no}"
+        exit "${FAKE_LOGINCTL_RC:-0}"
+        ;;
     distrobox) _fake_distrobox "$@" ;;
     just) _fake_just "$@" ;;
     gh) _fake_gh "$@" ;;

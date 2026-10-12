@@ -186,7 +186,7 @@ _check_group_interrupt() {
     _assert_group_interrupt INT 130 assemble 5.2.2
 }
 
-REALBOX_FAKED_TOOLS=(distrobox just gh jq)
+REALBOX_FAKED_TOOLS=(distrobox just gh jq loginctl)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
 setup() {
@@ -220,6 +220,12 @@ setup() {
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
+    export XDG_SESSION_ID=graphical-test
+    export XDG_RUNTIME_DIR="${STATE}/runtime" WAYLAND_DISPLAY=wayland-test
+    unset DISPLAY
+    mkdir -p "${XDG_RUNTIME_DIR}"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -1015,6 +1021,96 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line --partial "posted=1"
     assert_line "cleanup-rc=1"
     assert_output --partial "survived cleanup"
+}
+
+@test "#529: locked desktop is inconclusive before any backup or box action" {
+    FAKE_LOCKED_HINT=yes run "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
+}
+
+@test "#529: undeterminable session warns and proceeds through the window flow" {
+    _fake_window_process
+    FAKE_LOGINCTL_RC=1 FAKE_LOCKED_HINT=yes run _window_input 4242
+    assert_output --partial "[WARN] item 5.2: cannot determine session lock state; proceeding"
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    run cat "${STATE}/calls.log"
+    assert_output --partial "just box assemble"
+    assert_output --partial "just box setup"
+}
+
+@test "#529: unlocked desktop preserves apply, window evidence and restore" {
+    _fake_window_process
+    FAKE_LOCKED_HINT=no run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+    refute_output --partial "[INCONCLUSIVE]"
+    refute_output --partial "cannot determine session lock state"
+}
+
+@test "#529: missing display is inconclusive without backup or config changes" {
+    run env -u WAYLAND_DISPLAY -u DISPLAY "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
+}
+
+@test "#529: stale display endpoints are inconclusive before actions" {
+    rm "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
+    local _mode
+    for _mode in absent regular x11; do
+        case "${_mode}" in
+            regular) : >"${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ;;
+        esac
+        if [[ "${_mode}" == x11 ]]; then
+            DISPLAY=:999529 run "${REALBOX}" --allow-real-box 5.2
+        else
+            run "${REALBOX}" --allow-real-box 5.2
+        fi
+        assert_equal "${status}" "3"
+        assert_output --partial "[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+}
+
+@test "#529: usable X11 fallback and absolute Wayland paths preserve the flow" {
+    _fake_window_process
+    local _x="${BASHPID}" _mode
+    mkdir -p /tmp/.X11-unix
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "/tmp/.X11-unix/X${_x}"
+    for _mode in x11 wayland; do
+        if [[ "${_mode}" == x11 ]]; then
+            WAYLAND_DISPLAY=absent DISPLAY=":${_x}.0" run _window_input 4242
+        else
+            WAYLAND_DISPLAY="${XDG_RUNTIME_DIR}/wayland-test" run _window_input 4242
+        fi
+        assert_equal "$(cat "${STATE}/window-rc")" "0"
+        assert_output --partial "window-evidence: pid=4242"
+        assert_output --partial "restore-ok=1"
+        refute_output --partial "[INCONCLUSIVE]"
+    done
+    rm "/tmp/.X11-unix/X${_x}"
 }
 
 # --- 5.2 step 1: back up -----------------------------------------------------
