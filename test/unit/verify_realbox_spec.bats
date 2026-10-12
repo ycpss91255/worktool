@@ -29,6 +29,8 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+bats_require_minimum_version 1.5.0
+
 @test "realbox: the default box name follows the shipped manifest before opt-in" {
     local _repo="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${_repo}"
