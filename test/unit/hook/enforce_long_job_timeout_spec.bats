@@ -192,7 +192,8 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
 
 @test "pr-loop rejects gates and any wait while standalone acceptance remains allowed" {
     local cmd
-    export WORKTOOL_AGENT_ROLE=pr-loop
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
     for cmd in 'just test changed' 'just test' 'just test unit' 'just verify all' 'just verify realbox' 'just box assemble' 'just box bench' '.agents/script/job.sh wait gates' 'just job wait gates' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
         _check "$cmd" true 600000
         assert_failure 2
@@ -224,7 +225,8 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
 @test "job start owns detachment and must not inherit its command's foreground timeout requirement" {
     _check 'just job start gate -- just test changed'
     assert_success
-    export WORKTOOL_AGENT_ROLE=pr-loop
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
     _check 'just job start gate -- just test changed'
     assert_success
     unset WORKTOOL_AGENT_ROLE
