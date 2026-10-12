@@ -24,3 +24,6 @@ mod? worktree '.agents/script/worktree/justfile.worktree'
 # Default: list the namespaces.
 default:
     @just --list
+
+# Detached agent jobs and compact results.
+mod? job '.agents/script/justfile.job'
