@@ -21,6 +21,25 @@ _payload() {
 
 _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
 
+# Implementer CLI rust-v0.160.0: unified_exec/exec_command.rs:520-531
+# forwards only command in tool_input; PreToolUse also carries turn_id.
+_implementer_payload() {
+    jq -n --arg c "$1" --arg cwd "${BATS_TEST_TMPDIR}" '{
+        session_id:"s", turn_id:"t", transcript_path:"/missing/transcript.jsonl",
+        cwd:$cwd, hook_event_name:"PreToolUse", model:"m", tool_name:"Bash",
+        tool_input:{command:$c}, tool_use_id:"exec-1"
+    }'
+}
+
+@test "implementer without role allows standalone long jobs without a timeout field" {
+    unset WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'just test lint' 'just verify all'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_success
+    done
+}
+
 # --- blocked -----------------------------------------------------------------
 
 @test "blocks 'just test unit' with no bound" {

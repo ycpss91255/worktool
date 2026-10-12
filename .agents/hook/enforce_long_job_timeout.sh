@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# .agents/hook/enforce_long_job_timeout.sh - Claude Code PreToolUse hook
-# (matcher: Bash), registered in .claude/settings.json.
+# .agents/hook/enforce_long_job_timeout.sh - PreToolUse hook for both harnesses.
+# (matcher: Bash), registered in .claude/settings.json and .codex/hooks.json.
 #
-# A long local job must not run as an unbounded FOREGROUND command: if it
+# A Claude long local job must not run as an unbounded FOREGROUND command: if it
 # hangs, the session waits forever. In worktool the long jobs are the
 # test gates (`just test [tier]`, script/test/test.sh), the real box verbs
 # (`just box assemble` / `bench` without --dry-run / --help), image builds
@@ -22,6 +22,8 @@
 # result collection and harness background notifications are the shared
 # alternatives. The pr-loop role delegates long gates and every wait to
 # its separate workflow agent, regardless of timeout/background settings.
+# Implementer inputs skip only Claude's time-bound requirement; their outer
+# runner supplies the deadline. Source detection lives in the hook library.
 # Exit codes: 0 = allow, 2 = block.
 
 # shellcheck source-path=SCRIPTDIR/lib
@@ -30,6 +32,8 @@ _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 # shellcheck source=subcommand.sh
 source "${_HOOK_HERE}/lib/subcommand.sh"
+# shellcheck source=long_job_timeout.sh
+source "${_HOOK_HERE}/lib/long_job_timeout.sh"
 hook_bootstrap "long-job-timeout"
 
 # _self_wrapped <sub-command> - 0 when THIS sub-command is led by a
@@ -190,6 +194,7 @@ main() {
             hook_block "foreground waiting: use job.sh wait or run_in_background."
         fi
     done < <(hook_subcommands "${_cmd}")
+    hook_implementer_input && hook_allow
     [[ "$(hook_field '.tool_input.timeout')" =~ ^[1-9][0-9]*$ ]] && hook_allow
     while IFS= read -r _sub; do
         _self_wrapped "${_sub}" && continue
