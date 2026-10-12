@@ -472,13 +472,34 @@ cfgbk_revalidate() {
 
 # --- step 3: restore ---------------------------------------------------------
 
-_cfgbk_same_regular() {
-    local _p="$1" _bp="$2" _mode _bmode
-    [[ "$(guard_path_type "${_p}")" == regular ]] || return 1
+_cfgbk_same_file() {
+    local _p="$1" _bp="$2" _mode _bmode _type _link _blink
+    _type="$(guard_path_type "${_bp}")"
+    [[ "$(guard_path_type "${_p}")" == "${_type}" ]] || return 1
     _mode="$(stat -c %a -- "${_p}")" || return 1
     _bmode="$(stat -c %a -- "${_bp}")" || return 1
     [[ "${_mode}" == "${_bmode}" ]] || return 1
-    cmp -s -- "${_p}" "${_bp}"
+    case "${_type}" in
+        regular) cmp -s -- "${_p}" "${_bp}" ;;
+        symlink)
+            _link="$(readlink -- "${_p}" || exit 1; printf '.')" || return 1
+            _blink="$(readlink -- "${_bp}" || exit 1; printf '.')" || return 1
+            [[ "${_link}" == "${_blink}" ]]
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+_cfgbk_restore_copy() {
+    local _p="$1" _bp="$2"
+    if _cfgbk_same_file "${_p}" "${_bp}"; then
+        return 0
+    fi
+    # Clear first: never write through a live symlink, including target paths.
+    rm -f -- "${_p}" || { guard_fail "cannot clear ${_p}"; return 1; }
+    cp -a -- "${_bp}" "${_p}" || { guard_fail "restore copy failed: ${_p}"; return 1; }
+    _cfgbk_same_file "${_p}" "${_bp}" \
+        || { guard_fail "restored type, content, mode or link mismatch: ${_p}"; return 1; }
 }
 
 _cfgbk_restore_link() {
@@ -492,10 +513,7 @@ _cfgbk_restore_link() {
     _tp="$(guard_field "${CFGBK_B}" "${_n}.tpath")" \
         || { guard_fail "${_n}: the manifest records no link-target path"; return 1; }
     [[ -n "${_tp}" ]] || return 0
-    # Put the pointed-to file back byte for byte, whether setup wrote through
-    # the link or replaced it (cp -a over an untouched file is a no-op).
-    cp -a -- "${CFGBK_B}/${_n}.target" "${_tp}" \
-        || { guard_fail "${_n}: restoring link target ${_tp} failed"; return 1; }
+    _cfgbk_restore_copy "${_tp}" "${CFGBK_B}/${_n}.target" || return 1
     _sha="$(guard_sha256 "${_tp}")" \
         || { guard_fail "${_n}: hashing the restored link target failed"; return 1; }
     _msha="$(guard_field "${CFGBK_B}" "${_n}.tsha")" \
@@ -510,11 +528,7 @@ _cfgbk_restore_file() {
         mkdir -p -- "${_d}" \
             || { guard_fail "${_n}: cannot recreate ${_d}"; return 1; }
     fi
-    if [[ "${_s}" != regular ]] || ! _cfgbk_same_regular "${_p}" "${_bp}"; then
-        # Clear first: never write THROUGH a symlink.
-        rm -f -- "${_p}" || { guard_fail "${_n}: cannot clear ${_p}"; return 1; }
-        cp -a -- "${_bp}" "${_p}" || { guard_fail "${_n}: restore copy failed"; return 1; }
-    fi
+    _cfgbk_restore_copy "${_p}" "${_bp}" || return 1
     _t="$(guard_path_type "${_p}")"
     [[ "${_t}" == "${_s}" ]] \
         || { guard_fail "${_n}: restored as ${_t}, expected ${_s}"; return 1; }
