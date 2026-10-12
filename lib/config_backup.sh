@@ -318,17 +318,41 @@ cfgbk_backup_body() {
     printf 'backup=%s ok=1\n' "${CFGBK_B}"
 }
 
-# NUL pairs preserve spaces and newlines in paths. Record existing ancestors
-# through HOME, including parents of absent files and resolved link targets.
+# Keep HOME's existing coverage. External managed paths stop at their XDG
+# root; external link targets stop at their direct parent instead.
+_cfgbk_parent_root() {
+    local _p="$1" _target="$2" _root
+    _root="$(readlink -m -- "${CFGBK_H}")" || return 1
+    if [[ "${_p}" == "${_root}" || "${_p}" == "${_root}/"* ]]; then
+        printf '%s\n' "${_root}"
+        return 0
+    fi
+    if [[ "${_target}" == no ]]; then
+        for _root in "${CFGBK_C}" "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}"; do
+            _root="$(readlink -m -- "${_root}")" || return 1
+            if [[ "${_p}" == "${_root}" || "${_p}" == "${_root}/"* ]]; then
+                printf '%s\n' "${_root}"
+                return 0
+            fi
+        done
+    fi
+    printf '%s\n' "${_p}"
+}
+
+# NUL pairs preserve spaces and newlines in paths. Record existing parents
+# within the selected root, including parents of originally absent files.
 _cfgbk_backup_parent_dirs() {
-    local _p="${1%/*}" _mtime
-    [[ "${_p}" == /* ]] || _p="${PWD}/${_p}"
+    local _p _root _mtime
+    _p="${1%/*}"
+    _p="${_p:-/}"
+    _p="$(readlink -m -- "${_p}")" || return 1
+    _root="$(_cfgbk_parent_root "${_p}" "${2:-no}")" || return 1
     while [[ -n "${_p}" && "${_p}" != / ]]; do
         if [[ -d "${_p}" ]]; then
             _mtime="$(stat -L -c %y -- "${_p}")" || return 1
             printf '%s\0%s\0' "${_p}" "${_mtime}" >>"${CFGBK_B}/directories" || return 1
         fi
-        [[ "${_p}" != "${CFGBK_H}" ]] || break
+        [[ "${_p}" != "${_root}" ]] || break
         _p="${_p%/*}"
     done
 }
@@ -341,7 +365,7 @@ _cfgbk_backup_dirs() {
         _cfgbk_backup_parent_dirs "${_p}" || return 1
         if [[ -L "${_p}" && -e "${_p}" ]]; then
             _p="$(readlink -f -- "${_p}")" || return 1
-            _cfgbk_backup_parent_dirs "${_p}" || return 1
+            _cfgbk_backup_parent_dirs "${_p}" yes || return 1
         fi
     done
 }
