@@ -86,9 +86,13 @@ _is_wait() {
             done ;;
         watch) return 0 ;;
         sleep)
-            [[ "${w[1]:-}" =~ ^([0-9]+)([smhd]?)$ ]] || return 0
-            [[ "${BASH_REMATCH[2]}" == '' || "${BASH_REMATCH[2]}" == s ]] || return 0
-            [[ ${#BASH_REMATCH[1]} -lt 3 && $((10#${BASH_REMATCH[1]})) -le 5 ]] || return 0 ;;
+            local total=0 value
+            for arg in "${w[@]:1}"; do
+                [[ "$arg" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)s?$ ]] || return 0
+                value="${arg%s}"
+                total="$(awk -v a="$total" -v b="$value" 'BEGIN { print a+b }')"
+            done
+            awk -v n="$total" 'BEGIN { exit !(n <= 5) }' || return 0 ;;
     esac
     return 1
 }

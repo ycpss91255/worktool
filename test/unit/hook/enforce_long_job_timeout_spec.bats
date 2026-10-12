@@ -211,3 +211,12 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check "echo 'while true; do sleep 60; done'"
     assert_success
 }
+
+@test "fractional short retry sleeps remain allowed while cumulative long sleeps are blocked" {
+    _check 'sleep 0.1'
+    assert_success
+    _check 'sleep 1.5s 1'
+    assert_success
+    _check 'sleep 5 5' null 600000
+    assert_failure 2
+}
