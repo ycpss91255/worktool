@@ -209,3 +209,24 @@ STUB
     refute_output --partial 'interrupt-matrix: PASS'
     [ ! -s "${MATRIX_STATE}/boxes" ]
 }
+
+@test "5.4: a posted capture line fails the cell even with unchanged comment IDs" {
+    mkdir -p "${MATRIX_STATE}/original"
+    install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" "${MATRIX_STATE}/original/just"
+    cat >"${MATRIX_STATE}/bin/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == assemble ]]; then
+    echo 'posted=1 comment=unexpected' >&2
+fi
+exec "${MATRIX_STATE}/original/just" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'posted=1 comment=unexpected'
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
