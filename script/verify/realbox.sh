@@ -873,7 +873,20 @@ _52_step3_restore() {
     return 0
 }
 
+# Query only the caller's session, never another user's active session.
+_52_desktop_preflight() {
+    local _locked
+    if _locked="$(guard_timed "${TIMEOUT_SHORT}" loginctl show-session \
+        "${XDG_SESSION_ID:-self}" --property=LockedHint --value 2>/dev/null)"; then
+        if [[ "${_locked}" == yes ]]; then
+            printf '[INCONCLUSIVE] item 5.2: session is locked; an unlocked desktop is needed, unlock and re-run\n' >&2
+            return 3
+        fi
+    fi
+}
+
 item_52() {
+    _52_desktop_preflight || return $?
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
         grep cut id cat find sort cmp ps realpath || return $?
     cfgbk_paths || return 1

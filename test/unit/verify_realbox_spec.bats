@@ -186,7 +186,7 @@ _check_group_interrupt() {
     _assert_group_interrupt INT 130 assemble 5.2.2
 }
 
-REALBOX_FAKED_TOOLS=(distrobox just gh jq)
+REALBOX_FAKED_TOOLS=(distrobox just gh jq loginctl)
 REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
 setup() {
@@ -220,6 +220,7 @@ setup() {
     export HOME="${BATS_TEST_TMPDIR}/home"
     export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
+    export XDG_SESSION_ID=graphical-test
     PATH="${STUBS}:${PATH}"
     export PATH
 }
@@ -925,6 +926,19 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_line --partial "posted=1"
     assert_line "cleanup-rc=1"
     assert_output --partial "survived cleanup"
+}
+
+@test "#529: locked desktop is inconclusive before any backup or box action" {
+    FAKE_LOCKED_HINT=yes run "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
 }
 
 # --- 5.2 step 1: back up -----------------------------------------------------
