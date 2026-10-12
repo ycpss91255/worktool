@@ -1,10 +1,51 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 setup() {
-    JOB="${REPO_ROOT}/.agents/script/job.sh"
+    JOB_ROOT="$(mktemp -d)"
+    chmod 755 "${JOB_ROOT}"
+    mkdir -p "${JOB_ROOT}/.agents/script" "${JOB_ROOT}/lib"
+    cp "${REPO_ROOT}/.agents/script/job.sh" "${JOB_ROOT}/.agents/script/"
+    cp "${REPO_ROOT}/lib/log.sh" "${JOB_ROOT}/lib/"
+    JOB="${JOB_ROOT}/.agents/script/job.sh"
     NAME="spec-${BATS_TEST_NUMBER}-$$"
 }
-teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
+teardown() {
+    chmod -R u+w "${JOB_ROOT}"
+    rm -rf "${JOB_ROOT}"
+}
+@test "start reports permission denial when the state or job directory cannot be created" {
+    local blocked
+    local as_user=()
+    if [[ "$(id -u)" -eq 0 ]]; then
+        as_user=(setpriv --reuid=65534 --regid=65534 --clear-groups)
+    fi
+    for blocked in "${JOB_ROOT}/.agents/state/job" "${JOB_ROOT}/.agents/state"; do
+        mkdir -p "${blocked}"
+        chmod 555 "${blocked}"
+        run "${as_user[@]}" "$JOB" start "$NAME" -- true
+        assert_failure 1
+        assert_output --partial 'Permission denied'
+        assert_output --partial 'cannot create job directory'
+        refute_output --partial 'job already exists'
+        assert [ ! -d "${JOB_ROOT}/.agents/state/job/${NAME}" ]
+        chmod 755 "${blocked}"
+        rm -rf "${JOB_ROOT}/.agents/state"
+    done
+}
+@test "start reports already exists only when the job path is a directory" {
+    mkdir -p "${JOB_ROOT}/.agents/state/job/${NAME}"
+    run "$JOB" start "$NAME" -- true
+    assert_failure 1
+    assert_output --partial "job already exists: ${NAME}"
+    refute_output --partial 'cannot create job directory'
+
+    rmdir "${JOB_ROOT}/.agents/state/job/${NAME}"
+    touch "${JOB_ROOT}/.agents/state/job/${NAME}"
+    run "$JOB" start "$NAME" -- true
+    assert_failure 1
+    assert_output --partial 'cannot create job directory'
+    refute_output --partial 'job already exists'
+}
 @test "start detaches a job and wait and status report its successful result" {
     run "$JOB" start "$NAME" -- printf '%s\n' finished
     assert_success

@@ -8,8 +8,18 @@ source "${ROOT}/lib/log.sh"
 usage() { printf '%s\n' 'Usage: job.sh start <name> -- <cmd...> | wait <name> [--max-seconds N] | status <name>'; }
 bad() { log_error "job.sh: $* (see --help)"; exit 2; }
 start_job() {
-    mkdir -p "${ROOT}/.agents/state/job"
-    if ! mkdir "${DIR}"; then log_error "job.sh: job already exists: ${NAME}"; exit 1; fi
+    if ! mkdir -p "${ROOT}/.agents/state/job"; then
+        log_error "job.sh: cannot create job directory ${DIR}"
+        exit 1
+    fi
+    if ! mkdir "${DIR}"; then
+        if [[ -d "${DIR}" ]]; then
+            log_error "job.sh: job already exists: ${NAME}"
+        else
+            log_error "job.sh: cannot create job directory ${DIR}"
+        fi
+        exit 1
+    fi
     nohup setsid bash -c "$(cat <<'WORKER'
         set -euo pipefail
         dir=$1; shift
