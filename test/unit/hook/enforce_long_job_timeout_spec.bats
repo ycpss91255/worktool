@@ -64,6 +64,16 @@ _implementer_payload() {
     assert_output --partial 'long-running foreground command with no time bound'
 }
 
+@test "implementer without role still blocks foreground polling" {
+    unset WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'tail --pid=1 -n 0 -f /dev/null' 'while kill -0 1; do sleep 1; done'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_failure 2
+        assert_output --partial 'foreground'
+    done
+}
+
 # --- blocked -----------------------------------------------------------------
 
 @test "blocks 'just test unit' with no bound" {
