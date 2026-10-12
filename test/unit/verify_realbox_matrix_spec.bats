@@ -190,3 +190,22 @@ STUB
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/home" ]
 }
+
+@test "5.4: changed comment IDs fail the cell even with successful cleanup" {
+    cat >"${MATRIX_STATE}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${MATRIX_STATE}/snapshot-taken" ]]; then
+    echo '["new-comment-id"]'
+else
+    touch "${MATRIX_STATE}/snapshot-taken"
+    echo '[]'
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
