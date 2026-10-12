@@ -153,6 +153,11 @@ _54_prepare() {
     }
 }
 
+_54_now_ms() {
+    local stamp="${EPOCHREALTIME/,/.}"
+    printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -160,11 +165,16 @@ _54_cell() {
     _54_prepare "${phase}" "${signal}" "${dir}" || return 1
     local -a comment_args=()
     [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
+    local started signalled
+    started="$(_54_now_ms)"
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
     if _54_event "${phase}" "${capture}"; then
+        signalled="$(_54_now_ms)"
+        printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
+            "${phase}" "${signal}" "${phase}" "$((signalled - started))"
         kill -s "${signal}" -- "-${_54_PID}" || rc=1
     else
         guard_fail "interrupt ${phase} ${signal}: observable event missed"

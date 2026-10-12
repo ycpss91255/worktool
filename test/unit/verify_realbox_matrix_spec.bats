@@ -54,19 +54,27 @@ STUB
 }
 
 @test "5.4: all six event-driven interrupts have pinned passing output" {
-    run "${REALBOX}" --allow-real-box 5.4
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.4
     assert_success
-    local phase signal code expected=''
+    local phase signal code line actual='' expected=''
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
+            assert_line --regexp "^interrupt ${phase} ${signal}: signal-phase=${phase} signal-after-ms=[0-9]+$"
             case "${signal}" in INT) code=130 ;; TERM) code=143 ;; HUP) code=129 ;; esac
             expected+="interrupt ${phase} ${signal}: rc=${code} cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS"$'\n'
         done
     done
     expected+='interrupt-matrix: PASS (6/6)'
-    assert_output "${expected}"
+    [ "${#lines[@]}" -eq 13 ]
+    for line in "${lines[@]}"; do
+        [[ "${line}" == *'signal-phase='* ]] || actual+="${line}"$'\n'
+    done
+    assert_equal "${actual%$'\n'}" "${expected}"
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*'
+    assert_success
+    assert_output ''
 }
 
 @test "5.4: any cell cleanup failure fails the matrix" {
