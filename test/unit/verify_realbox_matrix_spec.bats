@@ -132,6 +132,7 @@ STUB
     run "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
     assert_line --partial 'cannot create interrupt capture'
+    assert_line 'interrupt assemble INT: FAIL (cannot create interrupt capture)'
     assert_line 'interrupt-matrix: FAIL'
     refute_output --partial 'observable event missed'
     refute_output --partial 'interrupt-matrix: PASS'

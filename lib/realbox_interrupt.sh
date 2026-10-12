@@ -126,6 +126,11 @@ _54_failure_report() {
         "${phase}" "${signal}" "${rc}" "${cleanup}" "${dir}"
 }
 
+_54_prestart_failure() {
+    printf 'interrupt %s %s: FAIL (%s)\n' "$1" "$2" "$3"
+    return 1
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -134,7 +139,11 @@ _54_cell() {
     _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
     _54_comments "${dir}/comments-before" || return 1
     # Prepare evidence before forking so the observer always has a capture.
-    : >"${capture}" || { guard_fail 'cannot create interrupt capture'; return 1; }
+    : >"${capture}" || {
+        guard_fail 'cannot create interrupt capture'
+        _54_prestart_failure "${phase}" "${signal}" 'cannot create interrupt capture'
+        return 1
+    }
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" 5.1 >>"${capture}" 2>&1 &
