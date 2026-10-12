@@ -189,3 +189,25 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
         assert_output --partial 'job.sh wait'
     done
 }
+
+@test "pr-loop rejects gates and any wait while standalone acceptance remains allowed" {
+    local cmd
+    export WORKTOOL_AGENT_ROLE=pr-loop
+    for cmd in 'just test changed' 'just test' 'just test unit' 'just verify all' 'just verify realbox' 'just box assemble' 'just box bench' '.agents/script/job.sh wait gates' 'just job wait gates' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
+        _check "$cmd" true 600000
+        assert_failure 2
+    done
+    for cmd in 'just test lint' 'just test unit test/unit/script/job_spec.bats' 'just box assemble --dry-run' 'just job start gates -- just test changed'; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    unset WORKTOOL_AGENT_ROLE
+    for cmd in 'just verify all' 'just verify realbox' 'just test' 'just test unit' '.agents/script/job.sh wait gates' 'just job wait gates' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    _check 'tail --pid=2070005 -n 0 -f .agents/state/541-review-r1-changed-direct.log' true
+    assert_success
+    _check "echo 'while true; do sleep 60; done'"
+    assert_success
+}

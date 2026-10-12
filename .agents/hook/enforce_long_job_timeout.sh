@@ -106,11 +106,52 @@ _poll_loop() {
     return 1
 }
 
+_role_forbidden() {
+    local -a w
+    read -ra w <<<"$1"
+    [[ "${w[0]:-}" == bash || "${w[0]:-}" == sh ]] && w=("${w[@]:1}")
+    case "${w[0]##*/}" in
+        sleep) return 0 ;;
+        job.sh) [[ "${w[1]:-}" == wait ]] && return 0 ;;
+        gh) [[ " $1 " == *' --watch '* ]] && return 0 ;;
+        just)
+            local i verb next
+            for ((i=1; i<${#w[@]}; i++)); do
+                verb="${w[i]}"; next="${w[i+1]:-}"
+                case "$verb" in
+                    job) [[ "$next" == wait ]] && return 0; return 1 ;;
+                    verify) [[ "$next" == all || "$next" == realbox ]] && return 0; return 1 ;;
+                    box) _just_is_long "${w[@]}"; return $? ;;
+                    test)
+                        [[ "$next" =~ ^(lint|help|h|--help|-h)$ ]] && return 1
+                        [[ "$next" == changed || -z "$next" ]] && return 0
+                        # A tier alone, or only options, has no selected spec.
+                        local arg
+                        for arg in "${w[@]:i+2}"; do
+                            [[ "$arg" == *.bats ]] && return 1
+                        done
+                        return 0 ;;
+                esac
+            done ;;
+    esac
+    _is_wait "$1"
+}
+
 main() {
     hook_read_input
     local _cmd _sub
     _cmd="$(hook_command)"
     [[ -z "${_cmd}" ]] && hook_allow
+    if [[ "${WORKTOOL_AGENT_ROLE:-}" == pr-loop ]]; then
+        while IFS= read -r _sub; do
+            local role_lead
+            role_lead="$(hook_timeout_lead "${_sub}")"
+            if _role_forbidden "${_sub#"${role_lead}"}"; then
+                hook_block "pr-loop: delegate long gates and all waits to the workflow job stage."
+            fi
+        done < <(hook_subcommands "${_cmd}")
+        _poll_loop "${_cmd}" && hook_block "pr-loop: delegate polling to the workflow job stage."
+    fi
     [[ "$(hook_field '.tool_input.run_in_background')" == true ]] && hook_allow
     if _poll_loop "${_cmd}"; then
         hook_block "foreground polling: use job.sh wait or run_in_background."
