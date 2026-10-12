@@ -93,6 +93,25 @@ setup() {
     assert_equal "${stderr}" ''
 }
 
+@test "#525: composing a managed block before the last user line without a final newline remains intact" {
+    # shellcheck source=lib/enter.sh
+    source "${LIB_DIR}/enter.sh"
+    local config="${XDG_CONFIG_HOME}/ghostty/config"
+    printf 'A\n%s\nold\n%s\nB' "${CFGBK_BLOCK_BEGIN}" \
+        "${CFGBK_BLOCK_END}" >"${config}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    enter_block_compose "${config}" 'new managed content' >"${config}.new"
+    mv "${config}.new" "${config}"
+
+    run --separate-stderr cfgbk_report_user_content after-apply
+
+    assert_success
+    assert_output 'user-content after-apply: ghostty=intact tmux.conf=intact'
+    assert_equal "${stderr}" ''
+}
+
 @test "#523: an existing unreadable Ghostty target still fails the block report" {
     local dir
     dir="$(mktemp -d /tmp/cfgbk-unreadable.XXXXXX)"

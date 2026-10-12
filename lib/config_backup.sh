@@ -561,15 +561,14 @@ _cfgbk_user_live() {
 }
 
 CFGBK_USER_STATE=""
-# A final managed block needs a separator after the last user line. Only
-# accept that added newline when no user line follows the block, so real
-# final-newline changes at the user's EOF still fail the byte comparison.
-_cfgbk_user_has_block_separator() {
+# Once compose has run, a gained final newline is product-caused, not loss
+# of user content: compose prints every user line, wherever the block sits.
+# A live managed block permits only that gain; other byte changes still fail.
+_cfgbk_user_has_managed_block() {
     awk -v b="${CFGBK_BLOCK_BEGIN}" -v e="${CFGBK_BLOCK_END}" '
-        $0 == b { if (user) separator = 1; skip = 1; next }
-        $0 == e { skip = 0; next }
-        !skip { user = 1; separator = 0 }
-        END { exit !separator }
+        $0 == b { inside = 1; next }
+        $0 == e && inside { found = 1 }
+        END { exit !found }
     ' "$1"
 }
 
@@ -589,7 +588,7 @@ _cfgbk_user_state() {
         return 0
     fi
     if [[ -n "${_want}" && "${_want}" != *$'\n' && "${_got}" == "${_want}"$'\n' ]] \
-        && _cfgbk_user_has_block_separator "${_p}"; then
+        && _cfgbk_user_has_managed_block "${_p}"; then
         CFGBK_USER_STATE="intact"
         return 0
     fi
