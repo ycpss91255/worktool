@@ -89,7 +89,7 @@ _is_wait() {
             for arg in "${w[@]:1}"; do
                 [[ "$arg" == --pid* || "$arg" == --follow* || "$arg" =~ ^-[^-]*[fF] ]] && return 0
             done ;;
-        watch) return 0 ;;
+        watch|wait) return 0 ;;
         sleep)
             local total=0 value
             for arg in "${w[@]:1}"; do
@@ -122,7 +122,8 @@ _role_forbidden() {
     case "${w[0]##*/}" in
         sleep) return 0 ;;
         job.sh) [[ "${w[1]:-}" == wait ]] && return 0 ;;
-        gh) [[ " $1 " == *' --watch '* ]] && return 0 ;;
+        gh)
+            [[ " $1 " == *' --watch '* || " $1 " == *' run watch '* ]] && return 0 ;;
         just)
             local i verb next
             for ((i=1; i<${#w[@]}; i++)); do

@@ -231,3 +231,15 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     assert_success
     unset WORKTOOL_AGENT_ROLE
 }
+
+@test "pr-loop delegates shell wait and single blocking gh run watches even when bounded" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    _check 'wait 2070005' null 600000
+    assert_failure 2
+    _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
+    assert_failure 2
+    unset WORKTOOL_AGENT_ROLE
+    _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
+    assert_success
+}
