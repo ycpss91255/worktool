@@ -146,7 +146,9 @@ Items:
           No keyboard input; refuses existing boxes; preserves failed evidence.
 
 Options:
-  --allow-real-box   Required. Says you accept that this run creates and
+  -l, --list         List the item ids and their titles, then exit without running checks.
+                     No --allow-real-box is needed; no box or config is touched.
+  --allow-real-box   Required to run checks. Says you accept that this run creates and
                      removes a distrobox, rewrites the ghostty and worktool
                      configs under $XDG_CONFIG_HOME, and comments on an issue.
   --repo OWNER/NAME  GitHub repository for 5.1 (default: ycpss91255/worktool).
@@ -1060,6 +1062,17 @@ _is_item() {
     return 1
 }
 
+_list_items() {
+    printf '%s  %s\n' \
+        5.1 'Real-machine bench: build the box and measure the enter latency' \
+        5.2 'Ghostty window chain: back up, apply, verify and restore configs' \
+        5.2.1 '5.2 step 1 only (back up)' \
+        5.2.2 '5.2 step 2 only (apply and check preserved user content)' \
+        5.2.3 '5.2 step 3 only (restore)' \
+        5.3 'Negative: a pre-existing dev box is refused, never deleted' \
+        5.4 'Automatic interrupt matrix: assemble/bench x INT/TERM/HUP'
+}
+
 _dispatch_item() {
     case "$1" in
         5.1) item_51 ;;
@@ -1107,12 +1120,13 @@ _set_option() {
 }
 
 realbox_run() {
-    local _help=0 _opt _i
+    local _help=0 _list=0 _opt _i
     local _items=()
     # The WHOLE command line is parsed before anything runs.
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h | --help) _help=1 ;;
+            -l | --list) _list=1 ;;
             --allow-real-box) OPT_IN=1 ;;
             --repo | --issue | --box | --image | --comment-tag)
                 _opt="$1"
@@ -1134,6 +1148,10 @@ realbox_run() {
 
     if [[ "${_help}" -eq 1 ]]; then
         _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        _list_items
         return 0
     fi
     [[ "${#_items[@]}" -gt 0 ]] || _items=("${ITEMS_ALL[@]}")
