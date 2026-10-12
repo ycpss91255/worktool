@@ -205,15 +205,15 @@ _assemble_owned_box() {
         verify_run "${TIMEOUT_LONG}" bash -c "
             set -euo pipefail
             trap ':' INT TERM HUP
-            source \"\$1/lib/guard.sh\"
-            dir=\"\$2\"
+            $(declare -f guard_fail)
+            dir=\"\$1\"
             just box assemble --home \"\${dir}/box-home\" || {
                 guard_fail 'just box assemble failed'; exit 1;
             }
             : >\"\${dir}/assemble-success\" || {
                 guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
             }
-        " _ "${REPO_ROOT}" "$1" || exit $?
+        " _ "$1" || exit $?
         _confirm_box_ownership "$1"
     )
 }
