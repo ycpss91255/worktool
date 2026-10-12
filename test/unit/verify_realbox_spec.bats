@@ -988,9 +988,12 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     for _mode in absent regular x11; do
         case "${_mode}" in
             regular) : >"${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ;;
-            x11) export DISPLAY=:999529 ;;
         esac
-        run "${REALBOX}" --allow-real-box 5.2
+        if [[ "${_mode}" == x11 ]]; then
+            DISPLAY=:999529 run "${REALBOX}" --allow-real-box 5.2
+        else
+            run "${REALBOX}" --allow-real-box 5.2
+        fi
         assert_equal "${status}" "3"
         assert_output --partial "[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display"
         [ ! -e "$(_backup_dir)" ]
@@ -1008,12 +1011,10 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
         "/tmp/.X11-unix/X${_x}"
     for _mode in x11 wayland; do
         if [[ "${_mode}" == x11 ]]; then
-            export WAYLAND_DISPLAY=absent DISPLAY=":${_x}.0"
+            WAYLAND_DISPLAY=absent DISPLAY=":${_x}.0" run _window_input 4242
         else
-            unset DISPLAY
-            export WAYLAND_DISPLAY="${XDG_RUNTIME_DIR}/wayland-test"
+            WAYLAND_DISPLAY="${XDG_RUNTIME_DIR}/wayland-test" run _window_input 4242
         fi
-        run _window_input 4242
         assert_equal "$(cat "${STATE}/window-rc")" "0"
         assert_output --partial "window-evidence: pid=4242"
         assert_output --partial "restore-ok=1"
