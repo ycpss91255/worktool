@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # realbox.sh - the real-machine (group `realbox`) acceptance items of M3:
-# 5.1, 5.2 and 5.3 of doc/acceptance.md, as a script instead of as shell logic
+# 5.1, 5.2, 5.3 and 5.4 of doc/acceptance.md, as a script instead of as shell logic
 # embedded in the document.
 #
 # WHY THIS EXISTS
@@ -46,12 +46,12 @@
 #       fails the whole run.
 #
 # USAGE
-#   script/verify/realbox.sh --allow-real-box            # 5.1, 5.2, 5.3
+#   script/verify/realbox.sh --allow-real-box            # 5.1-5.4
 #   script/verify/realbox.sh --allow-real-box 5.1        # one item
 #   script/verify/realbox.sh --allow-real-box 5.2.3      # restore only
 #   script/verify/realbox.sh --help
 #
-#   With no item the three items run in order and stop at the first failure.
+#   With no item the four items run in order and stop at the first failure.
 #   Every check prints the same human-readable lines doc/acceptance.md shows.
 #
 # This script owns its option validation: an unknown option is refused with
@@ -81,6 +81,9 @@ source "${LIB_DIR}/distrobox_manager.sh"
 # shellcheck source=script/verify/config_backup_paths.sh
 source "${SCRIPT_DIR}/config_backup_paths.sh"
 
+# shellcheck source=lib/realbox_interrupt.sh
+source "${LIB_DIR}/realbox_interrupt.sh"
+
 # --- Defaults (overridable on the command line) ------------------------------
 REPO="ycpss91255/worktool"
 ISSUE="22"
@@ -103,7 +106,7 @@ BENCH_MAX_MS=300
 BENCH_RUNS=10
 
 # The items `no argument` runs, in order.
-ITEMS_ALL=(5.1 5.2 5.3)
+ITEMS_ALL=(5.1 5.2 5.3 5.4)
 
 # --- Usage -------------------------------------------------------------------
 _usage_error() {
@@ -115,7 +118,7 @@ _usage() {
 Usage: realbox.sh --allow-real-box [options] [item ...]
 
 Run the real-machine (realbox) acceptance items of M3 from doc/acceptance.md
-on THIS machine. With no item, 5.1, 5.2 and 5.3 run in order and stop at the
+on THIS machine. With no item, 5.1, 5.2, 5.3 and 5.4 run in order and stop at the
 first failure.
 
 Items:
@@ -136,6 +139,11 @@ Items:
           after an interrupt, and a no-op when there is no backup.
   5.3     Negative: with a `dev` box present, prove 5.1 and 5.2 step 2 refuse
           instead of deleting it. Creates and removes its own decoy box.
+
+  5.4     Automatic interrupt matrix: assemble/bench x INT/TERM/HUP.
+          Observes box creation or a bench diagnostic; checks signal status,
+          cleanup, private HOME/tmux, host state and unchanged issue comments.
+          No keyboard input; refuses existing boxes; preserves failed evidence.
 
 Options:
   --allow-real-box   Required. Says you accept that this run creates and
@@ -298,6 +306,7 @@ _cleanup_run() {
         52-abort-backup) cfgbk_abort ;;
         52-restore) _52_cleanup_report ;;
         53) _53_cleanup ;;
+        54) _54_cleanup ;;
         *) guard_fail "internal: unknown cleanup token '$1'"; return 1 ;;
     esac
 }
@@ -530,6 +539,7 @@ _51_body() {
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
         || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
 
+    printf 'phase=bench\n' >&2
     XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"
     _brc=$?
@@ -1045,7 +1055,7 @@ item_53() {
 # =============================================================================
 _is_item() {
     case "$1" in
-        5.1 | 5.2 | 5.2.1 | 5.2.2 | 5.2.3 | 5.3) return 0 ;;
+        5.1 | 5.2 | 5.2.1 | 5.2.2 | 5.2.3 | 5.3 | 5.4) return 0 ;;
     esac
     return 1
 }
@@ -1058,6 +1068,7 @@ _dispatch_item() {
         5.2.2) _52_apply_only ;;
         5.2.3) _52_step3_restore ;;
         5.3) item_53 ;;
+        5.4) item_54 ;;
         *) guard_fail "internal: unknown item '$1'"; return 1 ;;
     esac
 }

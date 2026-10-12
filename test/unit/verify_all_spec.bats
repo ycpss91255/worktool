@@ -60,7 +60,8 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     run printf '%s\n' "${_scope}"
     for _path in 'doc/acceptance.md' 'doc/design.md' 'doc/enter.md' \
         'doc/manifest.md' 'doc/evidence/' 'ADR 0008' '0010' \
-        'script/verify/' 'lib/verify_run.sh' 'justfile' \
+        'script/verify/' 'lib/verify_run.sh' 'lib/realbox_interrupt.sh' \
+        'justfile' \
         'lib/config_backup.sh' 'lib/guard.sh' \
         'lib/distrobox_manager.sh' 'lib/home.sh' 'test/unit/enter_spec.bats' \
         'test/unit/config_backup_spec.bats' \
