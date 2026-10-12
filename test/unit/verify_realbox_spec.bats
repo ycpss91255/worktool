@@ -953,6 +953,17 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output --partial "just box setup"
 }
 
+@test "#529: unlocked desktop preserves apply, window evidence and restore" {
+    _fake_window_process
+    FAKE_LOCKED_HINT=no run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+    refute_output --partial "[INCONCLUSIVE]"
+    refute_output --partial "cannot determine session lock state"
+}
+
 # --- 5.2 step 1: back up -----------------------------------------------------
 
 _install_restore_window_tools() {
