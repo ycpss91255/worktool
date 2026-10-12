@@ -10,13 +10,15 @@ bad() { log_error "job.sh: $* (see --help)"; exit 2; }
 start_job() {
     mkdir -p "${ROOT}/.agents/state/job"
     if ! mkdir "${DIR}"; then log_error "job.sh: job already exists: ${NAME}"; exit 1; fi
-    nohup setsid bash -c '
+    nohup setsid bash -c "$(cat <<'WORKER'
+        set -euo pipefail
         dir=$1; shift
         rc=0
         "$@" > "$dir/log" 2>&1 || rc=$?
         printf "%s\n" "$rc" > "$dir/rc.tmp"
         mv "$dir/rc.tmp" "$dir/rc"
-    ' job "${DIR}" "$@" </dev/null >/dev/null 2>&1 &
+WORKER
+    )" job "${DIR}" "$@" </dev/null >/dev/null 2>&1 &
     printf '%s\n' "$!" > "${DIR}/pid"
     printf '%s: started\n' "${NAME}"
 }
@@ -24,7 +26,7 @@ state() {
     [[ -d "${DIR}" ]] || { log_error "job.sh: unknown job: ${NAME}"; exit 1; }
     if [[ -f "${DIR}/rc" ]]; then
         RC="$(cat "${DIR}/rc")"
-        if [[ "${RC}" == 0 ]]; then printf '%s: success\n' "${NAME}"; else printf '%s: failed (exit %s)\n' "${NAME}" "${RC}"; fi
+        if [[ "${RC}" == 0 ]]; then printf '%s: success\n' "${NAME}"; else printf '%s: failed (exit %s)\n' "${NAME}" "${RC}"; return 1; fi
         return 0
     fi
     printf '%s: running\n' "${NAME}"
@@ -37,13 +39,14 @@ wait_job() {
         if [[ -n "${MAX_SECONDS}" && "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
         sleep 1
     done
-    state
+    local state_rc=0
+    state || state_rc=$?
     if [[ "${RC}" == 0 ]]; then
         tail -n 40 "${DIR}/log"
     else
         awk '/^(not ok|FAIL|ERROR|Error|error:|\[ERROR\])/ { left=15 } left > 0 { print; left--; found=1; count++; if (count >= 80) exit } END { if (!found) exit 1 }' "${DIR}/log" || tail -n 40 "${DIR}/log"
     fi
-    [[ "${RC}" == 0 ]] || exit 1
+    return "${state_rc}"
 }
 parse_args() {
     HELP=0

@@ -60,3 +60,12 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     run "$JOB" wait "$NAME" --max-seconds 0 --help
     assert_success
 }
+@test "status of a failed job reports failure without blocking" {
+    run "$JOB" start "$NAME" -- false
+    assert_success
+    run "$JOB" wait "$NAME"
+    assert_failure 1
+    run "$JOB" status "$NAME"
+    assert_failure 1
+    assert_output --partial 'failed (exit 1)'
+}
