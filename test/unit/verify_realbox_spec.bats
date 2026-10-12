@@ -941,6 +941,18 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output "font-size = 12"
 }
 
+@test "#529: undeterminable session warns and proceeds through the window flow" {
+    _fake_window_process
+    FAKE_LOGINCTL_RC=1 FAKE_LOCKED_HINT=yes run _window_input 4242
+    assert_output --partial "[WARN] item 5.2: cannot determine session lock state; proceeding"
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    run cat "${STATE}/calls.log"
+    assert_output --partial "just box assemble"
+    assert_output --partial "just box setup"
+}
+
 # --- 5.2 step 1: back up -----------------------------------------------------
 
 _install_restore_window_tools() {
