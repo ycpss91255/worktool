@@ -346,6 +346,26 @@ In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; 
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
+// The gate agent has no implementer context and returns only compact results.
+const jobInstructions = (name, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
+${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)}\``).join('\n')}
+job.sh wait blocks once and prints only a result and log tail or failure section. Never poll, tail -f, read whole logs, use Monitor or background tool calls. If start or wait fails, stop immediately and return state red with only the failure summary. Return green only when every wait exits 0. Never edit, commit or push.`
+const gateStage = (stage) => agent(jobInstructions(`550-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim())), {
+  label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
+  schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',
+})
+const publishCodex = (stage, pr) => agent(`${GUARDRAILS}
+In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
+PR body starts with [codex], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
+  label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
+})
+const completeCodex = async (stage, pr = A.pr) => {
+  const gates = await gateStage(stage)
+  if (!gates || gates.state !== 'green') return (gates && gates.detail) || 'gate stage returned no result'
+  const published = await publishCodex(stage, pr)
+  return published && published.pr ? '' : 'publication failed'
+}
+
 const implementFull = async () => {
   for (let retry = 0; retry <= 3; retry += 1) {
     const setup = retry ? `cd ${WT}` : IMPLEMENT_SETUP
@@ -353,12 +373,15 @@ const implementFull = async () => {
     const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, setup)}\n${context}`
     let edited
     try {
-      edited = await agent(`${brief}\nReturn status ready only after implementation and publication succeed; otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
+      edited = await agent(`${brief}\nReturn status ready after the codex implementer commits its completed work (Claude still publishes); otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
         label: `${RUN_ID} implement:#${A.issue}${retry ? `:retry${retry}` : ''}`, phase: 'Implement',
         schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose',
       })
     } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
-    if (edited && edited.status === 'ready') return ''
+    if (edited && edited.status === 'ready') {
+      if (IMPLEMENTER !== 'codex') return ''
+      return completeCodex('Implement')
+    }
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
     if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
     await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
@@ -429,6 +452,10 @@ for (;;) {
     ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
   await agent(fixBrief, { label: `${RUN_ID} fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  if (IMPLEMENTER === 'codex') {
+    const failure = await completeCodex(`Fix-${fixes}`, pr)
+    if (failure) return result({ pr, sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [failure] })
+  }
   const checked = await checkStage(pr, 'Fix', sha)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })

@@ -3467,3 +3467,15 @@ _pl_retry_run() {
         contains("Do not push or open a PR; the workflow owns long gates and publication")' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop delegates local gates to a low effort job stage before publication (#550)" {
+    local replies
+    replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
+    assert_success
+    run jq -e '.error == null and .result.ciState == "green" and
+        (.calls[] | select(.role | startswith("gates:")) | .effort == "low" and
+          (.prompt | contains("just job start") and contains("just job wait") and contains("just test changed"))) and
+        ([.calls[].role] | index("gates:Implement") < index("publish:Implement"))' <<<"${output}"
+    assert_success
+}
