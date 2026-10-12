@@ -488,6 +488,32 @@ _backup_dir() { printf '%s\n' "${TMPDIR}/worktool-m3-52-backup.$(id -u)"; }
     done
 }
 
+@test "#526: a directory mtime mismatch at the end of restore fails restore-ok" {
+    mkdir -p "${HOME}/.cache/worktool"
+    _realbox_quiet 5.2.1
+    export REAL_TOUCH
+    REAL_TOUCH="$(type -P touch)"
+    "${REAL_TOUCH}" -d '1999-01-01 01:01:01' "${HOME}/.cache"
+    cat >"${STUBS}/touch" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${REAL_TOUCH}" "$@"
+# Simulate another writer changing a previously restored directory.
+if [[ "${*: -1}" == "${HOME}/.cache" ]]; then
+    "${REAL_TOUCH}" -d '2002-02-02 02:02:02' "${HOME}/.cache/worktool"
+fi
+STUB
+    chmod +x "${STUBS}/touch"
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+
+    assert_failure 1
+    assert_line 'restore-files-ok=0'
+    assert_line 'restore-ok=0'
+    assert_output --partial 'directory mtime mismatch:'
+    assert [ -d "$(_backup_dir)" ]
+}
+
 # Run realbox.sh for real (not under `run`), so $output stays whatever the
 # case under test put there.
 _realbox_quiet() { "${REALBOX}" --allow-real-box "$@" >/dev/null 2>&1; }
@@ -2159,6 +2185,8 @@ STUB
 @test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
+    # Force an actual restore copy; identical live files are now skipped.
+    printf 'changed config\n' >"$(_ghostty_config)"
     VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
     export VERIFY_RESTORE_SOURCE
     VERIFY_CP="$(cat "${STATE}/real/cp")"
@@ -2175,7 +2203,7 @@ STUB
     assert_failure 1
     assert_line 'restore-ok=0'
     assert_line 'blocks=0'
-    assert_output --partial 'restored content checksum mismatch'
+    assert_output --partial 'restored type, content, mode or link mismatch'
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }

@@ -320,6 +320,7 @@ cfgbk_backup_body() {
 # through HOME, including parents of absent files and resolved link targets.
 _cfgbk_backup_parent_dirs() {
     local _p="${1%/*}" _mtime
+    [[ "${_p}" == /* ]] || _p="${PWD}/${_p}"
     while [[ -n "${_p}" && "${_p}" != / ]]; do
         if [[ -d "${_p}" ]]; then
             _mtime="$(stat -L -c %y -- "${_p}")" || return 1
@@ -347,19 +348,35 @@ _cfgbk_backup_dirs() {
 # an existing ancestor. A failed timestamp restore must fail restore-ok.
 cfgbk_restore_dirs() {
     local _p _mtime _got
-    [[ -f "${CFGBK_B}/directories" ]] \
+    [[ -s "${CFGBK_B}/directories" ]] \
         || { guard_fail "directory mtime backup missing"; return 1; }
     while IFS= read -r -d '' _p; do
         IFS= read -r -d '' _mtime \
             || { guard_fail "incomplete directory mtime backup"; return 1; }
         [[ -d "${_p}" ]] \
             || { guard_fail "backed-up directory ${_p} is missing"; return 1; }
-        touch -d "${_mtime}" -- "${_p}" \
-            || { guard_fail "cannot restore directory mtime: ${_p}"; return 1; }
         _got="$(stat -L -c %y -- "${_p}")" || return 1
-        [[ "${_got}" == "${_mtime}" ]] \
+        if [[ "${_got}" != "${_mtime}" ]]; then
+            touch -d "${_mtime}" -- "${_p}" \
+                || { guard_fail "cannot restore directory mtime: ${_p}"; return 1; }
+        fi
+    done <"${CFGBK_B}/directories"
+    [[ -z "${_p}" ]] || { guard_fail "incomplete directory mtime backup"; return 1; }
+    cfgbk_dirs_ok
+}
+
+cfgbk_dirs_ok() {
+    local _p _mtime _got
+    [[ -s "${CFGBK_B}/directories" ]] \
+        || { guard_fail "directory mtime backup missing"; return 1; }
+    while IFS= read -r -d '' _p; do
+        IFS= read -r -d '' _mtime \
+            || { guard_fail "incomplete directory mtime backup"; return 1; }
+        _got="$(stat -L -c %y -- "${_p}")" || return 1
+        [[ -d "${_p}" && "${_got}" == "${_mtime}" ]] \
             || { guard_fail "directory mtime mismatch: ${_p}"; return 1; }
     done <"${CFGBK_B}/directories"
+    [[ -z "${_p}" ]] || { guard_fail "incomplete directory mtime backup"; return 1; }
 }
 
 # --- step 2: re-validate the published backup --------------------------------
