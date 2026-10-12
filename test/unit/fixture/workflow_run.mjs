@@ -52,6 +52,7 @@ const checkHooks = (cmd) => {
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
+  if (k !== undefined && Array.isArray(replies[k])) return replies[k].shift() || null
   return k === undefined ? (label.startsWith('prepare:') ? { state: 'new' } : null) : replies[k]
 }
 

@@ -360,8 +360,27 @@ PR body starts with [codex], includes Closes #${A.issue}${PARENT ? `, Part of ${
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
 const completeCodex = async (stage, pr = A.pr) => {
-  const gates = await gateStage(stage)
-  if (!gates || gates.state !== 'green') return (gates && gates.detail) || 'gate stage returned no result'
+  let green = false
+  for (let repair = 0; repair <= MAX; repair += 1) {
+    const gates = await gateStage(`${stage}${repair ? `-repair${repair}` : ''}`)
+    if (gates && gates.state === 'green') { green = true; break }
+    const summary = (gates && gates.detail) || 'gate stage returned no result'
+    if (repair === MAX || !gates) return summary
+    const fixed = await agent(`${CODEX_RULES}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/gate-fix-${stage}-${repair}`)}
+brief:
+${SKILL_LOAD.codex}
+${TDD_IMPLEMENT_RULES}
+Repair this failed gate in ${WT} without running or waiting for long gates. Only the failure summary follows:
+${summary}
+Run only slice specs and just test lint. Commit each complete repair with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication.
+Return ready only when codex exits successfully and its repair is committed; otherwise failed.`, {
+      label: `${RUN_ID} gate-fix:${stage}:${repair}`, phase: 'Fix',
+      schema: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }, agentType: 'general-purpose',
+    })
+    if (!fixed || fixed.status !== 'ready') return summary
+  }
+  if (!green) return 'gate repairs exhausted'
   const published = await publishCodex(stage, pr)
   return published && published.pr ? '' : 'publication failed'
 }

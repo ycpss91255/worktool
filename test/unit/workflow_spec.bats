@@ -3479,3 +3479,14 @@ _pl_retry_run() {
         ([.calls[].role] | index("gates:Implement") < index("publish:Implement"))' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop sends only the failed gate summary to codex and reruns gates after repair (#550)" {
+    local replies
+    replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
+    assert_success
+    run jq -e '.result.ciState == "green" and
+        (.calls[] | select(.role | startswith("gate-fix:")) | .prompt | contains("not ok 1 gate failed") and contains("WORKTOOL_AGENT_ROLE=pr-loop")) and
+        ([.calls[] | select(.role | startswith("gates:"))] | length) == 2' <<<"${output}"
+    assert_success
+}
