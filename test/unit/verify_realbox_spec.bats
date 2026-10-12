@@ -982,6 +982,24 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output "font-size = 12"
 }
 
+@test "#529: stale display endpoints are inconclusive before actions" {
+    rm "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
+    local _mode
+    for _mode in absent regular x11; do
+        case "${_mode}" in
+            regular) : >"${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ;;
+            x11) export DISPLAY=:999529 ;;
+        esac
+        run "${REALBOX}" --allow-real-box 5.2
+        assert_equal "${status}" "3"
+        assert_output --partial "[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+}
+
 # --- 5.2 step 1: back up -----------------------------------------------------
 
 _install_restore_window_tools() {

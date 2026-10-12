@@ -58,7 +58,7 @@
 # `realbox.sh: unknown option '<x>' (see --help)` on stderr, exit 2.
 #
 # Exit codes: 0 pass, 1 a check failed, 2 the command line or the opt-in is
-# wrong (nothing ran); 3 a required tool is unavailable or bench is inconclusive.
+# wrong (nothing ran); 3 a required tool is unavailable or acceptance is inconclusive.
 #
 # Expected failures are handled explicitly; checks run in conditionals so
 # their own exit codes and diagnostics decide the acceptance verdict.
@@ -152,7 +152,8 @@ Options:
   -h, --help         Show this help and exit 0.
 
 Exit: 0 pass, 1 a check failed, 2 bad command line or missing --allow-real-box,
-3 a required tool is unavailable or the 5.1 bench is inconclusive.
+3 a required tool is unavailable, the 5.1 bench is inconclusive, or 5.2
+needs an unlocked desktop with a usable display.
 Cleanup failure takes precedence over an inconclusive bench (exit 1).
 EOF
 }
@@ -873,6 +874,29 @@ _52_step3_restore() {
     return 0
 }
 
+# A configured local display needs its Unix socket, not just a stale name.
+_52_has_display() {
+    local _wayland="${WAYLAND_DISPLAY:-}" _display="${DISPLAY:-}"
+    if [[ -n "${_wayland}" ]]; then
+        if [[ "${_wayland}" != /* ]]; then
+            _wayland="${XDG_RUNTIME_DIR:-}/${_wayland}"
+        fi
+        [[ -S "${_wayland}" && -r "${_wayland}" && -w "${_wayland}" ]] && return 0
+    fi
+    if [[ "${_display}" =~ ^(unix/|unix)?:([0-9]+)(\.[0-9]+)?$ ]]; then
+        [[ -S "/tmp/.X11-unix/X${BASH_REMATCH[2]}" ]]
+        return $?
+    fi
+    [[ -n "${_display}" ]] || return 1
+    # TCP/forwarded X11 has no local socket. Probe when the tool is present;
+    # otherwise its reachability is unknown, rather than known unavailable.
+    if command -v xdpyinfo >/dev/null 2>&1; then
+        guard_timed "${TIMEOUT_SHORT}" xdpyinfo -display "${_display}" >/dev/null 2>&1
+        return $?
+    fi
+    log_warn "item 5.2: cannot verify non-local X11 display without xdpyinfo; proceeding"
+}
+
 # Query only the caller's session, never another user's active session.
 _52_desktop_preflight() {
     local _locked=""
@@ -888,7 +912,7 @@ _52_desktop_preflight() {
         no) ;;
         *) log_warn "item 5.2: cannot determine session lock state; proceeding" ;;
     esac
-    if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+    if ! _52_has_display; then
         printf '[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display; an unlocked desktop is needed, re-run from its graphical session\n' >&2
         return 3
     fi
