@@ -44,7 +44,7 @@ wait_job() {
     if [[ "${RC}" == 0 ]]; then
         tail -n 40 "${DIR}/log"
     else
-        awk '/^(not ok|FAIL|ERROR|Error|error:|\[ERROR\])/ { left=15 } left > 0 { print; left--; found=1; count++; if (count >= 80) exit } END { if (!found) exit 1 }' "${DIR}/log" || tail -n 40 "${DIR}/log"
+        awk '/^(not ok|FAIL|ERROR|Error|error:|In .* line [0-9]+:|\[ERROR\]|\[ci\] ERROR)/ { left=15 } left > 0 { print; left--; found=1; count++; if (count >= 80) exit } END { if (!found) exit 1 }' "${DIR}/log" || tail -n 40 "${DIR}/log"
     fi
     return "${state_rc}"
 }

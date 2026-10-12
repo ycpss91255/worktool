@@ -76,3 +76,11 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     assert_output --partial 'wait'
     assert_output --partial 'status'
 }
+@test "failure summaries preserve ShellCheck diagnostics before the recipe error" {
+    run "$JOB" start "$NAME" -- bash -c 'echo secret-prefix; for i in {1..100}; do echo filler; done; echo "In /source/example.sh line 13:"; echo "SC2016: invalid quoting"; echo "[ci] ERROR: ShellCheck failed"; echo "error: recipe lint failed"; for i in {1..100}; do echo trailing; done; exit 1'
+    assert_success
+    run "$JOB" wait "$NAME"
+    assert_failure 1
+    assert_output --partial 'SC2016: invalid quoting'
+    refute_output --partial 'secret-prefix'
+}
