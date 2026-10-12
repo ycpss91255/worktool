@@ -1044,6 +1044,24 @@ rc=0
       just verify realbox --allow-real-box 5.3; echo rc=$?
       ```
       預期 `rc=0`；本項最初就遇到既有 dev 時直接拒絕，不取得所有權。
+  - [ ] 5.4 自動完成 assemble／bench × SIGINT／SIGTERM／SIGHUP 實機中斷矩陣，不需要人按鍵。每格在獨立 session／行程群組啟動原有 5.1；assemble 以 distrobox list 觀察盒子出現（若已進入 bench 就判失敗），bench 以實際 `[INFO] psi before enter run ...` 或 `[INFO] enter: ... done` 診斷行決定時點。deadline 只限制等待，絕不依 sleep 或經過時間送出訊號。每格先拒絕既有同名盒，5.1 保持只刪本輪盒與 #511／#516 的 XDG 隔離。
+    - 每格必須回 130／143／129，捕捉到 `cleanup-rc=0`、`box-state after-cleanup: home=0 tmux=0`、`host-state after-cleanup: new=0`，再次查詢確認盒已移除、獨立 HOME 不存在，並確認該 session 無仍能執行的子行程。訊號前後以 `gh issue view --json comments` 比對完整留言 ID 集合，集合不變且沒有 `posted=` 回報才算沒有發出 #22 留言；若其他使用者同時留言也會失敗，須重跑。查詢失敗不能當作集合為空。
+    - stdout 成功輸出固定如下（每格逐行比對）。任一格失敗即停止、回 1，印該格 `FAIL (rc=...; evidence=...)` 與 `interrupt-matrix: FAIL`；原始 5.1 輸出送到 stderr，本輪證據與尚存的盒／HOME 保留供檢查。不宣稱涵蓋每行指令間的中斷，也不替代人類 Ctrl-C 主觀體驗。
+      ```text
+      interrupt assemble INT: rc=130 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt assemble TERM: rc=143 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt assemble HUP: rc=129 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench INT: rc=130 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench TERM: rc=143 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench HUP: rc=129 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt-matrix: PASS (6/6)
+      ```
+    - 驗收方式：
+      ```bash
+      just verify realbox --allow-real-box 5.4; echo rc=$?
+      ```
+      預期 `rc=0`。無參數的 realbox 現在依序執行 5.1–5.4；5.4 本身不發留言。
+
   realbox 自己的 5.1 assemble／bench、5.2 assemble 與 5.3 decoy create 將 `XDG_DATA_HOME` 指到本輪 scratch／備份目錄的 `data`，刪盒也使用同一路徑。Docker 中固定 distrobox 1.8.2.5 的真實 create／generate-entry 驗證 desktop entry 與 Ubuntu 圖示落在該目錄，清理後隨本輪目錄移除。host `${XDG_DATA_HOME:-~/.local/share}/applications` 與 `icons/distrobox` 保持執行前的內容與 mtime，原本不存在時仍不存在；不以刪除 host 匯出檔案補救。
   PR #228 後盒 HOME 獨立且建盒後固定。5.1 用本輪 scratch 下的 `box-home`；5.2 用備份目錄下的 `box-home`；5.3 的 decoy 也用本輪 scratch 下的 `box-home`。user config 連結只落在該 HOME。realbox 在建盒前記錄 host 預設目錄（`~/<盒名>-box`，dev 為 `~/dev-box`）的既有項目；還原時先刪除本輪建立的盒子，再回報 host 預設目錄的清理前／後新增項目數，所有權僅限本輪明確指定的獨立 `box-home`；基準差異與 `created-box` 都不能證明 host 預設目錄內路徑的歸屬。該目錄的所有新增項目（含目錄、檔案、symlink 與 socket）一律保留，stdout 印 `host-state kept-unknown=<新增項目數>`（正常為 `0`），stderr 逐項列出路徑；若數量非零，清理後仍印 `host-state after-cleanup: new=<新增項目數>` 並回非零，保留備份供檢查與重試。5.1、5.2、5.3 共用此規則，本輪獨立 HOME 仍會先清除。5.2.3 若沒有 `created-box` 所有權標記（本輪未啟動 assemble），stdout 只印 `dev-untouched=1` 與 `host-state untouched: new=<新增項目數>`，不清理 host 預設目錄；本輪未建盒、保留所有盒的說明以 `[INFO]` 寫到 stderr，5.3 的還原也相同；5.2.1 之後由使用者新增的檔案、symlink、目錄與 socket 全部保留，新增項目不視為本輪殘留。自訂盒 HOME（含 `.cache/tmux` 下的 socket 目錄）也回報清理前／後是否存在，清理後必須不存在。刪盒或狀態清理失敗會回非零並保留尚未清除的盒 HOME 與備份供重試；`leftover-dirs=0` 只代表受管設定目錄，不能單獨證明盒內狀態已清乾淨。產品預設 HOME 與 config 的保存／回報由 3.2 驗。
 

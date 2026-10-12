@@ -62,7 +62,7 @@ setup *args:
 diagram *args:
     ./script/verify/diagram.sh "$@"
 
-# Acceptance items 5.1-5.3: the real machine; needs --allow-real-box (args: ITEM, --allow-real-box, --repo, --issue, --comment-tag, --box, --image, --help).
+# Acceptance items 5.1-5.4: the real machine; needs --allow-real-box (args: ITEM, --allow-real-box, --repo, --issue, --comment-tag, --box, --image, --help).
 realbox *args:
     ./script/verify/realbox.sh "$@"
 
