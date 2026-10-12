@@ -175,6 +175,7 @@ _usage() {
         '' \
         '  --root <repo>  worktool checkout to verify (default: the one this script' \
         '                 lives in).' \
+        '  -l, --list     List the item ids and exit without running checks.' \
         '  --realbox      Accepted so every verify script shares one command line.' \
         '                 This script declares NO real-machine items - it only reads' \
         '                 files - so the flag enables nothing and creates nothing.' \

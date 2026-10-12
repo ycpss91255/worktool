@@ -42,3 +42,18 @@ STUB
     [ ! -e "${CALLS}" ]
     assert_equal "$(find "${HOME}" -mindepth 1 -print)" ""
 }
+
+@test "diagram and realbox help advertise --list after validating all arguments" {
+    local action option
+    for action in diagram realbox; do
+        run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify "${action}" --help
+        assert_success
+        assert_output --partial '--list'
+        for option in --help --list; do
+            run "${REAL_JUST}" --justfile "${REPO_ROOT}/justfile" verify "${action}" "${option}" --bogus
+            assert_failure 2
+            assert_output --partial "${action}.sh: unknown option '--bogus' (see --help)"
+        done
+    done
+    [ ! -e "${CALLS}" ]
+}

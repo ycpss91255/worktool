@@ -146,7 +146,9 @@ Items:
           No keyboard input; refuses existing boxes; preserves failed evidence.
 
 Options:
-  --allow-real-box   Required. Says you accept that this run creates and
+  -l, --list         List the item ids and exit without running checks.
+                     No --allow-real-box is needed; no box or config is touched.
+  --allow-real-box   Required to run checks. Says you accept that this run creates and
                      removes a distrobox, rewrites the ghostty and worktool
                      configs under $XDG_CONFIG_HOME, and comments on an issue.
   --repo OWNER/NAME  GitHub repository for 5.1 (default: ycpss91255/worktool).
