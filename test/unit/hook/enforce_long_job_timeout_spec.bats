@@ -220,3 +220,12 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check 'sleep 5 5' null 600000
     assert_failure 2
 }
+
+@test "job start owns detachment and must not inherit its command's foreground timeout requirement" {
+    _check 'just job start gate -- just test changed'
+    assert_success
+    export WORKTOOL_AGENT_ROLE=pr-loop
+    _check 'just job start gate -- just test changed'
+    assert_success
+    unset WORKTOOL_AGENT_ROLE
+}

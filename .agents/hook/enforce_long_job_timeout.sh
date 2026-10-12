@@ -44,6 +44,7 @@ _just_is_long() {
     local -a _words=("$@")
     for ((_i = 1; _i < ${#_words[@]}; _i++)); do
         _w="${_words[_i]}"
+        [[ "${_w}" == job ]] && return 1
         if [[ "${_w}" == test ]]; then
             [[ "${_words[_i + 1]:-}" =~ ^(help|h|--help|-h)$ ]] && return 1
             return 0
