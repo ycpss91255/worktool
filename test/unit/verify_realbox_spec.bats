@@ -31,6 +31,14 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 bats_require_minimum_version 1.5.0
 
+@test "realbox fixture: distrobox without arguments succeeds without a shift error" {
+    run bash -O shift_verbose "${STUBS}/distrobox"
+    assert_success
+    assert_output ""
+    assert_equal "$(cat "${STATE}/calls.log")" 'distrobox '
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "realbox: the default box name follows the shipped manifest before opt-in" {
     local _repo="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${_repo}"
