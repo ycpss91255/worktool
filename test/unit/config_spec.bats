@@ -38,6 +38,8 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+bats_require_minimum_version 1.5.0
+
 setup() {
     HOME="${BATS_TEST_TMPDIR}/home"
     export HOME
