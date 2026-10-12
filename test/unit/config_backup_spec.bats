@@ -45,6 +45,43 @@ setup() {
     assert_equal "$(stat -c %y "${root}")" '2002-02-02 00:00:00.000000000 +0000'
 }
 
+@test "#536: external XDG roots and direct parents are restored without touching ancestors" {
+    export XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/opt/config"
+    export XDG_CACHE_HOME="${BATS_TEST_TMPDIR}/var/cache"
+    local BOX=dev
+    # shellcheck source=script/verify/config_backup_paths.sh
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    cfgbk_paths
+    mkdir -p "${XDG_CONFIG_HOME}/ghostty" "${XDG_CACHE_HOME}/worktool"
+    printf 'original\n' >"${XDG_CONFIG_HOME}/ghostty/config"
+    local dirs=("${XDG_CONFIG_HOME}" "${XDG_CONFIG_HOME}/ghostty"
+        "${XDG_CACHE_HOME}" "${XDG_CACHE_HOME}/worktool")
+    local dir path mtime
+    for dir in "${dirs[@]}"; do touch -d '2001-01-01' "${dir}"; done
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    touch -d '2002-02-02' "${XDG_CONFIG_HOME%/*}" "${XDG_CACHE_HOME%/*}"
+    run cfgbk_dirs_ok
+    assert_success
+    while IFS= read -r -d '' path; do
+        IFS= read -r -d '' mtime
+        [[ "${path}" == "${XDG_CONFIG_HOME}" || "${path}" == "${XDG_CONFIG_HOME}/"* ||
+            "${path}" == "${XDG_CACHE_HOME}" || "${path}" == "${XDG_CACHE_HOME}/"* ]]
+    done <"${CFGBK_B}/directories"
+    printf 'changed\n' >"${XDG_CONFIG_HOME}/ghostty/config"
+    printf 'new log\n' >"${XDG_CACHE_HOME}/worktool/dev-init.log"
+    for dir in "${dirs[@]}"; do touch -d '2003-03-03' "${dir}"; done
+    cfgbk_restore_all
+    assert [ ! -e "${XDG_CACHE_HOME}/worktool/dev-init.log" ]
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 00:00:00.000000000 +0000'
+    done
+    for dir in "${XDG_CONFIG_HOME%/*}" "${XDG_CACHE_HOME%/*}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2002-02-02 00:00:00.000000000 +0000'
+    done
+}
+
 @test "#526: unchanged regular file, symlink and target keep their inodes on restore" {
     local config="${XDG_CONFIG_HOME}/ghostty/config" target="${HOME}/original"
     printf 'font-size = 13\n' >"${target}"
