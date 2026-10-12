@@ -93,3 +93,25 @@ _copy_matrix_repo() {
         done
     done
 }
+
+@test "5.4: a copy without cleanup turns every corresponding cell red" {
+    _copy_matrix_repo
+    sed -i '/^_51_cleanup() {/a\    if [[ "${TMPDIR}" == *"${MATRIX_DEGRADE_CELL}"* ]]; then return 0; fi' "${REALBOX}"
+    local phase signal code
+    for phase in assemble bench; do
+        for signal in INT TERM HUP; do
+            export MATRIX_DEGRADE_CELL="${phase}-${signal}"
+            : >"${MATRIX_STATE}/boxes"
+            case "${signal}" in INT) code=130 ;; TERM) code=143 ;; HUP) code=129 ;; esac
+            run "${REALBOX}" --allow-real-box 5.4
+            assert_failure 1
+            assert_line --partial "interrupt ${phase} ${signal}: FAIL (rc=${code}; cleanup-rc=missing; evidence="
+            assert_line 'interrupt-matrix: FAIL'
+            refute_output --partial 'interrupt-matrix: PASS'
+            [ -s "${MATRIX_STATE}/boxes" ]
+            local home
+            read -r home <"${MATRIX_STATE}/home"
+            [ -d "${home}/.cache/tmux" ]
+        done
+    done
+}
