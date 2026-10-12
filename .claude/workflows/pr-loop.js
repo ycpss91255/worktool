@@ -160,8 +160,8 @@ const CI_LOCAL_TEST_RULES = A.gates
 
 // The gate agent has no implementer context and returns only compact results.
 const jobInstructions = (name, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
-${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)}\``).join('\n')}
-job.sh wait blocks once and prints only a result and log tail or failure section. Never poll, tail -f, read whole logs, use Monitor or background tool calls. If start or wait fails, stop immediately and return state red with only the failure summary. Return green only when every wait exits 0. `
+${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)} --max-seconds 540\``).join('\n')}
+Set Bash tool timeout: 600000 for every start and wait call. Make at most 6 wait calls per job, each as a separate foreground Bash call. A wait exit 124 means still running: re-wait with the same job name and --max-seconds 540. Do not restart the job. job.sh wait prints only a result and log tail or failure section. Never poll status, tail -f, read whole logs, use Monitor or background tool calls. If start fails or wait exits anything other than 0 or 124, stop immediately and return state red with only the failure summary. After the sixth running result, return red with exhausted rc 124 and the job name. Return green only when every wait exits 0. `
 const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim()))} Only collect gates; never edit, commit or push.`, {
   label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
   schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',

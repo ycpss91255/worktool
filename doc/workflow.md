@@ -89,8 +89,11 @@ rc 為 124 表示 session 未完成，從 log 第一行 `session id:` 取得 id�
 禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行。
 所有 pr-loop 的 codex exec（包括 resume 與複驗）都帶 `WORKTOOL_AGENT_ROLE=pr-loop`。
 實作 codex 只跑切片 spec 與 `just test lint`，完成後提交，不守長 gate、不等待、不發布。
-workflow 另開低 effort gate stage，以 `just job start <name> -- <gate...>` 與一次 `just job wait <name>`
-收集結果；紅時只把失敗摘要交回 codex 修正，再跑 gate，綠後才由發布 stage 推送與開／更新 PR。
+workflow 另開低 effort gate stage，以 `just job start <name> -- <gate...>` 與 `just job wait <name> --max-seconds 540`
+收集結果；每次 start／wait 都是獨立前景 Bash 呼叫，工具 timeout 設為 `600000` ms。
+wait 回傳 `124` 代表仍在執行，以同一名稱再 wait，不重新 start，每個 job 最多六次 wait。
+start 失敗、wait 回傳非 `0`／`124`，或六次仍為 `124` 時回報紅；只有成功退出 `0` 才算綠。
+紅時只把失敗摘要交回 codex 修正，再跑 gate，綠後才由發布 stage 推送與開／更新 PR。
 完整 log 留在 `.agents/state/job/<name>/log`，綠的結果尾段逐字交給發布 stage 作為測試證據。
 CI 的本機 gate 與有 timeout 的 `gh pr checks --watch` 同樣走 job；一般未帶標記的獨立驗收 session
 仍可跑 `just verify all`、`just verify realbox` 與 `just test`（長工作仍遵守 timeout 規則）。見 ADR-0015。

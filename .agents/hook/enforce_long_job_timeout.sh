@@ -115,13 +115,30 @@ _poll_loop() {
     return 1
 }
 
+# A detached launch retains the role restrictions of its payload.
+_role_job_forbidden() {
+    local arg payload lead
+    [[ "${1:-}" == wait ]] && return 0
+    [[ "${1:-}" == start ]] || return 1
+    shift
+    while [[ $# -gt 0 ]]; do
+        arg="$1"; shift
+        [[ "$arg" == -- ]] || continue
+        payload="$*"
+        lead="$(hook_timeout_lead "$payload")"
+        _role_forbidden "${payload#"$lead"}"
+        return $?
+    done
+    return 1
+}
+
 _role_forbidden() {
     local -a w
     read -ra w <<<"$1"
     [[ "${w[0]:-}" == bash || "${w[0]:-}" == sh ]] && w=("${w[@]:1}")
     case "${w[0]##*/}" in
         sleep) return 0 ;;
-        job.sh) [[ "${w[1]:-}" == wait ]] && return 0 ;;
+        job.sh) _role_job_forbidden "${w[@]:1}"; return $? ;;
         gh)
             [[ " $1 " == *' --watch '* || " $1 " == *' run watch '* ]] && return 0 ;;
         just)
@@ -129,7 +146,7 @@ _role_forbidden() {
             for ((i=1; i<${#w[@]}; i++)); do
                 verb="${w[i]}"; next="${w[i+1]:-}"
                 case "$verb" in
-                    job) [[ "$next" == wait ]] && return 0; return 1 ;;
+                    job) _role_job_forbidden "${w[@]:i+1}"; return $? ;;
                     verify) [[ "$next" == all || "$next" == realbox ]] && return 0; return 1 ;;
                     box) _just_is_long "${w[@]}"; return $? ;;
                     test)

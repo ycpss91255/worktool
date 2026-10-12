@@ -194,11 +194,11 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     local cmd
     local WORKTOOL_AGENT_ROLE=pr-loop
     export WORKTOOL_AGENT_ROLE
-    for cmd in 'just test changed' 'just test' 'just test unit' 'just verify all' 'just verify realbox' 'just box assemble' 'just box bench' '.agents/script/job.sh wait gates' 'just job wait gates' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
+    for cmd in 'just test changed' 'just test' 'just test unit' 'just verify all' 'just verify realbox' 'just box assemble' 'just box bench' '.agents/script/job.sh wait gates' 'just job wait gates' 'just job start gates -- just test changed' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
         _check "$cmd" true 600000
         assert_failure 2
     done
-    for cmd in 'just test lint' 'just test unit test/unit/script/job_spec.bats' 'just box assemble --dry-run' 'just job start gates -- just test changed'; do
+    for cmd in 'just test lint' 'just test unit test/unit/script/job_spec.bats' 'just box assemble --dry-run' 'just job start lint -- just test lint' 'just job status gates'; do
         _check "$cmd" null 600000
         assert_success
     done
@@ -222,14 +222,26 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     assert_failure 2
 }
 
-@test "job start owns detachment and must not inherit its command's foreground timeout requirement" {
+@test "job start detaches standalone gates but pr-loop rejects forbidden payloads" {
     _check 'just job start gate -- just test changed'
     assert_success
     local WORKTOOL_AGENT_ROLE=pr-loop
     export WORKTOOL_AGENT_ROLE
-    _check 'just job start gate -- just test changed'
-    assert_success
+    local launcher payload
+    for launcher in 'just job' '.agents/script/job.sh' 'bash .agents/script/job.sh'; do
+        for payload in 'just test changed' 'just test unit' 'just verify all' \
+            'just box assemble' 'just job wait gate' 'sleep 1' \
+            'timeout 1800 just test changed' 'just job start nested -- just test changed'; do
+            _check "$launcher start gate -- $payload" true 600000
+            assert_failure 2
+            assert_output --partial 'pr-loop: delegate'
+        done
+        _check "$launcher start slice -- just test unit test/unit/script/job_spec.bats"
+        assert_success
+    done
     unset WORKTOOL_AGENT_ROLE
+    _check '.agents/script/job.sh start gate -- just test changed'
+    assert_success
 }
 
 @test "pr-loop delegates shell wait and single blocking gh run watches even when bounded" {

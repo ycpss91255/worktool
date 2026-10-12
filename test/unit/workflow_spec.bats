@@ -3507,6 +3507,20 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "pr-loop gate and CI prompts bound each wait and retry only running jobs (#550)" {
+    run _pl_run
+    assert_success
+    run jq -e '[.calls[] | select(.role | startswith("gates:") or startswith("ci:"))] |
+        length >= 2 and all(.[]; .prompt |
+            contains("--max-seconds 540") and contains("timeout: 600000") and
+            contains("at most 6 wait calls per job") and
+            contains("exit 124 means still running") and
+            contains("same job name") and contains("Do not restart the job") and
+            contains("exhausted rc 124") and
+            contains("Return green only when every wait exits 0"))' <<<"${output}"
+    assert_success
+}
+
 @test "pr-loop transient retries use a detached sleep job instead of foreground polling (#550)" {
     run _pl_retry_run false
     assert_success
