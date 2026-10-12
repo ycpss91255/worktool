@@ -174,3 +174,84 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check "(cd /r && timeout 600 just test unit)"
     assert_success
 }
+
+@test "blocks real 541 foreground polling for every agent even with a tool timeout" {
+    local cmd
+    for cmd in \
+        'tail --pid=2070005 -n 0 -f .agents/state/541-review-r1-changed-direct.log' \
+        'tail -F .agents/state/541-review-r1-changed-direct.log' \
+        'watch gh pr checks 541 -R ycpss91255/worktool' \
+        'sleep 60' \
+        'while kill -0 2070005; do sleep 1; done' \
+        'until test -f result; do sleep 1; done'; do
+        _check "$cmd" null 600000
+        assert_failure 2
+        assert_output --partial 'job.sh wait'
+    done
+}
+
+@test "pr-loop rejects gates and any wait while standalone acceptance remains allowed" {
+    local cmd
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    for cmd in 'just test changed' 'just test' 'just test unit' 'just verify all' 'just verify realbox' 'just box assemble' 'just box bench' '.agents/script/job.sh wait gates' 'just job wait gates' 'just job start gates -- just test changed' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
+        _check "$cmd" true 600000
+        assert_failure 2
+    done
+    for cmd in 'just test lint' 'just test unit test/unit/script/job_spec.bats' 'just box assemble --dry-run' 'just job start lint -- just test lint' 'just job status gates'; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    unset WORKTOOL_AGENT_ROLE
+    for cmd in 'just verify all' 'just verify realbox' 'just test' 'just test unit' '.agents/script/job.sh wait gates' 'just job wait gates' 'sleep 1' 'timeout 1800 gh pr checks 541 -R ycpss91255/worktool --watch'; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    _check 'tail --pid=2070005 -n 0 -f .agents/state/541-review-r1-changed-direct.log' true
+    assert_success
+    _check "echo 'while true; do sleep 60; done'"
+    assert_success
+}
+
+@test "fractional short retry sleeps remain allowed while cumulative long sleeps are blocked" {
+    _check 'sleep 0.1'
+    assert_success
+    _check 'sleep 1.5s 1'
+    assert_success
+    _check 'sleep 5 5' null 600000
+    assert_failure 2
+}
+
+@test "job start detaches standalone gates but pr-loop rejects forbidden payloads" {
+    _check 'just job start gate -- just test changed'
+    assert_success
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local launcher payload
+    for launcher in 'just job' '.agents/script/job.sh' 'bash .agents/script/job.sh'; do
+        for payload in 'just test changed' 'just test unit' 'just verify all' \
+            'just box assemble' 'just job wait gate' 'sleep 1' \
+            'timeout 1800 just test changed' 'just job start nested -- just test changed'; do
+            _check "$launcher start gate -- $payload" true 600000
+            assert_failure 2
+            assert_output --partial 'pr-loop: delegate'
+        done
+        _check "$launcher start slice -- just test unit test/unit/script/job_spec.bats"
+        assert_success
+    done
+    unset WORKTOOL_AGENT_ROLE
+    _check '.agents/script/job.sh start gate -- just test changed'
+    assert_success
+}
+
+@test "pr-loop delegates shell wait and single blocking gh run watches even when bounded" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    _check 'wait 2070005' null 600000
+    assert_failure 2
+    _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
+    assert_failure 2
+    unset WORKTOOL_AGENT_ROLE
+    _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
+    assert_success
+}

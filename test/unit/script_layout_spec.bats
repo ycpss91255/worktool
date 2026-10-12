@@ -58,3 +58,14 @@ setup() {
     assert_failure 1
     assert_output --partial 'failed.bak'
 }
+@test "allows only the shared job entry at the agent script root" {
+    touch "${ROOT}/.agents/script/job.sh"
+    chmod +x "${ROOT}/.agents/script/job.sh"
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_success
+    touch "${ROOT}/script/job.sh"
+    chmod +x "${ROOT}/script/job.sh"
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_failure 1
+    assert_output --partial 'top-level script: script/job.sh'
+}

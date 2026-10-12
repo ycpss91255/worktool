@@ -18,6 +18,10 @@
 # dropped), and a sub-command led by a text carrier (git, gh, grep, echo,
 # ...) is never a launch. The timeout(1) bound is judged per sub-command.
 #
+# Pure foreground waits/polling are blocked even with a time bound. Job
+# result collection and harness background notifications are the shared
+# alternatives. The pr-loop role delegates long gates and every wait to
+# its separate workflow agent, regardless of timeout/background settings.
 # Exit codes: 0 = allow, 2 = block.
 
 # shellcheck source-path=SCRIPTDIR/lib
@@ -44,6 +48,7 @@ _just_is_long() {
     local -a _words=("$@")
     for ((_i = 1; _i < ${#_words[@]}; _i++)); do
         _w="${_words[_i]}"
+        [[ "${_w}" == job ]] && return 1
         if [[ "${_w}" == test ]]; then
             [[ "${_words[_i + 1]:-}" =~ ^(help|h|--help|-h)$ ]] && return 1
             return 0
@@ -74,12 +79,117 @@ _is_long() {
     esac
 }
 
+# Pure waiting never earns a model turn, even when bounded.
+_is_wait() {
+    local -a w
+    local arg
+    read -ra w <<<"$1"
+    case "${w[0]##*/}" in
+        tail)
+            for arg in "${w[@]:1}"; do
+                [[ "$arg" == --pid* || "$arg" == --follow* || "$arg" =~ ^-[^-]*[fF] ]] && return 0
+            done ;;
+        watch|wait) return 0 ;;
+        sleep)
+            local total=0 value
+            for arg in "${w[@]:1}"; do
+                [[ "$arg" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)s?$ ]] || return 0
+                value="${arg%s}"
+                total="$(awk -v a="$total" -v b="$value" 'BEGIN { print a+b }')"
+            done
+            awk -v n="$total" 'BEGIN { exit !(n <= 5) }' || return 0 ;;
+    esac
+    return 1
+}
+
+_poll_loop() {
+    local script text sub has_loop
+    while IFS= read -r -d '' script; do
+        text="$(_hook_strip_heredocs "$script" | _hook_unquote)"
+        has_loop='(^|[;&|()[:space:]])(while|until)[[:space:]]'
+        [[ "$text" =~ $has_loop ]] || continue
+        while IFS= read -r sub; do
+            [[ "$sub" =~ ^(g?timeout[[:space:]]+[^[:space:]]+[[:space:]]+)?sleep[[:space:]] ]] && return 0
+        done < <(hook_subcommands "$script")
+    done < <(hook_scripts "$1")
+    return 1
+}
+
+# A detached launch retains the role restrictions of its payload.
+_role_job_forbidden() {
+    local arg payload lead
+    [[ "${1:-}" == wait ]] && return 0
+    [[ "${1:-}" == start ]] || return 1
+    shift
+    while [[ $# -gt 0 ]]; do
+        arg="$1"; shift
+        [[ "$arg" == -- ]] || continue
+        payload="$*"
+        lead="$(hook_timeout_lead "$payload")"
+        _role_forbidden "${payload#"$lead"}"
+        return $?
+    done
+    return 1
+}
+
+_role_forbidden() {
+    local -a w
+    read -ra w <<<"$1"
+    [[ "${w[0]:-}" == bash || "${w[0]:-}" == sh ]] && w=("${w[@]:1}")
+    case "${w[0]##*/}" in
+        sleep) return 0 ;;
+        job.sh) _role_job_forbidden "${w[@]:1}"; return $? ;;
+        gh)
+            [[ " $1 " == *' --watch '* || " $1 " == *' run watch '* ]] && return 0 ;;
+        just)
+            local i verb next
+            for ((i=1; i<${#w[@]}; i++)); do
+                verb="${w[i]}"; next="${w[i+1]:-}"
+                case "$verb" in
+                    job) _role_job_forbidden "${w[@]:i+1}"; return $? ;;
+                    verify) [[ "$next" == all || "$next" == realbox ]] && return 0; return 1 ;;
+                    box) _just_is_long "${w[@]}"; return $? ;;
+                    test)
+                        [[ "$next" =~ ^(lint|help|h|--help|-h)$ ]] && return 1
+                        [[ "$next" == changed || -z "$next" ]] && return 0
+                        # A tier alone, or only options, has no selected spec.
+                        local arg
+                        for arg in "${w[@]:i+2}"; do
+                            [[ "$arg" == *.bats ]] && return 1
+                        done
+                        return 0 ;;
+                esac
+            done ;;
+    esac
+    _is_wait "$1"
+}
+
 main() {
     hook_read_input
     local _cmd _sub
     _cmd="$(hook_command)"
     [[ -z "${_cmd}" ]] && hook_allow
+    if [[ "${WORKTOOL_AGENT_ROLE:-}" == pr-loop ]]; then
+        while IFS= read -r _sub; do
+            local role_lead
+            role_lead="$(hook_timeout_lead "${_sub}")"
+            if _role_forbidden "${_sub#"${role_lead}"}"; then
+                hook_block "pr-loop: delegate long gates and all waits to the workflow job stage."
+            fi
+        done < <(hook_subcommands "${_cmd}")
+        _poll_loop "${_cmd}" && hook_block "pr-loop: delegate polling to the workflow job stage."
+    fi
     [[ "$(hook_field '.tool_input.run_in_background')" == true ]] && hook_allow
+    if _poll_loop "${_cmd}"; then
+        hook_block "foreground polling: use job.sh wait or run_in_background."
+    fi
+    while IFS= read -r _sub; do
+        local lead
+        lead="$(hook_timeout_lead "${_sub}")"
+        if _is_wait "${_sub#"${lead}"}"; then
+            hook_block "foreground waiting: use job.sh wait or run_in_background."
+        fi
+    done < <(hook_subcommands "${_cmd}")
     [[ "$(hook_field '.tool_input.timeout')" =~ ^[1-9][0-9]*$ ]] && hook_allow
     while IFS= read -r _sub; do
         _self_wrapped "${_sub}" && continue

@@ -56,7 +56,7 @@ const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
 const CHANGED_GATE = BASE === 'main' ? 'just test changed' : `just test changed --base origin/${BASE}`
-const GATES = A.gates || (MODE === 'light' ? 'just test lint and only the touched specs with just test <tier> <spec>' : `just test lint, ${CHANGED_GATE}`)
+const GATES = A.gates || (MODE === 'light' ? 'just test lint' : `just test lint, ${CHANGED_GATE}`)
 const PARENT = A.parent || ''
 const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
@@ -101,7 +101,7 @@ const SKILL_LOAD = {
 const TDD_IMPLEMENT_RULES = `Treat the issue 驗收 section as the approved behaviour list; do not ask the maintainer to approve it again. Work in vertical slices: each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit. Never put a batch of tests in one commit.`
 const TDD_REVIEW_RULES = `Check that the commit history is vertical slices and that tests verify behaviour through the public interface. Structure- or implementation-detail tests are blocking.`
 const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. Never write a "[codex]" line yourself.`
-const CODEX_RULES = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
+const CODEX_RULES = `${COMMON_GUARDRAILS.replace(LOCAL_TEST_RULES, 'Run only slice specs and just test lint. In the TDD loop run only the slice\'s spec with just test <tier> <spec> [--filter]. Never run a whole tier locally; CI runs every tier. Do not run long gates or any waits, including job.sh wait.').replace(`(${GATES})`, '(slice specs and lint)')} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
 const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
@@ -117,7 +117,8 @@ ${IMPLEMENT_TASK}. Do NOT merge. Leave the worktree in place (later phases reuse
 const CODEX_IMPLEMENT_BRIEF = `${CODEX_RULES}
 ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
-${IMPLEMENT_TASK}. The PR body starts with "[codex]" and has no attribution footer. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
+${A.pr ? `Reuse PR #${A.pr}; the workflow will update it.\n` : ''}TASK (issue #${A.issue}): ${A.task}
+Do not push or open a PR; the workflow owns long gates and publication. Commit the completed vertical slices and report ready. Do NOT merge. Leave the worktree in place (later phases reuse it). Report: PR URL, branch, commit SHAs, RED/GREEN evidence, gate tails.`
 
 const IMPLEMENT_SNAPSHOT = `Before overwriting any output, run this foreground script to preserve the previous attempt:
 \`mkdir -p ${sq(SCRATCH)} && for file in ${sq(IMPLEMENT_OUT)} ${sq(`${IMPLEMENT_OUT}.log`)} ${sq(`${SCRATCH}/implement.rc`)}; do
@@ -130,10 +131,10 @@ const CODEX_FOREGROUND_RUN = (stem) => {
   const [out, log, rc, prompt, cont] = [`${stem}.md`, `${stem}.md.log`, `${stem}.rc`, `${stem}-prompt.md`, `${stem}-continue.md`].map(sq)
   return `Create ${SCRATCH}. With the Write tool, write the brief below verbatim to ${prompt} and write this continuation prompt to ${cont}: "Continue the same task from where you stopped. Inspect git status, git log and your earlier output first; do not redo finished slices." Remove any stale ${rc} with rm -f.
 Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
-rc=0; timeout ${CODEX_CALL_SECONDS} codex exec --skip-git-repo-check -C ${sq(WT)} -o ${out} - < ${prompt} > ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+rc=0; WORKTOOL_AGENT_ROLE=pr-loop timeout ${CODEX_CALL_SECONDS} codex exec --skip-git-repo-check -C ${sq(WT)} -o ${out} - < ${prompt} > ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
 After every call, list test containers mounting the worktree with \`docker ps --filter volume=${WT} --format '{{.ID}}'\` and stop every returned container with \`docker stop\`, then read ${rc}.
 rc 124 means the codex session is unfinished, not failed. Read its id from the first "session id: " line of ${log} (grep -m1 '^session id: ' ${log}) and resume that same session with this call, <session-id> replaced by the literal id:
-rc=0; cd ${sq(WT)} && timeout ${CODEX_CALL_SECONDS} codex exec resume --skip-git-repo-check -o ${out} <session-id> - < ${cont} >> ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
+rc=0; cd ${sq(WT)} && WORKTOOL_AGENT_ROLE=pr-loop timeout ${CODEX_CALL_SECONDS} codex exec resume --skip-git-repo-check -o ${out} <session-id> - < ${cont} >> ${log} 2>&1 || rc=$?; echo "$rc" > ${rc}
 Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it; never relaunch from scratch or detach.
 ${LAUNCH_FORBIDDEN}
 If the final codex rc is non-zero, report failure and include the last 80 lines from both \`tail -n 80 ${log}\` and \`tail -n 80 ${out}\`; never treat it as success.`
@@ -146,7 +147,7 @@ ${CODEX_RULES}
 First run: ${SETUP}.
 ${IMPLEMENT_SNAPSHOT}
 ${CODEX_FOREGROUND_RUN(`${SCRATCH}/implement`)}
-Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and opened its PR. Report any failed check; do not repair it yourself.
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, and committed its completed work. Report any failed check; do not repair it yourself.
 
 brief:
 ${CODEX_IMPLEMENT_BRIEF}`
@@ -157,13 +158,52 @@ const CI_LOCAL_TEST_RULES = A.gates
   ? `Before pushing run ${GATES} blocking in the foreground. Never run a whole tier locally; CI runs every tier.`
   : 'Locally run only just test lint and changed unit specs with just test unit <spec...> [--filter REGEX]. Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally; those tiers are verified by CI (ci-passed).'
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run ${GATES} blocking in the foreground, verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then run \`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast\` in the foreground. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+// The gate agent has no implementer context and returns only compact results.
+const jobInstructions = (name, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
+${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)} --max-seconds 540\``).join('\n')}
+Set Bash tool timeout: 600000 for every start and wait call. Make at most 6 wait calls per job, each as a separate foreground Bash call. A wait exit 124 means still running: re-wait with the same job name and --max-seconds 540. Do not restart the job. job.sh wait prints only a result and log tail or failure section. Never poll status, tail -f, read whole logs, use Monitor or background tool calls. If start fails or wait exits anything other than 0 or 124, stop immediately and return state red with only the failure summary. After the sixth running result, return red with exhausted rc 124 and the job name. Return green only when every wait exits 0. `
+const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim()))} Only collect gates; never edit, commit or push.`, {
+  label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
+  schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',
+})
+const publishCodex = (stage, pr, evidence) => agent(`${GUARDRAILS}
+In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
+Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [codex], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
+  label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
+})
+const completeCodex = async (stage, pr = A.pr) => {
+  let green = false, evidence = ''
+  for (let repair = 0; repair <= MAX; repair += 1) {
+    const gates = await gateStage(`${stage}${repair ? `-repair${repair}` : ''}`)
+    if (gates && gates.state === 'green') { green = true; evidence = gates.detail; break }
+    const summary = (gates && gates.detail) || 'gate stage returned no result'
+    if (repair === MAX || !gates) return summary
+    const fixed = await agent(`${CODEX_RULES}
+${CODEX_FOREGROUND_RUN(`${SCRATCH}/gate-fix-${stage}-${repair}`)}
+brief:
+${SKILL_LOAD.codex}
+${TDD_IMPLEMENT_RULES}
+Repair this failed gate in ${WT} without running or waiting for long gates. Only the failure summary follows:
+${summary}
+Run only slice specs and just test lint. Commit each complete repair with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication.
+Return ready only when codex exits successfully and its repair is committed; otherwise failed.`, {
+      label: `${RUN_ID} gate-fix:${stage}:${repair}`, phase: 'Fix',
+      schema: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }, agentType: 'general-purpose',
+    })
+    if (!fixed || fixed.status !== 'ready') return summary
+  }
+  if (!green) return 'gate repairs exhausted'
+  const published = await publishCodex(stage, pr, evidence)
+  return published && published.pr ? '' : 'publication failed'
+}
+
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}-${Date.now()}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
 2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的寫法、延伸情境、假設性繞過與措辭一律列為非阻擋項。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。阻擋項列在「## 阻擋項」標題下、非阻擋項列在「## 非阻擋項」標題下,每項引用 diff 位置。最後一行只能是「可合併」或「不可合併:<原因>」。"
-3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
-4. Post ONE PR comment through a body file: "[codex] 第 ${round} 輪複驗" + the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
+3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | WORKTOOL_AGENT_ROLE=pr-loop timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
+4. Post ONE PR comment through a body file: "[codex] 第 ${round} 輪複驗" + the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | WORKTOOL_AGENT_ROLE=pr-loop codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
 5. Return: verdict = "mergeable" if the LAST line of the answer is exactly 可合併, "blocked" if it starts with 不可合併, otherwise "blocked" too (unparseable is not a pass); blocking = the items under 「## 阻擋項」 (one string each, short); nonBlocking = items under 「## 非阻擋項」; answer = the verbatim answer.`
 
 const CLAUDE_REVIEW = (pr, round, prior) => `${GUARDRAILS}
@@ -183,14 +223,14 @@ ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (review round ${round})", with no attribution or session trailer lines); push. Post a PR comment starting with "[codex] 採納第 ${round} 輪:" listing what changed per item. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
+Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. Return the commit SHA and a summary for the workflow publication comment starting with "[codex] 採納第 ${round} 輪:".`
 
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
 ${CODEX_RULES}
 
 ${CODEX_FOREGROUND_RUN(`${SCRATCH}/fix-r${round}`)}
-Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, pushed ${A.branch}, and updated PR #${pr}. Report any failed check; do not repair it yourself.
+Do not add sandbox flags. After codex exits, verify with scripts that it changed only ${WT}, used the required noreply author and committer, added no attribution or session trailer lines, preserved vertical RED/GREEN slices, and committed its completed work. Report any failed check; do not repair it yourself.
 
 brief:
 ${CODEX_FIX_BRIEF(pr, round, blocking)}`
@@ -341,7 +381,7 @@ In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; 
   const checked = await checkStage(loc.pr, 'Implement')
   if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
-  const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
@@ -352,16 +392,19 @@ const implementFull = async () => {
     const brief = `${(IMPLEMENTER === 'codex' ? CODEX_IMPLEMENT : IMPLEMENT).replace(SETUP, setup)}\n${context}`
     let edited
     try {
-      edited = await agent(`${brief}\nReturn status ready only after implementation and publication succeed; otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
+      edited = await agent(`${brief}\nReturn status ready after the codex implementer commits its completed work (Claude still publishes); otherwise failed. Include reason with the actual exit code and error output, including ${IMPLEMENT_OUT}.log; never infer success from a partial report.`, {
         label: `${RUN_ID} implement:#${A.issue}${retry ? `:retry${retry}` : ''}`, phase: 'Implement',
         schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose',
       })
     } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
-    if (edited && edited.status === 'ready') return ''
+    if (edited && edited.status === 'ready') {
+      if (IMPLEMENTER !== 'codex') return ''
+      return completeCodex('Implement')
+    }
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
     if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
-    await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
-      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
+    await agent(`${jobInstructions(`retry-${A.issue}-${retry}-${Date.now()}`, [`sleep ${(retry + 1) * 30}`])} Preserve the worktree.`, {
+      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', effort: 'low', agentType: 'general-purpose',
     })
   }
 }
@@ -396,7 +439,7 @@ sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
-let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
 if (RESUME) {
@@ -428,9 +471,13 @@ for (;;) {
     ? CODEX_FIX(pr, fixes, blocking.length ? blocking : ['see the review answer above'])
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
   await agent(fixBrief, { label: `${RUN_ID} fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
+  if (IMPLEMENTER === 'codex') {
+    const failure = await completeCodex(`Fix-${fixes}`, pr)
+    if (failure) return result({ pr, sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [failure] })
+  }
   const checked = await checkStage(pr, 'Fix', sha)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
-  ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
 }

@@ -34,7 +34,16 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
-const replies = JSON.parse(repliesJson)
+// Existing pr-loop scenarios model successful external gates/publication by
+// default. Individual scenarios override either reply (including null).
+const replies = {
+  ...(process.env.WORKFLOW_JOB_REPLIES ? {
+    'gates:': { state: 'green', detail: 'success' },
+    'publish:Implement': { pr: 7, sha: 'abc' },
+    'publish:Fix': { pr: 7, sha: 'def' },
+  } : {}),
+  ...JSON.parse(repliesJson),
+}
 const calls = []
 const ran = []
 const workflowCalls = []
@@ -52,6 +61,7 @@ const checkHooks = (cmd) => {
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
+  if (k !== undefined && Array.isArray(replies[k])) return replies[k].shift() || null
   return k === undefined ? (label.startsWith('prepare:') ? { state: 'new' } : null) : replies[k]
 }
 
@@ -142,7 +152,7 @@ const playHandoverFiles = (role, prompt) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
-  calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, prompt })
+  calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
