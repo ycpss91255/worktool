@@ -564,3 +564,14 @@ _document_change() {
     assert_output --partial 'repository-scanning spec missing from guard list: test/unit/unlisted_spec.bats'
     [[ ! -s "${FAKE_DOCKER_CALLS}" ]] || fail 'dispatched before validation'
 }
+
+@test "changed shared job runner selects its script spec" {
+    mkdir -p "${TEMP_REPO}/.agents/script" "${TEMP_REPO}/test/unit/script"
+    printf '# job\n' > "${TEMP_REPO}/.agents/script/job.sh"
+    printf '@test "job" { true; }\n' > "${TEMP_REPO}/test/unit/script/job_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >> "${TEMP_REPO}/.agents/script/job.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/job_spec.bats')"
+}
