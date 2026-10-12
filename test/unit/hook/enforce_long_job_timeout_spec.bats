@@ -174,3 +174,18 @@ _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
     _check "(cd /r && timeout 600 just test unit)"
     assert_success
 }
+
+@test "blocks real 541 foreground polling for every agent even with a tool timeout" {
+    local cmd
+    for cmd in \
+        'tail --pid=2070005 -n 0 -f .agents/state/541-review-r1-changed-direct.log' \
+        'tail -F .agents/state/541-review-r1-changed-direct.log' \
+        'watch gh pr checks 541 -R ycpss91255/worktool' \
+        'sleep 60' \
+        'while kill -0 2070005; do sleep 1; done' \
+        'until test -f result; do sleep 1; done'; do
+        _check "$cmd" null 600000
+        assert_failure 2
+        assert_output --partial 'job.sh wait'
+    done
+}

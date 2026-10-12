@@ -74,12 +74,54 @@ _is_long() {
     esac
 }
 
+# Pure waiting never earns a model turn, even when bounded.
+_is_wait() {
+    local -a w
+    local arg
+    read -ra w <<<"$1"
+    case "${w[0]##*/}" in
+        tail)
+            for arg in "${w[@]:1}"; do
+                [[ "$arg" == --pid* || "$arg" == --follow* || "$arg" =~ ^-[^-]*[fF] ]] && return 0
+            done ;;
+        watch) return 0 ;;
+        sleep)
+            [[ "${w[1]:-}" =~ ^([0-9]+)([smhd]?)$ ]] || return 0
+            [[ "${BASH_REMATCH[2]}" == '' || "${BASH_REMATCH[2]}" == s ]] || return 0
+            [[ ${#BASH_REMATCH[1]} -lt 3 && $((10#${BASH_REMATCH[1]})) -le 5 ]] || return 0 ;;
+    esac
+    return 1
+}
+
+_poll_loop() {
+    local script text sub has_loop
+    while IFS= read -r -d '' script; do
+        text="$(_hook_strip_heredocs "$script" | _hook_unquote)"
+        has_loop='(^|[;&|()[:space:]])(while|until)[[:space:]]'
+        [[ "$text" =~ $has_loop ]] || continue
+        while IFS= read -r sub; do
+            [[ "$sub" =~ ^(g?timeout[[:space:]]+[^[:space:]]+[[:space:]]+)?sleep[[:space:]] ]] && return 0
+        done < <(hook_subcommands "$script")
+    done < <(hook_scripts "$1")
+    return 1
+}
+
 main() {
     hook_read_input
     local _cmd _sub
     _cmd="$(hook_command)"
     [[ -z "${_cmd}" ]] && hook_allow
     [[ "$(hook_field '.tool_input.run_in_background')" == true ]] && hook_allow
+    if _poll_loop "${_cmd}"; then
+        hook_block "foreground polling: use job.sh wait or run_in_background."
+    fi
+    while IFS= read -r _sub; do
+        local lead
+        lead="$(hook_timeout_lead "${_sub}")"
+        if _is_wait "${_sub#"${lead}"}"; then
+            hook_block "foreground waiting: use job.sh wait or run_in_background."
+        fi
+    done < <(hook_subcommands "${_cmd}")
     [[ "$(hook_field '.tool_input.timeout')" =~ ^[1-9][0-9]*$ ]] && hook_allow
     while IFS= read -r _sub; do
         _self_wrapped "${_sub}" && continue
