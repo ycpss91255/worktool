@@ -600,7 +600,7 @@ _52_baseline_ghostty() {
 }
 
 _52_step1_backup() {
-    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp || return $?
+    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp stat || return $?
     cfgbk_paths || return 1
     _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
@@ -824,7 +824,7 @@ _52_report_restore_window() {
 
 _52_step3_restore() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp \
+        ps find cmp stat touch \
         || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
@@ -875,7 +875,7 @@ _52_step3_restore() {
 
 item_52() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath || return $?
+        grep cut id cat find sort cmp ps realpath stat touch || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
@@ -977,7 +977,7 @@ _53_body() {
 
 item_53() {
     guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
-        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath || return $?
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \

@@ -321,11 +321,26 @@ EOF
 _path_without() {
     local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
     mkdir -p "${_path}"
-    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch; do
         [[ "${_tool}" != "$1" ]] || continue
         ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     printf '%s\n' "${_path}"
+}
+
+@test "#526: missing timestamp tools refuse full realbox chains before side effects" {
+    local tool item path
+    for tool in stat touch; do
+        path="$(_path_without "${tool}")"
+        for item in 5.2 5.3; do
+            run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+            assert_failure 3
+            assert_output --partial "[UNAVAILABLE] realbox.sh: ${tool} not found on PATH"
+            assert_equal "$(_count_calls distrobox)" '0'
+            assert_equal "$(_count_calls just)" '0'
+            assert [ ! -e "$(_backup_dir)" ]
+        done
+    done
 }
 
 @test "5.1: missing report or cleanup tools refuses before scratch or box creation" {
