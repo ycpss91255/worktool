@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # test/unit/hook/enforce_long_job_timeout_spec.bats - .agents/hook/enforce_long_job_timeout.sh
 #
-# A long FOREGROUND job (a `just test` tier, script/test/test.sh, an image
+# A Claude long FOREGROUND job (a `just test` tier, script/test/test.sh, an image
 # build, a compose service run) must be bounded: run_in_background, the Bash
 # timeout param, or a self-wrapped timeout(1). Otherwise the hook blocks
 # (exit 2) so a hung gate can never wedge the session. Words inside quoted
@@ -49,6 +49,19 @@ _implementer_payload() {
         assert_failure 2
         assert_output --partial 'pr-loop: delegate'
     done
+}
+
+@test "Claude input without turn_id still blocks lint without a timeout" {
+    unset WORKTOOL_AGENT_ROLE
+    # Claude Code hooks reference: common input fields, with no turn_id.
+    run_hook enforce_long_job_timeout "$(jq -n --arg cwd "${BATS_TEST_TMPDIR}" '{
+        session_id:"abc123", transcript_path:"/missing/transcript.jsonl",
+        cwd:$cwd, permission_mode:"default", hook_event_name:"PreToolUse",
+        tool_name:"Bash", tool_use_id:"toolu_01ABC123",
+        tool_input:{command:"just test lint", description:"Run lint"}
+    }')"
+    assert_failure 2
+    assert_output --partial 'long-running foreground command with no time bound'
 }
 
 # --- blocked -----------------------------------------------------------------
