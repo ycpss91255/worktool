@@ -1000,6 +1000,28 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     refute_output --partial "just box setup"
 }
 
+@test "#529: usable X11 fallback and absolute Wayland paths preserve the flow" {
+    _fake_window_process
+    local _x="${BASHPID}" _mode
+    mkdir -p /tmp/.X11-unix
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "/tmp/.X11-unix/X${_x}"
+    for _mode in x11 wayland; do
+        if [[ "${_mode}" == x11 ]]; then
+            export WAYLAND_DISPLAY=absent DISPLAY=":${_x}.0"
+        else
+            unset DISPLAY
+            export WAYLAND_DISPLAY="${XDG_RUNTIME_DIR}/wayland-test"
+        fi
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "0"
+        assert_output --partial "window-evidence: pid=4242"
+        assert_output --partial "restore-ok=1"
+        refute_output --partial "[INCONCLUSIVE]"
+    done
+    rm "/tmp/.X11-unix/X${_x}"
+}
+
 # --- 5.2 step 1: back up -----------------------------------------------------
 
 _install_restore_window_tools() {
