@@ -3490,3 +3490,13 @@ _pl_retry_run() {
         ([.calls[] | select(.role | startswith("gates:"))] | length) == 2' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop CI watches checks and runs its gates through jobs (#550)" {
+    run _pl_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.calls[] | select(.role | startswith("ci:")) | .effort == "low" and
+        (.prompt | contains("just job start") and contains("just job wait") and
+            contains("timeout 1800 gh pr checks 7 --repo o/r --watch --fail-fast") and
+            (contains("Then run `timeout 1800") | not))' <<<"${output}"
+    assert_success
+}

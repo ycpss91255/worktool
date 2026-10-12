@@ -158,7 +158,7 @@ const CI_LOCAL_TEST_RULES = A.gates
   ? `Before pushing run ${GATES} blocking in the foreground. Never run a whole tier locally; CI runs every tier.`
   : 'Locally run only just test lint and changed unit specs with just test unit <spec...> [--filter REGEX]. Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally; those tiers are verified by CI (ci-passed).'
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run ${GATES} blocking in the foreground, verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then run \`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast\` in the foreground. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}-${Date.now()}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
@@ -342,7 +342,7 @@ In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; 
   const checked = await checkStage(loc.pr, 'Implement')
   if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
-  const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
@@ -350,7 +350,7 @@ In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; 
 const jobInstructions = (name, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
 ${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)}\``).join('\n')}
 job.sh wait blocks once and prints only a result and log tail or failure section. Never poll, tail -f, read whole logs, use Monitor or background tool calls. If start or wait fails, stop immediately and return state red with only the failure summary. Return green only when every wait exits 0. Never edit, commit or push.`
-const gateStage = (stage) => agent(jobInstructions(`550-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim())), {
+const gateStage = (stage) => agent(jobInstructions(`pr-loop-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim())), {
   label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
   schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',
 })
@@ -439,7 +439,7 @@ sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
-let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
 if (RESUME) {
@@ -477,7 +477,7 @@ for (;;) {
   }
   const checked = await checkStage(pr, 'Fix', sha)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
-  ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', schema: CI_SCHEMA, agentType: 'general-purpose' })
+  ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
 }
