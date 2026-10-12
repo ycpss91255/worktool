@@ -16,3 +16,14 @@ teardown() { rm -rf "${REPO_ROOT}/.agents/state/job/${NAME}"; }
     assert_success
     assert_output --partial 'success'
 }
+@test "wait times out with 124 while status remains nonblocking" {
+    run "$JOB" start "$NAME" -- sleep 2
+    assert_success
+    run "$JOB" wait "$NAME" --max-seconds 0
+    assert_failure 124
+    assert_output --partial 'running'
+    run "$JOB" status "$NAME"
+    assert_failure 124
+    run "$JOB" wait "$NAME" --max-seconds 5
+    assert_success
+}

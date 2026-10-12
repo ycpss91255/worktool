@@ -31,7 +31,11 @@ state() {
     return 124
 }
 wait_job() {
-    while [[ ! -f "${DIR}/rc" ]]; do sleep 1; done
+    local deadline=$((SECONDS + MAX_SECONDS))
+    while [[ ! -f "${DIR}/rc" ]]; do
+        if [[ "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
+        sleep 1
+    done
     state
     tail -n 40 "${DIR}/log"
     [[ "${RC}" == 0 ]] || exit 1
@@ -43,7 +47,14 @@ main() {
     DIR="${ROOT}/.agents/state/job/${NAME}"
     case "${verb}" in
         start) [[ "${1:-}" == -- && $# -gt 1 ]] || bad 'start requires -- <cmd...>'; shift; start_job "$@" ;;
-        wait) [[ $# == 0 ]] || bad "unknown option '$1'"; [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
+        wait)
+            MAX_SECONDS=86400
+            if [[ "${1:-}" == --max-seconds && $# == 2 ]]; then
+                [[ "$2" =~ ^[0-9]+$ && ${#2} -le 6 ]] || bad 'invalid max-seconds'
+                MAX_SECONDS=$((10#$2)); shift 2
+            fi
+            [[ $# == 0 ]] || bad "unknown option '$1'"
+            [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
         status) [[ $# == 0 ]] || bad "unknown option '$1'"; state ;;
         *) bad "unknown option '${verb}'" ;;
     esac
