@@ -321,11 +321,26 @@ EOF
 _path_without() {
     local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
     mkdir -p "${_path}"
-    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch; do
         [[ "${_tool}" != "$1" ]] || continue
         ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
     done
     printf '%s\n' "${_path}"
+}
+
+@test "#526: missing timestamp tools refuse full realbox chains before side effects" {
+    local tool item path
+    for tool in stat touch; do
+        path="$(_path_without "${tool}")"
+        for item in 5.2 5.3; do
+            run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+            assert_failure 3
+            assert_output --partial "[UNAVAILABLE] realbox.sh: ${tool} not found on PATH"
+            assert_equal "$(_count_calls distrobox)" '0'
+            assert_equal "$(_count_calls just)" '0'
+            assert [ ! -e "$(_backup_dir)" ]
+        done
+    done
 }
 
 @test "5.1: missing report or cleanup tools refuses before scratch or box creation" {
@@ -437,7 +452,82 @@ _seed_box() { printf '%s\n' "$1" >>"${STATE}/boxes"; }
 
 _ghostty_config() { printf '%s\n' "${HOME}/.config/ghostty/config"; }
 
+@test "#526: 5.3 refused apply preserves every pre-existing parent directory mtime" {
+    mkdir -p "${HOME}/.cache/worktool" "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+    printf 'original log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    printf 'original state\n' >"${HOME}/.config/worktool/config"
+    local dir
+    local dirs=("${HOME}" "${HOME}/.config" "${HOME}/.config/ghostty"
+        "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+        "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+
+    run "${REALBOX}" --allow-real-box 5.3
+
+    assert_success
+    assert_line 'restore-ok=1'
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
 _backup_dir() { printf '%s\n' "${TMPDIR}/worktool-m3-52-backup.$(id -u)"; }
+
+@test "#526: 5.2 apply and restore recover parent mtimes including originally absent files" {
+    local repo dir target="${HOME}/targets/ghostty" link
+    repo="$(_repo_copy)"
+    link="$(_ghostty_config)"
+    mkdir -p "${HOME}/targets" "${HOME}/.cache/worktool"
+    mv "${link}" "${target}"
+    ln -s "${target}" "${link}"
+    local dirs=("${HOME}" "${HOME}/targets" "${HOME}/.config"
+        "${HOME}/.config/ghostty" "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    printf 'new log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    rm "${target}"
+    printf 'changed target\n' >"${target}"
+
+    run _restore_input 4242
+
+    assert_success
+    assert_line 'restore-ok=1'
+    assert [ ! -e "${HOME}/.cache/worktool/dev-init.log" ]
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
+@test "#526: a directory mtime mismatch at the end of restore fails restore-ok" {
+    mkdir -p "${HOME}/.cache/worktool"
+    _realbox_quiet 5.2.1
+    export REAL_TOUCH
+    REAL_TOUCH="$(type -P touch)"
+    "${REAL_TOUCH}" -d '1999-01-01 01:01:01' "${HOME}/.cache"
+    cat >"${STUBS}/touch" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${REAL_TOUCH}" "$@"
+# Simulate another writer changing a previously restored directory.
+if [[ "${*: -1}" == "${HOME}/.cache" ]]; then
+    "${REAL_TOUCH}" -d '2002-02-02 02:02:02' "${HOME}/.cache/worktool"
+fi
+STUB
+    chmod +x "${STUBS}/touch"
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+
+    assert_failure 1
+    assert_line 'restore-files-ok=0'
+    assert_line 'restore-ok=0'
+    assert_output --partial 'directory mtime mismatch:'
+    assert [ -d "$(_backup_dir)" ]
+}
 
 # Run realbox.sh for real (not under `run`), so $output stays whatever the
 # case under test put there.
@@ -2110,6 +2200,8 @@ STUB
 @test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
+    # Force an actual restore copy; identical live files are now skipped.
+    printf 'changed config\n' >"$(_ghostty_config)"
     VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
     export VERIFY_RESTORE_SOURCE
     VERIFY_CP="$(cat "${STATE}/real/cp")"
@@ -2126,7 +2218,7 @@ STUB
     assert_failure 1
     assert_line 'restore-ok=0'
     assert_line 'blocks=0'
-    assert_output --partial 'restored content checksum mismatch'
+    assert_output --partial 'restored type, content, mode or link mismatch'
     refute_line 'backup-removed=1'
     [ -d "$(_backup_dir)" ]
 }
@@ -2367,6 +2459,25 @@ _assert_data_unchanged() {
     run cmp "${STATE}/init-baseline" "${log}"
     assert_success
     assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+}
+
+@test "#526: 5.2.3 restores the mtime of an identical rewritten init log without replacing its inode" {
+    local log="${HOME}/.cache/worktool/dev-init.log" inode
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2001-01-01 01:01:01.123456789' "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    inode="$(stat -c %i "${log}")"
+    _realbox_quiet 5.2.1
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2002-02-02 02:02:02.987654321' "${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+    assert_equal "$(stat -c %i "${log}")" "${inode}"
 }
 
 @test "#516: 5.2.3 removes the Ghostty init log when originally absent" {

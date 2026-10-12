@@ -16,6 +16,32 @@ setup() {
     cfgbk_paths
 }
 
+@test "#526: unchanged regular file, symlink and target keep their inodes on restore" {
+    local config="${XDG_CONFIG_HOME}/ghostty/config" target="${HOME}/original"
+    printf 'font-size = 13\n' >"${target}"
+    chmod 640 "${target}"
+    ln -s ../../original "${config}"
+    printf 'set -g mouse on\n' >"${HOME}/.tmux.conf"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    local link_inode target_inode regular_inode
+    link_inode="$(stat -c %i "${config}")"
+    target_inode="$(stat -c %i "${target}")"
+    regular_inode="$(stat -c %i "${HOME}/.tmux.conf")"
+    # Keep each original inode allocated so delete/recreate cannot reuse it.
+    ln -P "${config}" "${BATS_TEST_TMPDIR}/pinned-link"
+    ln "${target}" "${BATS_TEST_TMPDIR}/pinned-target"
+    ln "${HOME}/.tmux.conf" "${BATS_TEST_TMPDIR}/pinned-regular"
+
+    cfgbk_restore_one ghostty
+    cfgbk_restore_one tmux-conf
+
+    assert_equal "$(stat -c %i "${config}")" "${link_inode}"
+    assert_equal "$(stat -c %i "${target}")" "${target_inode}"
+    assert_equal "$(stat -c %i "${HOME}/.tmux.conf")" "${regular_inode}"
+}
+
 @test "#525: removing user trailing blank lines reports LOST and fails" {
     local config="${XDG_CONFIG_HOME}/ghostty/config"
     printf 'font-size = 13\n\n\n' >"${config}"
