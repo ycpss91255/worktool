@@ -3506,3 +3506,11 @@ _pl_retry_run() {
             (contains("Then run `timeout 1800") | not))' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop transient retries use a detached sleep job instead of foreground polling (#550)" {
+    run _pl_retry_run false
+    assert_success
+    run jq -e '.calls[] | select(.role | startswith("implement-wait:")) | .effort == "low" and
+        (.prompt | contains("just job start") and contains("-- sleep 30") and contains("just job wait"))' <<<"${output}"
+    assert_success
+}

@@ -403,8 +403,8 @@ const implementFull = async () => {
     }
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
     if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
-    await agent(`Wait blocking in the foreground before retrying implementation: \`cd ${sq(WT)} && sleep ${(retry + 1) * 30}\`. Preserve the worktree.`, {
-      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', agentType: 'general-purpose',
+    await agent(`${jobInstructions(`retry-${A.issue}-${retry}-${Date.now()}`, [`sleep ${(retry + 1) * 30}`])} Preserve the worktree.`, {
+      label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', effort: 'low', agentType: 'general-purpose',
     })
   }
 }
