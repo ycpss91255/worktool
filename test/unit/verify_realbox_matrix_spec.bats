@@ -115,19 +115,27 @@ _copy_matrix_repo() {
     done
 }
 
-@test "5.4: the event wait tolerates a capture the child has not opened yet" {
-    # shellcheck source=lib/realbox_interrupt.sh
-    source "${REPO_ROOT}/lib/realbox_interrupt.sh"
-    local work="${BATS_TEST_TMPDIR}/event" child
-    mkdir -p "${work}"
-    mkfifo "${work}/poll"
-    exec {_54_POLL_FD}<>"${work}/poll"
-    sleep 30 3>&- &
-    child=$!
-    _54_PID="${child}"
-    (sleep 0.5 && printf '[INFO] psi before enter run 1: x\n' >"${work}/capture") 3>&- &
-    TIMEOUT_LONG=10 run _54_event bench "${work}/capture"
-    kill "${child}"
-    assert_success
-    refute_output --partial 'No such file'
+@test "5.4: an unavailable capture fails before waiting for an interrupt event" {
+    # Inject a filesystem failure at the external mkdir seam.
+    cat >"${MATRIX_STATE}/bin/mkdir" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+/bin/mkdir "$@"
+for dir in "$@"; do
+    case "${dir}" in
+        */wt-m3-54.*/*) /bin/mkdir "${dir}/capture" ;;
+    esac
+done
+STUB
+    chmod +x "${MATRIX_STATE}/bin/mkdir"
+
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'cannot create interrupt capture'
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'observable event missed'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/home" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
 }

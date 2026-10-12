@@ -62,11 +62,6 @@ _54_event() {
     local phase="$1" capture="$2" deadline=$((SECONDS + TIMEOUT_LONG)) rc
     while ((SECONDS < deadline)); do
         kill -0 "${_54_PID}" 2>/dev/null || return 1
-        # The child opens its capture after fork; absence means not yet.
-        if [[ ! -e "${capture}" ]]; then
-            _54_poll || return 1
-            continue
-        fi
         if [[ "${phase}" == assemble ]]; then
             if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
             rc=0
@@ -132,9 +127,11 @@ _54_cell() {
     capture="${dir}/capture"
     _refuse_preexisting_box 'Interrupt matrix will not touch an existing box.' || return 1
     _54_comments "${dir}/comments-before" || return 1
+    # Prepare evidence before forking so the observer always has a capture.
+    : >"${capture}" || { guard_fail 'cannot create interrupt capture'; return 1; }
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
-        --issue "${ISSUE}" --box "${BOX}" 5.1 >"${capture}" 2>&1 &
+        --issue "${ISSUE}" --box "${BOX}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
     if _54_event "${phase}" "${capture}"; then
         kill -s "${signal}" -- "-${_54_PID}" || rc=1
