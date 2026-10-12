@@ -39,9 +39,8 @@
 #     - they refuse to run without the explicit --allow-real-box opt-in;
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
-#     - ownership is claimed BEFORE anything can exist (the marker means
-#       "assemble was ATTEMPTED", not "assemble returned 0"), so an interrupt
-#       mid-create still leaves cleanup able to remove the box;
+#     - ownership requires successful assemble and a confirmed listed box;
+#       the claim is recorded before propagating an interrupt to cleanup;
 #     - cleanup and restore run on EXIT INT TERM HUP, and a failed cleanup
 #       fails the whole run.
 #
@@ -177,6 +176,31 @@ _just() {
         trap 'exit 143' TERM
         trap 'exit 129' HUP
         cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@"
+    )
+}
+
+# Record success inside the supervised group, before _just's signal status
+# could hide the assemble result. A failed command never grants ownership.
+_assemble_owned_box() {
+    (
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+        cd -- "${REPO_ROOT}" || exit 1
+        verify_run "${TIMEOUT_LONG}" bash -c '
+            trap ":" INT TERM HUP
+            source "$1/lib/guard.sh"
+            dir="$2" box="$3" secs="$4"
+            just box assemble --home "${dir}/box-home" || {
+                guard_fail "just box assemble failed"; exit 1;
+            }
+            guard_box_exists "${box}" "${secs}" || {
+                guard_fail "assemble returned 0 but box '\''${box}'\'' is not listed"; exit 1;
+            }
+            : >"${dir}/created-box" || {
+                guard_fail "cannot record box ownership at ${dir}/created-box"; exit 1;
+            }
+        ' _ "${REPO_ROOT}" "$1" "${BOX}" "${TIMEOUT_SHORT}"
     )
 }
 
@@ -352,11 +376,10 @@ _on_exit() {
 # 5.1  real-machine bench
 # =============================================================================
 _51_W=""
-_51_CREATED=0
 
 _51_cleanup() {
     local _crc=0
-    if [[ "${_51_CREATED}" -eq 1 ]]; then
+    if [[ -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
@@ -530,14 +553,8 @@ _51_body() {
     _run_id="m3-51-${_stamp}-$$"
     _51_prepare_config || return 1
 
-    # Ownership BEFORE the box can exist: the marker means "assemble was
-    # ATTEMPTED", not "assemble returned 0", so an interrupt anywhere inside
-    # assemble still hands cleanup the box. A marker with no box is the safe
-    # direction, and cleanup tolerates it.
-    _51_CREATED=1
-    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
-        || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" \
+        _assemble_owned_box "${_51_W}" >/dev/null || return 1
 
     printf 'phase=bench\n' >&2
     XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
@@ -574,7 +591,6 @@ item_51() {
     [[ -d "${_51_W}" ]] \
         || { guard_fail "mktemp returned '${_51_W}', which is not a directory"; return 1; }
 
-    _51_CREATED=0
     _host_state_snapshot "${_51_W}" || return $?
     _cleanup_push 51
     local _rc=0
