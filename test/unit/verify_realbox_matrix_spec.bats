@@ -49,12 +49,11 @@ set -euo pipefail
 if [[ "$1" == rm && "${XDG_DATA_HOME}" == *"${MATRIX_FAIL_CELL}"* ]]; then
     exit 1
 fi
-exec "${REPO_ROOT}/test/unit/fixture/realbox_tool.sh" "$@"
+exec "${MATRIX_STATE}/original/distrobox" "$@"
 STUB
-    # The fixture dispatches on basename, so keep a real distrobox-named copy.
+    # Preserve the basename used by the tool fixture to dispatch.
     mkdir -p "${MATRIX_STATE}/original"
     install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${MATRIX_STATE}/original/distrobox"
-    sed -i 's|${REPO_ROOT}/test/unit/fixture/realbox_tool.sh|${MATRIX_STATE}/original/distrobox|' "${MATRIX_STATE}/bin/distrobox"
     local phase signal
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
@@ -79,12 +78,12 @@ _copy_matrix_repo() {
 
 @test "5.4: a copy without signal forwarding turns the interrupt cell red" {
     _copy_matrix_repo
-    sed -i 's/verify_stop_group "${monitor}" "${interrupted}"/if [[ "${TMPDIR}" != *"${MATRIX_DEGRADE_CELL}"* ]]; then verify_stop_group "${monitor}" "${interrupted}"; fi/' "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    sed -i "s/verify_stop_group \"\${monitor}\" \"\${interrupted}\"/if [[ \"\${TMPDIR}\" != *\"\${FORWARDING_DEGRADE_CELL}\"* ]]; then verify_stop_group \"\${monitor}\" \"\${interrupted}\"; fi/" "${MATRIX_STATE}/repo/lib/verify_run.sh"
     sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
     local phase signal
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
-            export MATRIX_DEGRADE_CELL="${phase}-${signal}"
+            export FORWARDING_DEGRADE_CELL="${phase}-${signal}"
             run "${REALBOX}" --allow-real-box 5.4
             assert_failure 1
             assert_line --partial "interrupt ${phase} ${signal}: FAIL ("
@@ -96,11 +95,11 @@ _copy_matrix_repo() {
 
 @test "5.4: a copy without cleanup turns every corresponding cell red" {
     _copy_matrix_repo
-    sed -i '/^_51_cleanup() {/a\    if [[ "${TMPDIR}" == *"${MATRIX_DEGRADE_CELL}"* ]]; then return 0; fi' "${REALBOX}"
+    sed -i "/^_51_cleanup() {/a\\    if [[ \"\${TMPDIR}\" == *\"\${CLEANUP_DEGRADE_CELL}\"* ]]; then return 0; fi" "${REALBOX}"
     local phase signal code
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
-            export MATRIX_DEGRADE_CELL="${phase}-${signal}"
+            export CLEANUP_DEGRADE_CELL="${phase}-${signal}"
             : >"${MATRIX_STATE}/boxes"
             case "${signal}" in INT) code=130 ;; TERM) code=143 ;; HUP) code=129 ;; esac
             run "${REALBOX}" --allow-real-box 5.4
@@ -109,9 +108,9 @@ _copy_matrix_repo() {
             assert_line 'interrupt-matrix: FAIL'
             refute_output --partial 'interrupt-matrix: PASS'
             [ -s "${MATRIX_STATE}/boxes" ]
-            local home
-            read -r home <"${MATRIX_STATE}/home"
-            [ -d "${home}/.cache/tmux" ]
+            local box_home
+            read -r box_home <"${MATRIX_STATE}/home"
+            [ -d "${box_home}/.cache/tmux" ]
         done
     done
 }

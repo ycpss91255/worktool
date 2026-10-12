@@ -18,10 +18,10 @@ _54_cleanup() {
 # timeout gives commands their own groups within the child's private session.
 # A forwarding regression must fail even if the outer shell cleaned its box.
 _54_session_groups() {
-    local file row status parent group session rest
+    local file row status _parent group session rest
     for file in /proc/[0-9]*/stat; do
         if ! IFS= read -r row <"${file}" 2>/dev/null; then continue; fi
-        read -r status parent group session rest <<<"${row##*) }"
+        read -r status _parent group session rest <<<"${row##*) }"
         if [[ "${session}" == "$1" && "${status}" != Z && "${status}" != X ]]; then
             printf '%s\n' "${group}"
         fi

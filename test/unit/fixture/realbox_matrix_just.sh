@@ -3,9 +3,9 @@ set -euo pipefail
 phase="${2:-}"
 if [[ "${phase}" == assemble ]]; then
     printf 'dev\n' >"${MATRIX_STATE}/boxes"
-    home="${@: -1}"
-    mkdir -p "${home}/.cache/tmux"
-    printf '%s\n' "${home}" >"${MATRIX_STATE}/home"
+    box_home="${*: -1}"
+    mkdir -p "${box_home}/.cache/tmux"
+    printf '%s\n' "${box_home}" >"${MATRIX_STATE}/home"
     if [[ "${TMPDIR}" == *assemble* ]]; then
         trap 'exit 0' INT TERM HUP
         while :; do sleep 0.1; done
