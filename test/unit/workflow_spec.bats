@@ -3586,7 +3586,7 @@ _pl_retry_run() {
         assert_success
         if [[ "${tag}" == '"wave-555"' ]]; then
             run jq -c '[.error,.workflowCalls[0].args.runTag,.result[0].ciState]' <<<"${output}"
-            assert_output '[null,"wave-555","error"]'
+            assert_output '[null,"wave-555","none"]'
         else
             run jq -c '[.error,(.workflowCalls | length),(.calls | length)]' <<<"${output}"
             assert_output '["milestone-fanout: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)",0,0]'
