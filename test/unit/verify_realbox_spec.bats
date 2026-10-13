@@ -2916,3 +2916,35 @@ STUB
     run cat "${STATE}/calls.log"
     refute_output --partial 'loginctl show-session 72'
 }
+
+@test "#562: one unlocked graphical session passes among locked and text sessions" {
+    unset XDG_SESSION_ID
+    export FAKE_SESSIONS="72 ${UID} test seat0 tty2
+73 ${UID} test seat0 tty3
+71 ${UID} test seat0 tty1"
+    cp "${STUBS}/loginctl" "${STATE}/loginctl"
+    cat >"${STUBS}/loginctl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${2:-}" in
+    72 | 73)
+        printf 'loginctl %s\n' "$*" >>"${FAKE_STATE_DIR}/calls.log"
+        printf 'User=%s\nActive=yes\n' "${UID}"
+        if [[ "$2" == 72 ]]; then
+            printf 'Type=wayland\nLockedHint=yes\n'
+        else
+            printf 'Type=tty\nLockedHint=no\n'
+        fi
+        ;;
+    *) exec "${FAKE_STATE_DIR}/loginctl" "$@" ;;
+esac
+STUB
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    assert_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 73'
+    assert_output --partial 'loginctl show-session 71'
+}
