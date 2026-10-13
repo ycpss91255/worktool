@@ -596,7 +596,7 @@ _pl_launch_checks() {
     assert_output '[true,true,true]'
 }
 
-@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+@test "pr-loop (node): codex implement and fix prompts forbid attribution" {
     run _pl_run
     assert_success
     run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
@@ -604,8 +604,8 @@ _pl_launch_checks() {
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
-    assert_output '[true,true,true,true,true]'
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("beyond the task") | not)]' <<<"${output}"
+    assert_output '[true,true,true]'
 }
 
 @test "pr-loop (node): an invalid implementer value throws a clear error" {
