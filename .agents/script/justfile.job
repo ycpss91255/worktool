@@ -1,0 +1,17 @@
+set working-directory := '../..'
+set positional-arguments
+# List shared job actions.
+default:
+    @just --justfile '{{source_file()}}' --list
+# Start a detached job.
+start *args:
+    ./.agents/script/job.sh start "$@"
+# Collect a compact job result.
+wait *args:
+    ./.agents/script/job.sh wait "$@"
+# Report job state without waiting.
+status *args:
+    ./.agents/script/job.sh status "$@"
+# Show the job interface.
+help *args:
+    ./.agents/script/job.sh --help "$@"
