@@ -63,13 +63,14 @@ const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
 // POSIX single quoting: how a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
-// Light selects only spec files touched by this branch or pending edits.
+// Light selects touched local specs; real-engine coverage belongs to CI.
 const TOUCHED_GATE = `bash -c ${sq(`set -euo pipefail
 paths="$(git diff --name-only --diff-filter=ACMR ${sq(`origin/${BASE}`)}...HEAD && git diff --name-only --diff-filter=ACMR HEAD && git ls-files --others --exclude-standard)"
 paths="$(printf '%s\\n' "$paths" | sort -u)"
 while IFS= read -r spec; do
   case "$spec" in
-    test/unit/*.bats|test/matrix/*.bats|test/integration/*.bats|test/system/*.bats|test/system-real/*.bats|test/acceptance/*.bats)
+    test/system-real/*.bats|test/system/real_engine_spec.bats) continue ;;
+    test/unit/*.bats|test/matrix/*.bats|test/integration/*.bats|test/system/*.bats|test/acceptance/*.bats)
       [ -f "$spec" ] || continue
       tier="\${spec#test/}"; tier="\${tier%%/*}"
       just test "$tier" "$spec" ;;
@@ -111,7 +112,7 @@ const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', 
 const LOCAL_TEST_RULES = A.gates
   ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run ${GATES}. Never run a whole tier locally; CI runs every tier.`
   : MODE === 'light'
-  ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Never run just test changed or a whole tier locally; CI runs every tier.`
+  ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Leave system-real specs (including test/system/real_engine_spec.bats) to CI. Never run just test changed or a whole tier locally; CI runs every tier.`
   : `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and ${CHANGED_GATE}. Never run a whole tier locally; CI runs every tier.`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with ${BASE} by merging.`
 const COMMON_GUARDRAILS = `
@@ -179,7 +180,7 @@ const LOCATE = `Resolve the open PR for branch ${A.branch} in ${REPO}: run \`gh 
 const CI_LOCAL_TEST_RULES = A.gates
   ? `Before pushing run ${GATES} blocking in the foreground. Never run a whole tier locally; CI runs every tier.`
   : MODE === 'light'
-  ? 'Locally run only just test lint and touched specs with just test <tier> <spec> [--filter]. Never run just test changed or a whole tier locally; CI runs every tier.'
+  ? 'Locally run only just test lint and touched specs with just test <tier> <spec> [--filter]. Leave system-real specs (including test/system/real_engine_spec.bats) to CI. Never run just test changed or a whole tier locally; CI runs every tier.'
   : 'Locally run only just test lint and changed unit specs with just test unit <spec...> [--filter REGEX]. Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally; those tiers are verified by CI (ci-passed).'
 
 // The gate agent has no implementer context and returns only compact results.

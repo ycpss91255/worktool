@@ -3659,6 +3659,7 @@ _pl_light_gate_repo() {
         mkdir -p "${root}/test/${tier}/nested"
         printf 'committed\n' > "${root}/test/${tier}/nested/touched.bats"
     done
+    printf "real engine\n" > "${root}/test/system/real_engine_spec.bats"
     git -C "${root}" rm test/unit/deleted.bats
     git -C "${root}" add test
     git -C "${root}" commit -qm 'Touch specs'
@@ -3690,7 +3691,7 @@ SH
     assert_success
 }
 
-@test "pr-loop light gates execute lint and each touched spec with its tier (#552)" {
+@test "pr-loop light gates execute touched local specs and leave system-real to CI (#561)" {
     _pl_light_gate_repo
     local root="${BATS_TEST_TMPDIR}/light" json
     run _pl_run '{"mode":"light","codex":"off","base":"acceptance"}'
@@ -3707,7 +3708,6 @@ test integration test/integration/nested/touched.bats
 test lint
 test matrix test/matrix/nested/touched.bats
 test system test/system/nested/touched.bats
-test system-real test/system-real/nested/touched.bats
 test unit test/unit/nested/touched.bats
 test unit test/unit/new spec.bats
 test unit test/unit/pending.bats'
