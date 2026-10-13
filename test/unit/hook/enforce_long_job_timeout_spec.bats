@@ -329,3 +329,12 @@ _implementer_payload() {
     _check "just job start g -- bash -c 'just test changed'" null 600000
     assert_success
 }
+
+@test "shell wait is allowed without the pr-loop role (#552)" {
+    unset WORKTOOL_AGENT_ROLE
+    _check 'a & b & wait'
+    assert_success
+    export WORKTOOL_AGENT_ROLE=pr-loop
+    _check 'a & b & wait' null 600000
+    assert_failure 2
+}

@@ -93,7 +93,7 @@ _is_wait() {
             for arg in "${w[@]:1}"; do
                 [[ "$arg" == --pid* || "$arg" == --follow* || "$arg" =~ ^-[^-]*[fF] ]] && return 0
             done ;;
-        watch|wait) return 0 ;;
+        watch) return 0 ;;
         sleep)
             local total=0 value
             for arg in "${w[@]:1}"; do
