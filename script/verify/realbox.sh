@@ -222,7 +222,8 @@ _assemble_owned_box() {
             trap ':' INT TERM HUP
             $(declare -f guard_fail)
             dir=\"\$1\"
-            just box assemble --home \"\${dir}/box-home\" || {
+            mkdir -p -- \"\${dir}/assemble-tmp\"
+            TMPDIR=\"\${dir}/assemble-tmp\" just box assemble --home \"\${dir}/box-home\" || {
                 guard_fail 'just box assemble failed'; exit 1;
             }
             : >\"\${dir}/assemble-success\" || {

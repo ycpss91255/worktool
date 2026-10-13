@@ -1003,6 +1003,7 @@ rc=0
       ````
       (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於或等於這一輪真的傳給 `bench` 的 `--max-ms`(300;剛好等於門檻算通過,與 `bench` 及 #181 一致)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
       `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc=1` 會讓本項 exit 非 0 並要你手動移除盒子。所有權須以 assemble 前確認盒子不存在、執行後合法列表確認盒子存在為證據，才寫入 `created-box`。`assemble-started` 只記錄已確認不存在後的 assemble 嘗試，不授予所有權；正常成功另記 `assemble-success`，仍須再次查到盒子。中斷後 assemble 回非零時，先停止本輪子行程群組，再以合法列表確認盒子存在並取得清理所有權，因此 Ctrl-C 跑到一半仍會清掉本輪建出的盒。失敗且確認盒子不存在時不取得所有權、不呼叫刪盒，並清除嘗試紀錄，避免日後還原誤認使用者新建的同名盒；列表失敗或無法解析時拒絕刪盒、回非零並保留證據。取得所有權後清理只看最後盒子是否確定不存在，`distrobox rm` 沒東西可刪不算失敗。)
+    - assemble 的暫存檔以本輪 scratch 下的 `assemble-tmp` 為 TMPDIR。distrobox 1.8.2.5 的 `distrobox-assemble` 在解析前以 `expanded_file=$(mktemp -u)` 建立展開的 manifest，卻未將它列入 EXIT trap；realbox 因此將建立步驟的暫存目錄納入本輪所有權，成功、失敗與 INT／TERM／HUP 後均隨 scratch 清除，不刪外層 TMPDIR 的其他檔案。5.4 每格也核對本輪 scratch 已不存在。
     - 主機忙碌時，bench 依 ADR 0003 回 3，代表未判定。本項仍清理本輪建立的盒子，不發 #22 留言；清理成功時不印 `[FAIL]`，整項 exit 3。預期輸出包含以下各行（清理的狀態行照常穿插，最後一行為 `echo rc=$?`）：
       ```text
       rc=3

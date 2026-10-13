@@ -72,7 +72,7 @@ STUB
     assert_equal "${actual%$'\n'}" "${expected}"
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
-    run find "${TMPDIR}" -name 'wt-m3-54.*'
+    run find "${TMPDIR}" -name 'wt-m3-54.*' -o -name 'tmp.*'
     assert_success
     assert_output ''
 }

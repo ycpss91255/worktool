@@ -216,6 +216,12 @@ _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
+            if [[ "${FAKE_ASSEMBLE_MANIFEST:-0}" == 1 ]]; then
+                local manifest
+                manifest="$(mktemp)" || return 1
+                cat "${FAKE_MANIFEST_SOURCE}" >"${manifest}" || return 1
+                printf '%s\n' "${manifest}" >"${_DIR}/temporary-manifest"
+            fi
             if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 || "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]]; then
                 distrobox assemble create --file box/dev.ini || return 1
             fi

@@ -2747,3 +2747,26 @@ _assert_symlink_roundtrip() {
     assert [ ! -e "${link}" ]
     assert [ ! -e "${HOME}/missing-ghostty" ]
 }
+
+@test "#545: 5.1 removes its temporary manifest on success, failure and interruption" {
+    export FAKE_ASSEMBLE_MANIFEST=1 FAKE_MANIFEST_SOURCE="${REPO_ROOT}/box/dev.ini"
+    local rc manifest signal expected
+    : >"${TMPDIR}/unrelated"
+    for rc in 0 1; do
+        FAKE_JUST_ASSEMBLE_RC="${rc}" run "${REALBOX}" --allow-real-box 5.1
+        assert_equal "${status}" "${rc}"
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+    for signal in INT TERM HUP; do
+        case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/just"
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
+        rm -f "${STATE}/ready" "${STATE}/events" "${STATE}/child.pid"
+        _assert_group_interrupt "${signal}" "${expected}" assemble
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+}
