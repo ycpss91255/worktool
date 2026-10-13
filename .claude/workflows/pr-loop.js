@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pr-loop',
   description: 'Drive one issue through implementation, CI and independent review without merging.',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, base?, pr?, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, runTag, base?, pr?, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/<base>, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Review', detail: 'light: a separate Claude agent reviews only the diff and applies required fixes' },
@@ -22,6 +22,7 @@ export const meta = {
 //     issue: 150,                      // required: the ONE sub-issue this PR closes
 //     branch: "m3/150-bench",          // required: branch off origin/<base>
 //     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
+//     runTag: "issue150-attempt1",      // required: unique per new run; reuse on resume
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
 //     base: "main",                   // optional: target branch, including acceptance branches
 //     gates: "just test lint, ...",    // optional replacement gates; default = lint + changed
@@ -35,6 +36,7 @@ export const meta = {
 // main loop (one PR at a time, merge commit, keep agent commits).
 
 const A = args || {}
+if (typeof A.runTag !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(A.runTag)) throw new Error('pr-loop: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)')
 for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
   if (!A[k]) throw new Error(`pr-loop: args.${k} is required`)
 }
@@ -159,10 +161,15 @@ const CI_LOCAL_TEST_RULES = A.gates
   : 'Locally run only just test lint and changed unit specs with just test unit <spec...> [--filter REGEX]. Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally; those tiers are verified by CI (ci-passed).'
 
 // The gate agent has no implementer context and returns only compact results.
-const jobInstructions = (name, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
-${commands.map((cmd, i) => `\`cd ${sq(WT)} && just job start ${sq(`${name}-${i}`)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(`${name}-${i}`)} --max-seconds 540\``).join('\n')}
+let jobCounter = 0
+const nextJobName = (stage) => `${A.runTag}-${stage}-${++jobCounter}`
+const jobInstructions = (stage, commands) => `In ${WT}, without WORKTOOL_AGENT_ROLE set, run these as foreground Bash calls:
+${commands.map(cmd => {
+  const name = nextJobName(stage)
+  return `\`cd ${sq(WT)} && just job start ${sq(name)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(name)} --max-seconds 540\``
+}).join('\n')}
 Set Bash tool timeout: 600000 for every start and wait call. Make at most 6 wait calls per job, each as a separate foreground Bash call. A wait exit 124 means still running: re-wait with the same job name and --max-seconds 540. Do not restart the job. job.sh wait prints only a result and log tail or failure section. Never poll status, tail -f, read whole logs, use Monitor or background tool calls. If start fails or wait exits anything other than 0 or 124, stop immediately and return state red with only the failure summary. After the sixth running result, return red with exhausted rc 124 and the job name. Return green only when every wait exits 0. `
-const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}-${Date.now()}`, GATES.split(',').map(g => g.trim()))} Only collect gates; never edit, commit or push.`, {
+const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}`, GATES.split(',').map(g => g.trim()))} Only collect gates; never edit, commit or push.`, {
   label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
   schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',
 })
@@ -197,7 +204,7 @@ Return ready only when codex exits successfully and its repair is committed; oth
   return published && published.pr ? '' : 'publication failed'
 }
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}-${Date.now()}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}-${Date.now()}`, GATES.split(',').map(g => g.trim()))}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATES.split(',').map(g => g.trim()))}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATES.split(',').map(g => g.trim()))}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
@@ -403,7 +410,7 @@ const implementFull = async () => {
     }
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
     if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
-    await agent(`${jobInstructions(`retry-${A.issue}-${retry}-${Date.now()}`, [`sleep ${(retry + 1) * 30}`])} Preserve the worktree.`, {
+    await agent(`${jobInstructions(`retry-${A.issue}-${retry}`, [`sleep ${(retry + 1) * 30}`])} Preserve the worktree.`, {
       label: `${RUN_ID} implement-wait:#${A.issue}:retry${retry + 1}`, phase: 'Implement', effort: 'low', agentType: 'general-purpose',
     })
   }
