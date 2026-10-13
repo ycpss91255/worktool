@@ -66,6 +66,7 @@ const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // Light selects only spec files touched by this branch or pending edits.
 const TOUCHED_GATE = `bash -c ${sq(`set -euo pipefail
 paths="$(git diff --name-only --diff-filter=ACMR ${sq(`origin/${BASE}`)}...HEAD && git diff --name-only --diff-filter=ACMR HEAD && git ls-files --others --exclude-standard)"
+paths="$(printf '%s\\n' "$paths" | sort -u)"
 while IFS= read -r spec; do
   case "$spec" in
     test/unit/*.bats|test/matrix/*.bats|test/integration/*.bats|test/system/*.bats|test/system-real/*.bats|test/acceptance/*.bats)

@@ -3644,12 +3644,63 @@ JS
     assert_success
 }
 
-@test "pr-loop light gates include lint and touched specs in review publish and CI (#552)" {
-    run _pl_run '{"mode":"light","codex":"off"}'
+_pl_light_gate_repo() {
+    local root="${BATS_TEST_TMPDIR}/light" tier
+    mkdir -p "${root}/bin" "${root}/test/unit"
+    git init -q "${root}"
+    git -C "${root}" config user.name Tester
+    git -C "${root}" config user.email '1+tester@users.noreply.github.com'
+    touch "${root}/test/unit/untouched.bats" "${root}/test/unit/deleted.bats"
+    touch "${root}/test/unit/pending-delete.bats" "${root}/test/unit/pending.bats"
+    git -C "${root}" add test
+    git -C "${root}" commit -qm base
+    git -C "${root}" update-ref refs/remotes/origin/acceptance HEAD
+    for tier in unit matrix integration system system-real acceptance; do
+        mkdir -p "${root}/test/${tier}/nested"
+        printf 'committed\n' > "${root}/test/${tier}/nested/touched.bats"
+    done
+    git -C "${root}" rm test/unit/deleted.bats
+    git -C "${root}" add test
+    git -C "${root}" commit -qm 'Touch specs'
+    printf 'pending\n' >> "${root}/test/unit/nested/touched.bats"
+    printf 'pending\n' >> "${root}/test/unit/pending.bats"
+    git -C "${root}" rm test/unit/pending-delete.bats
+    touch "${root}/test/unit/new spec.bats" "${root}/test/unit/ignored.bats"
+    printf 'test/unit/ignored.bats\n' > "${root}/.gitignore"
+    touch "${root}/test/unit/helper.sh"
+    cat > "${root}/bin/just" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$2" == lint ]]; then [ "$#" -eq 2 ]; else [ "$#" -eq 3 ]; fi
+printf '%s\n' "$*" >> "${GATE_LOG}"
+SH
+    chmod +x "${root}/bin/just"
+}
+
+@test "pr-loop light gates execute lint and each touched spec with its tier (#552)" {
+    _pl_light_gate_repo
+    local root="${BATS_TEST_TMPDIR}/light" json
+    run _pl_run '{"mode":"light","codex":"off","base":"acceptance"}'
     assert_success
-    run jq -e '[.calls[] | select(.role | test("^(review|publish|ci):")) | .prompt |
-        contains("just test lint") and contains("git diff --name-only --diff-filter=ACMR") and
-        contains("just test") and contains("test/unit/*.bats")] | length == 3 and all' <<<"${output}"
+    json="$output"
+    jq -er '.calls[] | select(.role | startswith("review:")) | .prompt |
+        capture("Run (?<commands>just test lint.*?) blocking in the foreground after fixes"; "m").commands' \
+        <<<"$json" > "${root}/gates.sh"
+    run bash -c 'cd "$1" && PATH="$1/bin:$PATH" GATE_LOG="$1/calls" bash gates.sh' _ "${root}"
+    assert_success
+    run sort "${root}/calls"
+    assert_output 'test acceptance test/acceptance/nested/touched.bats
+test integration test/integration/nested/touched.bats
+test lint
+test matrix test/matrix/nested/touched.bats
+test system test/system/nested/touched.bats
+test system-real test/system-real/nested/touched.bats
+test unit test/unit/nested/touched.bats
+test unit test/unit/new spec.bats
+test unit test/unit/pending.bats'
+    run jq -e --arg commands "$(cat "${root}/gates.sh")" '
+        [.calls[] | select(.role | test("^(review|publish|ci):")) | .prompt |
+         contains($commands)] | length == 3 and all' <<<"$json"
     assert_success
 }
 
