@@ -102,6 +102,7 @@ job 名稱由 `runTag`、階段名稱與腳本內遞增計數組成，不讀取�
 完整 log 留在 `.agents/state/job/<name>/log`，綠的結果尾段逐字交給發布 stage 作為測試證據。
 CI 的本機 gate 與有 timeout 的 `gh pr checks --watch` 同樣走 job；一般未帶標記的獨立驗收 session
 仍可跑 `just verify all`、`just verify realbox` 與 `just test`（長工作仍遵守 timeout 規則）。見 ADR-0015。
+只有 CI checks job 的 wait 回傳 `1` 時，前景 wrapper 會輸出 `CI_CHECK_FAILED` 並交回控制；這不代表綠燈，CI agent 必須讀取失敗 log、以 TDD 修復、推送後重看 checks，修復上限維持兩輪。start 失敗、其他非 `0`／`124` 退出碼與六次 wait 耗盡仍直接回報紅；CI 本機 gate 與修復後 gate 的失敗規則不變。
 指定既有 `branch` 與 `pr` 且實作已完成、工作區乾淨時，跳過實作與開 PR，直接進入 CI／審查迴圈；需要接續實作時仍重用指定 PR，不另開 PR。
 CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base`。
 本機若有未推送的修正，先跑 `gates`、核對 noreply 與 `Refs`，再推送並等待該 head 的 CI。
