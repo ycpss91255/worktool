@@ -867,6 +867,21 @@ STUB
     assert_equal "$(_count_calls 'distrobox rm')" '0'
 }
 
+@test "#558: failed assemble with an unparsable confirmation keeps evidence and refuses cleanup" {
+    FAKE_JUST_ASSEMBLE_RC=1 FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'after assemble (list status 2)'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-started -print)"
+    dir="${dir%/assemble-started}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ ! -e "${dir}/created-box" ]
+}
+
 @test "5.1: assemble returns 0 but the box is not listed" {
     FAKE_JUST_ASSEMBLE_REGISTERS=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure
@@ -1613,6 +1628,43 @@ STUB
     assert_failure
     assert_output --partial "cannot count the manifest state lines"
     refute_output --partial "revalidate=1"
+}
+
+@test "#558: a matching recorded ID permits normal cleanup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-gone=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "#558: restore refuses a replacement box with a different ID and keeps evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_DBX_LIST_OUT=$'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04' \
+        run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ -s "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
+}
+
+@test "#558: restore refuses an unconfirmed interrupted attempt even when a same-name box appears" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/assemble-started"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
 }
 
 @test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
@@ -2802,4 +2854,37 @@ _assert_symlink_roundtrip() {
     assert_equal "$(cat "${STATE}/window-rc")" 0
     assert_output --partial 'restore-ok=1'
     refute_output --partial '[INCONCLUSIVE]'
+}
+
+@test "#558: interrupted apply records its ID before restore can replace the box" {
+    _prepare_group_interrupt assemble
+    cp "${STUBS}/just" "${STATE}/interrupt-just"
+    cp "${STUBS}/distrobox" "${STATE}/interrupt-distrobox"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == 'box setup --auto-enter no' ]]; then
+    printf 'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04\n' \
+        >"${SIGNAL_STATE}/replacement"
+fi
+exec "${SIGNAL_STATE}/interrupt-just" "$@"
+STUB
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${SIGNAL_STATE}/replacement" ]]; then
+    FAKE_DBX_LIST_OUT="$(cat "${SIGNAL_STATE}/replacement")"
+    export FAKE_DBX_LIST_OUT
+fi
+exec "${SIGNAL_STATE}/interrupt-distrobox" "$@"
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    assert_line 'rc=1'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    [ -e "$(_backup_dir)/assemble-started" ]
+    [ -s "${STATE}/boxes" ]
 }
