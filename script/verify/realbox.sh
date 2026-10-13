@@ -194,7 +194,7 @@ _confirm_box_ownership() {
         return 0
     fi
     if [[ "${rc}" -ne 0 ]]; then
-        if [[ -e "${dir}/assemble-success" ]]; then
+        if [[ "${rc}" -eq 1 && -e "${dir}/assemble-success" ]]; then
             guard_fail "assemble returned 0 but box '${BOX}' is not listed"
         else
             guard_fail "cannot confirm box '${BOX}' after assemble (list status ${rc})"
@@ -207,6 +207,10 @@ _confirm_box_ownership() {
     }
     if [[ -e "${dir}/created-box" ]]; then
         recorded="$(cat -- "${dir}/created-box")" || return 1
+        [[ -n "${recorded}" ]] || {
+            guard_fail "legacy empty created-box marker at ${dir}/created-box; ownership is unknown; inspect and remove the box manually if appropriate, then remove the marker and retry cleanup"
+            return 1
+        }
         [[ "${recorded}" == "${id}" ]] || {
             guard_fail "box '${BOX}' ID differs from this run; keeping ownership evidence"
             return 1
@@ -250,7 +254,9 @@ _assemble_owned_box() {
             trap ':' INT TERM HUP
             $(declare -f guard_fail)
             dir=\"\$1\"
-            mkdir -p -- \"\${dir}/assemble-tmp\"
+            mkdir -p -- \"\${dir}/assemble-tmp\" || {
+                guard_fail \"cannot create assemble temp dir at \${dir}/assemble-tmp\"; exit 1;
+            }
             TMPDIR=\"\${dir}/assemble-tmp\" just box assemble --home \"\${dir}/box-home\" || {
                 guard_fail 'just box assemble failed'; exit 1;
             }

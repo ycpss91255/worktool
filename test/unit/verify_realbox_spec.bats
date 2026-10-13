@@ -199,7 +199,7 @@ _check_group_interrupt() {
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq loginctl)
-REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
+REALBOX_SHIMMED_TOOLS=(mkdir grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
 setup() {
     REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
@@ -2887,4 +2887,134 @@ STUB
     assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
     [ -e "$(_backup_dir)/assemble-started" ]
     [ -s "${STATE}/boxes" ]
+}
+
+@test "#562: no caller session skips other UID rows without querying them" {
+    unset XDG_SESSION_ID
+    local sessions="72 $((UID + 1)) other seat0 tty2
+71 ${UID} test seat0 tty1"
+    _fake_window_process
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 71'
+}
+
+@test "#562: no caller session rejects a nonnumeric UID row before actions" {
+    unset XDG_SESSION_ID
+    local sessions="71 ${UID} test seat0 tty1
+72 invalid other seat0 tty2"
+    FAKE_SESSIONS="${sessions}" run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial '[INCONCLUSIVE] item 5.2:'
+    [ ! -e "$(_backup_dir)" ]
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    assert_equal "$(cat "${HOME}/.config/ghostty/config")" 'font-size = 12'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+}
+
+@test "#562: one unlocked graphical session passes among locked and text sessions" {
+    unset XDG_SESSION_ID
+    local sessions="72 ${UID} test seat0 tty2
+73 ${UID} test seat0 tty3
+71 ${UID} test seat0 tty1"
+    cp "${STUBS}/loginctl" "${STATE}/loginctl"
+    cat >"${STUBS}/loginctl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${2:-}" in
+    72 | 73)
+        printf 'loginctl %s\n' "$*" >>"${FAKE_STATE_DIR}/calls.log"
+        printf 'User=%s\nActive=yes\n' "${UID}"
+        if [[ "$2" == 72 ]]; then
+            printf 'Type=wayland\nLockedHint=yes\n'
+        else
+            printf 'Type=tty\nLockedHint=no\n'
+        fi
+        ;;
+    *) exec "${FAKE_STATE_DIR}/loginctl" "$@" ;;
+esac
+STUB
+    _fake_window_process
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    assert_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 73'
+    assert_output --partial 'loginctl show-session 71'
+}
+
+@test "#562: acceptance 5.2 documents expanded manifest ownership and recovery" {
+    run sed -n '/  - \[ \] 5\.2 /,/  - \[ \] 5\.3 /p' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial 'TMPDIR=<本輪 5.2 備份目錄>/assemble-tmp'
+    assert_output --partial '展開後的 manifest'
+    assert_output --partial '成功清理時隨備份目錄一起移除'
+    assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
+}
+
+@test "#562: assemble temp directory failure explains the path and never builds a box" {
+    _realbox_quiet 5.2.1
+    SHIM_MKDIR_ON=assemble-tmp SHIM_MKDIR_RC=1 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot create assemble temp dir at $(_backup_dir)/assemble-tmp"* ]]
+    refute_output --partial '[FAIL]'
+    assert_equal "$(_count_calls 'just box assemble')" 0
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
+}
+
+@test "#562: duplicate box names are unknown for both guard interfaces without an ID" {
+    local id helper
+    for id in 0000 1111; do
+        for helper in guard_box_id guard_box_exists; do
+            FAKE_DBX_LIST_OUT="ID | NAME | STATUS | IMAGE
+0000 | dev | Up | ubuntu:24.04
+${id} | dev | Up | ubuntu:24.04" \
+                run bash -c 'source "$1/lib/guard.sh"; "$2" dev' _ "${REPO_ROOT}" "${helper}"
+            assert_failure 2
+            assert_output ''
+        done
+    done
+}
+
+@test "#562: restore explains empty legacy ownership markers and manual recovery" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/created-box"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_output --partial "[FAIL] legacy empty created-box marker at $(_backup_dir)/created-box"
+    assert_output --partial 'ownership is unknown'
+    assert_output --partial 'inspect and remove the box manually if appropriate, then remove the marker and retry cleanup'
+    refute_output --partial 'ID differs from this run'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    [ -e "$(_backup_dir)/created-box" ]
+    [ ! -s "$(_backup_dir)/created-box" ]
+}
+
+@test "#562: successful assemble with an unknown confirmation reports uncertainty" {
+    FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot confirm box 'dev' after assemble (list status 2)"* ]]
+    [[ "${stderr}" != *'is not listed'* ]]
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-success -print)"
+    dir="${dir%/assemble-success}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ -e "${dir}/assemble-success" ]
+    [ ! -e "${dir}/created-box" ]
 }

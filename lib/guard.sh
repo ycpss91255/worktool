@@ -20,6 +20,7 @@
 #   guard_fail <message...>          -> `[FAIL] <message>` on stderr, returns 1
 #   guard_timed <secs> <cmd...>      -> run <cmd> under a timeout
 #   guard_require <cmd...>           -> 0 tools present / 3 unavailable
+#   guard_box_id <name> [secs]      -> ID on stdout / 1 absent / 2 CANNOT TELL
 #   guard_box_exists <name>          -> 0 exists / 1 absent / 2 CANNOT TELL
 #   guard_sha256 <file>              -> the file's sha256, or status 1
 #   guard_path_type <path>           -> regular | symlink | absent | other
