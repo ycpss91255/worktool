@@ -3768,6 +3768,35 @@ test unit test/unit/pending.bats'
     assert_success
 }
 
+@test "pr-loop prepare leaves no branch or worktree when base job help fails (#561)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    printf 'job *args:\n    @exit 1\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Break job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.codexVerdict == "blocked" and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"$output"
+    assert_success
+    run git -C "${root}/src" show-ref --verify --quiet refs/heads/b
+    assert_failure 1
+    assert [ ! -e "${root}/worktree/n" ]
+    run git -C "${root}/src" worktree list --porcelain
+    refute_output --partial "${root}/worktree/n"
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Repair job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.ciState == "green"' <<<"$output"
+    assert_success
+}
+
 @test "pr-loop gate repairs report missing infrastructure red instead of adding it (#552)" {
     local replies json
     replies='{ "implement:": {"status":"ready"}, "gates:": {"state":"red","detail":"missing hook infrastructure"}, "gate-fix:": {"status":"failed"} }'

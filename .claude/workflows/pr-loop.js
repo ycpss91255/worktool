@@ -374,9 +374,17 @@ else
   if ! git cat-file -e ${sq(`origin/${BASE}:.agents/script/justfile.job`)} 2>/dev/null; then
     printf missing-job; exit 0
   fi
+  probe=$(mktemp -d) || exit 1
+  trap 'rm -rf -- "$probe"' EXIT
+  git archive ${sq(`origin/${BASE}`)} | tar -x -C "$probe" || exit 1
+  if ! (cd "$probe" && just job help) >/dev/null 2>&1; then
+    printf missing-job; exit 0
+  fi
+  rm -rf -- "$probe" || exit 1
+  trap - EXIT
   git worktree add -b ${sq(A.branch)} ${sq(WT)} ${sq(`origin/${BASE}`)} >&2 || exit 1
   cd ${sq(WT)} || exit 1
-  if just job help >/dev/null 2>&1; then printf new; else printf missing-job; fi
+  printf new
 fi
 }\``, { label: `${RUN_ID} prepare:${A.branch}`, phase: 'Locate', schema: { type: 'object', properties: { state: { type: 'string', enum: ['new', 'resume', 'implement', 'missing-job'] } }, required: ['state'] }, agentType: 'general-purpose' })
 if (prepared && prepared.state === 'missing-job') return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['base 分支缺少 job 模組，先同步 main'] })
