@@ -128,7 +128,7 @@ const RULES = GUARDRAILS
 const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
 When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
-const SETUP = `cd ${REPO_DIR} && git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}`
+const SETUP = `cd ${REPO_DIR} && if [ ! -e ${sq(WT)} ]; then git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}; fi && cd ${sq(WT)}`
 const IMPLEMENT = `${RULES}
 ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
@@ -329,7 +329,7 @@ Return its stdout verbatim in evidence, even when it contains errors. Do not inf
 
 // Probe the branch before choosing fresh implementation or resume.
 const prepared = await agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
-Run this script blocking in the foreground; return stdout verbatim in state. Only recreate the named worktree if absent; never alter another worktree, implement, push or rewrite history:
+Run this script blocking in the foreground; return stdout verbatim in state. Only recreate the named worktree if absent; never alter another worktree, implement, push or rewrite history. Check just job help in the target worktree before choosing any next stage:
 \`cd ${sq(REPO_DIR)} && {
 if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   if [ ! -e ${sq(WT)} ]; then
@@ -347,6 +347,7 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   cd ${sq(WT)} &&
   [ "$(git rev-parse --path-format=absolute --git-common-dir)" = "$common" ] &&
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] || exit 1
+  if ! just job help >/dev/null 2>&1; then printf missing-job; exit 0; fi
   status=$(git status --porcelain) || exit 1
   previous_rc=0
   ${IMPLEMENTER === 'codex' ? `if [ -e ${sq(`${SCRATCH}/implement.rc`)} ]; then
@@ -365,9 +366,13 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
   fi
 else
   rc=$?
-  [ "$rc" -eq 1 ] && printf new
+  [ "$rc" -eq 1 ] || exit 1
+  git fetch origin >&2 && git worktree add -b ${sq(A.branch)} ${sq(WT)} ${sq(`origin/${BASE}`)} >&2 || exit 1
+  cd ${sq(WT)} || exit 1
+  if just job help >/dev/null 2>&1; then printf new; else printf missing-job; fi
 fi
-}\``, { label: `${RUN_ID} prepare:${A.branch}`, phase: 'Locate', schema: { type: 'object', properties: { state: { type: 'string', enum: ['new', 'resume', 'implement'] } }, required: ['state'] }, agentType: 'general-purpose' })
+}\``, { label: `${RUN_ID} prepare:${A.branch}`, phase: 'Locate', schema: { type: 'object', properties: { state: { type: 'string', enum: ['new', 'resume', 'implement', 'missing-job'] } }, required: ['state'] }, agentType: 'general-purpose' })
+if (prepared && prepared.state === 'missing-job') return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['base 分支缺少 job 模組，先同步 main'] })
 if (!prepared || !['new', 'resume', 'implement'].includes(prepared.state)) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['branch/worktree preparation failed'] })
 const RESUME = prepared.state === 'resume'
 const IMPLEMENT_SETUP = prepared.state === 'implement' ? `cd ${WT}` : SETUP

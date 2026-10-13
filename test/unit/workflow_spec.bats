@@ -2624,6 +2624,8 @@ _pl_resume_setup() {
     git init -q "${root}/src"
     git -C "${root}/src" config user.name Tester
     git -C "${root}/src" config user.email '1+tester@users.noreply.github.com'
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
     git -C "${root}/src" commit -qm initial --allow-empty
     git -C "${root}/src" branch -M main
     git -C "${root}/src" remote add origin "${root}/remote"
@@ -3659,4 +3661,27 @@ JS
             contains("-- printf a,b` then") and (contains("-- printf a` then") | not))' <<<"$json"
         assert_success
     done
+}
+
+@test "pr-loop prepare blocks a base without just job before implementation (#552)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" json
+    rm "${root}/worktree/n/justfile"
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$json"
+    assert_success
+    git -C "${root}/src" worktree remove --force "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    git -C "${root}/src" rm justfile
+    git -C "${root}/src" commit -qm 'Remove job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
+    assert_success
 }
