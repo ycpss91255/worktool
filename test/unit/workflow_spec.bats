@@ -716,7 +716,7 @@ _fanout_batches() {
 import { readFileSync } from 'node:fs'
 const [path, options] = process.argv.slice(2)
 const items = Array.from({ length: 23 }, (_, i) => ({ issue: i + 1, branch: `b${i}`, name: `n${i}`, task: 't' }))
-const args = { repo: 'o/r', repoDir: '/work', items, ...JSON.parse(options) }
+const args = { runTag: 'test-run', repo: 'o/r', repoDir: '/work', items, ...JSON.parse(options) }
 const batches = [], children = [], logs = []
 const parallel = async fns => {
   batches.push(fns.length)
