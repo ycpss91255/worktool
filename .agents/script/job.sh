@@ -29,7 +29,8 @@ start_job() {
         mv "$dir/rc.tmp" "$dir/rc"
 WORKER
     )" job "${DIR}" "$@" </dev/null >/dev/null 2>&1 &
-    printf '%s\n' "$!" > "${DIR}/pid"
+    printf '%s\n' "$!" > "${DIR}/pid.tmp"
+    mv "${DIR}/pid.tmp" "${DIR}/pid"
     printf '%s: started\n' "${NAME}"
 }
 state() {
@@ -44,7 +45,8 @@ state() {
 }
 worker_alive() {
     local pid proc_stat
-    [[ -s "${DIR}/pid" ]] || return 1
+    # start publishes the pid after launching; readers may arrive first.
+    [[ -s "${DIR}/pid" ]] || return 0
     pid="$(cat "${DIR}/pid")"
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
