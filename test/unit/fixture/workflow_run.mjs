@@ -186,10 +186,25 @@ const workflow = async (options, workflowArgs) => {
 }
 
 const AsyncFunction = (async () => {}).constructor
+// Match the Workflow harness while preserving explicit date inputs.
+const NativeDate = Date
+const forbidden = (api) => { throw new Error(`Workflow: ${api} is forbidden`) }
+const WorkflowDate = new Proxy(NativeDate, {
+  construct(target, inputs) {
+    if (inputs.length === 0) forbidden('new Date()')
+    return Reflect.construct(target, inputs)
+  },
+  apply() { return forbidden('new Date()') },
+  get(target, key) {
+    return key === 'now' ? () => forbidden('Date.now()') : Reflect.get(target, key)
+  },
+})
+const WorkflowMath = Object.create(Math)
+WorkflowMath.random = () => forbidden('Math.random()')
 const runWorkflow = async (path, workflowArgs) => {
   const src = readFileSync(path, 'utf8').replace(/^export const meta/m, 'const meta')
-  const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', src)
-  return body(workflowArgs, agent, parallel, workflow, () => {}, message => logs.push(message))
+  const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', 'Date', 'Math', src)
+  return body(workflowArgs, agent, parallel, workflow, () => {}, message => logs.push(message), WorkflowDate, WorkflowMath)
 }
 
 const out = { result: null, error: null, calls, workflowCalls, ran, logs }

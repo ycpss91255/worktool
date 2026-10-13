@@ -3528,3 +3528,19 @@ _pl_retry_run() {
         (.prompt | contains("just job start") and contains("-- sleep 30") and contains("just job wait"))' <<<"${output}"
     assert_success
 }
+
+@test "workflow fixture rejects nondeterministic APIs but accepts dated input (#555)" {
+    local expression expected template="${BATS_TEST_TMPDIR}/api.js"
+    for expression in 'Date.now()' 'new Date()' 'Math.random()' 'new Date("2026-01-01").toISOString()'; do
+        printf 'return %s\n' "${expression}" > "${template}"
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" '{}' '{}'
+        assert_success
+        if [[ "${expression}" == 'new Date("2026-01-01").toISOString()' ]]; then
+            expected='[null,"2026-01-01T00:00:00.000Z"]'
+        else
+            expected="[\"Workflow: ${expression} is forbidden\",null]"
+        fi
+        run jq -c '[.error,.result]' <<<"${output}"
+        assert_output "${expected}"
+    done
+}
