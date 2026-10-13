@@ -122,7 +122,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 
 1. 一個 Claude 子代理在獨立 worktree 直接修改並 commit，不叫 codex 實作；有行為改變時仍依 TDD 逐片 RED→GREEN。
 2. 另一個 Claude 子代理只看完整 diff，審查並套用必改，追加 commit；修改或審查未成功就停止，不發布。
-3. 阻塞執行 `just test lint` 與改到的 spec（`just test <tier> <spec> [--filter REGEX]`），不跑 `just test changed` 或完整 tier；通過後才推送、開 PR。
+3. 阻塞執行 `just test lint` 與改到的 spec（`just test <tier> <spec> [--filter REGEX]`）；排除 CI-only 的 `test/system-real/` 與 `test/system/real_engine_spec.bats`，交由 CI 驗證，不跑 `just test changed` 或完整 tier；通過後才推送、開 PR。
 4. 等 CI 全綠，失敗時在同一 worktree 修正並追加 commit、再推送；不跑 codex 複驗，也不 merge。
 
 仍遵守一個 issue 一個 PR、noreply author 與 committer、無署名、不改寫已推送 commit。

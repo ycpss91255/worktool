@@ -142,3 +142,23 @@ teardown() {
         assert_output --partial 'unknown job'
     done
 }
+
+@test "wait treats a job awaiting pid publication as starting rather than dead (#561)" {
+    local dir="${JOB_ROOT}/.agents/state/job/${NAME}" phase
+    mkdir -p "$dir"
+    for phase in missing empty; do
+        if [[ "$phase" == empty ]]; then touch "$dir/pid"; fi
+        run "$JOB" wait "$NAME" --max-seconds 0
+        assert_failure 124
+        assert_output --partial 'running'
+        refute_output --partial 'worker 異常結束'
+    done
+    printf '%s\n' "$$" > "$dir/pid"
+    run "$JOB" wait "$NAME" --max-seconds 0
+    assert_failure 124
+    printf 'finished\n' > "$dir/log"
+    printf '0\n' > "$dir/rc"
+    run "$JOB" wait "$NAME"
+    assert_success
+    assert_output --partial 'finished'
+}

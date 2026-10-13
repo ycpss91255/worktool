@@ -596,7 +596,7 @@ _pl_launch_checks() {
     assert_output '[true,true,true]'
 }
 
-@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+@test "pr-loop (node): codex implement and fix prompts forbid attribution" {
     run _pl_run
     assert_success
     run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
@@ -604,8 +604,8 @@ _pl_launch_checks() {
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
-    assert_output '[true,true,true,true,true]'
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("beyond the task") | not)]' <<<"${output}"
+    assert_output '[true,true,true]'
 }
 
 @test "pr-loop (node): an invalid implementer value throws a clear error" {
@@ -3659,6 +3659,7 @@ _pl_light_gate_repo() {
         mkdir -p "${root}/test/${tier}/nested"
         printf 'committed\n' > "${root}/test/${tier}/nested/touched.bats"
     done
+    printf "real engine\n" > "${root}/test/system/real_engine_spec.bats"
     git -C "${root}" rm test/unit/deleted.bats
     git -C "${root}" add test
     git -C "${root}" commit -qm 'Touch specs'
@@ -3677,7 +3678,20 @@ SH
     chmod +x "${root}/bin/just"
 }
 
-@test "pr-loop light gates execute lint and each touched spec with its tier (#552)" {
+@test "pr-loop Codex fix summary can be published by the workflow identity (#561)" {
+    run _pl_blocked_run codex
+    assert_success
+    local body="${BATS_TEST_TMPDIR}/adoption.md" input
+    jq -er '.calls[] | select(.role == "fix:#7:r1") | .prompt |
+        [scan("\\[[a-z]+\\] 採納第 [0-9]+ 輪:")] | last' <<<"$output" > "$body"
+    printf 'Resolved finding in commit abc.\n' >> "$body"
+    input="$(jq -cn --arg cwd "$REPO_ROOT" --arg cmd "gh pr comment 7 --repo ycpss91255/worktool --body-file $body" \
+        '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')"
+    run bash "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh" claude <<<"$input"
+    assert_success
+}
+
+@test "pr-loop light gates execute touched local specs and leave system-real to CI (#561)" {
     _pl_light_gate_repo
     local root="${BATS_TEST_TMPDIR}/light" json
     run _pl_run '{"mode":"light","codex":"off","base":"acceptance"}'
@@ -3694,7 +3708,6 @@ test integration test/integration/nested/touched.bats
 test lint
 test matrix test/matrix/nested/touched.bats
 test system test/system/nested/touched.bats
-test system-real test/system-real/nested/touched.bats
 test unit test/unit/nested/touched.bats
 test unit test/unit/new spec.bats
 test unit test/unit/pending.bats'
@@ -3765,6 +3778,35 @@ test unit test/unit/pending.bats'
         ([.calls[].role | startswith("implement:")] | any)' <<<"$json"
     assert_success
     run just --justfile "${root}/worktree/n/justfile" job help
+    assert_success
+}
+
+@test "pr-loop prepare leaves no branch or worktree when base job help fails (#561)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    printf 'job *args:\n    @exit 1\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Break job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.codexVerdict == "blocked" and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"$output"
+    assert_success
+    run git -C "${root}/src" show-ref --verify --quiet refs/heads/b
+    assert_failure 1
+    assert [ ! -e "${root}/worktree/n" ]
+    run git -C "${root}/src" worktree list --porcelain
+    refute_output --partial "${root}/worktree/n"
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Repair job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.ciState == "green"' <<<"$output"
     assert_success
 }
 
