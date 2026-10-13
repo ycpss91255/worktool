@@ -96,7 +96,7 @@ _54_assert() {
     if grep -qE '^cleanup-rc=[1-9]|^posted=' "${capture}"; then return 1; fi
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || gone=$?
     [[ "${gone}" -eq 1 ]] || return 1
-    local -a homes=("${dir}"/wt-m3-51.*/box-home)
+    local -a homes=("${dir}"/wt-m3-51.*)
     for check in "${homes[@]}"; do
         [[ ! -e "${check}" && ! -L "${check}" ]] || return 1
     done

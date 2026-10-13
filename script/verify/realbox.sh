@@ -222,7 +222,8 @@ _assemble_owned_box() {
             trap ':' INT TERM HUP
             $(declare -f guard_fail)
             dir=\"\$1\"
-            just box assemble --home \"\${dir}/box-home\" || {
+            mkdir -p -- \"\${dir}/assemble-tmp\"
+            TMPDIR=\"\${dir}/assemble-tmp\" just box assemble --home \"\${dir}/box-home\" || {
                 guard_fail 'just box assemble failed'; exit 1;
             }
             : >\"\${dir}/assemble-success\" || {
@@ -952,12 +953,55 @@ _52_has_display() {
     log_warn "item 5.2: cannot verify non-local X11 display without xdpyinfo; proceeding"
 }
 
-# Query only the caller's session, never another user's active session.
+# Require complete logind evidence for a session belonging to this user.
+_52_graphical_session_unlocked() {
+    local properties="$1" uid="$2" key value user='' type='' active='' locked=''
+    while IFS='=' read -r key value; do
+        case "${key}" in
+            User) user="${value}" ;;
+            Type) type="${value}" ;;
+            Active) active="${value}" ;;
+            LockedHint) locked="${value}" ;;
+        esac
+    done <<<"${properties}"
+    [[ "${user}" == "${uid}" && "${active}" == yes && "${locked}" == no ]] || return 1
+    [[ "${type}" == wayland || "${type}" == x11 ]]
+}
+
+# Enumerate only this user's sessions; any failed query makes evidence unsafe.
+_52_unlocked_graphical_session() {
+    local sessions uid session owner rest properties unlocked=''
+    uid="$(id -u)" || return 1
+    sessions="$(guard_timed "${TIMEOUT_SHORT}" loginctl list-sessions \
+        --no-legend --no-pager 2>/dev/null)" || return 1
+    while read -r session owner rest; do
+        [[ -n "${session}" ]] || continue
+        [[ "${owner}" =~ ^[0-9]+$ ]] || return 1
+        [[ "${owner}" == "${uid}" ]] || continue
+        properties="$(guard_timed "${TIMEOUT_SHORT}" loginctl show-session "${session}" \
+            --property=User --property=Type --property=Active --property=LockedHint \
+            2>/dev/null)" || return 1
+        if _52_graphical_session_unlocked "${properties}" "${uid}"; then
+            unlocked="${session}"
+        fi
+    done <<<"${sessions}"
+    [[ -n "${unlocked}" ]] || return 1
+    log_info "item 5.2: confirmed unlocked graphical session ${unlocked} for uid ${uid}"
+}
+
+# Preserve caller-session behavior; otherwise require an unlocked graphical session.
 _52_desktop_preflight() {
     local _locked=""
     if ! _locked="$(guard_timed "${TIMEOUT_SHORT}" loginctl show-session \
         "${XDG_SESSION_ID:-self}" --property=LockedHint --value 2>/dev/null)"; then
         _locked=""
+    fi
+    if [[ -z "${XDG_SESSION_ID:-}" && "${_locked}" != yes && "${_locked}" != no ]]; then
+        if ! _52_unlocked_graphical_session; then
+            printf '[INCONCLUSIVE] item 5.2: cannot confirm an unlocked graphical session for this user; unlock the desktop and re-run\n' >&2
+            return 3
+        fi
+        _locked=no
     fi
     case "${_locked}" in
         yes)

@@ -2747,3 +2747,59 @@ _assert_symlink_roundtrip() {
     assert [ ! -e "${link}" ]
     assert [ ! -e "${HOME}/missing-ghostty" ]
 }
+
+@test "#545: 5.1 removes its temporary manifest on success, failure and interruption" {
+    export FAKE_ASSEMBLE_MANIFEST=1 FAKE_MANIFEST_SOURCE="${REPO_ROOT}/box/dev.ini"
+    local rc manifest signal expected
+    : >"${TMPDIR}/unrelated"
+    for rc in 0 1; do
+        FAKE_JUST_ASSEMBLE_RC="${rc}" run "${REALBOX}" --allow-real-box 5.1
+        assert_equal "${status}" "${rc}"
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+    for signal in INT TERM HUP; do
+        case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/just"
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
+        rm -f "${STATE}/ready" "${STATE}/events" "${STATE}/child.pid"
+        _assert_group_interrupt "${signal}" "${expected}" assemble
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+}
+
+@test "#545: no caller session requires a confirmed unlocked graphical session before actions" {
+    unset XDG_SESSION_ID
+    local mode
+    for mode in locked absent list-failure query-failure inactive text other-user unknown; do
+        export FAKE_LOCKED_HINT=no FAKE_SESSIONS="71 ${UID} test seat0 tty1"
+        export FAKE_SESSIONS_RC=0 FAKE_SESSION_QUERY_RC=0
+        export FAKE_SESSION_ACTIVE=yes FAKE_SESSION_TYPE=wayland FAKE_SESSION_USER="${UID}"
+        case "${mode}" in
+            locked) FAKE_LOCKED_HINT=yes ;;
+            absent) FAKE_SESSIONS='' ;;
+            list-failure) FAKE_SESSIONS_RC=1 ;;
+            query-failure) FAKE_SESSION_QUERY_RC=1 ;;
+            inactive) FAKE_SESSION_ACTIVE=no ;;
+            text) FAKE_SESSION_TYPE='tty' ;;
+            other-user) FAKE_SESSION_USER=99999 ;;
+            unknown) FAKE_LOCKED_HINT=unknown ;;
+        esac
+        run "${REALBOX}" --allow-real-box 5.2
+        assert_failure 3
+        assert_output --partial '[INCONCLUSIVE] item 5.2:'
+        [ ! -e "$(_backup_dir)" ]
+        assert_equal "$(_count_calls just)" 0
+        assert_equal "$(_count_calls distrobox)" 0
+        assert_equal "$(cat "${HOME}/.config/ghostty/config")" 'font-size = 12'
+    done
+    export FAKE_LOCKED_HINT=no FAKE_SESSION_USER="${UID}"
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    refute_output --partial '[INCONCLUSIVE]'
+}
