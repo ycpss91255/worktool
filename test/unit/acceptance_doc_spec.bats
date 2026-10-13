@@ -31,3 +31,14 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     assert_equal "${#documented[@]}" "${#CFGBK_NAMES[@]}"
     assert_equal "$(printf '%s\n' "${documented[@]}")" "$(printf '%s\n' "${expected[@]}")"
 }
+
+@test "acceptance 5.1 and 5.2 require confirmed ownership and preserve interrupt cleanup (#541)" {
+    local doc
+    doc="$(cat "${REPO_ROOT}/doc/acceptance.md")"
+    [[ "${doc}" != *"所有權標記在 \`just box assemble\` **之前**就寫下"* ]]
+    [[ "${doc}" != *'所有權記錄先於 assemble'* ]]
+    [[ "${doc}" != *'本輪未啟動 assemble'* ]]
+    [[ "${doc}" == *'assemble 前確認盒子不存在'* ]]
+    [[ "${doc}" == *'中斷後 assemble 回非零'* ]]
+    [[ "${doc}" == *"缺少 \`created-box\` 代表本輪未確認盒子所有權"* ]]
+}

@@ -26,7 +26,7 @@ STUB
     REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
 }
 
-@test "5.4: all six event-driven interrupts have pinned passing output" {
+@test "5.4: all six event-driven interrupts pass with nonzero interrupted assemble" {
     run "${REALBOX}" --allow-real-box 5.4
     assert_success
     local phase signal code expected=''
@@ -84,9 +84,6 @@ _copy_matrix_repo() {
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
             export FORWARDING_DEGRADE_CELL="${phase}-${signal}"
-            # A child stopped before assemble succeeds grants no ownership.
-            # Give each degraded cell its own empty baseline.
-            : >"${MATRIX_STATE}/boxes"
             run "${REALBOX}" --allow-real-box 5.4
             assert_failure 1
             assert_line --partial "interrupt ${phase} ${signal}: FAIL ("

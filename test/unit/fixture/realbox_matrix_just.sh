@@ -6,7 +6,9 @@ if [[ "${phase}" == assemble ]]; then
     mkdir -p "${box_home}/.cache/tmux"
     printf '%s\n' "${box_home}" >"${MATRIX_STATE}/home"
     if [[ "${TMPDIR}" == *assemble* ]]; then
-        trap 'exit 0' INT TERM HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
     fi
     # Publish the observed event only after state and signal handling are ready.
     printf 'dev\n' >"${MATRIX_STATE}/boxes"

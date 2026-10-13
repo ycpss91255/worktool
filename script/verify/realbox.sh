@@ -39,9 +39,9 @@
 #     - they refuse to run without the explicit --allow-real-box opt-in;
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
-#     - ownership requires successful assemble and a confirmed listed box;
-#       success is recorded before propagating an interrupt to cleanup,
-#       which confirms ownership after signal forwarding has stopped;
+#     - ownership requires confirmed absence before assemble and a listed
+#       box afterward, including nonzero interrupted assemble; cleanup
+#       confirms ownership after signal forwarding has stopped;
 #     - cleanup and restore run on EXIT INT TERM HUP, and a failed cleanup
 #       fails the whole run.
 #
@@ -180,15 +180,25 @@ _just() {
     )
 }
 
-# Success is evidence, not ownership: confirm outside the signalled group.
+# Confirm the absent-before/listed-after evidence outside the signalled group.
 _confirm_box_ownership() {
-    local dir="$1"
+    local dir="$1" rc=0
     [[ ! -e "${dir}/created-box" ]] || return 0
-    [[ -e "${dir}/assemble-success" ]] || return 0
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || {
-        guard_fail "assemble returned 0 but box '${BOX}' is not listed"
+    [[ -e "${dir}/assemble-started" ]] || return 0
+    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
+    if [[ "${rc}" -eq 1 && ! -e "${dir}/assemble-success" ]]; then
+        # Retire this attempt so a later restore cannot claim an unrelated box.
+        rm -f -- "${dir}/assemble-started" || return 1
+        return 0
+    fi
+    if [[ "${rc}" -ne 0 ]]; then
+        if [[ -e "${dir}/assemble-success" ]]; then
+            guard_fail "assemble returned 0 but box '${BOX}' is not listed"
+        else
+            guard_fail "cannot confirm box '${BOX}' after assemble (list status ${rc})"
+        fi
         return 1
-    }
+    fi
     : >"${dir}/created-box" || {
         guard_fail "cannot record box ownership at ${dir}/created-box"
         return 1
@@ -198,10 +208,13 @@ _confirm_box_ownership() {
 # Keep the actual assemble result even when supervision returns a signal.
 _assemble_owned_box() {
     (
+        local rc=0
         trap 'exit 130' INT
         trap 'exit 143' TERM
         trap 'exit 129' HUP
         cd -- "${REPO_ROOT}" || exit 1
+        _refuse_preexisting_box "No ownership without confirmed absence." || exit 1
+        : >"$1/assemble-started" || exit 1
         verify_run "${TIMEOUT_LONG}" bash -c "
             set -euo pipefail
             trap ':' INT TERM HUP
@@ -213,8 +226,9 @@ _assemble_owned_box() {
             : >\"\${dir}/assemble-success\" || {
                 guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
             }
-        " _ "$1" || exit $?
-        _confirm_box_ownership "$1"
+        " _ "$1" || rc=$?
+        _confirm_box_ownership "$1" || exit 1
+        exit "${rc}"
     )
 }
 
@@ -764,7 +778,7 @@ _52_remove_owned_box() {
     _confirm_box_ownership "${CFGBK_B}" || return 1
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         printf 'dev-untouched=1\n'
-        log_info "this run never created a box; leaving every box alone"
+        log_info "this run has no confirmed box ownership; leaving every box alone"
         return 0
     fi
     if XDG_DATA_HOME="${CFGBK_B}/data" _drop_owned_box; then
@@ -790,6 +804,7 @@ _52_cleanup_state() {
     _host_state_cleanup "${CFGBK_B}" || return 1
     # Keep ownership across retries until all owned state is clean.
     rm -f -- "${CFGBK_B}/created-box" "${CFGBK_B}/assemble-success" \
+        "${CFGBK_B}/assemble-started" \
         || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 

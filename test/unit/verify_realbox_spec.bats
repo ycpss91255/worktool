@@ -80,8 +80,12 @@ set -euo pipefail
 if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
     finish() {
         echo finished >>"${SIGNAL_STATE}/events"
+        if [[ "${INTERRUPT_PHASE}" == assemble ]]; then exit 1; fi
         exec "${SIGNAL_STATE}/just" "$@"
     }
+    if [[ "${INTERRUPT_PHASE}" == assemble ]]; then
+        "${SIGNAL_STATE}/just" "$@"
+    fi
     trap 'sleep 0.2; finish "$@"' INT TERM HUP
     echo "$$" >"${SIGNAL_STATE}/child.pid"
     touch "${SIGNAL_STATE}/ready"
@@ -122,7 +126,7 @@ _check_group_interrupt() {
     assert_failure 1
 }
 
-@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+@test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
     _assert_group_interrupt INT 130 assemble
 }
 
@@ -1832,7 +1836,7 @@ STUB
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
-    [[ "${stderr:-}" == *'[INFO] this run never created a box; leaving every box alone'* ]]
+    [[ "${stderr:-}" == *'[INFO] this run has no confirmed box ownership; leaving every box alone'* ]]
     _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
         | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
     _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
