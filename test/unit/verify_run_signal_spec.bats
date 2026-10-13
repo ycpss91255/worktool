@@ -72,6 +72,31 @@ teardown() {
     assert_signal_cleanup HUP 129
 }
 
+@test "verify_run: HUP under CPU load always finishes before cleanup" {
+    load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+    interrupt_load_start
+    local attempt failures=0 trials=60
+    sed -i '3i printf -v FORK_PAYLOAD "%50000000s" ""; taskset -pc "${INTERRUPT_LOAD_CPU}" "$BASHPID" >/dev/null; exec 9>>"${SIGNAL_STATE}/trace"; BASH_XTRACEFD=9; set -x' "${SIGNAL_STATE}/child"
+    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
+        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${SIGNAL_STATE}/signal.js"
+    for ((attempt=1; attempt<=trials; attempt++)); do
+        rm -f "${SIGNAL_STATE}/ready" "${SIGNAL_STATE}/events"
+        run node "${SIGNAL_STATE}/signal.js" HUP bash "${SIGNAL_STATE}/caller"
+        if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
+            "$(cat "${SIGNAL_STATE}/events")" != $'finished\ncleanup' ]]; then
+            failures=$((failures + 1))
+            printf '# attempt=%s status=%s output=%s events=%s\n' "${attempt}" "${status}" "${output}" "$(cat "${SIGNAL_STATE}/events")" >&3
+        fi
+        teardown
+        if ((attempt % 10 == 0)); then
+            printf '# verify_run HUP attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
+        fi
+    done
+    interrupt_load_stop
+    printf '# verify_run HUP load failures=%s/%s\n' "${failures}" "${trials}" >&3
+    [ "${failures}" -eq 0 ]
+}
+
 @test "verify_run: a signal-ignoring child is killed within the grace period" {
     sed -i "s/^trap .*/trap '' INT TERM HUP/" "${SIGNAL_STATE}/child"
     local start="${SECONDS}"
