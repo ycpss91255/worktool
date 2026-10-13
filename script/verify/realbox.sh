@@ -213,7 +213,7 @@ _confirm_box_ownership() {
         }
         return 0
     fi
-    [[ "${2:-}" == record || "${_ASSEMBLE_CONFIRM_DIR:-}" == "${dir}" ]] || {
+    [[ "${2:-}" == record ]] || {
         guard_fail "box '${BOX}' has no recorded ID from this run; keeping ownership evidence"
         return 1
     }
@@ -221,6 +221,16 @@ _confirm_box_ownership() {
         guard_fail "cannot record box ownership at ${dir}/created-box"
         return 1
     }
+}
+
+# Consume the active run's final confirmation before any restore interaction.
+_finish_box_confirmation() {
+    local dir="$1" mode=''
+    if [[ "${_ASSEMBLE_CONFIRM_DIR:-}" == "${dir}" ]]; then
+        mode=record
+    fi
+    _ASSEMBLE_CONFIRM_DIR=''
+    _confirm_box_ownership "${dir}" "${mode}"
 }
 
 # Keep the actual assemble result even when supervision returns a signal.
@@ -387,6 +397,7 @@ _cleanup_run() {
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
     local _rc=0
+    _finish_box_confirmation "${CFGBK_B}" || _rc=1
     _52_step3_restore || _rc=$?
     printf 'cleanup-rc=%s\n' "${_rc}"
     return "${_rc}"
@@ -429,7 +440,7 @@ _51_W=""
 _51_cleanup() {
     local _crc=0
     if [[ -n "${_51_W}" ]]; then
-        _confirm_box_ownership "${_51_W}" || _crc=1
+        _finish_box_confirmation "${_51_W}" || _crc=1
     fi
     if [[ "${_crc}" -eq 0 && -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1

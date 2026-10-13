@@ -2855,3 +2855,36 @@ _assert_symlink_roundtrip() {
     assert_output --partial 'restore-ok=1'
     refute_output --partial '[INCONCLUSIVE]'
 }
+
+@test "#558: interrupted apply records its ID before restore can replace the box" {
+    _prepare_group_interrupt assemble
+    cp "${STUBS}/just" "${STATE}/interrupt-just"
+    cp "${STUBS}/distrobox" "${STATE}/interrupt-distrobox"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == 'box setup --auto-enter no' ]]; then
+    printf 'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04\n' \
+        >"${SIGNAL_STATE}/replacement"
+fi
+exec "${SIGNAL_STATE}/interrupt-just" "$@"
+STUB
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${SIGNAL_STATE}/replacement" ]]; then
+    FAKE_DBX_LIST_OUT="$(cat "${SIGNAL_STATE}/replacement")"
+    export FAKE_DBX_LIST_OUT
+fi
+exec "${SIGNAL_STATE}/interrupt-distrobox" "$@"
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    assert_line 'rc=1'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    [ -e "$(_backup_dir)/assemble-started" ]
+    [ -s "${STATE}/boxes" ]
+}
