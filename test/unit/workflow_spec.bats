@@ -341,7 +341,7 @@ SH
     chmod +x "${stub}/gh" "${stub}/git"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}}'
     (cd "${WORK}" && PATH="${stub}:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/repo" '{repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/repo" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:238,branch:"b",name:"n",task:"t",implementer:"claude"}')" \
         "${replies}" exec)
 }
 
@@ -356,7 +356,7 @@ _pl_run() {
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --argjson extra "${extra}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
+        "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
 }
 
@@ -364,7 +364,7 @@ _pl_blocked_run() {
     local implementer="$1"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg implementer "${implementer}" '{repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
+        "$(jq -cn --arg implementer "${implementer}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
 }
 
@@ -477,7 +477,7 @@ _pl_blocked_run() {
         for mode in full light; do
             for implementer in codex claude; do
                 args="$(jq -cn --arg m "${mode}" --arg i "${implementer}" --arg g "${gate}" --arg d "${REPO_ROOT}" \
-                    '{repo:"o/r",repoDir:$d,mode:$m,implementer:$i,maxRounds:1} +
+                    '{runTag:"test-run",repo:"o/r",repoDir:$d,mode:$m,implementer:$i,maxRounds:1} +
                     {issue:385,branch:"b",name:"n",task:"t",gates:$g}')"
                 if [[ "${template}" == "${FANOUT}" ]]; then
                     args="$(jq -c '. + {items:[{issue,branch,name,task,gates}]} | del(.issue,.branch,.name,.task,.gates)' <<<"${args}")"
@@ -689,7 +689,7 @@ _pl_launch_checks() {
     replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     for implementer in codex claude; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
-            "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
+            "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
         assert_success
         run jq -e '.error == null and (.workflowCalls | length == 1) and (.workflowCalls[0].args | has("sessionUrl") | not) and ([.calls[].prompt | test("Co-Authored-By|Claude-Session|Generated with")] | any | not)' <<<"${output}"
         assert_success
@@ -773,7 +773,7 @@ JS
     local replies
     replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
-        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
+        "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
     assert_success
     run jq -e '.error == null and (.workflowCalls | length == 2) and .workflowCalls[0].args.gates == "just test lint" and (.workflowCalls[1].args | has("gates") | not)' <<<"${output}"
     assert_success
@@ -1526,7 +1526,7 @@ _codex_rel_answer() {
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
         "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${dir}" '{repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
+        "$(jq -cn --arg d "${dir}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
     assert_success
     local prompt
     prompt="$(jq -r '.calls[] | select(.role | startswith("review:")) | .prompt' <<<"${output}")"
@@ -1938,7 +1938,7 @@ _rv_assert_fails_closed() {
 
 @test "milestone-fanout (node): forwards light mode to each child (#310)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
-        "{\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"mode\":\"light\",\"items\":[{\"issue\":310,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" '{}'
+        "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"mode\":\"light\",\"items\":[{\"issue\":310,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" '{}'
     assert_success
     run jq -cr '[.error, .workflowCalls[0].args.mode]' <<<"${output}"
     assert_output '[null,"light"]'
@@ -1978,7 +1978,7 @@ _pl_stage_run() {
         "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
     PL_ACTION="${action}" PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${root}/src" --arg impl "${implementer}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t",implementer:$impl,maxRounds:1}')" \
+        "$(jq -cn --arg d "${root}/src" --arg impl "${implementer}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t",implementer:$impl,maxRounds:1}')" \
         "${replies}" exec-stage-checks
 }
 
@@ -2045,7 +2045,7 @@ _pl_stage_run() {
             "review:":{verdict:"mergeable",blocking:[],nonBlocking:[],answer:"ok"},
             "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
         PL_STAGE=Implement PL_ACTION=dirty PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-            "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
+            "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
             "${replies}" exec-stage-checks
         assert_success
         json="${output}"
@@ -2060,7 +2060,7 @@ _pl_stage_run() {
 
 @test "pr-loop (node): invalid stage evidence fails closed with a reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t"}' \
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t"}' \
         '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"null"}}'
     assert_success
     run jq -cr '[.error, .result.codexVerdict, .result.blockingLeft]' <<<"${output}"
@@ -2083,7 +2083,7 @@ _pl_stage_run() {
 
 @test "pr-loop (node): a missing worktree stops the stage script (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/missing" '{repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"}')" \
+        "$(jq -cn --arg d "${BATS_TEST_TMPDIR}/missing" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"}')" \
         '{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"<stdout>"}}' exec-stage-checks
     assert_success
     run jq -cr '[.error, .result.codexVerdict, (.ran[0].rc != 0), .result.blockingLeft]' <<<"${output}"
@@ -2092,7 +2092,7 @@ _pl_stage_run() {
 
 @test "pr-loop (node): light failed editing includes the step and reason (#331)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        '{"repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":331,"branch":"b","name":"n","task":"t","mode":"light"}' \
         '{"implement:":{"status":"failed","reason":"commit: noreply identity is missing"}}'
     assert_success
     run jq -cr '[.result.blockingLeft, [.calls[].role | select(startswith("prepare:") | not)], (.calls[] | select(.role | startswith("implement:")) | .schema.required | index("reason") != null)]' <<<"${output}"
@@ -2101,7 +2101,7 @@ _pl_stage_run() {
 
 @test "pr-loop (node): light stops before review when editing fails (#310)" {
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        '{"repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":310,"branch":"b","name":"n","task":"t","mode":"light"}' '{}'
     assert_success
     run jq -cr '[.error, [.calls[].role | select(startswith("prepare:") | not)], .result.pr, (.result.blockingLeft | length)]' <<<"${output}"
     assert_output '[null,["implement:#310"],0,1]'
@@ -2473,7 +2473,7 @@ _scratch_assert_isolated() {
     for issues in '[215,264]' '[319]'; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
             "$(jq -cn --arg dir "${REPO_ROOT}" --argjson issues "${issues}" \
-                '{repo:"o/r",repoDir:$dir,items:[$issues[] | {issue:.,branch:"b",name:"n",task:"t"}]}')" '{}'
+                '{runTag:"test-run",repo:"o/r",repoDir:$dir,items:[$issues[] | {issue:.,branch:"b",name:"n",task:"t"}]}')" '{}'
         assert_success
         json="${output}"
         run jq -e --argjson issues "${issues}" '
@@ -2649,7 +2649,7 @@ _pl_resume_run() {
         replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
     fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${template}" \
-        "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
+        "$(jq -cn --arg d "${root}/src" --argjson a "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t"} + $a')" \
         "${replies}" exec-resume
 }
 
@@ -2811,7 +2811,7 @@ _pl_resume_run() {
     local root="${BATS_TEST_TMPDIR}"
     local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
+        "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume
     assert_success
     run jq -e '.error == null and .result.codexVerdict == "blocked" and
@@ -2840,7 +2840,7 @@ _pl_resume_run() {
     local root="${BATS_TEST_TMPDIR}" replies json
     replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
     PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
+        "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
     assert_success
     json="${output}"
@@ -2860,7 +2860,7 @@ _pl_resume_run() {
     local root="${BATS_TEST_TMPDIR}" replies json
     replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable"}}'
     PL_ACTION=unpushed PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
+        "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
     assert_success
     json="${output}"
@@ -3075,7 +3075,7 @@ _pl_retry_run() {
         "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
         "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        '{"repo":"o/r","repoDir":"/work","issue":417,"branch":"b","name":"n","task":"t"}' "${replies}"
+        "$(jq -cn --arg tag "${3:-test-run}" '{runTag:$tag,repo:"o/r",repoDir:"/work",issue:417,branch:"b",name:"n",task:"t"}')" "${replies}"
 }
 
 @test "pr-loop retry: capacity failure then success continues in the same worktree (#417)" {
@@ -3204,7 +3204,7 @@ _pl_retry_run() {
     printf 'at capacity\n' > "${root}/worktree/.scratch/n/implement.md.log"
     printf '1\n' > "${root}/worktree/.scratch/n/implement.rc"
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
-        "$(jq -cn --arg d "${root}/src" '{repo:"o/r",repoDir:$d,issue:417,branch:"b",name:"n",task:"t"}')" \
+        "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:417,branch:"b",name:"n",task:"t"}')" \
         '{"prepare:":{"state":"implement"},"implement:":{"status":"ready","reason":""}}' exec
     assert_success
     json="${output}"
@@ -3477,7 +3477,7 @@ _pl_retry_run() {
 @test "pr-loop delegates local gates to a low effort job stage before publication (#550)" {
     local replies
     replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
-    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.error == null and .result.ciState == "green" and
         (.calls[] | select(.role | startswith("gates:")) | .effort == "low" and
@@ -3489,7 +3489,7 @@ _pl_retry_run() {
 @test "pr-loop sends only the failed gate summary to codex and reruns gates after repair (#550)" {
     local replies
     replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
-    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.result.ciState == "green" and
         (.calls[] | select(.role | startswith("gate-fix:")) | .prompt | contains("not ok 1 gate failed") and contains("WORKTOOL_AGENT_ROLE=pr-loop")) and
@@ -3553,4 +3553,27 @@ _pl_retry_run() {
         run jq -c '[.error, (.calls | length), (.logs | length)]' <<<"${output}"
         assert_output '["pr-loop: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)",0,0]'
     done
+}
+
+@test "pr-loop job names replay through retry gate CI and differ across runs in one worktree (#555)" {
+    local first second fresh
+    first="$(_pl_retry_run false)"
+    second="$(_pl_retry_run false)"
+    fresh="$(_pl_retry_run false "HTTP 503 at capacity" run-two)"
+    run jq -e --argjson replay "${second}" --argjson fresh "${fresh}" '
+        .error == null and .result.ciState == "green" and
+        ([.calls[].role] | any(startswith("implement-wait:"))) and
+        ([.calls[].role] | any(startswith("gates:"))) and
+        ([.calls[].role] | any(startswith("ci:"))) and
+        ([.calls[].prompt | scan("just job start \u0027([^\u0027]+)\u0027") | .[0]] as $names |
+         ($names | length > 4) and (($names | length) == ($names | unique | length)) and
+         ($names == [$replay.calls[].prompt | scan("just job start \u0027([^\u0027]+)\u0027") | .[0]]) and
+         all($names[]; startswith("test-run-")) and
+         ([$names[] | capture("-(?<n>[0-9]+)$").n | tonumber] == [range(1; ($names | length) + 1)]) and
+         ($fresh.error == null) and
+         ([$fresh.calls[].prompt | scan("just job start \u0027([^\u0027]+)\u0027") | .[0]] as $new |
+          ($new | length) == ($names | length) and all($new[]; startswith("run-two-")) and
+          (($names + $new | unique | length) == ($names + $new | length))))' <<<"${first}"
+    assert_success
+    assert_output "true"
 }
