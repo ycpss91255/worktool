@@ -21,6 +21,8 @@
 // `exec-record` plays only Record agents against prepared model output files.
 // `exec-stage-checks` plays only pr-loop stage-check agents; implementation
 // and review remain canned so the checks can inspect real test repositories.
+// `exec-job-results` executes generated start/wait calls against fake jobs,
+// then reads the failed run and hands off to a canned repair on a failure marker.
 // `exec-hooks` also runs both publication body hooks before each shell
 // step, using the unchanged tool cwd rather than following shell `cd`.
 // A top-level reply field equal to "<stdout>" becomes the trimmed stdout of
@@ -97,6 +99,39 @@ const withStdout = (value, stdout) => {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, v === '<stdout>' ? stdout : v]))
 }
 
+// Execute generated job calls against deterministic just/gh adapters. A
+// successful failure handoff reads the failed run before the canned repair.
+const playJobResults = (role, prompt) => {
+  const steps = [...prompt.matchAll(/`([^`]+)`/g)].map(match => match[1])
+  const start = steps.findIndex(cmd => cmd.includes('just job start') &&
+    (!role.startsWith('ci:') || cmd.includes('--watch --fail-fast') !== (process.env.PL_JOB_KIND === 'local')))
+  if (start < 0) throw new Error('fixture: missing job start')
+  let stdout = ''
+  for (const cmd of steps.slice(start, start + 2)) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
+        ran.push({ cmd, rc: 0, stdout })
+        break
+      } catch (e) {
+        ran.push({ cmd, rc: e.status })
+        if (e.status === 124 && cmd.includes('just job wait') && attempt < 5) continue
+        return { state: 'red', sha: 'abc', detail: `job rc ${e.status}` }
+      }
+    }
+  }
+  if (stdout.includes('CI_CHECK_FAILED')) {
+    const failedLog = steps.find(cmd => cmd.startsWith('gh run view ') && cmd.includes('--log-failed'))
+    if (!failedLog) throw new Error('fixture: missing failed-log step')
+    const cmd = failedLog.replace('<run-id>', '42')
+    execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] })
+    ran.push({ cmd, rc: 0 })
+    // The implementation itself stays canned, like the other workflow modes.
+    return reply(`${role}repair`)
+  }
+  return reply(role)
+}
+
 // Model the Review agent and its Codex child at the publication seam.
 const playHandoverReview = (prompt) => {
   const task = prompt.match(/BEGIN CODEX TASK\n([\s\S]*?)\nEND CODEX TASK/)
@@ -154,6 +189,7 @@ const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
+  if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
