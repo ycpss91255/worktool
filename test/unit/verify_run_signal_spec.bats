@@ -6,11 +6,16 @@ setup() {
     cat >"${SIGNAL_STATE}/child" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'sleep 0.2; echo finished >>"${SIGNAL_STATE}/events"; exit 0' INT TERM HUP
+stop_sleep() {
+    if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
+        : # The background sleep may already have exited.
+    fi
+}
+trap 'stop_sleep; sleep 0.2; echo finished >>"${SIGNAL_STATE}/events"; exit 0' INT TERM HUP
 printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
 printf '%s\n' "${WORKTOOL_TEST_RUN_ID:-}" >"${SIGNAL_STATE}/run-id"
 touch "${SIGNAL_STATE}/ready"
-sleep 3
+sleep 3 & wait "$!"
 echo finished >>"${SIGNAL_STATE}/events"
 CHILD
     chmod +x "${SIGNAL_STATE}/child"
