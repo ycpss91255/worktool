@@ -2970,3 +2970,17 @@ STUB
     [ ! -s "${STATE}/boxes" ]
     [ ! -e "$(_backup_dir)/created-box" ]
 }
+
+@test "#562: duplicate box names are unknown for both guard interfaces without an ID" {
+    local id helper
+    for id in 0000 1111; do
+        for helper in guard_box_id guard_box_exists; do
+            FAKE_DBX_LIST_OUT="ID | NAME | STATUS | IMAGE
+0000 | dev | Up | ubuntu:24.04
+${id} | dev | Up | ubuntu:24.04" \
+                run bash -c 'source "$1/lib/guard.sh"; "$2" dev' _ "${REPO_ROOT}" "${helper}"
+            assert_failure 2
+            assert_output ''
+        done
+    done
+}
