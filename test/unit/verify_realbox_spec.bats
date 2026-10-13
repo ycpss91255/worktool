@@ -2984,3 +2984,20 @@ ${id} | dev | Up | ubuntu:24.04" \
         done
     done
 }
+
+@test "#562: restore explains empty legacy ownership markers and manual recovery" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/created-box"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_output --partial "[FAIL] legacy empty created-box marker at $(_backup_dir)/created-box"
+    assert_output --partial 'ownership is unknown'
+    assert_output --partial 'inspect and remove the box manually if appropriate, then remove the marker and retry cleanup'
+    refute_output --partial 'ID differs from this run'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    [ -e "$(_backup_dir)/created-box" ]
+    [ ! -s "$(_backup_dir)/created-box" ]
+    assert_line 'cleanup-rc=1'
+}

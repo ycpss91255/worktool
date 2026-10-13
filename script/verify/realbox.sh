@@ -207,6 +207,10 @@ _confirm_box_ownership() {
     }
     if [[ -e "${dir}/created-box" ]]; then
         recorded="$(cat -- "${dir}/created-box")" || return 1
+        [[ -n "${recorded}" ]] || {
+            guard_fail "legacy empty created-box marker at ${dir}/created-box; ownership is unknown; inspect and remove the box manually if appropriate, then remove the marker and retry cleanup"
+            return 1
+        }
         [[ "${recorded}" == "${id}" ]] || {
             guard_fail "box '${BOX}' ID differs from this run; keeping ownership evidence"
             return 1
