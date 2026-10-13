@@ -2948,3 +2948,12 @@ STUB
     assert_output --partial 'loginctl show-session 73'
     assert_output --partial 'loginctl show-session 71'
 }
+
+@test "#562: acceptance 5.2 documents expanded manifest ownership and recovery" {
+    run sed -n '/  - \[ \] 5\.2 /,/  - \[ \] 5\.3 /p' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial 'TMPDIR=<本輪 5.2 備份目錄>/assemble-tmp'
+    assert_output --partial '展開後的 manifest'
+    assert_output --partial '成功清理時隨備份目錄一起移除'
+    assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
+}
