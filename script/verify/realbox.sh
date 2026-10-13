@@ -213,7 +213,7 @@ _confirm_box_ownership() {
         }
         return 0
     fi
-    [[ "${2:-}" == record ]] || {
+    [[ "${2:-}" == record || "${_ASSEMBLE_CONFIRM_DIR:-}" == "${dir}" ]] || {
         guard_fail "box '${BOX}' has no recorded ID from this run; keeping ownership evidence"
         return 1
     }
@@ -225,6 +225,8 @@ _confirm_box_ownership() {
 
 # Keep the actual assemble result even when supervision returns a signal.
 _assemble_owned_box() {
+    # Only this invocation may finish confirmation after stopping its children.
+    _ASSEMBLE_CONFIRM_DIR="$1"
     (
         local rc=0
         trap 'exit 130' INT
