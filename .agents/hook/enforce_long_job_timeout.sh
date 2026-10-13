@@ -121,30 +121,35 @@ _poll_loop() {
 
 # A detached launch retains the role restrictions of its payload.
 _role_job_forbidden() {
-    local arg payload lead
+    local arg payload sub
     [[ "${1:-}" == wait ]] && return 0
     [[ "${1:-}" == start ]] || return 1
     shift
     while [[ $# -gt 0 ]]; do
         arg="$1"; shift
         [[ "$arg" == -- ]] || continue
-        payload="$*"
-        lead="$(hook_timeout_lead "$payload")"
-        _role_forbidden "${payload#"$lead"}"
-        return $?
+        printf -v payload '%q ' "$@"
+        while IFS= read -r sub; do
+            _role_raw_forbidden "$sub" && return 0
+        done < <(hook_subcommands_raw "$payload")
+        return 1
     done
     return 1
 }
 
 _role_forbidden() {
-    local -a w
-    read -ra w <<<"$1"
+    local -a w=("$@")
     [[ "${w[0]:-}" == bash || "${w[0]:-}" == sh ]] && w=("${w[@]:1}")
     case "${w[0]##*/}" in
         sleep) return 0 ;;
+        test.sh)
+            if [[ "${w[0]}" == script/test/test.sh || "${w[0]}" == */script/test/test.sh ]]; then
+                _role_forbidden just test "${w[@]:1}"
+                return $?
+            fi ;;
         job.sh) _role_job_forbidden "${w[@]:1}"; return $? ;;
         gh)
-            [[ " $1 " == *' --watch '* || " $1 " == *' run watch '* ]] && return 0 ;;
+            [[ " $* " == *' --watch '* || " $* " == *' run watch '* ]] && return 0 ;;
         just)
             local i verb next
             for ((i=1; i<${#w[@]}; i++)); do
@@ -165,7 +170,18 @@ _role_forbidden() {
                 esac
             done ;;
     esac
-    _is_wait "$1"
+    [[ "${w[0]##*/}" == wait ]] && return 0
+    _is_wait "${w[*]}"
+}
+
+# Keep quoted payload arguments intact until the job command is unpacked.
+_role_raw_forbidden() {
+    local raw="$1" lead token
+    local -a encoded words=()
+    lead="$(hook_timeout_lead "$raw")"
+    read -ra encoded <<<"${raw#"$lead"}"
+    for token in "${encoded[@]}"; do words+=("$(hook_word "$token")"); done
+    _role_forbidden "${words[@]}"
 }
 
 main() {
@@ -175,12 +191,10 @@ main() {
     [[ -z "${_cmd}" ]] && hook_allow
     if [[ "${WORKTOOL_AGENT_ROLE:-}" == pr-loop ]]; then
         while IFS= read -r _sub; do
-            local role_lead
-            role_lead="$(hook_timeout_lead "${_sub}")"
-            if _role_forbidden "${_sub#"${role_lead}"}"; then
+            if _role_raw_forbidden "${_sub}"; then
                 hook_block "pr-loop: delegate long gates and all waits to the workflow job stage."
             fi
-        done < <(hook_subcommands "${_cmd}")
+        done < <(hook_subcommands_raw "${_cmd}")
         _poll_loop "${_cmd}" && hook_block "pr-loop: delegate polling to the workflow job stage."
     fi
     [[ "$(hook_field '.tool_input.run_in_background')" == true ]] && hook_allow

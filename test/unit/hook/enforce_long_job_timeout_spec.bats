@@ -308,3 +308,24 @@ _implementer_payload() {
     _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
     assert_success
 }
+
+@test "role checks wrapped gates in direct commands and job payloads (#552)" {
+    export WORKTOOL_AGENT_ROLE=pr-loop
+    local cmd wrapper
+    for cmd in 'just test changed' 'script/test/test.sh changed'; do
+        for wrapper in "$cmd" "env A=1 $cmd" "bash -c '$cmd'" "sh -c 'true; $cmd'"; do
+            _check "$wrapper" null 600000
+            assert_failure 2
+            _check "just job start g -- $wrapper" null 600000
+            assert_failure 2
+        done
+    done
+    for cmd in "just job start g -- bash -c 'just test lint'" \
+        "just job start g -- env A=1 just test unit test/unit/workflow_spec.bats"; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    unset WORKTOOL_AGENT_ROLE
+    _check "just job start g -- bash -c 'just test changed'" null 600000
+    assert_success
+}
