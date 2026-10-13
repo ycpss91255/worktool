@@ -338,3 +338,18 @@ _implementer_payload() {
     _check 'a & b & wait' null 600000
     assert_failure 2
 }
+
+@test "role script selectors allow lint and slice specs but reject changed and whole tiers (#552)" {
+    export WORKTOOL_AGENT_ROLE=pr-loop
+    local args cmd
+    for args in '--lint' '--unit test/unit/workflow_spec.bats' '--help'; do
+        for cmd in "script/test/test.sh $args" "just job start g -- env A=1 script/test/test.sh $args"; do
+            _check "$cmd" null 600000
+            assert_success
+        done
+    done
+    for args in '--changed' '--unit' ''; do
+        _check "script/test/test.sh $args" null 600000
+        assert_failure 2
+    done
+}

@@ -144,7 +144,8 @@ _role_forbidden() {
         sleep) return 0 ;;
         test.sh)
             if [[ "${w[0]}" == script/test/test.sh || "${w[0]}" == */script/test/test.sh ]]; then
-                _role_forbidden just test "${w[@]:1}"
+                local selector="${w[1]:-}"
+                _role_forbidden just test "${selector#--}" "${w[@]:2}"
                 return $?
             fi ;;
         job.sh) _role_job_forbidden "${w[@]:1}"; return $? ;;
