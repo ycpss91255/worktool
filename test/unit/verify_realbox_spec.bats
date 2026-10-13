@@ -2891,6 +2891,7 @@ STUB
 
 @test "#562: no caller session skips other UID rows without querying them" {
     unset XDG_SESSION_ID
+    local FAKE_SESSIONS
     export FAKE_SESSIONS="72 $((UID + 1)) other seat0 tty2
 71 ${UID} test seat0 tty1"
     _fake_window_process
@@ -2904,6 +2905,7 @@ STUB
 
 @test "#562: no caller session rejects a nonnumeric UID row before actions" {
     unset XDG_SESSION_ID
+    local FAKE_SESSIONS
     export FAKE_SESSIONS="71 ${UID} test seat0 tty1
 72 invalid other seat0 tty2"
     run "${REALBOX}" --allow-real-box 5.2
@@ -2919,6 +2921,7 @@ STUB
 
 @test "#562: one unlocked graphical session passes among locked and text sessions" {
     unset XDG_SESSION_ID
+    local FAKE_SESSIONS
     export FAKE_SESSIONS="72 ${UID} test seat0 tty2
 73 ${UID} test seat0 tty3
 71 ${UID} test seat0 tty1"
