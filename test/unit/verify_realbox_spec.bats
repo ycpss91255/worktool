@@ -1627,6 +1627,18 @@ STUB
     [ -e "$(_backup_dir)/assemble-started" ]
 }
 
+@test "#558: restore refuses an unconfirmed interrupted attempt even when a same-name box appears" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/assemble-started"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
+}
+
 @test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
