@@ -81,7 +81,7 @@ teardown() {
     load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
     interrupt_load_start
     local attempt failures=0 trials=60
-    sed -i '3i printf -v FORK_PAYLOAD "%50000000s" ""; taskset -pc "${INTERRUPT_LOAD_CPU}" "$BASHPID" >/dev/null; exec 9>>"${SIGNAL_STATE}/trace"; BASH_XTRACEFD=9; set -x' "${SIGNAL_STATE}/child"
+    sed -i "3i printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${SIGNAL_STATE}/child"
     sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
         "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${SIGNAL_STATE}/signal.js"
     for ((attempt=1; attempt<=trials; attempt++)); do

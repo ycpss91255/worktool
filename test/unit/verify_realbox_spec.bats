@@ -94,10 +94,15 @@ if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
     if [[ "${INTERRUPT_PHASE}" == assemble ]]; then
         "${SIGNAL_STATE}/just" "$@"
     fi
-    trap 'sleep 0.2; finish "$@"' INT TERM HUP
+    stop_sleep() {
+        if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
+            : # The background sleep may already have exited.
+        fi
+    }
+    trap 'stop_sleep; sleep 0.2; finish "$@"' INT TERM HUP
     echo "$$" >"${SIGNAL_STATE}/child.pid"
     touch "${SIGNAL_STATE}/ready"
-    sleep 3
+    sleep 3 & wait "$!"
     finish "$@"
 fi
 exec "${SIGNAL_STATE}/just" "$@"
@@ -180,7 +185,7 @@ _check_group_interrupt() {
             install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/${tool}"
         done
         _prepare_group_interrupt "${phase}"
-        sed -i '/^    trap /i \    printf -v FORK_PAYLOAD "%50000000s" ""; taskset -pc "${INTERRUPT_LOAD_CPU}" "$BASHPID" >/dev/null; exec 9>>"${SIGNAL_STATE}/trace"; BASH_XTRACEFD=9; set -x' "${STUBS}/just"
+        sed -i "/^    trap /i \\    printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${STUBS}/just"
         rm -f "${STATE}/ready" "${STATE}/events"
         run node "${STATE}/signal.js" HUP bash "${REALBOX}" --allow-real-box 5.1
         if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
