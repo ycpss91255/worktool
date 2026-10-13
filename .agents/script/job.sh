@@ -42,10 +42,27 @@ state() {
     printf '%s: running\n' "${NAME}"
     return 124
 }
+worker_alive() {
+    local pid proc_stat
+    [[ -s "${DIR}/pid" ]] || return 1
+    pid="$(cat "${DIR}/pid")"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/${pid}/stat" ]]; then
+        read -r proc_stat < "/proc/${pid}/stat" || return 1
+        [[ "${proc_stat##*) }" == [ZX]* ]] && return 1
+    fi
+    return 0
+}
 wait_job() {
     local deadline=0
     [[ -z "${MAX_SECONDS}" ]] || deadline=$((SECONDS + MAX_SECONDS))
     while [[ ! -f "${DIR}/rc" ]]; do
+        if ! worker_alive; then
+            [[ -f "${DIR}/rc" ]] && break
+            log_error "job.sh: worker 異常結束: ${NAME}"
+            return 1
+        fi
         if [[ -n "${MAX_SECONDS}" && "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
         sleep 1
     done
