@@ -175,6 +175,7 @@ const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stag
 })
 const publishCodex = (stage, pr, evidence) => agent(`${GUARDRAILS}
 In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
+Do not edit the existing PR description when reusing a PR. Draft a PR body only when creating a new PR.
 Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
@@ -223,7 +224,7 @@ ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Post a PR comment starting with "[claude] 採納第 ${round} 輪:" listing what changed per item. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Do not edit the existing PR description or post an adoption comment; the workflow publishes that comment after verifying the pushed head. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
 ${SKILL_LOAD.codex}
@@ -484,6 +485,14 @@ for (;;) {
   }
   const checked = await checkStage(pr, 'Fix', sha)
   if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
+  const adoption = await agent(`${GUARDRAILS}
+Do not edit the existing PR description. Post ONE comment starting with "[claude] 採納第 ${fixes} 輪:" on PR #${pr}, listing the resolution and commit for each finding below. Inspect the committed diff in ${WT}; require PR head ${checked.sha} before posting.
+${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
+Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the posted comment back and verify its body, prefix and head. Return posted true only after this verification; on any failure return false.`, {
+    label: `${RUN_ID} adoption:#${pr}:r${fixes}`, phase: 'Fix',
+    schema: { type: 'object', properties: { posted: { type: 'boolean' } }, required: ['posted'] }, agentType: 'general-purpose',
+  })
+  if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha

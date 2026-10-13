@@ -41,6 +41,7 @@ const replies = {
     'gates:': { state: 'green', detail: 'success' },
     'publish:Implement': { pr: 7, sha: 'abc' },
     'publish:Fix': { pr: 7, sha: 'def' },
+    'adoption:': { posted: true },
   } : {}),
   ...JSON.parse(repliesJson),
 }

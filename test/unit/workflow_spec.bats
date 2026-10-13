@@ -3629,3 +3629,13 @@ JS
         (contains("PR body starts with [codex]") | not)' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop publishes a verified adoption comment without replacing the PR body (#552)" {
+    run _pl_blocked_run codex
+    assert_success
+    run jq -e '.calls[] | select(.role == "adoption:#7:r1") | .prompt |
+        contains("Do not edit the existing PR description") and
+        contains("[claude] 採納第 1 輪:") and contains("gh pr comment 7 --repo o/r --body-file") and
+        contains("read the posted comment back")' <<<"${output}"
+    assert_success
+}
