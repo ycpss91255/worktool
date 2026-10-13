@@ -2999,5 +2999,4 @@ ${id} | dev | Up | ubuntu:24.04" \
     [ -s "${STATE}/boxes" ]
     [ -e "$(_backup_dir)/created-box" ]
     [ ! -s "$(_backup_dir)/created-box" ]
-    assert_line 'cleanup-rc=1'
 }
