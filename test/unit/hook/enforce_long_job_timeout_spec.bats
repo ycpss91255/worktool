@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # test/unit/hook/enforce_long_job_timeout_spec.bats - .agents/hook/enforce_long_job_timeout.sh
 #
-# A long FOREGROUND job (a `just test` tier, script/test/test.sh, an image
+# A Claude long FOREGROUND job (a `just test` tier, script/test/test.sh, an image
 # build, a compose service run) must be bounded: run_in_background, the Bash
 # timeout param, or a self-wrapped timeout(1). Otherwise the hook blocks
 # (exit 2) so a hung gate can never wedge the session. Words inside quoted
@@ -20,6 +20,59 @@ _payload() {
 }
 
 _check() { run_hook enforce_long_job_timeout "$(_payload "$@")"; }
+
+# Implementer CLI rust-v0.160.0: unified_exec/exec_command.rs:520-531
+# forwards only command in tool_input; PreToolUse also carries turn_id.
+_implementer_payload() {
+    jq -n --arg c "$1" --arg cwd "${BATS_TEST_TMPDIR}" '{
+        session_id:"s", turn_id:"t", transcript_path:"/missing/transcript.jsonl",
+        cwd:$cwd, hook_event_name:"PreToolUse", model:"m", tool_name:"Bash",
+        tool_input:{command:$c}, tool_use_id:"exec-1"
+    }'
+}
+
+@test "implementer without role allows standalone long jobs without a timeout field" {
+    unset WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'just test lint' 'just verify all'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_success
+    done
+}
+
+@test "implementer pr-loop still blocks long gates and waits without a timeout field" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'just test changed' 'tail --pid=1 -n 0 -f /dev/null'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_failure 2
+        assert_output --partial 'pr-loop: delegate'
+    done
+}
+
+@test "Claude input without turn_id still blocks lint without a timeout" {
+    unset WORKTOOL_AGENT_ROLE
+    # Claude Code hooks reference: common input fields, with no turn_id.
+    run_hook enforce_long_job_timeout "$(jq -n --arg cwd "${BATS_TEST_TMPDIR}" '{
+        session_id:"abc123", transcript_path:"/missing/transcript.jsonl",
+        cwd:$cwd, permission_mode:"default", hook_event_name:"PreToolUse",
+        tool_name:"Bash", tool_use_id:"toolu_01ABC123",
+        tool_input:{command:"just test lint", description:"Run lint"}
+    }')"
+    assert_failure 2
+    assert_output --partial 'long-running foreground command with no time bound'
+}
+
+@test "implementer without role still blocks foreground polling" {
+    unset WORKTOOL_AGENT_ROLE
+    local cmd
+    for cmd in 'tail --pid=1 -n 0 -f /dev/null' 'while kill -0 1; do sleep 1; done'; do
+        run_hook enforce_long_job_timeout "$(_implementer_payload "$cmd")"
+        assert_failure 2
+        assert_output --partial 'foreground'
+    done
+}
 
 # --- blocked -----------------------------------------------------------------
 
