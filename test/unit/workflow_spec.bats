@@ -3685,3 +3685,18 @@ JS
         ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
     assert_success
 }
+
+@test "pr-loop gate repairs report missing infrastructure red instead of adding it (#552)" {
+    local replies json
+    replies='{ "implement:": {"status":"ready"}, "gates:": {"state":"red","detail":"missing hook infrastructure"}, "gate-fix:": {"status":"failed"} }'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" \
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":552,"branch":"b","name":"n","task":"t"}' "$replies"
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "blocked" and
+        ([.calls[].role | startswith("publish:")] | any | not) and
+        (.calls[] | select(.role | startswith("gate-fix:")) | .prompt |
+            contains("Do not add workflow infrastructure (job modules or hooks) to the PR branch") and
+            contains("return failed and report red"))' <<<"$json"
+    assert_success
+}

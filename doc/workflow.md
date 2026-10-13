@@ -91,6 +91,8 @@ rc 為 124 表示 session 未完成，從 log 第一行 `session id:` 取得 id�
 禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行。
 所有 pr-loop 的 codex exec（包括 resume 與複驗）都帶 `WORKTOOL_AGENT_ROLE=pr-loop`。
 實作 codex 只跑切片 spec 與 `just test lint`，完成後提交，不守長 gate、不等待、不發布。
+prepare 階段先在目標 worktree 執行 `just job help`；缺少入口就回報「base 分支缺少 job 模組，先同步 main」，不進入實作或 gate。gate 與 CI 修復不得在 PR 分支補 job 模組或 hook 等 workflow 基礎設施，這類缺口必須回報 red，先同步 base。
+
 workflow 另開低 effort gate stage，以 `just job start <name> -- <gate...>` 與 `just job wait <name> --max-seconds 540`
 收集結果；每次 start／wait 都是獨立前景 Bash 呼叫，工具 timeout 設為 `600000` ms。
 wait 回傳 `124` 代表仍在執行，以同一名稱再 wait，不重新 start，每個 job 最多六次 wait。
