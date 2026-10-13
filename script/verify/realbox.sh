@@ -184,10 +184,10 @@ _just() {
 
 # Confirm the absent-before/listed-after evidence outside the signalled group.
 _confirm_box_ownership() {
-    local dir="$1" rc=0
-    [[ ! -e "${dir}/created-box" ]] || return 0
-    [[ -e "${dir}/assemble-started" ]] || return 0
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
+    local dir="$1" rc=0 id recorded
+    [[ -e "${dir}/created-box" || -e "${dir}/assemble-started" ]] || return 0
+    id="$(guard_box_id "${BOX}" "${TIMEOUT_SHORT}")" || rc=$?
+    [[ "${rc}" -ne 1 || ! -e "${dir}/created-box" ]] || return 0
     if [[ "${rc}" -eq 1 && ! -e "${dir}/assemble-success" ]]; then
         # Retire this attempt so a later restore cannot claim an unrelated box.
         rm -f -- "${dir}/assemble-started" || return 1
@@ -201,7 +201,23 @@ _confirm_box_ownership() {
         fi
         return 1
     fi
-    : >"${dir}/created-box" || {
+    [[ "${id}" =~ ^[0-9a-fA-F]+$ ]] || {
+        guard_fail "cannot identify box '${BOX}'; keeping ownership evidence"
+        return 1
+    }
+    if [[ -e "${dir}/created-box" ]]; then
+        recorded="$(cat -- "${dir}/created-box")" || return 1
+        [[ "${recorded}" == "${id}" ]] || {
+            guard_fail "box '${BOX}' ID differs from this run; keeping ownership evidence"
+            return 1
+        }
+        return 0
+    fi
+    [[ "${2:-}" == record ]] || {
+        guard_fail "box '${BOX}' has no recorded ID from this run; keeping ownership evidence"
+        return 1
+    }
+    printf '%s\n' "${id}" >"${dir}/created-box" || {
         guard_fail "cannot record box ownership at ${dir}/created-box"
         return 1
     }
@@ -230,7 +246,7 @@ _assemble_owned_box() {
                 guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
             }
         " _ "$1" || rc=$?
-        _confirm_box_ownership "$1" || exit 1
+        _confirm_box_ownership "$1" record || exit 1
         exit "${rc}"
     )
 }
@@ -413,7 +429,7 @@ _51_cleanup() {
     if [[ -n "${_51_W}" ]]; then
         _confirm_box_ownership "${_51_W}" || _crc=1
     fi
-    if [[ -e "${_51_W}/created-box" ]]; then
+    if [[ "${_crc}" -eq 0 && -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"

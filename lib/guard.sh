@@ -67,6 +67,11 @@ guard_require() {
 # create a box over someone else's, or delete one it never made. awk's own
 # failure (>= 2) is kept apart from awk's "not found" (1) for the same reason.
 guard_box_exists() {
+    guard_box_id "$@" >/dev/null
+}
+
+# Print the listed container ID, retaining the same absent/unknown statuses.
+guard_box_id() {
     local _want="$1" _secs="${2:-180}" _out _st=0
     _out="$(guard_timed "${_secs}" distrobox list 2>/dev/null)" || return 2
     printf '%s\n' "${_out}" | awk -F'|' -v want="${_want}" '
@@ -77,10 +82,14 @@ guard_box_exists() {
                     $3 != "STATUS" || $4 != "IMAGE") bad = 1
             } else {
                 if (NF != 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "") bad = 1
-                if ($2 == want) found = 1
+                if ($2 == want) { found++; id = $1 }
             }
         }
-        END { exit(bad || NR == 0 ? 2 : (found ? 0 : 1)) }' || _st=$?
+        END {
+            if (bad || NR == 0 || found > 1) exit 2
+            if (!found) exit 1
+            print id
+        }' || _st=$?
     [[ "${_st}" -eq 0 || "${_st}" -eq 1 ]] || return 2
     return "${_st}"
 }

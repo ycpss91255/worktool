@@ -1615,6 +1615,18 @@ STUB
     refute_output --partial "revalidate=1"
 }
 
+@test "#558: restore refuses a replacement box with a different ID and keeps evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_DBX_LIST_OUT=$'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04' \
+        run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ -s "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
+}
+
 @test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
     run "${REALBOX}" --allow-real-box 5.2.1
     assert_success
