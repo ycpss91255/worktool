@@ -194,7 +194,7 @@ _confirm_box_ownership() {
         return 0
     fi
     if [[ "${rc}" -ne 0 ]]; then
-        if [[ -e "${dir}/assemble-success" ]]; then
+        if [[ "${rc}" -eq 1 && -e "${dir}/assemble-success" ]]; then
             guard_fail "assemble returned 0 but box '${BOX}' is not listed"
         else
             guard_fail "cannot confirm box '${BOX}' after assemble (list status ${rc})"

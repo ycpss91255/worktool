@@ -3000,3 +3000,21 @@ ${id} | dev | Up | ubuntu:24.04" \
     [ -e "$(_backup_dir)/created-box" ]
     [ ! -s "$(_backup_dir)/created-box" ]
 }
+
+@test "#562: successful assemble with an unknown confirmation reports uncertainty" {
+    FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot confirm box 'dev' after assemble (list status 2)"* ]]
+    [[ "${stderr}" != *'is not listed'* ]]
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-success -print)"
+    dir="${dir%/assemble-success}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ -e "${dir}/assemble-success" ]
+    [ ! -e "${dir}/created-box" ]
+}
