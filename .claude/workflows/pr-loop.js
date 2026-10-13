@@ -175,7 +175,7 @@ const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stag
 })
 const publishCodex = (stage, pr, evidence) => agent(`${GUARDRAILS}
 In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
-Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [codex], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
+Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
 const completeCodex = async (stage, pr = A.pr) => {
@@ -430,10 +430,10 @@ if (RESUME && MODE === 'light') {
 let resumedPR
 if (RESUME && !A.pr) {
   phase('Publish')
-  resumedPR = await agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
+  resumedPR = await agent(`${GUARDRAILS}
 Resume the committed work in ${WT} on ${A.branch}; skip implementation. Require a clean worktree and inspect git log. Locate an existing open PR by branch and base ${BASE} first; reuse it rather than opening a duplicate. If none exists, require unpublished commits (compare origin/${A.branch}..HEAD, or origin/${BASE}..HEAD when the remote branch is absent). No unpublished commits or any lookup failure is blocking; return pr 0, sha "" without pushing.
 Before publishing, run ${GATES} blocking in the foreground. Check every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Only when green, git push -u origin ${A.branch}; then gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>.
-Body starts with ${IMPLEMENTER === 'codex' ? '[codex]' : '[claude]'} and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,獨立 Claude diff 審查已完成,不跑 codex 複驗' : CODEX ? 'codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+Body starts with [claude] and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,獨立 Claude diff 審查已完成,不跑 codex 複驗' : CODEX ? 'codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
 }
 phase('Locate')
 const loc = RESUME ? (A.pr ? { pr: A.pr, sha: '' } : resumedPR) : await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })

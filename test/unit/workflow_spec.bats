@@ -3620,3 +3620,12 @@ JS
     assert_success
     assert_output ""
 }
+
+@test "pr-loop publisher uses its own Claude identity consistently (#552)" {
+    run _pl_run
+    assert_success
+    run jq -e '.calls[] | select(.role | startswith("publish:")) | .prompt |
+        contains("PR body starts with [claude]") and
+        (contains("PR body starts with [codex]") | not)' <<<"${output}"
+    assert_success
+}
