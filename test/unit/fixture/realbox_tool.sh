@@ -210,18 +210,22 @@ _fake_data_export() {
     printf '%s\n' "${data}" >"${_DIR}/data-path"
 }
 
+# Model upstream's expanded manifest, which its EXIT trap does not remove.
+_fake_assemble_manifest() {
+    [[ "${FAKE_ASSEMBLE_MANIFEST:-0}" == 1 ]] || return 0
+    local manifest
+    manifest="$(mktemp)" || return 1
+    cat "${FAKE_MANIFEST_SOURCE}" >"${manifest}" || return 1
+    printf '%s\n' "${manifest}" >"${_DIR}/temporary-manifest"
+}
+
 # argv always starts `box <verb>` (script/verify/realbox.sh only ever calls
 # the box namespace).
 _fake_just() {
     local _verb="${2:-}" _rc _out
     case "${_verb}" in
         assemble)
-            if [[ "${FAKE_ASSEMBLE_MANIFEST:-0}" == 1 ]]; then
-                local manifest
-                manifest="$(mktemp)" || return 1
-                cat "${FAKE_MANIFEST_SOURCE}" >"${manifest}" || return 1
-                printf '%s\n' "${manifest}" >"${_DIR}/temporary-manifest"
-            fi
+            _fake_assemble_manifest || return 1
             if [[ "${FAKE_DBX_RECORD_CONFIG:-0}" -eq 1 || "${FAKE_DBX_RECORD_CONTAINER_CONFIG:-0}" -eq 1 ]]; then
                 distrobox assemble create --file box/dev.ini || return 1
             fi

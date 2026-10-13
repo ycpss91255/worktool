@@ -2784,7 +2784,7 @@ _assert_symlink_roundtrip() {
             list-failure) FAKE_SESSIONS_RC=1 ;;
             query-failure) FAKE_SESSION_QUERY_RC=1 ;;
             inactive) FAKE_SESSION_ACTIVE=no ;;
-            text) FAKE_SESSION_TYPE=tty ;;
+            text) FAKE_SESSION_TYPE='tty' ;;
             other-user) FAKE_SESSION_USER=99999 ;;
             unknown) FAKE_LOCKED_HINT=unknown ;;
         esac
