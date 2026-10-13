@@ -17,7 +17,7 @@ export const meta = {
 //     concurrency: 4,                // optional positive integer; limits implementation work
 //     repoDir: "/path/to/worktool",   // required: local checkout
 //     items: [
-//       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "...", gates: "just test lint, just test changed" },
+//       { issue: 149, branch: "m3/149-arm64-ci", name: "arm",   task: "...", gates: ["just test lint", "just test changed"] },
 //       { issue: 150, branch: "m3/150-bench",    name: "bench", task: "..." },
 //     ]
 //   } })

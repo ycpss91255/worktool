@@ -2703,7 +2703,7 @@ _pl_resume_run() {
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
     _pl_resume_codex_complete
-    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}'
     assert_success
     local json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
@@ -2721,7 +2721,7 @@ _pl_resume_run() {
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local before json
     before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
-    run _pl_resume_run '{"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    run _pl_resume_run '{"base":"acceptance","gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}'
     assert_success
     json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
@@ -2796,7 +2796,7 @@ _pl_resume_run() {
 @test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
     _pl_resume_setup
     _pl_resume_codex_complete
-    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
+    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}]}' "${FANOUT}"
     assert_success
     run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
         .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
@@ -3647,4 +3647,16 @@ JS
         contains("just test lint") and contains("git diff --name-only --diff-filter=ACMR") and
         contains("just test") and contains("test/unit/*.bats")] | length == 3 and all' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop custom gate commands preserve literal commas and support arrays (#552)" {
+    local gates json
+    for gates in '"printf a,b"' '["just test lint","printf a,b"]'; do
+        run _pl_run "{\"gates\":$gates}"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and (.calls[] | select(.role == "gates:Implement") | .prompt |
+            contains("-- printf a,b` then") and (contains("-- printf a` then") | not))' <<<"$json"
+        assert_success
+    done
 }

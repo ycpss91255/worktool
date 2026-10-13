@@ -74,7 +74,15 @@ while IFS= read -r spec; do
       just test "$tier" "$spec" ;;
   esac
 done <<< "$paths"`)}`
-const GATES = A.gates || (MODE === 'light' ? `just test lint, ${TOUCHED_GATE}` : `just test lint, ${CHANGED_GATE}`)
+// A string is one shell command; arrays delimit multiple commands explicitly.
+const GATE_COMMANDS = A.gates === undefined
+  ? ['just test lint', MODE === 'light' ? TOUCHED_GATE : CHANGED_GATE]
+  : typeof A.gates === 'string' ? [A.gates] : A.gates
+if (!Array.isArray(GATE_COMMANDS) || !GATE_COMMANDS.length ||
+    GATE_COMMANDS.some(g => typeof g !== 'string' || !g.trim())) {
+  throw new Error('pr-loop: args.gates must be a non-empty command string or array of non-empty command strings')
+}
+const GATES = GATE_COMMANDS.join(' && ')
 // A literal path, escaped for a sed -E s#...#...# pattern.
 const ere = (s) => String(s).replace(/[\\^$.*+?()[\]{}|#]/g, '\\$&')
 // The repo is public (#233): codex cites files through the local directory
@@ -180,7 +188,7 @@ ${commands.map(cmd => {
   return `\`cd ${sq(WT)} && just job start ${sq(name)} -- ${cmd}\` then \`cd ${sq(WT)} && just job wait ${sq(name)} --max-seconds 540\``
 }).join('\n')}
 Set Bash tool timeout: 600000 for every start and wait call. Make at most 6 wait calls per job, each as a separate foreground Bash call. A wait exit 124 means still running: re-wait with the same job name and --max-seconds 540. Do not restart the job. job.sh wait prints only a result and log tail or failure section. Never poll status, tail -f, read whole logs, use Monitor or background tool calls. If start fails or wait exits anything other than 0 or 124, stop immediately and return state red with only the failure summary. After the sixth running result, return red with exhausted rc 124 and the job name. Return green only when every wait exits 0. `
-const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}`, GATES.split(',').map(g => g.trim()))} Only collect gates; never edit, commit or push.`, {
+const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stage}`, GATE_COMMANDS)} Only collect gates; never edit, commit or push.`, {
   label: `${RUN_ID} gates:${stage}`, phase: 'Publish', effort: 'low',
   schema: { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, detail: { type: 'string' } }, required: ['state', 'detail'] }, agentType: 'general-purpose',
 })
@@ -216,7 +224,7 @@ Return ready only when codex exits successfully and its repair is committed; oth
   return published && published.pr ? '' : 'publication failed'
 }
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATES.split(',').map(g => g.trim()))}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATES.split(',').map(g => g.trim()))}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`])} Use a fresh job name on each retry. If every check passes, return state "green". If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
@@ -264,7 +272,7 @@ const pushAhead = async (pr, stage) => {
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] &&
   git fetch origin ${sq(A.branch)} >&2 &&
   git merge-base --is-ancestor FETCH_HEAD HEAD`
-  const gates = `${GATES.split(',').map(g => g.trim()).join(' && ')} &&`
+  const gates = `${GATE_COMMANDS.join(' && ')} &&`
   return agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
 Local HEAD is ahead. Run ${GATES} blocking in the foreground before pushing. Verify every unpublished commit has noreply author/committer, Refs: #${A.issue}, and no attribution trailers before running the script. Any failed gate or guard is blocking. Never force push or rewrite history. Run this script only after all gates pass:
 \`cd ${sq(WT)} && ${guards} &&
@@ -519,6 +527,6 @@ return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes,
 //   "name": "impl283",
 //   "task": "依 issue #283 的範圍與驗收實作。",
 //   "implementer": "codex",
-//   "gates": "just test lint, just test changed",
+//   "gates": ["just test lint", "just test changed"],
 //   "maxRounds": 3
 // }
