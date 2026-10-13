@@ -199,7 +199,7 @@ _check_group_interrupt() {
 }
 
 REALBOX_FAKED_TOOLS=(distrobox just gh jq loginctl)
-REALBOX_SHIMMED_TOOLS=(grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
+REALBOX_SHIMMED_TOOLS=(mkdir grep cut wc sort sha256sum readlink tee mktemp id date uname cp mv rm awk)
 
 setup() {
     REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
@@ -2956,4 +2956,17 @@ STUB
     assert_output --partial '展開後的 manifest'
     assert_output --partial '成功清理時隨備份目錄一起移除'
     assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
+}
+
+@test "#562: assemble temp directory failure explains the path and never builds a box" {
+    _realbox_quiet 5.2.1
+    SHIM_MKDIR_ON=assemble-tmp SHIM_MKDIR_RC=1 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot create assemble temp dir at $(_backup_dir)/assemble-tmp"* ]]
+    refute_output --partial '[FAIL]'
+    assert_equal "$(_count_calls 'just box assemble')" 0
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
 }
