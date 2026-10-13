@@ -3593,3 +3593,30 @@ _pl_retry_run() {
         fi
     done
 }
+
+_workflow_api_scan() {
+    node --input-type=module - "$@" <<'JS'
+import { readFileSync } from 'node:fs'
+const forbidden = /\bDate\s*\.\s*now\s*\(|\bnew\s+Date\s*\(\s*\)|\bMath\s*\.\s*random\s*\(/g
+for (const path of process.argv.slice(2)) {
+    for (const match of readFileSync(path, 'utf8').matchAll(forbidden)) {
+        console.log(`${path}: ${match[0]}`)
+        process.exitCode = 1
+    }
+}
+JS
+}
+
+@test "all workflow templates statically exclude nondeterministic APIs (#555)" {
+    local expression template="${BATS_TEST_TMPDIR}/static-api.js"
+    for expression in 'Date.now()' 'new Date()' 'Math.random()' $'Date\n . now ()' $'new Date(\n)' $'Math\n.random()'; do
+        printf 'return %s\n' "${expression}" > "${template}"
+        run _workflow_api_scan "${template}"
+        assert_failure 1
+        assert_output --partial "${template}:"
+    done
+    printf 'return new Date("2026-01-01")\n' > "${template}"
+    run _workflow_api_scan "${template}" "${WF_DIR}"/*.js
+    assert_success
+    assert_output ""
+}
