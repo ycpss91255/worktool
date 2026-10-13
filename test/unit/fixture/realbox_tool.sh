@@ -311,9 +311,23 @@ case "${_ME}" in
         exit "${FAKE_DEV_INSPECT_RC:-0}"
         ;;
     loginctl)
-        [[ "$*" == 'show-session graphical-test --property=LockedHint --value' ]] || exit 2
-        printf '%s\n' "${FAKE_LOCKED_HINT-no}"
-        exit "${FAKE_LOGINCTL_RC:-0}"
+        case "$*" in
+            'show-session graphical-test --property=LockedHint --value')
+                printf '%s\n' "${FAKE_LOCKED_HINT-no}"
+                exit "${FAKE_LOGINCTL_RC:-0}"
+                ;;
+            'list-sessions --no-legend --no-pager')
+                printf '%s\n' "${FAKE_SESSIONS-71 ${UID} test seat0 tty1}"
+                exit "${FAKE_SESSIONS_RC:-0}"
+                ;;
+            'show-session 71 --property=User --property=Type --property=Active --property=LockedHint')
+                printf 'User=%s\nType=%s\nActive=%s\nLockedHint=%s\n' \
+                    "${FAKE_SESSION_USER:-${UID}}" "${FAKE_SESSION_TYPE:-wayland}" \
+                    "${FAKE_SESSION_ACTIVE:-yes}" "${FAKE_LOCKED_HINT:-no}"
+                exit "${FAKE_SESSION_QUERY_RC:-0}"
+                ;;
+            *) exit 1 ;;
+        esac
         ;;
     distrobox) _fake_distrobox "$@" ;;
     just) _fake_just "$@" ;;
