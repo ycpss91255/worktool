@@ -867,6 +867,21 @@ STUB
     assert_equal "$(_count_calls 'distrobox rm')" '0'
 }
 
+@test "#558: failed assemble with an unparsable confirmation keeps evidence and refuses cleanup" {
+    FAKE_JUST_ASSEMBLE_RC=1 FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'after assemble (list status 2)'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-started -print)"
+    dir="${dir%/assemble-started}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ ! -e "${dir}/created-box" ]
+}
+
 @test "5.1: assemble returns 0 but the box is not listed" {
     FAKE_JUST_ASSEMBLE_REGISTERS=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure

@@ -76,6 +76,10 @@ _fake_distrobox_list() {
     if [[ -n "${FAKE_DBX_LIST_FAIL_FROM-}" && "${_n}" -ge "${FAKE_DBX_LIST_FAIL_FROM}" ]]; then
         _rc=1
     fi
+    if [[ -n "${FAKE_DBX_LIST_UNPARSABLE_FROM-}" && "${_n}" -ge "${FAKE_DBX_LIST_UNPARSABLE_FROM}" ]]; then
+        printf 'not a distrobox table\n'
+        return "${_rc}"
+    fi
     # The table is printed either way: plausible output plus a non-zero exit
     # is exactly the shape an unguarded check would read as "no such box".
     if [[ -n "${FAKE_DBX_LIST_OUT+x}" ]]; then
