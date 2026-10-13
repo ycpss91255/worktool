@@ -2888,3 +2888,16 @@ STUB
     [ -e "$(_backup_dir)/assemble-started" ]
     [ -s "${STATE}/boxes" ]
 }
+
+@test "#562: no caller session skips other UID rows without querying them" {
+    unset XDG_SESSION_ID
+    export FAKE_SESSIONS="72 $((UID + 1)) other seat0 tty2
+71 ${UID} test seat0 tty1"
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 71'
+}
