@@ -3544,3 +3544,13 @@ _pl_retry_run() {
         assert_output "${expected}"
     done
 }
+
+@test "pr-loop rejects missing or unsafe run tags before calling agents (#555)" {
+    local tag
+    for tag in null '""' '"../escape"' '"two words"' '42'; do
+        run _pl_run "{\"runTag\":${tag}}"
+        assert_success
+        run jq -c '[.error, (.calls | length), (.logs | length)]' <<<"${output}"
+        assert_output '["pr-loop: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)",0,0]'
+    done
+}

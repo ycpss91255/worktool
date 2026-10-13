@@ -45,6 +45,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
   issue: 150,
   branch: "m3/150-bench",
   name: "bench",
+  runTag: "issue150-attempt1",
   parent: "#5",
   mode: "full",
   implementer: "codex",
@@ -65,6 +66,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `base` | 否 | PR 目標分支，預設 `main` |
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
+| `runTag` | 是 | 呼叫端提供的唯一 run 標記；英數開頭，只含英數、底線或連字號。新 run（含以 `pr` 接續同一 worktree）必須換值，resume 同一 run 沿用原值；缺少或格式錯誤會在任何代理呼叫前拒絕 |
 | `gates` | 否 | 傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
 | `mode` | 否 | `full`（預設）或 `light`；其他值直接 throw。light 固定由 Claude 修改與另一個 Claude 子代理審查，不呼叫 codex |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |

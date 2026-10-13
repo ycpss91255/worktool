@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pr-loop',
   description: 'Drive one issue through implementation, CI and independent review without merging.',
-  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, base?, pr?, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
+  whenToUse: 'Every worktool sub-issue. Pass args {repo, repoDir, issue, branch, name, task, runTag, base?, pr?, mode?, implementer?, gates?, codex?, maxRounds?, parent?}.',
   phases: [
     { title: 'Implement', detail: 'agent: worktree off origin/<base>, TDD RED->GREEN, Docker gates, push, open PR' },
     { title: 'Review', detail: 'light: a separate Claude agent reviews only the diff and applies required fixes' },
@@ -22,6 +22,7 @@ export const meta = {
 //     issue: 150,                      // required: the ONE sub-issue this PR closes
 //     branch: "m3/150-bench",          // required: branch off origin/<base>
 //     name: "bench",                   // required: worktree name under <repoDir>/../worktree/
+//     runTag: "issue150-attempt1",      // required: unique per new run; reuse on resume
 //     task: "...",                     // required: what to build, acceptance criteria, files, tests
 //     base: "main",                   // optional: target branch, including acceptance branches
 //     gates: "just test lint, ...",    // optional replacement gates; default = lint + changed
@@ -35,6 +36,7 @@ export const meta = {
 // main loop (one PR at a time, merge commit, keep agent commits).
 
 const A = args || {}
+if (typeof A.runTag !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(A.runTag)) throw new Error('pr-loop: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)')
 for (const k of ['repo', 'repoDir', 'issue', 'branch', 'name', 'task']) {
   if (!A[k]) throw new Error(`pr-loop: args.${k} is required`)
 }
