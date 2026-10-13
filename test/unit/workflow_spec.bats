@@ -2625,7 +2625,9 @@ _pl_resume_setup() {
     git -C "${root}/src" config user.name Tester
     git -C "${root}/src" config user.email '1+tester@users.noreply.github.com'
     printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
-    git -C "${root}/src" add justfile
+    mkdir -p "${root}/src/.agents/script"
+    printf '# job module\n' > "${root}/src/.agents/script/justfile.job"
+    git -C "${root}/src" add justfile .agents/script/justfile.job
     git -C "${root}/src" commit -qm initial --allow-empty
     git -C "${root}/src" branch -M main
     git -C "${root}/src" remote add origin "${root}/remote"
@@ -3676,13 +3678,42 @@ JS
     assert_success
     git -C "${root}/src" worktree remove --force "${root}/worktree/n"
     git -C "${root}/src" branch -D b
-    git -C "${root}/src" rm justfile
+    git -C "${root}/src" rm justfile .agents/script/justfile.job
     git -C "${root}/src" commit -qm 'Remove job interface'
     git -C "${root}/src" push -q origin main
     run _pl_resume_run '{"implementer":"claude"}'
     assert_success
     run jq -e '.result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
         ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop prepare recovers after syncing a base missing job without manual cleanup (#552)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" json
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    git -C "${root}/src" rm justfile .agents/script/justfile.job
+    git -C "${root}/src" commit -qm 'Remove job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude","runTag":"missing-base"}'
+    assert_success
+    run jq -e '.result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
+    assert_success
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    mkdir -p "${root}/src/.agents/script"
+    printf '# job module\n' > "${root}/src/.agents/script/justfile.job"
+    git -C "${root}/src" add justfile .agents/script/justfile.job
+    git -C "${root}/src" commit -qm 'Restore job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude","runTag":"synced-base"}'
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | startswith("implement:")] | any)' <<<"$json"
+    assert_success
+    run just --justfile "${root}/worktree/n/justfile" job help
     assert_success
 }
 

@@ -369,7 +369,11 @@ if git show-ref --verify --quiet ${sq(`refs/heads/${A.branch}`)}; then
 else
   rc=$?
   [ "$rc" -eq 1 ] || exit 1
-  git fetch origin >&2 && git worktree add -b ${sq(A.branch)} ${sq(WT)} ${sq(`origin/${BASE}`)} >&2 || exit 1
+  git fetch origin >&2 || exit 1
+  if ! git cat-file -e ${sq(`origin/${BASE}:.agents/script/justfile.job`)} 2>/dev/null; then
+    printf missing-job; exit 0
+  fi
+  git worktree add -b ${sq(A.branch)} ${sq(WT)} ${sq(`origin/${BASE}`)} >&2 || exit 1
   cd ${sq(WT)} || exit 1
   if just job help >/dev/null 2>&1; then printf new; else printf missing-job; fi
 fi
