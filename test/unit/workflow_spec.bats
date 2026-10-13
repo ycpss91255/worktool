@@ -3700,3 +3700,12 @@ JS
             contains("return failed and report red"))' <<<"$json"
     assert_success
 }
+
+@test "pr-loop light CI repair follows touched-spec rules without full-mode tier bans (#552)" {
+    run _pl_run '{"mode":"light","codex":"off"}'
+    assert_success
+    run jq -e '.calls[] | select(.role == "ci:#7") | .prompt |
+        contains("Locally run only just test lint and touched specs") and
+        (contains("Never run matrix, integration, system, system-real, acceptance") | not)' <<<"$output"
+    assert_success
+}

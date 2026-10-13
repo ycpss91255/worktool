@@ -177,6 +177,8 @@ const LOCATE = `Resolve the open PR for branch ${A.branch} in ${REPO}: run \`gh 
 
 const CI_LOCAL_TEST_RULES = A.gates
   ? `Before pushing run ${GATES} blocking in the foreground. Never run a whole tier locally; CI runs every tier.`
+  : MODE === 'light'
+  ? 'Locally run only just test lint and touched specs with just test <tier> <spec> [--filter]. Never run just test changed or a whole tier locally; CI runs every tier.'
   : 'Locally run only just test lint and changed unit specs with just test unit <spec...> [--filter REGEX]. Never run matrix, integration, system, system-real, acceptance or a whole unit tier locally; those tiers are verified by CI (ci-passed).'
 
 // The gate agent has no implementer context and returns only compact results.
