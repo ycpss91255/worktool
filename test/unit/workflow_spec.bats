@@ -3677,6 +3677,19 @@ SH
     chmod +x "${root}/bin/just"
 }
 
+@test "pr-loop Codex fix summary can be published by the workflow identity (#561)" {
+    run _pl_blocked_run codex
+    assert_success
+    local body="${BATS_TEST_TMPDIR}/adoption.md" input
+    jq -er '.calls[] | select(.role == "fix:#7:r1") | .prompt |
+        [scan("\\[[a-z]+\\] 採納第 [0-9]+ 輪:")] | last' <<<"$output" > "$body"
+    printf 'Resolved finding in commit abc.\n' >> "$body"
+    input="$(jq -cn --arg cwd "$REPO_ROOT" --arg cmd "gh pr comment 7 --repo ycpss91255/worktool --body-file $body" \
+        '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')"
+    run bash "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh" claude <<<"$input"
+    assert_success
+}
+
 @test "pr-loop light gates execute lint and each touched spec with its tier (#552)" {
     _pl_light_gate_repo
     local root="${BATS_TEST_TMPDIR}/light" json
