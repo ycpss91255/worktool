@@ -2891,11 +2891,10 @@ STUB
 
 @test "#562: no caller session skips other UID rows without querying them" {
     unset XDG_SESSION_ID
-    local FAKE_SESSIONS
-    export FAKE_SESSIONS="72 $((UID + 1)) other seat0 tty2
+    local sessions="72 $((UID + 1)) other seat0 tty2
 71 ${UID} test seat0 tty1"
     _fake_window_process
-    run _window_input 4242
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" 0
     assert_output --partial 'restore-ok=1'
     run cat "${STATE}/calls.log"
@@ -2905,10 +2904,9 @@ STUB
 
 @test "#562: no caller session rejects a nonnumeric UID row before actions" {
     unset XDG_SESSION_ID
-    local FAKE_SESSIONS
-    export FAKE_SESSIONS="71 ${UID} test seat0 tty1
+    local sessions="71 ${UID} test seat0 tty1
 72 invalid other seat0 tty2"
-    run "${REALBOX}" --allow-real-box 5.2
+    FAKE_SESSIONS="${sessions}" run "${REALBOX}" --allow-real-box 5.2
     assert_failure 3
     assert_output --partial '[INCONCLUSIVE] item 5.2:'
     [ ! -e "$(_backup_dir)" ]
@@ -2921,8 +2919,7 @@ STUB
 
 @test "#562: one unlocked graphical session passes among locked and text sessions" {
     unset XDG_SESSION_ID
-    local FAKE_SESSIONS
-    export FAKE_SESSIONS="72 ${UID} test seat0 tty2
+    local sessions="72 ${UID} test seat0 tty2
 73 ${UID} test seat0 tty3
 71 ${UID} test seat0 tty1"
     cp "${STUBS}/loginctl" "${STATE}/loginctl"
@@ -2943,7 +2940,7 @@ case "${2:-}" in
 esac
 STUB
     _fake_window_process
-    run _window_input 4242
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
     assert_equal "$(cat "${STATE}/window-rc")" 0
     assert_output --partial 'restore-ok=1'
     run cat "${STATE}/calls.log"
