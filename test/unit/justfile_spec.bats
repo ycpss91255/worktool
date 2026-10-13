@@ -337,6 +337,23 @@ _listed_names() {
     assert_equal "$(_last_argc)" "1"
 }
 
+@test "#561: structure renders every public just command row inside a table" {
+    run awk '
+        /^\| 指令 \| 實際執行 \|$/ { header = 1; next }
+        header && /^\|[-: ]+\|[-: ]+\|$/ { table = 1; header = 0; next }
+        /^\| `just/ {
+            rows++
+            if (!table) {
+                print "command row outside a table at line " NR ": " $0
+                invalid = 1
+            }
+        }
+        !/^\|/ { table = 0; header = 0 }
+        END { exit (invalid || !rows) }
+    ' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+}
+
 @test "#446: README and structure describe an independent HOME fixed at box creation" {
     local _doc
     for _doc in README.md doc/structure.md; do

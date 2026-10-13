@@ -29,7 +29,8 @@ start_job() {
         mv "$dir/rc.tmp" "$dir/rc"
 WORKER
     )" job "${DIR}" "$@" </dev/null >/dev/null 2>&1 &
-    printf '%s\n' "$!" > "${DIR}/pid"
+    printf '%s\n' "$!" > "${DIR}/pid.tmp"
+    mv "${DIR}/pid.tmp" "${DIR}/pid"
     printf '%s: started\n' "${NAME}"
 }
 state() {
@@ -42,10 +43,28 @@ state() {
     printf '%s: running\n' "${NAME}"
     return 124
 }
+worker_alive() {
+    local pid proc_stat
+    # start publishes the pid after launching; readers may arrive first.
+    [[ -s "${DIR}/pid" ]] || return 0
+    pid="$(cat "${DIR}/pid")"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/${pid}/stat" ]]; then
+        read -r proc_stat < "/proc/${pid}/stat" || return 1
+        [[ "${proc_stat##*) }" == [ZX]* ]] && return 1
+    fi
+    return 0
+}
 wait_job() {
     local deadline=0
     [[ -z "${MAX_SECONDS}" ]] || deadline=$((SECONDS + MAX_SECONDS))
     while [[ ! -f "${DIR}/rc" ]]; do
+        if ! worker_alive; then
+            [[ -f "${DIR}/rc" ]] && break
+            log_error "job.sh: worker 異常結束: ${NAME}"
+            return 1
+        fi
         if [[ -n "${MAX_SECONDS}" && "${SECONDS}" -ge "${deadline}" ]]; then state; exit 124; fi
         sleep 1
     done
@@ -97,7 +116,7 @@ main() {
     DIR="${ROOT}/.agents/state/job/${NAME}"
     case "$VERB" in
         start) start_job "${ARGS[@]:3}" ;;
-        wait) [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
+        wait) [[ -d "${DIR}" ]] || { log_error "job.sh: unknown job: ${NAME}"; exit 1; }; wait_job ;;
         status) state ;;
     esac
 }

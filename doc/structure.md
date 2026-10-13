@@ -321,6 +321,8 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help`、`./script/box/enter.sh --help` |
 
+`start` 以暫存檔改名原子發布 pid；`wait` 在 pid 尚未發布時視為啟動中，仍受 `--max-seconds` 限制，不會誤報 worker 異常結束。
+
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
 是 `assemble.sh` 自己的 `assemble.sh: unknown option '--bogus' (see --help)`

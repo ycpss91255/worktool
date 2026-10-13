@@ -396,7 +396,7 @@ _pl_blocked_run() {
 @test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
     run _pl_run '{"implementer":"claude"}'
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Setup: cd /work && if")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
@@ -596,7 +596,7 @@ _pl_launch_checks() {
     assert_output '[true,true,true]'
 }
 
-@test "pr-loop (node): codex implement and fix prompts use codex identity without attribution" {
+@test "pr-loop (node): codex implement and fix prompts forbid attribution" {
     run _pl_run
     assert_success
     run jq -cr '.calls[] | select(.role | startswith("implement:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex]"))]' <<<"${output}"
@@ -604,8 +604,8 @@ _pl_launch_checks() {
 
     run _pl_blocked_run codex
     assert_success
-    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("[claude] 採納") | not), (.prompt | contains("beyond the task") | not), (.prompt | contains("[codex] 採納第 1 輪:"))]' <<<"${output}"
-    assert_output '[true,true,true,true,true]'
+    run jq -cr '.calls[] | select(.role | startswith("fix:")) | [(.prompt | contains("Co-Authored-By") | not), (.prompt | contains("Generated with") | not), (.prompt | contains("beyond the task") | not)]' <<<"${output}"
+    assert_output '[true,true,true]'
 }
 
 @test "pr-loop (node): an invalid implementer value throws a clear error" {
@@ -2624,6 +2624,10 @@ _pl_resume_setup() {
     git init -q "${root}/src"
     git -C "${root}/src" config user.name Tester
     git -C "${root}/src" config user.email '1+tester@users.noreply.github.com'
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    mkdir -p "${root}/src/.agents/script"
+    printf '# job module\n' > "${root}/src/.agents/script/justfile.job"
+    git -C "${root}/src" add justfile .agents/script/justfile.job
     git -C "${root}/src" commit -qm initial --allow-empty
     git -C "${root}/src" branch -M main
     git -C "${root}/src" remote add origin "${root}/remote"
@@ -2703,7 +2707,7 @@ _pl_resume_run() {
 @test "pr-loop resume: existing PR goes straight to CI and independent review (#386)" {
     _pl_resume_setup
     _pl_resume_codex_complete
-    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    run _pl_resume_run '{"pr":7,"base":"acceptance","gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}'
     assert_success
     local json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
@@ -2721,15 +2725,15 @@ _pl_resume_run() {
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local before json
     before="$(git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD)"
-    run _pl_resume_run '{"base":"acceptance","gates":"just test lint, just test unit test/unit/workflow_spec.bats"}'
+    run _pl_resume_run '{"base":"acceptance","gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}'
     assert_success
     json="${output}"
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
         ([.calls[].role | startswith("implement:")] | any | not) and
         (.calls[] | select(.role | startswith("publish:")) | .prompt |
-            contains("run just test lint, just test unit test/unit/workflow_spec.bats") and
+            contains("run just test lint && just test unit test/unit/workflow_spec.bats") and
             contains("git push -u origin b") and contains("--base acceptance --head b") and
-            contains("Refs: #386") and contains("noreply") and contains("[codex]"))' <<<"${json}"
+            contains("Refs: #386") and contains("noreply") and contains("Body starts with [claude]"))' <<<"${json}"
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
@@ -2796,11 +2800,11 @@ _pl_resume_run() {
 @test "milestone-fanout resume: items retain their PR and custom gates (#386)" {
     _pl_resume_setup
     _pl_resume_codex_complete
-    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":"just test lint, just test unit test/unit/workflow_spec.bats"}]}' "${FANOUT}"
+    run _pl_resume_run '{"base":"acceptance","items":[{"issue":386,"branch":"b","name":"n","task":"t","pr":7,"gates":["just test lint","just test unit test/unit/workflow_spec.bats"]}]}' "${FANOUT}"
     assert_success
     run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
         .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
-        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint, just test unit test/unit/workflow_spec.bats")) and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint && just test unit test/unit/workflow_spec.bats")) and
         ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
     assert_success
 }
@@ -3619,4 +3623,213 @@ JS
     run _workflow_api_scan "${template}" "${WF_DIR}"/*.js
     assert_success
     assert_output ""
+}
+
+@test "pr-loop publisher uses its own Claude identity consistently (#552)" {
+    run _pl_run
+    assert_success
+    run jq -e '.calls[] | select(.role | startswith("publish:")) | .prompt |
+        contains("PR body starts with [claude]") and
+        (contains("PR body starts with [codex]") | not)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop publishes a verified adoption comment without replacing the PR body (#552)" {
+    run _pl_blocked_run codex
+    assert_success
+    run jq -e '.calls[] | select(.role == "adoption:#7:r1") | .prompt |
+        contains("Do not edit the existing PR description") and
+        contains("[claude] 採納第 1 輪:") and contains("gh pr comment 7 --repo o/r --body-file") and
+        contains("read the posted comment back")' <<<"${output}"
+    assert_success
+}
+
+_pl_light_gate_repo() {
+    local root="${BATS_TEST_TMPDIR}/light" tier
+    mkdir -p "${root}/bin" "${root}/test/unit"
+    git init -q "${root}"
+    git -C "${root}" config user.name Tester
+    git -C "${root}" config user.email '1+tester@users.noreply.github.com'
+    touch "${root}/test/unit/untouched.bats" "${root}/test/unit/deleted.bats"
+    touch "${root}/test/unit/pending-delete.bats" "${root}/test/unit/pending.bats"
+    git -C "${root}" add test
+    git -C "${root}" commit -qm base
+    git -C "${root}" update-ref refs/remotes/origin/acceptance HEAD
+    for tier in unit matrix integration system system-real acceptance; do
+        mkdir -p "${root}/test/${tier}/nested"
+        printf 'committed\n' > "${root}/test/${tier}/nested/touched.bats"
+    done
+    printf "real engine\n" > "${root}/test/system/real_engine_spec.bats"
+    git -C "${root}" rm test/unit/deleted.bats
+    git -C "${root}" add test
+    git -C "${root}" commit -qm 'Touch specs'
+    printf 'pending\n' >> "${root}/test/unit/nested/touched.bats"
+    printf 'pending\n' >> "${root}/test/unit/pending.bats"
+    git -C "${root}" rm test/unit/pending-delete.bats
+    touch "${root}/test/unit/new spec.bats" "${root}/test/unit/ignored.bats"
+    printf 'test/unit/ignored.bats\n' > "${root}/.gitignore"
+    touch "${root}/test/unit/helper.sh"
+    cat > "${root}/bin/just" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$2" == lint ]]; then [ "$#" -eq 2 ]; else [ "$#" -eq 3 ]; fi
+printf '%s\n' "$*" >> "${GATE_LOG}"
+SH
+    chmod +x "${root}/bin/just"
+}
+
+@test "pr-loop Codex fix summary can be published by the workflow identity (#561)" {
+    run _pl_blocked_run codex
+    assert_success
+    local body="${BATS_TEST_TMPDIR}/adoption.md" input
+    jq -er '.calls[] | select(.role == "fix:#7:r1") | .prompt |
+        [scan("\\[[a-z]+\\] 採納第 [0-9]+ 輪:")] | last' <<<"$output" > "$body"
+    printf 'Resolved finding in commit abc.\n' >> "$body"
+    input="$(jq -cn --arg cwd "$REPO_ROOT" --arg cmd "gh pr comment 7 --repo ycpss91255/worktool --body-file $body" \
+        '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')"
+    run bash "${REPO_ROOT}/.agents/hook/enforce_milestone_gate_approval.sh" claude <<<"$input"
+    assert_success
+}
+
+@test "pr-loop light gates execute touched local specs and leave system-real to CI (#561)" {
+    _pl_light_gate_repo
+    local root="${BATS_TEST_TMPDIR}/light" json
+    run _pl_run '{"mode":"light","codex":"off","base":"acceptance"}'
+    assert_success
+    json="$output"
+    jq -er '.calls[] | select(.role | startswith("review:")) | .prompt |
+        capture("Run (?<commands>just test lint.*?) blocking in the foreground after fixes"; "m").commands' \
+        <<<"$json" > "${root}/gates.sh"
+    run bash -c 'cd "$1" && PATH="$1/bin:$PATH" GATE_LOG="$1/calls" bash gates.sh' _ "${root}"
+    assert_success
+    run sort "${root}/calls"
+    assert_output 'test acceptance test/acceptance/nested/touched.bats
+test integration test/integration/nested/touched.bats
+test lint
+test matrix test/matrix/nested/touched.bats
+test system test/system/nested/touched.bats
+test unit test/unit/nested/touched.bats
+test unit test/unit/new spec.bats
+test unit test/unit/pending.bats'
+    run jq -e --arg commands "$(cat "${root}/gates.sh")" '
+        [.calls[] | select(.role | test("^(review|publish|ci):")) | .prompt |
+         contains($commands)] | length == 3 and all' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop custom gate commands preserve literal commas and support arrays (#552)" {
+    local gates json
+    for gates in '"printf a,b"' '["just test lint","printf a,b"]'; do
+        run _pl_run "{\"gates\":$gates}"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and (.calls[] | select(.role == "gates:Implement") | .prompt |
+            contains("-- printf a,b` then") and (contains("-- printf a` then") | not))' <<<"$json"
+        assert_success
+    done
+}
+
+@test "pr-loop prepare blocks a base without just job before implementation (#552)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" json
+    rm "${root}/worktree/n/justfile"
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$json"
+    assert_success
+    git -C "${root}/src" worktree remove --force "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    git -C "${root}/src" rm justfile .agents/script/justfile.job
+    git -C "${root}/src" commit -qm 'Remove job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop prepare recovers after syncing a base missing job without manual cleanup (#552)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}" json
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    git -C "${root}/src" rm justfile .agents/script/justfile.job
+    git -C "${root}/src" commit -qm 'Remove job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude","runTag":"missing-base"}'
+    assert_success
+    run jq -e '.result.blockingLeft == ["base 分支缺少 job 模組，先同步 main"] and
+        ([.calls[].role | test("^(implement|gates|gate-fix):")] | any | not)' <<<"$output"
+    assert_success
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    mkdir -p "${root}/src/.agents/script"
+    printf '# job module\n' > "${root}/src/.agents/script/justfile.job"
+    git -C "${root}/src" add justfile .agents/script/justfile.job
+    git -C "${root}/src" commit -qm 'Restore job interface'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude","runTag":"synced-base"}'
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.ciState == "green" and
+        ([.calls[].role | startswith("implement:")] | any)' <<<"$json"
+    assert_success
+    run just --justfile "${root}/worktree/n/justfile" job help
+    assert_success
+}
+
+@test "pr-loop prepare leaves no branch or worktree when base job help fails (#561)" {
+    _pl_resume_setup
+    local root="${BATS_TEST_TMPDIR}"
+    git -C "${root}/src" worktree remove "${root}/worktree/n"
+    git -C "${root}/src" branch -D b
+    printf 'job *args:\n    @exit 1\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Break job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.codexVerdict == "blocked" and
+        ([.calls[].role | startswith("implement:")] | any | not)' <<<"$output"
+    assert_success
+    run git -C "${root}/src" show-ref --verify --quiet refs/heads/b
+    assert_failure 1
+    assert [ ! -e "${root}/worktree/n" ]
+    run git -C "${root}/src" worktree list --porcelain
+    refute_output --partial "${root}/worktree/n"
+    printf 'job *args:\n    @printf "job help\\n"\n' > "${root}/src/justfile"
+    git -C "${root}/src" add justfile
+    git -C "${root}/src" commit -qm 'Repair job help'
+    git -C "${root}/src" push -q origin main
+    run _pl_resume_run '{"implementer":"claude"}'
+    assert_success
+    run jq -e '.result.ciState == "green"' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop gate repairs report missing infrastructure red instead of adding it (#552)" {
+    local replies json
+    replies='{ "implement:": {"status":"ready"}, "gates:": {"state":"red","detail":"missing hook infrastructure"}, "gate-fix:": {"status":"failed"} }'
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" \
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":552,"branch":"b","name":"n","task":"t"}' "$replies"
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "blocked" and
+        ([.calls[].role | startswith("publish:")] | any | not) and
+        (.calls[] | select(.role | startswith("gate-fix:")) | .prompt |
+            contains("Do not add workflow infrastructure (job modules or hooks) to the PR branch") and
+            contains("return failed and report red"))' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop light CI repair follows touched-spec rules without full-mode tier bans (#552)" {
+    run _pl_run '{"mode":"light","codex":"off"}'
+    assert_success
+    run jq -e '.calls[] | select(.role == "ci:#7") | .prompt |
+        contains("Locally run only just test lint and touched specs") and
+        (contains("Never run matrix, integration, system, system-real, acceptance") | not)' <<<"$output"
+    assert_success
 }
