@@ -3577,3 +3577,19 @@ _pl_retry_run() {
     assert_success
     assert_output "true"
 }
+
+@test "milestone-fanout requires and forwards the caller run tag (#555)" {
+    local tag args
+    for tag in null '""' '"../escape"' '"wave-555"'; do
+        args="$(jq -cn --arg d "${REPO_ROOT}" --argjson tag "${tag}" '{runTag:$tag,repo:"o/r",repoDir:$d,items:[{issue:555,branch:"b",name:"n",task:"t"}]}')"
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" "${args}" '{}'
+        assert_success
+        if [[ "${tag}" == '"wave-555"' ]]; then
+            run jq -c '[.error,.workflowCalls[0].args.runTag,.result[0].ciState]' <<<"${output}"
+            assert_output '[null,"wave-555","error"]'
+        else
+            run jq -c '[.error,(.workflowCalls | length),(.calls | length)]' <<<"${output}"
+            assert_output '["milestone-fanout: args.runTag must be a non-empty job-safe string (letters, digits, underscore, hyphen)",0,0]'
+        fi
+    done
+}

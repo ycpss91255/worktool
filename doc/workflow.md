@@ -160,6 +160,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 |------|------|------|
 | `repo` | 是 | `owner/name`;轉傳給每個 `pr-loop` |
 | `repoDir` | 是 | 本機 checkout 的絕對路徑 |
+| `runTag` | 是 | 本次 fanout 的唯一 run 標記，格式與 `pr-loop` 相同；原樣轉傳各子 workflow。新 run 換值，resume 沿用原值 |
 | `items` | 是 | 非空陣列；每項必須有 `issue`、`branch`、`name`、`task`；`pr` 為可選接續 PR 編號，與既有 `branch` 一起轉傳；`gates` 若有指定就原樣轉傳，省略時由 `pr-loop` 依 mode 選擇預設 gate |
 | `mode` | 否 | `full`（預設）或 `light`；轉傳給每個 `pr-loop` |
 | `implementer` | 否 | `codex`(預設)或 `claude`;轉傳給每個 `pr-loop` |
@@ -175,6 +176,7 @@ args 範例：
   "repo": "ycpss91255/worktool",
   "repoDir": "/path/to/worktool",
   "parent": "#280",
+  "runTag": "milestone280-wave1",
   "implementer": "codex",
   "maxRounds": 3,
   "concurrency": 4,
