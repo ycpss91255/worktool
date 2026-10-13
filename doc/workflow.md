@@ -67,7 +67,7 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `name` | 是 | worktree 名稱(`../worktree/<name>`);各 PR 各自的 worktree,不互相干擾 |
 | `task` | 是 | 交給實作 agent 的完整任務描述 |
 | `runTag` | 是 | 呼叫端提供的唯一 run 標記；英數開頭，只含英數、底線或連字號。新 run（含以 `pr` 接續同一 worktree）必須換值，resume 同一 run 沿用原值；缺少或格式錯誤會在任何代理呼叫前拒絕 |
-| `gates` | 否 | 傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
+| `gates` | 否 | 字串代表一整條 shell 指令（逗號保留）；多條指令用字串陣列，例如 `["just test lint", "just test changed"]`。傳入時完整取代預設推送前 gate，呼叫者須自行包含 `just test lint`；僅省略時採用預設：full 為 `just test lint` 與 `just test changed`，light 為 lint 與改到的 spec；不得用它要求本機跑整個 tier |
 | `mode` | 否 | `full`（預設）或 `light`；其他值直接 throw。light 固定由 Claude 修改與另一個 Claude 子代理審查，不呼叫 codex |
 | `implementer` | 否 | `codex`(預設)或 `claude`;實作與 Fix 由這一方執行，Review 永遠由另一方執行 |
 | `codex` | 否 | 只接受 `on`(預設)/ `off`(配額暫停:改在 PR 留 `[claude]` 註記,不冒充 codex);其他值直接報錯 |
@@ -91,6 +91,8 @@ rc 為 124 表示 session 未完成，從 log 第一行 `session id:` 取得 id�
 禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行。
 所有 pr-loop 的 codex exec（包括 resume 與複驗）都帶 `WORKTOOL_AGENT_ROLE=pr-loop`。
 實作 codex 只跑切片 spec 與 `just test lint`，完成後提交，不守長 gate、不等待、不發布。
+prepare 階段先在目標 worktree 執行 `just job help`；缺少入口就回報「base 分支缺少 job 模組，先同步 main」，不進入實作或 gate。gate 與 CI 修復不得在 PR 分支補 job 模組或 hook 等 workflow 基礎設施，這類缺口必須回報 red，先同步 base。
+
 workflow 另開低 effort gate stage，以 `just job start <name> -- <gate...>` 與 `just job wait <name> --max-seconds 540`
 收集結果；每次 start／wait 都是獨立前景 Bash 呼叫，工具 timeout 設為 `600000` ms。
 wait 回傳 `124` 代表仍在執行，以同一名稱再 wait，不重新 start，每個 job 最多六次 wait。

@@ -125,3 +125,20 @@ teardown() {
     assert_output --partial 'SC2016: invalid quoting'
     refute_output --partial 'secret-prefix'
 }
+
+@test "wait reports a vanished worker without an rc as a failure (#552)" {
+    mkdir -p "${JOB_ROOT}/.agents/state/job/${NAME}"
+    printf '%s\n' 2147483647 > "${JOB_ROOT}/.agents/state/job/${NAME}/pid"
+    run timeout 3 "$JOB" wait "$NAME"
+    assert_failure 1
+    assert_output --partial 'worker 異常結束'
+}
+
+@test "unknown jobs return functional failure for wait and status (#552)" {
+    local verb
+    for verb in wait status; do
+        run "$JOB" "$verb" missing
+        assert_failure 1
+        assert_output --partial 'unknown job'
+    done
+}

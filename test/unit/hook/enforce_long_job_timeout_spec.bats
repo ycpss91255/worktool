@@ -308,3 +308,63 @@ _implementer_payload() {
     _check 'timeout 1800 gh run watch 541 -R ycpss91255/worktool' null 600000
     assert_success
 }
+
+@test "role checks wrapped gates in direct commands and job payloads (#552)" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local cmd wrapper
+    for cmd in 'just test changed' 'script/test/test.sh changed'; do
+        for wrapper in "$cmd" "env A=1 $cmd" "bash -c '$cmd'" "sh -c 'true; $cmd'"; do
+            _check "$wrapper" null 600000
+            assert_failure 2
+            _check "just job start g -- $wrapper" null 600000
+            assert_failure 2
+        done
+    done
+    for cmd in "just job start g -- bash -c 'just test lint'" \
+        "just job start g -- env A=1 just test unit test/unit/workflow_spec.bats"; do
+        _check "$cmd" null 600000
+        assert_success
+    done
+    unset WORKTOOL_AGENT_ROLE
+    _check "just job start g -- bash -c 'just test changed'" null 600000
+    assert_success
+}
+
+@test "shell wait is allowed without the pr-loop role (#552)" {
+    local WORKTOOL_AGENT_ROLE=''
+    export WORKTOOL_AGENT_ROLE
+    _check 'a & b & wait'
+    assert_success
+    WORKTOOL_AGENT_ROLE=pr-loop
+    _check 'a & b & wait' null 600000
+    assert_failure 2
+}
+
+@test "role script selectors allow lint and slice specs but reject changed and whole tiers (#552)" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local args cmd
+    for args in '--lint' '--unit test/unit/workflow_spec.bats' '--help'; do
+        for cmd in "script/test/test.sh $args" "just job start g -- env A=1 script/test/test.sh $args"; do
+            _check "$cmd" null 600000
+            assert_success
+        done
+    done
+    for args in '--changed' '--unit' '--lint --unit' '--lint --changed' ''; do
+        _check "script/test/test.sh $args" null 600000
+        assert_failure 2
+    done
+}
+
+@test "role rejects script builds and guard gates combined with lint (#552)" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local gate
+    for gate in --build --guards; do
+        _check "script/test/test.sh --lint $gate" null 600000
+        assert_failure 2
+        _check "just job start g -- bash -c 'script/test/test.sh --lint $gate'" null 600000
+        assert_failure 2
+    done
+}
