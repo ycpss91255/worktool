@@ -356,3 +356,15 @@ _implementer_payload() {
         assert_failure 2
     done
 }
+
+@test "role rejects script builds and guard gates combined with lint (#552)" {
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
+    local gate
+    for gate in --build --guards; do
+        _check "script/test/test.sh --lint $gate" null 600000
+        assert_failure 2
+        _check "just job start g -- bash -c 'script/test/test.sh --lint $gate'" null 600000
+        assert_failure 2
+    done
+}

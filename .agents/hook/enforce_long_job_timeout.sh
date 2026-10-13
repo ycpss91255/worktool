@@ -143,7 +143,7 @@ _role_script_forbidden() {
     for arg in "$@"; do
         case "$arg" in
             --help|-h) return 1 ;;
-            --changed|changed) return 0 ;;
+            --changed|changed|--build|--guards) return 0 ;;
             --lint) lint=1 ;;
             --unit|--matrix|--integration|--system|--system-real|--acceptance) tier=1 ;;
             *.bats) spec=1 ;;
