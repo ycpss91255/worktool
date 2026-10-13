@@ -396,7 +396,7 @@ _pl_blocked_run() {
 @test "pr-loop (node): implementer claude keeps the existing Claude implement and codex review tracks" {
     run _pl_run '{"implementer":"claude"}'
     assert_success
-    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Setup: cd /work && git fetch origin")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
+    run jq -cr '[.error, (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("codex exec --skip-git-repo-check -C") | not), (.calls[] | select(.role | startswith("implement:")) | .prompt | contains("Setup: cd /work && if")), (.calls[] | select(.role | startswith("review:")) | .prompt | contains("Run ONE codex re-verification"))]' <<<"${output}"
     assert_output '[null,true,true,true]'
 }
 
@@ -2729,9 +2729,9 @@ _pl_resume_run() {
     run jq -e '.error == null and .result.pr == 7 and .result.codexVerdict == "mergeable" and
         ([.calls[].role | startswith("implement:")] | any | not) and
         (.calls[] | select(.role | startswith("publish:")) | .prompt |
-            contains("run just test lint, just test unit test/unit/workflow_spec.bats") and
+            contains("run just test lint && just test unit test/unit/workflow_spec.bats") and
             contains("git push -u origin b") and contains("--base acceptance --head b") and
-            contains("Refs: #386") and contains("noreply") and contains("[codex]"))' <<<"${json}"
+            contains("Refs: #386") and contains("noreply") and contains("Body starts with [claude]"))' <<<"${json}"
     assert_success
     run git -C "${BATS_TEST_TMPDIR}/worktree/n" rev-parse HEAD
     assert_output "${before}"
@@ -2802,7 +2802,7 @@ _pl_resume_run() {
     assert_success
     run jq -e '.error == null and .result[0].pr == 7 and .result[0].codexVerdict == "mergeable" and
         .workflowCalls[0].args.pr == 7 and .workflowCalls[0].args.base == "acceptance" and
-        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint, just test unit test/unit/workflow_spec.bats")) and
+        (.calls[] | select(.role == "ci:#7") | .prompt | contains("before pushing run just test lint && just test unit test/unit/workflow_spec.bats")) and
         ([.calls[].role | startswith("implement:")] | any | not)' <<<"${output}"
     assert_success
 }
