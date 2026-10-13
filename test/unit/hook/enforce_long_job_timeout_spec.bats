@@ -310,7 +310,8 @@ _implementer_payload() {
 }
 
 @test "role checks wrapped gates in direct commands and job payloads (#552)" {
-    export WORKTOOL_AGENT_ROLE=pr-loop
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
     local cmd wrapper
     for cmd in 'just test changed' 'script/test/test.sh changed'; do
         for wrapper in "$cmd" "env A=1 $cmd" "bash -c '$cmd'" "sh -c 'true; $cmd'"; do
@@ -331,16 +332,18 @@ _implementer_payload() {
 }
 
 @test "shell wait is allowed without the pr-loop role (#552)" {
-    unset WORKTOOL_AGENT_ROLE
+    local WORKTOOL_AGENT_ROLE=''
+    export WORKTOOL_AGENT_ROLE
     _check 'a & b & wait'
     assert_success
-    export WORKTOOL_AGENT_ROLE=pr-loop
+    WORKTOOL_AGENT_ROLE=pr-loop
     _check 'a & b & wait' null 600000
     assert_failure 2
 }
 
 @test "role script selectors allow lint and slice specs but reject changed and whole tiers (#552)" {
-    export WORKTOOL_AGENT_ROLE=pr-loop
+    local WORKTOOL_AGENT_ROLE=pr-loop
+    export WORKTOOL_AGENT_ROLE
     local args cmd
     for args in '--lint' '--unit test/unit/workflow_spec.bats' '--help'; do
         for cmd in "script/test/test.sh $args" "just job start g -- env A=1 script/test/test.sh $args"; do
@@ -348,7 +351,7 @@ _implementer_payload() {
             assert_success
         done
     done
-    for args in '--changed' '--unit' ''; do
+    for args in '--changed' '--unit' '--lint --unit' '--lint --changed' ''; do
         _check "script/test/test.sh $args" null 600000
         assert_failure 2
     done

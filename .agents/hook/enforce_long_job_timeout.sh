@@ -137,6 +137,23 @@ _role_job_forbidden() {
     return 1
 }
 
+# Direct script selectors can combine lint with a tier, so inspect all of them.
+_role_script_forbidden() {
+    local arg tier=0 spec=0 lint=0
+    for arg in "$@"; do
+        case "$arg" in
+            --help|-h) return 1 ;;
+            --changed|changed) return 0 ;;
+            --lint) lint=1 ;;
+            --unit|--matrix|--integration|--system|--system-real|--acceptance) tier=1 ;;
+            *.bats) spec=1 ;;
+        esac
+    done
+    [[ "$tier" == 1 && "$spec" == 0 ]] && return 0
+    [[ "$tier" == 0 && "$lint" == 0 ]] && return 0
+    return 1
+}
+
 _role_forbidden() {
     local -a w=("$@")
     [[ "${w[0]:-}" == bash || "${w[0]:-}" == sh ]] && w=("${w[@]:1}")
@@ -144,8 +161,7 @@ _role_forbidden() {
         sleep) return 0 ;;
         test.sh)
             if [[ "${w[0]}" == script/test/test.sh || "${w[0]}" == */script/test/test.sh ]]; then
-                local selector="${w[1]:-}"
-                _role_forbidden just test "${selector#--}" "${w[@]:2}"
+                _role_script_forbidden "${w[@]:1}"
                 return $?
             fi ;;
         job.sh) _role_job_forbidden "${w[@]:1}"; return $? ;;
