@@ -298,8 +298,6 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just job wait <name> [--max-seconds N]` | 單次阻塞收集結果與尾段／失敗段落；成功 0、失敗 1、仍執行 124、參數錯誤 2 |
 | `just job status <name>` | 不阻塞回報 success／failed／running；退出碼分別 0／1／124 |
 | `just job help [args...]` | job.sh 驗證整份參數後顯示 help |
-
-`start` 以暫存檔改名原子發布 pid；`wait` 在 pid 尚未發布時視為啟動中，仍受 `--max-seconds` 限制，不會誤報 worker 異常結束。
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
@@ -322,6 +320,8 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box help` / `just box h` | 依序 `./script/box/assemble.sh --help`、`./script/box/bench.sh --help`、`./script/box/setup.sh --help`、`./script/box/status.sh --help`、`./script/box/enter.sh --help` |
+
+`start` 以暫存檔改名原子發布 pid；`wait` 在 pid 尚未發布時視為啟動中，仍受 `--max-seconds` 限制，不會誤報 worker 異常結束。
 
 錯誤來源分兩種,都不是 justfile 印的:`just test bogus` 是 just 自己的
 「does not contain recipe」(exit 1),什麼都不會跑;`just box assemble --bogus`
