@@ -2901,3 +2901,18 @@ STUB
     refute_output --partial 'loginctl show-session 72'
     assert_output --partial 'loginctl show-session 71'
 }
+
+@test "#562: no caller session rejects a nonnumeric UID row before actions" {
+    unset XDG_SESSION_ID
+    export FAKE_SESSIONS="71 ${UID} test seat0 tty1
+72 invalid other seat0 tty2"
+    run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial '[INCONCLUSIVE] item 5.2:'
+    [ ! -e "$(_backup_dir)" ]
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    assert_equal "$(cat "${HOME}/.config/ghostty/config")" 'font-size = 12'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+}
