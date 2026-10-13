@@ -88,8 +88,12 @@ set -euo pipefail
 if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
     finish() {
         echo finished >>"${SIGNAL_STATE}/events"
+        if [[ "${INTERRUPT_PHASE}" == assemble ]]; then exit 1; fi
         exec "${SIGNAL_STATE}/just" "$@"
     }
+    if [[ "${INTERRUPT_PHASE}" == assemble ]]; then
+        "${SIGNAL_STATE}/just" "$@"
+    fi
     trap 'sleep 0.2; finish "$@"' INT TERM HUP
     echo "$$" >"${SIGNAL_STATE}/child.pid"
     touch "${SIGNAL_STATE}/ready"
@@ -130,7 +134,7 @@ _check_group_interrupt() {
     assert_failure 1
 }
 
-@test "5.1: interrupt during slow assemble waits before cleanup and exits 130" {
+@test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
     _assert_group_interrupt INT 130 assemble
 }
 
@@ -722,6 +726,33 @@ FRAG
 
 # --- 5.1 real-machine bench --------------------------------------------------
 
+@test "guard: successful unparsable listings are unknown and preserve existing boxes" {
+    _seed_box dev
+    local listing
+    for listing in 'unexpected output without a table' '' \
+        $'ID | NAME | STATUS | IMAGE\nbroken row' \
+        $'ID | NAME | STATUS | IMAGE\n0000 | dev | Up | ubuntu:24.04\nbroken row'; do
+        FAKE_DBX_LIST_OUT="${listing}" \
+            run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+        assert_failure 2
+        FAKE_DBX_LIST_OUT="${listing}" FAKE_JUST_ASSEMBLE_RC=1 \
+            run "${REALBOX}" --allow-real-box 5.1
+        assert_failure
+        assert_output --partial "cannot tell whether 'dev' exists"
+        assert_equal "$(_count_calls 'just box assemble')" '0'
+        assert_equal "$(_count_calls 'distrobox rm')" '0'
+        run cat "${STATE}/boxes"
+        assert_output dev
+    done
+}
+
+@test "guard: a valid empty table means absent" {
+    FAKE_DBX_LIST_OUT=' ID | NAME | STATUS | IMAGE ' \
+        run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+}
+
 @test "5.1: --comment-tag prefixes the first body.md line" {
     run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
     assert_success
@@ -828,11 +859,12 @@ STUB
     assert_equal "$(_count_calls just)" "0"
 }
 
-@test "5.1: just box assemble fails, and cleanup still runs" {
+@test "5.1: failed assemble never claims or deletes a box" {
     FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.1
     assert_failure 1
     assert_output --partial "just box assemble failed"
     assert_line "cleanup-rc=0"
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
 }
 
 @test "5.1: assemble returns 0 but the box is not listed" {
@@ -1583,6 +1615,22 @@ STUB
     refute_output --partial "revalidate=1"
 }
 
+@test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    [ ! -e "$(_backup_dir)/created-box" ]
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    run cat "${STATE}/boxes"
+    assert_output dev
+}
+
 @test "5.2.2: a pre-existing dev box is refused after revalidate=1 and before assemble" {
     _realbox_quiet 5.2.1
     _seed_box dev
@@ -1796,7 +1844,7 @@ STUB
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
     assert_success
     assert_line "dev-untouched=1"
-    [[ "${stderr:-}" == *'[INFO] this run never created a box; leaving every box alone'* ]]
+    [[ "${stderr:-}" == *'[INFO] this run has no confirmed box ownership; leaving every box alone'* ]]
     _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
         | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
     _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
@@ -2389,6 +2437,21 @@ STUB
     run cat "${RESTORE_STDERR}"
     assert_success
     assert_line --partial 'Ctrl-D skips confirmation'
+}
+
+@test "5.2.3: retry after box cleanup does not reclaim the removed box" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line 'dev-gone=1'
+    assert_line 'restore-window-ok=0'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
 }
 
 @test "#471: a clean post-restore Ghostty window completes restore" {

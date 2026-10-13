@@ -53,7 +53,7 @@ STUB
     refute_output --partial '<--comment-tag>'
 }
 
-@test "5.4: all six event-driven interrupts have pinned passing output" {
+@test "5.4: all six event-driven interrupts pass with nonzero interrupted assemble" {
     run --separate-stderr "${REALBOX}" --allow-real-box 5.4
     assert_success
     local phase signal code line actual='' expected=''

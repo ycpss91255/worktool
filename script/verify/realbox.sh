@@ -39,9 +39,9 @@
 #     - they refuse to run without the explicit --allow-real-box opt-in;
 #     - they refuse when a box named `dev` already exists, and never delete a
 #       box this run did not create;
-#     - ownership is claimed BEFORE anything can exist (the marker means
-#       "assemble was ATTEMPTED", not "assemble returned 0"), so an interrupt
-#       mid-create still leaves cleanup able to remove the box;
+#     - ownership requires confirmed absence before assemble and a listed
+#       box afterward, including nonzero interrupted assemble; cleanup
+#       confirms ownership after signal forwarding has stopped;
 #     - cleanup and restore run on EXIT INT TERM HUP, and a failed cleanup
 #       fails the whole run.
 #
@@ -179,6 +179,58 @@ _just() {
         trap 'exit 143' TERM
         trap 'exit 129' HUP
         cd -- "${REPO_ROOT}" && verify_run "${TIMEOUT_LONG}" just "$@"
+    )
+}
+
+# Confirm the absent-before/listed-after evidence outside the signalled group.
+_confirm_box_ownership() {
+    local dir="$1" rc=0
+    [[ ! -e "${dir}/created-box" ]] || return 0
+    [[ -e "${dir}/assemble-started" ]] || return 0
+    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
+    if [[ "${rc}" -eq 1 && ! -e "${dir}/assemble-success" ]]; then
+        # Retire this attempt so a later restore cannot claim an unrelated box.
+        rm -f -- "${dir}/assemble-started" || return 1
+        return 0
+    fi
+    if [[ "${rc}" -ne 0 ]]; then
+        if [[ -e "${dir}/assemble-success" ]]; then
+            guard_fail "assemble returned 0 but box '${BOX}' is not listed"
+        else
+            guard_fail "cannot confirm box '${BOX}' after assemble (list status ${rc})"
+        fi
+        return 1
+    fi
+    : >"${dir}/created-box" || {
+        guard_fail "cannot record box ownership at ${dir}/created-box"
+        return 1
+    }
+}
+
+# Keep the actual assemble result even when supervision returns a signal.
+_assemble_owned_box() {
+    (
+        local rc=0
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+        cd -- "${REPO_ROOT}" || exit 1
+        _refuse_preexisting_box "No ownership without confirmed absence." || exit 1
+        : >"$1/assemble-started" || exit 1
+        verify_run "${TIMEOUT_LONG}" bash -c "
+            set -euo pipefail
+            trap ':' INT TERM HUP
+            $(declare -f guard_fail)
+            dir=\"\$1\"
+            just box assemble --home \"\${dir}/box-home\" || {
+                guard_fail 'just box assemble failed'; exit 1;
+            }
+            : >\"\${dir}/assemble-success\" || {
+                guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
+            }
+        " _ "$1" || rc=$?
+        _confirm_box_ownership "$1" || exit 1
+        exit "${rc}"
     )
 }
 
@@ -354,11 +406,13 @@ _on_exit() {
 # 5.1  real-machine bench
 # =============================================================================
 _51_W=""
-_51_CREATED=0
 
 _51_cleanup() {
     local _crc=0
-    if [[ "${_51_CREATED}" -eq 1 ]]; then
+    if [[ -n "${_51_W}" ]]; then
+        _confirm_box_ownership "${_51_W}" || _crc=1
+    fi
+    if [[ -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
@@ -532,14 +586,8 @@ _51_body() {
     _run_id="m3-51-${_stamp}-$$"
     _51_prepare_config || return 1
 
-    # Ownership BEFORE the box can exist: the marker means "assemble was
-    # ATTEMPTED", not "assemble returned 0", so an interrupt anywhere inside
-    # assemble still hands cleanup the box. A marker with no box is the safe
-    # direction, and cleanup tolerates it.
-    _51_CREATED=1
-    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" _just box assemble --home "${_51_W}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
-        || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" \
+        _assemble_owned_box "${_51_W}" >/dev/null || return 1
 
     printf 'phase=bench\n' >&2
     XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
@@ -576,7 +624,6 @@ item_51() {
     [[ -d "${_51_W}" ]] \
         || { guard_fail "mktemp returned '${_51_W}', which is not a directory"; return 1; }
 
-    _51_CREATED=0
     _host_state_snapshot "${_51_W}" || return $?
     _cleanup_push 51
     local _rc=0
@@ -646,14 +693,9 @@ _52_step2_apply() {
         || return 1
     printf 'preexisting-dev=0\n'
 
-    # The marker is written BEFORE assemble and persisted to disk, so step 3
-    # works in a fresh shell and an interrupt inside assemble still leaves
-    # something that says "this run touched assemble".
-    : >"${CFGBK_B}/created-box" \
-        || { guard_fail "cannot record box ownership at ${CFGBK_B}/created-box"; return 1; }
-    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" _just box assemble --home "${CFGBK_B}/box-home" >/dev/null || { guard_fail "just box assemble failed"; return 1; }
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" \
-        || { guard_fail "assemble returned 0 but box '${BOX}' is not listed"; return 1; }
+    # Persist confirmed ownership for step 3, including a fresh invocation.
+    XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" \
+        _assemble_owned_box "${CFGBK_B}" >/dev/null || return 1
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
         || { guard_fail "cannot inventory processes before setup"; return 1; }
     _just box setup --terminal ghostty --auto-enter yes --box "${MANIFEST_BOX}" \
@@ -733,12 +775,12 @@ _52_window_evidence() {
 
 # --- step 3 ------------------------------------------------------------------
 
-# Only a box this run created may be removed. The marker says step 2 STARTED
-# assemble, so it can outlive an interrupt that left no box.
+# Only a box confirmed created by this run may be removed.
 _52_remove_owned_box() {
+    _confirm_box_ownership "${CFGBK_B}" || return 1
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         printf 'dev-untouched=1\n'
-        log_info "this run never created a box; leaving every box alone"
+        log_info "this run has no confirmed box ownership; leaving every box alone"
         return 0
     fi
     if XDG_DATA_HOME="${CFGBK_B}/data" _drop_owned_box; then
@@ -752,17 +794,19 @@ _52_remove_owned_box() {
 }
 
 _52_cleanup_state() {
+    _confirm_box_ownership "${CFGBK_B}" || return 1
     if [[ ! -e "${CFGBK_B}/created-box" ]]; then
         _52_remove_owned_box || return 1
         # Separate invocations allow user-owned state to appear after backup.
-        # Without an assemble marker, none of it belongs to this run.
+        # Without confirmed ownership, none of it belongs to this run.
         _host_state_report "${CFGBK_B}" untouched
         return $?
     fi
     _52_remove_owned_box || return 1
     _host_state_cleanup "${CFGBK_B}" || return 1
     # Keep ownership across retries until all owned state is clean.
-    rm -f -- "${CFGBK_B}/created-box" \
+    rm -f -- "${CFGBK_B}/created-box" "${CFGBK_B}/assemble-success" \
+        "${CFGBK_B}/assemble-started" \
         || { guard_fail "cannot clear the ownership marker ${CFGBK_B}/created-box"; return 1; }
 }
 
