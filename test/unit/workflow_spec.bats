@@ -3639,3 +3639,12 @@ JS
         contains("read the posted comment back")' <<<"${output}"
     assert_success
 }
+
+@test "pr-loop light gates include lint and touched specs in review publish and CI (#552)" {
+    run _pl_run '{"mode":"light","codex":"off"}'
+    assert_success
+    run jq -e '[.calls[] | select(.role | test("^(review|publish|ci):")) | .prompt |
+        contains("just test lint") and contains("git diff --name-only --diff-filter=ACMR") and
+        contains("just test") and contains("test/unit/*.bats")] | length == 3 and all' <<<"${output}"
+    assert_success
+}

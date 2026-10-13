@@ -58,12 +58,23 @@ const REPO_DIR = A.repoDir
 const WORKTREE_ROOT = `${REPO_DIR}/../worktree`
 const CODEX = codexArg === 'on'
 const CHANGED_GATE = BASE === 'main' ? 'just test changed' : `just test changed --base origin/${BASE}`
-const GATES = A.gates || (MODE === 'light' ? 'just test lint' : `just test lint, ${CHANGED_GATE}`)
 const PARENT = A.parent || ''
 const WT = `${WORKTREE_ROOT}/${A.name}`
 const SCRATCH = `${WORKTREE_ROOT}/.scratch/${A.name}`
 // POSIX single quoting: how a value reaches a shell command.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+// Light selects only spec files touched by this branch or pending edits.
+const TOUCHED_GATE = `bash -c ${sq(`set -euo pipefail
+paths="$(git diff --name-only --diff-filter=ACMR ${sq(`origin/${BASE}`)}...HEAD && git diff --name-only --diff-filter=ACMR HEAD && git ls-files --others --exclude-standard)"
+while IFS= read -r spec; do
+  case "$spec" in
+    test/unit/*.bats|test/matrix/*.bats|test/integration/*.bats|test/system/*.bats|test/system-real/*.bats|test/acceptance/*.bats)
+      [ -f "$spec" ] || continue
+      tier="\${spec#test/}"; tier="\${tier%%/*}"
+      just test "$tier" "$spec" ;;
+  esac
+done <<< "$paths"`)}`
+const GATES = A.gates || (MODE === 'light' ? `just test lint, ${TOUCHED_GATE}` : `just test lint, ${CHANGED_GATE}`)
 // A literal path, escaped for a sed -E s#...#...# pattern.
 const ere = (s) => String(s).replace(/[\\^$.*+?()[\]{}|#]/g, '\\$&')
 // The repo is public (#233): codex cites files through the local directory
@@ -253,7 +264,7 @@ const pushAhead = async (pr, stage) => {
   [ "$(git branch --show-current)" = ${sq(A.branch)} ] &&
   git fetch origin ${sq(A.branch)} >&2 &&
   git merge-base --is-ancestor FETCH_HEAD HEAD`
-  const gates = MODE === 'light' && !A.gates ? '' : `${GATES.split(',').map(g => g.trim()).join(' && ')} &&`
+  const gates = `${GATES.split(',').map(g => g.trim()).join(' && ')} &&`
   return agent(`${IMPLEMENTER === 'codex' ? CODEX_RULES : GUARDRAILS}
 Local HEAD is ahead. Run ${GATES} blocking in the foreground before pushing. Verify every unpublished commit has noreply author/committer, Refs: #${A.issue}, and no attribution trailers before running the script. Any failed gate or guard is blocking. Never force push or rewrite history. Run this script only after all gates pass:
 \`cd ${sq(WT)} && ${guards} &&
