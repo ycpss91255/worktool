@@ -1630,6 +1630,19 @@ STUB
     refute_output --partial "revalidate=1"
 }
 
+@test "#558: a matching recorded ID permits normal cleanup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-gone=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)" ]
+}
+
 @test "#558: restore refuses a replacement box with a different ID and keeps evidence" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
