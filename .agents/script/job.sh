@@ -114,7 +114,7 @@ main() {
     DIR="${ROOT}/.agents/state/job/${NAME}"
     case "$VERB" in
         start) start_job "${ARGS[@]:3}" ;;
-        wait) [[ -d "${DIR}" ]] || bad 'unknown job'; wait_job ;;
+        wait) [[ -d "${DIR}" ]] || { log_error "job.sh: unknown job: ${NAME}"; exit 1; }; wait_job ;;
         status) state ;;
     esac
 }

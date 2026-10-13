@@ -133,3 +133,12 @@ teardown() {
     assert_failure 1
     assert_output --partial 'worker 異常結束'
 }
+
+@test "unknown jobs return functional failure for wait and status (#552)" {
+    local verb
+    for verb in wait status; do
+        run "$JOB" "$verb" missing
+        assert_failure 1
+        assert_output --partial 'unknown job'
+    done
+}
