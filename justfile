@@ -23,6 +23,10 @@ mod? agent 'script/agent/justfile.agent'
 # Cleanup merged linked worktrees (dry-run by default).
 mod? worktree '.agents/script/worktree/justfile.worktree'
 
+
+# Detached agent jobs and compact results.
+mod? job '.agents/script/justfile.job'
+
 # Default: list the namespaces.
 default:
     @just --list

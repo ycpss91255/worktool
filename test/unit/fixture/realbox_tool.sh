@@ -151,7 +151,9 @@ _fake_distrobox() {
     local _verb="${1:-}"
     _record_distrobox_config "${_verb}" || return 1
     _record_container_config "${_verb}" || return 1
-    shift || true
+    if [[ $# -gt 0 ]]; then
+        shift
+    fi
     case "${_verb}" in
         list) _fake_distrobox_list ;;
         create) _fake_distrobox_create "$@" ;;

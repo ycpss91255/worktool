@@ -175,6 +175,7 @@ _usage() {
         '' \
         '  --root <repo>  worktool checkout to verify (default: the one this script' \
         '                 lives in).' \
+        '  -l, --list     List the item ids and their titles, then exit without running checks.' \
         '  --realbox      Accepted so every verify script shares one command line.' \
         '                 This script declares NO real-machine items - it only reads' \
         '                 files - so the flag enables nothing and creates nothing.' \
@@ -469,7 +470,7 @@ _resolve_root() {
 
 # --- Main --------------------------------------------------------------------
 diagram_run() {
-    local _help=0 _root="${SELF_ROOT}" _items=() _item _rc=0
+    local _help=0 _list=0 _root="${SELF_ROOT}" _items=() _item _rc=0
 
     # The whole command line is parsed and validated before anything runs.
     while [[ $# -gt 0 ]]; do
@@ -484,6 +485,7 @@ diagram_run() {
                 ;;
             --root=*) _root="${1#*=}" ;;
             --realbox) VERIFY_REALBOX=1 ;;
+            -l|--list) _list=1 ;;
             # Recorded, not served: `--help --bogus` is a usage error.
             -h|--help) _help=1 ;;
             -*)
@@ -491,6 +493,7 @@ diagram_run() {
                 return 2
                 ;;
             *)
+                _is_known_item "$1" || { _usage_error "unknown item '$1'"; return 2; }
                 _items+=("$1")
                 ;;
         esac
@@ -499,6 +502,11 @@ diagram_run() {
 
     if [[ "${_help}" -eq 1 ]]; then
         _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        printf '%s  %s\n' 4.1 \
+            'doc/diagram/ draw.io files, embedded mxfile sources and README references'
         return 0
     fi
 

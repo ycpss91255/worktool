@@ -35,6 +35,8 @@ FAILED=0
 for TREE in script .agents/script; do
     [[ -d "${ROOT}/${TREE}" ]] || continue
     while IFS= read -r -d '' FILE; do
+        # #550 specifies this shared entry point outside categorized scripts.
+        [[ "${FILE#"${ROOT}/"}" == .agents/script/job.sh ]] && continue
         log_error "top-level script: ${FILE#"${ROOT}/"}"
         FAILED=1
     done < <(find "${ROOT}/${TREE}" -maxdepth 1 -type f -executable -print0)

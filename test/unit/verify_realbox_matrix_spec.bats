@@ -26,20 +26,55 @@ STUB
     REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
 }
 
-@test "5.4: all six event-driven interrupts pass with nonzero interrupted assemble" {
+@test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
+    cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '<%s>' "$@" >>"${MATRIX_STATE}/child-argv"
+printf '\n' >>"${MATRIX_STATE}/child-argv"
+exec /usr/bin/setsid "$@"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/setsid"
+    run "${REALBOX}" --allow-real-box --comment-tag '[codex]' 5.4
+    assert_success
+    run cat "${MATRIX_STATE}/child-argv"
+    assert_success
+    [ "${#lines[@]}" -eq 6 ]
+    local line
+    for line in "${lines[@]}"; do
+        [[ "${line}" == *'<--comment-tag><[codex]>'* ]]
+    done
+    : >"${MATRIX_STATE}/child-argv"
     run "${REALBOX}" --allow-real-box 5.4
     assert_success
-    local phase signal code expected=''
+    run cat "${MATRIX_STATE}/child-argv"
+    assert_success
+    [ "${#lines[@]}" -eq 6 ]
+    refute_output --partial '<--comment-tag>'
+}
+
+@test "5.4: all six event-driven interrupts pass with nonzero interrupted assemble" {
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    local phase signal code line actual='' expected=''
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
+            assert_line --regexp "^interrupt ${phase} ${signal}: signal-phase=${phase} signal-after-ms=[0-9]+$"
             case "${signal}" in INT) code=130 ;; TERM) code=143 ;; HUP) code=129 ;; esac
             expected+="interrupt ${phase} ${signal}: rc=${code} cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS"$'\n'
         done
     done
     expected+='interrupt-matrix: PASS (6/6)'
-    assert_output "${expected}"
+    [ "${#lines[@]}" -eq 13 ]
+    for line in "${lines[@]}"; do
+        [[ "${line}" == *'signal-phase='* ]] || actual+="${line}"$'\n'
+    done
+    assert_equal "${actual%$'\n'}" "${expected}"
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*'
+    assert_success
+    assert_output ''
 }
 
 @test "5.4: any cell cleanup failure fails the matrix" {

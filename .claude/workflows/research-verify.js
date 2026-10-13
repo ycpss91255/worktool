@@ -50,7 +50,7 @@ export const meta = {
 // first agent reads from /dev/urandom, so markers are unique per run (issue
 // #225); n is distinct for every block of the run and chosen so neither
 // marker occurs in the block or in repoDir: no content can close the block
-// early. A Workflow may not call Math.random (it would break resume), but a
+// early. A Workflow may not draw random values; that would break resume. A
 // resumed run replays the nonce agent's cached result, so it keeps its own
 // markers while a new run with the same args draws new ones.
 

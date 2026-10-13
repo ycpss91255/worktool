@@ -34,7 +34,16 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
-const replies = JSON.parse(repliesJson)
+// Existing pr-loop scenarios model successful external gates/publication by
+// default. Individual scenarios override either reply (including null).
+const replies = {
+  ...(process.env.WORKFLOW_JOB_REPLIES ? {
+    'gates:': { state: 'green', detail: 'success' },
+    'publish:Implement': { pr: 7, sha: 'abc' },
+    'publish:Fix': { pr: 7, sha: 'def' },
+  } : {}),
+  ...JSON.parse(repliesJson),
+}
 const calls = []
 const ran = []
 const workflowCalls = []
@@ -52,6 +61,7 @@ const checkHooks = (cmd) => {
 
 const reply = (label) => {
   const k = Object.keys(replies).find(p => label.startsWith(p))
+  if (k !== undefined && Array.isArray(replies[k])) return replies[k].shift() || null
   return k === undefined ? (label.startsWith('prepare:') ? { state: 'new' } : null) : replies[k]
 }
 
@@ -142,7 +152,7 @@ const playHandoverFiles = (role, prompt) => {
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
-  calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, prompt })
+  calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
@@ -176,10 +186,25 @@ const workflow = async (options, workflowArgs) => {
 }
 
 const AsyncFunction = (async () => {}).constructor
+// Match the Workflow harness while preserving explicit date inputs.
+const NativeDate = Date
+const forbidden = (api) => { throw new Error(`Workflow: ${api} is forbidden`) }
+const WorkflowDate = new Proxy(NativeDate, {
+  construct(target, inputs) {
+    if (inputs.length === 0) forbidden('new Date()')
+    return Reflect.construct(target, inputs)
+  },
+  apply() { return forbidden('new Date()') },
+  get(target, key) {
+    return key === 'now' ? () => forbidden('Date.now()') : Reflect.get(target, key)
+  },
+})
+const WorkflowMath = Object.create(Math)
+WorkflowMath.random = () => forbidden('Math.random()')
 const runWorkflow = async (path, workflowArgs) => {
   const src = readFileSync(path, 'utf8').replace(/^export const meta/m, 'const meta')
-  const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', src)
-  return body(workflowArgs, agent, parallel, workflow, () => {}, message => logs.push(message))
+  const body = new AsyncFunction('args', 'agent', 'parallel', 'workflow', 'phase', 'log', 'Date', 'Math', src)
+  return body(workflowArgs, agent, parallel, workflow, () => {}, message => logs.push(message), WorkflowDate, WorkflowMath)
 }
 
 const out = { result: null, error: null, calls, workflowCalls, ran, logs }
