@@ -30,7 +30,7 @@
 // Prints ONE JSON object: { result, error, calls: [{label, role, phase, schema, prompt}],
 // ran: [{cmd, rc}] }.
 
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync, renameSync, utimesSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -185,11 +185,49 @@ const playHandoverFiles = (role, prompt) => {
   return reply(role)
 }
 
+// Run workflow-owned snapshots against an isolated host-config fixture.
+const playHandoverSnapshots = (role, prompt) => {
+  if (process.env.HANDOVER_UNRELATED_SIBLINGS && /^independent-(codex|claude):$/.test(role)) {
+    for (const [parent, name] of [[process.env.HOME, '.claude.json'], [`${process.env.HOME}/.local/share`, 'recently-used.xbel']]) {
+      writeFileSync(`${parent}/${name}.tmp`, role)
+      renameSync(`${parent}/${name}.tmp`, `${parent}/${name}`)
+      // Make the parent metadata change deterministic even on coarse filesystems.
+      const time = new Date(role === 'independent-codex:' ? '2030-01-01' : '2031-01-01')
+      utimesSync(parent, time, time)
+    }
+  }
+  if (role === process.env.HANDOVER_MUTATE + ':') {
+    writeFileSync(`${process.env.HOME}/.config/ghostty/config`, 'changed config\n')
+  }
+  if (role === process.env.HANDOVER_SNAPSHOT_FAILURE) {
+    const ghostty = `${process.env.HOME}/.config/ghostty`
+    if (process.env.HANDOVER_SNAPSHOT_FAILURE_KIND === 'sha256') {
+      unlinkSync(`${ghostty}/config`)
+      symlinkSync('/proc/self/mem', `${ghostty}/config`)
+    } else {
+      rmSync(ghostty, { recursive: true })
+      writeFileSync(ghostty, 'not a directory\n')
+    }
+  }
+  if (role.startsWith('snapshot:')) {
+    const result = play(prompt)
+    ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(result.stdout) : null }
+    return result.ok ? result.stdout : { error: 'Snapshot command failed' }
+  }
+  if (role === 'independent-cleanup:' || role === 'independent-claude-cleanup:') {
+    return prompt.includes('journal absence or emptiness alone')
+      ? { restored: false, childrenStopped: true }
+      : { restored: false, childrenStopped: true, error: 'Missing journal' }
+  }
+  return reply(role)
+}
+
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
+  if (mode === 'exec-handover-snapshots') return playHandoverSnapshots(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
