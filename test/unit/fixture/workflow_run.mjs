@@ -185,11 +185,27 @@ const playHandoverFiles = (role, prompt) => {
   return reply(role)
 }
 
+// Run workflow-owned snapshots against an isolated host-config fixture.
+const playHandoverSnapshots = (role, prompt) => {
+  if (role.startsWith('snapshot:')) {
+    const result = play(prompt)
+    ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(result.stdout) : null }
+    return result.ok ? result.stdout : { error: 'Snapshot command failed' }
+  }
+  if (role === 'independent-cleanup:' || role === 'independent-claude-cleanup:') {
+    return prompt.includes('journal absence or emptiness alone')
+      ? { restored: true, childrenStopped: true }
+      : { restored: false, childrenStopped: true, error: 'Missing journal' }
+  }
+  return reply(role)
+}
+
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
+  if (mode === 'exec-handover-snapshots') return playHandoverSnapshots(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
   if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {

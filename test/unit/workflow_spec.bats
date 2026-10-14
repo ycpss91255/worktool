@@ -3002,7 +3002,8 @@ _handover_replies() {
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
-        "independent-cleanup:":{restored:true,childrenStopped:true},
+        "snapshot:":{snapshot:{"fixture-path":{type:"absent"}}},
+        "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],url:"https://github.com/o/r/pull/7#issuecomment-4"},
@@ -3012,7 +3013,7 @@ _handover_replies() {
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","independent-codex:","independent-cleanup:","independent-claude:","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
@@ -3407,7 +3408,7 @@ _pl_retry_run() {
     json="${output}"
     run jq -e '.result.status == "prepared" and
         [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review",
-            "review:","artifact-check:Machine","machine:","independent-codex:","independent-cleanup:","independent-claude:","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+            "review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
     [ ! -e "${scratch}/stale.md" ]
@@ -3888,5 +3889,31 @@ test unit test/unit/pending.bats'
     run jq -e '.calls[] | select(.role == "ci:#7") | .prompt |
         contains("Locally run only just test lint and touched specs") and
         (contains("Never run matrix, integration, system, system-real, acceptance") | not)' <<<"$output"
+    assert_success
+}
+
+_handover_snapshot_run() {
+    local root="${BATS_TEST_TMPDIR}/snapshot" replies="$1"
+    mkdir -p "${root}/lib" "${root}/home/.config/ghostty"
+    cp "${REPO_ROOT}/lib/"{link,config,log}.sh "${root}/lib/"
+    printf 'original\n' > "${root}/home/.config/ghostty/config"
+    replies="$(jq --arg d "${root}" '."sync:".repoDir=$d' <<<"${replies}")"
+    HOME="${root}/home" XDG_CONFIG_HOME="${root}/home/.config" XDG_CACHE_HOME="${root}/home/.cache" \
+        run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" \
+        "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" \
+        "${replies}" exec-handover-snapshots
+    assert_success
+}
+
+@test "milestone-handover equal host snapshots without a journal proceed to Claude (#577)" {
+    _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-claude:") != null) and
+        [.ran[] | select(.snapshot) | .role] ==
+            ["snapshot:codex-before", "snapshot:codex-after", "snapshot:claude-before", "snapshot:claude-after"] and
+        ([.ran[] | select(.snapshot) | .rc] | all(. == 0)) and
+        ([.ran[] | select(.snapshot) | .data.snapshot] | .[0] == .[1] and .[2] == .[3]) and
+        (.ran[0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
     assert_success
 }
