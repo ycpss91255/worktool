@@ -30,7 +30,7 @@
 // Prints ONE JSON object: { result, error, calls: [{label, role, phase, schema, prompt}],
 // ran: [{cmd, rc}] }.
 
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -189,6 +189,16 @@ const playHandoverFiles = (role, prompt) => {
 const playHandoverSnapshots = (role, prompt) => {
   if (role === process.env.HANDOVER_MUTATE + ':') {
     writeFileSync(`${process.env.HOME}/.config/ghostty/config`, 'changed config\n')
+  }
+  if (role === process.env.HANDOVER_SNAPSHOT_FAILURE) {
+    const ghostty = `${process.env.HOME}/.config/ghostty`
+    if (process.env.HANDOVER_SNAPSHOT_FAILURE_KIND === 'sha256') {
+      unlinkSync(`${ghostty}/config`)
+      symlinkSync('/proc/self/mem', `${ghostty}/config`)
+    } else {
+      rmSync(ghostty, { recursive: true })
+      writeFileSync(ghostty, 'not a directory\n')
+    }
   }
   if (role.startsWith('snapshot:')) {
     const result = play(prompt)

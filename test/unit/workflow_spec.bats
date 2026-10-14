@@ -3928,3 +3928,22 @@ _handover_snapshot_run() {
         assert_success
     done
 }
+
+@test "milestone-handover tracked snapshot stat or sha256 failure fails closed before serving the next stage (#577)" {
+    local reviewer moment kind
+    for reviewer in codex claude; do
+        for moment in before after; do
+            for kind in stat sha256; do
+                HANDOVER_SNAPSHOT_FAILURE="snapshot:${reviewer}-${moment}" HANDOVER_SNAPSHOT_FAILURE_KIND="${kind}" \
+                    _handover_snapshot_run "$(_handover_replies)"
+                run jq -e --arg r "${reviewer}" --arg m "${moment}" '
+                    .result.status == "independent-failed" and .result.reviewer == $r and
+                    .calls[-1].role == ("snapshot:" + $r + "-" + $m) and
+                    .ran[-1].rc != 0 and
+                    ([.calls[].role] | index("independent-assess:") == null)' <<<"${output}"
+                assert_success
+                rm -rf "${BATS_TEST_TMPDIR}/snapshot"
+            done
+        done
+    done
+}
