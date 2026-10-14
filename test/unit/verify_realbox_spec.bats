@@ -2691,7 +2691,7 @@ STUB
     [ -d "$(_backup_dir)" ]
 }
 
-@test "timeout cleanup: realbox kills a TERM-ignoring just descendant" {
+_prepare_timeout_descendant() {
     local timeout_real
     timeout_real="$(command -v timeout)"
     printf '#!/usr/bin/env bash\nshift 3\nexec %q -k 1 0.2 "$@"\n' "${timeout_real}" >"${STUBS}/timeout"
@@ -2701,6 +2701,10 @@ STUB
 bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
 wait
 STUB
+}
+
+@test "timeout cleanup: realbox kills a TERM-ignoring just descendant" {
+    _prepare_timeout_descendant
     local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
     ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" run "${REALBOX}" --allow-real-box 5.1
     assert_failure 1
@@ -2713,6 +2717,46 @@ STUB
     fi
     [ "${alive}" -eq 0 ]
     [ ! -e "${marker}" ]
+}
+
+@test "timeout cleanup: TERM-ignoring just descendant under CPU load" {
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
+    _prepare_timeout_descendant
+    interrupt_load_start
+    # Keep the supervisor free to run while the assemble shell is contended.
+    cat >"${STUBS}/bash" <<'STUB'
+#!/bin/bash
+if [[ "${1:-}" == -c && "${2:-}" == *'just box assemble'* ]]; then
+    exec taskset -c "${INTERRUPT_LOAD_CPU}" /bin/bash "$@"
+fi
+exec /bin/bash "$@"
+STUB
+    chmod +x "${STUBS}/bash"
+    local attempt failures=0 trials=30 pid ready=0
+    export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
+    for ((attempt=1; attempt<=trials; attempt++)); do
+        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}"
+        run "${REALBOX}" --allow-real-box 5.1
+        if [[ "${status}" -ne 1 || "${output}" != *'just box assemble failed'* ||
+            ! -s "${ORPHAN_PID}" || -e "${ORPHAN_MARKER}" ]]; then
+            failures=$((failures + 1))
+            printf '# attempt=%s status=%s output=%s\n' "${attempt}" "${status}" "${output}" >&3
+        fi
+        if [[ -s "${ORPHAN_PID}" ]]; then
+            ready=$((ready + 1))
+            read -r pid <"${ORPHAN_PID}"
+            if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+                failures=$((failures + 1))
+                kill -KILL "${pid}"
+            fi
+        fi
+        if ((attempt % 10 == 0)); then
+            printf '# timeout descendant attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
+        fi
+    done
+    interrupt_load_stop
+    printf '# timeout descendant load failures=%s/%s ready=%s/%s\n' "${failures}" "${trials}" "${ready}" "${trials}" >&3
+    [ "${failures}" -eq 0 ]
 }
 
 @test "#511: 5.1 assemble cache stays in scratch and absent real cache stays absent" {
