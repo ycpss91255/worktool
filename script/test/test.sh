@@ -421,17 +421,18 @@ _run_lint() (
     _info "Script layout OK"
 )
 
-# Only the two optional CPU repro cases may skip in the unit tier.
+# Only the optional CPU repro cases may skip in the unit tier.
 _has_unexpected_skip() {
     awk -v tier="$1" -v stress="${WORKTOOL_STRESS:-}" '
         /^ok [0-9]+ .*# skip/ {
             sub(/^ok [0-9]+ /, "")
             reason = " # skip set WORKTOOL_STRESS=1 to run CPU repro"
             # Exempt names come from test/unit/verify_run_signal_spec.bats and
-            # test/unit/verify_realbox_spec.bats, respectively.
+            # test/unit/verify_realbox_spec.bats.
             if (tier == "unit" && stress != "1" &&
                 ($0 == "verify_run: HUP under CPU load always finishes before cleanup" reason ||
-                 $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason)) next
+                 $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason ||
+                 $0 == "timeout cleanup: TERM-ignoring just descendant under CPU load" reason)) next
             unexpected = 1
         }
         END { exit !unexpected }
