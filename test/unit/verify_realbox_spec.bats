@@ -2063,6 +2063,29 @@ STUB
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
 
+@test "#590: 5.3 fails when 5.1 cannot read the box list" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == list && -s "${FAKE_STATE_DIR}/boxes" && ! -e "${FAKE_STATE_DIR}/decoy-listed" ]]; then
+    touch "${FAKE_STATE_DIR}/decoy-listed"
+elif [[ "${1:-}" == list && -e "${FAKE_STATE_DIR}/decoy-listed" && ! -e "${FAKE_STATE_DIR}/list-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/list-failed"
+    printf 'injected box list failure\n' >&2
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line '51-rc=1'
+    assert_output --partial "cannot tell whether 'dev' exists"
+    refute_line '52-rc=1'
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "#590: 5.3 fails when step 2 cannot revalidate before checking the box" {
     cp "${STUBS}/grep" "${STATE}/grep"
     cat >"${STUBS}/grep" <<'STUB'

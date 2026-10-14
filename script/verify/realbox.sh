@@ -1145,12 +1145,15 @@ _53_body() {
 
     # 5.1 must refuse BEFORE `just box assemble`, so it prints neither
     # preexisting-dev=0 nor cleanup-rc, and touches no box.
+    _BOX_REFUSAL_CONFIRMED=0
     item_51
     _rc51=$?
     printf '51-rc=%s\n' "${_rc51}"
     [[ "${_rc51}" -ne 3 ]] || return 3
     [[ "${_rc51}" -ne 0 ]] \
         || { guard_fail "5.1 did NOT refuse a pre-existing '${BOX}' box"; return 1; }
+    [[ "${_BOX_REFUSAL_CONFIRMED}" -eq 1 ]] \
+        || { guard_fail "5.1 failed for a reason other than a pre-existing '${BOX}' box; see diagnostics above"; return 1; }
 
     _52_step1_backup || return $?
     _cleanup_push 52-restore
