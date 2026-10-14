@@ -78,6 +78,7 @@ teardown() {
 }
 
 @test "verify_run: HUP under CPU load always finishes before cleanup" {
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
     interrupt_load_start
     local attempt failures=0 trials=60

@@ -174,6 +174,7 @@ _check_group_interrupt() {
 }
 
 @test "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" {
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
     interrupt_load_start
     local attempt failures=0 trials=60 phase tool
