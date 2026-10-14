@@ -410,5 +410,5 @@ _stub_calls() {
     local scope
     scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     run printf '%s\n' "${scope}"
-    refute_output --partial '`doc/evidence/`'
+    refute_output --partial "\`doc/evidence/\`"
 }
