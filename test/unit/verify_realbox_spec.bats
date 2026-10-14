@@ -907,6 +907,17 @@ STUB
     assert_equal "$(_count_calls 'distrobox rm')" '0'
 }
 
+@test "#586: assemble exit 2 still reports assemble failure from the supervisor" {
+    FAKE_JUST_ASSEMBLE_RC=2 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[FAIL] just box assemble failed'
+    refute_output --partial 'cannot create assemble temp dir'
+    refute_output --partial 'cannot record assemble success'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "#558: failed assemble with an unparsable confirmation keeps evidence and refuses cleanup" {
     FAKE_JUST_ASSEMBLE_RC=1 FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
         run "${REALBOX}" --allow-real-box 5.1
@@ -3165,17 +3176,37 @@ STUB
     assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
 }
 
-@test "#562: assemble temp directory failure explains the path and never builds a box" {
+@test "#586: assemble temp directory failure reports only its own cause" {
     _realbox_quiet 5.2.1
     SHIM_MKDIR_ON=assemble-tmp SHIM_MKDIR_RC=1 \
         run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2
     assert_failure 1
     [[ "${stderr}" == *"[FAIL] cannot create assemble temp dir at $(_backup_dir)/assemble-tmp"* ]]
+    [[ "${stderr}" != *'[FAIL] just box assemble failed'* ]]
     refute_output --partial '[FAIL]'
     assert_equal "$(_count_calls 'just box assemble')" 0
     assert_equal "$(_count_calls 'distrobox rm')" 0
     [ ! -s "${STATE}/boxes" ]
     [ ! -e "$(_backup_dir)/created-box" ]
+}
+
+@test "#586: success marker failure reports only its own cause after assemble succeeds" {
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/just" "$@"
+if [[ "${2:-}" == assemble ]]; then
+    mkdir -- "${TMPDIR%/assemble-tmp}/assemble-success"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial '[FAIL] cannot record assemble success at '
+    refute_output --partial '[FAIL] just box assemble failed'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
 }
 
 @test "#562: duplicate box names are unknown for both guard interfaces without an ID" {

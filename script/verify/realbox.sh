@@ -255,16 +255,20 @@ _assemble_owned_box() {
             $(declare -f guard_fail)
             dir=\"\$1\"
             mkdir -p -- \"\${dir}/assemble-tmp\" || {
-                guard_fail \"cannot create assemble temp dir at \${dir}/assemble-tmp\"; exit 1;
+                guard_fail \"cannot create assemble temp dir at \${dir}/assemble-tmp\" || exit 2
             }
             TMPDIR=\"\${dir}/assemble-tmp\" just box assemble --home \"\${dir}/box-home\" || exit 1
             : >\"\${dir}/assemble-success\" || {
-                guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
+                guard_fail \"cannot record assemble success at \${dir}/assemble-success\" || exit 2
             }
         " _ "$1" || rc=$?
         # Deadline cleanup can kill the inner shell before it reports failure.
         # Report from the surviving supervisor after its process group stops.
-        if [[ "${rc}" -ne 0 ]]; then
+        # Inner status 2 identifies a stage failure outside the assemble command.
+        # Assemble's own nonzero status is normalized to 1 inside the group.
+        if [[ "${rc}" -eq 2 ]]; then
+            rc=1
+        elif [[ "${rc}" -ne 0 ]]; then
             printf '[FAIL] just box assemble failed\n' >&2
         fi
         _confirm_box_ownership "$1" record || exit 1
