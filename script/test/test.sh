@@ -46,7 +46,8 @@
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
 # per tier), the TAP plan covers at least those cases, at least one case ran
-# and none was skipped. bats exits 0 on skips and happily runs a tier whose
+# and none was unexpectedly skipped. Only the two opt-in CPU repro cases
+# may skip in unit when stress is disabled. bats exits 0 on skips and runs a tier whose
 # required spec was deleted or emptied as long as some other spec remains,
 # so the required list is checked per file BEFORE bats runs and the TAP
 # stream is scanned AFTER: a missing, emptied or skipped required case fails
@@ -420,9 +421,24 @@ _run_lint() (
     _info "Script layout OK"
 )
 
+# Only the two optional CPU repro cases may skip in the unit tier.
+_has_unexpected_skip() {
+    awk -v tier="$1" -v stress="${WORKTOOL_STRESS:-}" '
+        /^ok [0-9]+ .*# skip/ {
+            sub(/^ok [0-9]+ /, "")
+            reason = " # skip set WORKTOOL_STRESS=1 to run CPU repro"
+            if (tier == "unit" && stress != "1" &&
+                ($0 == "verify_run: HUP under CPU load always finishes before cleanup" reason ||
+                 $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason)) next
+            unexpected = 1
+        }
+        END { exit !unexpected }
+    ' "$2"
+}
+
 # Check the captured TAP stream of tier $1 in file $2 after the run: a plan
 # was emitted, at least one case ran (no "1..0"), the plan covers at least
-# the $3 cases the required specs define, and no case was skipped (bats
+# the $3 cases the required specs define, and no unexpected case skipped (bats
 # itself exits 0 on a skip). Prints the reason and returns 1 on any miss.
 _verify_tap() {
     local _tier="$1" _tap="$2" _min="$3" _plan
@@ -441,7 +457,7 @@ _verify_tap() {
         _err "${_tier} bats plan (${_plan}) is below the required specs' case total (${_min})"
         return 1
     fi
-    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+    if _has_unexpected_skip "${_tier}" "${_tap}"; then
         _err "${_tier} bats has skipped case(s) - a skipped required case is not green"
         return 1
     fi
