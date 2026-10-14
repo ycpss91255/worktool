@@ -3165,12 +3165,13 @@ STUB
     assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
 }
 
-@test "#562: assemble temp directory failure explains the path and never builds a box" {
+@test "#586: assemble temp directory failure reports only its own cause" {
     _realbox_quiet 5.2.1
     SHIM_MKDIR_ON=assemble-tmp SHIM_MKDIR_RC=1 \
         run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2
     assert_failure 1
     [[ "${stderr}" == *"[FAIL] cannot create assemble temp dir at $(_backup_dir)/assemble-tmp"* ]]
+    [[ "${stderr}" != *'[FAIL] just box assemble failed'* ]]
     refute_output --partial '[FAIL]'
     assert_equal "$(_count_calls 'just box assemble')" 0
     assert_equal "$(_count_calls 'distrobox rm')" 0
