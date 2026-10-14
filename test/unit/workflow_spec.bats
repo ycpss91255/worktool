@@ -3894,11 +3894,12 @@ test unit test/unit/pending.bats'
 
 _handover_snapshot_run() {
     local root="${BATS_TEST_TMPDIR}/snapshot" replies="$1"
-    mkdir -p "${root}/lib" "${root}/home/.config/ghostty"
+    mkdir -p "${root}/lib" "${root}/home/.config/ghostty" "${root}/home/.local/share"
     cp "${REPO_ROOT}/lib/"{link,config,log}.sh "${root}/lib/"
     printf 'original\n' > "${root}/home/.config/ghostty/config"
     replies="$(jq --arg d "${root}" '."sync:".repoDir=$d' <<<"${replies}")"
     HOME="${root}/home" XDG_CONFIG_HOME="${root}/home/.config" XDG_CACHE_HOME="${root}/home/.cache" \
+        XDG_DATA_HOME="${root}/home/.local/share" \
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" \
         "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" \
@@ -3916,6 +3917,16 @@ _handover_snapshot_run() {
         ([.ran[] | select(.snapshot) | .data.snapshot] | .[0] == .[1] and .[2] == .[3]) and
         (.ran[0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
     assert_success
+}
+
+@test "milestone-handover unrelated HOME and data siblings do not block independent reviewers (#577)" {
+    HANDOVER_UNRELATED_SIBLINGS=1 _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-claude:") != null) and
+        ([.ran[] | select(.snapshot) | .data.snapshot] | .[0] == .[1] and .[2] == .[3])' <<<"${output}"
+    assert_success
+    assert [ -s "${BATS_TEST_TMPDIR}/snapshot/home/.claude.json" ]
+    assert [ -s "${BATS_TEST_TMPDIR}/snapshot/home/.local/share/recently-used.xbel" ]
 }
 
 @test "milestone-handover snapshot mismatch blocks despite a successful cleanup claim (#577)" {

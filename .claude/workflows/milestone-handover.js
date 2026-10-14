@@ -175,7 +175,7 @@ const digestFile = path => {
     return digest.digest('hex')
   } finally { closeSync(fd) }
 }
-const capture = (path, recursive = true) => {
+const capture = (path, recursive = true, parent = false) => {
   if (Object.hasOwn(records, path)) return
   let info
   try { info = lstatSync(path, { bigint: true }) }
@@ -185,6 +185,10 @@ const capture = (path, recursive = true) => {
     return
   }
   const type = info.isSymbolicLink() ? 'symlink' : info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other'
+  if (parent && type === 'directory') {
+    records[path] = { type, mode: String(info.mode), parent: true }
+    return
+  }
   const item = { type, mode: String(info.mode), inode: String(info.ino), mtime: String(info.mtimeNs), sha256: null }
   records[path] = item
   if (type === 'symlink') {
@@ -207,7 +211,7 @@ const collect = repo => {
   const links = execFileSync('bash', ['-c', command, 'snapshot', repo], { encoding: 'utf8' }).trim().split('\n')
   const roots = [...files, join(home, 'dev-box'), join(data, 'applications'), join(data, 'icons'), ...links.map(p => join(home, p))]
   for (const path of roots) capture(path)
-  for (const path of roots) capture(dirname(path), false)
+  for (const path of roots) capture(dirname(path), false, true)
   return Object.fromEntries(Object.entries(records).sort(([a], [b]) => a.localeCompare(b)))
 }
 try {
@@ -223,7 +227,7 @@ const takeSnapshot = async (reviewer, moment) => {
   const stem = `independent-snapshot-${reviewer}-${moment}`
   const program = `${SCRATCH}/${stem}.mjs`
   const output = `${SCRATCH}/${stem}.json`
-  const raw = await agent(`Workflow-owned read-only host-config snapshot; do not run acceptance or read reviewer reports. Work only in ${JSON.stringify(A.repoDir)}. Capture the 5.2 five-file backup set and parent dirs, ~/dev-box, applications/icons entries and link_apply targets. Record type, mode, inode, mtime and sha256, including absence and symlink targets. Never mutate tracked config. Do not scan /tmp: permission-denied in unrelated root-owned directories is irrelevant; every tracked stat, traversal or sha256 failure must fail closed.
+  const raw = await agent(`Workflow-owned read-only host-config snapshot; do not run acceptance or read reviewer reports. Work only in ${JSON.stringify(A.repoDir)}. Capture the 5.2 five-file backup set and parent dirs, ~/dev-box, applications/icons entries and link_apply targets. Record type, mode, inode, mtime and sha256, including absence and symlink targets. For directories tracked only as parents, record existence, type and mode; omit inode and mtime because unrelated sibling updates change them. Never mutate tracked config. Do not scan /tmp: permission-denied in unrelated root-owned directories is irrelevant; every tracked stat, traversal or sha256 failure must fail closed.
 Write the following exact collector to the path ${JSON.stringify(program)} with the Write tool. Only write this program and its snapshot output; never edit the collector or invent snapshot data.
 ===BEGIN-${head.sha}-577===
 ${SNAPSHOT_SOURCE}
@@ -237,6 +241,7 @@ Return only the command's JSON stdout unchanged; any nonzero exit is error.`,
 const validSnapshot = value => value && !value.error && value.snapshot &&
   typeof value.snapshot === 'object' && !Array.isArray(value.snapshot) && Object.keys(value.snapshot).length > 0 &&
   Object.values(value.snapshot).every(item => item && (item.type === 'absent' ||
+    (item.type === 'directory' && item.parent === true && /^-?[0-9]+$/.test(item.mode) && typeof item.mode === 'string') ||
     (['file', 'directory', 'symlink', 'other'].includes(item.type) &&
       ['mode', 'inode', 'mtime'].every(key => typeof item[key] === 'string' && /^-?[0-9]+$/.test(item[key])) &&
       (['file', 'symlink'].includes(item.type) ? /^[0-9a-f]{64}$/.test(item.sha256) : item.sha256 === null) &&
