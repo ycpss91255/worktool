@@ -3917,3 +3917,14 @@ _handover_snapshot_run() {
         (.ran[0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
     assert_success
 }
+
+@test "milestone-handover snapshot mismatch blocks despite a successful cleanup claim (#577)" {
+    local reviewer
+    for reviewer in codex claude; do
+        HANDOVER_MUTATE="independent-${reviewer}" _handover_snapshot_run "$(_handover_replies)"
+        run jq -e --arg r "${reviewer}" '.result.status == "independent-failed" and .result.reviewer == $r and
+            ([.calls[].role] | index("independent-assess:") == null) and
+            (if $r == "codex" then [.calls[].role] | index("independent-claude:") == null else true end)' <<<"${output}"
+        assert_success
+    done
+}

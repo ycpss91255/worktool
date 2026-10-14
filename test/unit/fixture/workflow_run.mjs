@@ -187,6 +187,9 @@ const playHandoverFiles = (role, prompt) => {
 
 // Run workflow-owned snapshots against an isolated host-config fixture.
 const playHandoverSnapshots = (role, prompt) => {
+  if (role === process.env.HANDOVER_MUTATE + ':') {
+    writeFileSync(`${process.env.HOME}/.config/ghostty/config`, 'changed config\n')
+  }
   if (role.startsWith('snapshot:')) {
     const result = play(prompt)
     ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(result.stdout) : null }

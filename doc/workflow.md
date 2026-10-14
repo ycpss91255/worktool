@@ -480,7 +480,14 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    所有 Codex 結果（含逾時耗盡、啟動失敗及空報告）都進入獨立清理階段：
    確認 launcher 退出，核對行程身分，只終止自己的子行程並等待它們結束，才還原設定；
    核對內容、symlink 與 metadata 的原狀態，保存清理證據與備份。
-   journal、子行程退出或還原無法確認時封閉失敗；兩個驗證旗標都必須為 true 才啟動 Claude。
+   workflow 在獨立 Codex、Claude 各自啟動前及完成清理後，以自己的唯讀收集器保存
+   host-config 快照；涵蓋 5.2 五檔備份集合（兩個 Ghostty 設定、worktool 設定、
+   distrobox 設定與 dev init log）及上層目錄、`~/dev-box`、applications/icons 項目，
+   以及 `link_apply` 的預設與自訂來源（含 symlink 目標）。記錄缺席、type、mode、inode、mtime
+   與 SHA-256；目錄包含遞迴項目，symlink 另外記錄連結文字。
+   前後快照相等且所有子行程已退出，才有主要還原證據；journal 留作 agent 操作紀錄，
+   缺少或空白本身不阻擋。快照不一致、子行程退出或還原無法確認時封閉失敗。
+   Claude 也經獨立清理與快照核對後，才進入報告彙整。
    不傳 Findings、Machine、Review 產物、驗收清單或預期答案；Claude 也不收到 Codex 報告。
    任一驗收失敗、報告為空或設定還原無法確認就停止，不啟動後續驗收。
 8. **獨立報告彙整與發布**：兩者完成後才分類缺陷、證據不足與待維護者人工項目。
