@@ -456,10 +456,10 @@ _51_cleanup() {
         _box_state_cleanup "${_51_W}/box-home" || _crc=1
         _host_state_cleanup "${_51_W}" || _crc=1
     fi
-    printf 'cleanup-rc=%s\n' "${_crc}"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
         rm -rf -- "${_51_W}" || _crc=1
     fi
+    printf 'cleanup-rc=%s\n' "${_crc}"
     return "${_crc}"
 }
 

@@ -1156,6 +1156,31 @@ STUB
     [ ! -s "${STATE}/boxes" ]
 }
 
+_fail_scratch_removal() {
+    cat >"${STUBS}/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 3 && "$1" == -rf && "$2" == -- ]]; then
+    case "${3##*/}" in wt-m3-51.* | wt-m3-53.*) exit 1 ;; esac
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/rm")" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    [ -f "${TMPDIR}"/wt-m3-51.*/host-state-baseline ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
     FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure
