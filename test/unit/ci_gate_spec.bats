@@ -505,7 +505,7 @@ EOF
 
 @test "unit: only the two opt-in CPU repro skips are accepted" {
     _make_repo_copy
-    local bin="${BATS_TEST_TMPDIR}/bin" tier spec
+    local bin="${BATS_TEST_TMPDIR}/bin" tier spec stress_case
     mkdir -p "${bin}"
     cat >"${bin}/bats" <<'STUB'
 #!/usr/bin/env bash
@@ -514,19 +514,21 @@ printf 'ok 2 %s # skip set WORKTOOL_STRESS=1 to run CPU repro\n' "${STRESS_CASE}
 printf 'ok 3 5.1: group HUP under CPU load finishes before cleanup during assemble and bench # skip set WORKTOOL_STRESS=1 to run CPU repro\n'
 STUB
     chmod +x "${bin}/bats"
-    export STRESS_CASE='verify_run: HUP under CPU load always finishes before cleanup'
-    PATH="${bin}:${PATH}" run "${COPY}/script/test/test.sh" --ci-unit test/unit/ci_gate_spec.bats
+    STRESS_CASE='verify_run: HUP under CPU load always finishes before cleanup' \
+        PATH="${bin}:${PATH}" run env -u WORKTOOL_STRESS \
+        "${COPY}/script/test/test.sh" --ci-unit test/unit/ci_gate_spec.bats
     assert_success
     assert_output --partial '[ci] unit bats OK'
     for tier in unit integration; do
         if [[ "${tier}" == unit ]]; then
-            export STRESS_CASE='unrelated case'
+            stress_case='unrelated case'
             spec=ci_gate
         else
-            export STRESS_CASE='verify_run: HUP under CPU load always finishes before cleanup'
+            stress_case='verify_run: HUP under CPU load always finishes before cleanup'
             spec=smoke
         fi
-        PATH="${bin}:${PATH}" run "${COPY}/script/test/test.sh" "--ci-${tier}" \
+        STRESS_CASE="${stress_case}" PATH="${bin}:${PATH}" run env -u WORKTOOL_STRESS \
+            "${COPY}/script/test/test.sh" "--ci-${tier}" \
             "test/${tier}/${spec}_spec.bats"
         assert_failure
         assert_output --partial 'bats has skipped case(s)'
