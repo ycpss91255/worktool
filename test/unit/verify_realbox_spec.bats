@@ -907,6 +907,17 @@ STUB
     assert_equal "$(_count_calls 'distrobox rm')" '0'
 }
 
+@test "#586: assemble exit 2 still reports assemble failure from the supervisor" {
+    FAKE_JUST_ASSEMBLE_RC=2 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[FAIL] just box assemble failed'
+    refute_output --partial 'cannot create assemble temp dir'
+    refute_output --partial 'cannot record assemble success'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "#558: failed assemble with an unparsable confirmation keeps evidence and refuses cleanup" {
     FAKE_JUST_ASSEMBLE_RC=1 FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
         run "${REALBOX}" --allow-real-box 5.1
