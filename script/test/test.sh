@@ -46,7 +46,7 @@
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
 # per tier), the TAP plan covers at least those cases, at least one case ran
-# and none was unexpectedly skipped. Only the two opt-in CPU repro cases
+# and none was unexpectedly skipped. Only the opt-in CPU repro cases
 # may skip in unit when stress is disabled. bats exits 0 on skips and runs a tier whose
 # required spec was deleted or emptied as long as some other spec remains,
 # so the required list is checked per file BEFORE bats runs and the TAP
