@@ -1139,7 +1139,9 @@ STUB
     refute_line 'cleanup-rc=0'
     assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
     [ ! -s "${STATE}/boxes" ]
-    [ -f "${TMPDIR}"/wt-m3-51.*/box-home/leftover ]
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
 }
 
 @test "#574: 5.1 reports host state cleanup failure once and preserves evidence" {
@@ -1151,8 +1153,10 @@ STUB
     refute_line 'cleanup-rc=0'
     assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
     assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
-    [ -f "${TMPDIR}"/wt-m3-51.*/host-state-baseline ]
-    [ ! -e "${TMPDIR}"/wt-m3-51.*/box-home ]
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -1177,7 +1181,9 @@ STUB
     assert_line 'cleanup-rc=1'
     refute_line 'cleanup-rc=0'
     assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
-    [ -f "${TMPDIR}"/wt-m3-51.*/host-state-baseline ]
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -1190,7 +1196,9 @@ STUB
     refute_line 'decoy-cleanup-rc=0'
     assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
     [ ! -s "${STATE}/boxes" ]
-    [ -f "${TMPDIR}"/wt-m3-53.*/box-home/leftover ]
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
 }
 
 @test "#574: 5.3 reports host state cleanup failure once and preserves evidence" {
@@ -1202,8 +1210,10 @@ STUB
     refute_line 'decoy-cleanup-rc=0'
     assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
     assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
-    [ -f "${TMPDIR}"/wt-m3-53.*/host-state-baseline ]
-    [ ! -e "${TMPDIR}"/wt-m3-53.*/box-home ]
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
     [ ! -s "${STATE}/boxes" ]
 }
 
@@ -1217,7 +1227,9 @@ STUB
     assert_line 'decoy-cleanup-rc=1'
     refute_line 'decoy-cleanup-rc=0'
     assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
-    [ -f "${TMPDIR}"/wt-m3-53.*/host-state-baseline ]
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
     [ ! -s "${STATE}/boxes" ]
 }
 
