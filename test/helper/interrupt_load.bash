@@ -15,10 +15,12 @@ interrupt_load_start() {
 interrupt_load_stop() {
     local pid rc
     for pid in "${INTERRUPT_LOAD_PIDS[@]}"; do
-        if kill -0 "${pid}" 2>/dev/null; then kill "${pid}"; fi
+        # Parallel runners may pass an ignored TERM disposition to workers.
+        # These disposable CPU workers have no graceful shutdown work.
+        if kill -0 "${pid}" 2>/dev/null; then kill -KILL "${pid}"; fi
         rc=0
         wait "${pid}" || rc=$?
-        [[ "${rc}" -eq 0 || "${rc}" -eq 143 ]]
+        [[ "${rc}" -eq 0 || "${rc}" -eq 137 || "${rc}" -eq 143 ]]
     done
     INTERRUPT_LOAD_PIDS=()
 }

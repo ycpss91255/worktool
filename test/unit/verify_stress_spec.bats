@@ -1,6 +1,31 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "stress: cleanup stops workers that inherit ignored TERM" {
+    run bash -c '
+        exec 3>&-
+        trap "" TERM
+        source "$1/test/helper/interrupt_load.bash"
+        interrupt_load_start
+        workers=("${INTERRUPT_LOAD_PIDS[@]}")
+        (
+            sleep 2
+            for pid in "${workers[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    printf "worker survived cleanup\n"
+                    kill -KILL "$pid"
+                fi
+            done
+        ) &
+        watchdog=$!
+        interrupt_load_stop
+        wait "$watchdog"
+        interrupt_load_stop
+    ' _ "${REPO_ROOT}"
+    assert_success
+    refute_output --partial 'worker survived cleanup'
+}
+
 @test "stress: CPU repro cases skip unless explicitly enabled" {
     local spec probe="${BATS_TEST_TMPDIR}/probe.bats" value
     for spec in verify_run_signal verify_realbox; do
