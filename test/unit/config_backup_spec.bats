@@ -16,6 +16,32 @@ setup() {
     cfgbk_paths
 }
 
+@test "#588: restore removes an init-log target created through an originally dangling link" {
+    local BOX=dev log target
+    # shellcheck source=script/verify/config_backup_paths.sh
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    cfgbk_paths
+    mkdir -p "${HOME}/.cache/worktool"
+    log="$(cfgbk_file_of init-log)"
+    target="${HOME}/.cache/new init log"
+    ln -s '../new init log' "${log}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    assert_equal "$(guard_field "${CFGBK_B}" init-log.tpath)" "${target}"
+    cfgbk_revalidate
+    printf 'acceptance init output\n' >"${log}"
+
+    run cfgbk_restore_all
+
+    assert_success
+    assert [ ! -e "${target}" ]
+    assert [ ! -L "${target}" ]
+    assert [ -L "${log}" ]
+    assert [ ! -e "${log}" ]
+    assert_equal "$(readlink "${log}")" '../new init log'
+}
+
 @test "#576: leftover directory report skips other manifest states under errexit" {
     cfgbk_dir_create
     printf 'ghostty=absent-file\nworktool=absent-dir\n' >"${CFGBK_B}/manifest"
