@@ -65,28 +65,44 @@ STUB
     done
 }
 
-@test "stress: teardown stops every load worker and can run twice" {
-    local spec cleanup="${BATS_TEST_TMPDIR}/cleanup.bash"
+@test "stress: failing CPU repro cases leave no load workers" {
+    local spec pid survived workers="${BATS_TEST_TMPDIR}/workers"
+    prepare_stress_failure
+    export STRESS_WORKERS="${workers}"
+    export STRESS_TASKSET
+    STRESS_TASKSET=$(command -v taskset)
+    cat >"${BATS_TEST_TMPDIR}/failure-bin/taskset" <<'STUB'
+#!/usr/bin/env bash
+exec 3>&-
+printf '%s\n' "$$" >>"${STRESS_WORKERS}"
+exec "${STRESS_TASKSET}" "$@"
+STUB
+    cat >"${BATS_TEST_TMPDIR}/failure-bin/sed" <<'STUB'
+#!/usr/bin/env bash
+# Record all workers before failing, so the parent can check their lifetime.
+limit=$((SECONDS + 5))
+until [[ $(wc -l <"${STRESS_WORKERS}") -eq 4 ]]; do
+    [[ "${SECONDS}" -lt "${limit}" ]] || exit 2
+    sleep 0.01
+done
+printf 'forced stress fixture failure\n' >&2
+exit 1
+STUB
+    chmod +x "${BATS_TEST_TMPDIR}/failure-bin/taskset"
     for spec in verify_run_signal verify_realbox; do
-        sed -n '/^teardown() {/,/^}/p; /^signal_child_stop() {/,/^}/p' \
-            "${BATS_TEST_DIRNAME}/${spec}_spec.bats" >"${cleanup}"
-        run bash -c '
-            exec 3>&-
-            source "$1/test/helper/interrupt_load.bash"
-            source "$2"
-            export SIGNAL_STATE="$3"
-            trap interrupt_load_stop EXIT
-            interrupt_load_start
-            workers=("${INTERRUPT_LOAD_PIDS[@]}")
-            teardown || exit 1
-            teardown || exit 1
-            for pid in "${workers[@]}"; do
-                if kill -0 "$pid" 2>/dev/null; then
-                    printf "load worker still alive: %s\n" "$pid"
-                    exit 1
-                fi
-            done
-        ' _ "${REPO_ROOT}" "${cleanup}" "${BATS_TEST_TMPDIR}"
-        assert_success
+        : >"${workers}"
+        run env WORKTOOL_STRESS=1 bats --formatter tap --filter 'HUP under CPU load' \
+            "${BATS_TEST_DIRNAME}/${spec}_spec.bats"
+        survived=0
+        while read -r pid; do
+            if kill -0 "${pid}" 2>/dev/null; then
+                survived=$((survived + 1))
+                kill -KILL "${pid}"
+            fi
+        done <"${workers}"
+        assert_failure
+        assert_output --partial 'forced stress fixture failure'
+        assert_equal "$(wc -l <"${workers}")" 4
+        assert_equal "${survived}" 0
     done
 }
