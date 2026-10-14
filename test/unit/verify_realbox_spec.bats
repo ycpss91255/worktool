@@ -1207,6 +1207,20 @@ STUB
     [ ! -s "${STATE}/boxes" ]
 }
 
+@test "#574: 5.3 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    [ -f "${TMPDIR}"/wt-m3-53.*/host-state-baseline ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
     FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure

@@ -1098,10 +1098,10 @@ _53_cleanup() {
         _box_state_cleanup "${_53_W}/box-home" || _crc=1
         _host_state_cleanup "${_53_W}" || _crc=1
     fi
-    printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
         rm -rf -- "${_53_W}" || _crc=1
     fi
+    printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     return "${_crc}"
 }
 
