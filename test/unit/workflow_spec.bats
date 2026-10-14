@@ -360,6 +360,63 @@ _pl_run() {
         "${replies}"
 }
 
+_pl_job_results() {
+    local root="${BATS_TEST_TMPDIR}/jobs" args
+    mkdir -p "${root}/src" "${root}/worktree/n" "${root}/bin"
+    cat > "${root}/bin/just" <<'SH'
+#!/bin/sh
+case "$2" in
+    start) exit "${PL_JOB_START_RC:-0}" ;;
+    wait) exit "${PL_JOB_WAIT_RC:-0}" ;;
+esac
+SH
+    printf '#!/bin/sh\nprintf "failed run log\\n"\n' > "${root}/bin/gh"
+    chmod +x "${root}/bin/just" "${root}/bin/gh"
+    args="$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:566,branch:"b",name:"n",task:"t",pr:7,codex:"off",implementer:"claude"}')"
+    PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" "${args}" \
+        '{"prepare:":{"state":"resume"},"stage-check:Resume":[{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},{"evidence":"{\"status\":\"\",\"localHead\":\"repaired\",\"remoteHead\":\"repaired\",\"prHead\":\"repaired\",\"errors\":\"\"}"}],"ci:#7repair":{"state":"green","sha":"repaired","detail":"repair completed"},"ci:":{"state":"green","sha":"abc","detail":"checks passed"}}' exec-job-results
+}
+
+@test "pr-loop CI check job rc 1 reads the failed log and enters repair (#566)" {
+    export PL_JOB_WAIT_RC=1
+    run _pl_job_results
+    assert_success
+    printf '# job result: %s\n' "$(jq -c '{result,error,ran}' <<<"${output}")" >&3
+    run jq -e '.error == null and .result.ciState == "green" and .result.sha == "repaired" and
+        ([.ran[] | select(.cmd | startswith("gh run view 42 "))] | length == 1)' <<<"${output}"
+    assert_success
+    assert_output "true"
+
+    local rc
+    for rc in 2 124; do
+        export PL_JOB_WAIT_RC="${rc}"
+        run _pl_job_results
+        assert_success
+        run jq -e --argjson rc "${rc}" '.error == null and .result.ciState == "red" and
+            ([.ran[] | select(.cmd | startswith("gh run view "))] | length == 0) and
+            ([.ran[] | select(.cmd | contains("just job wait"))] | length == (if $rc == 124 then 6 else 1 end))' <<<"${output}"
+        assert_success
+    done
+
+    export PL_JOB_START_RC=1 PL_JOB_WAIT_RC=0
+    run _pl_job_results
+    assert_success
+    run jq -e '.result.ciState == "red" and (.ran | length == 1)' <<<"${output}"
+    assert_success
+
+    export PL_JOB_START_RC=0
+    run _pl_job_results
+    assert_success
+    run jq -e '.result.ciState == "green" and (.ran | length == 2)' <<<"${output}"
+    assert_success
+
+    export PL_JOB_KIND=local PL_JOB_WAIT_RC=1
+    run _pl_job_results
+    assert_success
+    run jq -e '.result.ciState == "red" and (.ran | length == 2) and .ran[1].rc == 1' <<<"${output}"
+    assert_success
+}
+
 _pl_blocked_run() {
     local implementer="$1"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
