@@ -1096,10 +1096,10 @@ _53_cleanup() {
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
         _box_state_cleanup "${_53_W}/box-home" || _crc=1
+        _host_state_cleanup "${_53_W}" || _crc=1
     fi
     printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
-        _host_state_cleanup "${_53_W}" || return 1
         rm -rf -- "${_53_W}" || _crc=1
     fi
     return "${_crc}"

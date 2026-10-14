@@ -1193,6 +1193,20 @@ STUB
     [ -f "${TMPDIR}"/wt-m3-53.*/box-home/leftover ]
 }
 
+@test "#574: 5.3 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    [ -f "${TMPDIR}"/wt-m3-53.*/host-state-baseline ]
+    [ ! -e "${TMPDIR}"/wt-m3-53.*/box-home ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
     FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure
