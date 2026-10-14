@@ -278,6 +278,7 @@ _assemble_owned_box() {
 
 # Refuse before creating anything: a box we did not make is never ours to
 # delete. $1 is the tail of the message (it differs between 5.1 and 5.2).
+_BOX_REFUSAL_CONFIRMED=0
 _refuse_preexisting_box() {
     local _e
     guard_box_exists "${BOX}" "${TIMEOUT_SHORT}"
@@ -288,6 +289,7 @@ _refuse_preexisting_box() {
             return 1
             ;;
         0)
+            _BOX_REFUSAL_CONFIRMED=1
             guard_fail "a distrobox named '${BOX}' already exists -- refusing. $1"
             return 1
             ;;
@@ -1152,6 +1154,7 @@ _53_body() {
 
     _52_step1_backup || return $?
     _cleanup_push 52-restore
+    _BOX_REFUSAL_CONFIRMED=0
     _52_step2_apply
     _rc52=$?
     printf '52-rc=%s\n' "${_rc52}"
@@ -1162,6 +1165,8 @@ _53_body() {
         return 1
     fi
     _cleanup_pop_run || { guard_fail "5.2 step 3 failed"; return 1; }
+    [[ "${_BOX_REFUSAL_CONFIRMED}" -eq 1 ]] \
+        || { guard_fail "5.2 step 2 failed for a reason other than a pre-existing '${BOX}' box; see diagnostics above"; return 1; }
 
     _53_still_there
 }

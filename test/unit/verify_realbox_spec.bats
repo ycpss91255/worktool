@@ -2063,6 +2063,32 @@ STUB
 
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
 
+@test "#590: 5.3 fails when step 2 cannot revalidate before checking the box" {
+    cp "${STUBS}/grep" "${STATE}/grep"
+    cat >"${STUBS}/grep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *'^ghostty='* ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/manifest-read" && ! -e "${FAKE_STATE_DIR}/manifest-failed" ]]; then
+        touch "${FAKE_STATE_DIR}/manifest-failed"
+        printf 'injected manifest read failure\n' >&2
+        exit 2
+    fi
+    touch "${FAKE_STATE_DIR}/manifest-read"
+fi
+exec "${FAKE_STATE_DIR}/grep" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line '51-rc=1'
+    assert_line '52-rc=1'
+    assert_output --partial 'injected manifest read failure'
+    assert_line 'restore-rc=0'
+    refute_line 'still-there=dev'
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.3: documented refusal and restore lines follow the actual output order" {
     bats_require_minimum_version 1.5.0
     local _actual _documented _keys
