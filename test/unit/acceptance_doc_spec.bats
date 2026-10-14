@@ -2,6 +2,21 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "acceptance 2.1 documents exactly the runner CPU skip exemptions (#575)" {
+    local policy section reason expected documented
+    policy="$(sed -n '/^_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/script/test/test.sh")"
+    reason="$(sed -n 's/.*reason = " \(.*\)"/\1/p' <<<"${policy}")"
+    expected="$(sed -n "s/.*\$0 == \"\([^\"]*\)\" reason.*/\1/p" <<<"${policy}" |
+        while IFS= read -r name; do printf '%s | %s\n' "${name}" "${reason}"; done | sort)"
+    [[ -n "${expected}" ]]
+    section="$(sed -n '/^  - \[ \] 2\.1 裸/,/^  - \[ \] 2\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
+    documented="$(sed -n "s/^      | \`\([^\`]*\)\` | \`\([^\`]*\)\` |$/\1 | \2/p" <<<"${section}" | sort)"
+    assert_equal "${documented}" "${expected}"
+    [[ "${section}" == *'除此之外，每層都不得有任何 skip'* ]]
+    [[ "${section}" == *'WORKTOOL_STRESS=1 just test unit test/unit/verify_run_signal_spec.bats --filter'* ]]
+    [[ "${section}" == *'WORKTOOL_STRESS=1 just test unit test/unit/verify_realbox_spec.bats --filter'* ]]
+}
+
 @test "acceptance section 5 opening backup count and list match CFGBK_NAMES (#527)" {
     # shellcheck source=script/verify/config_backup_paths.sh
     source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
