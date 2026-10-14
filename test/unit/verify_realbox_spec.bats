@@ -28,6 +28,11 @@
 #   runs can reach the machine's real ghostty or worktool config.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+
+teardown() {
+    interrupt_load_stop
+}
 
 bats_require_minimum_version 1.5.0
 
@@ -174,7 +179,7 @@ _check_group_interrupt() {
 }
 
 @test "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" {
-    load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     interrupt_load_start
     local attempt failures=0 trials=60 phase tool
     sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \

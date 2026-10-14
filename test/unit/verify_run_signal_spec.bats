@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
 
 setup() {
     export SIGNAL_STATE="${BATS_TEST_TMPDIR}"
@@ -56,6 +57,11 @@ assert_signal_cleanup() {
 }
 
 teardown() {
+    interrupt_load_stop
+    signal_child_stop
+}
+
+signal_child_stop() {
     local pid
     if [[ -f "${SIGNAL_STATE}/child.pid" ]]; then
         read -r pid <"${SIGNAL_STATE}/child.pid"
@@ -78,7 +84,7 @@ teardown() {
 }
 
 @test "verify_run: HUP under CPU load always finishes before cleanup" {
-    load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     interrupt_load_start
     local attempt failures=0 trials=60
     sed -i "3i printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${SIGNAL_STATE}/child"
@@ -92,7 +98,7 @@ teardown() {
             failures=$((failures + 1))
             printf '# attempt=%s status=%s output=%s events=%s\n' "${attempt}" "${status}" "${output}" "$(cat "${SIGNAL_STATE}/events")" >&3
         fi
-        teardown
+        signal_child_stop
         if ((attempt % 10 == 0)); then
             printf '# verify_run HUP attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
         fi

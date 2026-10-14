@@ -278,7 +278,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -v .*:/source( -v .*:ro)? -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -v .*:/source( -v .*:ro)? -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 @test "test.sh --unit forwards one spec path to the container gate" {
@@ -487,4 +487,12 @@ _prepare_lint_worktree() {
     calls="$(grep '^docker run ' "${FAKE_DOCKER_CALLS}")"
     [ "$(printf '%s\n' "${calls}" | wc -l)" -eq 4 ]
     [ "$(printf '%s\n' "${calls}" | grep -c -- '--label worktool.verify-run=owned-run')" -eq 4 ]
+}
+
+@test "test.sh: forwards the stress opt-in to the test container" {
+    export WORKTOOL_STRESS=1
+    run "${TEST_SH}" --unit test/unit/verify_run_signal_spec.bats --filter 'HUP under CPU load'
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_output --partial '-e WORKTOOL_STRESS'
 }
