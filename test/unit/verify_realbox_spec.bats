@@ -1110,6 +1110,129 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output --partial "is 'true', neither 0 nor 1"
 }
 
+_create_home_before_cleanup() {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == rm ]]; then
+    for dir in "${TMPDIR}"/wt-m3-51.* "${TMPDIR}"/wt-m3-53.*; do
+        [[ -d "${dir}" ]] || continue
+        mkdir -p "${dir}/box-home"
+        printf 'owned state\n' >"${dir}/box-home/leftover"
+        if [[ "${INJECT_HOST_STATE:-0}" == 1 ]]; then
+            mkdir -p "${HOME}/dev-box"
+            printf 'unknown data\n' >"${HOME}/dev-box/notes"
+        fi
+    done
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports isolated HOME cleanup failure once and exits nonzero" {
+    _create_home_before_cleanup
+    SHIM_RM_ON='/box-home' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=1 tmux=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    [ ! -s "${STATE}/boxes" ]
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
+}
+
+@test "#574: 5.1 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+_fail_scratch_removal() {
+    cat >"${STUBS}/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 3 && "$1" == -rf && "$2" == -- ]]; then
+    case "${3##*/}" in wt-m3-51.* | wt-m3-53.*) exit 1 ;; esac
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/rm")" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#574: 5.3 reports isolated HOME cleanup failure once and exits nonzero" {
+    _create_home_before_cleanup
+    SHIM_RM_ON='/box-home' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=1 tmux=0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    [ ! -s "${STATE}/boxes" ]
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
+}
+
+@test "#574: 5.3 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#574: 5.3 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
     FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure

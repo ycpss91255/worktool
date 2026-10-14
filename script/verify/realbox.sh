@@ -451,13 +451,15 @@ _51_cleanup() {
     if [[ "${_crc}" -eq 0 && -e "${_51_W}/created-box" ]]; then
         XDG_DATA_HOME="${_51_W}/data" _drop_owned_box || _crc=1
     fi
-    printf 'cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
-        _box_state_cleanup "${_51_W}/box-home" || return 1
-        _host_state_cleanup "${_51_W}" || return 1
+        _box_state_cleanup "${_51_W}/box-home" || _crc=1
+        _host_state_cleanup "${_51_W}" || _crc=1
+    fi
+    if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
         rm -rf -- "${_51_W}" || _crc=1
     fi
+    printf 'cleanup-rc=%s\n' "${_crc}"
     return "${_crc}"
 }
 
@@ -1090,14 +1092,16 @@ _53_cleanup() {
     if [[ "${_53_CREATED}" -eq 1 ]]; then
         XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
     fi
-    printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     [[ "${_crc}" -eq 0 ]] \
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
-        _box_state_cleanup "${_53_W}/box-home" || return 1
-        _host_state_cleanup "${_53_W}" || return 1
+        _box_state_cleanup "${_53_W}/box-home" || _crc=1
+        _host_state_cleanup "${_53_W}" || _crc=1
+    fi
+    if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
         rm -rf -- "${_53_W}" || _crc=1
     fi
+    printf 'decoy-cleanup-rc=%s\n' "${_crc}"
     return "${_crc}"
 }
 
