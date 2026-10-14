@@ -28,6 +28,11 @@
 #   runs can reach the machine's real ghostty or worktool config.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+
+teardown() {
+    interrupt_load_stop
+}
 
 bats_require_minimum_version 1.5.0
 
@@ -175,7 +180,6 @@ _check_group_interrupt() {
 
 @test "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" {
     [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
-    load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
     interrupt_load_start
     local attempt failures=0 trials=60 phase tool
     sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
@@ -716,7 +720,11 @@ FRAG
 }
 
 @test "a --box different from the delivered manifest exits 2 without side effects" {
-    bats_require_minimum_version 1.5.0
+    teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
     local _item
     for _item in 5.1 5.2 5.3; do
         run --separate-stderr "${REALBOX}" --allow-real-box --box work "${_item}"
@@ -824,7 +832,11 @@ STUB
 }
 
 @test "5.1: invalid comment tags exit 2 on stderr before help or side effects" {
-    bats_require_minimum_version 1.5.0
+    teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
     local _tag
     for _tag in '' claude '[Claude]' '[claude] extra' '[123]' '[允許合併]'; do
         run --separate-stderr "${REALBOX}" --help --comment-tag "${_tag}"
@@ -1743,7 +1755,11 @@ STUB
 # --- 5.2 step 3: restore -----------------------------------------------------
 
 @test "5.2.3 with no backup is a no-op that exits 0" {
-    bats_require_minimum_version 1.5.0
+    teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_success
     assert_line "no-backup=1"
@@ -1926,7 +1942,11 @@ STUB
 # --- 5.3 the pre-existing-box refusal ----------------------------------------
 
 @test "5.3: documented refusal and restore lines follow the actual output order" {
-    bats_require_minimum_version 1.5.0
+    teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
     local _actual _documented _keys
     _keys='^(backup-covers|52-rc|restore-rc|restore-files-ok|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|cleanup-rc|still-there)='
     run --separate-stderr "${REALBOX}" --allow-real-box 5.3
@@ -2196,7 +2216,11 @@ EOF
     printf 'run state\n' >"${_owned}/owned"
     node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
         "${_owned}/.cache/tmux/default"
-    bats_require_minimum_version 1.5.0
+    teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
     run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
     assert_failure 1
     assert_line "host-state before-cleanup: new=3"

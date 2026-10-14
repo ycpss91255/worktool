@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Run interrupt fixtures under contention on one permitted container CPU.
+INTERRUPT_LOAD_PIDS=()
 interrupt_load_start() {
     local cpu worker
     cpu=$(awk '/Cpus_allowed_list/ { split($2, parts, /[-,]/); print parts[1] }' /proc/self/status)
@@ -19,4 +20,5 @@ interrupt_load_stop() {
         wait "${pid}" || rc=$?
         [[ "${rc}" -eq 0 || "${rc}" -eq 143 ]]
     done
+    INTERRUPT_LOAD_PIDS=()
 }

@@ -21,3 +21,29 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
         refute_output --partial '# skip'
     done
 }
+
+@test "stress: teardown stops every load worker and can run twice" {
+    local spec cleanup="${BATS_TEST_TMPDIR}/cleanup.bash"
+    for spec in verify_run_signal verify_realbox; do
+        sed -n '/^teardown() {/,/^}/p; /^signal_child_stop() {/,/^}/p' \
+            "${BATS_TEST_DIRNAME}/${spec}_spec.bats" >"${cleanup}"
+        run bash -c '
+            exec 3>&-
+            source "$1/test/helper/interrupt_load.bash"
+            source "$2"
+            export SIGNAL_STATE="$3"
+            trap interrupt_load_stop EXIT
+            interrupt_load_start
+            workers=("${INTERRUPT_LOAD_PIDS[@]}")
+            teardown || exit 1
+            teardown || exit 1
+            for pid in "${workers[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    printf "load worker still alive: %s\n" "$pid"
+                    exit 1
+                fi
+            done
+        ' _ "${REPO_ROOT}" "${cleanup}" "${BATS_TEST_TMPDIR}"
+        assert_success
+    done
+}
