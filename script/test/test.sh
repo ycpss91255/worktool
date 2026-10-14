@@ -290,7 +290,7 @@ _run_in_container() {
             || _die "cannot resolve Git common directory"
         _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
-    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \

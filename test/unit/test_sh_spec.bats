@@ -488,3 +488,11 @@ _prepare_lint_worktree() {
     [ "$(printf '%s\n' "${calls}" | wc -l)" -eq 4 ]
     [ "$(printf '%s\n' "${calls}" | grep -c -- '--label worktool.verify-run=owned-run')" -eq 4 ]
 }
+
+@test "test.sh: forwards the stress opt-in to the test container" {
+    export WORKTOOL_STRESS=1
+    run "${TEST_SH}" --unit test/unit/verify_run_signal_spec.bats --filter 'HUP under CPU load'
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_output --partial '-e WORKTOOL_STRESS'
+}
