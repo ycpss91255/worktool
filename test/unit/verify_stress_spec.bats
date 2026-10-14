@@ -26,23 +26,41 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     refute_output --partial 'worker survived cleanup'
 }
 
+# Fail at the first external tool after load starts, without changing the spec.
+prepare_stress_failure() {
+    local bin="${BATS_TEST_TMPDIR}/failure-bin"
+    mkdir -p "${bin}"
+    cat >"${bin}/sed" <<'STUB'
+#!/usr/bin/env bash
+printf 'forced stress fixture failure\n' >&2
+exit 1
+STUB
+    chmod +x "${bin}/sed"
+    export PATH="${bin}:${PATH}"
+}
+
 @test "stress: CPU repro cases skip unless explicitly enabled" {
-    local spec probe="${BATS_TEST_TMPDIR}/probe.bats" value
+    local spec value
+    prepare_stress_failure
     for spec in verify_run_signal verify_realbox; do
-        sed -n '/^@test .*HUP under CPU load/,/^}/p' \
-            "${BATS_TEST_DIRNAME}/${spec}_spec.bats" |
-            sed '/^    load /d; s/^    interrupt_load_start$/    return 1/' >"${probe}"
         for value in unset 0; do
             if [[ "${value}" == unset ]]; then
-                run env -u WORKTOOL_STRESS bats --formatter tap "${probe}"
+                run env -u WORKTOOL_STRESS bats --formatter tap --filter 'HUP under CPU load' \
+                    "${BATS_TEST_DIRNAME}/${spec}_spec.bats"
             else
-                run env WORKTOOL_STRESS="${value}" bats --formatter tap "${probe}"
+                run env WORKTOOL_STRESS="${value}" bats --formatter tap --filter 'HUP under CPU load' \
+                    "${BATS_TEST_DIRNAME}/${spec}_spec.bats"
             fi
             assert_success
-            assert_output --partial '# skip'
+            assert_line '1..1'
+            assert_output --partial '# skip set WORKTOOL_STRESS=1 to run CPU repro'
+            refute_output --partial 'forced stress fixture failure'
         done
-        run env WORKTOOL_STRESS=1 bats --formatter tap "${probe}"
+        run env WORKTOOL_STRESS=1 bats --formatter tap --filter 'HUP under CPU load' \
+            "${BATS_TEST_DIRNAME}/${spec}_spec.bats"
         assert_failure
+        assert_line '1..1'
+        assert_output --partial 'forced stress fixture failure'
         refute_output --partial '# skip'
     done
 }
