@@ -136,9 +136,8 @@ guard_field() {
 # returns 1 here, or an unreadable file would answer "0" - a zero that means
 # something entirely different from "I looked and found none".
 guard_count_lines() {
-    local _out _rc
-    _out="$(grep -cE "$2" -- "$1")"
-    _rc=$?
+    local _out _rc=0
+    _out="$(grep -cE "$2" -- "$1")" || _rc=$?
     [[ "${_rc}" -le 1 ]] || return 1
     [[ "${_out}" =~ ^[0-9]+$ ]] || return 1
     printf '%s\n' "${_out}"
