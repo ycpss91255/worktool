@@ -588,6 +588,10 @@ _cfgbk_restore_link() {
     if [[ -z "${_msha}" ]]; then
         rm -f -- "${_tp}" \
             || { guard_fail "${_n}: cannot remove originally absent link target ${_tp}"; return 1; }
+        _cfgbk_missing_link_target "${_p}" \
+            || { guard_fail "${_n}: cannot verify the restored link is dangling"; return 1; }
+        [[ ! -e "${_tp}" && ! -L "${_tp}" ]] \
+            || { guard_fail "${_n}: originally absent link target ${_tp} still present"; return 1; }
         return 0
     fi
     _cfgbk_restore_copy "${_tp}" "${CFGBK_B}/${_n}.target" || return 1

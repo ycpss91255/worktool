@@ -42,6 +42,33 @@ setup() {
     assert_equal "$(readlink "${log}")" '../new init log'
 }
 
+@test "#588: restore fails closed when removal leaves the init-log target present" {
+    local BOX=dev log target removal_rc
+    # shellcheck source=script/verify/config_backup_paths.sh
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    cfgbk_paths
+    mkdir -p "${HOME}/.cache/worktool"
+    log="$(cfgbk_file_of init-log)"
+    target="${HOME}/new-init-log"
+    ln -s "${target}" "${log}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    printf 'acceptance init output\n' >"${log}"
+    # A failing remover and a false success must both fail the restore.
+    rm() {
+        if [[ "${*: -1}" == "${target}" ]]; then return "${removal_rc}"; fi
+        command rm "$@"
+    }
+    for removal_rc in 1 0; do
+        run cfgbk_restore_one init-log
+
+        assert_failure 1
+        assert [ -e "${target}" ]
+        assert [ -L "${log}" ]
+    done
+}
+
 @test "#576: leftover directory report skips other manifest states under errexit" {
     cfgbk_dir_create
     printf 'ghostty=absent-file\nworktool=absent-dir\n' >"${CFGBK_B}/manifest"
