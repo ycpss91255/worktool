@@ -6,11 +6,16 @@ setup() {
     cat >"${SIGNAL_STATE}/child" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'sleep 0.2; echo finished >>"${SIGNAL_STATE}/events"; exit 0' INT TERM HUP
+stop_sleep() {
+    if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
+        : # The background sleep may already have exited.
+    fi
+}
+trap 'stop_sleep; sleep 0.2; echo finished >>"${SIGNAL_STATE}/events"; exit 0' INT TERM HUP
 printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
 printf '%s\n' "${WORKTOOL_TEST_RUN_ID:-}" >"${SIGNAL_STATE}/run-id"
 touch "${SIGNAL_STATE}/ready"
-sleep 3
+sleep 3 & wait "$!"
 echo finished >>"${SIGNAL_STATE}/events"
 CHILD
     chmod +x "${SIGNAL_STATE}/child"
@@ -70,6 +75,31 @@ teardown() {
 
 @test "verify_run: HUP waits for the child before caller cleanup and exits 129" {
     assert_signal_cleanup HUP 129
+}
+
+@test "verify_run: HUP under CPU load always finishes before cleanup" {
+    load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+    interrupt_load_start
+    local attempt failures=0 trials=60
+    sed -i "3i printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${SIGNAL_STATE}/child"
+    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
+        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${SIGNAL_STATE}/signal.js"
+    for ((attempt=1; attempt<=trials; attempt++)); do
+        rm -f "${SIGNAL_STATE}/ready" "${SIGNAL_STATE}/events"
+        run node "${SIGNAL_STATE}/signal.js" HUP bash "${SIGNAL_STATE}/caller"
+        if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
+            "$(cat "${SIGNAL_STATE}/events")" != $'finished\ncleanup' ]]; then
+            failures=$((failures + 1))
+            printf '# attempt=%s status=%s output=%s events=%s\n' "${attempt}" "${status}" "${output}" "$(cat "${SIGNAL_STATE}/events")" >&3
+        fi
+        teardown
+        if ((attempt % 10 == 0)); then
+            printf '# verify_run HUP attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
+        fi
+    done
+    interrupt_load_stop
+    printf '# verify_run HUP load failures=%s/%s\n' "${failures}" "${trials}" >&3
+    [ "${failures}" -eq 0 ]
 }
 
 @test "verify_run: a signal-ignoring child is killed within the grace period" {

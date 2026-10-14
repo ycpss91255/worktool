@@ -181,9 +181,14 @@ STUB
     cat >"${MATRIX_STATE}/child" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'exit 143' TERM
+stop_sleep() {
+    if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
+        : # The background sleep may already have exited.
+    fi
+}
+trap 'stop_sleep; exit 143' TERM
 touch "${SIGNAL_STATE}/ready"
-while :; do sleep 0.1; done
+while :; do sleep 0.1 & wait "$!"; done
 STUB
     cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
 #!/usr/bin/env bash
