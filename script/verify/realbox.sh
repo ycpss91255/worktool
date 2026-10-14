@@ -454,10 +454,10 @@ _51_cleanup() {
     [[ "${_crc}" -eq 0 ]] || guard_fail "box '${BOX}' survived cleanup -- remove it by hand"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
         _box_state_cleanup "${_51_W}/box-home" || _crc=1
+        _host_state_cleanup "${_51_W}" || _crc=1
     fi
     printf 'cleanup-rc=%s\n' "${_crc}"
     if [[ "${_crc}" -eq 0 && -n "${_51_W}" ]]; then
-        _host_state_cleanup "${_51_W}" || return 1
         rm -rf -- "${_51_W}" || _crc=1
     fi
     return "${_crc}"

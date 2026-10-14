@@ -1120,6 +1120,10 @@ if [[ "${1:-}" == rm ]]; then
         [[ -d "${dir}" ]] || continue
         mkdir -p "${dir}/box-home"
         printf 'owned state\n' >"${dir}/box-home/leftover"
+        if [[ "${INJECT_HOST_STATE:-0}" == 1 ]]; then
+            mkdir -p "${HOME}/dev-box"
+            printf 'unknown data\n' >"${HOME}/dev-box/notes"
+        fi
     done
 fi
 exec "${FAKE_STATE_DIR}/distrobox" "$@"
@@ -1136,6 +1140,20 @@ STUB
     assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
     [ ! -s "${STATE}/boxes" ]
     [ -f "${TMPDIR}"/wt-m3-51.*/box-home/leftover ]
+}
+
+@test "#574: 5.1 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    [ -f "${TMPDIR}"/wt-m3-51.*/host-state-baseline ]
+    [ ! -e "${TMPDIR}"/wt-m3-51.*/box-home ]
+    [ ! -s "${STATE}/boxes" ]
 }
 
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
