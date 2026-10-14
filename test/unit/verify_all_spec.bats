@@ -59,7 +59,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     _scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     run printf '%s\n' "${_scope}"
     for _path in 'doc/acceptance.md' 'doc/design.md' 'doc/enter.md' \
-        'doc/manifest.md' 'doc/evidence/' 'ADR 0008' '0010' \
+        'doc/manifest.md' 'doc/evidence/README.md' 'ADR 0008' '0010' \
         'script/verify/' 'lib/verify_run.sh' 'lib/realbox_interrupt.sh' \
         'justfile' \
         'lib/config_backup.sh' 'lib/guard.sh' \
@@ -403,4 +403,12 @@ _stub_calls() {
         assert_failure 3
         assert_line "[UNAVAILABLE] ${_group}.sh: ${_tool} not found on PATH"
     done
+}
+
+@test "acceptance: issue 568 stress evidence stays out of repository scope" {
+    [ ! -e "${REPO_ROOT}/doc/evidence/568-hup-fixture-fork-window.md" ]
+    local scope
+    scope="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    run printf '%s\n' "${scope}"
+    refute_output --partial '`doc/evidence/`'
 }
