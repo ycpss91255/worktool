@@ -242,6 +242,11 @@ const validSnapshot = value => value && !value.error && value.snapshot &&
       (['file', 'symlink'].includes(item.type) ? /^[0-9a-f]{64}$/.test(item.sha256) : item.sha256 === null) &&
       (item.type !== 'symlink' || typeof item.target === 'string'))))
 const equalSnapshots = (before, after) => JSON.stringify(before?.snapshot) === JSON.stringify(after?.snapshot)
+const restorationEvidence = (operations, before, after) => operations && {
+  ...operations,
+  restored: !operations.error && operations.childrenStopped === true &&
+    validSnapshot(before) && validSnapshot(after) && equalSnapshots(before, after),
+}
 const codexBefore = await takeSnapshot('codex', 'before')
 if (!validSnapshot(codexBefore)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', snapshot: codexBefore }
 const acceptancePrompt = `${sentence}
@@ -260,11 +265,12 @@ ${acceptancePrompt}
 END TASK`, { label: `${RUN_ID} independent-codex:`, phase: 'Independent Codex', agentType: 'general-purpose' })
 const cleanupRaw = await agent(`Verify and recover independent Codex operational state after EVERY launch outcome, including exhausted rc 124, missing session id, launch failure, nonzero exit or empty report. This is cleanup only, never another acceptance attempt. Work only in ${JSON.stringify(A.repoDir)}. Never write GitHub, modify tracked files, install host packages or delete recovery evidence. Do not read earlier review artifacts.
 Read ${ACCEPT_RC}, ${ACCEPT_LOG} and ${sq(`${recoveryDir}/codex/journal.md`)}. Confirm the Codex launcher has exited. Inspect recorded process identity and owned process groups, including descendants; never signal unrelated or reused PIDs. On failure terminate only verified owned children, escalating TERM to KILL if necessary, and wait in bounded foreground calls until every owned process has exited. On success still verify there are no surviving children. Never restore config while any child could still modify it.
-Then restore every journaled config from verified backups (remove originally absent entries), even if Codex claimed restoration already. Compare content, symlink targets and metadata with the recorded before-state. Persist exact commands, exit codes, child exit evidence and restoration comparisons to ${sq(`${recoveryDir}/codex/cleanup.md`)}; retain backups and journal. Use workflow-owned before/after snapshots as primary before-state restoration evidence; journal absence or emptiness alone does not fail closed. The journal remains the agent operation log and supplies backups for recorded mutations. Independently inspect launcher descendants even without journal entries. Unverifiable process ownership or child exit still means fail closed; never infer success from the report.
-Return only {restored: boolean, childrenStopped: boolean, error?: reason}. Both flags must be true only after independently verifying all evidence.`,
+Then restore every journaled config from verified backups (remove originally absent entries), even if Codex claimed restoration already. Compare content, symlink targets and metadata with the recorded before-state. Persist exact commands, exit codes, child exit evidence and restoration comparisons to ${sq(`${recoveryDir}/codex/cleanup.md`)}; retain backups and journal. Use the workflow-owned ${sq(`${SCRATCH}/independent-snapshot-codex-before.json`)} as the original before-state baseline; the workflow takes and compares its after snapshot only after this cleanup returns; journal absence or emptiness alone does not fail closed. The journal remains the agent operation log and supplies backups for recorded mutations. Independently inspect launcher descendants even without journal entries. Unverifiable process ownership or child exit still means fail closed; never infer success from the report.
+Return only {childrenStopped: boolean, error?: reason}. Confirm all children have exited independently; report any failed recovery operation as error. Do not supply a restored verdict: the workflow derives it from snapshot equality and child exit evidence.`,
 { label: `${RUN_ID} independent-cleanup:`, phase: 'Independent Codex cleanup', agentType: 'general-purpose' })
-const cleanup = decode(cleanupRaw)
+const cleanupOperations = decode(cleanupRaw)
 const codexAfter = await takeSnapshot('codex', 'after')
+const cleanup = restorationEvidence(cleanupOperations, codexBefore, codexAfter)
 if (!validSnapshot(codexAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', cleanup, snapshot: codexAfter }
 if (typeof codexAcceptance !== 'string' || !codexAcceptance.trim() || !cleanup || cleanup.error ||
     cleanup.restored !== true || cleanup.childrenStopped !== true || !equalSnapshots(codexBefore, codexAfter)) {
@@ -273,12 +279,15 @@ if (typeof codexAcceptance !== 'string' || !codexAcceptance.trim() || !cleanup |
 const claudeBefore = await takeSnapshot('claude', 'before')
 if (!validSnapshot(claudeBefore)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', snapshot: claudeBefore }
 const claudeAcceptance = await agent(acceptancePrompt, { label: `${RUN_ID} independent-claude:`, phase: 'Independent Claude', agentType: 'general-purpose' })
-const claudeCleanupRaw = await agent(`Verify and recover independent Claude operational state after every outcome. Work only in ${JSON.stringify(A.repoDir)}; never publish or delete recovery evidence. Inspect all owned children and process groups independently, confirm identities, stop only owned children and wait for all to exit before restoring journaled mutations from verified backups. Save child exit and restore evidence under ${sq(`${recoveryDir}/claude/cleanup.md`)}. Use workflow-owned snapshots as primary before-state restoration evidence; journal absence or emptiness alone does not fail closed. Unverifiable ownership, child exit or restoration fails closed. Return only {restored: boolean, childrenStopped: boolean, error?: reason}.`,
+const claudeCleanupRaw = await agent(`Verify and recover independent Claude operational state after every outcome. Work only in ${JSON.stringify(A.repoDir)}; never publish or delete recovery evidence. Inspect all owned children and process groups independently, confirm identities, stop only owned children and wait for all to exit before restoring journaled mutations from verified backups. Save child exit and restore evidence under ${sq(`${recoveryDir}/claude/cleanup.md`)}. Use the workflow-owned ${sq(`${SCRATCH}/independent-snapshot-claude-before.json`)} as the original before-state baseline; the workflow takes and compares its after snapshot only after this cleanup returns; journal absence or emptiness alone does not fail closed. Unverifiable ownership, child exit or restoration fails closed. Return only {childrenStopped: boolean, error?: reason}; report any failed recovery operation as error. The workflow derives restoration from snapshot equality and independently verified child exits.`,
 { label: `${RUN_ID} independent-claude-cleanup:`, phase: 'Independent Claude cleanup', agentType: 'general-purpose' })
-const claudeCleanup = decode(claudeCleanupRaw)
+const claudeCleanupOperations = decode(claudeCleanupRaw)
 const claudeAfter = await takeSnapshot('claude', 'after')
+const claudeCleanup = restorationEvidence(claudeCleanupOperations, claudeBefore, claudeAfter)
 if (!validSnapshot(claudeAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup, snapshot: claudeAfter }
-if (!equalSnapshots(claudeBefore, claudeAfter) || !claudeCleanup || claudeCleanup.error || claudeCleanup.restored !== true || claudeCleanup.childrenStopped !== true || typeof claudeAcceptance !== 'string'  || !claudeAcceptance.trim()) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude' }
+if (!claudeCleanup || claudeCleanup.restored !== true || typeof claudeAcceptance !== 'string' || !claudeAcceptance.trim()) {
+  return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup }
+}
 const assessedRaw = await agent(`${CONTEXT}
 Classify these two completed independent reports without rewriting them:
 ${JSON.stringify({ codex: codexAcceptance, claude: claudeAcceptance })}

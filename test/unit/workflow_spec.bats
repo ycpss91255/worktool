@@ -3458,7 +3458,7 @@ _pl_retry_run() {
 @test "milestone-handover cleans up exhausted Codex timeouts and blocks unverifiable restoration (#505)" {
     local mutation
     for mutation in '."independent-codex:"=null' \
-        '."independent-cleanup:"={restored:false,childrenStopped:true}' \
+        '."independent-cleanup:"={error:"Restore command failed",childrenStopped:true}' \
         '."independent-cleanup:"={restored:true,childrenStopped:false}' \
         '."independent-cleanup:"=null'; do
         _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
@@ -3946,4 +3946,13 @@ _handover_snapshot_run() {
             done
         done
     done
+}
+
+@test "milestone-handover derives restoration from equal workflow snapshots and stopped children (#577)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+        "$(_handover_replies | jq '."independent-cleanup:"={restored:false,childrenStopped:true} |
+            ."independent-claude-cleanup:"={restored:false,childrenStopped:true}')"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-claude:") != null)' <<<"${output}"
+    assert_success
 }

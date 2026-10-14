@@ -207,7 +207,7 @@ const playHandoverSnapshots = (role, prompt) => {
   }
   if (role === 'independent-cleanup:' || role === 'independent-claude-cleanup:') {
     return prompt.includes('journal absence or emptiness alone')
-      ? { restored: true, childrenStopped: true }
+      ? { restored: false, childrenStopped: true }
       : { restored: false, childrenStopped: true, error: 'Missing journal' }
   }
   return reply(role)

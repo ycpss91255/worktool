@@ -485,7 +485,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    distrobox 設定與 dev init log）及上層目錄、`~/dev-box`、applications/icons 項目，
    以及 `link_apply` 的預設與自訂來源（含 symlink 目標）。記錄缺席、type、mode、inode、mtime
    與 SHA-256；目錄包含遞迴項目，symlink 另外記錄連結文字。
-   前後快照相等且所有子行程已退出，才有主要還原證據；journal 留作 agent 操作紀錄，
+   workflow 自行以「前後快照相等且所有子行程已退出」計算 `restored`，
+   不採用驗收者或 cleanup 回傳的舊還原旗標；journal 留作 agent 操作紀錄，
    缺少或空白本身不阻擋。快照不一致、快照拍攝失敗、子行程退出或還原無法確認時封閉失敗。
    任一受追蹤路徑的 stat、目錄列舉或 SHA-256 失敗都停止；前置快照失敗不啟動驗收者。
    收集器不掃描 `/tmp`，無關 root-owned 目錄的 permission-denied 不影響完整快照。
