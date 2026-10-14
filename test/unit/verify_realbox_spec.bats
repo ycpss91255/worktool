@@ -1110,6 +1110,34 @@ inbox: min=14.9 median=17.5 max=25.4 ms' \
     assert_output --partial "is 'true', neither 0 nor 1"
 }
 
+_create_home_before_cleanup() {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == rm ]]; then
+    for dir in "${TMPDIR}"/wt-m3-51.* "${TMPDIR}"/wt-m3-53.*; do
+        [[ -d "${dir}" ]] || continue
+        mkdir -p "${dir}/box-home"
+        printf 'owned state\n' >"${dir}/box-home/leftover"
+    done
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports isolated HOME cleanup failure once and exits nonzero" {
+    _create_home_before_cleanup
+    SHIM_RM_ON='/box-home' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=1 tmux=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    [ ! -s "${STATE}/boxes" ]
+    [ -f "${TMPDIR}"/wt-m3-51.*/box-home/leftover ]
+}
+
 @test "5.1: the box survives cleanup, so the item fails even though every check passed" {
     FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
     assert_failure
