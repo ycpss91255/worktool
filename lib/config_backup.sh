@@ -805,8 +805,8 @@ cfgbk_report_leftover_dirs() {
     for _n in "${CFGBK_NAMES[@]}"; do
         _d="$(cfgbk_dir_of "${_n}")" || return 1
         [[ -n "${_d}" ]] || continue
-        grep -qx -- "${_n}=absent-dir" "${CFGBK_B}/manifest"
-        _rc=$?
+        _rc=0
+        grep -qx -- "${_n}=absent-dir" "${CFGBK_B}/manifest" || _rc=$?
         [[ "${_rc}" -le 1 ]] \
             || { guard_fail "cannot read ${CFGBK_B}/manifest -- leftover-dirs= is not trustworthy"; return 1; }
         [[ "${_rc}" -eq 0 ]] || continue
