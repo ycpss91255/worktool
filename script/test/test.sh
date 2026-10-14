@@ -427,6 +427,8 @@ _has_unexpected_skip() {
         /^ok [0-9]+ .*# skip/ {
             sub(/^ok [0-9]+ /, "")
             reason = " # skip set WORKTOOL_STRESS=1 to run CPU repro"
+            # Exempt names come from test/unit/verify_run_signal_spec.bats and
+            # test/unit/verify_realbox_spec.bats, respectively.
             if (tier == "unit" && stress != "1" &&
                 ($0 == "verify_run: HUP under CPU load always finishes before cleanup" reason ||
                  $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason)) next
