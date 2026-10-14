@@ -623,7 +623,9 @@ cfgbk_restore_one() {
             [[ -n "${_d}" ]] \
                 || { guard_fail "${_n}: manifest says absent-dir, but ${_n} has no directory worktool owns"; return 1; }
             rm -f -- "${_p}" || { guard_fail "${_n}: cannot remove ${_p}"; return 1; }
-            rmdir -- "${_d}" 2>/dev/null
+            if ! rmdir -- "${_d}" 2>/dev/null; then
+                : # Already absent is valid; the path check below decides.
+            fi
             [[ ! -e "${_d}" ]] \
                 || { guard_fail "${_n}: ${_d} still present (not empty?)"; return 1; }
             ;;
@@ -805,8 +807,8 @@ cfgbk_report_leftover_dirs() {
     for _n in "${CFGBK_NAMES[@]}"; do
         _d="$(cfgbk_dir_of "${_n}")" || return 1
         [[ -n "${_d}" ]] || continue
-        grep -qx -- "${_n}=absent-dir" "${CFGBK_B}/manifest"
-        _rc=$?
+        _rc=0
+        grep -qx -- "${_n}=absent-dir" "${CFGBK_B}/manifest" || _rc=$?
         [[ "${_rc}" -le 1 ]] \
             || { guard_fail "cannot read ${CFGBK_B}/manifest -- leftover-dirs= is not trustworthy"; return 1; }
         [[ "${_rc}" -eq 0 ]] || continue

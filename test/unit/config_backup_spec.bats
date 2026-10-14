@@ -16,6 +16,41 @@ setup() {
     cfgbk_paths
 }
 
+@test "#576: leftover directory report skips other manifest states under errexit" {
+    cfgbk_dir_create
+    printf 'ghostty=absent-file\nworktool=absent-dir\n' >"${CFGBK_B}/manifest"
+
+    run bash -c '
+        set -euo pipefail
+        source "$1/guard.sh"
+        source "$1/config_backup.sh"
+        cfgbk_paths
+        cfgbk_report_leftover_dirs
+        printf "returned=%s\n" "$?"
+    ' _ "${LIB_DIR}"
+
+    assert_success
+    assert_output $'leftover-dirs=0\nreturned=0'
+}
+
+@test "#576: restoring an already absent directory succeeds under errexit" {
+    cfgbk_dir_create
+    printf 'worktool=absent-dir\n' >"${CFGBK_B}/manifest"
+
+    run bash -c '
+        set -euo pipefail
+        source "$1/guard.sh"
+        source "$1/config_backup.sh"
+        cfgbk_paths
+        cfgbk_restore_one worktool
+        printf "returned=%s\n" "$?"
+    ' _ "${LIB_DIR}"
+
+    assert_success
+    assert_output 'returned=0'
+    [[ ! -e "${XDG_CONFIG_HOME}/worktool" ]]
+}
+
 @test "#536: external symlink target protects its parent without recording or restoring ancestors" {
     local root="${BATS_TEST_TMPDIR}/opt" target config
     target="${root}/user config/ghostty"
