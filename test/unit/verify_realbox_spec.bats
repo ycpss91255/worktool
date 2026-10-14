@@ -3179,6 +3179,25 @@ STUB
     [ ! -e "$(_backup_dir)/created-box" ]
 }
 
+@test "#586: success marker failure reports only its own cause after assemble succeeds" {
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/just" "$@"
+if [[ "${2:-}" == assemble ]]; then
+    mkdir -- "${TMPDIR%/assemble-tmp}/assemble-success"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial '[FAIL] cannot record assemble success at '
+    refute_output --partial '[FAIL] just box assemble failed'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
 @test "#562: duplicate box names are unknown for both guard interfaces without an ID" {
     local id helper
     for id in 0000 1111; do

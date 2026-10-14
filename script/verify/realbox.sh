@@ -259,7 +259,7 @@ _assemble_owned_box() {
             }
             TMPDIR=\"\${dir}/assemble-tmp\" just box assemble --home \"\${dir}/box-home\" || exit 1
             : >\"\${dir}/assemble-success\" || {
-                guard_fail \"cannot record assemble success at \${dir}/assemble-success\"; exit 1;
+                guard_fail \"cannot record assemble success at \${dir}/assemble-success\" || exit 2
             }
         " _ "$1" || rc=$?
         # Deadline cleanup can kill the inner shell before it reports failure.
