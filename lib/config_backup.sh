@@ -623,7 +623,9 @@ cfgbk_restore_one() {
             [[ -n "${_d}" ]] \
                 || { guard_fail "${_n}: manifest says absent-dir, but ${_n} has no directory worktool owns"; return 1; }
             rm -f -- "${_p}" || { guard_fail "${_n}: cannot remove ${_p}"; return 1; }
-            rmdir -- "${_d}" 2>/dev/null
+            if ! rmdir -- "${_d}" 2>/dev/null; then
+                : # Already absent is valid; the path check below decides.
+            fi
             [[ ! -e "${_d}" ]] \
                 || { guard_fail "${_n}: ${_d} still present (not empty?)"; return 1; }
             ;;
