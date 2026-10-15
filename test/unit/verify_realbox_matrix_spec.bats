@@ -23,7 +23,7 @@ STUB
     chmod +x "${MATRIX_STATE}/bin/gh"
     export PATH="${MATRIX_STATE}/bin:${PATH}"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
-    REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
+    _copy_matrix_repo
 }
 
 @test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
@@ -109,12 +109,12 @@ _copy_matrix_repo() {
     mkdir -p "${repo}"
     cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${repo}/"
     REALBOX="${repo}/script/verify/realbox.sh"
+    sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
 }
 
 @test "5.4: a copy without signal forwarding turns the interrupt cell red" {
     _copy_matrix_repo
     sed -i "s/verify_stop_group \"\${monitor}\" \"\${interrupted}\"/if [[ \"\${TMPDIR}\" != *\"\${FORWARDING_DEGRADE_CELL}\"* ]]; then verify_stop_group \"\${monitor}\" \"\${interrupted}\"; fi/" "${MATRIX_STATE}/repo/lib/verify_run.sh"
-    sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
     local phase signal
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
@@ -311,4 +311,15 @@ STUB
     refute_output --partial 'interrupt-matrix: PASS'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: a missing observable event fails within the unit deadline" {
+    _matrix_child_stub
+    sed -i 's/SECONDS + 10/SECONDS + 30/' "${MATRIX_STATE}/child"
+    local started="${SECONDS}"
+    run timeout --kill-after=1 12 "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: observable event missed'
+    assert_line 'interrupt-matrix: FAIL'
+    [ "$((SECONDS - started))" -lt 12 ]
 }
