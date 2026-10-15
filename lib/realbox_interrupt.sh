@@ -81,6 +81,8 @@ _54_event() {
             rc=0
             guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
             [[ "${rc}" -ne 2 ]] || return 1
+            # The box query can outlive assemble; never use its stale phase.
+            if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
             [[ "${rc}" -ne 0 ]] || return 0
         else
             rc=0
@@ -217,6 +219,31 @@ _54_reap() {
     return "${_54_REAP_RESULT}"
 }
 
+_54_signal() {
+    local phase="$1" signal="$2" capture="$3" started="$4" signalled rc=0 observed="$1"
+    signalled="$(_54_now_ms)" || return 1
+    if [[ "${phase}" == assemble ]]; then
+        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        if [[ "${rc}" -ne 1 ]]; then
+            guard_fail "interrupt ${phase} ${signal}: assemble phase no longer confirmed; retry the cell"
+            if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
+            return 1
+        fi
+    fi
+    kill -s "${signal}" -- "-${_54_PID}" || return 1
+    if [[ "${phase}" == assemble ]]; then
+        rc=0
+        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        if [[ "${rc}" -ne 1 ]]; then
+            observed=unknown
+            guard_fail "interrupt ${phase} ${signal}: phase crossed or became unreadable at signal delivery; retry the cell"
+        fi
+    fi
+    printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
+        "${phase}" "${signal}" "${observed}" "$((signalled - started))"
+    [[ "${observed}" == "${phase}" ]]
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -224,7 +251,7 @@ _54_cell() {
     _54_prepare "${phase}" "${signal}" "${dir}" || return 1
     local -a comment_args=()
     [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
-    local started signalled
+    local started
     started="$(_54_now_ms)"
     _54_REAP_RESULT=""
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
@@ -232,10 +259,7 @@ _54_cell() {
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
     if _54_event "${phase}" "${capture}"; then
-        signalled="$(_54_now_ms)"
-        printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
-            "${phase}" "${signal}" "${phase}" "$((signalled - started))"
-        kill -s "${signal}" -- "-${_54_PID}" || rc=1
+        _54_signal "${phase}" "${signal}" "${capture}" "${started}" || rc=1
     else
         guard_fail "interrupt ${phase} ${signal}: observable event missed"
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi

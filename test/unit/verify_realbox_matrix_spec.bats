@@ -82,6 +82,64 @@ STUB
     assert_output ''
 }
 
+@test "#601: bench starting during the box query cannot pass as assemble" {
+    export MATRIX_CAPTURE_ROOT="${TMPDIR}"
+    mkdir -p "${MATRIX_STATE}/original"
+    mv "${MATRIX_STATE}/bin/distrobox" "${MATRIX_STATE}/original/distrobox"
+    cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == list && -s "${MATRIX_STATE}/boxes" ]]; then
+    for capture in "${MATRIX_CAPTURE_ROOT}"/wt-m3-54.*/assemble-INT/capture; do
+        printf 'phase=bench\n' >>"${capture}"
+    done
+fi
+exec "${MATRIX_STATE}/original/distrobox" "$@"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/distrobox"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: observable event missed'
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    refute_output --partial 'posted=0 PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
+@test "#601: bench observed immediately before signalling refuses the assemble signal" {
+    sed -i '/^_54_now_ms() {/a\
+    if [[ -s "${MATRIX_STATE}/boxes" ]]; then\
+        printf "phase=bench\\n" >>"${_54_W}/assemble-INT/capture"\
+    fi' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    refute_output --partial 'posted=0 PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
+@test "#601: a bench transition at signal delivery fails with an unknown signal phase" {
+    cat >>"${MATRIX_STATE}/repo/lib/realbox_interrupt.sh" <<'STUB'
+
+# Inject the transition at delivery, after the last observer check.
+kill() {
+    if [[ "${1:-}" == -s && "${2:-}" == INT ]]; then
+        printf 'phase=bench\n' >>"${_54_W}/assemble-INT/capture"
+    fi
+    builtin kill "$@"
+}
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --regexp '^interrupt assemble INT: signal-phase=unknown signal-after-ms=[0-9]+$'
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    refute_output --partial 'posted=0 PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
 @test "5.4: any cell cleanup failure fails the matrix" {
     cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
 #!/usr/bin/env bash
