@@ -79,10 +79,17 @@ setup() {
     ln -s missing-init-log "${log}"
     cfgbk_dir_create
     # A resolver that succeeds without a path has not proved absence.
-    readlink() {
-        if [[ "$1" == -m && "${*: -1}" == "${log}" ]]; then return 0; fi
-        command readlink "$@"
-    }
+    export CFGBK_TEST_LOG="${log}" CFGBK_REAL_READLINK
+    CFGBK_REAL_READLINK="$(type -P readlink)"
+    mkdir "${BATS_TEST_TMPDIR}/bin"
+    cat >"${BATS_TEST_TMPDIR}/bin/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == -m && "${*: -1}" == "${CFGBK_TEST_LOG}" ]]; then exit 0; fi
+exec "${CFGBK_REAL_READLINK}" "$@"
+STUB
+    chmod +x "${BATS_TEST_TMPDIR}/bin/readlink"
+    export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
 
     run cfgbk_backup_body
 
