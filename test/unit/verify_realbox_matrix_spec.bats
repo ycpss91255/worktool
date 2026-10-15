@@ -343,3 +343,16 @@ STUB
     assert_line 'rc=1'
     assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
 }
+
+@test "5.4: matrix fixture residents expire without supervisor signals" {
+    local phase
+    for phase in assemble bench; do
+        run timeout --kill-after=1 5 env MATRIX_FIXTURE_TIMEOUT=1 \
+            TMPDIR="${TMPDIR}/assemble-INT/cell" bash -c '
+                mkdir -p "${TMPDIR}"
+                exec bash "$1" --yes "$2" "$HOME/box"
+            ' _ "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" "${phase}"
+        assert_failure 1
+        assert_line --partial "matrix fixture ${phase}: resident wait deadline exceeded"
+    done
+}
