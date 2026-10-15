@@ -237,17 +237,34 @@ STUB
 @test "5.4: killed supervisor leaves no child holding the test pipe" {
     export MATRIX_READY_DELAY=6
     _matrix_child_stub
+    local started="${SECONDS}"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     assert_success
     assert_line 'rc=137'
-    _matrix_stop_child
-    local pid
+    local pid path target parent group session state rest row
     read -r pid <"${MATRIX_STATE}/child.pid"
+    # Inspect before teardown can signal the orphan. Bash may keep its script fd.
+    for path in /proc/"${pid}"/fd/*; do
+        if ! target="$(readlink "${path}")"; then continue; fi
+        [[ "${target}" != pipe:* ]]
+    done
     # shellcheck source=lib/verify_run.sh
     source "${LIB_DIR}/verify_run.sh"
+    while verify_group_running "${pid}" && ((SECONDS - started < 14)); do
+        sleep 0.05
+    done
     run verify_group_running "${pid}"
     assert_failure 1
+    [ "$((SECONDS - started))" -lt 14 ]
+    # Include descendants in other process groups within the child's session.
+    for path in /proc/[0-9]*/stat; do
+        if ! IFS= read -r row 2>/dev/null <"${path}"; then continue; fi
+        read -r state parent group session rest <<<"${row##*) }"
+        if [[ "${session}" == "${pid}" && "${parent}" == 1 ]]; then
+            [[ "${state}" == Z || "${state}" == X ]]
+        fi
+    done
 }
 
 @test "5.4: a preexisting box reports the refused cell and remains untouched" {
