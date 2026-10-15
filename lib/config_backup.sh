@@ -387,7 +387,6 @@ _cfgbk_backup_dirs() {
 # Keep deepest-first NUL paths so restore can use rmdir without recursion.
 _cfgbk_backup_missing_parents() {
     local _p="${1%/*}"
-    [[ ! -d "${_p%/*}" ]] || return 0
     while [[ ! -e "${_p}" && ! -L "${_p}" ]]; do
         printf '%s\0' "${_p}" >>"${CFGBK_B}/absent-directories" || return 1
         _p="${_p%/*}"

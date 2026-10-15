@@ -30,3 +30,23 @@ setup() {
     assert_success
     assert_output 'leftover-dirs=0'
 }
+
+@test "#589: restore preserves existing cache and removes only the new worktool directory" {
+    mkdir "${HOME}/.cache"
+    touch -d '2001-01-01' "${HOME}/.cache"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    mkdir "${HOME}/.cache/worktool"
+    printf 'acceptance output\n' >"$(cfgbk_file_of init-log)"
+
+    run cfgbk_restore_all
+
+    assert_success
+    assert [ -d "${HOME}/.cache" ]
+    assert [ ! -e "${HOME}/.cache/worktool" ]
+    assert_equal "$(stat -c %y "${HOME}/.cache")" '2001-01-01 00:00:00.000000000 +0000'
+    run cfgbk_report_leftover_dirs
+    assert_success
+    assert_output 'leftover-dirs=0'
+}
