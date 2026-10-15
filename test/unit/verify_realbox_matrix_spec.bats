@@ -106,6 +106,19 @@ STUB
     [ ! -s "${MATRIX_STATE}/boxes" ]
 }
 
+@test "#601: bench observed immediately before signalling refuses the assemble signal" {
+    sed -i '/^_54_now_ms() {/a\
+    if [[ -s "${MATRIX_STATE}/boxes" ]]; then\
+        printf "phase=bench\\n" >>"${_54_W}/assemble-INT/capture"\
+    fi' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    refute_output --partial 'posted=0 PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
 @test "5.4: any cell cleanup failure fails the matrix" {
     cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
 #!/usr/bin/env bash

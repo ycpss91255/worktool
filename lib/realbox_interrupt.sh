@@ -219,6 +219,21 @@ _54_reap() {
     return "${_54_REAP_RESULT}"
 }
 
+_54_signal() {
+    local phase="$1" signal="$2" capture="$3" started="$4" signalled rc=0
+    signalled="$(_54_now_ms)" || return 1
+    if [[ "${phase}" == assemble ]]; then
+        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        if [[ "${rc}" -ne 1 ]]; then
+            guard_fail "interrupt ${phase} ${signal}: assemble phase no longer confirmed; retry the cell"
+            return 1
+        fi
+    fi
+    kill -s "${signal}" -- "-${_54_PID}" || return 1
+    printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
+        "${phase}" "${signal}" "${phase}" "$((signalled - started))"
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -226,18 +241,15 @@ _54_cell() {
     _54_prepare "${phase}" "${signal}" "${dir}" || return 1
     local -a comment_args=()
     [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
-    local started signalled
+    local started
     started="$(_54_now_ms)"
     _54_REAP_RESULT=""
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
-    if _54_event "${phase}" "${capture}"; then
-        signalled="$(_54_now_ms)"
-        printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
-            "${phase}" "${signal}" "${phase}" "$((signalled - started))"
-        kill -s "${signal}" -- "-${_54_PID}" || rc=1
+    if _54_event "${phase}" "${capture}" && _54_signal "${phase}" "${signal}" "${capture}" "${started}"; then
+        :
     else
         guard_fail "interrupt ${phase} ${signal}: observable event missed"
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
