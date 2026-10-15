@@ -81,6 +81,8 @@ _54_event() {
             rc=0
             guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
             [[ "${rc}" -ne 2 ]] || return 1
+            # The box query can outlive assemble; never use its stale phase.
+            if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
             [[ "${rc}" -ne 0 ]] || return 0
         else
             rc=0
