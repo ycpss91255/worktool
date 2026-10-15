@@ -76,3 +76,10 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     run grep -F '已知限制：設定根目錄以上的目錄 mtime 不受保護' "${REPO_ROOT}/doc/acceptance.md"
     assert_failure 1
 }
+
+@test "acceptance 5.2 documents actual relative cache parent handling (#594)" {
+    run grep -F '非絕對路徑的 `XDG_CACHE_HOME` 不會單憑此條件拒絕備份' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial '`readlink -m`'
+    assert_output --partial '不會將 `cfgbk_file_of` 的 init-log 路徑改為絕對路徑'
+}
