@@ -458,7 +458,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    以 `rc=0; cd <repoDir> && timeout 570 codex exec resume --skip-git-repo-check -o <scratch>/codex-result.json <session-id> - < <scratch>/codex-continue.md >> <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`
    接續同一個 session，最多接續 25 次；仍為 124 或讀不到 session id 即失敗並回報，不從頭重啟、不轉背景。
    禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行（#453）。
-   codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
+   codex 子程序先把原始結果保留在本地 scratch，不發布 PR 留言；
+   兩份獨立報告都發布並核對後，才由 Codex 以自己的 hook 身分發布原始結果，Claude 不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
@@ -498,7 +499,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    明確保留給維護者的人工操作不單獨阻擋，但不能把 agent 可取得的證據缺口改列人工待驗。
    workflow 以 `[claude]` 身分前綴分別原文貼出兩份完整報告，逐次確認 frozen head，
    讀回留言核對原文；不改寫報告，含本機路徑或核准片語的報告拒絕發布。
-   再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
+   本輪在此之前不發布任何 PR 留言，兩位獨立驗收者只能讀到前幾輪既有留言。
+   接著由 Codex publisher 透過自己的 hook 原文發布本地 `codex.md`，核對原文與 frozen head，
+   Claude 不代貼或重寫；再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
    原 Review 的負面判定仍阻擋；最終正面判定必須在獨立驗收之後，不能只引用早期 Review。
    任一發布或核對失敗即停止，不宣告就緒。
 9. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與

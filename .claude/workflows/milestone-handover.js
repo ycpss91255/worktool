@@ -124,12 +124,12 @@ const CODEX_RESUME = `rc=0; cd ${sq(A.repoDir)} && timeout ${CODEX_CALL_SECONDS}
 const LAUNCH_FORBIDDEN = 'Never use setsid, nohup, disown, a trailing &, run_in_background, Monitor, a bash -c wrapper, or a run script written and then executed; never change the command shapes.'
 const reviewResult = await agent(`${CONTEXT}
 Only create or overwrite your own files: codex*.
-Run an independent codex review with the following task as its prompt. With the Write tool, write the task verbatim to ${CODEX_PROMPT} and write this continuation prompt to ${CODEX_CONT}: "Continue the same review task from where you stopped. Inspect your earlier output and the scratch files first; do not redo finished steps or post a second comment." Keep nested gh commands out of the Claude shell command. Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
+Run an independent codex review with the following task as its prompt. With the Write tool, write the task verbatim to ${CODEX_PROMPT} and write this continuation prompt to ${CODEX_CONT}: "Continue the same review task from where you stopped. Inspect your earlier output and the scratch files first; do not redo finished steps or publish any PR comment." Keep nested gh commands out of the Claude shell command. Run each command below as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms); timeout ${CODEX_CALL_SECONDS} keeps codex inside that bound. First call:
 ${CODEX_LAUNCH}
 After every call read ${CODEX_RC}. rc 124 means the codex session is unfinished, not failed. Read its id from the first "session id: " line of ${CODEX_LOG} (grep -m1 '^session id: ' ${CODEX_LOG}) and resume that same session with this call, <session-id> replaced by the literal id:
 ${CODEX_RESUME}
 Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it with the last 80 lines of ${CODEX_LOG}; never relaunch from scratch or detach.
-${LAUNCH_FORBIDDEN} Any other nonzero final exit, empty output or malformed JSON also fails closed. The Codex process itself must write, validate and post its verdict using its own codex hooks; Claude must never post or retype the codex comment. Pass these instructions to Codex verbatim:
+${LAUNCH_FORBIDDEN} Any other nonzero final exit, empty output or malformed JSON also fails closed. The Codex process itself must write and validate its local verdict. Do not publish any PR comment in this stage; publication is deferred until both independent reports are posted. Pass these instructions to Codex verbatim:
 BEGIN CODEX TASK
 ${CONTEXT}
 Only create or overwrite your own files: codex*.
@@ -137,14 +137,12 @@ Review the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milesto
 Write your own verdict to ${SCRATCH}/codex.md starting [codex], containing exactly one standalone verdict line with either:
 交出判定：可交出 head=${head.sha}
 交出判定：不可交出 head=${head.sha}
-and list blocking items (or explicitly none), evidence and real-machine limitations. Validate this exact format, re-query the frozen head and stop on mismatch before publishing. Post your original file yourself via \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/codex.md`)}\`. Do not post on malformed/failed output. Return only {line: exact verdict line, url: actual posted comment URL, error?: reason}; never invent a URL.
+and list blocking items (or explicitly none), evidence and real-machine limitations. Validate this exact format and re-query the frozen head; stop on mismatch. Keep the original verdict in local scratch only; do not post any PR comment. Return only {line: exact verdict line, error?: reason}.
 END CODEX TASK
-Read codex-result.json and relay its JSON unchanged; verify the comment URL exists and contains the original verdict on the frozen head. Return {line: exact verdict line, url: posted comment URL, error?: reason}.`, { label: `${RUN_ID} review:`, phase: 'Review', agentType: 'general-purpose' })
+Read codex-result.json and relay its JSON unchanged; verify the local codex.md contains the original verdict on the frozen head. Return {line: exact verdict line, error?: reason}.`, { label: `${RUN_ID} review:`, phase: 'Review', agentType: 'general-purpose' })
 const review = decode(reviewResult)
 const verdicts = [`交出判定：可交出 head=${head.sha}`, `交出判定：不可交出 head=${head.sha}`]
-if (!review || review.error || !verdicts.includes(review.line) ||
-    !review.url?.startsWith(`https://github.com/${A.repo}/pull/${A.pr}#issuecomment-`) ||
-    !/#[a-z]+-[0-9]+$/.test(review.url)) {
+if (!review || review.error || !verdicts.includes(review.line)) {
   return { pr: A.pr, sha: head.sha, status: 'review-failed', report: review }
 }
 const reviewFiles = ['findings.md', 'codex.md', 'codex-result.json']
@@ -316,14 +314,20 @@ Use the Write tool to save each complete report verbatim, including all whitespa
 Post both original files to acceptance PR ${A.pr}, sequentially:
 \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-codex-report.md`)}\`
 \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-claude-report.md`)}\`
-Read both posted comments back and verify their bodies match the files verbatim. Then launch a fresh Codex publisher with bounded foreground calls and literal paths (never detached), using its own codex hooks to write and post independent-verdict.md starting [codex], with exactly this standalone line: ${verdict}. Include both report links, issues to open ${JSON.stringify(issues)}, and pending human items ${JSON.stringify(pendingHuman)}; do not claim human acceptance passed. The publisher must verify the frozen head immediately before posting via gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-verdict.md`)}. Claude never impersonates Codex. Verify the posted verdict body and head. Any failed launch, nonzero exit, empty file, malformed body, changed head, or unverifiable post returns error; never invent links or report success after partial publication.
-Return {sha: frozen full SHA, reports: [actual Codex-report comment URL, actual Claude-report comment URL], line: exact final verdict line, url: actual final Codex-verdict comment URL}.`,
+Read both posted comments back and verify their bodies match the files verbatim. Only after both reports are published and verified, launch a fresh Codex publisher with this task verbatim:
+BEGIN CODEX TASK
+${CONTEXT}
+Post the existing codex.md verbatim yourself using your own codex hooks; do not rewrite it or repeat the review. Validate it starts [codex] and has exactly one standalone verdict line matching ${review.line}. Re-query the frozen head immediately before posting and stop on mismatch or query failure. Post your original file yourself via \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/codex.md`)}\`. Do not post on malformed/failed output. Read the posted comment back and verify its body matches the original file verbatim. Return {line: exact verdict line, url: actual posted comment URL, error?: reason}; never invent a URL.
+END CODEX TASK
+Use bounded foreground calls and literal paths (never detached). The Codex process itself must post; Claude must never post or retype the codex comment. Any failed launch, nonzero exit, malformed result, changed head, or unverifiable post stops before the final verdict. Then launch a fresh Codex publisher with bounded foreground calls and literal paths (never detached), using its own codex hooks to write and post independent-verdict.md starting [codex], with exactly this standalone line: ${verdict}. Include both report links, issues to open ${JSON.stringify(issues)}, and pending human items ${JSON.stringify(pendingHuman)}; do not claim human acceptance passed. The publisher must verify the frozen head immediately before posting via gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-verdict.md`)}. Claude never impersonates Codex. Verify the posted verdict body and head. Any failed launch, nonzero exit, empty file, malformed body, changed head, or unverifiable post returns error; never invent links or report success after partial publication.
+Return {sha: frozen full SHA, reports: [actual Codex-report comment URL, actual Claude-report comment URL], line: exact final verdict line, url: actual final Codex-verdict comment URL, reviewUrl: actual hand-over review comment URL}.`,
 { label: `${RUN_ID} independent-publish:`, phase: 'Independent acceptance publication', agentType: 'general-purpose' })
 const publication = decode(publicationRaw)
 const commentUrl = url => typeof url === 'string' && url.startsWith(`https://github.com/${A.repo}/pull/${A.pr}#issuecomment-`) && /#issuecomment-[0-9]+$/.test(url)
 if (!publication || publication.error || publication.sha !== head.sha || publication.line !== verdict ||
     !Array.isArray(publication.reports) || publication.reports.length !== 2 || !publication.reports.every(commentUrl) ||
-    !commentUrl(publication.url) || new Set([...publication.reports, publication.url]).size !== 3) {
+    !commentUrl(publication.url) || !commentUrl(publication.reviewUrl) ||
+    new Set([...publication.reports, publication.reviewUrl, publication.url]).size !== 4) {
   return { pr: A.pr, sha: head.sha, status: 'independent-publish-failed', verdict: verdicts[1], report: publication }
 }
 const evidenceFiles = [...reviewFiles, 'machine.md', 'independent-codex-report.md', 'independent-claude-report.md', 'independent-verdict.md']
