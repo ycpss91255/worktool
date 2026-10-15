@@ -25,6 +25,9 @@ if [[ "${phase}" == assemble ]]; then
         matrix_resident
     fi
 elif [[ "${phase}" == bench ]]; then
+    if [[ -n "${MATRIX_BENCH_EXIT_CELL:-}" && "${TMPDIR}/" == *"/${MATRIX_BENCH_EXIT_CELL}/"* ]]; then
+        exit "${MATRIX_BENCH_RC:-3}"
+    fi
     trap 'exit 0' INT TERM HUP
     printf '[INFO] psi before enter run 1: /proc/pressure/cpu some avg10=0.00\n' >&2
     matrix_resident

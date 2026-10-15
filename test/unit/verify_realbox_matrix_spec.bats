@@ -82,6 +82,52 @@ STUB
     assert_output ''
 }
 
+@test "#602: a busy-host bench cell is inconclusive and never passes the matrix" {
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_failure 3
+    assert_line --partial 'interrupt bench INT: INCONCLUSIVE (rc=3;'
+    assert_line 'interrupt-matrix: INCONCLUSIVE (host too busy, re-run when idle)'
+    refute_output --partial 'FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    assert_line --partial 'interrupt bench HUP: rc=129 cleanup-rc=0'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*' -o -name 'wt-m3-51.*'
+    assert_success
+    assert_output ''
+}
+
+@test "#602: a real bench failure after an inconclusive cell still fails the matrix" {
+    sed -i "/elif \[\[ \"\${phase}\" == bench \]\]; then/a\\
+    if [[ \"\${TMPDIR}/\" == */bench-TERM/* ]]; then exit 1; fi" "${MATRIX_STATE}/bin/just"
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt bench INT: INCONCLUSIVE (rc=3;'
+    assert_line --partial 'interrupt bench TERM: FAIL (rc=1; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt-matrix: INCONCLUSIVE'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "#602: an inconclusive child cannot hide missing cleanup evidence" {
+    sed -i "/^_51_cleanup() {/a\\
+    if [[ \"\${TMPDIR}/\" == */bench-INT/* ]]; then return 0; fi" "${REALBOX}"
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt bench INT: FAIL (rc=3; cleanup-rc=missing; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt bench INT: INCONCLUSIVE'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
 @test "#601: bench starting during the box query cannot pass as assemble" {
     export MATRIX_CAPTURE_ROOT="${TMPDIR}"
     mkdir -p "${MATRIX_STATE}/original"

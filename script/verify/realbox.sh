@@ -144,6 +144,8 @@ Items:
           Observes box creation or a bench diagnostic; checks signal status,
           cleanup, private HOME/tmux, host state and unchanged issue comments.
           No keyboard input; refuses existing boxes; preserves failed evidence.
+          Busy-host bench cells are inconclusive (exit 3); re-run when idle.
+          Any failed cell or cleanup takes precedence (exit 1).
 
 Options:
   -l, --list         List the item ids and their titles, then exit without running checks.
