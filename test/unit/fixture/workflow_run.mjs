@@ -89,7 +89,7 @@ const play = (prompt) => {
       ran.push({ cmd, rc: 0 })
     } catch (e) {
       ran.push({ cmd, rc: e.status })
-      return { ok: false, stdout: '' }
+      return { ok: false, stdout: e.stdout?.toString().trim() || '' }
     }
   }
   return { ok: true, stdout: stdout.trim() }
@@ -159,6 +159,15 @@ const playHandoverReview = (prompt) => {
   }
 }
 
+// Model an artifact writer transcribing data incorrectly or reporting a failure.
+const artifactFault = (role, prompt, scratch) => {
+  const [stage, file, kind] = (process.env.HANDOVER_WRITE_FAULT || '').split(':')
+  if (role !== `artifact-write:${stage}`) return { prompt }
+  if (kind === 'error') return { error: `${scratch}/${file}: simulated write failure` }
+  return { prompt: prompt.replace(/`(cd [^`]*)`/g, (span, command) =>
+    command.includes(file) ? span.replace(/ORIGINAL/g, 'MUTATION') : span) }
+}
+
 // Exercise handover filesystem commands with deterministic stage writers.
 const playHandoverFiles = (role, prompt) => {
   const args = JSON.parse(argsJson)
@@ -170,8 +179,10 @@ const playHandoverFiles = (role, prompt) => {
     else writeFileSync(`${scratch}/${lostFile}`, '')
   }
   if (role === 'scratch:' || role.startsWith('artifact-check:') || role.startsWith('artifact-write:')) {
-    const result = play(prompt)
-    if (!result.ok) return null
+    const fault = artifactFault(role, prompt, scratch)
+    if (fault.error) return { error: fault.error }
+    const result = play(fault.prompt)
+    if (!result.ok) return result.stdout || null
     return role === 'scratch:' ? reply(role) : result.stdout
   }
   const files = {

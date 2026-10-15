@@ -4089,3 +4089,32 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ("[claude]\n" + ."independent-claude:") == $claude' "$replies"
     assert_success
 }
+
+@test "milestone-handover stops with the failing file when artifact writers alter or reject producer content (#612)" {
+    local root="${BATS_TEST_TMPDIR}/writer faults" args replies json row stage file expected kind
+    mkdir -p "$root"
+    args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$(_handover_replies | jq --arg d "$root" '
+        ."sync:".repoDir=$d | ."findings:".content="ORIGINAL ledger\n" |
+        ."machine:".content="ORIGINAL ledger\n" | ."independent-codex:"="ORIGINAL ledger\n" |
+        ."independent-claude:"="ORIGINAL ledger\n" |
+        ."evidence:"={evidenceContent:"ORIGINAL ledger\n",readyContent:"ORIGINAL ledger\n"}')"
+    for row in 'Findings:findings.md:findings-failed' 'Machine:machine.md:machine-failed' \
+        'Independent reports:independent-codex-report.md:independent-publish-failed' \
+        'Independent reports:independent-claude-report.md:independent-publish-failed' \
+        'Evidence:evidence.md:evidence-failed' 'Evidence:ready.md:evidence-failed'; do
+        IFS=: read -r stage file expected <<<"$row"
+        for kind in altered error; do
+            run env HANDOVER_WRITE_FAULT="$stage:$file:$kind" node \
+                "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+                "${WF_DIR}/milestone-handover.js" "$args" "$replies" exec-handover-files
+            assert_success
+            json="$output"
+            run jq -e --arg status "$expected" --arg file "$file" --arg stage "$stage" '
+                .error == null and .result.status == $status and
+                (.result.report.detail.error | contains($file)) and
+                .calls[-1].role == ("artifact-write:" + $stage)' <<<"$json"
+            assert_success
+        done
+    done
+}
