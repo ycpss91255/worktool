@@ -57,3 +57,13 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     [[ "${doc}" == *'中斷後 assemble 回非零'* ]]
     [[ "${doc}" == *"缺少 \`created-box\` 代表本輪未確認盒子所有權"* ]]
 }
+
+@test "acceptance 5.2 documents absent cache parent cleanup and leftover counts (#594)" {
+    local doc
+    doc="$(cat "${REPO_ROOT}/doc/acceptance.md")"
+    run printf '%s\n' "${doc}"
+    assert_output --partial '由最深層往上以 `rmdir` 移除'
+    assert_output --partial '非空目錄保留，還原 fail closed'
+    assert_output --partial '`leftover-dirs=0` 代表受管設定目錄及 init-log 原本不存在的上層目錄鏈均無殘留'
+    refute_output --partial '`leftover-dirs=0` 只代表受管設定目錄'
+}
