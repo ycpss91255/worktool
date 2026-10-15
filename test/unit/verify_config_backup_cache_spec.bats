@@ -32,10 +32,9 @@ setup() {
 }
 
 @test "#589: missing relative cache parents restore from a different working directory" {
-    export XDG_CACHE_HOME=relcache
-
     # Bound a regressed backup loop's runtime and journal size.
     run bash -euo pipefail -c '
+        export XDG_CACHE_HOME=relcache
         ulimit -f 128
         timeout 5 bash -euo pipefail -c '\''
             source "$REPO_ROOT/lib/guard.sh"
