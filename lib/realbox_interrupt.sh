@@ -5,20 +5,22 @@ _54_PID=""
 _54_POLL_FD=""
 
 _54_cleanup() {
-    local rc=0
+    local rc=0 failed=0
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
         # Terminating the owned child normally yields a signal exit status.
         # Cleanup judges surviving processes, not the interrupted child's verdict.
-        wait "${_54_PID}" || rc=$?
+        _54_reap cleanup || rc=$?
+        [[ "${rc}" -ne 124 ]] || failed=1
         if [[ "${rc}" -ne 0 ]]; then
             log_info "interrupt cleanup: stopped child rc=${rc} (expected after termination)"
         fi
-        _54_stop_session "${_54_PID}"
+        _54_stop_session "${_54_PID}" || failed=1
         _54_PID=""
     fi
     if [[ -n "${_54_POLL_FD}" ]]; then exec {_54_POLL_FD}>&-; fi
     [[ -z "${_54_W}" ]] || rm -rf -- "${_54_W}"
+    return "${failed}"
 }
 
 # timeout gives commands their own groups within the child's private session.

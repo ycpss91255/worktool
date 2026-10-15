@@ -333,3 +333,13 @@ STUB
     assert_line --partial 'interrupt assemble INT: child reap wait deadline exceeded'
     assert_line 'interrupt-matrix: FAIL'
 }
+
+@test "5.4: outer cleanup bounds the wait for a TERM-ignoring child" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=143'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
