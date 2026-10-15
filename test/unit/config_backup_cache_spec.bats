@@ -50,3 +50,29 @@ setup() {
     assert_success
     assert_output 'leftover-dirs=0'
 }
+
+@test "#589: non-empty created parents survive and fail closed with truthful leftover counts" {
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    mkdir -p "${HOME}/.cache/worktool"
+    printf 'acceptance output\n' >"$(cfgbk_file_of init-log)"
+    printf 'user content\n' >"${HOME}/.cache/worktool/keep"
+
+    run cfgbk_restore_all
+
+    assert_failure 1
+    assert_equal "$(cat "${HOME}/.cache/worktool/keep")" 'user content'
+    assert [ ! -e "$(cfgbk_file_of init-log)" ]
+    run cfgbk_report_leftover_dirs
+    assert_failure 1
+    assert_line 'leftover-dirs=2'
+
+    rm "${HOME}/.cache/worktool/keep"
+    run cfgbk_restore_all
+    assert_success
+    assert [ ! -e "${HOME}/.cache" ]
+    run cfgbk_report_leftover_dirs
+    assert_success
+    assert_output 'leftover-dirs=0'
+}

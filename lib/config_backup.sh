@@ -859,8 +859,20 @@ cfgbk_report_blocks() {
 # directory worktool never creates (~/.tmux.conf, in $HOME) have no leftover
 # to report. Same rule for the manifest read: grep's 1 is "this name is not
 # absent-dir", >= 2 is "unreadable".
+_cfgbk_count_leftover_parents() {
+    local _p _count=0
+    [[ -e "${CFGBK_B}/absent-directories" ]] || { printf '0\n'; return 0; }
+    while IFS= read -r -d '' _p; do
+        if [[ -e "${_p}" || -L "${_p}" ]]; then _count=$((_count + 1)); fi
+    done <"${CFGBK_B}/absent-directories" || return 1
+    [[ -z "${_p}" ]] || return 1
+    printf '%s\n' "${_count}"
+}
+
 cfgbk_report_leftover_dirs() {
     local _lo=0 _n _d _rc
+    _lo="$(_cfgbk_count_leftover_parents)" \
+        || { guard_fail "cannot read absent parent backup -- leftover-dirs= is not trustworthy"; return 1; }
     for _n in "${CFGBK_NAMES[@]}"; do
         _d="$(cfgbk_dir_of "${_n}")" || return 1
         [[ -n "${_d}" ]] || continue
