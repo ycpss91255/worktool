@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -24,6 +25,10 @@ STUB
     export PATH="${MATRIX_STATE}/bin:${PATH}"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
     _copy_matrix_repo
+    if [[ "${WORKTOOL_STRESS:-}" == 1 ]]; then
+        interrupt_load_start
+        taskset -pc "${INTERRUPT_LOAD_CPU}" "${BASHPID}" >/dev/null
+    fi
 }
 
 @test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
@@ -177,6 +182,7 @@ STUB
 }
 
 teardown() {
+    interrupt_load_stop
     _matrix_stop_child
 }
 
@@ -232,6 +238,36 @@ STUB
     assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: outer interruption during a box query keeps cleanup in the owning shell" {
+    _matrix_child_stub
+    sed -i '/touch "${SIGNAL_STATE}\/ready"/d' "${MATRIX_STATE}/child"
+    # Force the fork window before Bash resets inherited EXIT/TERM handlers.
+    # Keep the pipeline producer alive until the driver signals the whole group.
+    sed -i '/^_on_exit() {/a\\    printf "exit-shell=%s subshell=%s child=%s\\n" "${BASHPID}" "${BASH_SUBSHELL}" "${_54_PID}" >>"${MATRIX_STATE}/exits"' "${REALBOX}"
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+_matrix_list() {
+    if [[ -n "${_54_PID:-}" ]]; then
+        trap _on_exit EXIT
+        trap 'exit 143' TERM
+        touch "${SIGNAL_STATE}/ready"
+        sleep 0.5
+    fi
+    printf '%s\n' "$1"
+}
+STUB
+    sed -i 's/printf.*"${_out}" | awk/_matrix_list "${_out}" | awk/' "${MATRIX_STATE}/repo/lib/guard.sh"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    cat "${MATRIX_STATE}/exits"
+    assert_success
+    assert_line 'rc=143'
+    assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
+    refute_output --partial 'not a child of this shell'
+    refute_output --partial 'No record of process'
+    refute_output --partial 'No such file or directory'
 }
 
 @test "5.4: killed supervisor leaves no child holding the test pipe" {
