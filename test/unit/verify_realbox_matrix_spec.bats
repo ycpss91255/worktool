@@ -358,3 +358,17 @@ STUB
         assert_line --partial "matrix fixture ${phase}: resident wait deadline exceeded"
     done
 }
+
+@test "5.4: removing matrix evidence remains part of successful cleanup" {
+    cat >"${MATRIX_STATE}/bin/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+target="${*: -1}"
+if [[ "${target##*/}" == wt-m3-54.* ]]; then exit 1; fi
+exec /bin/rm "$@"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/rm"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    refute_output --partial 'interrupt-matrix: PASS'
+}

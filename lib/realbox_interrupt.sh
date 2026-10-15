@@ -19,7 +19,9 @@ _54_cleanup() {
         _54_PID=""
     fi
     if [[ -n "${_54_POLL_FD}" ]]; then exec {_54_POLL_FD}>&-; fi
-    [[ -z "${_54_W}" ]] || rm -rf -- "${_54_W}"
+    if [[ -n "${_54_W}" ]]; then
+        rm -rf -- "${_54_W}" || failed=1
+    fi
     return "${failed}"
 }
 
