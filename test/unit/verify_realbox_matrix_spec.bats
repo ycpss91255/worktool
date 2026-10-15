@@ -323,3 +323,13 @@ STUB
     assert_line 'interrupt-matrix: FAIL'
     [ "$((SECONDS - started))" -lt 12 ]
 }
+
+@test "5.4: a failed observer cannot leave the cell waiting forever for its child" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    sed -i '/^_54_poll() {/a\    return 1' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    run timeout --kill-after=1 8 "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: child reap wait deadline exceeded'
+    assert_line 'interrupt-matrix: FAIL'
+}

@@ -158,6 +158,20 @@ _54_now_ms() {
     printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
 }
 
+# Only reap after observing exit: wait itself has no timeout option.
+_54_reap() {
+    local context="$1" deadline=$((SECONDS + TIMEOUT_SHORT))
+    while kill -0 "${_54_PID}" 2>/dev/null; do
+        if ((SECONDS >= deadline)); then
+            guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
+            _54_stop_session "${_54_PID}" || return 124
+            return 124
+        fi
+        sleep 0.05
+    done
+    wait "${_54_PID}"
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -183,7 +197,8 @@ _54_cell() {
     fi
     local child_rc=0
     _54_wait || rc=1
-    wait "${_54_PID}" || child_rc=$?
+    _54_reap "${phase} ${signal}" || child_rc=$?
+    [[ "${child_rc}" -ne 124 ]] || rc=1
     _54_assert "${capture}" "${dir}" "${child_rc}" "${expected}" || rc=1
     _54_session_clear "${_54_PID}" || rc=1
     if [[ "${rc}" -ne 0 ]]; then
