@@ -184,20 +184,20 @@ _just() {
 
 # Confirm the absent-before/listed-after evidence outside the signalled group.
 _confirm_box_ownership() {
-    local dir="$1" rc=0 id recorded
-    [[ -e "${dir}/created-box" || -e "${dir}/assemble-started" ]] || return 0
+    local dir="$1" rc=0 id recorded operation="${3:-assemble}"
+    [[ -e "${dir}/created-box" || -e "${dir}/${operation}-started" || -e "${dir}/${operation}-success" ]] || return 0
     id="$(guard_box_id "${BOX}" "${TIMEOUT_SHORT}")" || rc=$?
-    [[ "${rc}" -ne 1 || ! -e "${dir}/created-box" ]] || return 0
-    if [[ "${rc}" -eq 1 && ! -e "${dir}/assemble-success" ]]; then
+    [[ "${operation}" != assemble || "${rc}" -ne 1 || ! -e "${dir}/created-box" ]] || return 0
+    if [[ "${rc}" -eq 1 && ! -e "${dir}/${operation}-success" ]]; then
         # Retire this attempt so a later restore cannot claim an unrelated box.
         rm -f -- "${dir}/assemble-started" || return 1
         return 0
     fi
     if [[ "${rc}" -ne 0 ]]; then
-        if [[ "${rc}" -eq 1 && -e "${dir}/assemble-success" ]]; then
-            guard_fail "assemble returned 0 but box '${BOX}' is not listed"
+        if [[ "${rc}" -eq 1 && -e "${dir}/${operation}-success" ]]; then
+            guard_fail "${operation} returned 0 but box '${BOX}' is not listed"
         else
-            guard_fail "cannot confirm box '${BOX}' after assemble (list status ${rc})"
+            guard_fail "cannot confirm box '${BOX}' after ${operation} (list status ${rc})"
         fi
         return 1
     fi
@@ -1102,13 +1102,17 @@ _53_W=""
 _53_cleanup() {
     local _crc=0
     if [[ "${_53_CREATED}" -eq 1 ]]; then
-        XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
+        if _confirm_box_ownership "${_53_W}" '' create; then
+            XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
+        else
+            _crc=1
+        fi
     else
         guard_fail "decoy ownership is unconfirmed; leaving every box and scratch for manual inspection"
         _crc=1
     fi
     [[ "${_crc}" -eq 0 ]] \
-        || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
+        || guard_fail "decoy cleanup is unconfirmed; preserving box '${BOX}' and scratch for manual inspection"
     if [[ "${_crc}" -eq 0 && -n "${_53_W}" ]]; then
         _box_state_cleanup "${_53_W}/box-home" || _crc=1
         _host_state_cleanup "${_53_W}" || _crc=1
@@ -1121,16 +1125,10 @@ _53_cleanup() {
 }
 
 _53_make_decoy() {
-    local _e
     XDG_DATA_HOME="${_53_W}/data" XDG_CACHE_HOME="${_53_W}/cache" guard_timed "${TIMEOUT_LONG}" distrobox create --name "${BOX}" --image "${DECOY_IMAGE}" \
         --home "${_53_W}/box-home" --yes >/dev/null || { guard_fail "distrobox create --name ${BOX} failed"; return 1; }
-    # `create` returning 0 is not proof the box is there; ask `list`, whose
-    # own failure is tri-stated so "cannot tell" never reads as "created".
-    guard_box_exists "${BOX}" "${TIMEOUT_SHORT}"
-    _e=$?
-    [[ "${_e}" -ne 2 ]] \
-        || { guard_fail "distrobox list failed -- cannot tell whether '${BOX}' was created"; return 1; }
-    [[ "${_e}" -eq 0 ]] || { guard_fail "no box named '${BOX}' after create"; return 1; }
+    : >"${_53_W}/create-success" || { guard_fail "cannot record decoy create success"; return 1; }
+    _confirm_box_ownership "${_53_W}" record create || return 1
     _53_CREATED=1
     printf 'preexisting=%s\n' "${BOX}"
 }
