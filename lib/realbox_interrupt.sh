@@ -12,7 +12,7 @@ _54_cleanup() {
         # Cleanup judges surviving processes, not the interrupted child's verdict.
         _54_reap cleanup || rc=$?
         [[ "${rc}" -ne 124 ]] || failed=1
-        if [[ "${rc}" -ne 0 ]]; then
+        if [[ "${rc}" -ne 0 && "${rc}" -ne 124 ]]; then
             log_info "interrupt cleanup: stopped child rc=${rc} (expected after termination)"
         fi
         _54_stop_session "${_54_PID}" || failed=1
@@ -43,12 +43,13 @@ _54_session_clear() {
 }
 
 _54_stop_session() {
-    local groups group
-    groups="$(_54_session_groups "$1")" || return 1
+    local group
+    # Avoid command substitution in EXIT cleanup after an interrupted read.
+    _54_session_groups "$1" >"${_54_W}/groups" || return 1
     while IFS= read -r group; do
         [[ -n "${group}" && "${group}" != "$1" ]] || continue
         verify_stop_group "${group}" TERM
-    done <<<"${groups}"
+    done <"${_54_W}/groups"
     verify_stop_group "$1" TERM
 }
 
@@ -166,7 +167,12 @@ _54_reap() {
     while kill -0 "${_54_PID}" 2>/dev/null; do
         if ((SECONDS >= deadline)); then
             guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
-            _54_stop_session "${_54_PID}" || return 124
+            verify_stop_group "${_54_PID}" KILL || return 124
+            if ! kill -0 "${_54_PID}" 2>/dev/null; then
+                local child_rc=0
+                wait "${_54_PID}" || child_rc=$?
+                log_info "interrupt ${context}: killed child rc=${child_rc}"
+            fi
             return 124
         fi
         sleep 0.05

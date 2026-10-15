@@ -340,6 +340,6 @@ STUB
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     assert_success
-    assert_line 'rc=143'
+    assert_line 'rc=1'
     assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
 }
