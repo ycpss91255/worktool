@@ -2,10 +2,12 @@
 # Event-driven supervisor for the real-machine 5.1 interrupt matrix.
 _54_W=""
 _54_PID=""
+_54_REAP_RESULT=""
 _54_POLL_FD=""
 
 _54_cleanup() {
     local rc=0 failed=0
+    local _54_IN_CLEANUP=1
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
         # Terminating the owned child normally yields a signal exit status.
@@ -164,23 +166,55 @@ _54_now_ms() {
     printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
 }
 
+_54_record_wait() {
+    local child_rc=0
+    [[ -n "${_54_REAP_RESULT}" ]] || _54_REAP_RESULT=0
+    wait "${_54_PID}" || child_rc=$?
+    if [[ "${_54_REAP_RESULT}" -eq 124 ]]; then
+        log_info "interrupt $1: killed child rc=${child_rc}"
+    else
+        _54_REAP_RESULT="${child_rc}"
+    fi
+}
+
+# EXIT cleanup already ignores signals; keep its trap state untouched.
+_54_collect_status() {
+    if [[ "${_54_IN_CLEANUP:-0}" == 1 ]]; then
+        _54_record_wait "$1"
+        return
+    fi
+    local saved="" line interrupted=""
+    trap -p INT TERM HUP >"${_54_W}/signals" || return 1
+    while IFS= read -r line; do saved+="${line}"$'\n'; done <"${_54_W}/signals"
+    trap 'interrupted=INT' INT
+    trap 'interrupted=TERM' TERM
+    trap 'interrupted=HUP' HUP
+    # The child has exited. Defer signal exits until its wait is recorded.
+    _54_record_wait "$1"
+    eval "${saved}"
+    if [[ -n "${interrupted}" ]]; then
+        kill -s "${interrupted}" "${BASHPID}"
+    fi
+}
+
 # Only reap after observing exit: wait itself has no timeout option.
 _54_reap() {
     local context="$1" deadline=$((SECONDS + TIMEOUT_SHORT))
+    [[ -z "${_54_REAP_RESULT}" ]] || return "${_54_REAP_RESULT}"
     while kill -0 "${_54_PID}" 2>/dev/null; do
         if ((SECONDS >= deadline)); then
+            _54_REAP_RESULT=124
             guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
             verify_stop_group "${_54_PID}" KILL || return 124
             if ! kill -0 "${_54_PID}" 2>/dev/null; then
-                local child_rc=0
-                wait "${_54_PID}" || child_rc=$?
-                log_info "interrupt ${context}: killed child rc=${child_rc}"
+                _54_collect_status "${context}" || return 124
             fi
             return 124
         fi
         sleep 0.05
     done
-    wait "${_54_PID}"
+    _54_collect_status "${context}" || return 1
+    return "${_54_REAP_RESULT}"
 }
 
 _54_cell() {
@@ -192,6 +226,7 @@ _54_cell() {
     [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
     local started signalled
     started="$(_54_now_ms)"
+    _54_REAP_RESULT=""
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
