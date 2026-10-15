@@ -8,6 +8,7 @@
 source "${REPO_ROOT}/lib/config_backup.sh"
 CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf init-log)
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
+CFGBK_PARENT_CHAIN_NAMES=(init-log)
 
 cfgbk_file_of() {
     case "$1" in
@@ -25,6 +26,7 @@ cfgbk_dir_of() {
         ghostty | ghostty-modern) printf '%s/ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox\n' "${CFGBK_C}" ;;
+        # Its whole absent parent chain is restored after all managed files.
         init-log) printf '\n' ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac

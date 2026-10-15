@@ -64,6 +64,9 @@ CFGBK_NAMES=(ghostty worktool tmux-conf)
 # claim anyone can make about it.
 CFGBK_USER_NAMES=(ghostty tmux-conf)
 
+# Acceptance can opt individual files into absent parent-chain tracking.
+CFGBK_PARENT_CHAIN_NAMES=()
+
 CFGBK_C=""
 CFGBK_H=""
 CFGBK_B=""
@@ -366,6 +369,11 @@ _cfgbk_backup_parent_dirs() {
 _cfgbk_backup_dirs() {
     local _n _p
     : >"${CFGBK_B}/directories" || return 1
+    : >"${CFGBK_B}/absent-directories" || return 1
+    for _n in "${CFGBK_PARENT_CHAIN_NAMES[@]}"; do
+        _p="$(cfgbk_file_of "${_n}")" || return 1
+        _cfgbk_backup_missing_parents "${_p}" || return 1
+    done
     for _n in "${CFGBK_NAMES[@]}"; do
         _p="$(cfgbk_file_of "${_n}")" || return 1
         _cfgbk_backup_parent_dirs "${_p}" || return 1
@@ -376,10 +384,39 @@ _cfgbk_backup_dirs() {
     done
 }
 
+# Keep deepest-first NUL paths so restore can use rmdir without recursion.
+_cfgbk_backup_missing_parents() {
+    local _p="${1%/*}"
+    [[ ! -d "${_p%/*}" ]] || return 0
+    while [[ ! -e "${_p}" && ! -L "${_p}" ]]; do
+        printf '%s\0' "${_p}" >>"${CFGBK_B}/absent-directories" || return 1
+        _p="${_p%/*}"
+        _p="${_p:-/}"
+    done
+}
+
+_cfgbk_restore_missing_parents() {
+    local _p _bad=0
+    # Backups published before parent-chain tracking have no such record.
+    [[ -e "${CFGBK_B}/absent-directories" ]] || return 0
+    while IFS= read -r -d '' _p; do
+        if [[ -d "${_p}" && ! -L "${_p}" ]]; then
+            if ! rmdir -- "${_p}"; then _bad=1; fi
+        fi
+        if [[ -e "${_p}" || -L "${_p}" ]]; then
+            guard_fail "originally absent directory still present: ${_p}"
+            _bad=1
+        fi
+    done <"${CFGBK_B}/absent-directories"
+    [[ -z "${_p}" ]] || return 1
+    return "${_bad}"
+}
+
 # Called after all file restores: deleting a new directory can also change
 # an existing ancestor. A failed timestamp restore must fail restore-ok.
 cfgbk_restore_dirs() {
-    local _p _mtime _got
+    local _p _mtime _got _bad=0
+    _cfgbk_restore_missing_parents || _bad=1
     [[ -s "${CFGBK_B}/directories" ]] \
         || { guard_fail "directory mtime backup missing"; return 1; }
     while IFS= read -r -d '' _p; do
@@ -394,7 +431,8 @@ cfgbk_restore_dirs() {
         fi
     done <"${CFGBK_B}/directories"
     [[ -z "${_p}" ]] || { guard_fail "incomplete directory mtime backup"; return 1; }
-    cfgbk_dirs_ok
+    cfgbk_dirs_ok || _bad=1
+    return "${_bad}"
 }
 
 cfgbk_dirs_ok() {
