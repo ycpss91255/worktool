@@ -5,20 +5,24 @@ _54_PID=""
 _54_POLL_FD=""
 
 _54_cleanup() {
-    local rc=0
+    local rc=0 failed=0
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
         # Terminating the owned child normally yields a signal exit status.
         # Cleanup judges surviving processes, not the interrupted child's verdict.
-        wait "${_54_PID}" || rc=$?
-        if [[ "${rc}" -ne 0 ]]; then
+        _54_reap cleanup || rc=$?
+        [[ "${rc}" -ne 124 ]] || failed=1
+        if [[ "${rc}" -ne 0 && "${rc}" -ne 124 ]]; then
             log_info "interrupt cleanup: stopped child rc=${rc} (expected after termination)"
         fi
-        _54_stop_session "${_54_PID}"
+        _54_stop_session "${_54_PID}" || failed=1
         _54_PID=""
     fi
     if [[ -n "${_54_POLL_FD}" ]]; then exec {_54_POLL_FD}>&-; fi
-    [[ -z "${_54_W}" ]] || rm -rf -- "${_54_W}"
+    if [[ -n "${_54_W}" ]]; then
+        rm -rf -- "${_54_W}" || failed=1
+    fi
+    return "${failed}"
 }
 
 # timeout gives commands their own groups within the child's private session.
@@ -41,13 +45,15 @@ _54_session_clear() {
 }
 
 _54_stop_session() {
-    local groups group
-    groups="$(_54_session_groups "$1")" || return 1
+    local group rc=0
+    # Avoid command substitution in EXIT cleanup after an interrupted read.
+    _54_session_groups "$1" >"${_54_W}/groups" || return 1
     while IFS= read -r group; do
         [[ -n "${group}" && "${group}" != "$1" ]] || continue
-        verify_stop_group "${group}" TERM
-    done <<<"${groups}"
-    verify_stop_group "$1" TERM
+        verify_stop_group "${group}" TERM || rc=1
+    done <"${_54_W}/groups"
+    verify_stop_group "$1" TERM || rc=1
+    return "${rc}"
 }
 
 _54_comments() {
@@ -158,6 +164,25 @@ _54_now_ms() {
     printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
 }
 
+# Only reap after observing exit: wait itself has no timeout option.
+_54_reap() {
+    local context="$1" deadline=$((SECONDS + TIMEOUT_SHORT))
+    while kill -0 "${_54_PID}" 2>/dev/null; do
+        if ((SECONDS >= deadline)); then
+            guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
+            verify_stop_group "${_54_PID}" KILL || return 124
+            if ! kill -0 "${_54_PID}" 2>/dev/null; then
+                local child_rc=0
+                wait "${_54_PID}" || child_rc=$?
+                log_info "interrupt ${context}: killed child rc=${child_rc}"
+            fi
+            return 124
+        fi
+        sleep 0.05
+    done
+    wait "${_54_PID}"
+}
+
 _54_cell() {
     local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
     dir="${_54_W}/${phase}-${signal}"
@@ -183,7 +208,8 @@ _54_cell() {
     fi
     local child_rc=0
     _54_wait || rc=1
-    wait "${_54_PID}" || child_rc=$?
+    _54_reap "${phase} ${signal}" || child_rc=$?
+    [[ "${child_rc}" -ne 124 ]] || rc=1
     _54_assert "${capture}" "${dir}" "${child_rc}" "${expected}" || rc=1
     _54_session_clear "${_54_PID}" || rc=1
     if [[ "${rc}" -ne 0 ]]; then

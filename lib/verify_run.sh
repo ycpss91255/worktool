@@ -74,7 +74,12 @@ verify_stop_group() {
     if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
         : # The process group may already have exited.
     fi
+    local deadline=$((SECONDS + 1))
     while verify_group_running "${monitor}"; do
+        if ((SECONDS >= deadline)); then
+            log_error "verify_stop_group: post-KILL wait deadline exceeded (pgid=${monitor})"
+            return 1
+        fi
         sleep 0.01
     done
 }
@@ -83,7 +88,7 @@ verify_stop_group() {
 verify_group_running() {
     local file row status _parent group rest
     for file in /proc/[0-9]*/stat; do
-        if ! IFS= read -r row <"${file}" 2>/dev/null; then
+        if ! IFS= read -r row 2>/dev/null <"${file}"; then
             continue
         fi
         read -r status _parent group rest <<<"${row##*) }"

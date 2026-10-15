@@ -23,7 +23,7 @@ STUB
     chmod +x "${MATRIX_STATE}/bin/gh"
     export PATH="${MATRIX_STATE}/bin:${PATH}"
     unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
-    REALBOX="${REPO_ROOT}/script/verify/realbox.sh"
+    _copy_matrix_repo
 }
 
 @test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
@@ -109,12 +109,12 @@ _copy_matrix_repo() {
     mkdir -p "${repo}"
     cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${repo}/"
     REALBOX="${repo}/script/verify/realbox.sh"
+    sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
 }
 
 @test "5.4: a copy without signal forwarding turns the interrupt cell red" {
     _copy_matrix_repo
     sed -i "s/verify_stop_group \"\${monitor}\" \"\${interrupted}\"/if [[ \"\${TMPDIR}\" != *\"\${FORWARDING_DEGRADE_CELL}\"* ]]; then verify_stop_group \"\${monitor}\" \"\${interrupted}\"; fi/" "${MATRIX_STATE}/repo/lib/verify_run.sh"
-    sed -i 's/TIMEOUT_LONG=1800/TIMEOUT_LONG=8/; s/TIMEOUT_SHORT=180/TIMEOUT_SHORT=3/' "${REALBOX}"
     local phase signal
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
@@ -176,19 +176,44 @@ STUB
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
 
-@test "5.4: outer interruption records the stopped child's nonzero status" {
+teardown() {
+    _matrix_stop_child
+}
+
+_matrix_stop_child() {
+    local pid
+    if [[ -f "${MATRIX_STATE}/child.pid" ]]; then
+        read -r pid <"${MATRIX_STATE}/child.pid"
+        # shellcheck source=lib/verify_run.sh
+        source "${LIB_DIR}/verify_run.sh"
+        verify_stop_group "${pid}" TERM
+    fi
+}
+
+_matrix_child_stub() {
     export SIGNAL_STATE="${MATRIX_STATE}"
     cat >"${MATRIX_STATE}/child" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+# A killed supervisor cannot close inherited test descriptors for us.
+exec </dev/null >/dev/null 2>&1
+for path in /proc/$$/fd/*; do
+    fd="${path##*/}"
+    if ((fd > 2)); then exec {fd}>&-; fi
+done
+deadline=$((SECONDS + 10))
 stop_sleep() {
     if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
         : # The background sleep may already have exited.
     fi
 }
 trap 'stop_sleep; exit 143' TERM
+printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
+sleep "${MATRIX_READY_DELAY:-0}"
 touch "${SIGNAL_STATE}/ready"
-while :; do sleep 0.1 & wait "$!"; done
+while ((SECONDS < deadline)); do sleep 0.1 & wait "$!"; done
+printf 'matrix child lifetime wait deadline exceeded\n' >&2
+exit 1
 STUB
     cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
 #!/usr/bin/env bash
@@ -196,6 +221,10 @@ set -euo pipefail
 exec /usr/bin/setsid bash "${MATRIX_STATE}/child"
 STUB
     chmod +x "${MATRIX_STATE}/bin/setsid"
+}
+
+@test "5.4: outer interruption records the stopped child's nonzero status" {
+    _matrix_child_stub
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     assert_success
@@ -203,6 +232,39 @@ STUB
     assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: killed supervisor leaves no child holding the test pipe" {
+    export MATRIX_READY_DELAY=6
+    _matrix_child_stub
+    local started="${SECONDS}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=137'
+    local pid path target parent group session state rest row
+    read -r pid <"${MATRIX_STATE}/child.pid"
+    # Inspect before teardown can signal the orphan. Bash may keep its script fd.
+    for path in /proc/"${pid}"/fd/*; do
+        if ! target="$(readlink "${path}")"; then continue; fi
+        [[ "${target}" != pipe:* ]]
+    done
+    # shellcheck source=lib/verify_run.sh
+    source "${LIB_DIR}/verify_run.sh"
+    while verify_group_running "${pid}" && ((SECONDS - started < 14)); do
+        sleep 0.05
+    done
+    run verify_group_running "${pid}"
+    assert_failure 1
+    [ "$((SECONDS - started))" -lt 14 ]
+    # Include descendants in other process groups within the child's session.
+    for path in /proc/[0-9]*/stat; do
+        if ! IFS= read -r row 2>/dev/null <"${path}"; then continue; fi
+        read -r state parent group session rest <<<"${row##*) }"
+        if [[ "${session}" == "${pid}" && "${parent}" == 1 ]]; then
+            [[ "${state}" == Z || "${state}" == X ]]
+        fi
+    done
 }
 
 @test "5.4: a preexisting box reports the refused cell and remains untouched" {
@@ -269,4 +331,61 @@ STUB
     refute_output --partial 'interrupt-matrix: PASS'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: a missing observable event fails within the unit deadline" {
+    _matrix_child_stub
+    sed -i 's/SECONDS + 10/SECONDS + 30/' "${MATRIX_STATE}/child"
+    local started="${SECONDS}"
+    run timeout --kill-after=1 12 "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: observable event missed'
+    assert_line 'interrupt-matrix: FAIL'
+    [ "$((SECONDS - started))" -lt 12 ]
+}
+
+@test "5.4: a failed observer cannot leave the cell waiting forever for its child" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    sed -i '/^_54_poll() {/a\    return 1' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    run timeout --kill-after=1 8 "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt assemble INT: child reap wait deadline exceeded'
+    assert_line 'interrupt-matrix: FAIL'
+}
+
+@test "5.4: outer cleanup bounds the wait for a TERM-ignoring child" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=1'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
+
+@test "5.4: matrix fixture residents expire without supervisor signals" {
+    local phase
+    for phase in assemble bench; do
+        mkdir -p "${TMPDIR}/assemble-INT/cell"
+        run timeout --kill-after=1 5 env MATRIX_FIXTURE_TIMEOUT=1 \
+            TMPDIR="${TMPDIR}/assemble-INT/cell" bash \
+            "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" --yes "${phase}" "${HOME}/box"
+        assert_failure 1
+        assert_line --partial "matrix fixture ${phase}: resident wait deadline exceeded"
+    done
+}
+
+@test "5.4: removing matrix evidence remains part of successful cleanup" {
+    cat >"${MATRIX_STATE}/bin/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+target="${*: -1}"
+if [[ "${target##*/}" == wt-m3-54.* ]]; then exit 1; fi
+exec /bin/rm "$@"
+STUB
+    chmod +x "${MATRIX_STATE}/bin/rm"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    refute_output --partial 'interrupt-matrix: PASS'
 }
