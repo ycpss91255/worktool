@@ -184,6 +184,7 @@ _matrix_stop_child() {
     local pid
     if [[ -f "${MATRIX_STATE}/child.pid" ]]; then
         read -r pid <"${MATRIX_STATE}/child.pid"
+        # shellcheck source=lib/verify_run.sh
         source "${LIB_DIR}/verify_run.sh"
         verify_stop_group "${pid}" TERM
     fi
@@ -243,8 +244,10 @@ STUB
     _matrix_stop_child
     local pid
     read -r pid <"${MATRIX_STATE}/child.pid"
+    # shellcheck source=lib/verify_run.sh
     source "${LIB_DIR}/verify_run.sh"
-    ! verify_group_running "${pid}"
+    run verify_group_running "${pid}"
+    assert_failure 1
 }
 
 @test "5.4: a preexisting box reports the refused cell and remains untouched" {
@@ -347,11 +350,10 @@ STUB
 @test "5.4: matrix fixture residents expire without supervisor signals" {
     local phase
     for phase in assemble bench; do
+        mkdir -p "${TMPDIR}/assemble-INT/cell"
         run timeout --kill-after=1 5 env MATRIX_FIXTURE_TIMEOUT=1 \
-            TMPDIR="${TMPDIR}/assemble-INT/cell" bash -c '
-                mkdir -p "${TMPDIR}"
-                exec bash "$1" --yes "$2" "$HOME/box"
-            ' _ "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" "${phase}"
+            TMPDIR="${TMPDIR}/assemble-INT/cell" bash \
+            "${BATS_TEST_DIRNAME}/fixture/realbox_matrix_just.sh" --yes "${phase}" "${HOME}/box"
         assert_failure 1
         assert_line --partial "matrix fixture ${phase}: resident wait deadline exceeded"
     done
