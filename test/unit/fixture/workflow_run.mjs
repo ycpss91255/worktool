@@ -40,6 +40,7 @@ const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 // default. Individual scenarios override either reply (including null).
 const replies = {
   ...(process.env.WORKFLOW_JOB_REPLIES ? {
+    'red-record:': { evidence: JSON.stringify({ body: '## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```', comments: [] }) },
     'gates:': { state: 'green', detail: 'success' },
     'publish:Implement': { pr: 7, sha: 'abc' },
     'publish:Fix': { pr: 7, sha: 'def' },
@@ -132,7 +133,7 @@ const playJobResults = (role, prompt) => {
   return reply(role)
 }
 
-// Model the Review agent and its Codex child at the publication seam.
+// Model the deferred review publisher and its Codex child at the publication seam.
 const playHandoverReview = (prompt) => {
   const task = prompt.match(/BEGIN CODEX TASK\n([\s\S]*?)\nEND CODEX TASK/)
   const poster = task ? 'codex' : 'claude'
@@ -151,7 +152,7 @@ const playHandoverReview = (prompt) => {
     execFileSync('bash', [hook, poster], { input, stdio: ['pipe', 'pipe', 'pipe'] })
     const url = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
     ran.push({ cmd, poster, rc: 0 })
-    return { ...reply('review:'), url }
+    return { ...reply('independent-publish:'), reviewUrl: url }
   } catch (e) {
     ran.push({ cmd, poster, rc: e.status })
     return null
@@ -229,7 +230,7 @@ const agent = async (prompt, opts = {}) => {
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
   if (mode === 'exec-handover-snapshots') return playHandoverSnapshots(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)
-  if (mode === 'exec-handover' && role === 'review:') return playHandoverReview(prompt)
+  if (mode === 'exec-handover' && role === 'independent-publish:') return playHandoverReview(prompt)
   if (mode === 'exec-resume-push' && role.startsWith('ci:') && process.env.PL_ACTION === 'unpushed') {
     const wt = `${JSON.parse(argsJson).repoDir}/../worktree/n`
     execFileSync('git', ['-C', wt, 'commit', '-qm', 'fix: CI repair', '-m', 'Refs: #396', '--allow-empty'])

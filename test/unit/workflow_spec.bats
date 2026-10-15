@@ -355,6 +355,9 @@ _pl_run() {
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
+    if [[ $# -ge 3 ]]; then
+        replies="$(jq -c --argjson record "$3" '.["red-record:"] = $record' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
@@ -3001,13 +3004,31 @@ _handover_replies() {
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
-        "review:":{line:("交出判定：可交出 head=" + ("a" * 40)),url:"https://github.com/o/r/pull/7#issuecomment-1"},
+        "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
         "snapshot:":{snapshot:{"fixture-path":{type:"absent"}}},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
-        "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],url:"https://github.com/o/r/pull/7#issuecomment-4"},
+        "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
         "machine:":{file:"machine.md"},"evidence:":{evidence:"evidence.md",draft:"ready.md"}} | ."sync:".checks=."head:".checks'
+}
+
+@test "milestone-handover defers every PR comment until both independent reports are ready (#603)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        (.calls | map(.role)) as $stages |
+        ($stages | index("independent-publish:")) as $publish |
+        .result.status == "prepared" and
+        ($stages | index("independent-codex:") < $publish and index("independent-claude-cleanup:") < $publish) and
+        ([.calls[:$publish][] | select(.prompt | test("gh pr comment|gh pr review|gh api.*comments"))] | length) == 0 and
+        (.calls[] | select(.role == "independent-publish:") | .prompt |
+            index("independent-codex-report.md\u0027`") < index("Read both posted comments back") and
+            index("independent-claude-report.md\u0027`") < index("Read both posted comments back") and
+            index("Read both posted comments back") < index("BEGIN CODEX TASK") and
+            index("END CODEX TASK") < index("write and post independent-verdict.md") and
+            contains("Post the existing codex.md verbatim yourself") and
+            contains("Claude must never post or retype the codex comment"))' <<<"${output}"
+    assert_success
 }
 
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
@@ -3016,7 +3037,7 @@ _handover_replies() {
         [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
-    jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("--body-file")' <<<"${output}"
+    jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("local scratch only")' <<<"${output}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
     jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
     jq -e '.calls[0].prompt | contains("git worktree list --porcelain") and contains("origin/main") and contains("--no-ff") and contains("-F") and contains("Refs:")' <<<"${output}"
@@ -3065,8 +3086,7 @@ _handover_replies() {
         '."head:".checks[0].conclusion="FAILURE"' \
         '."head:".checks += [{name:"extra",status:"IN_PROGRESS",conclusion:null}]' \
         '."review:".line="交出判定：可交出 head=old"' \
-        '."review:".line="prefix 交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
-        '."review:".url="https://github.com/o/r/pull/7#issuecomment-1junk"'; do
+        '."review:".line="prefix 交出判定：可交出 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'; do
         _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(jq "${mutation}" <<<"${replies}")"
         jq -e '.result.status == "head-blocked" or .result.status == "review-failed"' <<<"${output}"
         jq -e '[.calls[].role] | index("machine:") == null' <<<"${output}"
@@ -3966,4 +3986,39 @@ _handover_snapshot_run() {
     run jq -e '.result.status == "prepared" and
         ([.calls[].role] | index("independent-claude:") != null)' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop blocks missing RED records before codex review (#607)" {
+    local record json
+    for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            (.result.blockingLeft | join(" ") | contains("RED")) and
+            ([.calls[].role | startswith("red-record:")] | any) and
+            ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+        assert_success
+    done
+}
+
+@test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
+    local body comments record json expected
+    for body in '## RED exemption' '## RED exemption
+Reason:   ' '## RED exemption
+Reason: 僅修正文句，沒有行為變更。'; do
+        for comments in '[]' '[{"body":"## RED exemption\nReason: docs only"}]'; do
+            record="$(jq -cn --arg body "$body" --argjson comments "$comments" '{evidence:({body:$body,comments:$comments}|tojson)}')"
+            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+            assert_success
+            json="$output"
+            expected=blocked
+            if [[ "$body" == *'Reason: 僅'* ]]; then expected=mergeable; fi
+            run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+                (if $expected == "mergeable" then
+                    ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
+                else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+            assert_success
+        done
+    done
 }

@@ -112,6 +112,26 @@ CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR he
 接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
+## PR 上的 RED 紀錄（#607）
+
+實作方在 GREEN 之前保存實際 RED 輸出至該 worktree 的
+`.agents/state/red-evidence.md`，並在完成報告附上原文。發布階段將其逐字貼到
+PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 RED。
+紀錄使用 `## RED` 標題，下方的同一個 fenced code block 包含完整
+`just test <tier> <spec> [--filter ...]` 指令與實際失敗的 `not ok <number> ...` TAP 行。
+不能在 GREEN 後虛構或重編 RED 證據。
+
+full 模式每輪獨立審查前，以 `gh pr view --json body,comments` 讀取 PR 原文，
+由 workflow 程式檢查 RED 紀錄。缺少紀錄、讀取失敗或資料格式錯誤時，
+直接回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
+也不會宣告 mergeable。補上原始證據後可接續同一 PR。
+`milestone-fanout` 呼叫同一份 `pr-loop`，因此沿用此檢查。
+
+沒有行為變更（例如純文件修正）的 PR，可在 **PR 說明**使用
+`## RED exemption`，下一行寫 `Reason: <沒有行為變更的具體理由>`。
+理由必須非空，不能只在留言宣告豁免；審查方仍須核對理由是否符合 diff。
+此檢查確認紀錄存在，不驗證輸出真偽，也不取代審查方對 TDD 的判斷。
+
 ## 實作暫時性錯誤
 
 full 模式的 implement 階段會讀取實作方的結構化完成狀態與失敗原因；codex 非零退出時，原因包含退出碼、報告與 `implement.md.log` 的錯誤輸出。遇到 `at capacity`、rate limit 或 HTTP 5xx（含 HTTP 版本格式）時，初次執行後最多再重試三次，分別由低 effort agent 透過 job start／wait 等待 30、60、90 秒，不直接執行前景長 sleep。每次都使用同一個 worktree、保留既有工作，不再次建立分支或 worktree，並附上接續 brief 與前次輸出。成功後繼續 Locate／CI；耗盡重試、非暫時性錯誤或沒有失敗原因時，停止並在 `blockingLeft` 回報原因，不進入 CI／審查。light 模式維持原有失敗回報，不套用 codex 重試。
@@ -458,7 +478,8 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    以 `rc=0; cd <repoDir> && timeout 570 codex exec resume --skip-git-repo-check -o <scratch>/codex-result.json <session-id> - < <scratch>/codex-continue.md >> <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`
    接續同一個 session，最多接續 25 次；仍為 124 或讀不到 session id 即失敗並回報，不從頭重啟、不轉背景。
    禁止 `setsid`、`nohup`、`disown`、結尾 `&`、`run_in_background`、`bash -c` 包裝與先寫 run script 再執行（#453）。
-   codex 子程序以自己的 hook 身分發布原始結果；Claude 只轉交結果，不代貼。
+   codex 子程序先把原始結果保留在本地 scratch，不發布 PR 留言；
+   兩份獨立報告都發布並核對後，才由 Codex 以自己的 hook 身分發布原始結果，Claude 不代貼。
    留言以 `[codex]` 開頭且包含一行
    `交出判定：可交出 head=<full sha>` 或 `交出判定：不可交出 head=<full sha>`，列出阻擋項。
    非零結束、空結果、格式不符或 head 改變均停止。
@@ -498,7 +519,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    明確保留給維護者的人工操作不單獨阻擋，但不能把 agent 可取得的證據缺口改列人工待驗。
    workflow 以 `[claude]` 身分前綴分別原文貼出兩份完整報告，逐次確認 frozen head，
    讀回留言核對原文；不改寫報告，含本機路徑或核准片語的報告拒絕發布。
-   再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
+   本輪在此之前不發布任何 PR 留言，兩位獨立驗收者只能讀到前幾輪既有留言。
+   接著由 Codex publisher 透過自己的 hook 原文發布本地 `codex.md`，核對原文與 frozen head，
+   Claude 不代貼或重寫；再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
    原 Review 的負面判定仍阻擋；最終正面判定必須在獨立驗收之後，不能只引用早期 Review。
    任一發布或核對失敗即停止，不宣告就緒。
 9. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
