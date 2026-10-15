@@ -386,12 +386,18 @@ _cfgbk_backup_dirs() {
 
 # Keep deepest-first NUL paths so restore can use rmdir without recursion.
 _cfgbk_backup_missing_parents() {
-    local _p="${1%/*}"
+    local _p="${1%/*}" _missing=0 _mtime
     while [[ ! -e "${_p}" && ! -L "${_p}" ]]; do
         printf '%s\0' "${_p}" >>"${CFGBK_B}/absent-directories" || return 1
+        _missing=1
         _p="${_p%/*}"
         _p="${_p:-/}"
     done
+    [[ "${_missing}" -eq 1 ]] || return 0
+    # Removing the new chain changes its first existing ancestor's mtime.
+    [[ -d "${_p}" ]] || { guard_fail "init-log ancestor is not a directory: ${_p}"; return 1; }
+    _mtime="$(stat -L -c %y -- "${_p}")" || return 1
+    printf '%s\0%s\0' "${_p}" "${_mtime}" >>"${CFGBK_B}/directories"
 }
 
 _cfgbk_restore_missing_parents() {
@@ -406,7 +412,7 @@ _cfgbk_restore_missing_parents() {
             guard_fail "originally absent directory still present: ${_p}"
             _bad=1
         fi
-    done <"${CFGBK_B}/absent-directories"
+    done <"${CFGBK_B}/absent-directories" || return 1
     [[ -z "${_p}" ]] || return 1
     return "${_bad}"
 }

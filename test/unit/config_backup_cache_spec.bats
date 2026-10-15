@@ -76,3 +76,30 @@ setup() {
     assert_success
     assert_output 'leftover-dirs=0'
 }
+
+@test "#589: a fresh shell restores a missing external XDG cache chain through its existing ancestor" {
+    local ancestor="${BATS_TEST_TMPDIR}/external cache"
+    export XDG_CACHE_HOME="${ancestor}/nested/cache"
+    mkdir "${ancestor}"
+    printf 'user content\n' >"${ancestor}/keep"
+    touch -d '2001-01-01' "${ancestor}"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    mkdir -p "${XDG_CACHE_HOME}/worktool"
+    printf 'acceptance output\n' >"$(cfgbk_file_of init-log)"
+
+    run bash -euo pipefail -c '
+        source "$REPO_ROOT/lib/guard.sh"
+        source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+        cfgbk_paths
+        cfgbk_restore_all
+        cfgbk_report_leftover_dirs
+    '
+
+    assert_success
+    assert_output 'leftover-dirs=0'
+    assert [ ! -e "${ancestor}/nested" ]
+    assert_equal "$(cat "${ancestor}/keep")" 'user content'
+    assert_equal "$(stat -c %y "${ancestor}")" '2001-01-01 00:00:00.000000000 +0000'
+}
