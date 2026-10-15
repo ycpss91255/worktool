@@ -274,7 +274,7 @@ STUB
     _matrix_child_stub
     # Let the child finish before the driver interrupts the capture validation.
     sed -i 's/^touch .*/exit 143/' "${MATRIX_STATE}/child"
-    sed -i '/^_54_assert() {/a\\    touch "${SIGNAL_STATE}/ready"; sleep 0.5' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    sed -i "/^_54_assert() {/a\\    touch '${SIGNAL_STATE}/ready'; sleep 0.5" "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
     cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
 wait() {
     local rc=0

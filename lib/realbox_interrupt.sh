@@ -7,6 +7,7 @@ _54_POLL_FD=""
 
 _54_cleanup() {
     local rc=0 failed=0
+    local _54_IN_CLEANUP=1
     if [[ -n "${_54_PID}" ]]; then
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
         # Terminating the owned child normally yields a signal exit status.
@@ -165,13 +166,8 @@ _54_now_ms() {
     printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
 }
 
-# The child has exited. Defer signal exits until its single wait is recorded.
-_54_collect_status() {
-    local saved interrupted="" child_rc=0
-    saved="$(trap -p INT TERM HUP)" || return 1
-    trap 'interrupted=INT' INT
-    trap 'interrupted=TERM' TERM
-    trap 'interrupted=HUP' HUP
+_54_record_wait() {
+    local child_rc=0
     [[ -n "${_54_REAP_RESULT}" ]] || _54_REAP_RESULT=0
     wait "${_54_PID}" || child_rc=$?
     if [[ "${_54_REAP_RESULT}" -eq 124 ]]; then
@@ -179,6 +175,22 @@ _54_collect_status() {
     else
         _54_REAP_RESULT="${child_rc}"
     fi
+}
+
+# EXIT cleanup already ignores signals; keep its trap state untouched.
+_54_collect_status() {
+    if [[ "${_54_IN_CLEANUP:-0}" == 1 ]]; then
+        _54_record_wait "$1"
+        return
+    fi
+    local saved="" line interrupted=""
+    trap -p INT TERM HUP >"${_54_W}/signals" || return 1
+    while IFS= read -r line; do saved+="${line}"$'\n'; done <"${_54_W}/signals"
+    trap 'interrupted=INT' INT
+    trap 'interrupted=TERM' TERM
+    trap 'interrupted=HUP' HUP
+    # The child has exited. Defer signal exits until its wait is recorded.
+    _54_record_wait "$1"
     eval "${saved}"
     if [[ -n "${interrupted}" ]]; then
         kill -s "${interrupted}" "${BASHPID}"
