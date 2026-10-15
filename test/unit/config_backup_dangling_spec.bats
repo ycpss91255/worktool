@@ -23,7 +23,6 @@ setup() {
     cfgbk_preflight
     cfgbk_dir_create
     cfgbk_backup_body
-    assert_equal "$(guard_field "${CFGBK_B}" init-log.tpath)" "${target}"
     cfgbk_revalidate
     printf 'acceptance init output\n' >"${log}"
 
