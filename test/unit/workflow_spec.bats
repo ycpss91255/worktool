@@ -355,6 +355,9 @@ _pl_run() {
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
+    if [[ $# -ge 3 ]]; then
+        replies="$(jq -c --argjson record "$3" '.["red-record:"] = $record' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
@@ -3983,4 +3986,39 @@ _handover_snapshot_run() {
     run jq -e '.result.status == "prepared" and
         ([.calls[].role] | index("independent-claude:") != null)' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop blocks missing RED records before codex review (#607)" {
+    local record json
+    for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            (.result.blockingLeft | join(" ") | contains("RED")) and
+            ([.calls[].role | startswith("red-record:")] | any) and
+            ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+        assert_success
+    done
+}
+
+@test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
+    local body comments record json expected
+    for body in '## RED exemption' '## RED exemption
+Reason:   ' '## RED exemption
+Reason: 僅修正文句，沒有行為變更。'; do
+        for comments in '[]' '[{"body":"## RED exemption\nReason: docs only"}]'; do
+            record="$(jq -cn --arg body "$body" --argjson comments "$comments" '{evidence:({body:$body,comments:$comments}|tojson)}')"
+            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+            assert_success
+            json="$output"
+            expected=blocked
+            if [[ "$body" == *'Reason: 僅'* ]]; then expected=mergeable; fi
+            run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+                (if $expected == "mergeable" then
+                    ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
+                else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+            assert_success
+        done
+    done
 }
