@@ -69,6 +69,28 @@ setup() {
     done
 }
 
+@test "#588: backup refuses an indeterminate dangling init-log target path" {
+    local BOX=dev log
+    # shellcheck source=script/verify/config_backup_paths.sh
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    cfgbk_paths
+    mkdir -p "${HOME}/.cache/worktool"
+    log="$(cfgbk_file_of init-log)"
+    ln -s missing-init-log "${log}"
+    cfgbk_dir_create
+    # A resolver that succeeds without a path has not proved absence.
+    readlink() {
+        if [[ "$1" == -m && "${*: -1}" == "${log}" ]]; then return 0; fi
+        command readlink "$@"
+    }
+
+    run cfgbk_backup_body
+
+    assert_failure 1
+    assert [ ! -e "${CFGBK_B}/manifest" ]
+    assert [ -L "${log}" ]
+}
+
 @test "#576: leftover directory report skips other manifest states under errexit" {
     cfgbk_dir_create
     printf 'ghostty=absent-file\nworktool=absent-dir\n' >"${CFGBK_B}/manifest"

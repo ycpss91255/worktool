@@ -249,6 +249,8 @@ _cfgbk_backup_link_target() {
             || { guard_fail "${_n}: cannot determine whether the link target is absent"; return 1; }
         _tp="$(readlink -m -- "${_p}")" \
             || { guard_fail "${_n}: cannot resolve the missing link target"; return 1; }
+        [[ "${_tp}" == /* ]] \
+            || { guard_fail "${_n}: missing link target did not resolve to an absolute path"; return 1; }
         # An empty checksum records absence separately from the target path.
         _cfgbk_manifest_add "${_n}.tpath=${_tp}" "${_n}.tsha="
         return
@@ -776,6 +778,7 @@ cfgbk_report_user_content() {
 _cfgbk_missing_link_target() {
     local _target _ancestor
     _target="$(readlink -m -- "$1")" || return 1
+    [[ "${_target}" == /* ]] || return 1
     [[ ! -e "${_target}" && ! -L "${_target}" ]] || return 1
     _ancestor="${_target%/*}"
     _ancestor="${_ancestor:-/}"
