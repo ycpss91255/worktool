@@ -468,7 +468,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    初始化失敗即停止，不進入 Findings。
 4. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
    驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
-   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
+   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。Findings 只以 structured output 的
+   `content` 字串回傳總帳，由專責產物步驟執行固定 Bash／Node 命令寫入 `findings.md`，
+   讀回確認非空且逐 byte 相同後才進入 Review；失敗回報檔名並停止。
 5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    每次 codex 呼叫都是一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值；

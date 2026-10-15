@@ -3003,7 +3003,7 @@ _handover_replies() {
     jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
-        "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{file:"findings.md"},
+        "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{content:"findings: output\n"},"artifact-write:":{ok:true},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
         "snapshot:":{snapshot:{"fixture-path":{type:"absent"}}},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
@@ -3034,8 +3034,8 @@ _handover_replies() {
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review","review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
-        ([.calls[0:][] | .schema] | all(. == null))' <<<"${output}"
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review","review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
+        ([.calls[] | select(.role != "findings:") | .schema] | all(. == null))' <<<"${output}"
     jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("local scratch only")' <<<"${output}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
@@ -3390,12 +3390,12 @@ _pl_retry_run() {
 @test "milestone-handover stages write only their own artifacts and preserve scratch (#423)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     local json="${output}"
-    run jq -e '[.calls[] | select(.role | test("^(findings|review|machine|evidence):"))] |
-        length == 4 and all(.prompt | contains("Only create or overwrite your own files:") and
+    run jq -e '[.calls[] | select(.role | test("^(review|machine|evidence):"))] |
+        length == 3 and all(.prompt | contains("Only create or overwrite your own files:") and
             contains("Never delete or recreate the scratch directory") and
             (contains("Create this directory and overwrite") | not))' <<<"${json}"
     assert_success
-    jq -e '.calls[] | select(.role == "findings:") | .prompt | contains("own files: findings.md")' <<<"${json}"
+    jq -e '.calls[] | select(.role == "findings:") | .prompt | contains("do not write report files")' <<<"${json}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("own files: codex*")' <<<"${json}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("own files: machine.md and machine/")' <<<"${json}"
     jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("own files: evidence.md and ready.md")' <<<"${json}"
@@ -3427,7 +3427,7 @@ _pl_retry_run() {
     assert_success
     json="${output}"
     run jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-check:Review",
+        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review",
             "review:","artifact-check:Machine","machine:","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","independent-publish:","artifact-check:Evidence","evidence:","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
@@ -4021,4 +4021,22 @@ Reason: 僅修正文句，沒有行為變更。'; do
             assert_success
         done
     done
+}
+
+@test "milestone-handover persists Findings returned as content without agent file writes (#612)" {
+    local root="${BATS_TEST_TMPDIR}/content only" args replies json
+    args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$(_handover_replies | jq --arg d "$root" '
+        ."sync:".repoDir=$d | ."findings:"={content:"F1 中文\n\nLiteral `code`, $HOME, quote: '\''\n"}')"
+    mkdir -p "$root"
+    HANDOVER_CONTENT_ONLY=1 run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$args" "$replies" exec-handover-files
+    assert_success
+    json="$output"
+    jq -c '{status:.result.status,report:.result.report}' <<<"$json"
+    run jq -e '.result.status == "prepared"' <<<"$json"
+    assert_success
+    run jq -e --rawfile actual "$root/.agents/state/milestone-handover-7-$(printf 'a%.0s' {1..40})/findings.md" \
+        '."findings:".content == $actual' <<<"$replies"
+    assert_success
 }

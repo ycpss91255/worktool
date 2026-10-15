@@ -161,7 +161,14 @@ const playHandoverReview = (prompt) => {
 
 // Exercise handover filesystem commands with deterministic stage writers.
 const playHandoverFiles = (role, prompt) => {
-  if (role === 'scratch:' || role.startsWith('artifact-check:')) {
+  if (role === 'artifact-check:Review' && process.env.HANDOVER_LOSS?.startsWith('findings:')) {
+    const [, file, kind] = process.env.HANDOVER_LOSS.split(':')
+    const args = JSON.parse(argsJson)
+    const path = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}/${file}`
+    if (kind === 'missing') unlinkSync(path)
+    else writeFileSync(path, '')
+  }
+  if (role === 'scratch:' || role.startsWith('artifact-check:') || role.startsWith('artifact-write:')) {
     const result = play(prompt)
     if (!result.ok) return null
     return role === 'scratch:' ? reply(role) : result.stdout
@@ -173,12 +180,12 @@ const playHandoverFiles = (role, prompt) => {
     'independent-publish:': ['independent-codex-report.md', 'independent-claude-report.md', 'independent-verdict.md'],
     'machine:': ['machine.md'], 'evidence:': ['evidence.md', 'ready.md'],
   }[role]
-  if (files) {
+  if (files && !(role === 'findings:' && process.env.HANDOVER_CONTENT_ONLY)) {
     mkdirSync(scratch, { recursive: true })
     if (role === 'machine:') mkdirSync(`${scratch}/machine`, { recursive: true })
     for (const file of files) writeFileSync(`${scratch}/${file}`, `${role} output\n`)
     const [stage, file, kind] = (process.env.HANDOVER_LOSS || '').split(':')
-    if (role === `${stage}:`) {
+    if (role === `${stage}:` && stage !== 'findings') {
       if (kind === 'missing') unlinkSync(`${scratch}/${file}`)
       else writeFileSync(`${scratch}/${file}`, '')
     }
