@@ -40,6 +40,7 @@ const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 // default. Individual scenarios override either reply (including null).
 const replies = {
   ...(process.env.WORKFLOW_JOB_REPLIES ? {
+    'red-record:': { evidence: JSON.stringify({ body: '## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```', comments: [] }) },
     'gates:': { state: 'green', detail: 'success' },
     'publish:Implement': { pr: 7, sha: 'abc' },
     'publish:Fix': { pr: 7, sha: 'def' },

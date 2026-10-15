@@ -355,6 +355,9 @@ _pl_run() {
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
+    if [[ $# -ge 3 ]]; then
+        replies="$(jq -c --argjson record "$3" '.["red-record:"] = $record' <<<"${replies}")"
+    fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
         "${replies}"
@@ -3983,4 +3986,18 @@ _handover_snapshot_run() {
     run jq -e '.result.status == "prepared" and
         ([.calls[].role] | index("independent-claude:") != null)' <<<"${output}"
     assert_success
+}
+
+@test "pr-loop blocks missing RED records before codex review (#607)" {
+    local record json
+    for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            (.result.blockingLeft | join(" ") | contains("RED")) and
+            ([.calls[].role | startswith("red-record:")] | any) and
+            ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+        assert_success
+    done
 }

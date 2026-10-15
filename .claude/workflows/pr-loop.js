@@ -121,13 +121,16 @@ const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
 }
-const TDD_IMPLEMENT_RULES = `Treat the issue 驗收 section as the approved behaviour list; do not ask the maintainer to approve it again. Work in vertical slices: each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit. Never put a batch of tests in one commit.`
+const TDD_IMPLEMENT_RULES = `Treat the issue 驗收 section as the approved behaviour list; do not ask the maintainer to approve it again. Work in vertical slices: each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit. Never put a batch of tests in one commit. Save the actual RED output before implementing GREEN in ${WT}/.agents/state/red-evidence.md and include it verbatim in your final report: a ## RED section with a fenced text block containing the exact just test command and failing TAP lines (not ok <number> ...). Never invent or reconstruct RED output after GREEN. Record this section in the PR description or a PR comment before review.`
 const TDD_REVIEW_RULES = `Check that the commit history is vertical slices and that tests verify behaviour through the public interface. Structure- or implementation-detail tests are blocking.`
 const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. Never write a "[codex]" line yourself.`
 const CODEX_RULES = `${COMMON_GUARDRAILS.replace(LOCAL_TEST_RULES, 'Run only slice specs and just test lint. In the TDD loop run only the slice\'s spec with just test <tier> <spec> [--filter]. Never run a whole tier locally; CI runs every tier. Do not run long gates or any waits, including job.sh wait.').replace(`(${GATES})`, '(slice specs and lint)')} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
+const RED_PUBLICATION_RULES = `Copy the actual ## RED section (exact just test command and failing TAP lines) verbatim from ${WT}/.agents/state/red-evidence.md or the implementer report at ${IMPLEMENT_OUT} into the PR description or a new PR comment with your own agent prefix. Never substitute GREEN gate tails or fabricate evidence. If evidence is unavailable, stop and report blocked.`
+
 const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
+${RED_PUBLICATION_RULES}
 When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
 const SETUP = `cd ${REPO_DIR} && if [ ! -e ${sq(WT)} ]; then git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}; fi && cd ${sq(WT)}`
@@ -203,6 +206,7 @@ const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stag
 const publishCodex = (stage, pr, evidence) => agent(`${GUARDRAILS}
 In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
 Do not edit the existing PR description when reusing a PR. Draft a PR body only when creating a new PR.
+${RED_PUBLICATION_RULES}
 Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
@@ -291,6 +295,26 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
     schema: { type: 'object', properties: { status: { type: 'string', enum: ['pushed', 'failed'] } }, required: ['status'] },
     agentType: 'general-purpose',
   })
+}
+
+// Only transport raw GitHub data through the agent; decide the gate here.
+const checkRedRecord = async (pr) => {
+  try {
+    const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
+      label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
+      schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+    })
+    const data = JSON.parse(fetched.evidence)
+    if (typeof data.body !== 'string' || !Array.isArray(data.comments)) return false
+    return [data.body, ...data.comments.map(comment => comment.body)].some(body => {
+      if (typeof body !== 'string') return false
+      const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+      if (!section) return false
+      return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
+        /^\s*(?:\$ )?just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
+        /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
+    })
+  } catch { return false }
 }
 
 // Read fresh remote state rather than trusting an implementer's completion prose.
@@ -426,6 +450,7 @@ For behaviour changes use TDD; mechanical edits without new behaviour need no ne
   if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
+${RED_PUBLICATION_RULES}
 In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; push updates instead of creating another PR. Ignore the creation command below for this existing PR.` : ''} Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
   phase('Locate')
   const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
@@ -478,6 +503,7 @@ if (RESUME && !A.pr) {
   resumedPR = await agent(`${GUARDRAILS}
 Resume the committed work in ${WT} on ${A.branch}; skip implementation. Require a clean worktree and inspect git log. Locate an existing open PR by branch and base ${BASE} first; reuse it rather than opening a duplicate. If none exists, require unpublished commits (compare origin/${A.branch}..HEAD, or origin/${BASE}..HEAD when the remote branch is absent). No unpublished commits or any lookup failure is blocking; return pr 0, sha "" without pushing.
 Before publishing, run ${GATES} blocking in the foreground. Check every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Only when green, git push -u origin ${A.branch}; then gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>.
+${RED_PUBLICATION_RULES}
 Body starts with [claude] and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,獨立 Claude diff 審查已完成,不跑 codex 複驗' : CODEX ? 'codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
 }
 phase('Locate')
@@ -509,6 +535,7 @@ if (!CODEX) {
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
+  if (!await checkRedRecord(pr)) return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['PR 缺少 RED 紀錄或讀取失敗；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
