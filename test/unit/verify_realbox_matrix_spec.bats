@@ -292,6 +292,29 @@ STUB
     assert_output '143'
 }
 
+@test "5.4: outer interruption during status collection records the child before cleanup" {
+    _matrix_child_stub
+    # Interrupt the wait handoff after the child has already exited.
+    sed -i 's/^touch .*/exit 143/' "${MATRIX_STATE}/child"
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+wait() {
+    local rc=0
+    touch "${SIGNAL_STATE}/ready"
+    sleep 0.5
+    builtin wait "$@" || rc=$?
+    printf '%s\n' "${rc}" >>"${MATRIX_STATE}/waits"
+    return "${rc}"
+}
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=143'
+    assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
+    run cat "${MATRIX_STATE}/waits"
+    assert_output '143'
+}
+
 @test "5.4: killed supervisor leaves no child holding the test pipe" {
     export MATRIX_READY_DELAY=6
     _matrix_child_stub

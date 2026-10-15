@@ -165,6 +165,26 @@ _54_now_ms() {
     printf '%s\n' "$((10#${stamp%.*} * 1000 + 10#${stamp#*.} / 1000))"
 }
 
+# The child has exited. Defer signal exits until its single wait is recorded.
+_54_collect_status() {
+    local saved interrupted="" child_rc=0
+    saved="$(trap -p INT TERM HUP)" || return 1
+    trap 'interrupted=INT' INT
+    trap 'interrupted=TERM' TERM
+    trap 'interrupted=HUP' HUP
+    [[ -n "${_54_REAP_RESULT}" ]] || _54_REAP_RESULT=0
+    wait "${_54_PID}" || child_rc=$?
+    if [[ "${_54_REAP_RESULT}" -eq 124 ]]; then
+        log_info "interrupt $1: killed child rc=${child_rc}"
+    else
+        _54_REAP_RESULT="${child_rc}"
+    fi
+    eval "${saved}"
+    if [[ -n "${interrupted}" ]]; then
+        kill -s "${interrupted}" "${BASHPID}"
+    fi
+}
+
 # Only reap after observing exit: wait itself has no timeout option.
 _54_reap() {
     local context="$1" deadline=$((SECONDS + TIMEOUT_SHORT))
@@ -175,17 +195,13 @@ _54_reap() {
             guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
             verify_stop_group "${_54_PID}" KILL || return 124
             if ! kill -0 "${_54_PID}" 2>/dev/null; then
-                local child_rc=0
-                wait "${_54_PID}" || child_rc=$?
-                log_info "interrupt ${context}: killed child rc=${child_rc}"
+                _54_collect_status "${context}" || return 124
             fi
             return 124
         fi
         sleep 0.05
     done
-    # Claim the wait before invoking it so EXIT cleanup cannot wait again.
-    _54_REAP_RESULT=0
-    wait "${_54_PID}" || _54_REAP_RESULT=$?
+    _54_collect_status "${context}" || return 1
     return "${_54_REAP_RESULT}"
 }
 
