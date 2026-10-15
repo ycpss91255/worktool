@@ -220,18 +220,28 @@ _54_reap() {
 }
 
 _54_signal() {
-    local phase="$1" signal="$2" capture="$3" started="$4" signalled rc=0
+    local phase="$1" signal="$2" capture="$3" started="$4" signalled rc=0 observed="$1"
     signalled="$(_54_now_ms)" || return 1
     if [[ "${phase}" == assemble ]]; then
         grep -qFx 'phase=bench' "${capture}" || rc=$?
         if [[ "${rc}" -ne 1 ]]; then
             guard_fail "interrupt ${phase} ${signal}: assemble phase no longer confirmed; retry the cell"
+            if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
             return 1
         fi
     fi
     kill -s "${signal}" -- "-${_54_PID}" || return 1
+    if [[ "${phase}" == assemble ]]; then
+        rc=0
+        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        if [[ "${rc}" -ne 1 ]]; then
+            observed=unknown
+            guard_fail "interrupt ${phase} ${signal}: phase crossed or became unreadable at signal delivery; retry the cell"
+        fi
+    fi
     printf 'interrupt %s %s: signal-phase=%s signal-after-ms=%s\n' \
-        "${phase}" "${signal}" "${phase}" "$((signalled - started))"
+        "${phase}" "${signal}" "${observed}" "$((signalled - started))"
+    [[ "${observed}" == "${phase}" ]]
 }
 
 _54_cell() {
@@ -248,8 +258,8 @@ _54_cell() {
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
     _54_PID=$!
-    if _54_event "${phase}" "${capture}" && _54_signal "${phase}" "${signal}" "${capture}" "${started}"; then
-        :
+    if _54_event "${phase}" "${capture}"; then
+        _54_signal "${phase}" "${signal}" "${capture}" "${started}" || rc=1
     else
         guard_fail "interrupt ${phase} ${signal}: observable event missed"
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi

@@ -119,6 +119,27 @@ STUB
     [ ! -s "${MATRIX_STATE}/boxes" ]
 }
 
+@test "#601: a bench transition at signal delivery fails with an unknown signal phase" {
+    cat >>"${MATRIX_STATE}/repo/lib/realbox_interrupt.sh" <<'STUB'
+
+# Inject the transition at delivery, after the last observer check.
+kill() {
+    if [[ "${1:-}" == -s && "${2:-}" == INT ]]; then
+        printf 'phase=bench\n' >>"${_54_W}/assemble-INT/capture"
+    fi
+    builtin kill "$@"
+}
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --regexp '^interrupt assemble INT: signal-phase=unknown signal-after-ms=[0-9]+$'
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    refute_output --partial 'posted=0 PASS'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+}
+
 @test "5.4: any cell cleanup failure fails the matrix" {
     cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
 #!/usr/bin/env bash
