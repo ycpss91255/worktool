@@ -245,8 +245,14 @@ _cfgbk_backup_regular() {
 _cfgbk_backup_link_target() {
     local _n="$1" _p="$2" _tp _tsha
     if [[ ! -e "${_p}" ]]; then
-        # A dangling link: there is nothing behind it to preserve.
-        _cfgbk_manifest_add "${_n}.tpath="
+        _cfgbk_missing_link_target "${_p}" \
+            || { guard_fail "${_n}: cannot determine whether the link target is absent"; return 1; }
+        _tp="$(readlink -m -- "${_p}")" \
+            || { guard_fail "${_n}: cannot resolve the missing link target"; return 1; }
+        [[ "${_tp}" == /* ]] \
+            || { guard_fail "${_n}: missing link target did not resolve to an absolute path"; return 1; }
+        # An empty checksum records absence separately from the target path.
+        _cfgbk_manifest_add "${_n}.tpath=${_tp}" "${_n}.tsha="
         return
     fi
     _tp="$(readlink -f -- "${_p}")" \
@@ -444,7 +450,7 @@ _cfgbk_revalidate_target() {
 }
 
 _cfgbk_revalidate_symlink() {
-    local _n="$1" _p="$2" _bp="$3" _blink _plink _mlink _tp
+    local _n="$1" _p="$2" _bp="$3" _blink _plink _mlink _tp _tsha
     [[ "$(guard_path_type "${_bp}")" == symlink ]] \
         || { guard_fail "${_n}: the backup did not preserve the symlink"; return 1; }
     [[ "$(guard_path_type "${_p}")" == symlink ]] \
@@ -461,8 +467,11 @@ _cfgbk_revalidate_symlink() {
         || { guard_fail "${_n}: live link target changed since step 1"; return 1; }
     _tp="$(guard_field "${CFGBK_B}" "${_n}.tpath")" \
         || { guard_fail "${_n}: the manifest records no link-target path"; return 1; }
-    if [[ -z "${_tp}" ]]; then
-        [[ ! -e "${_p}" ]] \
+    [[ -n "${_tp}" ]] \
+        || { guard_fail "${_n}: the manifest records an empty link-target path"; return 1; }
+    _tsha="$(guard_field "${CFGBK_B}" "${_n}.tsha")" || return 1
+    if [[ -z "${_tsha}" ]]; then
+        _cfgbk_missing_link_target "${_p}" \
             || { guard_fail "${_n}: manifest recorded a dangling link but it resolves now"; return 1; }
         return 0
     fi
@@ -574,12 +583,22 @@ _cfgbk_restore_link() {
         || { guard_fail "${_n}: restored link points at ${_plink}"; return 1; }
     _tp="$(guard_field "${CFGBK_B}" "${_n}.tpath")" \
         || { guard_fail "${_n}: the manifest records no link-target path"; return 1; }
-    [[ -n "${_tp}" ]] || return 0
+    [[ -n "${_tp}" ]] \
+        || { guard_fail "${_n}: the manifest records an empty link-target path"; return 1; }
+    _msha="$(guard_field "${CFGBK_B}" "${_n}.tsha")" \
+        || { guard_fail "${_n}: the manifest records no link-target checksum"; return 1; }
+    if [[ -z "${_msha}" ]]; then
+        rm -f -- "${_tp}" \
+            || { guard_fail "${_n}: cannot remove originally absent link target ${_tp}"; return 1; }
+        _cfgbk_missing_link_target "${_p}" \
+            || { guard_fail "${_n}: cannot verify the restored link is dangling"; return 1; }
+        [[ ! -e "${_tp}" && ! -L "${_tp}" ]] \
+            || { guard_fail "${_n}: originally absent link target ${_tp} still present"; return 1; }
+        return 0
+    fi
     _cfgbk_restore_copy "${_tp}" "${CFGBK_B}/${_n}.target" || return 1
     _sha="$(guard_sha256 "${_tp}")" \
         || { guard_fail "${_n}: hashing the restored link target failed"; return 1; }
-    _msha="$(guard_field "${CFGBK_B}" "${_n}.tsha")" \
-        || { guard_fail "${_n}: the manifest records no link-target checksum"; return 1; }
     [[ "${_sha}" == "${_msha}" ]] \
         || { guard_fail "${_n}: link target ${_tp} not restored byte for byte"; return 1; }
 }
@@ -675,13 +694,13 @@ cfgbk_user_lines() {
 # A symlinked config is judged by the file BEHIND it, which is the copy that
 # holds the content; the absent states had no content at all.
 _cfgbk_user_reference() {
-    local _n="$1" _s _tp
+    local _n="$1" _s _tsha
     _s="$(guard_field "${CFGBK_B}" "${_n}")" || return 1
     case "${_s}" in
         regular) cfgbk_user_lines "${CFGBK_B}/${_n}.config" ;;
         symlink)
-            _tp="$(guard_field "${CFGBK_B}" "${_n}.tpath")" || return 1
-            [[ -n "${_tp}" ]] || return 0
+            _tsha="$(guard_field "${CFGBK_B}" "${_n}.tsha")" || return 1
+            [[ -n "${_tsha}" ]] || return 0
             cfgbk_user_lines "${CFGBK_B}/${_n}.target"
             ;;
         absent-file | absent-dir) return 0 ;;
@@ -759,6 +778,7 @@ cfgbk_report_user_content() {
 _cfgbk_missing_link_target() {
     local _target _ancestor
     _target="$(readlink -m -- "$1")" || return 1
+    [[ "${_target}" == /* ]] || return 1
     [[ ! -e "${_target}" && ! -L "${_target}" ]] || return 1
     _ancestor="${_target%/*}"
     _ancestor="${_ancestor:-/}"
