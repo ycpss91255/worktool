@@ -2151,6 +2151,27 @@ STUB
     refute_line "dev-gone=1"
 }
 
+@test "#600: 5.3 create name clash never removes the other box or reports clean cleanup" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+    printf 'name dev is already in use\n' >&2
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_output --partial 'distrobox create --name dev failed'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
 @test "5.3: distrobox create prints plausible output but exits 1 (plausible output, non-zero exit)" {
     FAKE_DBX_CREATE_RC=1 FAKE_DBX_CREATE_OUT='Creating the container dev...' \
         run "${REALBOX}" --allow-real-box 5.3

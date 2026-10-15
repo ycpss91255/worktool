@@ -1103,6 +1103,9 @@ _53_cleanup() {
     local _crc=0
     if [[ "${_53_CREATED}" -eq 1 ]]; then
         XDG_DATA_HOME="${_53_W}/data" _drop_owned_box || _crc=1
+    else
+        guard_fail "decoy ownership is unconfirmed; leaving every box and scratch for manual inspection"
+        _crc=1
     fi
     [[ "${_crc}" -eq 0 ]] \
         || guard_fail "the decoy box '${BOX}' survived cleanup -- remove it by hand"
@@ -1128,6 +1131,7 @@ _53_make_decoy() {
     [[ "${_e}" -ne 2 ]] \
         || { guard_fail "distrobox list failed -- cannot tell whether '${BOX}' was created"; return 1; }
     [[ "${_e}" -eq 0 ]] || { guard_fail "no box named '${BOX}' after create"; return 1; }
+    _53_CREATED=1
     printf 'preexisting=%s\n' "${BOX}"
 }
 
@@ -1189,7 +1193,6 @@ item_53() {
         || { guard_fail "mktemp failed"; return 1; }
     [[ -d "${_53_W}" ]] || { guard_fail "decoy scratch is not a directory"; return 1; }
     _host_state_snapshot "${_53_W}" || return $?
-    _53_CREATED=1
     _cleanup_push 53
     local _rc=0
     _53_body || _rc=$?
