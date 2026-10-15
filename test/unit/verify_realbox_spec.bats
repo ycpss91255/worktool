@@ -2151,6 +2151,74 @@ STUB
     refute_line "dev-gone=1"
 }
 
+@test "#600: 5.3 create name clash never removes the other box or reports clean cleanup" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+    printf 'name dev is already in use\n' >&2
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_output --partial 'distrobox create --name dev failed'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "#600: 5.3 cleanup preserves a same-name replacement with a different ID" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == list && -s "${FAKE_STATE_DIR}/boxes" ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/decoy-listed" ]]; then
+        export FAKE_DBX_LIST_OUT=$'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04'
+    else
+        touch "${FAKE_STATE_DIR}/decoy-listed"
+    fi
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_output --partial "box 'dev' ID differs from this run"
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+    local scratch
+    scratch="$(find "${TMPDIR}" -maxdepth 1 -type d -name 'wt-m3-53.*')"
+    assert_equal "$(cat "${scratch}/created-box")" 0000
+}
+
+@test "#600: repeated 5.3 does not reuse ownership after a later create name clash" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/created-once" ]]; then
+        printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+        exit 1
+    fi
+    touch "${FAKE_STATE_DIR}/created-once"
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3 5.3
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
 @test "5.3: distrobox create prints plausible output but exits 1 (plausible output, non-zero exit)" {
     FAKE_DBX_CREATE_RC=1 FAKE_DBX_CREATE_OUT='Creating the container dev...' \
         run "${REALBOX}" --allow-real-box 5.3
@@ -2162,7 +2230,7 @@ STUB
 @test "5.3: create returns 0 but the box is not listed" {
     FAKE_DBX_CREATE_REGISTERS=0 run "${REALBOX}" --allow-real-box 5.3
     assert_failure
-    assert_output --partial "no box named 'dev' after create"
+    assert_output --partial "create returned 0 but box 'dev' is not listed"
     refute_output --partial "preexisting=dev"
 }
 
@@ -2178,14 +2246,14 @@ STUB
 
 @test "5.3: the final listing prints the dev row but exits 1, so 'still there' is not concluded" {
     # Learn how many `distrobox list` calls a green 5.3 makes, then break the
-    # one that decides the box survived (the last call is the decoy cleanup).
+    # one that decides the box survived (cleanup then checks ID and absence).
     _realbox_quiet 5.3
     local _n
     _n="$(_count_list_calls)"
     [ "${_n}" -ge 2 ]
     _reset_log
     : >"${STATE}/boxes"
-    FAKE_DBX_LIST_FAIL_FROM="$((_n - 1))" run "${REALBOX}" --allow-real-box 5.3
+    FAKE_DBX_LIST_FAIL_FROM="$((_n - 2))" run "${REALBOX}" --allow-real-box 5.3
     assert_failure
     assert_output --partial "must not be concluded from a list nobody could read"
     refute_output --partial "still-there=dev"
