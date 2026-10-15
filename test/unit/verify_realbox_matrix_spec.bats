@@ -242,10 +242,10 @@ STUB
 
 @test "5.4: outer interruption during a box query keeps cleanup in the owning shell" {
     _matrix_child_stub
-    sed -i '/touch "${SIGNAL_STATE}\/ready"/d' "${MATRIX_STATE}/child"
+    sed -i '/^touch /d' "${MATRIX_STATE}/child"
     # Force the fork window before Bash resets inherited EXIT/TERM handlers.
     # Keep the pipeline producer alive until the driver signals the whole group.
-    sed -i '/^_on_exit() {/a\\    printf "exit-shell=%s subshell=%s child=%s\\n" "${BASHPID}" "${BASH_SUBSHELL}" "${_54_PID}" >>"${MATRIX_STATE}/exits"' "${REALBOX}"
+    sed -i '/^    local _st=/a\\    printf "exit-shell=%s subshell=%s child=%s\\n" "${BASHPID}" "${BASH_SUBSHELL}" "${_54_PID}" >>"${MATRIX_STATE}/exits"' "${REALBOX}"
     cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
 _matrix_list() {
     if [[ -n "${_54_PID:-}" ]]; then

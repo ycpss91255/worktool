@@ -436,6 +436,9 @@ _cleanup_drop() {
 
 _on_exit() {
     local _st=$? _crc=0
+    # A signal can enter an inherited trap while Bash is forking a pipeline.
+    # Only the registering shell owns the stack, child jobs and scratch paths.
+    [[ "${BASHPID}" == "${REALBOX_OWNER_PID}" ]] || return "${_st}"
     trap - EXIT
     trap '' INT TERM HUP
     # EXIT may run inside assemble's redirection or bench's pipeline.
@@ -1309,6 +1312,7 @@ realbox_run() {
 
 _run_requested_items() {
     exec {REALBOX_REPORT_FD}>&1
+    REALBOX_OWNER_PID="${BASHPID}"
     trap _on_exit EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
