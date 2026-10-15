@@ -121,13 +121,13 @@ const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
 }
-const TDD_IMPLEMENT_RULES = `Treat the issue 驗收 section as the approved behaviour list; do not ask the maintainer to approve it again. Work in vertical slices: each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit. Never put a batch of tests in one commit. Save the actual RED output before implementing GREEN in ${WT}/.agents/state/red-evidence.md and include it verbatim in your final report: a ## RED section with a fenced text block containing the exact just test command and failing TAP lines (not ok <number> ...). Never invent or reconstruct RED output after GREEN. Record this section in the PR description or a PR comment before review.`
+const TDD_IMPLEMENT_RULES = `Treat the issue 驗收 section as the approved behaviour list; do not ask the maintainer to approve it again. Work in vertical slices: each behaviour one test+implementation commit, or an adjacent RED commit then GREEN commit. Never put a batch of tests in one commit. Save the actual RED output before implementing GREEN in ${WT}/.agents/state/red-evidence.md and include it verbatim in your final report: a ## RED section with a fenced text block containing the exact just test command and failing TAP lines (not ok <number> ...). Never invent or reconstruct RED output after GREEN. Record this section in the PR description or a PR comment before review. For a PR changing no behaviour (for example docs only), use ## RED exemption followed by Reason: <non-empty explanation of why no behaviour changes> in the PR description instead; report that reason and save it in the evidence file.`
 const TDD_REVIEW_RULES = `Check that the commit history is vertical slices and that tests verify behaviour through the public interface. Structure- or implementation-detail tests are blocking.`
 const GUARDRAILS = `${COMMON_GUARDRAILS} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. Never write a "[codex]" line yourself.`
 const CODEX_RULES = `${COMMON_GUARDRAILS.replace(LOCAL_TEST_RULES, 'Run only slice specs and just test lint. In the TDD loop run only the slice\'s spec with just test <tier> <spec> [--filter]. Never run a whole tier locally; CI runs every tier. Do not run long gates or any waits, including job.sh wait.').replace(`(${GATES})`, '(slice specs and lint)')} Commit with a GitHub noreply author and committer. Add no attribution or session trailer lines. PR bodies and comments you create start with "[codex]".`
 const RULES = GUARDRAILS
 
-const RED_PUBLICATION_RULES = `Copy the actual ## RED section (exact just test command and failing TAP lines) verbatim from ${WT}/.agents/state/red-evidence.md or the implementer report at ${IMPLEMENT_OUT} into the PR description or a new PR comment with your own agent prefix. Never substitute GREEN gate tails or fabricate evidence. If evidence is unavailable, stop and report blocked.`
+const RED_PUBLICATION_RULES = `Copy the actual ## RED section (exact just test command and failing TAP lines) verbatim from ${WT}/.agents/state/red-evidence.md or the implementer report at ${IMPLEMENT_OUT} into the PR description or a new PR comment with your own agent prefix. Never substitute GREEN gate tails or fabricate evidence. For no-behaviour changes only, copy ## RED exemption and its Reason: <explanation> into the PR description (a comment cannot grant an exemption). If evidence or a justified exemption is unavailable, stop and report blocked.`
 
 const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
 ${RED_PUBLICATION_RULES}
@@ -306,6 +306,8 @@ const checkRedRecord = async (pr) => {
     })
     const data = JSON.parse(fetched.evidence)
     if (typeof data.body !== 'string' || !Array.isArray(data.comments)) return false
+    const exemption = data.body.match(/^## RED exemption[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+    if (exemption && /^Reason:[ \t]*\S[^\r\n]*$/m.test(exemption[1])) return true
     return [data.body, ...data.comments.map(comment => comment.body)].some(body => {
       if (typeof body !== 'string') return false
       const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)

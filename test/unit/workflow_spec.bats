@@ -4001,3 +4001,24 @@ _handover_snapshot_run() {
         assert_success
     done
 }
+
+@test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
+    local body comments record json expected
+    for body in '## RED exemption' '## RED exemption
+Reason:   ' '## RED exemption
+Reason: 僅修正文句，沒有行為變更。'; do
+        for comments in '[]' '[{"body":"## RED exemption\nReason: docs only"}]'; do
+            record="$(jq -cn --arg body "$body" --argjson comments "$comments" '{evidence:({body:$body,comments:$comments}|tojson)}')"
+            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+            assert_success
+            json="$output"
+            expected=blocked
+            if [[ "$body" == *'Reason: 僅'* ]]; then expected=mergeable; fi
+            run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+                (if $expected == "mergeable" then
+                    ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
+                else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+            assert_success
+        done
+    done
+}
