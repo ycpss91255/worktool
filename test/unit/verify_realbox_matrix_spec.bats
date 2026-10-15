@@ -83,8 +83,8 @@ STUB
 }
 
 @test "#602: a busy-host bench cell is inconclusive and never passes the matrix" {
-    export MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3
-    run "${REALBOX}" --allow-real-box 5.4
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
     printf '%s\n' "${output}"
     assert_failure 3
     assert_line --partial 'interrupt bench INT: INCONCLUSIVE (rc=3;'
@@ -100,10 +100,10 @@ STUB
 }
 
 @test "#602: a real bench failure after an inconclusive cell still fails the matrix" {
-    export MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3
-    sed -i '/elif \[\[ "${phase}" == bench \]\]; then/a\
-    if [[ "${TMPDIR}/" == */bench-TERM/* ]]; then exit 1; fi' "${MATRIX_STATE}/bin/just"
-    run "${REALBOX}" --allow-real-box 5.4
+    sed -i "/elif \[\[ \"\${phase}\" == bench \]\]; then/a\\
+    if [[ \"\${TMPDIR}/\" == */bench-TERM/* ]]; then exit 1; fi" "${MATRIX_STATE}/bin/just"
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
     assert_line --partial 'interrupt bench INT: INCONCLUSIVE (rc=3;'
     assert_line --partial 'interrupt bench TERM: FAIL (rc=1; cleanup-rc=0; evidence='
@@ -115,10 +115,10 @@ STUB
 }
 
 @test "#602: an inconclusive child cannot hide missing cleanup evidence" {
-    export MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3
-    sed -i '/^_51_cleanup() {/a\
-    if [[ "${TMPDIR}/" == */bench-INT/* ]]; then return 0; fi' "${REALBOX}"
-    run "${REALBOX}" --allow-real-box 5.4
+    sed -i "/^_51_cleanup() {/a\\
+    if [[ \"\${TMPDIR}/\" == */bench-INT/* ]]; then return 0; fi" "${REALBOX}"
+    MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3 \
+        run "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
     assert_line --partial 'interrupt bench INT: FAIL (rc=3; cleanup-rc=missing; evidence='
     assert_line 'interrupt-matrix: FAIL'
