@@ -862,10 +862,6 @@ cfgbk_report_blocks() {
     return 0
 }
 
-# Print `leftover-dirs=N` and fail unless N is 0. Names whose file lives in a
-# directory worktool never creates (~/.tmux.conf, in $HOME) have no leftover
-# to report. Same rule for the manifest read: grep's 1 is "this name is not
-# absent-dir", >= 2 is "unreadable".
 _cfgbk_count_leftover_parents() {
     local _p _count=0
     [[ -e "${CFGBK_B}/absent-directories" ]] || { printf '0\n'; return 0; }
@@ -876,6 +872,10 @@ _cfgbk_count_leftover_parents() {
     printf '%s\n' "${_count}"
 }
 
+# Print `leftover-dirs=N` and fail unless N is 0. Names whose file lives in a
+# directory worktool never creates (~/.tmux.conf, in $HOME) have no leftover
+# to report. Same rule for the manifest read: grep's 1 is "this name is not
+# absent-dir", >= 2 is "unreadable".
 cfgbk_report_leftover_dirs() {
     local _lo=0 _n _d _rc
     _lo="$(_cfgbk_count_leftover_parents)" \

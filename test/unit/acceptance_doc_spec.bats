@@ -57,3 +57,38 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     [[ "${doc}" == *'中斷後 assemble 回非零'* ]]
     [[ "${doc}" == *"缺少 \`created-box\` 代表本輪未確認盒子所有權"* ]]
 }
+
+@test "acceptance 5.2 documents absent cache parent cleanup and leftover counts (#594)" {
+    local doc
+    doc="$(cat "${REPO_ROOT}/doc/acceptance.md")"
+    run printf '%s\n' "${doc}"
+    assert_output --partial "由最深層往上以 \`rmdir\` 移除"
+    assert_output --partial '非空目錄保留，還原 fail closed'
+    assert_output --partial "\`leftover-dirs=0\` 代表受管設定目錄及 init-log 原本不存在的上層目錄鏈均無殘留"
+    refute_output --partial "\`leftover-dirs=0\` 只代表受管設定目錄"
+}
+
+@test "acceptance 5.2 documents the cache chain ancestor mtime exception (#594)" {
+    run grep -F '第一個既有祖先可能高於 cache 根目錄' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial '例如 HOME'
+    assert_output --partial '#536'
+    run grep -F '已知限制：設定根目錄以上的目錄 mtime 不受保護' "${REPO_ROOT}/doc/acceptance.md"
+    assert_failure 1
+}
+
+@test "acceptance 5.2 documents actual relative cache parent handling (#594)" {
+    run grep -F "非絕對路徑的 \`XDG_CACHE_HOME\` 不會單憑此條件拒絕備份" "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial "\`readlink -m\`"
+    assert_output --partial "不會將 \`cfgbk_file_of\` 的 init-log 路徑改為絕對路徑"
+}
+
+@test "acceptance 5.2 documents dangling init-log target restoration (#594)" {
+    run grep -F 'init-log 若是 dangling symlink' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial "\`.tpath\`"
+    assert_output --partial "空的 \`.tsha\`"
+    assert_output --partial '刪除原本不存在、驗收期間才建立的目標檔'
+    assert_output --partial '無法確定目標是否不存在時拒絕備份'
+}
