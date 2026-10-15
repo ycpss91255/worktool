@@ -112,6 +112,26 @@ CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR he
 接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
+## PR 上的 RED 紀錄（#607）
+
+實作方在 GREEN 之前保存實際 RED 輸出至該 worktree 的
+`.agents/state/red-evidence.md`，並在完成報告附上原文。發布階段將其逐字貼到
+PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 RED。
+紀錄使用 `## RED` 標題，下方的同一個 fenced code block 包含完整
+`just test <tier> <spec> [--filter ...]` 指令與實際失敗的 `not ok <number> ...` TAP 行。
+不能在 GREEN 後虛構或重編 RED 證據。
+
+full 模式每輪獨立審查前，以 `gh pr view --json body,comments` 讀取 PR 原文，
+由 workflow 程式檢查 RED 紀錄。缺少紀錄、讀取失敗或資料格式錯誤時，
+直接回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
+也不會宣告 mergeable。補上原始證據後可接續同一 PR。
+`milestone-fanout` 呼叫同一份 `pr-loop`，因此沿用此檢查。
+
+沒有行為變更（例如純文件修正）的 PR，可在 **PR 說明**使用
+`## RED exemption`，下一行寫 `Reason: <沒有行為變更的具體理由>`。
+理由必須非空，不能只在留言宣告豁免；審查方仍須核對理由是否符合 diff。
+此檢查確認紀錄存在，不驗證輸出真偽，也不取代審查方對 TDD 的判斷。
+
 ## 實作暫時性錯誤
 
 full 模式的 implement 階段會讀取實作方的結構化完成狀態與失敗原因；codex 非零退出時，原因包含退出碼、報告與 `implement.md.log` 的錯誤輸出。遇到 `at capacity`、rate limit 或 HTTP 5xx（含 HTTP 版本格式）時，初次執行後最多再重試三次，分別由低 effort agent 透過 job start／wait 等待 30、60、90 秒，不直接執行前景長 sleep。每次都使用同一個 worktree、保留既有工作，不再次建立分支或 worktree，並附上接續 brief 與前次輸出。成功後繼續 Locate／CI；耗盡重試、非暫時性錯誤或沒有失敗原因時，停止並在 `blockingLeft` 回報原因，不進入 CI／審查。light 模式維持原有失敗回報，不套用 codex 重試。
