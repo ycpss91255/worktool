@@ -2,6 +2,7 @@
 # Event-driven supervisor for the real-machine 5.1 interrupt matrix.
 _54_W=""
 _54_PID=""
+_54_REAP_RESULT=""
 _54_POLL_FD=""
 
 _54_cleanup() {
@@ -167,8 +168,10 @@ _54_now_ms() {
 # Only reap after observing exit: wait itself has no timeout option.
 _54_reap() {
     local context="$1" deadline=$((SECONDS + TIMEOUT_SHORT))
+    [[ -z "${_54_REAP_RESULT}" ]] || return "${_54_REAP_RESULT}"
     while kill -0 "${_54_PID}" 2>/dev/null; do
         if ((SECONDS >= deadline)); then
+            _54_REAP_RESULT=124
             guard_fail "interrupt ${context}: child reap wait deadline exceeded (pid=${_54_PID})"
             verify_stop_group "${_54_PID}" KILL || return 124
             if ! kill -0 "${_54_PID}" 2>/dev/null; then
@@ -180,7 +183,10 @@ _54_reap() {
         fi
         sleep 0.05
     done
-    wait "${_54_PID}"
+    # Claim the wait before invoking it so EXIT cleanup cannot wait again.
+    _54_REAP_RESULT=0
+    wait "${_54_PID}" || _54_REAP_RESULT=$?
+    return "${_54_REAP_RESULT}"
 }
 
 _54_cell() {
@@ -192,6 +198,7 @@ _54_cell() {
     [[ -z "${COMMENT_TAG}" ]] || comment_args=(--comment-tag "${COMMENT_TAG}")
     local started signalled
     started="$(_54_now_ms)"
+    _54_REAP_RESULT=""
     TMPDIR="${dir}" setsid env --default-signal=INT,TERM,HUP \
         bash "${SCRIPT_DIR}/realbox.sh" --allow-real-box --repo "${REPO}" \
         --issue "${ISSUE}" --box "${BOX}" "${comment_args[@]}" 5.1 >>"${capture}" 2>&1 &
