@@ -64,6 +64,9 @@ CFGBK_NAMES=(ghostty worktool tmux-conf)
 # claim anyone can make about it.
 CFGBK_USER_NAMES=(ghostty tmux-conf)
 
+# Acceptance can opt individual files into absent parent-chain tracking.
+CFGBK_PARENT_CHAIN_NAMES=()
+
 CFGBK_C=""
 CFGBK_H=""
 CFGBK_B=""
@@ -366,6 +369,11 @@ _cfgbk_backup_parent_dirs() {
 _cfgbk_backup_dirs() {
     local _n _p
     : >"${CFGBK_B}/directories" || return 1
+    : >"${CFGBK_B}/absent-directories" || return 1
+    for _n in "${CFGBK_PARENT_CHAIN_NAMES[@]}"; do
+        _p="$(cfgbk_file_of "${_n}")" || return 1
+        _cfgbk_backup_missing_parents "${_p}" || return 1
+    done
     for _n in "${CFGBK_NAMES[@]}"; do
         _p="$(cfgbk_file_of "${_n}")" || return 1
         _cfgbk_backup_parent_dirs "${_p}" || return 1
@@ -376,10 +384,45 @@ _cfgbk_backup_dirs() {
     done
 }
 
+# Keep deepest-first NUL paths so restore can use rmdir without recursion.
+_cfgbk_backup_missing_parents() {
+    local _p="${1%/*}" _missing=0 _mtime
+    _p="$(readlink -m -- "${_p:-/}")" || return 1
+    while [[ ! -e "${_p}" && ! -L "${_p}" ]]; do
+        printf '%s\0' "${_p}" >>"${CFGBK_B}/absent-directories" || return 1
+        _missing=1
+        _p="${_p%/*}"
+        _p="${_p:-/}"
+    done
+    [[ "${_missing}" -eq 1 ]] || return 0
+    # Removing the new chain changes its first existing ancestor's mtime.
+    [[ -d "${_p}" ]] || { guard_fail "init-log ancestor is not a directory: ${_p}"; return 1; }
+    _mtime="$(stat -L -c %y -- "${_p}")" || return 1
+    printf '%s\0%s\0' "${_p}" "${_mtime}" >>"${CFGBK_B}/directories"
+}
+
+_cfgbk_restore_missing_parents() {
+    local _p _bad=0
+    # Backups published before parent-chain tracking have no such record.
+    [[ -e "${CFGBK_B}/absent-directories" ]] || return 0
+    while IFS= read -r -d '' _p; do
+        if [[ -d "${_p}" && ! -L "${_p}" ]]; then
+            if ! rmdir -- "${_p}"; then _bad=1; fi
+        fi
+        if [[ -e "${_p}" || -L "${_p}" ]]; then
+            guard_fail "originally absent directory still present: ${_p}"
+            _bad=1
+        fi
+    done <"${CFGBK_B}/absent-directories" || return 1
+    [[ -z "${_p}" ]] || return 1
+    return "${_bad}"
+}
+
 # Called after all file restores: deleting a new directory can also change
 # an existing ancestor. A failed timestamp restore must fail restore-ok.
 cfgbk_restore_dirs() {
-    local _p _mtime _got
+    local _p _mtime _got _bad=0
+    _cfgbk_restore_missing_parents || _bad=1
     [[ -s "${CFGBK_B}/directories" ]] \
         || { guard_fail "directory mtime backup missing"; return 1; }
     while IFS= read -r -d '' _p; do
@@ -394,7 +437,8 @@ cfgbk_restore_dirs() {
         fi
     done <"${CFGBK_B}/directories"
     [[ -z "${_p}" ]] || { guard_fail "incomplete directory mtime backup"; return 1; }
-    cfgbk_dirs_ok
+    cfgbk_dirs_ok || _bad=1
+    return "${_bad}"
 }
 
 cfgbk_dirs_ok() {
@@ -822,8 +866,20 @@ cfgbk_report_blocks() {
 # directory worktool never creates (~/.tmux.conf, in $HOME) have no leftover
 # to report. Same rule for the manifest read: grep's 1 is "this name is not
 # absent-dir", >= 2 is "unreadable".
+_cfgbk_count_leftover_parents() {
+    local _p _count=0
+    [[ -e "${CFGBK_B}/absent-directories" ]] || { printf '0\n'; return 0; }
+    while IFS= read -r -d '' _p; do
+        if [[ -e "${_p}" || -L "${_p}" ]]; then _count=$((_count + 1)); fi
+    done <"${CFGBK_B}/absent-directories" || return 1
+    [[ -z "${_p}" ]] || return 1
+    printf '%s\n' "${_count}"
+}
+
 cfgbk_report_leftover_dirs() {
     local _lo=0 _n _d _rc
+    _lo="$(_cfgbk_count_leftover_parents)" \
+        || { guard_fail "cannot read absent parent backup -- leftover-dirs= is not trustworthy"; return 1; }
     for _n in "${CFGBK_NAMES[@]}"; do
         _d="$(cfgbk_dir_of "${_n}")" || return 1
         [[ -n "${_d}" ]] || continue
