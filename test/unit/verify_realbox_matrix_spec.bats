@@ -176,19 +176,43 @@ STUB
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
 
-@test "5.4: outer interruption records the stopped child's nonzero status" {
+teardown() {
+    _matrix_stop_child
+}
+
+_matrix_stop_child() {
+    local pid
+    if [[ -f "${MATRIX_STATE}/child.pid" ]]; then
+        read -r pid <"${MATRIX_STATE}/child.pid"
+        source "${LIB_DIR}/verify_run.sh"
+        verify_stop_group "${pid}" TERM
+    fi
+}
+
+_matrix_child_stub() {
     export SIGNAL_STATE="${MATRIX_STATE}"
     cat >"${MATRIX_STATE}/child" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+# A killed supervisor cannot close inherited test descriptors for us.
+exec </dev/null >/dev/null 2>&1
+for path in /proc/$$/fd/*; do
+    fd="${path##*/}"
+    if ((fd > 2)); then exec {fd}>&-; fi
+done
+deadline=$((SECONDS + 10))
 stop_sleep() {
     if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
         : # The background sleep may already have exited.
     fi
 }
 trap 'stop_sleep; exit 143' TERM
+printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
+sleep "${MATRIX_READY_DELAY:-0}"
 touch "${SIGNAL_STATE}/ready"
-while :; do sleep 0.1 & wait "$!"; done
+while ((SECONDS < deadline)); do sleep 0.1 & wait "$!"; done
+printf 'matrix child lifetime wait deadline exceeded\n' >&2
+exit 1
 STUB
     cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
 #!/usr/bin/env bash
@@ -196,6 +220,10 @@ set -euo pipefail
 exec /usr/bin/setsid bash "${MATRIX_STATE}/child"
 STUB
     chmod +x "${MATRIX_STATE}/bin/setsid"
+}
+
+@test "5.4: outer interruption records the stopped child's nonzero status" {
+    _matrix_child_stub
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     assert_success
@@ -203,6 +231,20 @@ STUB
     assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
+@test "5.4: killed supervisor leaves no child holding the test pipe" {
+    export MATRIX_READY_DELAY=6
+    _matrix_child_stub
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=137'
+    _matrix_stop_child
+    local pid
+    read -r pid <"${MATRIX_STATE}/child.pid"
+    source "${LIB_DIR}/verify_run.sh"
+    ! verify_group_running "${pid}"
 }
 
 @test "5.4: a preexisting box reports the refused cell and remains untouched" {
