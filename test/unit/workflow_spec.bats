@@ -4067,3 +4067,25 @@ Reason: 僅修正文句，沒有行為變更。'; do
         .prompt | contains("workflow artifacts") and contains("byte-identical") and contains("node -e")] | all' <<<"$json"
     assert_success
 }
+
+@test "milestone-handover persists artifacts larger than 128 KiB without argv overflow (#612)" {
+    local root="${BATS_TEST_TMPDIR}/large artifacts" args replies json scratch
+    mkdir -p "$root"
+    scratch="$root/.agents/state/milestone-handover-7-$(printf 'a%.0s' {1..40})"
+    args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$root/replies.json"
+    _handover_replies | jq --arg d "$root" '
+        ."sync:".repoDir=$d | ([range(0;20000) | "中文𠮷 `\\n"] | join("")) as $large |
+        ."findings:".content=$large | ."independent-codex:"=$large | ."independent-claude:"=$large' > "$replies"
+    run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$args" "@$replies" exec-handover-files
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.status == "prepared"' <<<"$json"
+    assert_success
+    run jq -e --rawfile findings "$scratch/findings.md" --rawfile codex "$scratch/independent-codex-report.md" \
+        --rawfile claude "$scratch/independent-claude-report.md" '
+        ."findings:".content == $findings and ("[claude]\n" + ."independent-codex:") == $codex and
+        ("[claude]\n" + ."independent-claude:") == $claude' "$replies"
+    assert_success
+}

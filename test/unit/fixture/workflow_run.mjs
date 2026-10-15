@@ -46,7 +46,7 @@ const replies = {
     'publish:Fix': { pr: 7, sha: 'def' },
     'adoption:': { posted: true },
   } : {}),
-  ...JSON.parse(repliesJson),
+  ...JSON.parse(repliesJson.startsWith('@') ? readFileSync(repliesJson.slice(1), 'utf8') : repliesJson),
 }
 const calls = []
 const ran = []
