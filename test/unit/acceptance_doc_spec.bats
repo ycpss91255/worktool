@@ -67,3 +67,12 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     assert_output --partial '`leftover-dirs=0` 代表受管設定目錄及 init-log 原本不存在的上層目錄鏈均無殘留'
     refute_output --partial '`leftover-dirs=0` 只代表受管設定目錄'
 }
+
+@test "acceptance 5.2 documents the cache chain ancestor mtime exception (#594)" {
+    run grep -F '第一個既有祖先可能高於 cache 根目錄' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial '例如 HOME'
+    assert_output --partial '#536'
+    run grep -F '已知限制：設定根目錄以上的目錄 mtime 不受保護' "${REPO_ROOT}/doc/acceptance.md"
+    assert_failure 1
+}
