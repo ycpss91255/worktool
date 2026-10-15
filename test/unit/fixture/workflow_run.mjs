@@ -161,33 +161,29 @@ const playHandoverReview = (prompt) => {
 
 // Exercise handover filesystem commands with deterministic stage writers.
 const playHandoverFiles = (role, prompt) => {
-  if (role === 'artifact-check:Review' && process.env.HANDOVER_LOSS?.startsWith('findings:')) {
-    const [, file, kind] = process.env.HANDOVER_LOSS.split(':')
-    const args = JSON.parse(argsJson)
-    const path = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}/${file}`
-    if (kind === 'missing') unlinkSync(path)
-    else writeFileSync(path, '')
+  const args = JSON.parse(argsJson)
+  const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
+  const [stage, lostFile, kind] = (process.env.HANDOVER_LOSS || '').split(':')
+  const lossCheck = { findings: 'Review', machine: 'Evidence', evidence: 'Prepared' }[stage]
+  if (role === `artifact-check:${lossCheck}`) {
+    if (kind === 'missing') unlinkSync(`${scratch}/${lostFile}`)
+    else writeFileSync(`${scratch}/${lostFile}`, '')
   }
   if (role === 'scratch:' || role.startsWith('artifact-check:') || role.startsWith('artifact-write:')) {
     const result = play(prompt)
     if (!result.ok) return null
     return role === 'scratch:' ? reply(role) : result.stdout
   }
-  const args = JSON.parse(argsJson)
-  const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
   const files = {
-    'findings:': ['findings.md'], 'review:': ['codex.md', 'codex-result.json'],
-    'independent-publish:': ['independent-codex-report.md', 'independent-claude-report.md', 'independent-verdict.md'],
-    'machine:': ['machine.md'], 'evidence:': ['evidence.md', 'ready.md'],
+    'review:': ['codex.md', 'codex-result.json'],
+    'independent-publish:': ['independent-verdict.md'],
   }[role]
-  if (files && !(role === 'findings:' && process.env.HANDOVER_CONTENT_ONLY)) {
+  if (files) {
     mkdirSync(scratch, { recursive: true })
-    if (role === 'machine:') mkdirSync(`${scratch}/machine`, { recursive: true })
     for (const file of files) writeFileSync(`${scratch}/${file}`, `${role} output\n`)
-    const [stage, file, kind] = (process.env.HANDOVER_LOSS || '').split(':')
-    if (role === `${stage}:` && stage !== 'findings') {
-      if (kind === 'missing') unlinkSync(`${scratch}/${file}`)
-      else writeFileSync(`${scratch}/${file}`, '')
+    if (role === `${stage}:` && stage === 'review') {
+      if (kind === 'missing') unlinkSync(`${scratch}/${lostFile}`)
+      else writeFileSync(`${scratch}/${lostFile}`, '')
     }
   }
   return reply(role)
