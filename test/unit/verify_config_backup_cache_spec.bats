@@ -31,6 +31,33 @@ setup() {
     assert_output 'leftover-dirs=0'
 }
 
+@test "#589: missing relative cache parents restore from a different working directory" {
+    export XDG_CACHE_HOME=relcache
+
+    # Bound a regressed backup loop's runtime and journal size.
+    run bash -euo pipefail -c '
+        ulimit -f 128
+        timeout 5 bash -euo pipefail -c '\''
+            source "$REPO_ROOT/lib/guard.sh"
+            source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+            cd "$HOME"
+            cfgbk_paths
+            cfgbk_preflight
+            cfgbk_dir_create
+            cfgbk_backup_body
+            mkdir -p "$XDG_CACHE_HOME/worktool"
+            cd "$TMPDIR"
+            cfgbk_restore_all
+            cfgbk_report_leftover_dirs
+        '\''
+    '
+
+    assert_success
+    assert_line "backup=${CFGBK_B} ok=1"
+    assert_line 'leftover-dirs=0'
+    assert [ ! -e "${HOME}/relcache" ]
+}
+
 @test "#589: restore preserves existing cache and removes only the new worktool directory" {
     mkdir "${HOME}/.cache"
     touch -d '2001-01-01' "${HOME}/.cache"
