@@ -114,6 +114,20 @@ STUB
     [ ! -e "${MATRIX_STATE}/comments" ]
 }
 
+@test "#602: an inconclusive child cannot hide missing cleanup evidence" {
+    export MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3
+    sed -i '/^_51_cleanup() {/a\
+    if [[ "${TMPDIR}/" == */bench-INT/* ]]; then return 0; fi' "${REALBOX}"
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'interrupt bench INT: FAIL (rc=3; cleanup-rc=missing; evidence='
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'interrupt bench INT: INCONCLUSIVE'
+    refute_output --partial 'interrupt-matrix: PASS'
+    [ -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+}
+
 @test "#601: bench starting during the box query cannot pass as assemble" {
     export MATRIX_CAPTURE_ROOT="${TMPDIR}"
     mkdir -p "${MATRIX_STATE}/original"
