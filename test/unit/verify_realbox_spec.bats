@@ -2198,6 +2198,27 @@ STUB
     assert_equal "$(cat "${scratch}/created-box")" 0000
 }
 
+@test "#600: repeated 5.3 does not reuse ownership after a later create name clash" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/created-once" ]]; then
+        printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+        exit 1
+    fi
+    touch "${FAKE_STATE_DIR}/created-once"
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3 5.3
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
 @test "5.3: distrobox create prints plausible output but exits 1 (plausible output, non-zero exit)" {
     FAKE_DBX_CREATE_RC=1 FAKE_DBX_CREATE_OUT='Creating the container dev...' \
         run "${REALBOX}" --allow-real-box 5.3

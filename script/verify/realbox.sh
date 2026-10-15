@@ -1180,6 +1180,7 @@ _53_body() {
 }
 
 item_53() {
+    _53_CREATED=0
     guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
         mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
