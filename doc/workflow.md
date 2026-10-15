@@ -466,13 +466,22 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    缺少、查詢失敗或未綠即回報並停止。
 3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
    初始化失敗即停止，不進入 Findings。
+   所有 scratch 報告都視為 workflow 產物：Findings、Machine、Evidence agent 只回傳內容字串，
+   專責產物步驟以固定 Bash／Node 命令寫檔並讀回逐 byte 比對；空白內容或寫入／比對失敗
+   會回報檔名並停止。`machine.md`、`evidence.md`、`ready.md` 與兩份加上 `[claude]` 前綴的
+   `independent-*-report.md` 共用此步驟；獨立報告先保存，再由原發布階段核對及依序張貼。
+   必須自行保存的 Codex 原判定、最終判定、prompt、recovery journal 與 cleanup 紀錄，
+   也使用提示內同一固定 Bash／Node 寫法，僅代入檔案與內容資料，驗證非空及逐 byte 相同；
+   不再要求以 Write 工具保存報告。操作日誌與 Codex `-o` 輸出維持原本的命令輸出路徑。
 4. **Findings**：分頁讀取全部留言與 review，保留所有 OWNER 且非 agent 標記的歷次
    驗收報告；逐項編為 F1..Fn，附來源、此次重現方法、使用者入口與證據。
-   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。
+   真機限定的 finding 不得以 CI 或靜態閱讀宣稱通過。Findings 只以 structured output 的
+   `content` 字串回傳總帳，由專責產物步驟執行固定 Bash／Node 命令寫入 `findings.md`，
+   讀回確認非空且逐 byte 相同後才進入 Review；失敗回報檔名並停止。
 5. **Review**：前景執行獨立 codex 對整個 head 複驗，核對 milestone 目標、
    `doc/acceptance.md` 與全部 finding，也逐項比對文件預期輸出和腳本實際輸出。
    每次 codex 呼叫都是一次前景 Bash 呼叫（Bash 工具 timeout 設最大值）、路徑全部寫成字面值；
-   提示與接續提示（`<scratch>/codex-continue.md`）以 Write 工具寫入。首次呼叫：
+   提示與接續提示（`<scratch>/codex-continue.md`）以固定產物寫入協定保存。首次呼叫：
    `rc=0; WORKTOOL_AGENT_ROLE=pr-loop timeout 570 codex exec --skip-git-repo-check -C <repoDir> -o <scratch>/codex-result.json - < <scratch>/codex-prompt.md > <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`；
    完整複驗常超過 10 分鐘，結束碼 124 表示 session 未完成，從 transcript 第一行 `session id:` 取得 id，
    以 `rc=0; cd <repoDir> && timeout 570 codex exec resume --skip-git-repo-check -o <scratch>/codex-result.json <session-id> - < <scratch>/codex-continue.md >> <scratch>/codex-transcript.log 2>&1 || rc=$?; echo "$rc" > <scratch>/codex-exit.txt`
@@ -533,6 +542,11 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
 各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
 Machine 的 `machine.md` 與 `machine/` 子目錄、獨立驗收的 `independent-*`、Evidence 的 `evidence.md` 與 `ready.md`。
+回傳內容由專責寫入步驟以每塊最多 4096 個 Unicode code point 的固定命令，透過 stdin 寫入；
+各塊分開執行，不把整份報告塞入 argv，也不把多個命令合成一個超長 Bash 呼叫。
+workflow 從各階段回傳的原始字串計算 UTF-8 byte 數及 SHA-256，寫完後以此核對整個檔案；
+後續讀取前沿用同一份驗證基準，不能用寫入代理重述的內容作為基準。
+寫入錯誤或內容不符即停止，錯誤包含失敗檔名。
 所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。Review 前以獨立 agent 在前景執行 `test -s` 確認 `findings.md`；Machine 前確認
 `findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`，以及兩份獨立報告
 `independent-codex-report.md`、`independent-claude-report.md` 與最終 `independent-verdict.md`。

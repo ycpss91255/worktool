@@ -46,7 +46,7 @@ const replies = {
     'publish:Fix': { pr: 7, sha: 'def' },
     'adoption:': { posted: true },
   } : {}),
-  ...JSON.parse(repliesJson),
+  ...JSON.parse(repliesJson.startsWith('@') ? readFileSync(repliesJson.slice(1), 'utf8') : repliesJson),
 }
 const calls = []
 const ran = []
@@ -89,7 +89,7 @@ const play = (prompt) => {
       ran.push({ cmd, rc: 0 })
     } catch (e) {
       ran.push({ cmd, rc: e.status })
-      return { ok: false, stdout: '' }
+      return { ok: false, stdout: e.stdout?.toString().trim() || '' }
     }
   }
   return { ok: true, stdout: stdout.trim() }
@@ -159,28 +159,42 @@ const playHandoverReview = (prompt) => {
   }
 }
 
+// Model an artifact writer transcribing data incorrectly or reporting a failure.
+const artifactFault = (role, prompt, scratch) => {
+  const [stage, file, kind] = (process.env.HANDOVER_WRITE_FAULT || '').split(':')
+  if (role !== `artifact-write:${stage}`) return { prompt }
+  if (kind === 'error') return { error: `${scratch}/${file}: simulated write failure` }
+  return { prompt: prompt.replace(/`(cd [^`]*)`/g, (span, command) =>
+    command.includes(file) ? span.replace(/ORIGINAL/g, 'MUTATION') : span) }
+}
+
 // Exercise handover filesystem commands with deterministic stage writers.
 const playHandoverFiles = (role, prompt) => {
-  if (role === 'scratch:' || role.startsWith('artifact-check:')) {
-    const result = play(prompt)
-    if (!result.ok) return null
-    return role === 'scratch:' ? reply(role) : result.stdout
-  }
   const args = JSON.parse(argsJson)
   const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
+  const [stage, lostFile, kind] = (process.env.HANDOVER_LOSS || '').split(':')
+  const lossCheck = { findings: 'Review', machine: 'Evidence', evidence: 'Prepared' }[stage]
+  if (role === `artifact-check:${lossCheck}`) {
+    if (kind === 'missing') unlinkSync(`${scratch}/${lostFile}`)
+    else writeFileSync(`${scratch}/${lostFile}`, '')
+  }
+  if (role === 'scratch:' || role.startsWith('artifact-check:') || role.startsWith('artifact-write:')) {
+    const fault = artifactFault(role, prompt, scratch)
+    if (fault.error) return { error: fault.error }
+    const result = play(fault.prompt)
+    if (!result.ok) return result.stdout || null
+    return role === 'scratch:' ? reply(role) : result.stdout
+  }
   const files = {
-    'findings:': ['findings.md'], 'review:': ['codex.md', 'codex-result.json'],
-    'independent-publish:': ['independent-codex-report.md', 'independent-claude-report.md', 'independent-verdict.md'],
-    'machine:': ['machine.md'], 'evidence:': ['evidence.md', 'ready.md'],
+    'review:': ['codex.md', 'codex-result.json'],
+    'independent-publish:': ['independent-verdict.md'],
   }[role]
   if (files) {
     mkdirSync(scratch, { recursive: true })
-    if (role === 'machine:') mkdirSync(`${scratch}/machine`, { recursive: true })
     for (const file of files) writeFileSync(`${scratch}/${file}`, `${role} output\n`)
-    const [stage, file, kind] = (process.env.HANDOVER_LOSS || '').split(':')
-    if (role === `${stage}:`) {
-      if (kind === 'missing') unlinkSync(`${scratch}/${file}`)
-      else writeFileSync(`${scratch}/${file}`, '')
+    if (role === `${stage}:` && stage === 'review') {
+      if (kind === 'missing') unlinkSync(`${scratch}/${lostFile}`)
+      else writeFileSync(`${scratch}/${lostFile}`, '')
     }
   }
   return reply(role)
