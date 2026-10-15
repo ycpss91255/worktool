@@ -43,14 +43,15 @@ _54_session_clear() {
 }
 
 _54_stop_session() {
-    local group
+    local group rc=0
     # Avoid command substitution in EXIT cleanup after an interrupted read.
     _54_session_groups "$1" >"${_54_W}/groups" || return 1
     while IFS= read -r group; do
         [[ -n "${group}" && "${group}" != "$1" ]] || continue
-        verify_stop_group "${group}" TERM
+        verify_stop_group "${group}" TERM || rc=1
     done <"${_54_W}/groups"
-    verify_stop_group "$1" TERM
+    verify_stop_group "$1" TERM || rc=1
+    return "${rc}"
 }
 
 _54_comments() {

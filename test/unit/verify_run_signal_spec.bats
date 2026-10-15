@@ -186,3 +186,16 @@ CALLER
     run kill -0 "${pid}"
     assert_failure 1
 }
+
+@test "verify_stop_group: a group still observable after KILL fails within a deadline" {
+    run timeout --kill-after=1 4 bash <<'PROBE'
+source "${LIB_DIR}/log.sh"
+source "${LIB_DIR}/verify_run.sh"
+# Model a kernel group that remains observable even after KILL.
+kill() { return 0; }
+verify_group_running() { return 0; }
+verify_stop_group 999999 TERM
+PROBE
+    assert_failure 1
+    assert_output --partial 'verify_stop_group: post-KILL wait deadline exceeded (pgid=999999)'
+}
