@@ -82,6 +82,23 @@ STUB
     assert_output ''
 }
 
+@test "#602: a busy-host bench cell is inconclusive and never passes the matrix" {
+    export MATRIX_BENCH_EXIT_CELL=bench-INT MATRIX_BENCH_RC=3
+    run "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_failure 3
+    assert_line --partial 'interrupt bench INT: INCONCLUSIVE (rc=3;'
+    assert_line 'interrupt-matrix: INCONCLUSIVE (host too busy, re-run when idle)'
+    refute_output --partial 'FAIL'
+    refute_output --partial 'interrupt-matrix: PASS'
+    assert_line --partial 'interrupt bench HUP: rc=129 cleanup-rc=0'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
+    [ ! -e "${MATRIX_STATE}/comments" ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*' -o -name 'wt-m3-51.*'
+    assert_success
+    assert_output ''
+}
+
 @test "#601: bench starting during the box query cannot pass as assemble" {
     export MATRIX_CAPTURE_ROOT="${TMPDIR}"
     mkdir -p "${MATRIX_STATE}/original"

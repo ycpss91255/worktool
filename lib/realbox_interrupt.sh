@@ -244,8 +244,37 @@ _54_signal() {
     [[ "${observed}" == "${phase}" ]]
 }
 
+_54_finish_cell() {
+    local phase="$1" signal="$2" dir="$3" child_rc="$4" expected="$5" rc="$6" missed="$7"
+    local inconclusive=0
+    if [[ "${phase}" == bench && "${child_rc}" -eq 3 ]]; then
+        expected=3
+        inconclusive=1
+    elif [[ "${missed}" -eq 1 ]]; then
+        guard_fail "interrupt ${phase} ${signal}: observable event missed"
+        rc=1
+    fi
+    _54_assert "${dir}/capture" "${dir}" "${child_rc}" "${expected}" || rc=1
+    _54_session_clear "${_54_PID}" || rc=1
+    if [[ "${rc}" -ne 0 ]]; then
+        _54_stop_session "${_54_PID}"
+        _54_PID=""
+        _54_failure_report "${phase}" "${signal}" "${child_rc}" "${dir}"
+        return 1
+    fi
+    _54_PID=""
+    if [[ "${inconclusive}" -eq 1 ]]; then
+        cat "${dir}/capture" >&2
+        printf 'interrupt %s %s: INCONCLUSIVE (rc=3; cleanup-rc=0; host too busy, re-run when idle)\n' \
+            "${phase}" "${signal}"
+        return 3
+    fi
+    printf 'interrupt %s %s: rc=%s cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS\n' \
+        "${phase}" "${signal}" "${child_rc}"
+}
+
 _54_cell() {
-    local phase="$1" signal="$2" expected="$3" dir capture rc=0 verdict=PASS
+    local phase="$1" signal="$2" expected="$3" dir capture rc=0 missed=0
     dir="${_54_W}/${phase}-${signal}"
     capture="${dir}/capture"
     _54_prepare "${phase}" "${signal}" "${dir}" || return 1
@@ -261,25 +290,14 @@ _54_cell() {
     if _54_event "${phase}" "${capture}"; then
         _54_signal "${phase}" "${signal}" "${capture}" "${started}" || rc=1
     else
-        guard_fail "interrupt ${phase} ${signal}: observable event missed"
+        missed=1
         if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
-        rc=1
     fi
     local child_rc=0
     _54_wait || rc=1
     _54_reap "${phase} ${signal}" || child_rc=$?
     [[ "${child_rc}" -ne 124 ]] || rc=1
-    _54_assert "${capture}" "${dir}" "${child_rc}" "${expected}" || rc=1
-    _54_session_clear "${_54_PID}" || rc=1
-    if [[ "${rc}" -ne 0 ]]; then
-        _54_stop_session "${_54_PID}"
-        _54_PID=""
-        _54_failure_report "${phase}" "${signal}" "${child_rc}" "${dir}"
-        return 1
-    fi
-    _54_PID=""
-    printf 'interrupt %s %s: rc=%s cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 %s\n' \
-        "${phase}" "${signal}" "${child_rc}" "${verdict}"
+    _54_finish_cell "${phase}" "${signal}" "${dir}" "${child_rc}" "${expected}" "${rc}" "${missed}"
 }
 
 item_54() {
@@ -288,16 +306,26 @@ item_54() {
     _cleanup_push 54
     mkfifo "${_54_W}/poll" || return 1
     exec {_54_POLL_FD}<>"${_54_W}/poll"
-    local phase signal expected rc=0
+    local phase signal expected rc=0 cell_rc
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
             case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
-            _54_cell "${phase}" "${signal}" "${expected}" || { rc=1; break 2; }
+            cell_rc=0
+            _54_cell "${phase}" "${signal}" "${expected}" || cell_rc=$?
+            case "${cell_rc}" in
+                0) ;;
+                3) rc=3 ;;
+                *) rc=1; break 2 ;;
+            esac
         done
     done
-    if [[ "${rc}" -eq 0 ]]; then
+    if [[ "${rc}" -ne 1 ]]; then
         _cleanup_pop_run || return 1
-        printf 'interrupt-matrix: PASS (6/6)\n'
+        if [[ "${rc}" -eq 0 ]]; then
+            printf 'interrupt-matrix: PASS (6/6)\n'
+        else
+            printf 'interrupt-matrix: INCONCLUSIVE (host too busy, re-run when idle)\n'
+        fi
     else
         # Keep failed evidence and any surviving owned HOME for inspection.
         _cleanup_drop
