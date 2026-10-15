@@ -83,3 +83,12 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     assert_output --partial '`readlink -m`'
     assert_output --partial '不會將 `cfgbk_file_of` 的 init-log 路徑改為絕對路徑'
 }
+
+@test "acceptance 5.2 documents dangling init-log target restoration (#594)" {
+    run grep -F 'init-log 若是 dangling symlink' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial '`.tpath`'
+    assert_output --partial '空的 `.tsha`'
+    assert_output --partial '刪除原本不存在、驗收期間才建立的目標檔'
+    assert_output --partial '無法確定目標是否不存在時拒絕備份'
+}
