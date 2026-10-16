@@ -79,6 +79,26 @@ setup() {
     assert_output 'leftover-dirs=0'
 }
 
+@test "#626: overlapping config and cache chains restore children before shared parents" {
+    rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
+    export XDG_CACHE_HOME="${XDG_CONFIG_HOME}/nested/cache"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    run just box setup --terminal ghostty
+    assert_success
+    mkdir -p "${XDG_CACHE_HOME}/worktool"
+    printf 'acceptance output\n' >"$(cfgbk_file_of init-log)"
+
+    run cfgbk_restore_all
+
+    assert_success
+    assert [ ! -e "${XDG_CONFIG_HOME}" ]
+    run cfgbk_report_leftover_dirs
+    assert_success
+    assert_output 'leftover-dirs=0'
+}
+
 @test "#589: restore removes the init-log parent chain when cache was absent" {
     cfgbk_preflight
     cfgbk_dir_create

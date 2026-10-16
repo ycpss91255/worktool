@@ -374,6 +374,10 @@ _cfgbk_backup_dirs() {
         _p="$(cfgbk_file_of "${_n}")" || return 1
         _cfgbk_backup_missing_parents "${_p}" || return 1
     done
+    # Canonical children sort before their parents, including overlapping roots.
+    LC_ALL=C sort -zru -- "${CFGBK_B}/absent-directories" \
+        >"${CFGBK_B}/absent-directories.partial" || return 1
+    mv -- "${CFGBK_B}/absent-directories.partial" "${CFGBK_B}/absent-directories" || return 1
     for _n in "${CFGBK_NAMES[@]}"; do
         _p="$(cfgbk_file_of "${_n}")" || return 1
         _cfgbk_backup_parent_dirs "${_p}" || return 1
