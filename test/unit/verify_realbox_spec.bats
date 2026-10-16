@@ -158,7 +158,13 @@ verify_stop_group() {
     return "${INJECT_STOP_RC}"
 }
 INJECT
-    sed -i '/^_52_step3_restore() {/a\    echo restore-entered >>"${SIGNAL_STATE}/events"; if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then echo restore-with-live-child; fi' "${REALBOX}"
+    cat >"${SIGNAL_STATE}/restore-probe" <<'PROBE'
+    echo restore-entered >>"${SIGNAL_STATE}/events"
+    if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then
+        echo restore-with-live-child
+    fi
+PROBE
+    sed -i "/^_52_step3_restore() {/r ${SIGNAL_STATE}/restore-probe" "${REALBOX}"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.2
     assert_success
