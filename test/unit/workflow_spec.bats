@@ -4118,3 +4118,35 @@ Reason: 僅修正文句，沒有行為變更。'; do
         done
     done
 }
+
+@test "milestone-handover artifact commands pass registered Bash hooks with hostile report data (#614)" {
+    local root="${BATS_TEST_TMPDIR}/hook safe" args replies json scratch
+    mkdir -p "$root"
+    args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$root/replies.json"
+    _handover_replies | jq --arg d "$root" '
+        ."sync:".repoDir=$d |
+        ("gh api --paginate repos/<owner>/<repo>/issues/157/comments\ngh pr comment\n" +
+         "https://api.github.com/repos/example/project/issues/157/comments\n" +
+         ("允許" + "合併") + "\ncodex node -e\n中文𠮷 ` $HOME '\''\n\n") as $data |
+        ."findings:".content=$data | ."machine:".content=$data |
+        ."independent-codex:"=$data | ."independent-claude:"=$data |
+        ."evidence:"={evidenceContent:$data,readyContent:$data}' > "$replies"
+    run env HANDOVER_REAL_HOOKS=1 node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$args" "@$replies" exec-handover-files
+    assert_success
+    json="$output"
+    jq -c '{result,failed:[.ran[]|select(.rc != 0)]}' <<<"$json"
+    run jq -e '.error == null and .result.status == "prepared" and
+        ([.ran[].rc] | all(. == 0))' <<<"$json"
+    assert_success
+    scratch="$root/.agents/state/milestone-handover-7-$(printf 'a%.0s' {1..40})"
+    run jq -e --rawfile findings "$scratch/findings.md" --rawfile machine "$scratch/machine.md" \
+        --rawfile codex "$scratch/independent-codex-report.md" --rawfile claude "$scratch/independent-claude-report.md" \
+        --rawfile evidence "$scratch/evidence.md" --rawfile ready "$scratch/ready.md" '
+        ."findings:".content == $findings and ."machine:".content == $machine and
+        ("[claude]\n" + ."independent-codex:") == $codex and
+        ("[claude]\n" + ."independent-claude:") == $claude and
+        ."evidence:".evidenceContent == $evidence and ."evidence:".readyContent == $ready' "$replies"
+    assert_success
+}

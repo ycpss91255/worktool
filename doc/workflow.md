@@ -542,8 +542,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
 各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
 Machine 的 `machine.md` 與 `machine/` 子目錄、獨立驗收的 `independent-*`、Evidence 的 `evidence.md` 與 `ready.md`。
-回傳內容由專責寫入步驟以每塊最多 4096 個 Unicode code point 的固定命令，透過 stdin 寫入；
-各塊分開執行，不把整份報告塞入 argv，也不把多個命令合成一個超長 Bash 呼叫。
+回傳內容由專責寫入步驟使用 Write 寫入環境提供的 scratchpad 目錄下的 `.txt`，
+再以固定命令複製到 workflow scratch；命令參數只帶路徑、byte 數及十六進位 digest。
+內容僅經檔案寫入工具傳送，不放進 argv、heredoc 或 here-string，也不編碼或拆分內容來避開 hook。
 workflow 從各階段回傳的原始字串計算 UTF-8 byte 數及 SHA-256，寫完後以此核對整個檔案；
 後續讀取前沿用同一份驗證基準，不能用寫入代理重述的內容作為基準。
 寫入錯誤或內容不符即停止，錯誤包含失敗檔名。

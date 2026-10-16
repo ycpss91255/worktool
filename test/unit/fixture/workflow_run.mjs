@@ -55,6 +55,17 @@ const logs = []
 
 // Check the body before each shell launch, as registered PreToolUse hooks do.
 const checkHooks = (cmd) => {
+  if (process.env.HANDOVER_REAL_HOOKS) {
+    const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '')
+    const settings = JSON.parse(readFileSync(`${root}/.claude/settings.json`))
+    const input = JSON.stringify({ cwd: root, tool_name: 'Bash', tool_input: { command: cmd } })
+    for (const entry of settings.hooks.PreToolUse.filter(entry => entry.matcher === 'Bash')) {
+      for (const hook of entry.hooks) {
+        const path = hook.command.replace('${CLAUDE_PROJECT_DIR}', root)
+        execFileSync('bash', [path], { input, env: { ...process.env, CLAUDE_PROJECT_DIR: root }, stdio: ['pipe', 'pipe', 'pipe'] })
+      }
+    }
+  }
   if (mode !== 'exec-hooks') return
   const input = JSON.stringify({ cwd: process.cwd(), tool_name: 'Bash', tool_input: { command: cmd } })
   for (const hook of ['enforce_no_local_paths', 'enforce_milestone_gate_approval']) {
@@ -88,7 +99,7 @@ const play = (prompt) => {
       stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
       ran.push({ cmd, rc: 0 })
     } catch (e) {
-      ran.push({ cmd, rc: e.status })
+      ran.push({ cmd, rc: e.status, stderr: e.stderr?.toString() })
       return { ok: false, stdout: e.stdout?.toString().trim() || '' }
     }
   }
@@ -164,8 +175,12 @@ const artifactFault = (role, prompt, scratch) => {
   const [stage, file, kind] = (process.env.HANDOVER_WRITE_FAULT || '').split(':')
   if (role !== `artifact-write:${stage}`) return { prompt }
   if (kind === 'error') return { error: `${scratch}/${file}: simulated write failure` }
-  return { prompt: prompt.replace(/`(cd [^`]*)`/g, (span, command) =>
-    command.includes(file) ? span.replace(/ORIGINAL/g, 'MUTATION') : span) }
+  return { prompt: prompt.replace(/===ARTIFACT DATA===\n([^\n]*)/, (span, data) => {
+    const files = JSON.parse(data)
+    const path = `${scratch}/${file}`
+    if (files[path]) files[path] = files[path].replace(/ORIGINAL/g, 'MUTATION')
+    return `===ARTIFACT DATA===\n${JSON.stringify(files)}`
+  }) }
 }
 
 // Exercise handover filesystem commands with deterministic stage writers.
@@ -181,7 +196,17 @@ const playHandoverFiles = (role, prompt) => {
   if (role === 'scratch:' || role.startsWith('artifact-check:') || role.startsWith('artifact-write:')) {
     const fault = artifactFault(role, prompt, scratch)
     if (fault.error) return { error: fault.error }
-    const result = play(fault.prompt)
+    const data = fault.prompt.match(/===ARTIFACT DATA===\n([^\n]*)\n===END ARTIFACT DATA===/)
+    let instructions = fault.prompt
+    if (data) {
+      const scratchpad = `${args.repoDir}/scratchpad`
+      mkdirSync(scratchpad, { recursive: true })
+      for (const [path, content] of Object.entries(JSON.parse(data[1]))) {
+        writeFileSync(`${scratchpad}/handover-${args.pr}-${'a'.repeat(40)}-${path.split('/').pop()}.txt`, content)
+      }
+      instructions = instructions.replace(data[0], '').replaceAll('__CLAUDE_SCRATCHPAD__', scratchpad)
+    }
+    const result = play(instructions)
     if (!result.ok) return result.stdout || null
     return role === 'scratch:' ? reply(role) : result.stdout
   }
