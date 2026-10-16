@@ -178,7 +178,10 @@ const ARTIFACT_RULES = `All scratch reports, prompts, recovery journals and clea
 Artifact digest template: \`cd ${sq(A.repoDir)} && node -e ${sq(ARTIFACT_DIGEST)} '__SOURCE__'\`
 Artifact copy template: \`${copyCommand('__SOURCE__', '__DESTINATION__', { bytes: '__BYTES__', sha256: '__SHA256__' })}\`
 Apply this protocol to codex prompts and continuations, local verdicts, machine records, both reviewers' recovery journals before each operation, cleanup records and every other owned scratch artifact.`
-const CONTEXT = `${RULES} ${ARTIFACT_RULES} Frozen head=${head.sha}, milestone issue #${head.milestoneIssue}. Scratch ONLY ${JSON.stringify(SCRATCH)}. Never delete or recreate the scratch directory; preserve all earlier stages' files. Before any publication or final evidence, re-query head; if it changed, return error and stop. Do not publish a ready comment.`
+const CODEX_ARTIFACT_RULES = `For every artifact you originate, write artifacts directly to the specified destination paths using your own file tools or shell. This includes reports, prompts, local verdicts, recovery journals and cleanup records. Never paste report content into gh commands; publish only with literal --body-file paths. Never encode, obfuscate or split content to bypass hooks. Preserve earlier artifacts and owned recovery records. Verify files are nonempty and match the required format; on write or verification failure return error naming the destination and stop before publication or further operations.`
+const context = artifactRules => `${RULES} ${artifactRules} Frozen head=${head.sha}, milestone issue #${head.milestoneIssue}. Scratch ONLY ${JSON.stringify(SCRATCH)}. Never delete or recreate the scratch directory; preserve all earlier stages' files. Before any publication or final evidence, re-query head; if it changed, return error and stop. Do not publish a ready comment.`
+const CONTEXT = context(ARTIFACT_RULES)
+const CODEX_CONTEXT = context(CODEX_ARTIFACT_RULES)
 const verifyArtifacts = async (stage, files) => {
   const paths = files.map(file => `${SCRATCH}/${file}`)
   const checks = paths.map(path => `if ! test -s ${sq(path)}; then printf '%s\\n' ${sq(JSON.stringify({ missing: path }))}; exit 0; fi`).join('; ')
@@ -246,7 +249,7 @@ ${CODEX_RESUME}
 Repeat that resume call while rc is 124, at most ${CODEX_MAX_CONTINUES} times. If rc is still 124 after the last one, or no session id can be read, fail closed: stop and report it with the last 80 lines of ${CODEX_LOG}; never relaunch from scratch or detach.
 ${LAUNCH_FORBIDDEN} Any other nonzero final exit, empty output or malformed JSON also fails closed. The Codex process itself must write and validate its local verdict. Do not publish any PR comment in this stage; publication is deferred until both independent reports are posted. Pass these instructions to Codex verbatim:
 BEGIN CODEX TASK
-${CONTEXT}
+${CODEX_CONTEXT}
 Only create or overwrite your own files: codex*.
 Review the WHOLE head ${head.sha}, doc/acceptance.md for this milestone, milestone issue goals, and every prior finding in ${SCRATCH}/findings.md. Read scripts and check that documented expected output of EACH acceptance item matches what the script actually prints, including section 5. Compare all goals from actual user entry points. Mark real-machine items pending rather than passed. This is a hand-over verdict, not a claim that human acceptance passed.
 Write your own verdict to ${SCRATCH}/codex.md starting [codex], containing exactly one standalone verdict line with either:
@@ -440,7 +443,7 @@ Post both original files to acceptance PR ${A.pr}, sequentially:
 \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-claude-report.md`)}\`
 Read both posted comments back and verify their bodies match the files verbatim. Only after both reports are published and verified, launch a fresh Codex publisher with this task verbatim:
 BEGIN CODEX TASK
-${CONTEXT}
+${CODEX_CONTEXT}
 Post the existing codex.md verbatim yourself using your own codex hooks; do not rewrite it or repeat the review. Validate it starts [codex] and has exactly one standalone verdict line matching ${review.line}. Re-query the frozen head immediately before posting and stop on mismatch or query failure. Post your original file yourself via \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/codex.md`)}\`. Do not post on malformed/failed output. Read the posted comment back and verify its body matches the original file verbatim. Return {line: exact verdict line, url: actual posted comment URL, error?: reason}; never invent a URL.
 END CODEX TASK
 Use bounded foreground calls and literal paths (never detached). The Codex process itself must post; Claude must never post or retype the codex comment. Any failed launch, nonzero exit, malformed result, changed head, or unverifiable post stops before the final verdict. Then launch a fresh Codex publisher with bounded foreground calls and literal paths (never detached), using its own codex hooks to write and post independent-verdict.md starting [codex], with exactly this standalone line: ${verdict}. Include both report links, issues to open ${JSON.stringify(issues)}, and pending human items ${JSON.stringify(pendingHuman)}; do not claim human acceptance passed. The publisher must verify the frozen head immediately before posting via gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-verdict.md`)}. Claude never impersonates Codex. Verify the posted verdict body and head. Any failed launch, nonzero exit, empty file, malformed body, changed head, or unverifiable post returns error; never invent links or report success after partial publication.
