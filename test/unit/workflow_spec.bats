@@ -4002,6 +4002,38 @@ _handover_snapshot_run() {
     done
 }
 
+@test "pr-loop accepts only shell assignment prefixes in RED commands (#619)" {
+    local prefix expected record json
+    while IFS='|' read -r expected prefix _; do
+        record="$(jq -cn --arg prefix "$prefix" '{evidence:({
+            body:("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"),
+            comments:[]}|tojson)}')"
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        assert_success
+        json="$output"
+        run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+            (if $expected == "mergeable" then
+                ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
+            else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+        assert_success
+    done <<'CASES'
+mergeable|WORKTOOL_STRESS=1 |
+mergeable||
+mergeable|$ |
+mergeable|$ WORKTOOL_STRESS=1 _MODE2=fast |
+mergeable|LABEL='stress run' |
+mergeable|LABEL="stress run" WORKTOOL_STRESS=1 |
+mergeable|LABEL='' EMPTY="" |
+blocked|echo |
+blocked|WORKTOOL_STRESS=1 echo |
+blocked|env WORKTOOL_STRESS=1 |
+blocked|1MODE=fast |
+blocked|BAD-NAME=fast |
+blocked|LABEL='unterminated |
+blocked|LABEL="unterminated |
+CASES
+}
+
 @test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
     local body comments record json expected
     for body in '## RED exemption' '## RED exemption

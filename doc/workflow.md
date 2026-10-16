@@ -119,6 +119,11 @@ CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR he
 PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 RED。
 紀錄使用 `## RED` 標題，下方的同一個 fenced code block 包含完整
 `just test <tier> <spec> [--filter ...]` 指令與實際失敗的 `not ok <number> ...` TAP 行。
+指令前可有 `$ ` 提示符與零個或多個 `NAME=value` 環境變數指派，例如
+`WORKTOOL_STRESS=1 just test unit test/unit/example_spec.bats`。
+`NAME` 須符合 `[A-Za-z_][A-Za-z0-9_]*`；值可為不含空白或引號的非空字串，
+或以一對單引號／雙引號包住的簡單字串。任意文字前綴（如 `echo`），
+以及 `env`、`sudo` 等包裝指令不接受；仍須有同一區塊內的失敗 TAP 行。
 不能在 GREEN 後虛構或重編 RED 證據。
 
 full 模式每輪獨立審查前，以 `gh pr view --json body,comments` 讀取 PR 原文，
