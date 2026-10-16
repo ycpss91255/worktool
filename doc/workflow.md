@@ -542,11 +542,16 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 中間檔與證據置於 `<repoDir>/.agents/state/milestone-handover-<pr>-<sha>/`，
 各階段只能建立或覆寫自己的檔案：Findings 的 `findings.md`、Review 的 `codex*`、
 Machine 的 `machine.md` 與 `machine/` 子目錄、獨立驗收的 `independent-*`、Evidence 的 `evidence.md` 與 `ready.md`。
-回傳內容由專責寫入步驟以每塊最多 4096 個 Unicode code point 的固定命令，透過 stdin 寫入；
-各塊分開執行，不把整份報告塞入 argv，也不把多個命令合成一個超長 Bash 呼叫。
+回傳內容由專責寫入步驟使用 Write 寫入環境提供的 scratchpad 目錄下的 `.txt`，
+再以固定命令複製到 workflow scratch；命令參數只帶路徑、byte 數及十六進位 digest。
+內容僅經檔案寫入工具傳送，不放進 argv、heredoc 或 here-string，也不編碼或拆分內容來避開 hook。
 workflow 從各階段回傳的原始字串計算 UTF-8 byte 數及 SHA-256，寫完後以此核對整個檔案；
 後續讀取前沿用同一份驗證基準，不能用寫入代理重述的內容作為基準。
 寫入錯誤或內容不符即停止，錯誤包含失敗檔名。
+agent 自行產生的 codex prompt、continuation、recovery journal 與 cleanup 記錄也沿用
+Write 到 scratchpad `.txt` 再複製的規則；先以固定的路徑命令取得來源檔 byte 數與 digest，
+再核對來源與目的檔。這些動態產物的基準仍是 agent 寫出的來源檔，並非 workflow 已知的原始字串。
+scratchpad 位置由當次 agent 環境提供，不硬編 session 路徑；Write 拒絕時停止並指出目的檔。
 所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。Review 前以獨立 agent 在前景執行 `test -s` 確認 `findings.md`；Machine 前確認
 `findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`，以及兩份獨立報告
 `independent-codex-report.md`、`independent-claude-report.md` 與最終 `independent-verdict.md`。
