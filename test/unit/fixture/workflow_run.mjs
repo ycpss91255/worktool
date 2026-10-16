@@ -34,6 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync
 import { dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 // Existing pr-loop scenarios model successful external gates/publication by
@@ -93,7 +94,7 @@ const play = (prompt) => {
   }
   let stdout = ''
   for (const [, cmd] of outside.matchAll(/`((?:cd|mkdir|gh) [^`]*)`/g)) {
-    if (/(^|\s)<[A-Za-z][A-Za-z0-9_-]*>(\s|$)/.test(cmd)) continue
+    if (/(^|\s)<[A-Za-z][A-Za-z0-9_-]*>(\s|$)/.test(cmd) || cmd.includes('__SOURCE__')) continue
     try {
       checkHooks(cmd)
       stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
@@ -183,10 +184,45 @@ const artifactFault = (role, prompt, scratch) => {
   }) }
 }
 
+// Model Write plus the stage-owned protocol, then run its actual command.
+const playOwnedArtifacts = (role, prompt, scratch) => {
+  const files = {
+    'review:': ['codex-prompt.md', 'codex-continue.md', 'codex.md'],
+    'machine:': ['machine/record.md'],
+    'independent-codex:': ['independent-prompt.md', 'independent-continue.md', 'independent-recovery/codex/journal.md'],
+    'independent-claude:': ['independent-recovery/claude/journal.md'],
+    'independent-cleanup:': ['independent-recovery/codex/cleanup.md'],
+    'independent-claude-cleanup:': ['independent-recovery/claude/cleanup.md'],
+    'independent-publish:': ['independent-verdict.md'],
+  }[role]
+  if (!files) return
+  const template = prompt.match(/Artifact copy template: `([^`]+)`/)
+  if (!template) throw new Error(`Missing file-only artifact protocol: ${role}`)
+  const digestTemplate = prompt.match(/Artifact digest template: `([^`]+)`/)
+  if (!digestTemplate) throw new Error(`Missing file-only digest protocol: ${role}`)
+  const content = replies['findings:'].content
+  const source = `${scratch}/../scratchpad/owned.txt`
+  mkdirSync(dirname(source), { recursive: true })
+  for (const file of files) {
+    writeFileSync(source, content)
+    const digestCmd = digestTemplate[1].replace('__SOURCE__', source)
+    checkHooks(digestCmd)
+    const expected = JSON.parse(execFileSync('bash', ['-c', digestCmd], { stdio: ['ignore', 'pipe', 'pipe'] }))
+    if (expected.bytes !== Buffer.byteLength(content) || expected.sha256 !== createHash('sha256').update(content).digest('hex')) throw new Error(`Incorrect digest: ${file}`)
+    ran.push({ cmd: digestCmd, rc: 0, role })
+    const cmd = template[1].replace('__SOURCE__', source).replace('__DESTINATION__', `${scratch}/${file}`)
+      .replace('__BYTES__', expected.bytes).replace('__SHA256__', expected.sha256)
+    checkHooks(cmd)
+    execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] })
+    ran.push({ cmd, rc: 0, role, artifact: file, byteExact: readFileSync(`${scratch}/${file}`).equals(Buffer.from(content)) })
+  }
+}
+
 // Exercise handover filesystem commands with deterministic stage writers.
 const playHandoverFiles = (role, prompt) => {
   const args = JSON.parse(argsJson)
   const scratch = `${args.repoDir}/.agents/state/milestone-handover-${args.pr}-${'a'.repeat(40)}`
+  if (process.env.HANDOVER_OWNED_ARTIFACTS) playOwnedArtifacts(role, prompt, scratch)
   const [stage, lostFile, kind] = (process.env.HANDOVER_LOSS || '').split(':')
   const lossCheck = { findings: 'Review', machine: 'Evidence', evidence: 'Prepared' }[stage]
   if (role === `artifact-check:${lossCheck}`) {

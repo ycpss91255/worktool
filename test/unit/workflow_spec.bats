@@ -4150,3 +4150,26 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ."evidence:".evidenceContent == $evidence and ."evidence:".readyContent == $ready' "$replies"
     assert_success
 }
+
+@test "milestone-handover stage-owned artifacts use file-only commands allowed by real hooks (#614)" {
+    local root="${BATS_TEST_TMPDIR}/owned artifacts" args replies json
+    mkdir -p "$root"
+    args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
+    replies="$(_handover_replies | jq --arg d "$root" '
+        ."sync:".repoDir=$d | ."findings:".content=(
+        "gh api --paginate repos/<owner>/<repo>/issues/157/comments\ngh pr comment\n" +
+        "https://api.github.com/repos/example/project/issues/157/comments\n" +
+        ("允許" + "合併") + "\ncodex node -e\n中文𠮷 '\'' ` $HOME\n\n")')"
+    run env HANDOVER_REAL_HOOKS=1 HANDOVER_OWNED_ARTIFACTS=1 node \
+        "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
+        "${WF_DIR}/milestone-handover.js" "$args" "$replies" exec-handover-files
+    assert_success
+    json="$output"
+    jq -c '{error,result}' <<<"$json"
+    run jq -e '.error == null and .result.status == "prepared" and
+        ([.ran[]|select(.artifact)]|length == 11) and
+        ([.ran[]|select(.artifact)|.byteExact]|all) and
+        ([.ran[].cmd | contains("gh api --paginate") or contains("gh pr comment") or
+            contains("api.github.com") or contains("codex node -e")]|any|not)' <<<"$json"
+    assert_success
+}

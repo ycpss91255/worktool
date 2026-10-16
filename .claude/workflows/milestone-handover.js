@@ -164,22 +164,20 @@ try {
   process.exit(1);
 }`
 const copyCommand = (source, path, expected) => `cd ${sq(A.repoDir)} && node -e ${sq(ARTIFACT_COPY)} ${sq(source)} ${sq(path)} ${expected.bytes} ${sq(expected.sha256)}`
-// Persist workflow artifact data with one fixed command, including read-back verification.
-const ARTIFACT_WRITE = String.raw`const fs = require('node:fs');
-for (const [file, content] of Object.entries(JSON.parse(fs.readFileSync(0, 'utf8')))) {
-  try {
-    const expected = Buffer.from(content, 'utf8');
-    if (!content.length) throw new Error('empty content');
-    if (process.argv[1] === 'append') fs.appendFileSync(file, expected);
-    else fs.writeFileSync(file, expected);
-    if (!fs.readFileSync(file).subarray(-expected.length).equals(expected)) throw new Error('byte mismatch');
-  } catch (error) {
-    console.log(JSON.stringify({error: file + ': ' + error.message}));
-    process.exit(1);
-  }
-}
-console.log(JSON.stringify({ok: true}));`
-const ARTIFACT_RULES = `All scratch reports, prompts, recovery journals and cleanup records are workflow artifacts, not conversational report files. When your stage must persist its own artifact, use this fixed Bash method instead of the Write tool: pipe a JSON object mapping absolute artifact paths to exact content strings into node -e ${sq(ARTIFACT_WRITE)}. Never pass artifact content as a node argument. Limit each JSON input to 4096 Unicode code points of content; write the first chunk without an argument and subsequent chunks with the literal append argument, using separate bounded Bash commands. Use shell-safe literal quoting; never execute report text. Create only owned parent subdirectories with mkdir -p first. This command verifies non-empty, byte-identical read-back for each chunk. On any failure return error naming the file; never continue or publish. Preserve all earlier artifacts. Apply this method to every artifact your stage is asked to write.`
+const ARTIFACT_DIGEST = String.raw`const fs = require('node:fs'), crypto = require('node:crypto');
+const file = process.argv[1];
+try {
+  const data = fs.readFileSync(file);
+  if (!data.length) throw new Error('empty content');
+  console.log(JSON.stringify({bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex')}));
+} catch (error) {
+  console.log(JSON.stringify({error: file + ': ' + error.message}));
+  process.exit(1);
+}`
+const ARTIFACT_RULES = `All scratch reports, prompts, recovery journals and cleanup records are workflow artifacts. For every artifact you originate, use Write to save the exact complete content in a unique .txt file under the scratchpad directory supplied by your environment, then copy it to the owned destination using the fixed template below. This is the observed successful scratchpad .txt plus Bash copy pattern. Read the scratchpad file with a path-only digest command to obtain its UTF-8 byte count and SHA-256 before copying. For returned stage content the dedicated writer instead receives workflow-computed expectations; preserve those exactly. Substitute only shell-quoted absolute paths, decimal byte counts and hexadecimal digests into the template. Artifact content must never appear in any command text, argv, heredoc or here-string; never encode, obfuscate or split content to bypass hooks. The copy verifies nonempty source and byte-identical destination. Preserve earlier artifacts and owned recovery records. On Write refusal or verification failure return error naming the destination and stop before publication or further operations.
+Artifact digest template: \`cd ${sq(A.repoDir)} && node -e ${sq(ARTIFACT_DIGEST)} '__SOURCE__'\`
+Artifact copy template: \`${copyCommand('__SOURCE__', '__DESTINATION__', { bytes: '__BYTES__', sha256: '__SHA256__' })}\`
+Apply this protocol to codex prompts and continuations, local verdicts, machine records, both reviewers' recovery journals before each operation, cleanup records and every other owned scratch artifact.`
 const CONTEXT = `${RULES} ${ARTIFACT_RULES} Frozen head=${head.sha}, milestone issue #${head.milestoneIssue}. Scratch ONLY ${JSON.stringify(SCRATCH)}. Never delete or recreate the scratch directory; preserve all earlier stages' files. Before any publication or final evidence, re-query head; if it changed, return error and stop. Do not publish a ready comment.`
 const verifyArtifacts = async (stage, files) => {
   const paths = files.map(file => `${SCRATCH}/${file}`)
