@@ -338,6 +338,9 @@ setup() {
     assert_output --partial "[UNAVAILABLE] realbox.sh: jq not found on PATH"
     refute_output --partial "[FAIL]"
     assert_equal "$(_count_calls distrobox)" "0"
+    run find "${TMPDIR}" -mindepth 1 -print
+    assert_success
+    assert_output ''
 }
 
 @test "5.2: missing Ghostty refuses every step before backups or config writes" {

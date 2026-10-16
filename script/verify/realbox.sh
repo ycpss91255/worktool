@@ -666,10 +666,13 @@ _51_body() {
     return 0
 }
 
-item_51() {
+_51_require_tools() {
     guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
-        cat rm find cmp \
-        || return $?
+        cat rm find cmp
+}
+
+item_51() {
+    _51_require_tools || return $?
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \
         || return 1
@@ -715,8 +718,12 @@ _52_baseline_ghostty() {
     done
 }
 
+_52_backup_require_tools() {
+    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp stat
+}
+
 _52_step1_backup() {
-    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp stat || return $?
+    _52_backup_require_tools || return $?
     cfgbk_paths || return 1
     _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
@@ -738,8 +745,12 @@ _52_step1_backup() {
 }
 
 # --- step 2 ------------------------------------------------------------------
+_52_apply_require_tools() {
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath
+}
+
 _52_step2_apply() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
+    _52_apply_require_tools || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -935,10 +946,14 @@ _52_report_restore_window() {
     fi
 }
 
+_52_restore_require_tools() {
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
+        ps find cmp stat touch
+}
+
 _52_step3_restore() {
     verify_restore_allowed || return 1
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch || return $?
+    _52_restore_require_tools || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
     if [[ ! -d "${CFGBK_B}" ]]; then
@@ -1072,10 +1087,14 @@ _52_desktop_preflight() {
     fi
 }
 
+_52_require_tools() {
+    guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
+        grep cut id cat find sort cmp ps realpath stat touch
+}
+
 item_52() {
     _52_desktop_preflight || return $?
-    guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch || return $?
+    _52_require_tools || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
@@ -1185,10 +1204,14 @@ _53_body() {
     _53_still_there
 }
 
+_53_require_tools() {
+    guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch
+}
+
 item_53() {
     _53_CREATED=0
-    guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
-        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch || return $?
+    _53_require_tools || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \
@@ -1318,7 +1341,23 @@ realbox_run() {
     _run_requested_items "${_items[@]}"
 }
 
+# Check the first item's tools before allocating the shared stop guard. Later
+# items retain their own preflight when dispatched.
+_require_first_item_tools() {
+    case "$1" in
+        5.1) _51_require_tools ;;
+        5.2) _52_require_tools ;;
+        5.2.1) _52_backup_require_tools ;;
+        5.2.2) _52_apply_require_tools ;;
+        5.2.3) _52_restore_require_tools ;;
+        5.3) _53_require_tools ;;
+        5.4) return 0 ;;
+    esac
+}
+
 _run_requested_items() {
+    _require_first_item_tools "$1" || return $?
+    guard_require mktemp rmdir || return $?
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
     VERIFY_RUN_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-verify-guard.XXXXXXXX")" || return 1
