@@ -562,6 +562,35 @@ STUB
     assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
 }
 
+@test "5.4: outer cleanup accepts a child already reaped before status collection" {
+    _matrix_child_stub
+    # Consume both the job and Bash's saved background status before the
+    # production wait. The last builtin really waits on an unknown PID.
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+wait() {
+    local rc=0
+    builtin wait "$@" || rc=$?
+    builtin wait
+    rc=0
+    builtin wait "$@" || rc=$?
+    printf '%s\n' "${rc}" >"${MATRIX_STATE}/reaped-wait"
+    return "${rc}"
+}
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_success
+    assert_line 'rc=143'
+    refute_output --partial 'not a child of this shell'
+    refute_output --partial 'No record of process'
+    refute_output --partial 'stopped child rc=127'
+    [ "$(cat "${MATRIX_STATE}/reaped-wait")" = 127 ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*'
+    assert_success
+    assert_output ''
+}
+
 @test "5.4: matrix fixture residents expire without supervisor signals" {
     local phase
     for phase in assemble bench; do
