@@ -264,6 +264,7 @@ _assemble_owned_box() {
                 guard_fail \"cannot record assemble success at \${dir}/assemble-success\" || exit 2
             }
         " _ "$1" || rc=$?
+        verify_restore_allowed || exit 1
         # Deadline cleanup can kill the inner shell before it reports failure.
         # Report from the surviving supervisor after its process group stops.
         # Inner status 2 identifies a stage failure outside the assemble command.
@@ -401,6 +402,7 @@ _cleanup_push() { CLEANUP_STACK+=("$1"); }
 # Dispatch by token rather than by indirect function name, so every cleanup
 # has a visible call site.
 _cleanup_run() {
+    verify_restore_allowed || return 1
     case "$1" in
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
@@ -455,9 +457,11 @@ _on_exit() {
     trap - EXIT
     # EXIT may run inside assemble's redirection or bench's pipeline.
     exec 1>&"${REALBOX_REPORT_FD}"
+    verify_restore_allowed || exit 1
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
     done
+    rmdir -- "${VERIFY_RUN_GUARD_DIR}" || _crc=1
     [[ "${_crc}" -eq 0 ]] || exit 1
     exit "${_st}"
 }
@@ -672,10 +676,13 @@ _51_body() {
     return 0
 }
 
-item_51() {
+_51_require_tools() {
     guard_require distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln \
-        cat rm find cmp \
-        || return $?
+        cat rm find cmp
+}
+
+item_51() {
+    _51_require_tools || return $?
     _refuse_preexisting_box \
         "This block deletes the box it creates, so rename or remove yours by hand first." \
         || return 1
@@ -721,8 +728,12 @@ _52_baseline_ghostty() {
     done
 }
 
+_52_backup_require_tools() {
+    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp stat
+}
+
 _52_step1_backup() {
-    guard_require ghostty sha256sum cp mv mkdir rm readlink grep cut id cat find sort cmp stat || return $?
+    _52_backup_require_tools || return $?
     cfgbk_paths || return 1
     _52_baseline_ghostty || return 1
     # Nothing is applied unless EVERY file `just box setup` can write can be
@@ -744,8 +755,12 @@ _52_step1_backup() {
 }
 
 # --- step 2 ------------------------------------------------------------------
+_52_apply_require_tools() {
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath
+}
+
 _52_step2_apply() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
+    _52_apply_require_tools || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
     printf 'revalidate=1\n'
@@ -941,9 +956,14 @@ _52_report_restore_window() {
     fi
 }
 
-_52_step3_restore() {
+_52_restore_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch || return $?
+        ps find cmp stat touch
+}
+
+_52_step3_restore() {
+    verify_restore_allowed || return 1
+    _52_restore_require_tools || return $?
     cfgbk_paths || return 1
     local _rc=0 _rrc
     if [[ ! -d "${CFGBK_B}" ]]; then
@@ -961,7 +981,6 @@ _52_step3_restore() {
             "${CFGBK_B}"
         return 1
     fi
-
     _just box setup --auto-enter no >/dev/null 2>&1
     _rrc=$?
     printf 'restore-rc=%s\n' "${_rrc}"
@@ -1078,10 +1097,14 @@ _52_desktop_preflight() {
     fi
 }
 
+_52_require_tools() {
+    guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
+        grep cut id cat find sort cmp ps realpath stat touch
+}
+
 item_52() {
     _52_desktop_preflight || return $?
-    guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch || return $?
+    _52_require_tools || return $?
     cfgbk_paths || return 1
     _52_step1_backup || return $?
     # A published backup exists from here on, and step 3 is the only thing
@@ -1191,10 +1214,14 @@ _53_body() {
     _53_still_there
 }
 
+_53_require_tools() {
+    guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch
+}
+
 item_53() {
     _53_CREATED=0
-    guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
-        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch || return $?
+    _53_require_tools || return $?
     # The decoy has to be OURS: refuse if a box of that name already exists,
     # so this item can never remove one the maintainer cares about.
     _refuse_preexisting_box \
@@ -1324,9 +1351,26 @@ realbox_run() {
     _run_requested_items "${_items[@]}"
 }
 
+# Check the first item's tools before allocating the shared stop guard. Later
+# items retain their own preflight when dispatched.
+_require_first_item_tools() {
+    case "$1" in
+        5.1) _51_require_tools ;;
+        5.2) _52_require_tools ;;
+        5.2.1) _52_backup_require_tools ;;
+        5.2.2) _52_apply_require_tools ;;
+        5.2.3) _52_restore_require_tools ;;
+        5.3) _53_require_tools ;;
+        5.4) return 0 ;;
+    esac
+}
+
 _run_requested_items() {
+    _require_first_item_tools "$1" || return $?
+    guard_require mktemp rmdir || return $?
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
+    VERIFY_RUN_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-verify-guard.XXXXXXXX")" || return 1
     # Bash can return 127 from an implicit foreground wait at trap entry.
     # Cleanup handles its own failures; errexit must not short-circuit it.
     # A pipeline child can inherit EXIT before Bash resets its traps. Check

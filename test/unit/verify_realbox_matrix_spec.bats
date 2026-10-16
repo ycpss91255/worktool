@@ -252,11 +252,17 @@ _copy_matrix_repo() {
 
 @test "5.4: a copy without signal forwarding turns the interrupt cell red" {
     _copy_matrix_repo
-    sed -i "s/verify_stop_group \"\${monitor}\" \"\${interrupted}\"/if [[ \"\${TMPDIR}\" != *\"\${FORWARDING_DEGRADE_CELL}\"* ]]; then verify_stop_group \"\${monitor}\" \"\${interrupted}\"; fi/" "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    local stop_call="verify_stop_group \"\${monitor}\" \"\${signal}\" || rc=1"
+    grep -qF -- "${stop_call}" "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    sed -i "s/verify_stop_group \"\${monitor}\" \"\${signal}\" || rc=1/if [[ \"\${TMPDIR}\" != *\"\${FORWARDING_DEGRADE_CELL}\"* ]]; then verify_stop_group \"\${monitor}\" \"\${signal}\" || rc=1; fi/" "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    run grep -qF -- "    ${stop_call}" "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    assert_failure 1
     local phase signal
     for phase in assemble bench; do
         for signal in INT TERM HUP; do
             export FORWARDING_DEGRADE_CELL="${phase}-${signal}"
+            # An unconfirmed stop retains the cell's box for manual recovery.
+            : >"${MATRIX_STATE}/boxes"
             run "${REALBOX}" --allow-real-box 5.4
             assert_failure 1
             assert_line --partial "interrupt ${phase} ${signal}: FAIL ("

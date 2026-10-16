@@ -144,6 +144,51 @@ _check_group_interrupt() {
     assert_failure 1
 }
 
+_assert_unconfirmed_group_stop() {
+    export INJECT_STOP_RC="$1"
+    local repo pid
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    _prepare_group_interrupt assemble
+    cat >>"${repo}/lib/verify_run.sh" <<'INJECT'
+# Leave descendants alive after losing the monitor.
+verify_stop_group() {
+    echo "$1" >"${SIGNAL_STATE}/group"
+    builtin kill -KILL "$1"
+    return "${INJECT_STOP_RC}"
+}
+INJECT
+    cat >"${SIGNAL_STATE}/restore-probe" <<'PROBE'
+    echo restore-entered >>"${SIGNAL_STATE}/events"
+    if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then
+        echo restore-with-live-child
+    fi
+PROBE
+    sed -i "/^_52_step3_restore() {/r ${SIGNAL_STATE}/restore-probe" "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    refute_output --partial 'restore-ok=1'
+    assert_line --partial 'configuration restore refused'
+    assert_line 'rc=1'
+    [ -e "$(_backup_dir)/manifest" ]
+    if [[ -f "${SIGNAL_STATE}/events" ]]; then
+        run grep -F restore-entered "${SIGNAL_STATE}/events"
+        assert_failure 1
+    fi
+    read -r pid <"${SIGNAL_STATE}/group"
+    run bash -c 'source "${LIB_DIR}/verify_run.sh"; verify_group_running "$1"' _ "${pid}"
+    assert_failure 1
+}
+
+@test "5.2: failed group stop after real TERM refuses config restore and kills survivors" {
+    _assert_unconfirmed_group_stop 1
+}
+
+@test "5.2: surviving group after successful stop report refuses config restore" {
+    _assert_unconfirmed_group_stop 0
+}
+
 @test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
     _assert_group_interrupt INT 130 assemble
 }
@@ -293,6 +338,9 @@ setup() {
     assert_output --partial "[UNAVAILABLE] realbox.sh: jq not found on PATH"
     refute_output --partial "[FAIL]"
     assert_equal "$(_count_calls distrobox)" "0"
+    run find "${TMPDIR}" -mindepth 1 -print
+    assert_success
+    assert_output ''
 }
 
 @test "5.2: missing Ghostty refuses every step before backups or config writes" {
