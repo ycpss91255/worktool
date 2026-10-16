@@ -55,7 +55,7 @@ verify_run() {
 verify_interrupt_group() {
     local monitor="$1" signal="$2" rc=0
     verify_stop_group "${monitor}" "${signal}" || rc=1
-    if [[ "${rc}" -ne 0 ]]; then
+    if [[ "${rc}" -ne 0 ]] || verify_group_running "${monitor}"; then
         log_error "verify_run: group stop unconfirmed (pgid=${monitor}); configuration restore refused; inspect retained verification state before recovery"
         verify_kill_group "${monitor}" || rc=1
         return 1

@@ -144,7 +144,8 @@ _check_group_interrupt() {
     assert_failure 1
 }
 
-@test "5.2: failed group stop after real TERM refuses config restore and kills survivors" {
+_assert_unconfirmed_group_stop() {
+    export INJECT_STOP_RC="$1"
     local repo pid
     repo="$(_repo_copy)"
     REALBOX="${repo}/script/verify/realbox.sh"
@@ -152,8 +153,9 @@ _check_group_interrupt() {
     cat >>"${repo}/lib/verify_run.sh" <<'INJECT'
 # Leave descendants alive after losing the monitor.
 verify_stop_group() {
+    echo "$1" >"${SIGNAL_STATE}/group"
     builtin kill -KILL "$1"
-    return 1
+    return "${INJECT_STOP_RC}"
 }
 INJECT
     sed -i '/^_52_step3_restore() {/a\    echo restore-entered >>"${SIGNAL_STATE}/events"; if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then echo restore-with-live-child; fi' "${REALBOX}"
@@ -168,11 +170,17 @@ INJECT
         run grep -F restore-entered "${SIGNAL_STATE}/events"
         assert_failure 1
     fi
-    read -r pid <"${SIGNAL_STATE}/child.pid"
-    if kill -0 "${pid}" 2>/dev/null; then
-        run grep -E '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"
-        assert_success
-    fi
+    read -r pid <"${SIGNAL_STATE}/group"
+    run bash -c 'source "${LIB_DIR}/verify_run.sh"; verify_group_running "$1"' _ "${pid}"
+    assert_failure 1
+}
+
+@test "5.2: failed group stop after real TERM refuses config restore and kills survivors" {
+    _assert_unconfirmed_group_stop 1
+}
+
+@test "5.2: surviving group after successful stop report refuses config restore" {
+    _assert_unconfirmed_group_stop 0
 }
 
 @test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
