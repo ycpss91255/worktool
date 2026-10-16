@@ -8,7 +8,7 @@ verify_run() {
     saved_term="$(trap -p TERM)"
     saved_hup="$(trap -p HUP)"
     shift
-    state="$(mktemp -d)" || return 1
+    state="$(mktemp -d "${VERIFY_RUN_GUARD_DIR:-${TMPDIR:-/tmp}}/verify-run.XXXXXXXX")" || return 1
     if [[ "$1" == just && "${2:-}" == test ]]; then
         run_id="${state##*/}"
     fi
@@ -28,7 +28,11 @@ verify_run() {
     wait "${monitor}" || rc=$?
     if [[ -n "${interrupted}" ]]; then
         trap '' INT TERM HUP
-        verify_stop_group "${monitor}" "${interrupted}"
+        if ! verify_interrupt_group "${monitor}" "${interrupted}"; then
+            if ! verify_group_running "${monitor}"; then wait "${monitor}" || rc=$?; fi
+            verify_restore_signals "" "${saved_int}" "${saved_term}" "${saved_hup}"
+            return 1
+        fi
         wait "${monitor}" || rc=$?
     fi
     if [[ -n "${interrupted}" || "${rc}" -eq 124 || -e "${state}/deadline" ]]; then
@@ -45,6 +49,28 @@ verify_run() {
     rm -rf "${state}"
     verify_restore_signals "${interrupted}" "${saved_int}" "${saved_term}" "${saved_hup}" || rc=$?
     return "${rc}"
+}
+
+# Treat a failed stop as unsafe even if the emergency KILL succeeds.
+verify_interrupt_group() {
+    local monitor="$1" signal="$2" rc=0
+    verify_stop_group "${monitor}" "${signal}" || rc=1
+    if [[ "${rc}" -ne 0 ]]; then
+        log_error "verify_run: group stop unconfirmed (pgid=${monitor}); configuration restore refused; inspect retained verification state before recovery"
+        verify_kill_group "${monitor}" || rc=1
+        return 1
+    fi
+}
+
+# Subshell supervisors retain their state directory on an unsafe interruption.
+# The owning realbox shell must check this before any configuration restore.
+verify_restore_allowed() {
+    [[ -n "${VERIFY_RUN_GUARD_DIR:-}" ]] || return 0
+    local pending=("${VERIFY_RUN_GUARD_DIR}"/verify-run.*)
+    if [[ -e "${pending[0]}" ]]; then
+        log_error "configuration restore refused: unconfirmed verification stop; inspect ${VERIFY_RUN_GUARD_DIR} and stop surviving processes before manual recovery"
+        return 1
+    fi
 }
 
 verify_restore_signals() {
@@ -71,8 +97,13 @@ verify_stop_group() {
         fi
         sleep 0.05
     done
+    verify_kill_group "${monitor}"
+}
+
+verify_kill_group() {
+    local monitor="$1"
     if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
-        : # The process group may already have exited.
+        : # Confirm disappearance below even when signalling fails.
     fi
     local deadline=$((SECONDS + 1))
     while verify_group_running "${monitor}"; do

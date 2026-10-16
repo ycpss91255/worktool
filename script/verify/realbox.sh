@@ -264,6 +264,7 @@ _assemble_owned_box() {
                 guard_fail \"cannot record assemble success at \${dir}/assemble-success\" || exit 2
             }
         " _ "$1" || rc=$?
+        verify_restore_allowed || exit 1
         # Deadline cleanup can kill the inner shell before it reports failure.
         # Report from the surviving supervisor after its process group stops.
         # Inner status 2 identifies a stage failure outside the assemble command.
@@ -401,6 +402,7 @@ _cleanup_push() { CLEANUP_STACK+=("$1"); }
 # Dispatch by token rather than by indirect function name, so every cleanup
 # has a visible call site.
 _cleanup_run() {
+    verify_restore_allowed || return 1
     case "$1" in
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
@@ -445,9 +447,11 @@ _on_exit() {
     trap - EXIT
     # EXIT may run inside assemble's redirection or bench's pipeline.
     exec 1>&"${REALBOX_REPORT_FD}"
+    verify_restore_allowed || exit 1
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
     done
+    rmdir -- "${VERIFY_RUN_GUARD_DIR}" || _crc=1
     [[ "${_crc}" -eq 0 ]] || exit 1
     exit "${_st}"
 }
@@ -932,6 +936,7 @@ _52_report_restore_window() {
 }
 
 _52_step3_restore() {
+    verify_restore_allowed || return 1
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
         ps find cmp stat touch || return $?
     cfgbk_paths || return 1
@@ -1317,6 +1322,7 @@ realbox_run() {
 _run_requested_items() {
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
+    VERIFY_RUN_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-verify-guard.XXXXXXXX")" || return 1
     # Bash can return 127 from an implicit foreground wait at trap entry.
     # Cleanup handles its own failures; errexit must not short-circuit it.
     # A pipeline child can inherit EXIT before Bash resets its traps. Check

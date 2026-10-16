@@ -144,6 +144,37 @@ _check_group_interrupt() {
     assert_failure 1
 }
 
+@test "5.2: failed group stop after real TERM refuses config restore and kills survivors" {
+    local repo pid
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    _prepare_group_interrupt assemble
+    cat >>"${repo}/lib/verify_run.sh" <<'INJECT'
+# Leave descendants alive after losing the monitor.
+verify_stop_group() {
+    builtin kill -KILL "$1"
+    return 1
+}
+INJECT
+    sed -i '/^_52_step3_restore() {/a\    echo restore-entered >>"${SIGNAL_STATE}/events"; if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then echo restore-with-live-child; fi' "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    refute_output --partial 'restore-ok=1'
+    assert_line --partial 'configuration restore refused'
+    assert_line 'rc=1'
+    [ -e "$(_backup_dir)/manifest" ]
+    if [[ -f "${SIGNAL_STATE}/events" ]]; then
+        run grep -F restore-entered "${SIGNAL_STATE}/events"
+        assert_failure 1
+    fi
+    read -r pid <"${SIGNAL_STATE}/child.pid"
+    if kill -0 "${pid}" 2>/dev/null; then
+        run grep -E '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"
+        assert_success
+    fi
+}
+
 @test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
     _assert_group_interrupt INT 130 assemble
 }
