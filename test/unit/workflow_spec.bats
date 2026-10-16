@@ -4200,6 +4200,24 @@ Reason: 僅修正文句，沒有行為變更。'; do
     assert_success
 }
 
+@test "milestone-handover independent Codex gets direct writes while Claude acceptance and cleanup retain Write (#623)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        (.calls[] | select(.role == "independent-codex:") | .prompt |
+            split("BEGIN TASK\n")[1] | split("\nEND TASK")[0] |
+            contains("write artifacts directly to the specified destination paths") and
+            contains("your own file tools or shell") and
+            contains("Never paste report content into gh commands") and
+            contains("recovery journal") and
+            (test("use Write|Write tool|scratchpad|Artifact copy template|Artifact digest template") | not)) and
+        ([.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:" or
+            .role == "independent-cleanup:" or .role == "independent-claude-cleanup:") |
+            .prompt | split("BEGIN TASK\n")[0] |
+            contains("use Write") and contains("scratchpad directory") and
+            contains("Artifact copy template")] | length == 4 and all)' <<<"$output"
+    assert_success
+}
+
 @test "milestone-handover stage-owned artifacts use file-only commands allowed by real hooks (#614)" {
     local root="${BATS_TEST_TMPDIR}/owned artifacts" args replies json
     mkdir -p "$root"
