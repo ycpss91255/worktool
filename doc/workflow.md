@@ -553,10 +553,14 @@ Machine 的 `machine.md` 與 `machine/` 子目錄、獨立驗收的 `independent
 workflow 從各階段回傳的原始字串計算 UTF-8 byte 數及 SHA-256，寫完後以此核對整個檔案；
 後續讀取前沿用同一份驗證基準，不能用寫入代理重述的內容作為基準。
 寫入錯誤或內容不符即停止，錯誤包含失敗檔名。
-agent 自行產生的 codex prompt、continuation、recovery journal 與 cleanup 記錄也沿用
+Claude agent 自行產生的 codex prompt、continuation、recovery journal 與 cleanup 記錄也沿用
 Write 到 scratchpad `.txt` 再複製的規則；先以固定的路徑命令取得來源檔 byte 數與 digest，
 再核對來源與目的檔。這些動態產物的基準仍是 agent 寫出的來源檔，並非 workflow 已知的原始字串。
 scratchpad 位置由當次 agent 環境提供，不硬編 session 路徑；Write 拒絕時停止並指出目的檔。
+交給 Codex 程序的 Review、發布與獨立驗收任務改用 Codex 自己的檔案工具或 shell，直接寫入指定目的路徑，
+不得將報告內容貼入 gh 命令；發布仍使用字面 `--body-file` 路徑。Claude launcher 與獨立 cleanup agent
+保留 Write／scratchpad 規則；獨立驗收只將 `BEGIN TASK` 內的 Codex 規則傳入 Codex。
+寫完後仍由 workflow 側的 Claude agent 檢查檔案存在、非空及格式；失敗時停止並指出檔名。
 所有階段（含 Review 的 codex 子程序）禁止刪除或重建 scratch 目錄，必須保留前面階段的產物。Review 前以獨立 agent 在前景執行 `test -s` 確認 `findings.md`；Machine 前確認
 `findings.md`、`codex.md`、`codex-result.json`；Evidence 前再次確認這些檔案與 `machine.md`，以及兩份獨立報告
 `independent-codex-report.md`、`independent-claude-report.md` 與最終 `independent-verdict.md`。
