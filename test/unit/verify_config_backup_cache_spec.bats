@@ -50,6 +50,35 @@ setup() {
     assert_equal "$(stat -c %y "${HOME}")" "${ancestor_mtime}"
 }
 
+@test "#626: non-empty config parents fail restore and count each leftover directory once" {
+    rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
+    export XDG_CONFIG_HOME="${HOME}/missing/config"
+    cfgbk_paths
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    run just box setup --terminal ghostty
+    assert_success
+    printf 'user content\n' >"${XDG_CONFIG_HOME}/ghostty/keep"
+
+    run cfgbk_restore_all
+
+    assert_failure 1
+    assert_equal "$(cat "${XDG_CONFIG_HOME}/ghostty/keep")" 'user content'
+    assert [ ! -e "$(cfgbk_file_of ghostty)" ]
+    run cfgbk_report_leftover_dirs
+    assert_failure 1
+    assert_line 'leftover-dirs=3'
+
+    rm "${XDG_CONFIG_HOME}/ghostty/keep"
+    run cfgbk_restore_all
+    assert_success
+    assert [ ! -e "${HOME}/missing" ]
+    run cfgbk_report_leftover_dirs
+    assert_success
+    assert_output 'leftover-dirs=0'
+}
+
 @test "#589: restore removes the init-log parent chain when cache was absent" {
     cfgbk_preflight
     cfgbk_dir_create

@@ -862,24 +862,16 @@ cfgbk_report_blocks() {
     return 0
 }
 
-_cfgbk_count_leftover_parents() {
-    local _p _count=0
-    [[ -e "${CFGBK_B}/absent-directories" ]] || { printf '0\n'; return 0; }
-    while IFS= read -r -d '' _p; do
-        if [[ -e "${_p}" || -L "${_p}" ]]; then _count=$((_count + 1)); fi
-    done <"${CFGBK_B}/absent-directories" || return 1
-    [[ -z "${_p}" ]] || return 1
-    printf '%s\n' "${_count}"
-}
-
-# Print `leftover-dirs=N` and fail unless N is 0. Names whose file lives in a
-# directory worktool never creates (~/.tmux.conf, in $HOME) have no leftover
-# to report. Same rule for the manifest read: grep's 1 is "this name is not
-# absent-dir", >= 2 is "unreadable".
-cfgbk_report_leftover_dirs() {
-    local _lo=0 _n _d _rc
-    _lo="$(_cfgbk_count_leftover_parents)" \
-        || { guard_fail "cannot read absent parent backup -- leftover-dirs= is not trustworthy"; return 1; }
+_cfgbk_count_leftover_dirs() {
+    local _p _n _d _rc _count=0
+    local -A _dirs=()
+    if [[ -e "${CFGBK_B}/absent-directories" ]]; then
+        while IFS= read -r -d '' _p; do
+            _dirs["${_p}"]=1
+        done <"${CFGBK_B}/absent-directories" || return 1
+        [[ -z "${_p}" ]] || return 1
+    fi
+    # Include legacy absent-dir manifests, counting shared paths only once.
     for _n in "${CFGBK_NAMES[@]}"; do
         _d="$(cfgbk_dir_of "${_n}")" || return 1
         [[ -n "${_d}" ]] || continue
@@ -888,8 +880,21 @@ cfgbk_report_leftover_dirs() {
         [[ "${_rc}" -le 1 ]] \
             || { guard_fail "cannot read ${CFGBK_B}/manifest -- leftover-dirs= is not trustworthy"; return 1; }
         [[ "${_rc}" -eq 0 ]] || continue
-        [[ ! -e "${_d}" ]] || _lo=$((_lo + 1))
+        _d="$(readlink -m -- "${_d}")" || return 1
+        _dirs["${_d}"]=1
     done
+    for _p in "${!_dirs[@]}"; do
+        if [[ -e "${_p}" || -L "${_p}" ]]; then _count=$((_count + 1)); fi
+    done
+    printf '%s\n' "${_count}"
+}
+
+# Print `leftover-dirs=N` and fail unless N is 0. Missing parent chains and
+# legacy absent-dir entries describe a set of paths, even for shared dirs.
+cfgbk_report_leftover_dirs() {
+    local _lo
+    _lo="$(_cfgbk_count_leftover_dirs)" \
+        || { guard_fail "cannot read directory backup -- leftover-dirs= is not trustworthy"; return 1; }
     printf 'leftover-dirs=%s\n' "${_lo}"
     [[ "${_lo}" -eq 0 ]] \
         || { guard_fail "directories that did not exist before are still there"; return 1; }
