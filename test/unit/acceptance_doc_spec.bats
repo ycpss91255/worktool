@@ -75,13 +75,18 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     assert_success
 }
 
-@test "acceptance 5.2 documents the cache chain ancestor mtime exception (#594)" {
-    run grep -F '第一個既有祖先可能高於 cache 根目錄' "${REPO_ROOT}/doc/acceptance.md"
+@test "acceptance 5.2 documents all managed parent chain ancestor mtime exceptions (#594)" {
+    run grep -F '目錄 mtime（#526）' "${REPO_ROOT}/doc/acceptance.md"
     assert_success
+    assert_output --partial '五個受管檔案的缺失父目錄鏈各自另記錄第一個既有祖先的 mtime'
+    assert_output --partial '第一個既有祖先可能高於 config 或 cache 根目錄'
     assert_output --partial '例如 HOME'
+    assert_output --partial 'XDG_CONFIG_HOME=/x/missing/config'
+    assert_output --partial '記錄並還原 /x 的 mtime'
     assert_output --partial '#536'
-    run grep -F '已知限制：設定根目錄以上的目錄 mtime 不受保護' "${REPO_ROOT}/doc/acceptance.md"
-    assert_failure 1
+    assert_output --partial '所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime'
+    assert_output --partial '已知限制：除上述五個受管檔案缺失父目錄鏈的第一個既有祖先外，設定根目錄以上的目錄 mtime 不受保護'
+    refute_output --partial 'init-log 缺失目錄鏈'
 }
 
 @test "acceptance 5.2 documents actual relative cache parent handling (#594)" {
