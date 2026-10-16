@@ -366,8 +366,10 @@ STUB
     _matrix_child_stub
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
     assert_success
     assert_line 'rc=143'
+    refute_output --partial 'No record of process'
     assert_line '[INFO] interrupt cleanup: stopped child rc=143 (expected after termination)'
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
@@ -593,9 +595,9 @@ STUB
 
 @test "5.4: outer cleanup accepts a child already reaped before status collection" {
     _matrix_child_stub
-    # POSIX wait consumes only this child's job and saved status. A bare wait
-    # would also erase foreground jobs interrupted by TERM, corrupting Bash's
-    # implicit waits during EXIT. The final wait must see a real unknown PID.
+    # Consume the child's saved status in POSIX mode so the second wait sees
+    # a real unknown PID. POSIX wait also sweeps notified dead jobs; retain
+    # that stress on cleanup without fabricating a wait status.
     cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
 wait() {
     local -

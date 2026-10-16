@@ -1319,7 +1319,10 @@ _run_requested_items() {
     REALBOX_OWNER_PID="${BASHPID}"
     # Bash can return 127 from an implicit foreground wait at trap entry.
     # Cleanup handles its own failures; errexit must not short-circuit it.
-    trap '_on_exit || exit "$?"' EXIT
+    # A pipeline child can inherit EXIT before Bash resets its traps. Check
+    # ownership before entering a function: even its first builtin can make
+    # Bash implicitly wait for a foreground job missing from the child's table.
+    trap 'case "${BASHPID}" in "${REALBOX_OWNER_PID}") _on_exit || exit "$?" ;; esac' EXIT
     # Mask before entering EXIT: another signal must not abort the handoff.
     trap 'trap "" INT TERM HUP; exit 130' INT
     trap 'trap "" INT TERM HUP; exit 143' TERM
