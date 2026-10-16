@@ -1909,6 +1909,9 @@ STUB
     assert_line "leftover-dirs=0"
     assert_line "dev-gone=1"
     assert_line "backup-removed=1"
+    assert_equal "$(printf '%s\n' "${output}" | tr -d '\r' \
+        | grep -E '^(dev-gone|backup-removed|cleanup-rc)=')" \
+        $'dev-gone=1\nbackup-removed=1\ncleanup-rc=0'
     [ ! -e "$(_backup_dir)" ]
 }
 
