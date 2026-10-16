@@ -15,10 +15,14 @@ setup() {
     cfgbk_paths
 }
 
-@test "#626: backup and real setup restore an absent config root and preserve its ancestor" {
+_use_absent_config_root() {
     rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
-    export XDG_CONFIG_HOME="${HOME}/missing/config"
+    export XDG_CONFIG_HOME="$1" XDG_CACHE_HOME="${2:-}"
     cfgbk_paths
+}
+
+@test "#626: backup and real setup restore an absent config root and preserve its ancestor" {
+    _use_absent_config_root "${HOME}/missing/config"
     touch -d '2001-01-01' "${HOME}"
     local ancestor_inode ancestor_mtime
     ancestor_inode="$(stat -c %i "${HOME}")"
@@ -51,9 +55,7 @@ setup() {
 }
 
 @test "#626: non-empty config parents fail restore and count each leftover directory once" {
-    rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
-    export XDG_CONFIG_HOME="${HOME}/missing/config"
-    cfgbk_paths
+    _use_absent_config_root "${HOME}/missing/config"
     cfgbk_preflight
     cfgbk_dir_create
     cfgbk_backup_body
@@ -80,8 +82,7 @@ setup() {
 }
 
 @test "#626: overlapping config and cache chains restore children before shared parents" {
-    rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
-    export XDG_CACHE_HOME="${XDG_CONFIG_HOME}/nested/cache"
+    _use_absent_config_root "${HOME}/.config" "${HOME}/.config/nested/cache"
     cfgbk_preflight
     cfgbk_dir_create
     cfgbk_backup_body
