@@ -1317,7 +1317,9 @@ realbox_run() {
 _run_requested_items() {
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
-    trap _on_exit EXIT
+    # Bash can return 127 from an implicit foreground wait at trap entry.
+    # Cleanup handles its own failures; errexit must not short-circuit it.
+    trap '_on_exit || exit "$?"' EXIT
     # Mask before entering EXIT: another signal must not abort the handoff.
     trap 'trap "" INT TERM HUP; exit 130' INT
     trap 'trap "" INT TERM HUP; exit 143' TERM

@@ -591,6 +591,26 @@ STUB
     assert_output ''
 }
 
+@test "5.4: an unavailable wait record at EXIT entry cannot skip outer cleanup" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    # Pin Bash's unknown-child status (127) to the EXIT entry. Consume a
+    # real child's saved status first; do not manufacture its return code.
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+true &
+REAPED_FOREGROUND_PID=$!
+builtin wait "${REAPED_FOREGROUND_PID}"
+builtin wait
+STUB
+    sed -i '/^_on_exit() {/a\    builtin wait "${REAPED_FOREGROUND_PID}"' "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_success
+    assert_line 'rc=1'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
+
 @test "5.4: matrix fixture residents expire without supervisor signals" {
     local phase
     for phase in assemble bench; do
