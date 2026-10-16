@@ -420,6 +420,16 @@ _52_cleanup_report() {
     return "${_rc}"
 }
 
+# Keep the no-backup entry quiet while reporting actual restore cleanup.
+_52_restore_only() {
+    cfgbk_paths || return 1
+    if [[ -d "${CFGBK_B}" ]]; then
+        _52_cleanup_report
+    else
+        _52_step3_restore
+    fi
+}
+
 # Pop the top token and run it; returns its status (0 when the stack is empty).
 _cleanup_pop_run() {
     local _n="${#CLEANUP_STACK[@]}" _tok
@@ -1228,7 +1238,7 @@ _dispatch_item() {
         5.2) item_52 ;;
         5.2.1) _52_step1_backup ;;
         5.2.2) _52_apply_only ;;
-        5.2.3) _52_step3_restore ;;
+        5.2.3) _52_restore_only ;;
         5.3) item_53 ;;
         5.4) item_54 ;;
         *) guard_fail "internal: unknown item '$1'"; return 1 ;;
