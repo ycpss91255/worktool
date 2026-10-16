@@ -1,7 +1,7 @@
 # 目錄結構與測試 gate
 
 本文件說明 worktool 的 repo 目錄結構、`just` 使用者介面,以及如何在 Docker 內
-執行各項測試 gate。狀態:M2(盒子清單格式 + 最小 assemble)。M1 建立骨架、測試
+執行各項測試 gate。狀態:M3(終端自動進盒 + 效能達標)。M1 建立骨架、測試
 框架與 CI;M2 加入第一個 distrobox 邏輯:盒子清單格式與 assemble 包裝器(見
 [`manifest.md`](manifest.md)),並把 `just` 定為使用者介面(base 模型,見下)。
 

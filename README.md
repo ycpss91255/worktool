@@ -7,7 +7,7 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 
 這是 `init_ubuntu`(ycpss91255/initialization)的重設計繼任者,為新的大版本。
 
-狀態:M2(盒子清單格式 + 最小 assemble)。設計與 milestone 計畫見
+狀態:M3(終端自動進盒 + 效能達標)。設計與 milestone 計畫見
 [`doc/design.md`](doc/design.md);清單格式、assemble 流程與從 clone 到 assemble
 的完整驗證步驟見 [`doc/manifest.md`](doc/manifest.md);終端自動進盒的設定
 (`just box setup` / `status` / `enter`)見 [`doc/enter.md`](doc/enter.md);目錄結構見

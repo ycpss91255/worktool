@@ -1,7 +1,7 @@
 # 盒子清單格式與 assemble 流程
 
 本文件說明 worktool 的「盒子清單」(box manifest)格式,以及如何從清單
-assemble 出共用的 dev 盒。狀態:M2(盒子清單格式 + 最小 assemble)。整體設計與
+assemble 出共用的 dev 盒。狀態:M3(終端自動進盒 + 效能達標)。整體設計與
 治理見 [`design.md`](design.md);目錄結構與測試 gate 見
 [`structure.md`](structure.md)。
 
