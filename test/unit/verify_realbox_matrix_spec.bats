@@ -130,20 +130,49 @@ STUB
 
 @test "#601: bench starting during the box query cannot pass as assemble" {
     export MATRIX_CAPTURE_ROOT="${TMPDIR}"
+    # Publish the box during the observer's query, after any earlier snapshot.
+    cat >"${MATRIX_STATE}/publication.sed" <<'STUB'
+/^    printf 'dev\\n'/i\
+    if [[ "${TMPDIR}/" == */assemble-INT/* ]]; then\
+        touch "${MATRIX_STATE}/publication-ready"\
+        deadline=$((SECONDS + 3))\
+        while [[ ! -e "${MATRIX_STATE}/query-started" ]]; do\
+            if ((SECONDS >= deadline)); then exit 1; fi\
+            sleep 0.01\
+        done\
+    fi
+STUB
+    sed -i -f "${MATRIX_STATE}/publication.sed" "${MATRIX_STATE}/bin/just"
     mkdir -p "${MATRIX_STATE}/original"
     mv "${MATRIX_STATE}/bin/distrobox" "${MATRIX_STATE}/original/distrobox"
     cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == list && -s "${MATRIX_STATE}/boxes" ]]; then
-    for capture in "${MATRIX_CAPTURE_ROOT}"/wt-m3-54.*/assemble-INT/capture; do
-        printf 'phase=bench\n' >>"${capture}"
+if [[ "$1" == list && -e "${MATRIX_STATE}/publication-ready" && ! -e "${MATRIX_STATE}/query-started" ]]; then
+    touch "${MATRIX_STATE}/query-started"
+    deadline=$((SECONDS + 3))
+    while [[ ! -s "${MATRIX_STATE}/boxes" ]]; do
+        if ((SECONDS >= deadline)); then exit 1; fi
+        sleep 0.01
     done
+fi
+if [[ "$1" == list ]]; then
+    rc=0
+    listing="$("${MATRIX_STATE}/original/distrobox" "$@")" || rc=$?
+    # Inject from the returned snapshot, including a box published mid-query.
+    if [[ "${rc}" -eq 0 && "${listing}" == *' | dev | '* ]]; then
+        for capture in "${MATRIX_CAPTURE_ROOT}"/wt-m3-54.*/assemble-INT/capture; do
+            printf 'phase=bench\n' >>"${capture}"
+        done
+    fi
+    printf '%s\n' "${listing}"
+    exit "${rc}"
 fi
 exec "${MATRIX_STATE}/original/distrobox" "$@"
 STUB
     chmod +x "${MATRIX_STATE}/bin/distrobox"
     run "${REALBOX}" --allow-real-box 5.4
+    [ -e "${MATRIX_STATE}/query-started" ]
     assert_failure 1
     assert_line --partial 'interrupt assemble INT: observable event missed'
     assert_line 'interrupt-matrix: FAIL'
