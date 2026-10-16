@@ -8,7 +8,7 @@
 source "${REPO_ROOT}/lib/config_backup.sh"
 CFGBK_NAMES=(ghostty ghostty-modern worktool distrobox-conf init-log)
 CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
-CFGBK_PARENT_CHAIN_NAMES=(init-log)
+CFGBK_PARENT_CHAIN_NAMES=("${CFGBK_NAMES[@]}")
 
 cfgbk_file_of() {
     case "$1" in

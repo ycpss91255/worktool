@@ -58,23 +58,35 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     [[ "${doc}" == *"缺少 \`created-box\` 代表本輪未確認盒子所有權"* ]]
 }
 
-@test "acceptance 5.2 documents absent cache parent cleanup and leftover counts (#594)" {
-    local doc
-    doc="$(cat "${REPO_ROOT}/doc/acceptance.md")"
-    run printf '%s\n' "${doc}"
+@test "acceptance 5.2 documents all managed parent chains and unique leftovers (#626)" {
+    run grep -F "另以 \`absent-directories\` 記錄五個受管檔案各自原本不存在的完整上層目錄鏈" "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial 'missing/config/ghostty'
+    assert_output --partial '第一個既有祖先'
+
+    run grep -F '所有受管檔案還原後，五個受管檔案原本不存在的上層目錄鏈' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial '反向排序'
     assert_output --partial "由最深層往上以 \`rmdir\` 移除"
     assert_output --partial '非空目錄保留，還原 fail closed'
-    assert_output --partial "\`leftover-dirs=0\` 代表受管設定目錄及 init-log 原本不存在的上層目錄鏈均無殘留"
-    refute_output --partial "\`leftover-dirs=0\` 只代表受管設定目錄"
+    assert_output --partial '共用路徑只計一次'
+
+    run grep -F "\`leftover-dirs=0\` 代表五個受管檔案原本不存在的完整上層目錄鏈均無殘留" "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
 }
 
-@test "acceptance 5.2 documents the cache chain ancestor mtime exception (#594)" {
-    run grep -F '第一個既有祖先可能高於 cache 根目錄' "${REPO_ROOT}/doc/acceptance.md"
+@test "acceptance 5.2 documents all managed parent chain ancestor mtime exceptions (#594)" {
+    run grep -F '目錄 mtime（#526）' "${REPO_ROOT}/doc/acceptance.md"
     assert_success
+    assert_output --partial '五個受管檔案的缺失父目錄鏈各自另記錄第一個既有祖先的 mtime'
+    assert_output --partial '第一個既有祖先可能高於 config 或 cache 根目錄'
     assert_output --partial '例如 HOME'
+    assert_output --partial 'XDG_CONFIG_HOME=/x/missing/config'
+    assert_output --partial '記錄並還原 /x 的 mtime'
     assert_output --partial '#536'
-    run grep -F '已知限制：設定根目錄以上的目錄 mtime 不受保護' "${REPO_ROOT}/doc/acceptance.md"
-    assert_failure 1
+    assert_output --partial '所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime'
+    assert_output --partial '已知限制：除上述五個受管檔案缺失父目錄鏈的第一個既有祖先外，設定根目錄以上的目錄 mtime 不受保護'
+    refute_output --partial 'init-log 缺失目錄鏈'
 }
 
 @test "acceptance 5.2 documents actual relative cache parent handling (#594)" {
