@@ -4183,6 +4183,53 @@ Reason: 僅修正文句，沒有行為變更。'; do
     assert_success
 }
 
+@test "milestone-handover Codex tasks write artifacts directly while Claude keeps its protocol (#623)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        [.calls[] | select(.role == "review:" or .role == "independent-publish:") |
+            .prompt | split("BEGIN CODEX TASK\n")[1] | split("\nEND CODEX TASK")[0]] as $tasks |
+        ($tasks | length == 2) and
+        ([$tasks[] | contains("write artifacts directly to the specified destination paths") and
+            contains("your own file tools or shell") and
+            contains("Never paste report content into gh commands") and
+            (test("use Write|Write tool|scratchpad|Artifact copy template|Artifact digest template") | not)] | all) and
+        ([.calls[] | select(.role == "review:" or .role == "independent-publish:") |
+            .prompt | split("BEGIN CODEX TASK")[0] |
+            contains("use Write") and contains("scratchpad directory") and
+            contains("Artifact copy template")] | all)' <<<"$output"
+    assert_success
+}
+
+@test "milestone-handover independent Codex gets direct writes while Claude acceptance and cleanup retain Write (#623)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        (.calls[] | select(.role == "independent-codex:") | .prompt |
+            split("BEGIN TASK\n")[1] | split("\nEND TASK")[0] |
+            contains("write artifacts directly to the specified destination paths") and
+            contains("your own file tools or shell") and
+            contains("Never paste report content into gh commands") and
+            contains("recovery journal") and
+            (test("use Write|Write tool|scratchpad|Artifact copy template|Artifact digest template") | not)) and
+        ([.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:" or
+            .role == "independent-cleanup:" or .role == "independent-claude-cleanup:") |
+            .prompt | split("BEGIN TASK\n")[0] |
+            contains("use Write") and contains("scratchpad directory") and
+            contains("Artifact copy template")] | length == 4 and all)' <<<"$output"
+    assert_success
+}
+
+@test "milestone-handover final Codex publisher receives direct artifact rules (#623)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '.calls[] | select(.role == "independent-publish:") | .prompt |
+        split("Then launch a fresh Codex publisher")[1] |
+        contains("Pass these artifact rules verbatim to this publisher:") and
+        contains("write artifacts directly to the specified destination paths") and
+        contains("your own file tools or shell") and
+        contains("Never paste report content into gh commands") and
+        (test("use Write|Write tool|scratchpad|Artifact copy template") | not)' <<<"$output"
+    assert_success
+}
+
 @test "milestone-handover stage-owned artifacts use file-only commands allowed by real hooks (#614)" {
     local root="${BATS_TEST_TMPDIR}/owned artifacts" args replies json
     mkdir -p "$root"
