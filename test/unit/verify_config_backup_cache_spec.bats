@@ -15,6 +15,41 @@ setup() {
     cfgbk_paths
 }
 
+@test "#626: backup and real setup restore an absent config root and preserve its ancestor" {
+    rmdir "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}"
+    export XDG_CONFIG_HOME="${HOME}/missing/config"
+    cfgbk_paths
+    touch -d '2001-01-01' "${HOME}"
+    local ancestor_inode ancestor_mtime
+    ancestor_inode="$(stat -c %i "${HOME}")"
+    ancestor_mtime="$(stat -c %y "${HOME}")"
+    cfgbk_preflight
+    cfgbk_dir_create
+    cfgbk_backup_body
+    run just box setup --terminal ghostty
+    assert_success
+    : >"${XDG_CONFIG_HOME}/ghostty/config.ghostty"
+    run just box setup --terminal ghostty
+    assert_success
+    mkdir -p "${HOME}/.cache/worktool"
+    printf 'acceptance output\n' >"$(cfgbk_file_of init-log)"
+
+    run bash -euo pipefail -c '
+        source "$REPO_ROOT/lib/guard.sh"
+        source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+        cfgbk_paths
+        cfgbk_restore_all
+        cfgbk_report_leftover_dirs
+    '
+
+    assert_success
+    assert_output 'leftover-dirs=0'
+    assert [ ! -e "${HOME}/missing" ]
+    assert [ ! -e "${HOME}/.cache" ]
+    assert_equal "$(stat -c %i "${HOME}")" "${ancestor_inode}"
+    assert_equal "$(stat -c %y "${HOME}")" "${ancestor_mtime}"
+}
+
 @test "#589: restore removes the init-log parent chain when cache was absent" {
     cfgbk_preflight
     cfgbk_dir_create
