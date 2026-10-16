@@ -171,7 +171,10 @@ _54_now_ms() {
 _54_record_wait() {
     local child_rc=0
     [[ -n "${_54_REAP_RESULT}" ]] || _54_REAP_RESULT=0
-    wait "${_54_PID}" || child_rc=$?
+    # Bash returns 127 when another wait already consumed the child record.
+    # That child is finished; it is not a failed or still-running cleanup.
+    wait "${_54_PID}" 2>/dev/null || child_rc=$?
+    [[ "${child_rc}" -ne 127 ]] || child_rc=0
     if [[ "${_54_REAP_RESULT}" -eq 124 ]]; then
         log_info "interrupt $1: killed child rc=${child_rc}"
     else

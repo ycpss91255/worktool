@@ -130,20 +130,49 @@ STUB
 
 @test "#601: bench starting during the box query cannot pass as assemble" {
     export MATRIX_CAPTURE_ROOT="${TMPDIR}"
+    # Publish the box during the observer's query, after any earlier snapshot.
+    cat >"${MATRIX_STATE}/publication.sed" <<'STUB'
+/^    printf 'dev\\n'/i\
+    if [[ "${TMPDIR}/" == */assemble-INT/* ]]; then\
+        touch "${MATRIX_STATE}/publication-ready"\
+        deadline=$((SECONDS + 3))\
+        while [[ ! -e "${MATRIX_STATE}/query-started" ]]; do\
+            if ((SECONDS >= deadline)); then exit 1; fi\
+            sleep 0.01\
+        done\
+    fi
+STUB
+    sed -i -f "${MATRIX_STATE}/publication.sed" "${MATRIX_STATE}/bin/just"
     mkdir -p "${MATRIX_STATE}/original"
     mv "${MATRIX_STATE}/bin/distrobox" "${MATRIX_STATE}/original/distrobox"
     cat >"${MATRIX_STATE}/bin/distrobox" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == list && -s "${MATRIX_STATE}/boxes" ]]; then
-    for capture in "${MATRIX_CAPTURE_ROOT}"/wt-m3-54.*/assemble-INT/capture; do
-        printf 'phase=bench\n' >>"${capture}"
+if [[ "$1" == list && -e "${MATRIX_STATE}/publication-ready" && ! -e "${MATRIX_STATE}/query-started" ]]; then
+    touch "${MATRIX_STATE}/query-started"
+    deadline=$((SECONDS + 3))
+    while [[ ! -s "${MATRIX_STATE}/boxes" ]]; do
+        if ((SECONDS >= deadline)); then exit 1; fi
+        sleep 0.01
     done
+fi
+if [[ "$1" == list ]]; then
+    rc=0
+    listing="$("${MATRIX_STATE}/original/distrobox" "$@")" || rc=$?
+    # Inject from the returned snapshot, including a box published mid-query.
+    if [[ "${rc}" -eq 0 && "${listing}" == *' | dev | '* ]]; then
+        for capture in "${MATRIX_CAPTURE_ROOT}"/wt-m3-54.*/assemble-INT/capture; do
+            printf 'phase=bench\n' >>"${capture}"
+        done
+    fi
+    printf '%s\n' "${listing}"
+    exit "${rc}"
 fi
 exec "${MATRIX_STATE}/original/distrobox" "$@"
 STUB
     chmod +x "${MATRIX_STATE}/bin/distrobox"
     run "${REALBOX}" --allow-real-box 5.4
+    [ -e "${MATRIX_STATE}/query-started" ]
     assert_failure 1
     assert_line --partial 'interrupt assemble INT: observable event missed'
     assert_line 'interrupt-matrix: FAIL'
@@ -544,6 +573,70 @@ STUB
     sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
+    assert_success
+    assert_line 'rc=1'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
+
+@test "5.4: TERM at the EXIT handoff still completes bounded outer cleanup" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    # Pin a second TERM to entry into EXIT cleanup, before its first command.
+    sed -i "/^_on_exit() {/a\    builtin kill -TERM \"\${BASHPID}\"" "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_success
+    assert_line 'rc=1'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
+
+@test "5.4: outer cleanup accepts a child already reaped before status collection" {
+    _matrix_child_stub
+    # POSIX wait consumes only this child's job and saved status. A bare wait
+    # would also erase foreground jobs interrupted by TERM, corrupting Bash's
+    # implicit waits during EXIT. The final wait must see a real unknown PID.
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+wait() {
+    local -
+    local rc=0
+    set -o posix
+    builtin wait "$@" || rc=$?
+    rc=0
+    builtin wait "$@" || rc=$?
+    printf '%s\n' "${rc}" >"${MATRIX_STATE}/reaped-wait"
+    return "${rc}"
+}
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_success
+    assert_line 'rc=143'
+    refute_output --partial 'not a child of this shell'
+    refute_output --partial 'No record of process'
+    refute_output --partial 'stopped child rc=127'
+    [ "$(cat "${MATRIX_STATE}/reaped-wait")" = 127 ]
+    run find "${TMPDIR}" -name 'wt-m3-54.*'
+    assert_success
+    assert_output ''
+}
+
+@test "5.4: an unavailable wait record at EXIT entry cannot skip outer cleanup" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    # Pin Bash's unknown-child status (127) to the EXIT entry. Consume a
+    # real child's saved status first; do not manufacture its return code.
+    cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
+true &
+REAPED_FOREGROUND_PID=$!
+builtin wait "${REAPED_FOREGROUND_PID}"
+builtin wait
+STUB
+    sed -i "/^_on_exit() {/a\    builtin wait \"\${REAPED_FOREGROUND_PID}\"" "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
     assert_success
     assert_line 'rc=1'
     assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
