@@ -3462,6 +3462,19 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "milestone-handover gh limits allow explicit API repo paths and product just entries across stages (#630)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '[.calls[] | select(.role == "sync:" or .role == "head:" or
+        .role == "findings:" or .role == "review:" or .role == "machine:" or
+        .role == "evidence:" or .role == "independent-codex:" or .role == "independent-claude:")] |
+        length == 8 and all(.prompt |
+            (test("All gh calls pass --repo"; "i") | not) and
+            contains("gh pr, gh issue and other repo-aware subcommands must pass --repo o/r") and
+            contains("gh api must use explicit repos/o/r/ paths") and
+            contains("Calls inside product just entries that follow these rules are acceptable"))' <<<"${output}"
+    assert_success
+}
+
 @test "milestone-handover independent Codex resumes rc 124 with a bounded same-session loop (#505)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and
