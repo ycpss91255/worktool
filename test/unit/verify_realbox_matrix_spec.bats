@@ -553,7 +553,7 @@ STUB
     _matrix_child_stub
     sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
     # Pin a second TERM to entry into EXIT cleanup, before its first command.
-    sed -i '/^_on_exit() {/a\    builtin kill -TERM "${BASHPID}"' "${REALBOX}"
+    sed -i "/^_on_exit() {/a\    builtin kill -TERM \"\${BASHPID}\"" "${REALBOX}"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     printf '%s\n' "${output}"
@@ -602,7 +602,7 @@ REAPED_FOREGROUND_PID=$!
 builtin wait "${REAPED_FOREGROUND_PID}"
 builtin wait
 STUB
-    sed -i '/^_on_exit() {/a\    builtin wait "${REAPED_FOREGROUND_PID}"' "${REALBOX}"
+    sed -i "/^_on_exit() {/a\    builtin wait \"\${REAPED_FOREGROUND_PID}\"" "${REALBOX}"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
     printf '%s\n' "${output}"
