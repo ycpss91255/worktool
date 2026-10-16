@@ -593,13 +593,15 @@ STUB
 
 @test "5.4: outer cleanup accepts a child already reaped before status collection" {
     _matrix_child_stub
-    # Consume both the job and Bash's saved background status before the
-    # production wait. The last builtin really waits on an unknown PID.
+    # POSIX wait consumes only this child's job and saved status. A bare wait
+    # would also erase foreground jobs interrupted by TERM, corrupting Bash's
+    # implicit waits during EXIT. The final wait must see a real unknown PID.
     cat >>"${MATRIX_STATE}/repo/lib/guard.sh" <<'STUB'
 wait() {
+    local -
     local rc=0
+    set -o posix
     builtin wait "$@" || rc=$?
-    builtin wait
     rc=0
     builtin wait "$@" || rc=$?
     printf '%s\n' "${rc}" >"${MATRIX_STATE}/reaped-wait"
