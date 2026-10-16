@@ -441,8 +441,8 @@ _on_exit() {
     # A signal can enter an inherited trap while Bash is forking a pipeline.
     # Only the registering shell owns the stack, child jobs and scratch paths.
     [[ "${BASHPID}" == "${REALBOX_OWNER_PID}" ]] || return "${_st}"
-    trap - EXIT
     trap '' INT TERM HUP
+    trap - EXIT
     # EXIT may run inside assemble's redirection or bench's pipeline.
     exec 1>&"${REALBOX_REPORT_FD}"
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
@@ -1318,9 +1318,10 @@ _run_requested_items() {
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
     trap _on_exit EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
+    # Mask before entering EXIT: another signal must not abort the handoff.
+    trap 'trap "" INT TERM HUP; exit 130' INT
+    trap 'trap "" INT TERM HUP; exit 143' TERM
+    trap 'trap "" INT TERM HUP; exit 129' HUP
     local _rc=0 _i
     for _i in "$@"; do
         _dispatch_item "${_i}" || {

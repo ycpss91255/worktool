@@ -549,6 +549,19 @@ STUB
     assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
 }
 
+@test "5.4: TERM at the EXIT handoff still completes bounded outer cleanup" {
+    _matrix_child_stub
+    sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
+    # Pin a second TERM to entry into EXIT cleanup, before its first command.
+    sed -i '/^_on_exit() {/a\    builtin kill -TERM "${BASHPID}"' "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.4
+    printf '%s\n' "${output}"
+    assert_success
+    assert_line 'rc=1'
+    assert_line --partial 'interrupt cleanup: child reap wait deadline exceeded'
+}
+
 @test "5.4: matrix fixture residents expire without supervisor signals" {
     local phase
     for phase in assemble bench; do
