@@ -3997,6 +3997,15 @@ _handover_snapshot_run() {
     assert_success
 }
 
+@test "milestone-handover decides restoration from equal and diff despite a mis-copied relayed digest (#642)" {
+    HANDOVER_RELAY_ERROR=snapshot:claude-after HANDOVER_RELAY_ERROR_KIND=digest \
+        _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-publish:") != null) and
+        ([.ran[] | select(.snapshot)][3].comparison | .equal == true and .digests.before == .digests.after)' <<<"${output}"
+    assert_success
+}
+
 @test "milestone-handover equal host snapshots without a journal proceed to Claude (#577)" {
     _handover_snapshot_run "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and

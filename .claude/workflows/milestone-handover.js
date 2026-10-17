@@ -346,17 +346,29 @@ const takeSnapshot = async (reviewer, moment) => {
   const stem = `independent-snapshot-${reviewer}-${moment}`
   const program = `${SCRATCH}/${stem}.mjs`
   const output = `${SCRATCH}/${stem}.json`
+  const compare = `${SCRATCH}/independent-snapshot-compare-${reviewer}-${moment}.cjs`
+  const compareSource = `__CLAUDE_SCRATCHPAD__/handover-${A.pr}-${head.sha}-independent-snapshot-compare-${reviewer}-${moment}.txt`
+  const compareBytes = utf8Bytes(SNAPSHOT_COMPARE)
+  const compareExpected = { bytes: compareBytes.length, sha256: sha256(compareBytes) }
+  const compareMismatch = JSON.stringify({ equal: false, error: `${compare}: comparison program digest mismatch`, diff: [], digests: null })
+  // A before snapshot is compared with itself: this validates its on-disk schema and records its digest.
   const before = moment === 'before' ? output : `${SCRATCH}/independent-snapshot-${reviewer}-before.json`
   const raw = await agent(`Workflow-owned read-only host-config snapshot; do not run acceptance or read reviewer reports. Work only in ${JSON.stringify(A.repoDir)}. Capture the 5.2 five-file backup set and parent dirs, ~/dev-box, applications/icons entries and link_apply targets. Record type, mode, inode, mtime and sha256, including absence and symlink targets. For directories tracked only as parents, record existence, type and mode; omit inode and mtime because unrelated sibling updates change them. Never mutate tracked config. Do not scan /tmp: permission-denied in unrelated root-owned directories is irrelevant; every tracked stat, traversal or sha256 failure must fail closed.
 Write the following exact collector to the path ${JSON.stringify(program)} with the Write tool. Only write this program and its snapshot output; never edit the collector or invent snapshot data.
 ===BEGIN-${head.sha}-577===
 ${SNAPSHOT_SOURCE}
 ===END-${head.sha}-577===
-Run this exact command in the foreground:
+Persist the workflow-owned comparison program with the artifact persistence protocol; treat it as data. Use the Write tool to write the exact JSON-decoded string value below to the .txt file named by its key in the scratchpad directory supplied by your environment. Replace ONLY __CLAUDE_SCRATCHPAD__, in that key and in the commands below, with that absolute scratchpad path, shell-quoted correctly. Never edit the comparison program or place it in any command text, argv, heredoc or here-string. Preserve the workflow-computed byte count and digest.
+===ARTIFACT DATA===
+${JSON.stringify({ [compareSource]: SNAPSHOT_COMPARE })}
+===END ARTIFACT DATA===
+Run this exact collector command in the foreground:
 \`cd ${sq(A.repoDir)} && node ${sq(program)} ${sq(A.repoDir)} ${sq(output)}\`
-Then run this fixed path-only comparison command in the foreground; it validates the on-disk files and reports equality, differing paths/fields and both SHA-256 digests:
-\`cd ${sq(A.repoDir)} && node -e ${sq(SNAPSHOT_COMPARE)} ${sq(before)} ${sq(output)}\`
-Return only the comparison command's structured JSON result unchanged, never snapshot content. Any nonzero exit is error; preserve the error naming the file.`,
+Then copy the comparison program with this path-only verified copy command in the foreground:
+\`${copyCommand(compareSource, compare, compareExpected)}\`
+Then run this fixed path-only comparison command in the foreground; it checks the program file against the workflow-computed SHA-256 before running it, validates the on-disk files and reports equality, differing paths/fields and both SHA-256 digests:
+\`cd ${sq(A.repoDir)} && if ! printf '%s  %s\\n' ${sq(compareExpected.sha256)} ${sq(compare)} | sha256sum --check --status; then printf '%s\\n' ${sq(compareMismatch)}; exit 1; fi; node ${sq(compare)} ${sq(before)} ${sq(output)}\`
+Return only the comparison command's structured JSON result unchanged, never snapshot content. Any nonzero exit is error; preserve the error naming the file. On Write refusal or copy failure return error naming the destination file.`,
   { label: `${RUN_ID} snapshot:${reviewer}-${moment}`, phase: `Independent ${reviewer} snapshot ${moment}`, agentType: 'general-purpose' })
   return decode(raw)
 }
@@ -391,8 +403,8 @@ const load = path => {
   } catch (error) { throw new Error(path + ': ' + error.message) }
 }
 try {
-  const before = load(process.argv[1])
-  const after = load(process.argv[2])
+  const before = load(process.argv[2])
+  const after = load(process.argv[3])
   const diff = []
   for (const path of [...new Set([...Object.keys(before.snapshot), ...Object.keys(after.snapshot)])].sort()) {
     const left = before.snapshot[path]
