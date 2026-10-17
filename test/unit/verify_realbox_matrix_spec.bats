@@ -76,7 +76,7 @@ STUB
     done
     assert_equal "${actual%$'\n'}" "${expected}"
     for signal in INT TERM HUP; do
-        run awk -v cell="/bench-${signal}/" 'index($1, cell) { print $2 }' "${MATRIX_STATE}/phases"
+        run awk -v cell="/bench-${signal}" 'index($1, cell) { print $2 }' "${MATRIX_STATE}/phases"
         assert_output $'first-start-begin\nfirst-start-end\nbench'
     done
     [ ! -s "${MATRIX_STATE}/boxes" ]
