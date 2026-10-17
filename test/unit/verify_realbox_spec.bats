@@ -3468,3 +3468,16 @@ STUB
     assert_line 'cleanup-rc=0'
     [ ! -s "${STATE}/boxes" ]
 }
+
+@test "#641: INT TERM and HUP during first start stop children before cleanup" {
+    local signal expected
+    for signal in INT TERM HUP; do
+        case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
+        : >"${STATE}/events"
+        rm -f "${STATE}/ready"
+        _assert_group_interrupt "${signal}" "${expected}" enter
+        # Each signal needs fresh tool fixtures rather than recursive wrappers.
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/just"
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
+    done
+}
