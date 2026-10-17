@@ -3969,9 +3969,13 @@ _handover_snapshot_run() {
 }
 
 @test "milestone-handover compares disk snapshots despite a relayed inode transcription error (#642)" {
-    HANDOVER_RELAY_ERROR=snapshot:claude-after _handover_snapshot_run "$(_handover_replies)"
+    HANDOVER_REAL_HOOKS=1 HANDOVER_RELAY_ERROR=snapshot:claude-after _handover_snapshot_run "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and
-        ([.calls[].role] | index("independent-publish:") != null)' <<<"${output}"
+        ([.calls[].role] | index("independent-publish:") != null) and
+        ([.ran[] | select(.snapshot) | .comparison] | all(
+            .equal == true and .diff == [] and .snapshot == null and
+            (.digests.before | test("^[0-9a-f]{64}$")) and .digests.before == .digests.after)) and
+        ([.ran[] | select(.snapshot) | .data.snapshot] | .[2] == .[3])' <<<"${output}"
     assert_success
 }
 
@@ -3983,7 +3987,7 @@ _handover_snapshot_run() {
             ["snapshot:codex-before", "snapshot:codex-after", "snapshot:claude-before", "snapshot:claude-after"] and
         ([.ran[] | select(.snapshot) | .rc] | all(. == 0)) and
         ([.ran[] | select(.snapshot) | .data.snapshot] | .[0] == .[1] and .[2] == .[3]) and
-        (.ran[0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
+        ([.ran[] | select(.snapshot)][0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
     assert_success
 }
 
@@ -4020,6 +4024,23 @@ _handover_snapshot_run() {
             ([.calls[].role] | index("independent-assess:") == null) and
             (if $r == "codex" then [.calls[].role] | index("independent-claude:") == null else true end)' <<<"${output}"
         assert_success
+    done
+}
+
+@test "milestone-handover missing or invalid disk snapshots fail closed and name the file (#642)" {
+    local kind moment
+    for kind in missing json empty schema; do
+        for moment in before after; do
+            HANDOVER_SNAPSHOT_DAMAGE="snapshot:codex-${moment}" HANDOVER_SNAPSHOT_DAMAGE_KIND="$kind" \
+                _handover_snapshot_run "$(_handover_replies)"
+            run jq -e --arg m "$moment" '.result.status == "independent-failed" and
+                .result.reviewer == "codex" and
+                (.result.snapshot.error | contains("independent-snapshot-codex-" + $m + ".json")) and
+                ([.calls[].role] | index("independent-claude:") == null) and
+                (if $m == "after" then .result.cleanup.restored == false else true end)' <<<"${output}"
+            assert_success
+            rm -rf "${BATS_TEST_TMPDIR}/snapshot"
+        done
     done
 }
 

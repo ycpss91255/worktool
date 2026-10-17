@@ -362,14 +362,26 @@ Return only the comparison command's structured JSON result unchanged, never sna
 }
 const SNAPSHOT_COMPARE = String.raw`const { readFileSync } = require('node:fs')
 const { createHash } = require('node:crypto')
-const valid = value => value && !value.error && value.snapshot &&
-  typeof value.snapshot === 'object' && !Array.isArray(value.snapshot) && Object.keys(value.snapshot).length > 0 &&
-  Object.values(value.snapshot).every(item => item && (item.type === 'absent' ||
-    (item.type === 'directory' && item.parent === true && /^-?[0-9]+$/.test(item.mode) && typeof item.mode === 'string') ||
-    (['file', 'directory', 'symlink', 'other'].includes(item.type) &&
-      ['mode', 'inode', 'mtime'].every(key => typeof item[key] === 'string' && /^-?[0-9]+$/.test(item[key])) &&
-      (['file', 'symlink'].includes(item.type) ? /^[0-9a-f]{64}$/.test(item.sha256) : item.sha256 === null) &&
-      (item.type !== 'symlink' || typeof item.target === 'string'))))
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+const keys = (value, expected) => Object.keys(value).sort().join(',') === expected.sort().join(',')
+const numeric = value => typeof value === 'string' && /^-?[0-9]+$/.test(value)
+const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+const validItem = item => {
+  if (!object(item)) return false
+  if (item.type === 'absent') return keys(item, ['type'])
+  if (item.type === 'directory' && item.parent === true) {
+    return keys(item, ['type', 'mode', 'parent']) && numeric(item.mode)
+  }
+  if (!['file', 'directory', 'symlink', 'other'].includes(item.type)) return false
+  const fields = ['type', 'mode', 'inode', 'mtime', 'sha256']
+  if (item.type === 'symlink') fields.push('target')
+  return keys(item, fields) && ['mode', 'inode', 'mtime'].every(key => numeric(item[key])) &&
+    (['file', 'symlink'].includes(item.type) ? digest(item.sha256) : item.sha256 === null) &&
+    (item.type !== 'symlink' || typeof item.target === 'string')
+}
+const valid = value => object(value) && keys(value, ['snapshot']) && object(value.snapshot) &&
+  Object.keys(value.snapshot).length > 0 &&
+  Object.entries(value.snapshot).every(([path, item]) => path.startsWith('/') && validItem(item))
 const load = path => {
   try {
     const bytes = readFileSync(path)
