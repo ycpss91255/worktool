@@ -382,8 +382,15 @@ try {
   const before = load(process.argv[1])
   const after = load(process.argv[2])
   const diff = []
-  console.log(JSON.stringify({ equal: JSON.stringify(before.snapshot) === JSON.stringify(after.snapshot),
-    digests: { before: before.digest, after: after.digest }, diff }))
+  for (const path of [...new Set([...Object.keys(before.snapshot), ...Object.keys(after.snapshot)])].sort()) {
+    const left = before.snapshot[path]
+    const right = after.snapshot[path]
+    if (!left || !right) { diff.push({ path, fields: ['presence'] }); continue }
+    const fields = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+      .filter(field => JSON.stringify(left[field]) !== JSON.stringify(right[field]))
+    if (fields.length) diff.push({ path, fields })
+  }
+  console.log(JSON.stringify({ equal: diff.length === 0, digests: { before: before.digest, after: after.digest }, diff }))
 } catch (error) {
   console.log(JSON.stringify({ equal: false, error: error.message, diff: [], digests: null }))
   process.exitCode = 1

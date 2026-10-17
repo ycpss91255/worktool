@@ -3997,6 +3997,21 @@ _handover_snapshot_run() {
     assert [ -s "${BATS_TEST_TMPDIR}/snapshot/home/.local/share/recently-used.xbel" ]
 }
 
+@test "milestone-handover disk differences fail closed with paths fields and digests (#642)" {
+    local reviewer
+    for reviewer in codex claude; do
+        HANDOVER_MUTATE="independent-${reviewer}" _handover_snapshot_run "$(_handover_replies)"
+        run jq -e --arg r "${reviewer}" '.result.status == "independent-failed" and
+            .result.reviewer == $r and .result.cleanup.restored == false and
+            (.result.cleanup.comparison | .equal == false and
+                (.digests.before | test("^[0-9a-f]{64}$")) and
+                (.digests.after | test("^[0-9a-f]{64}$")) and .digests.before != .digests.after and
+                any(.diff[]; (.path | endswith("ghostty/config")) and (.fields | index("sha256") != null))) and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
+
 @test "milestone-handover snapshot mismatch blocks despite a successful cleanup claim (#577)" {
     local reviewer
     for reviewer in codex claude; do
