@@ -29,6 +29,14 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 
 ## 決策:終端不自動開 tmux;盒內的 tmux 用盒子自己的 server(issue #179)
 
+建盒時，`just box assemble` 僅在呼叫 distrobox assemble 的環境中固定
+`SHELL=/usr/bin/fish`（#472）。distrobox 1.8 create 記錄其 basename `fish`，
+init 安裝 manifest 的 fish 套件後，在盒內解析執行檔並設定使用者登入 shell。
+因此 host 的 `SHELL=/bin/bash` 不會改變盒內預設：Ghostty 受管命令與
+`just box enter` 都由 distrobox 進入盒內 fish；不要求 host 安裝 fish。
+這項設定在建盒時生效，既有 bash 盒須由使用者移除後重新 assemble。
+enter 的明確命令、首次初始化進度與逾時，以及 tmux 環境隔離維持原流程。
+
 M3 實機驗收(PR #157)出現**假成功**:受管命令原本是
 `'<distrobox>' enter dev -- tmux new -A -s main`,而 `distrobox-create` 固定把
 host 的 `/tmp` 掛進盒內(`--volume /tmp:/tmp`),tmux 的預設 socket
@@ -639,6 +647,6 @@ host tmux server 的部分在 system-real):
   payload。enter 與 shell 在 host 計時,包含 wrapper 與首次啟動檢查;inbox
   仍只計盒內 shell 啟動。setup 準備不計時、不更動使用者設定。CI system-real
   以 `fish -c exit` 的 shell median 與 300 ms 門檻判定,指標與 gate 不變。
-- 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
+- 驗收:進盒延遲量測與達標(≤ 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。

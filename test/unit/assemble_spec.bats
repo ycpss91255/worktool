@@ -344,6 +344,24 @@ EOF
     assert_line "HOME=${_box_home}"
 }
 
+@test "#472: assemble with host SHELL=/bin/bash requests fish as the box login shell" {
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == ps ]]
+EOF
+    cat >"${MOCKBIN}/distrobox" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# distrobox-create records the basename; init resolves it inside the box.
+printf 'container-login-shell=%s\n' "${SHELL##*/}"
+EOF
+    chmod +x "${MOCKBIN}/docker" "${MOCKBIN}/distrobox"
+    run env DBX_CONTAINER_MANAGER=docker SHELL=/bin/bash "${ASSEMBLE}"
+    assert_success
+    assert_line "container-login-shell=fish"
+}
+
 # --- errexit (issue #195) ----------------------------------------------------
 
 @test "assemble.sh runs under set -euo pipefail (one set line, errexit included)" {
