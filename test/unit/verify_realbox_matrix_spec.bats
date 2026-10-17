@@ -75,6 +75,10 @@ STUB
         [[ "${line}" == *'signal-phase='* ]] || actual+="${line}"$'\n'
     done
     assert_equal "${actual%$'\n'}" "${expected}"
+    for signal in INT TERM HUP; do
+        run awk -v cell="/bench-${signal}" 'index($1, cell) { print $2 }' "${MATRIX_STATE}/phases"
+        assert_output $'first-start-begin\nfirst-start-end\nbench'
+    done
     [ ! -s "${MATRIX_STATE}/boxes" ]
     [ ! -e "${MATRIX_STATE}/comments" ]
     run find "${TMPDIR}" -name 'wt-m3-54.*' -o -name 'tmp.*'
@@ -674,4 +678,22 @@ STUB
     run "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
     refute_output --partial 'interrupt-matrix: PASS'
+}
+
+@test "#641: first-start transition at signal delivery never passes as assemble" {
+    cat >>"${MATRIX_STATE}/repo/lib/realbox_interrupt.sh" <<'STUB'
+
+kill() {
+    if [[ "${1:-}" == -s && "${2:-}" == INT ]]; then
+        printf 'phase=first-start\n' >>"${_54_W}/assemble-INT/capture"
+    fi
+    builtin kill "$@"
+}
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --regexp '^interrupt assemble INT: signal-phase=unknown signal-after-ms=[0-9]+$'
+    assert_line 'interrupt-matrix: FAIL'
+    refute_output --partial 'signal-phase=assemble'
+    [ ! -s "${MATRIX_STATE}/boxes" ]
 }
