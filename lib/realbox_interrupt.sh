@@ -77,12 +77,12 @@ _54_event() {
     while ((SECONDS < deadline)); do
         kill -0 "${_54_PID}" 2>/dev/null || return 1
         if [[ "${phase}" == assemble ]]; then
-            if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
+            if grep -qE '^phase=(first-start|bench)$' "${capture}"; then return 1; fi
             rc=0
             guard_box_exists "${BOX}" "${TIMEOUT_SHORT}" || rc=$?
             [[ "${rc}" -ne 2 ]] || return 1
-            # The box query can outlive assemble; never use its stale phase.
-            if grep -qFx 'phase=bench' "${capture}"; then return 1; fi
+            # The box query can outlive assemble; first start is a separate phase.
+            if grep -qE '^phase=(first-start|bench)$' "${capture}"; then return 1; fi
             [[ "${rc}" -ne 0 ]] || return 0
         else
             rc=0
@@ -226,7 +226,7 @@ _54_signal() {
     local phase="$1" signal="$2" capture="$3" started="$4" signalled rc=0 observed="$1"
     signalled="$(_54_now_ms)" || return 1
     if [[ "${phase}" == assemble ]]; then
-        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        grep -qE '^phase=(first-start|bench)$' "${capture}" || rc=$?
         if [[ "${rc}" -ne 1 ]]; then
             guard_fail "interrupt ${phase} ${signal}: assemble phase no longer confirmed; retry the cell"
             if ! kill -TERM -- "-${_54_PID}" 2>/dev/null; then :; fi
@@ -236,7 +236,7 @@ _54_signal() {
     kill -s "${signal}" -- "-${_54_PID}" || return 1
     if [[ "${phase}" == assemble ]]; then
         rc=0
-        grep -qFx 'phase=bench' "${capture}" || rc=$?
+        grep -qE '^phase=(first-start|bench)$' "${capture}" || rc=$?
         if [[ "${rc}" -ne 1 ]]; then
             observed=unknown
             guard_fail "interrupt ${phase} ${signal}: phase crossed or became unreadable at signal delivery; retry the cell"

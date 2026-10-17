@@ -24,7 +24,12 @@ if [[ "${phase}" == assemble ]]; then
     if [[ "${TMPDIR}" == */assemble-INT/* || "${TMPDIR}" == */assemble-TERM/* || "${TMPDIR}" == */assemble-HUP/* ]]; then
         matrix_resident
     fi
+elif [[ "${phase}" == enter ]]; then
+    printf '%s first-start-begin\n' "${TMPDIR}" >>"${MATRIX_STATE}/phases"
+    sleep 0.1
+    printf '%s first-start-end\n' "${TMPDIR}" >>"${MATRIX_STATE}/phases"
 elif [[ "${phase}" == bench ]]; then
+    printf '%s bench\n' "${TMPDIR}" >>"${MATRIX_STATE}/phases"
     if [[ -n "${MATRIX_BENCH_EXIT_CELL:-}" && "${TMPDIR}/" == *"/${MATRIX_BENCH_EXIT_CELL}/"* ]]; then
         exit "${MATRIX_BENCH_RC:-3}"
     fi
