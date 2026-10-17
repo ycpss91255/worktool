@@ -3979,6 +3979,24 @@ _handover_snapshot_run() {
     assert_success
 }
 
+@test "milestone-handover snapshot comparison runs a digest-verified program file with path-only arguments (#642)" {
+    HANDOVER_REAL_HOOKS=1 _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.ran[] | select(.snapshot) | .cmd] | length == 4 and all(
+            (contains("node -e") or contains("readFileSync") or contains("require(") | not) and
+            contains("sha256sum --check --status") and
+            test("node '\''[^'\'']*/independent-snapshot-compare-[a-z]+-[a-z]+[.]cjs'\'' '\''[^'\'']*[.]json'\'' '\''[^'\'']*[.]json'\''$")))' \
+        <<<"${output}"
+    assert_success
+    rm -rf "${BATS_TEST_TMPDIR}/snapshot"
+    HANDOVER_COMPARE_TAMPER=snapshot:codex-after _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "independent-failed" and .result.reviewer == "codex" and
+        (.result.snapshot.error | contains("independent-snapshot-compare-codex-after.cjs") and contains("digest mismatch")) and
+        .calls[-1].role == "snapshot:codex-after" and .ran[-1].rc != 0 and
+        ([.calls[].role] | index("independent-claude:") == null)' <<<"${output}"
+    assert_success
+}
+
 @test "milestone-handover equal host snapshots without a journal proceed to Claude (#577)" {
     _handover_snapshot_run "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and

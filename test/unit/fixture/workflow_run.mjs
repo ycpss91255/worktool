@@ -264,8 +264,16 @@ const playHandoverFiles = (role, prompt) => {
 
 const snapshotPath = prompt => JSON.parse(prompt.match(/to the path ("(?:[^"\\]|\\.)*") with the Write tool/)[1])
   .replace(/\.mjs$/, '.json')
+const damaged = new Set()
+// Model a comparison program altered after its verified copy.
+const tamperComparison = (role, cmd) => {
+  if (role !== process.env.HANDOVER_COMPARE_TAMPER || !cmd.includes(' sha256sum ')) return
+  const program = cmd.match(/'([^']*\.cjs)'/)[1]
+  writeFileSync(program, readFileSync(program, 'utf8') + '// tampered\n')
+}
 const damageSnapshot = (role, prompt, cmd) => {
-  if (role !== process.env.HANDOVER_SNAPSHOT_DAMAGE || !cmd.includes('node -e ')) return
+  if (role !== process.env.HANDOVER_SNAPSHOT_DAMAGE || !/ sha256sum | node -e /.test(cmd) || damaged.has(role)) return
+  damaged.add(role)
   const path = snapshotPath(prompt)
   const kind = process.env.HANDOVER_SNAPSHOT_DAMAGE_KIND
   if (kind === 'missing') { unlinkSync(path); return }
@@ -301,15 +309,33 @@ const playHandoverSnapshots = (role, prompt) => {
     }
   }
   if (role.startsWith('snapshot:')) {
-    const result = play(prompt, cmd => damageSnapshot(role, prompt, cmd))
+    const scratchpad = `${JSON.parse(argsJson).repoDir}/scratchpad`
+    let steps = prompt.replaceAll('__CLAUDE_SCRATCHPAD__', scratchpad)
+    // Model Write of each JSON-decoded program to its scratchpad .txt file.
+    const data = steps.match(/===ARTIFACT DATA===\n([^\n]*)\n===END ARTIFACT DATA===/)
+    if (data) {
+      for (const [path, content] of Object.entries(JSON.parse(data[1]))) {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, content)
+      }
+      steps = steps.replace(data[0], '')
+    }
+    const result = play(steps, cmd => { damageSnapshot(role, prompt, cmd); tamperComparison(role, cmd) })
     ran[ran.length - 1] = {
       ...ran[ran.length - 1], role, snapshot: true,
       data: result.ok ? JSON.parse(readFileSync(snapshotPath(prompt), 'utf8')) : null,
       comparison: result.stdout ? JSON.parse(result.stdout) : null,
     }
     if (result.ok && process.env.HANDOVER_RELAY_ERROR === role) {
+      // The agent mis-copies either relayed snapshot content or one digest character.
       const relayed = JSON.parse(result.stdout)
-      if (relayed.snapshot) relayed.snapshot[`${process.env.HOME}/.config/ghostty/config`].inode = '999999'
+      if (process.env.HANDOVER_RELAY_ERROR_KIND === 'digest') {
+        const digest = relayed.digests.after
+        relayed.digests.after = digest.slice(0, -1) + (digest.endsWith('0') ? '1' : '0')
+      } else {
+        relayed.snapshot = JSON.parse(readFileSync(snapshotPath(prompt), 'utf8')).snapshot
+        relayed.snapshot[`${process.env.HOME}/.config/ghostty/config`].inode = '999999'
+      }
       return relayed
     }
     return result.stdout || { error: 'Snapshot command failed' }
