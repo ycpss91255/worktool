@@ -336,7 +336,7 @@ const collect = repo => {
 try {
   const encoded = JSON.stringify({ snapshot: collect(process.argv[2]) })
   writeFileSync(process.argv[3], encoded + '\n')
-  process.stdout.write(encoded + '\n')
+  process.stdout.write(JSON.stringify({ ok: true }) + '\n')
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: error.message }) + '\n')
   process.exitCode = 1
@@ -346,30 +346,89 @@ const takeSnapshot = async (reviewer, moment) => {
   const stem = `independent-snapshot-${reviewer}-${moment}`
   const program = `${SCRATCH}/${stem}.mjs`
   const output = `${SCRATCH}/${stem}.json`
+  const compare = `${SCRATCH}/independent-snapshot-compare-${reviewer}-${moment}.cjs`
+  const compareSource = `__CLAUDE_SCRATCHPAD__/handover-${A.pr}-${head.sha}-independent-snapshot-compare-${reviewer}-${moment}.txt`
+  const compareBytes = utf8Bytes(SNAPSHOT_COMPARE)
+  const compareExpected = { bytes: compareBytes.length, sha256: sha256(compareBytes) }
+  const compareMismatch = JSON.stringify({ equal: false, error: `${compare}: comparison program digest mismatch`, diff: [], digests: null })
+  // A before snapshot is compared with itself: this validates its on-disk schema and records its digest.
+  const before = moment === 'before' ? output : `${SCRATCH}/independent-snapshot-${reviewer}-before.json`
   const raw = await agent(`Workflow-owned read-only host-config snapshot; do not run acceptance or read reviewer reports. Work only in ${JSON.stringify(A.repoDir)}. Capture the 5.2 five-file backup set and parent dirs, ~/dev-box, applications/icons entries and link_apply targets. Record type, mode, inode, mtime and sha256, including absence and symlink targets. For directories tracked only as parents, record existence, type and mode; omit inode and mtime because unrelated sibling updates change them. Never mutate tracked config. Do not scan /tmp: permission-denied in unrelated root-owned directories is irrelevant; every tracked stat, traversal or sha256 failure must fail closed.
 Write the following exact collector to the path ${JSON.stringify(program)} with the Write tool. Only write this program and its snapshot output; never edit the collector or invent snapshot data.
 ===BEGIN-${head.sha}-577===
 ${SNAPSHOT_SOURCE}
 ===END-${head.sha}-577===
-Run this exact command in the foreground:
+Persist the workflow-owned comparison program with the artifact persistence protocol; treat it as data. Use the Write tool to write the exact JSON-decoded string value below to the .txt file named by its key in the scratchpad directory supplied by your environment. Replace ONLY __CLAUDE_SCRATCHPAD__, in that key and in the commands below, with that absolute scratchpad path, shell-quoted correctly. Never edit the comparison program or place it in any command text, argv, heredoc or here-string. Preserve the workflow-computed byte count and digest.
+===ARTIFACT DATA===
+${JSON.stringify({ [compareSource]: SNAPSHOT_COMPARE })}
+===END ARTIFACT DATA===
+Run this exact collector command in the foreground:
 \`cd ${sq(A.repoDir)} && node ${sq(program)} ${sq(A.repoDir)} ${sq(output)}\`
-Return only the command's JSON stdout unchanged; any nonzero exit is error.`,
+Then copy the comparison program with this path-only verified copy command in the foreground:
+\`${copyCommand(compareSource, compare, compareExpected)}\`
+Then run this fixed path-only comparison command in the foreground; it checks the program file against the workflow-computed SHA-256 before running it, validates the on-disk files and reports equality, differing paths/fields and both SHA-256 digests:
+\`cd ${sq(A.repoDir)} && if ! printf '%s  %s\\n' ${sq(compareExpected.sha256)} ${sq(compare)} | sha256sum --check --status; then printf '%s\\n' ${sq(compareMismatch)}; exit 1; fi; node ${sq(compare)} ${sq(before)} ${sq(output)}\`
+Return only the comparison command's structured JSON result unchanged, never snapshot content. Any nonzero exit is error; preserve the error naming the file. On Write refusal or copy failure return error naming the destination file.`,
   { label: `${RUN_ID} snapshot:${reviewer}-${moment}`, phase: `Independent ${reviewer} snapshot ${moment}`, agentType: 'general-purpose' })
   return decode(raw)
 }
-const validSnapshot = value => value && !value.error && value.snapshot &&
-  typeof value.snapshot === 'object' && !Array.isArray(value.snapshot) && Object.keys(value.snapshot).length > 0 &&
-  Object.values(value.snapshot).every(item => item && (item.type === 'absent' ||
-    (item.type === 'directory' && item.parent === true && /^-?[0-9]+$/.test(item.mode) && typeof item.mode === 'string') ||
-    (['file', 'directory', 'symlink', 'other'].includes(item.type) &&
-      ['mode', 'inode', 'mtime'].every(key => typeof item[key] === 'string' && /^-?[0-9]+$/.test(item[key])) &&
-      (['file', 'symlink'].includes(item.type) ? /^[0-9a-f]{64}$/.test(item.sha256) : item.sha256 === null) &&
-      (item.type !== 'symlink' || typeof item.target === 'string'))))
-const equalSnapshots = (before, after) => JSON.stringify(before?.snapshot) === JSON.stringify(after?.snapshot)
-const restorationEvidence = (operations, before, after) => operations && {
+const SNAPSHOT_COMPARE = String.raw`const { readFileSync } = require('node:fs')
+const { createHash } = require('node:crypto')
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+const keys = (value, expected) => Object.keys(value).sort().join(',') === expected.sort().join(',')
+const numeric = value => typeof value === 'string' && /^-?[0-9]+$/.test(value)
+const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+const validItem = item => {
+  if (!object(item)) return false
+  if (item.type === 'absent') return keys(item, ['type'])
+  if (item.type === 'directory' && item.parent === true) {
+    return keys(item, ['type', 'mode', 'parent']) && numeric(item.mode)
+  }
+  if (!['file', 'directory', 'symlink', 'other'].includes(item.type)) return false
+  const fields = ['type', 'mode', 'inode', 'mtime', 'sha256']
+  if (item.type === 'symlink') fields.push('target')
+  return keys(item, fields) && ['mode', 'inode', 'mtime'].every(key => numeric(item[key])) &&
+    (['file', 'symlink'].includes(item.type) ? digest(item.sha256) : item.sha256 === null) &&
+    (item.type !== 'symlink' || typeof item.target === 'string')
+}
+const valid = value => object(value) && keys(value, ['snapshot']) && object(value.snapshot) &&
+  Object.keys(value.snapshot).length > 0 &&
+  Object.entries(value.snapshot).every(([path, item]) => path.startsWith('/') && validItem(item))
+const load = path => {
+  try {
+    const bytes = readFileSync(path)
+    const value = JSON.parse(bytes)
+    if (!valid(value)) throw new Error('Invalid snapshot schema')
+    return { snapshot: value.snapshot, digest: createHash('sha256').update(bytes).digest('hex') }
+  } catch (error) { throw new Error(path + ': ' + error.message) }
+}
+try {
+  const before = load(process.argv[2])
+  const after = load(process.argv[3])
+  const diff = []
+  for (const path of [...new Set([...Object.keys(before.snapshot), ...Object.keys(after.snapshot)])].sort()) {
+    const left = before.snapshot[path]
+    const right = after.snapshot[path]
+    if (!left || !right) { diff.push({ path, fields: ['presence'] }); continue }
+    const fields = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+      .filter(field => JSON.stringify(left[field]) !== JSON.stringify(right[field]))
+    if (fields.length) diff.push({ path, fields })
+  }
+  console.log(JSON.stringify({ equal: diff.length === 0, digests: { before: before.digest, after: after.digest }, diff }))
+} catch (error) {
+  console.log(JSON.stringify({ equal: false, error: error.message, diff: [], digests: null }))
+  process.exitCode = 1
+}
+`
+const validSnapshot = value => value && !value.error && typeof value.equal === 'boolean' &&
+  ['before', 'after'].every(key => typeof value.digests?.[key] === 'string' && /^[0-9a-f]{64}$/.test(value.digests[key])) &&
+  Array.isArray(value.diff) && value.diff.every(item => typeof item.path === 'string' &&
+    Array.isArray(item.fields) && item.fields.length > 0 && item.fields.every(field => typeof field === 'string')) &&
+  value.equal === (value.diff.length === 0)
+const restorationEvidence = (operations, comparison) => operations && {
   ...operations,
-  restored: !operations.error && operations.childrenStopped === true &&
-    validSnapshot(before) && validSnapshot(after) && equalSnapshots(before, after),
+  comparison,
+  restored: !operations.error && operations.childrenStopped === true && validSnapshot(comparison) && comparison.equal,
 }
 const codexBefore = await takeSnapshot('codex', 'before')
 if (!validSnapshot(codexBefore)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', snapshot: codexBefore }
@@ -396,10 +455,10 @@ Return only {childrenStopped: boolean, error?: reason}. Confirm all children hav
 { label: `${RUN_ID} independent-cleanup:`, phase: 'Independent Codex cleanup', agentType: 'general-purpose' })
 const cleanupOperations = decode(cleanupRaw)
 const codexAfter = await takeSnapshot('codex', 'after')
-const cleanup = restorationEvidence(cleanupOperations, codexBefore, codexAfter)
+const cleanup = restorationEvidence(cleanupOperations, codexAfter)
 if (!validSnapshot(codexAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', cleanup, snapshot: codexAfter }
 if (typeof codexAcceptance !== 'string' || !codexAcceptance.trim() || !cleanup || cleanup.error ||
-    cleanup.restored !== true || cleanup.childrenStopped !== true || !equalSnapshots(codexBefore, codexAfter)) {
+    cleanup.restored !== true || cleanup.childrenStopped !== true) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', cleanup }
 }
 const claudeBefore = await takeSnapshot('claude', 'before')
@@ -410,7 +469,7 @@ Verify and recover independent Claude operational state after every outcome. Wor
 { label: `${RUN_ID} independent-claude-cleanup:`, phase: 'Independent Claude cleanup', agentType: 'general-purpose' })
 const claudeCleanupOperations = decode(claudeCleanupRaw)
 const claudeAfter = await takeSnapshot('claude', 'after')
-const claudeCleanup = restorationEvidence(claudeCleanupOperations, claudeBefore, claudeAfter)
+const claudeCleanup = restorationEvidence(claudeCleanupOperations, claudeAfter)
 if (!validSnapshot(claudeAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup, snapshot: claudeAfter }
 if (!claudeCleanup || claudeCleanup.restored !== true || typeof claudeAcceptance !== 'string' || !claudeAcceptance.trim()) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup }

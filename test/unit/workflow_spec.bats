@@ -3005,7 +3005,7 @@ _handover_replies() {
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{content:"findings: output\n"},"artifact-write:":{ok:true},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
-        "snapshot:":{snapshot:{"fixture-path":{type:"absent"}}},
+        "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
@@ -3968,6 +3968,44 @@ _handover_snapshot_run() {
     assert_success
 }
 
+@test "milestone-handover compares disk snapshots despite a relayed inode transcription error (#642)" {
+    HANDOVER_REAL_HOOKS=1 HANDOVER_RELAY_ERROR=snapshot:claude-after _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-publish:") != null) and
+        ([.ran[] | select(.snapshot) | .comparison] | all(
+            .equal == true and .diff == [] and .snapshot == null and
+            (.digests.before | test("^[0-9a-f]{64}$")) and .digests.before == .digests.after)) and
+        ([.ran[] | select(.snapshot) | .data.snapshot] | .[2] == .[3])' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover snapshot comparison runs a digest-verified program file with path-only arguments (#642)" {
+    HANDOVER_REAL_HOOKS=1 _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.ran[] | select(.snapshot) | .cmd] | length == 4 and all(
+            (contains("node -e") or contains("readFileSync") or contains("require(") | not) and
+            contains("sha256sum --check --status") and
+            test("node '\''[^'\'']*/independent-snapshot-compare-[a-z]+-[a-z]+[.]cjs'\'' '\''[^'\'']*[.]json'\'' '\''[^'\'']*[.]json'\''$")))' \
+        <<<"${output}"
+    assert_success
+    rm -rf "${BATS_TEST_TMPDIR}/snapshot"
+    HANDOVER_COMPARE_TAMPER=snapshot:codex-after _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "independent-failed" and .result.reviewer == "codex" and
+        (.result.snapshot.error | contains("independent-snapshot-compare-codex-after.cjs") and contains("digest mismatch")) and
+        .calls[-1].role == "snapshot:codex-after" and .ran[-1].rc != 0 and
+        ([.calls[].role] | index("independent-claude:") == null)' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover decides restoration from equal and diff despite a mis-copied relayed digest (#642)" {
+    HANDOVER_RELAY_ERROR=snapshot:claude-after HANDOVER_RELAY_ERROR_KIND=digest \
+        _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-publish:") != null) and
+        ([.ran[] | select(.snapshot)][3].comparison | .equal == true and .digests.before == .digests.after)' <<<"${output}"
+    assert_success
+}
+
 @test "milestone-handover equal host snapshots without a journal proceed to Claude (#577)" {
     _handover_snapshot_run "$(_handover_replies)"
     run jq -e '.result.status == "prepared" and
@@ -3976,7 +4014,7 @@ _handover_snapshot_run() {
             ["snapshot:codex-before", "snapshot:codex-after", "snapshot:claude-before", "snapshot:claude-after"] and
         ([.ran[] | select(.snapshot) | .rc] | all(. == 0)) and
         ([.ran[] | select(.snapshot) | .data.snapshot] | .[0] == .[1] and .[2] == .[3]) and
-        (.ran[0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
+        ([.ran[] | select(.snapshot)][0].data.snapshot | to_entries | any(.key | endswith("ghostty/config")))' <<<"${output}"
     assert_success
 }
 
@@ -3990,6 +4028,21 @@ _handover_snapshot_run() {
     assert [ -s "${BATS_TEST_TMPDIR}/snapshot/home/.local/share/recently-used.xbel" ]
 }
 
+@test "milestone-handover disk differences fail closed with paths fields and digests (#642)" {
+    local reviewer
+    for reviewer in codex claude; do
+        HANDOVER_MUTATE="independent-${reviewer}" _handover_snapshot_run "$(_handover_replies)"
+        run jq -e --arg r "${reviewer}" '.result.status == "independent-failed" and
+            .result.reviewer == $r and .result.cleanup.restored == false and
+            (.result.cleanup.comparison | .equal == false and
+                (.digests.before | test("^[0-9a-f]{64}$")) and
+                (.digests.after | test("^[0-9a-f]{64}$")) and .digests.before != .digests.after and
+                any(.diff[]; (.path | endswith("ghostty/config")) and (.fields | index("sha256") != null))) and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
+
 @test "milestone-handover snapshot mismatch blocks despite a successful cleanup claim (#577)" {
     local reviewer
     for reviewer in codex claude; do
@@ -3998,6 +4051,23 @@ _handover_snapshot_run() {
             ([.calls[].role] | index("independent-assess:") == null) and
             (if $r == "codex" then [.calls[].role] | index("independent-claude:") == null else true end)' <<<"${output}"
         assert_success
+    done
+}
+
+@test "milestone-handover missing or invalid disk snapshots fail closed and name the file (#642)" {
+    local kind moment
+    for kind in missing json empty schema; do
+        for moment in before after; do
+            HANDOVER_SNAPSHOT_DAMAGE="snapshot:codex-${moment}" HANDOVER_SNAPSHOT_DAMAGE_KIND="$kind" \
+                _handover_snapshot_run "$(_handover_replies)"
+            run jq -e --arg m "$moment" '.result.status == "independent-failed" and
+                .result.reviewer == "codex" and
+                (.result.snapshot.error | contains("independent-snapshot-codex-" + $m + ".json")) and
+                ([.calls[].role] | index("independent-claude:") == null) and
+                (if $m == "after" then .result.cleanup.restored == false else true end)' <<<"${output}"
+            assert_success
+            rm -rf "${BATS_TEST_TMPDIR}/snapshot"
+        done
     done
 }
 

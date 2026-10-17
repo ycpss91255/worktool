@@ -82,7 +82,7 @@ const reply = (label) => {
 }
 
 // Play the prompt's steps; returns { ok, stdout } of the last step run.
-const play = (prompt) => {
+const play = (prompt, beforeCommand = () => {}) => {
   const block = prompt.match(/===BEGIN-([0-9a-f]+-\d+)===\n([\s\S]*?)\n===END-\1===/)
   const outside = block ? prompt.replace(block[0], '') : prompt
   const target = outside.match(/to the path ("(?:[^"\\]|\\.)*") with the Write tool/)
@@ -96,6 +96,7 @@ const play = (prompt) => {
   for (const [, cmd] of outside.matchAll(/`((?:cd|mkdir|gh) [^`]*)`/g)) {
     if (/(^|\s)<[A-Za-z][A-Za-z0-9_-]*>(\s|$)/.test(cmd) || cmd.includes('__SOURCE__')) continue
     try {
+      beforeCommand(cmd)
       checkHooks(cmd)
       stdout = execFileSync('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
       ran.push({ cmd, rc: 0 })
@@ -261,6 +262,28 @@ const playHandoverFiles = (role, prompt) => {
   return reply(role)
 }
 
+const snapshotPath = prompt => JSON.parse(prompt.match(/to the path ("(?:[^"\\]|\\.)*") with the Write tool/)[1])
+  .replace(/\.mjs$/, '.json')
+const damaged = new Set()
+// Model a comparison program altered after its verified copy.
+const tamperComparison = (role, cmd) => {
+  if (role !== process.env.HANDOVER_COMPARE_TAMPER || !cmd.includes(' sha256sum ')) return
+  const program = cmd.match(/'([^']*\.cjs)'/)[1]
+  writeFileSync(program, readFileSync(program, 'utf8') + '// tampered\n')
+}
+const damageSnapshot = (role, prompt, cmd) => {
+  if (role !== process.env.HANDOVER_SNAPSHOT_DAMAGE || !/ sha256sum | node -e /.test(cmd) || damaged.has(role)) return
+  damaged.add(role)
+  const path = snapshotPath(prompt)
+  const kind = process.env.HANDOVER_SNAPSHOT_DAMAGE_KIND
+  if (kind === 'missing') { unlinkSync(path); return }
+  if (kind === 'json') { writeFileSync(path, '{'); return }
+  const data = JSON.parse(readFileSync(path, 'utf8'))
+  if (kind === 'empty') data.snapshot = {}
+  else data.snapshot[`${process.env.HOME}/.config/ghostty/config`].unexpected = 'invalid'
+  writeFileSync(path, JSON.stringify(data))
+}
+
 // Run workflow-owned snapshots against an isolated host-config fixture.
 const playHandoverSnapshots = (role, prompt) => {
   if (process.env.HANDOVER_UNRELATED_SIBLINGS && /^independent-(codex|claude):$/.test(role)) {
@@ -286,9 +309,36 @@ const playHandoverSnapshots = (role, prompt) => {
     }
   }
   if (role.startsWith('snapshot:')) {
-    const result = play(prompt)
-    ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(result.stdout) : null }
-    return result.ok ? result.stdout : { error: 'Snapshot command failed' }
+    const scratchpad = `${JSON.parse(argsJson).repoDir}/scratchpad`
+    let steps = prompt.replaceAll('__CLAUDE_SCRATCHPAD__', scratchpad)
+    // Model Write of each JSON-decoded program to its scratchpad .txt file.
+    const data = steps.match(/===ARTIFACT DATA===\n([^\n]*)\n===END ARTIFACT DATA===/)
+    if (data) {
+      for (const [path, content] of Object.entries(JSON.parse(data[1]))) {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, content)
+      }
+      steps = steps.replace(data[0], '')
+    }
+    const result = play(steps, cmd => { damageSnapshot(role, prompt, cmd); tamperComparison(role, cmd) })
+    ran[ran.length - 1] = {
+      ...ran[ran.length - 1], role, snapshot: true,
+      data: result.ok ? JSON.parse(readFileSync(snapshotPath(prompt), 'utf8')) : null,
+      comparison: result.stdout ? JSON.parse(result.stdout) : null,
+    }
+    if (result.ok && process.env.HANDOVER_RELAY_ERROR === role) {
+      // The agent mis-copies either relayed snapshot content or one digest character.
+      const relayed = JSON.parse(result.stdout)
+      if (process.env.HANDOVER_RELAY_ERROR_KIND === 'digest') {
+        const digest = relayed.digests.after
+        relayed.digests.after = digest.slice(0, -1) + (digest.endsWith('0') ? '1' : '0')
+      } else {
+        relayed.snapshot = JSON.parse(readFileSync(snapshotPath(prompt), 'utf8')).snapshot
+        relayed.snapshot[`${process.env.HOME}/.config/ghostty/config`].inode = '999999'
+      }
+      return relayed
+    }
+    return result.stdout || { error: 'Snapshot command failed' }
   }
   if (role === 'independent-cleanup:' || role === 'independent-claude-cleanup:') {
     return prompt.includes('journal absence or emptiness alone')
