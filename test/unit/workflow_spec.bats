@@ -3005,7 +3005,7 @@ _handover_replies() {
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{content:"findings: output\n"},"artifact-write:":{ok:true},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
-        "snapshot:":{snapshot:{"fixture-path":{type:"absent"}}},
+        "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
@@ -3965,6 +3965,13 @@ _handover_snapshot_run() {
         "${WF_DIR}/milestone-handover.js" \
         "$(jq -cn --arg d "${root}" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')" \
         "${replies}" exec-handover-snapshots
+    assert_success
+}
+
+@test "milestone-handover compares disk snapshots despite a relayed inode transcription error (#642)" {
+    HANDOVER_RELAY_ERROR=snapshot:claude-after _handover_snapshot_run "$(_handover_replies)"
+    run jq -e '.result.status == "prepared" and
+        ([.calls[].role] | index("independent-publish:") != null)' <<<"${output}"
     assert_success
 }
 

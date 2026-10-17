@@ -336,7 +336,7 @@ const collect = repo => {
 try {
   const encoded = JSON.stringify({ snapshot: collect(process.argv[2]) })
   writeFileSync(process.argv[3], encoded + '\n')
-  process.stdout.write(encoded + '\n')
+  process.stdout.write(JSON.stringify({ ok: true }) + '\n')
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: error.message }) + '\n')
   process.exitCode = 1
@@ -346,6 +346,7 @@ const takeSnapshot = async (reviewer, moment) => {
   const stem = `independent-snapshot-${reviewer}-${moment}`
   const program = `${SCRATCH}/${stem}.mjs`
   const output = `${SCRATCH}/${stem}.json`
+  const before = moment === 'before' ? output : `${SCRATCH}/independent-snapshot-${reviewer}-before.json`
   const raw = await agent(`Workflow-owned read-only host-config snapshot; do not run acceptance or read reviewer reports. Work only in ${JSON.stringify(A.repoDir)}. Capture the 5.2 five-file backup set and parent dirs, ~/dev-box, applications/icons entries and link_apply targets. Record type, mode, inode, mtime and sha256, including absence and symlink targets. For directories tracked only as parents, record existence, type and mode; omit inode and mtime because unrelated sibling updates change them. Never mutate tracked config. Do not scan /tmp: permission-denied in unrelated root-owned directories is irrelevant; every tracked stat, traversal or sha256 failure must fail closed.
 Write the following exact collector to the path ${JSON.stringify(program)} with the Write tool. Only write this program and its snapshot output; never edit the collector or invent snapshot data.
 ===BEGIN-${head.sha}-577===
@@ -353,11 +354,15 @@ ${SNAPSHOT_SOURCE}
 ===END-${head.sha}-577===
 Run this exact command in the foreground:
 \`cd ${sq(A.repoDir)} && node ${sq(program)} ${sq(A.repoDir)} ${sq(output)}\`
-Return only the command's JSON stdout unchanged; any nonzero exit is error.`,
+Then run this fixed path-only comparison command in the foreground; it validates the on-disk files and reports equality, differing paths/fields and both SHA-256 digests:
+\`cd ${sq(A.repoDir)} && node -e ${sq(SNAPSHOT_COMPARE)} ${sq(before)} ${sq(output)}\`
+Return only the comparison command's structured JSON result unchanged, never snapshot content. Any nonzero exit is error; preserve the error naming the file.`,
   { label: `${RUN_ID} snapshot:${reviewer}-${moment}`, phase: `Independent ${reviewer} snapshot ${moment}`, agentType: 'general-purpose' })
   return decode(raw)
 }
-const validSnapshot = value => value && !value.error && value.snapshot &&
+const SNAPSHOT_COMPARE = String.raw`const { readFileSync } = require('node:fs')
+const { createHash } = require('node:crypto')
+const valid = value => value && !value.error && value.snapshot &&
   typeof value.snapshot === 'object' && !Array.isArray(value.snapshot) && Object.keys(value.snapshot).length > 0 &&
   Object.values(value.snapshot).every(item => item && (item.type === 'absent' ||
     (item.type === 'directory' && item.parent === true && /^-?[0-9]+$/.test(item.mode) && typeof item.mode === 'string') ||
@@ -365,11 +370,34 @@ const validSnapshot = value => value && !value.error && value.snapshot &&
       ['mode', 'inode', 'mtime'].every(key => typeof item[key] === 'string' && /^-?[0-9]+$/.test(item[key])) &&
       (['file', 'symlink'].includes(item.type) ? /^[0-9a-f]{64}$/.test(item.sha256) : item.sha256 === null) &&
       (item.type !== 'symlink' || typeof item.target === 'string'))))
-const equalSnapshots = (before, after) => JSON.stringify(before?.snapshot) === JSON.stringify(after?.snapshot)
-const restorationEvidence = (operations, before, after) => operations && {
+const load = path => {
+  try {
+    const bytes = readFileSync(path)
+    const value = JSON.parse(bytes)
+    if (!valid(value)) throw new Error('Invalid snapshot schema')
+    return { snapshot: value.snapshot, digest: createHash('sha256').update(bytes).digest('hex') }
+  } catch (error) { throw new Error(path + ': ' + error.message) }
+}
+try {
+  const before = load(process.argv[1])
+  const after = load(process.argv[2])
+  const diff = []
+  console.log(JSON.stringify({ equal: JSON.stringify(before.snapshot) === JSON.stringify(after.snapshot),
+    digests: { before: before.digest, after: after.digest }, diff }))
+} catch (error) {
+  console.log(JSON.stringify({ equal: false, error: error.message, diff: [], digests: null }))
+  process.exitCode = 1
+}
+`
+const validSnapshot = value => value && !value.error && typeof value.equal === 'boolean' &&
+  ['before', 'after'].every(key => typeof value.digests?.[key] === 'string' && /^[0-9a-f]{64}$/.test(value.digests[key])) &&
+  Array.isArray(value.diff) && value.diff.every(item => typeof item.path === 'string' &&
+    Array.isArray(item.fields) && item.fields.length > 0 && item.fields.every(field => typeof field === 'string')) &&
+  value.equal === (value.diff.length === 0)
+const restorationEvidence = (operations, comparison) => operations && {
   ...operations,
-  restored: !operations.error && operations.childrenStopped === true &&
-    validSnapshot(before) && validSnapshot(after) && equalSnapshots(before, after),
+  comparison,
+  restored: !operations.error && operations.childrenStopped === true && validSnapshot(comparison) && comparison.equal,
 }
 const codexBefore = await takeSnapshot('codex', 'before')
 if (!validSnapshot(codexBefore)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', snapshot: codexBefore }
@@ -396,10 +424,10 @@ Return only {childrenStopped: boolean, error?: reason}. Confirm all children hav
 { label: `${RUN_ID} independent-cleanup:`, phase: 'Independent Codex cleanup', agentType: 'general-purpose' })
 const cleanupOperations = decode(cleanupRaw)
 const codexAfter = await takeSnapshot('codex', 'after')
-const cleanup = restorationEvidence(cleanupOperations, codexBefore, codexAfter)
+const cleanup = restorationEvidence(cleanupOperations, codexAfter)
 if (!validSnapshot(codexAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', cleanup, snapshot: codexAfter }
 if (typeof codexAcceptance !== 'string' || !codexAcceptance.trim() || !cleanup || cleanup.error ||
-    cleanup.restored !== true || cleanup.childrenStopped !== true || !equalSnapshots(codexBefore, codexAfter)) {
+    cleanup.restored !== true || cleanup.childrenStopped !== true) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'codex', cleanup }
 }
 const claudeBefore = await takeSnapshot('claude', 'before')
@@ -410,7 +438,7 @@ Verify and recover independent Claude operational state after every outcome. Wor
 { label: `${RUN_ID} independent-claude-cleanup:`, phase: 'Independent Claude cleanup', agentType: 'general-purpose' })
 const claudeCleanupOperations = decode(claudeCleanupRaw)
 const claudeAfter = await takeSnapshot('claude', 'after')
-const claudeCleanup = restorationEvidence(claudeCleanupOperations, claudeBefore, claudeAfter)
+const claudeCleanup = restorationEvidence(claudeCleanupOperations, claudeAfter)
 if (!validSnapshot(claudeAfter)) return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup, snapshot: claudeAfter }
 if (!claudeCleanup || claudeCleanup.restored !== true || typeof claudeAcceptance !== 'string' || !claudeAcceptance.trim()) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', reviewer: 'claude', cleanup: claudeCleanup }

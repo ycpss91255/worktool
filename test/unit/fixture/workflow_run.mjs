@@ -287,7 +287,12 @@ const playHandoverSnapshots = (role, prompt) => {
   }
   if (role.startsWith('snapshot:')) {
     const result = play(prompt)
-    ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(result.stdout) : null }
+    ran[ran.length - 1] = { ...ran[ran.length - 1], role, snapshot: true, data: result.ok ? JSON.parse(readFileSync(JSON.parse(prompt.match(/to the path ("(?:[^"\\]|\\.)*") with the Write tool/)[1]).replace(/\.mjs$/, '.json'), 'utf8')) : null, comparison: result.ok ? JSON.parse(result.stdout) : null }
+    if (result.ok && process.env.HANDOVER_RELAY_ERROR === role) {
+      const relayed = JSON.parse(result.stdout)
+      if (relayed.snapshot) relayed.snapshot[`${process.env.HOME}/.config/ghostty/config`].inode = '999999'
+      return relayed
+    }
     return result.ok ? result.stdout : { error: 'Snapshot command failed' }
   }
   if (role === 'independent-cleanup:' || role === 'independent-claude-cleanup:') {
