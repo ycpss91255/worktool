@@ -3447,3 +3447,24 @@ ${id} | dev | Up | ubuntu:24.04" \
     [ ! -s "${STATE}/boxes" ]
     [ -e "${STATE}/last-comment-body" ]
 }
+
+@test "#641: failed first start cleans up without bench or publication" {
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then
+    printf 'first-start-failed\n' >&2
+    exit 3
+fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line --partial 'just box enter failed during first start'
+    refute_output --partial 'phase=bench'
+    assert_equal "$(_count_calls "just box bench")" 0
+    assert_equal "$(_count_calls gh)" 0
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
