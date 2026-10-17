@@ -655,6 +655,11 @@ _51_body() {
     XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" \
         _assemble_owned_box "${_51_W}" >/dev/null || return 1
 
+    printf 'phase=first-start\n' >&2
+    XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" XDG_CONFIG_HOME="${_51_W}/config" \
+        _just box enter --box "${BOX}" -- true </dev/null \
+        || { guard_fail "just box enter failed during first start"; return 1; }
+
     printf 'phase=bench\n' >&2
     XDG_DATA_HOME="${_51_W}/data" XDG_CACHE_HOME="${_51_W}/cache" _just box bench --runs "${BENCH_RUNS}" --shell 'fish -c exit' \
         --max-ms "${BENCH_MAX_MS}" >"${_51_W}/bench-capture.txt"

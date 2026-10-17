@@ -3424,3 +3424,26 @@ ${id} | dev | Up | ubuntu:24.04" \
     [ -e "${dir}/assemble-success" ]
     [ ! -e "${dir}/created-box" ]
 }
+
+@test "#641: 5.1 reaches a verdict after a heavy first enter and quiet recovery" {
+    export FAKE_BOX_SCRIPTS="${REPO_ROOT}/script/box"
+    export BENCH_PSI_FILE="${STATE}/cpu.pressure"
+    printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"${BENCH_PSI_FILE}"
+    mkdir -p "${STATE}/fallback"
+    local tool
+    for tool in just distrobox docker sleep; do
+        if [[ -e "${STUBS}/${tool}" ]]; then
+            cp "${STUBS}/${tool}" "${STATE}/fallback/${tool}"
+        fi
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_cold_tool.sh" "${STUBS}/${tool}"
+    done
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'rc=0'
+    assert_line --partial 'host quiet:'
+    assert_line --partial 'psi after enter run 1:'
+    refute_output --partial 'host too busy mid-run'
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+    [ -e "${STATE}/last-comment-body" ]
+}
