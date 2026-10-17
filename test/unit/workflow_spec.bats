@@ -3462,6 +3462,22 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "milestone-handover retries evidence gathering while verdict preconditions still stop immediately (#639)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        [.calls[] | select(.role == "review:" or .role == "independent-codex:" or
+            .role == "independent-claude:") | .prompt] as $prompts |
+        ($prompts | length == 3) and
+        ([$prompts[] | contains("If an evidence-gathering command fails, diagnose the failure and retry another way to obtain the same evidence") and
+            contains("Only if evidence still cannot be obtained, report that item as evidence-insufficient") ] | all) and
+        ($prompts[0] | split("BEGIN CODEX TASK\n")[1] | split("\nEND CODEX TASK")[0] |
+            contains("with error on unrecoverable failure") and
+            contains("If an evidence-gathering command fails, diagnose the failure and retry another way to obtain the same evidence") and
+            contains("Verdict precondition failures, including a changed frozen head or invalid verdict format, must stop immediately") and
+            contains("Validate this exact format and re-query the frozen head; stop on mismatch"))' <<<"$output"
+    assert_success
+}
+
 @test "milestone-handover gh limits allow explicit API repo paths and product just entries across stages (#630)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     run jq -e '[.calls[] | select(.role == "sync:" or .role == "head:" or
