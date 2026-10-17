@@ -3478,6 +3478,18 @@ _pl_retry_run() {
     assert_success
 }
 
+@test "milestone-handover Review and independent reviewers receive the same CI log operational hint (#639)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '
+        [.calls[] | select(.role == "review:") | .prompt |
+            split("BEGIN CODEX TASK\n")[1] | split("\nEND CODEX TASK")[0]] +
+        [.calls[] | select(.role == "independent-codex:") | .prompt |
+            split("BEGIN TASK\n")[1] | split("\nEND TASK")[0]] +
+        [.calls[] | select(.role == "independent-claude:") | .prompt] |
+        length == 3 and all(contains("CI job logs can be fetched with gh run view --log or with gh api using --allow-escape-sequences."))' <<<"$output"
+    assert_success
+}
+
 @test "milestone-handover gh limits allow explicit API repo paths and product just entries across stages (#630)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     run jq -e '[.calls[] | select(.role == "sync:" or .role == "head:" or
