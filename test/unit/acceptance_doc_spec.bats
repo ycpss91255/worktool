@@ -2,6 +2,27 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+@test "acceptance PR 157 scope credits the signal and evidence fixes (#651)" {
+    local paragraph entry
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    entry="${paragraph#*逾時清理共用程式}"
+    entry="${entry%%中斷矩陣共用程式*}"
+    [[ "${entry}" == *'#647／PR #649'* ]]
+    entry="${paragraph#*驗收程式與入口}"
+    entry="${entry%%逾時清理共用程式*}"
+    [[ "${entry}" == *'#648／PR #650'*"\`evidence.sh\`"* ]]
+    entry="${paragraph#*\`test/unit/verify_*_spec.bats\`}"
+    entry="${entry%%\`test/unit/test_sh_spec.bats\`*}"
+    [[ "${entry}" == *"\`verify_run_signal_spec.bats\`"*'#647／PR #649'* ]]
+    [[ "${entry}" == *"\`verify_evidence_spec.bats\`"*'#648／PR #650'* ]]
+    entry="${paragraph#*\`doc/acceptance.md\`}"
+    entry="${entry%%\`doc/evidence/README.md\`*}"
+    [[ "${entry}" == *'#651'* ]]
+    entry="${paragraph#*\`test/unit/acceptance_doc_spec.bats\`}"
+    entry="${entry%%\`test/unit/assemble_spec.bats\`*}"
+    [[ "${entry}" == *'#651／PR #652'* ]]
+}
+
 @test "acceptance 2.1 documents exactly the runner CPU skip exemptions (#575)" {
     local policy section reason expected documented
     policy="$(sed -n '/^_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/script/test/test.sh")"
