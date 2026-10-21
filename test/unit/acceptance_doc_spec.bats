@@ -17,10 +17,12 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     [[ "${entry}" == *"\`verify_evidence_spec.bats\`"*'#648／PR #650'* ]]
     entry="${paragraph#*\`doc/acceptance.md\`}"
     entry="${entry%%\`doc/evidence/README.md\`*}"
-    [[ "${entry}" == *'#651'* ]]
+    [[ "${entry}" == *'#651／PR #652'* ]]
+    [[ "${entry}" == *'#653／PR #654'* ]]
     entry="${paragraph#*\`test/unit/acceptance_doc_spec.bats\`}"
     entry="${entry%%\`test/unit/assemble_spec.bats\`*}"
     [[ "${entry}" == *'#651／PR #652'* ]]
+    [[ "${entry}" == *'#653／PR #654'* ]]
 }
 
 @test "acceptance 2.1 documents exactly the runner CPU skip exemptions (#575)" {
