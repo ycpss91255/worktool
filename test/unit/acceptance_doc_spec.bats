@@ -10,11 +10,11 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     [[ "${entry}" == *'#647／PR #649'* ]]
     entry="${paragraph#*驗收程式與入口}"
     entry="${entry%%逾時清理共用程式*}"
-    [[ "${entry}" == *'#648／PR #650'*'`evidence.sh`'* ]]
+    [[ "${entry}" == *'#648／PR #650'*"\`evidence.sh\`"* ]]
     entry="${paragraph#*\`test/unit/verify_*_spec.bats\`}"
     entry="${entry%%\`test/unit/test_sh_spec.bats\`*}"
-    [[ "${entry}" == *'`verify_run_signal_spec.bats`'*'#647／PR #649'* ]]
-    [[ "${entry}" == *'`verify_evidence_spec.bats`'*'#648／PR #650'* ]]
+    [[ "${entry}" == *"\`verify_run_signal_spec.bats\`"*'#647／PR #649'* ]]
+    [[ "${entry}" == *"\`verify_evidence_spec.bats\`"*'#648／PR #650'* ]]
     entry="${paragraph#*\`doc/acceptance.md\`}"
     entry="${entry%%\`doc/evidence/README.md\`*}"
     [[ "${entry}" == *'#651'* ]]
