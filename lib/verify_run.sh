@@ -36,10 +36,10 @@ verify_run() {
         wait "${monitor}" || rc=$?
     fi
     if [[ -n "${interrupted}" || "${rc}" -eq 124 || -e "${state}/deadline" ]]; then
-        if [[ -z "${interrupted}" ]]; then
-            if ! kill -KILL -- "-${monitor}" 2>/dev/null; then
-                : # The process group may already have exited.
-            fi
+        if [[ -z "${interrupted}" ]] && ! verify_kill_group "${monitor}"; then
+            log_error "verify_run: group stop unconfirmed (pgid=${monitor}); configuration restore refused; inspect retained verification state before recovery"
+            verify_restore_signals "" "${saved_int}" "${saved_term}" "${saved_hup}"
+            return 1
         fi
         if [[ -n "${run_id}" ]]; then
             verify_cleanup_containers "${run_id}" || rc=$?
