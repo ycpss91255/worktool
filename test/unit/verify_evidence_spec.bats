@@ -632,6 +632,56 @@ STUB
 
 # --- 6.3 ---------------------------------------------------------------------
 
+# Evaluate the requested gh filter against two real JSON pages. Without
+# --slurp, jq evaluates each page separately, just like gh --paginate.
+_stub_two_page_codex() {
+    export FAKE_REAL_JQ
+    FAKE_REAL_JQ="$(command -v jq)"
+    _stub_all_ok
+    mv "${BIN}/gh" "${BIN}/gh-single-page"
+    cat >"${BIN}/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" != *'/issues/156/comments'* || "$*" != *'[codex]'* ]]; then
+    exec "${0}-single-page" "$@"
+fi
+slurp=0
+filter='.'
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --slurp) slurp=1 ;;
+        --jq) filter="$2"; shift ;;
+    esac
+    shift
+done
+pages='[{"body":"[codex] old review\n可合併"}]'
+pages+=$'\n'
+pages+="${FAKE_GH_SECOND_PAGE}"
+if [[ "${slurp}" -eq 1 ]]; then
+    printf '%s\n' "${pages}" | "${FAKE_REAL_JQ}" -rs "${filter}"
+else
+    printf '%s\n' "${pages}" | "${FAKE_REAL_JQ}" -r "${filter}"
+fi
+STUB
+    chmod +x "${BIN}/gh"
+}
+
+@test "6.3: selects the true last codex comment across two pages" {
+    _stub_two_page_codex
+    export FAKE_GH_SECOND_PAGE
+    FAKE_GH_SECOND_PAGE='[{"body":"[codex] later review\n不可合併"},{"body":"[codex] latest review has no verdict"}]'
+    _run_evidence_item item_6_3
+    assert_failure 1
+    assert_line "#156 NOT"
+    refute_line "#156 mergeable"
+
+    # A later page with no codex comment leaves the earlier review current.
+    FAKE_GH_SECOND_PAGE='[{"body":"[claude] latest discussion"}]'
+    _run_evidence_item item_6_3
+    assert_success
+    assert_line "#156 mergeable"
+}
+
 @test "6.3: prints the document's lines and exits 0 when the verdict chain holds" {
     _stub_all_ok
     _run_evidence_item item_6_3
