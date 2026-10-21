@@ -529,11 +529,13 @@ _ITEM_6_3_BLOCKED_PRS=(152 153 154 155)
 #   3  there is no [codex] comment at all
 _item_6_3_verdict() {
     local -n _verdict_ref="$2"
-    local _body _line _rc
+    local _pages _body _line _rc
     _verdict_ref=""
-    if ! _gh_capture _body api \
-        "repos/${EVIDENCE_REPO}/issues/$1/comments" --paginate --slurp \
-        --jq '[.[][].body | select(startswith("[codex]"))] | last'; then
+    if ! _gh_capture _pages api \
+        "repos/${EVIDENCE_REPO}/issues/$1/comments" --paginate --slurp; then
+        return 2
+    fi
+    if ! _jq_capture _body "${_pages}" -r '[.[][].body | select(startswith("[codex]"))] | last'; then
         return 2
     fi
     # `last` over an empty array is the four characters `null`, which is not
@@ -657,7 +659,7 @@ _item_6_3_blocked_pr() {
 
 item_6_3() {
     local _tool_rc=0
-    _require_tools timeout gh grep || _tool_rc=$?
+    _require_tools timeout gh jq grep || _tool_rc=$?
     if [[ "${_tool_rc}" -ne 0 ]]; then
         printf 'rc=%s\n' "${_tool_rc}"
         return "${_tool_rc}"

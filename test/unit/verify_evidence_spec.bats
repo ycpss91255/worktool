@@ -21,8 +21,8 @@
 # document shows, so the failure cases cannot be passing for the trivial
 # reason that the check never worked at all.
 #
-# Everything external is stubbed on PATH (no network, no gh, no real jq in
-# the test image). The stubs are deliberately dumb: they answer only the
+# External commands are stubbed on PATH (no network or real gh). The codex
+# JSON fixtures use the real jq in Docker. The stubs answer only the
 # queries this script makes, and an unexpected query is a loud failure.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
@@ -30,8 +30,10 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 setup() {
     EVIDENCE="${REPO_ROOT}/script/verify/evidence.sh"
 
-    # Resolved BEFORE the stub directory goes on PATH: the grep stub
-    # delegates to the real one for everything it is not asked to break.
+    # Resolve real tools before installing stubs: jq evaluates codex fixtures;
+    # grep delegates every match it is not asked to break.
+    FAKE_REAL_JQ="$(command -v jq)"
+    export FAKE_REAL_JQ
     FAKE_REAL_GREP="$(command -v grep)"
     export FAKE_REAL_GREP
 
@@ -43,7 +45,7 @@ setup() {
     FAKE_GH_LOG="${BATS_TEST_TMPDIR}/gh.log"
     FAKE_DISTROBOX_LOG="${BATS_TEST_TMPDIR}/distrobox.log"
     FAKE_DISTROBOX_STATE="${BATS_TEST_TMPDIR}/boxes"
-    export FAKE_GH_LOG FAKE_DISTROBOX_LOG FAKE_DISTROBOX_STATE
+    export FAKE_GH_LOG FAKE_DISTROBOX_LOG FAKE_DISTROBOX_STATE FAKE_GH_SECOND_PAGE
     : >"${FAKE_GH_LOG}"
     : >"${FAKE_DISTROBOX_LOG}"
     : >"${FAKE_DISTROBOX_STATE}"
@@ -181,9 +183,10 @@ case "$1" in
     api)
         number="${2#*/issues/}"
         number="${number%/comments}"
-        if printf '%s\n' "$@" | "${FAKE_REAL_GREP}" -q '\[codex\]'; then
+        if printf '%s\n' "$@" | "${FAKE_REAL_GREP}" -q -e '\[codex\]' -e '^--slurp$'; then
             kind=codex
             out="$(_codex_of "${number}")"
+            out="$("${FAKE_REAL_JQ}" -cn --arg body "${out}" '[[{body: $body}]]')"
         else
             kind=claude
             out="$(_claude_of "${number}")"
@@ -215,7 +218,7 @@ STUB
 _stub_jq() {
     cat >"${BIN}/jq" <<'STUB'
 #!/usr/bin/env bash
-# Fake jq for verify_evidence_spec.bats (the test image ships no jq).
+# Fake jq for verify_evidence_spec.bats; codex filters use real jq.
 set -u
 filter="${!#}"
 input="$(cat)"
@@ -237,6 +240,7 @@ _names() {
 }
 
 case "${filter}" in
+    *'[codex]'*) out="$("${FAKE_REAL_JQ}" -r "${filter}" <<<"${input}")" || exit $? ;;
     type) out="array" ;;
     length) out="${FAKE_JQ_LENGTH:-$(_count '{"name"')}" ;;
     *'.bucket != "pass"'*)
@@ -635,14 +639,12 @@ STUB
 # Evaluate the requested gh filter against two real JSON pages. Without
 # --slurp, jq evaluates each page separately, just like gh --paginate.
 _stub_two_page_codex() {
-    export FAKE_REAL_JQ
-    FAKE_REAL_JQ="$(command -v jq)"
     _stub_all_ok
     mv "${BIN}/gh" "${BIN}/gh-single-page"
     cat >"${BIN}/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$*" != *'/issues/156/comments'* || "$*" != *'[codex]'* ]]; then
+if [[ "$*" != *'/issues/156/comments'* ]]; then
     exec "${0}-single-page" "$@"
 fi
 slurp=0
@@ -674,17 +676,26 @@ STUB
 
 @test "6.3: two-page gh rejects slurp combined with jq or template" {
     _stub_two_page_codex
-    export FAKE_GH_SECOND_PAGE='[]'
+    FAKE_GH_SECOND_PAGE='[]'
     for flag in --jq --template; do
         run gh api repos/ycpss91255/worktool/issues/156/comments --paginate --slurp "${flag}" '[.[][].body | select(startswith("[codex]"))] | last'
         assert_failure 1
-        assert_output 'the `--slurp` option is not supported with `--jq` or `--template`'
+        assert_output "the \`--slurp\` option is not supported with \`--jq\` or \`--template\`"
     done
+}
+
+@test "6.3: accepts a later blocked review through valid gh pagination flags" {
+    _stub_two_page_codex
+    FAKE_GH_SECOND_PAGE='[{"body":"[codex] latest review\n不可合併"}]'
+    _run_evidence_item item_6_3
+    assert_failure 1
+    assert_line "#156 blocked"
+    refute_line "#156 gh-failed"
+    refute_line "#156 mergeable"
 }
 
 @test "6.3: selects the true last codex comment across two pages" {
     _stub_two_page_codex
-    export FAKE_GH_SECOND_PAGE
     FAKE_GH_SECOND_PAGE='[{"body":"[codex] later review\n不可合併"},{"body":"[codex] latest review has no verdict"}]'
     _run_evidence_item item_6_3
     assert_failure 1
@@ -761,7 +772,7 @@ STUB
     _stub_all_ok
     cat >"${BIN}/gh" <<'STUB'
 #!/usr/bin/env bash
-printf 'null\n'
+printf '[[{"body":"[claude] discussion"}]]\n'
 exit 0
 STUB
     chmod +x "${BIN}/gh"
@@ -807,8 +818,8 @@ set -u
 case "$1:$2" in
     pr:list) exit 0 ;;
 esac
-if printf '%s\n' "$@" | "${FAKE_REAL_GREP}" -q '\[codex\]'; then
-    printf '[codex] review\n不可合併\n'
+if printf '%s\n' "$@" | "${FAKE_REAL_GREP}" -q -e '\[codex\]' -e '^--slurp$'; then
+    printf '%s\n' '[[{"body":"[codex] review\n不可合併"}]]'
     exit 0
 fi
 printf '[claude] blockers recorded in follow-up issue #163\n'
@@ -825,7 +836,7 @@ STUB
     _stub_all_ok
     cat >"${BIN}/gh" <<'STUB'
 #!/usr/bin/env bash
-printf '[codex] review\n不可合併\n'
+printf '%s\n' '[[{"body":"[codex] review\n不可合併"}]]'
 exit 0
 STUB
     chmod +x "${BIN}/gh"
