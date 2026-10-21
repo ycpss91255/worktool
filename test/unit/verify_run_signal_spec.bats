@@ -160,9 +160,36 @@ PROBE
     assert_failure 137
     run bash <<'PROBE'
 source "${LIB_DIR}/verify_run.sh"
+export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}"
 verify_run 0.1 bash -c 'trap "" TERM; sleep 3'
 PROBE
     assert_failure 124
+    local pending=("${SIGNAL_STATE}"/verify-run.*)
+    [ ! -e "${pending[0]}" ]
+}
+
+@test "verify_run: deadline with failed KILL and a live group retains the restore guard" {
+    run bash <<'PROBE'
+source "${LIB_DIR}/log.sh"
+source "${LIB_DIR}/verify_run.sh"
+export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}"
+# Inject a deadline and a group that cannot be killed.
+timeout() { return 124; }
+kill() { return 1; }
+verify_group_running() { return 0; }
+rc=0
+verify_run 0.1 true || rc=$?
+printf 'rc=%s\n' "${rc}"
+pending=("${VERIFY_RUN_GUARD_DIR}"/verify-run.*)
+[[ ! -d "${pending[0]}" ]] || echo guard-retained
+if verify_restore_allowed; then echo restore-allowed; else echo restore-refused; fi
+exit "${rc}"
+PROBE
+    assert_failure
+    assert_line guard-retained
+    assert_line restore-refused
+    refute_line restore-allowed
+    assert_output --partial 'post-KILL wait deadline exceeded'
 }
 
 @test "verify_run: default TERM propagates instead of becoming caller failure 1" {
