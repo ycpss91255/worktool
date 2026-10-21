@@ -647,13 +647,19 @@ if [[ "$*" != *'/issues/156/comments'* || "$*" != *'[codex]'* ]]; then
 fi
 slurp=0
 filter='.'
+formatted=0
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --slurp) slurp=1 ;;
-        --jq) filter="$2"; shift ;;
+        --jq) filter="$2"; formatted=1; shift ;;
+        --template) formatted=1; shift ;;
     esac
     shift
 done
+if [[ "${slurp}" -eq 1 && "${formatted}" -eq 1 ]]; then
+    printf '%s\n' 'the `--slurp` option is not supported with `--jq` or `--template`' >&2
+    exit 1
+fi
 pages='[{"body":"[codex] old review\n可合併"}]'
 pages+=$'\n'
 pages+="${FAKE_GH_SECOND_PAGE}"
@@ -664,6 +670,16 @@ else
 fi
 STUB
     chmod +x "${BIN}/gh"
+}
+
+@test "6.3: two-page gh rejects slurp combined with jq or template" {
+    _stub_two_page_codex
+    export FAKE_GH_SECOND_PAGE='[]'
+    for flag in --jq --template; do
+        run gh api repos/ycpss91255/worktool/issues/156/comments --paginate --slurp "${flag}" '[.[][].body | select(startswith("[codex]"))] | last'
+        assert_failure 1
+        assert_output 'the `--slurp` option is not supported with `--jq` or `--template`'
+    done
 }
 
 @test "6.3: selects the true last codex comment across two pages" {
