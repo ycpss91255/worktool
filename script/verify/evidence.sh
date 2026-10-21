@@ -521,19 +521,21 @@ item_6_2() {
 _ITEM_6_3_MERGEABLE_PRS=(156 165 166 167 168 169)
 _ITEM_6_3_BLOCKED_PRS=(152 153 154 155)
 
-# Last [codex] verdict line of issue/PR $1 into the variable named by $2.
+# Verdict line of the last [codex] comment on issue/PR $1 into variable $2.
 # Return codes are kept apart on purpose:
 #   0  a verdict line was read
-#   1  there are [codex] comments but none carries a verdict line
+#   1  the last [codex] comment has no verdict line
 #   2  the query itself failed (or grep contradicted itself)
 #   3  there is no [codex] comment at all
 _item_6_3_verdict() {
     local -n _verdict_ref="$2"
-    local _body _line _rc
+    local _pages _body _line _rc
     _verdict_ref=""
-    if ! _gh_capture _body api \
-        "repos/${EVIDENCE_REPO}/issues/$1/comments" --paginate \
-        --jq '[.[].body | select(startswith("[codex]"))] | last'; then
+    if ! _gh_capture _pages api \
+        "repos/${EVIDENCE_REPO}/issues/$1/comments" --paginate --slurp; then
+        return 2
+    fi
+    if ! _jq_capture _body "${_pages}" -r '[.[][].body | select(startswith("[codex]"))] | last'; then
         return 2
     fi
     # `last` over an empty array is the four characters `null`, which is not
@@ -657,7 +659,7 @@ _item_6_3_blocked_pr() {
 
 item_6_3() {
     local _tool_rc=0
-    _require_tools timeout gh grep || _tool_rc=$?
+    _require_tools timeout gh jq grep || _tool_rc=$?
     if [[ "${_tool_rc}" -ne 0 ]]; then
         printf 'rc=%s\n' "${_tool_rc}"
         return "${_tool_rc}"
