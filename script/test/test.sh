@@ -358,7 +358,7 @@ _run_system_real_in_runner() {
 # Write repository-relative paths, NUL-delimited to preserve odd characters.
 # A per-command safe.directory permits root to inspect the mounted checkout.
 _write_lint_paths() {
-    local _destination="$1" _path
+    local _destination="$1" _path _listing
     if ! command -v git >/dev/null 2>&1; then
         _info "git unavailable; falling back to filesystem lint discovery"
     elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
@@ -367,10 +367,17 @@ _write_lint_paths() {
     else
         _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
     fi
+    _listing="$(mktemp)" || { _err "cannot create filesystem lint discovery snapshot"; return 1; }
+    if ! find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0 >"${_listing}"; then
+        rm -f "${_listing}"
+        _err "filesystem lint discovery failed"
+        return 1
+    fi
     while IFS= read -r -d '' _path; do
         printf '%s\0' "${_path#"${REPO_ROOT}/"}"
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -print0) >"${_destination}"
+    done <"${_listing}" >"${_destination}"
+    rm -f "${_listing}"
 }
 
 # Emit existing regular shell scripts from the selected path snapshot.
