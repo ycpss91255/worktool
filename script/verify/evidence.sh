@@ -225,7 +225,7 @@ _grep_capture() {
 # One sub-issue one PR, two-architecture CI: each PR has checks, none of them
 # outside the pass bucket, exactly one `Closes #` line, and - from #153 on -
 # an equal, non-zero number of amd64 and arm64 checks. The ten issue
-# references must be ten distinct ones.
+# references must match the document's fixed pairings and be ten distinct ones.
 #
 # "Two architectures" is a claim about two DISJOINT SETS of checks, so that is
 # what is counted. Two independent substring tests over the same array do not
@@ -236,6 +236,11 @@ _grep_capture() {
 # no name at all (`both=0`).
 
 _ITEM_6_1_PRS=(152 153 154 155 156 165 166 167 168 169)
+# Fixed PR-to-issue criterion in doc/acceptance.md item 6.1.
+declare -A _ITEM_6_1_ISSUES=(
+    [152]=151 [153]=149 [154]=150 [155]=21 [156]=23
+    [165]=164 [166]=163 [167]=160 [168]=161 [169]=162
+)
 # The one PR that predates the arm64 runner; from #153 on both architectures
 # must be present in equal numbers.
 _ITEM_6_1_NO_ARM_PR=152
@@ -366,6 +371,11 @@ _item_6_1_pr() {
     [[ -z "${_issue}" ]] || _distinct["${_issue}"]=1
     [[ "${_total}" -gt 0 && "${_nonpass}" -eq 0 \
         && "${_closes}" -eq 1 && -n "${_issue}" ]] || _fail=1
+    if [[ "${_issue}" != "#${_ITEM_6_1_ISSUES[${_pr}]}" ]]; then
+        printf '#%s issue-mismatch actual=%s expected=#%s\n' \
+            "${_pr}" "${_issue}" "${_ITEM_6_1_ISSUES[${_pr}]}"
+        _fail=1
+    fi
     if [[ "${_pr}" != "${_ITEM_6_1_NO_ARM_PR}" ]]; then
         [[ "${_amd}" -gt 0 && "${_amd}" -eq "${_arm}" && "${_both}" -eq 0 ]] || _fail=1
     fi

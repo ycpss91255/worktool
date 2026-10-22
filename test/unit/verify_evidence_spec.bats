@@ -112,6 +112,12 @@ _checks_json() {
 _body_of() {
     local issue
     issue="${FAKE_GH_CLOSES:-$(_issue_of "$1")}" || return 1
+    if [ "${FAKE_GH_SWAP_CLOSES:-0}" = 1 ]; then
+        case "$1" in
+            152) issue=149 ;;
+            153) issue=151 ;;
+        esac
+    fi
     printf 'What this PR does.\n\nCloses #%s\n' "${issue}"
 }
 
@@ -544,6 +550,16 @@ STUB
     FAKE_GH_CLOSES=151 _run_evidence_item item_6_1
     assert_failure
     assert_line "distinct=1"
+    assert_line "rc=1"
+}
+
+@test "6.1: swapped Closes issues fail with actual and expected pairings despite distinct=10" {
+    _stub_all_ok
+    FAKE_GH_SWAP_CLOSES=1 run "${EVIDENCE}" 6.1
+    assert_failure 1
+    assert_line "#152 issue-mismatch actual=#149 expected=#151"
+    assert_line "#153 issue-mismatch actual=#151 expected=#149"
+    assert_line "distinct=10"
     assert_line "rc=1"
 }
 
