@@ -1174,6 +1174,43 @@ FRAG
     ' "${_doc}")
 }
 
+# Ignore only runner progress/recipe echoes; retain every product line, in order.
+# Canonicalise the version-dependent just diagnostic without hiding its outcome.
+_verbatim_setup_lines() {
+    sed -E "/^\[verify\] /d; /^\.\/script\//d;
+        s/^error: [Rr]ecipe \`([^\`]+)\` failed on line [0-9]+ with exit code ([0-9]+)$/recipe=\1 exit code \2/"
+}
+
+_assert_setup_verbatim() {
+    local _item="$1" _section _expected _actual output=""
+    _section="$(awk -v item="${_item}" '
+        /^## M3 / { m3=1 }
+        m3 && /^  - \[ \] / { if (found) exit; found=("item:" $4 == "item:" item) }
+        found { print }
+    ' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ "${_section}" == *'工具版本會影響的輸出（just 診斷行）'* ]]
+    _expected="$(awk '
+        /^      ```text$/ { block=1; next }
+        /^      ```$/ && block { exit }
+        block { sub(/^      /, ""); print }
+    ' <<<"${_section}" | _verbatim_setup_lines)"
+    [[ -n "${_expected}" ]]
+    run "${VERIFY}" "${_item}"
+    assert_success
+    _actual="${output}"
+    [[ "${_item}" == 3.5 ]] && _actual+=$'\nrc=0'
+    _actual="$(printf '%s\n' "${_actual}" | _verbatim_setup_lines)"
+    assert_equal "${_actual}" "${_expected}"
+}
+
+@test "single source: 3.5 verbatim block includes every normalized product line" {
+    _assert_setup_verbatim 3.5
+}
+
+@test "single source: 3.10 verbatim block separates version-dependent just diagnostics" {
+    _assert_setup_verbatim 3.10
+}
+
 @test "single source: setup fixture starts with real product output before corruption" {
     local _home="${BATS_TEST_TMPDIR}/fixture-home" _fixture
     mkdir -p "${_home}"
