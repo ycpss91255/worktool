@@ -333,7 +333,15 @@ item_54() {
             printf 'interrupt-matrix: INCONCLUSIVE (host too busy, re-run when idle)\n'
         fi
     else
+        # Retry a failed cell stop before dropping its cleanup token.
         # Keep failed evidence and any surviving owned HOME for inspection.
+        if [[ -n "${_54_PID}" ]]; then
+            if _54_stop_session "${_54_PID}"; then
+                _54_PID=""
+            else
+                log_error "interrupt cleanup: failed to stop owned session (pid=${_54_PID}); inspect ${_54_W} and stop it manually"
+            fi
+        fi
         _cleanup_drop
         printf 'interrupt-matrix: FAIL\n'
     fi
