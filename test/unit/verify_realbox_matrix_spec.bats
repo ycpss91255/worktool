@@ -31,6 +31,43 @@ STUB
     fi
 }
 
+@test "#657: failed cell stop retries the surviving session and preserves failure evidence" {
+    _matrix_child_stub
+    # The supervisor exits, leaving a TERM-ignoring resident in its session.
+    sed -i '/^sleep "${MATRIX_READY_DELAY/,$d' "${MATRIX_STATE}/child"
+    cat >>"${MATRIX_STATE}/child" <<'STUB'
+trap '' TERM
+sleep 30 &
+exit 130
+STUB
+    # Fail one stop at the process-group adapter, then use real signalling.
+    sed -i 's/^verify_stop_group() {/_matrix_real_stop_group() {/' \
+        "${MATRIX_STATE}/repo/lib/verify_run.sh"
+    cat >>"${MATRIX_STATE}/repo/lib/verify_run.sh" <<'STUB'
+verify_stop_group() {
+    if [[ "$2" == TERM && ! -e "${MATRIX_STATE}/stop-failed" ]]; then
+        touch "${MATRIX_STATE}/stop-failed"
+        return 1
+    fi
+    _matrix_real_stop_group "$@"
+}
+STUB
+    run "${REALBOX}" --allow-real-box 5.4
+    assert_failure 1
+    assert_line --partial 'failed to stop owned session (pid='
+    assert_line --partial 'retaining PID for cleanup'
+    assert_line 'interrupt-matrix: FAIL'
+    local pid evidence
+    read -r pid <"${MATRIX_STATE}/child.pid"
+    # Observe the owned session before teardown can stop its resident.
+    # shellcheck source=lib/verify_run.sh
+    source "${LIB_DIR}/verify_run.sh"
+    run verify_group_running "${pid}"
+    assert_failure 1
+    evidence=("${TMPDIR}"/wt-m3-54.*/assemble-INT/capture)
+    [ -f "${evidence[0]}" ]
+}
+
 @test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
     cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
 #!/usr/bin/env bash
