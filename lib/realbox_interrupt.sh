@@ -260,8 +260,11 @@ _54_finish_cell() {
     _54_assert "${dir}/capture" "${dir}" "${child_rc}" "${expected}" || rc=1
     _54_session_clear "${_54_PID}" || rc=1
     if [[ "${rc}" -ne 0 ]]; then
-        _54_stop_session "${_54_PID}"
-        _54_PID=""
+        if _54_stop_session "${_54_PID}"; then
+            _54_PID=""
+        else
+            log_error "interrupt ${phase} ${signal}: failed to stop owned session (pid=${_54_PID}); retaining PID for cleanup"
+        fi
         _54_failure_report "${phase}" "${signal}" "${child_rc}" "${dir}"
         return 1
     fi

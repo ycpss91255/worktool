@@ -31,6 +31,38 @@ STUB
     fi
 }
 
+@test "#657: failed cell stop retains the PID for later cleanup and reports failure" {
+    printf 'cleanup-rc=0\n' >"${MATRIX_STATE}/capture"
+    run bash -c '
+        source "${LIB_DIR}/log.sh"
+        source "${LIB_DIR}/guard.sh"
+        source "${LIB_DIR}/realbox_interrupt.sh"
+        _54_assert() { return 1; }
+        _54_session_clear() { return 1; }
+        _54_reap() { return 0; }
+        kill() { return 0; }
+        stops=0
+        _54_stop_session() {
+            stops=$((stops + 1))
+            printf "stop=%s pid=%s\n" "${stops}" "$1"
+            [[ "${stops}" -gt 1 ]]
+        }
+        _54_PID=424242
+        rc=0
+        _54_finish_cell assemble INT "${MATRIX_STATE}" 130 130 1 0 || rc=$?
+        printf "finish-rc=%s tracked-pid=%s\n" "${rc}" "${_54_PID}"
+        _54_cleanup
+        printf "cleanup-tracked-pid=%s\n" "${_54_PID}"
+    '
+    assert_success
+    assert_line 'finish-rc=1 tracked-pid=424242'
+    assert_line '[ERROR] interrupt assemble INT: failed to stop owned session (pid=424242); retaining PID for cleanup'
+    assert_line --partial 'interrupt assemble INT: FAIL (rc=130; cleanup-rc=0; evidence='
+    assert_line 'stop=1 pid=424242'
+    assert_line 'stop=2 pid=424242'
+    assert_line 'cleanup-tracked-pid='
+}
+
 @test "5.4: comment tags reach every child unchanged and stay absent when omitted" {
     cat >"${MATRIX_STATE}/bin/setsid" <<'STUB'
 #!/usr/bin/env bash
