@@ -846,6 +846,7 @@ rc=0
   - [ ] 3.10 原子寫入失敗不破壞原檔；status 報 absent，重跑補完
     - 驗收方式：`just verify setup 3.10`。只讓 Ghostty profile 的最後 rename 失敗，worktool 狀態檔與 distrobox.conf 仍照實寫入。錯誤必須恰好一次、setup exit 1；原檔逐 byte 相同，沒有 `config.XXXXXX` 殘留。status exit 0 且報 absent，移除故障後 setup exit 0、區塊 present、使用者內容保留。
     - 下列判準取自 Docker 內實際執行輸出；路徑以 `<H>`／`<D>`／`<repo>` 正規化。進度與 just 的 recipe echo 不列入判準；本項最後 exit 0。
+      輸出類型：工具版本會影響的輸出（just 診斷行）；其餘為固定判準（替換佔位符後逐字比對）。just 診斷只比對 recipe 名稱 `setup` 與 `exit code 1`，大小寫與行號不列入逐字判準，與 3.5 相同。
       ```text
       [INFO] auto-enter: yes (default)
       [INFO] terminal: ghostty (user)

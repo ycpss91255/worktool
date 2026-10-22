@@ -1185,7 +1185,7 @@ _assert_setup_verbatim() {
     local _item="$1" _section _expected _actual
     _section="$(awk -v item="${_item}" '
         /^## M3 / { m3=1 }
-        m3 && /^  - \[ \] / { if (found) exit; found=($4 == item) }
+        m3 && /^  - \[ \] / { if (found) exit; found=("item:" $4 == "item:" item) }
         found { print }
     ' "${REPO_ROOT}/doc/acceptance.md")"
     [[ "${_section}" == *'工具版本會影響的輸出（just 診斷行）'* ]]
@@ -1205,6 +1205,10 @@ _assert_setup_verbatim() {
 
 @test "single source: 3.5 verbatim block includes every normalized product line" {
     _assert_setup_verbatim 3.5
+}
+
+@test "single source: 3.10 verbatim block separates version-dependent just diagnostics" {
+    _assert_setup_verbatim 3.10
 }
 
 @test "single source: setup fixture starts with real product output before corruption" {
