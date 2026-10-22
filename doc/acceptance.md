@@ -779,6 +779,7 @@ rc=0
       [INFO] terminal: ghostty (default)
       [INFO] terminal detected: ghostty (ghostty executable <H>/bin/ghostty)
       [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
       [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
       error: Recipe `setup` failed on line 45 with exit code 1
       rc=1
