@@ -17,12 +17,12 @@ test/unit/acceptance_doc_spec.bats #659／PR #662
 CREDITS
     entry="${paragraph#*驗收程式與入口}"
     entry="${entry%%逾時清理共用程式*}"
-    [[ "${entry}" == *'#658／PR #660'*'`evidence.sh` 6.1'* ]]
+    [[ "${entry}" == *'#658／PR #660'*"\`evidence.sh\` 6.1"* ]]
     entry="${paragraph#*\`test/unit/verify_*_spec.bats\`}"
     entry="${entry%%\`test/unit/test_sh_spec.bats\`*}"
-    [[ "${entry}" == *'`verify_realbox_matrix_spec.bats`'*'#657／PR #661'*'修正，'* ]]
-    [[ "${entry}" == *'`verify_evidence_spec.bats`'*'#658／PR #660'*'修正'* ]]
-    [[ "${entry}" == *'`verify_setup_spec.bats` 的 #659／PR #662'* ]]
+    [[ "${entry}" == *"\`verify_realbox_matrix_spec.bats\`"*'#657／PR #661'*'修正，'* ]]
+    [[ "${entry}" == *"\`verify_evidence_spec.bats\`"*'#658／PR #660'*'修正'* ]]
+    [[ "${entry}" == *"\`verify_setup_spec.bats\` 的 #659／PR #662"* ]]
 }
 
 @test "acceptance PR 157 scope credits the lint discovery fix on every touched entry (#655)" {
