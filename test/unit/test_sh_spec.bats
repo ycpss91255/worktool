@@ -477,6 +477,34 @@ _prepare_lint_worktree() {
     assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
 }
 
+@test "lint rejects failed filesystem discovery without git even after partial output" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname mktemp rm shellcheck; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    ln -s "$(command -v find)" "${bin}/real-find"
+    cat >"${bin}/find" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$2" != -path ]]; then
+    exec real-find "$@"
+fi
+printf '%s\0' "$1/lib/log.sh"
+printf 'find: unreadable subdirectory\n' >&2
+exit 1
+EOF
+    chmod +x "${bin}/find"
+    PATH="${bin}" run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert [ "${stderr}" != "${stderr#*git unavailable}" ]
+    assert [ "${stderr}" != "${stderr#*find: unreadable subdirectory}" ]
+    assert [ "${stderr}" != "${stderr#*filesystem lint discovery failed}" ]
+    refute_output --partial 'ShellCheck OK'
+}
+
 @test "test.sh labels every test container with the enclosing verify run identity" {
     local tier
     for tier in unit integration system-real; do
