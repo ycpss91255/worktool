@@ -7,7 +7,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     for path in script/test/test.sh test/unit/test_sh_spec.bats \
         doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
-        entry="${paragraph#*\`${path}\`（}"
+        entry="${paragraph#*\`"${path}"\`（}"
         [[ "${entry}" != "${paragraph}" ]]
         entry="${entry%%）*}"
         [[ "${entry}" == *'#655／PR #656'* ]]
