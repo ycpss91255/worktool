@@ -26,7 +26,7 @@
 #   real-engine (--system-real) test/system/real_engine_spec.bats only;
 #               needs a live docker daemon, so it runs in the dedicated
 #               docker-in-docker runner image (dockerfile/Dockerfile.system-real)
-#               started with `docker run --rm --privileged`, whose entry
+#               started with `docker run --rm "${TEST_RUN_LABEL[@]}" --privileged`, whose entry
 #               (script/test/system-real-entry.sh) starts dockerd and then
 #               calls back into --ci-system-real. --privileged is used ONLY
 #               here.
@@ -46,7 +46,8 @@
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
 # per tier), the TAP plan covers at least those cases, at least one case ran
-# and none was skipped. bats exits 0 on skips and happily runs a tier whose
+# and none was unexpectedly skipped. Only the opt-in CPU repro cases
+# may skip in unit when stress is disabled. bats exits 0 on skips and runs a tier whose
 # required spec was deleted or emptied as long as some other spec remains,
 # so the required list is checked per file BEFORE bats runs and the TAP
 # stream is scanned AFTER: a missing, emptied or skipped required case fails
@@ -73,6 +74,12 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
+
+# Only verification-owned containers carry the cleanup identity.
+TEST_RUN_LABEL=()
+if [[ -n "${WORKTOOL_TEST_RUN_ID:-}" ]]; then
+    TEST_RUN_LABEL=(--label "worktool.verify-run=${WORKTOOL_TEST_RUN_ID}")
+fi
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -271,18 +278,21 @@ _run_in_container() {
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
     local _layout_paths="" _rc=0
-    local _layout_env=()
+    local _layout_env=() _git_mount=()
     if [[ "${_flag}" == --ci-lint ]]; then
         mkdir -p "${REPO_ROOT}/.agents/state"
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
-        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
-            rm -f "${_layout_paths}"
-            _die "could not enumerate repository paths for lint"
-        fi
+        _write_lint_paths "${_layout_paths}"
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    elif [[ -f "${REPO_ROOT}/.git" ]]; then
+        local _git_common_dir
+        _git_common_dir="$(git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+            rev-parse --path-format=absolute --git-common-dir)" \
+            || _die "cannot resolve Git common directory"
+        _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
-        -v "${REPO_ROOT}:/source" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS "${_layout_env[@]}" \
+        -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \
         ./script/test/test.sh "${_flag}" "$@" || _rc=$?
@@ -309,7 +319,7 @@ _run_ghostty_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_ghostty_image
     _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
-    docker run --rm \
+    docker run --rm "${TEST_RUN_LABEL[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${GHOSTTY_IMAGE}" \
@@ -336,7 +346,7 @@ _run_system_real_in_runner() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged -e CI \
+    docker run --rm "${TEST_RUN_LABEL[@]}" --privileged -e CI \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -345,12 +355,42 @@ _run_system_real_in_runner() {
 
 # --- Container side: gates ----------------------------------------------------
 
-# Emit NUL-delimited lintable shell scripts. -print0 keeps paths with odd
-# characters intact.
+# Write repository-relative paths, NUL-delimited to preserve odd characters.
+# A per-command safe.directory permits root to inspect the mounted checkout.
+_write_lint_paths() {
+    local _destination="$1" _path _listing
+    if ! command -v git >/dev/null 2>&1; then
+        _info "git unavailable; falling back to filesystem lint discovery"
+    elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+        ls-files --cached --others --exclude-standard -z >"${_destination}" 2>/dev/null; then
+        return 0
+    else
+        _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
+    fi
+    _listing="$(mktemp)" || { _err "cannot create filesystem lint discovery snapshot"; return 1; }
+    if ! find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0 >"${_listing}"; then
+        rm -f "${_listing}"
+        _err "filesystem lint discovery failed"
+        return 1
+    fi
+    while IFS= read -r -d '' _path; do
+        printf '%s\0' "${_path#"${REPO_ROOT}/"}"
+    done <"${_listing}" >"${_destination}"
+    rm -f "${_listing}"
+}
+
+# Emit existing regular shell scripts from the selected path snapshot.
 _find_lintable_sh() {
-    find "${REPO_ROOT}" \
-        -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.sh' -print0
+    local _path
+    while IFS= read -r -d '' _path; do
+        case "${_path}" in
+            *.sh|*.bats)
+                if [[ -f "${REPO_ROOT}/${_path}" && ! -L "${REPO_ROOT}/${_path}" ]]; then
+                    printf '%s\0' "${REPO_ROOT}/${_path}"
+                fi ;;
+        esac
+    done <"${WORKTOOL_LAYOUT_PATHS}"
 }
 
 _run_shellcheck() {
@@ -359,12 +399,6 @@ _run_shellcheck() {
     while IFS= read -r -d '' _f; do
         _files+=("${_f}")
     done < <(_find_lintable_sh)
-    # *.bats are bash under the hood; check them too (info-level findings
-    # still fail the gate, matching init_ubuntu's lint policy).
-    while IFS= read -r -d '' _f; do
-        _files+=("${_f}")
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.bats' -print0)
 
     if [[ "${#_files[@]}" -eq 0 ]]; then
         _info "  (no shell scripts to check - skipping)"
@@ -377,9 +411,44 @@ _run_shellcheck() {
     _info "ShellCheck OK"
 }
 
+# Host lint supplies a snapshot when linked-worktree metadata is outside
+# /source. Direct container callers create their own, with filesystem fallback.
+_run_lint() (
+    if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]]; then
+        WORKTOOL_LAYOUT_PATHS="$(mktemp)"
+        trap 'rm -f "${WORKTOOL_LAYOUT_PATHS}"' EXIT
+        _write_lint_paths "${WORKTOOL_LAYOUT_PATHS}"
+    fi
+    [[ -r "${WORKTOOL_LAYOUT_PATHS}" ]] || _die "lint path snapshot unreadable"
+    export WORKTOOL_LAYOUT_PATHS
+    _run_shellcheck
+    _info "Checking script layout and process artifacts"
+    "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+        || _die "Script layout check failed"
+    _info "Script layout OK"
+)
+
+# Only the optional CPU repro cases may skip in the unit tier.
+_has_unexpected_skip() {
+    awk -v tier="$1" -v stress="${WORKTOOL_STRESS:-}" '
+        /^ok [0-9]+ .*# skip/ {
+            sub(/^ok [0-9]+ /, "")
+            reason = " # skip set WORKTOOL_STRESS=1 to run CPU repro"
+            # Exempt names come from test/unit/verify_run_signal_spec.bats and
+            # test/unit/verify_realbox_spec.bats.
+            if (tier == "unit" && stress != "1" &&
+                ($0 == "verify_run: HUP under CPU load always finishes before cleanup" reason ||
+                 $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason ||
+                 $0 == "timeout cleanup: TERM-ignoring just descendant under CPU load" reason)) next
+            unexpected = 1
+        }
+        END { exit !unexpected }
+    ' "$2"
+}
+
 # Check the captured TAP stream of tier $1 in file $2 after the run: a plan
 # was emitted, at least one case ran (no "1..0"), the plan covers at least
-# the $3 cases the required specs define, and no case was skipped (bats
+# the $3 cases the required specs define, and no unexpected case skipped (bats
 # itself exits 0 on a skip). Prints the reason and returns 1 on any miss.
 _verify_tap() {
     local _tier="$1" _tap="$2" _min="$3" _plan
@@ -398,7 +467,7 @@ _verify_tap() {
         _err "${_tier} bats plan (${_plan}) is below the required specs' case total (${_min})"
         return 1
     fi
-    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+    if _has_unexpected_skip "${_tier}" "${_tap}"; then
         _err "${_tier} bats has skipped case(s) - a skipped required case is not green"
         return 1
     fi
@@ -642,11 +711,7 @@ _run_ci_gate() {
     shift
     case "${_flag}" in
         --ci-lint)
-            _run_shellcheck
-            _info "Checking script layout and process artifacts"
-            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
-                || _die "Script layout check failed"
-            _info "Script layout OK"
+            _run_lint
             ;;
         --ci-unit)         _run_unit "$@" ;;
         --ci-matrix)       _run_matrix "$@" ;;
@@ -847,7 +912,8 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout \
+        verify_ui; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

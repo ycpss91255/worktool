@@ -5,7 +5,7 @@
 #   The just layer follows ycpss91255-docker/base (ADR-00000005/10/11):
 #
 #   - zero special cases: the root justfile is action `mod?` lines
-#     (test, box, agent, worktree) plus a `default` that lists them - no other recipe;
+#     (test, box, verify, agent, worktree) plus a `default` that lists them - no other recipe;
 #   - action-named namespaces: script/test/justfile.test and
 #     script/box/justfile.box, each with its own `default`, `help` (alias
 #     `h`) and `set working-directory := '../..'`, so every recipe runs at
@@ -143,25 +143,26 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is five mod? lines (test, box, agent, worktree, job) and one default recipe" {
+@test "root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe" {
     assert [ -f "${REPO_ROOT}/justfile" ]
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
     # Everything that is not a comment or blank line, verbatim.
     run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
     assert_success
-    assert_equal "${#lines[@]}" 7
+    assert_equal "${#lines[@]}" 8
     assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
     assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 3 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
-    assert_line --index 4 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
-    assert_line --index 5 "default:"
-    assert_line --index 6 --regexp '^[[:space:]]+@just --list$'
+    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
+    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
+    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
+    assert_line --index 5 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
+    assert_line --index 6 "default:"
+    assert_line --index 7 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
     local _m
-    for _m in script/test/justfile.test script/box/justfile.box .agents/script/justfile.job; do
+    for _m in script/test/justfile.test script/box/justfile.box script/verify/justfile.verify .agents/script/justfile.job; do
         assert [ -f "${REPO_ROOT}/${_m}" ]
         run grep -xE "set working-directory := '\.\./\.\.'" "${REPO_ROOT}/${_m}"
         assert_success
@@ -173,19 +174,21 @@ _listed_names() {
     # settings must not carry usage text or option lists (case-insensitive).
     run bash -c "grep -vhE '^[[:space:]]*#' \"\$@\" | grep -niE 'valid:|usage'" _ \
         "${REPO_ROOT}/justfile" \
-        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box"
+        "${REPO_ROOT}/script/test/justfile.test" "${REPO_ROOT}/script/box/justfile.box" \
+        "${REPO_ROOT}/script/verify/justfile.verify"
     assert_failure
     assert_output ""
 }
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the five namespaces and default, nothing else" {
+@test "just --list shows the six namespaces and default, nothing else" {
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default job test worktree "
+    assert_equal "$(_listed_names)" "agent box default job test verify worktree "
     assert_line --regexp '^ +box \.\.\. +# '
     assert_line --regexp '^ +test \.\.\. +# '
+    assert_line --regexp '^ +verify \.\.\. +# '
 }
 
 @test "bare just is just --list" {
@@ -202,6 +205,13 @@ _listed_names() {
     assert_equal "$(_listed_names | sed 's/^h //; s/ h / /')" "assemble bench default enter help setup status "
     assert_output --regexp '\[alias: h\]|^ +h( |$)'
     refute_output --partial "test.sh"
+    assert_equal "$(_stub_calls)" ""
+}
+
+@test "#513: bare just verify lists the realbox comment tag option" {
+    _just verify
+    assert_success
+    assert_line --regexp '^ +realbox .*--comment-tag'
     assert_equal "$(_stub_calls)" ""
 }
 

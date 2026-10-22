@@ -176,12 +176,14 @@ EOF
 
 # A bounded CPU worker, used only inside the test container. timeout owns
 # the process group so an interrupted fixture cannot leave a busy loop behind.
+# Publish ready before the deadline starts, even if the child never gets CPU time.
 _install_cpu_load() {
     cat >"${MOCKBIN}/cpu-load" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'ready\n' >"$2"
 rc=0
-timeout "$1" bash -c 'printf "ready\n" >"$1"; while :; do :; done' _ "$2" || rc=$?
+timeout "$1" bash -c 'while :; do :; done' || rc=$?
 if (( rc == 124 )); then
     exit 0
 fi
@@ -222,7 +224,7 @@ printf '%s\n' "$(( _now + _ms * 1000 ))" >"${FAKE_CLOCK_FILE}"
 # a PSI of FAKE_DBX_PSI_VALUE behind (read by bench.sh after the run).
 if [[ -n "${FAKE_DBX_PSI_AT:-}" ]] \
     && (( $(wc -l <"${FAKE_DBX_CALLS}") == FAKE_DBX_PSI_AT )); then
-    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${FAKE_DBX_PSI_VALUE}" >"${BENCH_PSI_FILE}"
+    printf 'some avg10=%s avg60=0.00 avg300=0.00 total=1\n' "${FAKE_DBX_PSI_VALUE}" >"${FAKE_DBX_PSI_FILE:-${BENCH_PSI_FILE}}"
 fi
 _rc="${FAKE_DBX_EXIT:-0}"
 [[ "${_kind}" == shell && -n "${FAKE_DBX_EXIT_SHELL:-}" ]] && _rc="${FAKE_DBX_EXIT_SHELL}"
@@ -556,6 +558,25 @@ _run_matrix() {
 }
 
 # The load fixture must stop itself even if the matrix fails or is interrupted.
+@test "artificial CPU load is ready even when timeout kills bash before its command starts" {
+    # Non-interactive bash sources BASH_ENV before executing its command.
+    # Stall only the bounded child, so timeout kills it before it can write ready.
+    cat >"${TMP}/stall-child.bash" <<'EOF'
+if [[ -n "${BASH_EXECUTION_STRING:-}" ]]; then
+    while :; do :; done
+fi
+EOF
+    run env BASH_ENV="${TMP}/stall-child.bash" \
+        timeout 3 "${MOCKBIN}/cpu-load" 0.15 "${TMP}/load.ready"
+    assert_success
+    run cat "${TMP}/load.ready"
+    assert_success
+    assert_output "ready"
+    _run_matrix enter 1
+    _run_matrix shell 1
+    _run_matrix inbox 1
+}
+
 @test "artificial CPU load stops on its own within a short deadline" {
     run timeout 3 "${MOCKBIN}/cpu-load" 1 "${TMP}/load.ready"
     assert_success
@@ -1173,4 +1194,207 @@ _manifest_gate_paragraph() {
         _ "${BENCH}"
     assert_failure 1
     assert_output --partial "inbox: 'bash -c exit 4' exited 4 on run 1 - measurement aborted"
+}
+
+@test "box PSI: busy box with quiet bench is inconclusive instead of a latency verdict" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 7.25 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=400 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 300 --max-wait 5
+    assert_failure 3
+    assert_output --partial "${_box} some avg10=7.25"
+    assert_equal "$(_calls)" ""
+    assert_equal "$(_sleeps)" "5"
+}
+
+@test "box PSI: quiet box keeps the latency gate and records every boundary and peak" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 1.25 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=300 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 300
+    assert_success
+    local _metric _boundary
+    for _metric in enter shell inbox; do
+        for _boundary in before after; do
+            assert_line "[INFO] psi ${_boundary} ${_metric} run 1: ${_box} some avg10=1.25"
+        done
+    done
+    assert_line --partial "host stayed quiet: ${_box} some avg10 peak=1.25"
+    assert_line --partial "shell median 300.0 ms within --max-ms 300"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_SLEEP_MS=300 \
+        "${BENCH}" --runs 1 --warmup 0 --max-ms 1
+    assert_failure 1
+    assert_line --partial "shell median 300.0 ms exceeds --max-ms 1"
+}
+
+@test "box PSI: unreadable box warns and retains the bench quiet-host check" {
+    local _box="${TMP}/absent.box.pressure"
+    run env BENCH_BOX_PSI_FILE="${_box}" "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --partial "[WARN] box cgroup PSI unreadable (${_box}) - box cgroup check skipped"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    _psi 7.25
+    run env BENCH_BOX_PSI_FILE="${_box}" "${BENCH}" --runs 1 --warmup 0 --max-wait 5
+    assert_failure 3
+    assert_line --partial "box cgroup check skipped"
+    assert_line --partial "${BENCH_PSI_FILE} some avg10=7.25"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "3"
+}
+
+@test "box PSI: inspect resolves the measured box cgroup in the reader namespace" {
+    local _cg="${TMP}/cgfs" _proc="${TMP}/proc" _engine _rel
+    mkdir -p "${_proc}/4321"
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "inspect --format {{.State.Pid}} dev" ]] || exit 1
+printf '4321\n'
+EOF
+    chmod +x "${MOCKBIN}/docker"
+    cp "${MOCKBIN}/docker" "${MOCKBIN}/podman"
+    for _engine in docker podman; do
+        for _rel in /engine.scope /nested/box /; do
+            mkdir -p "${_cg}${_rel}"
+            printf '0::%s\n' "${_rel}" >"${_proc}/4321/cgroup"
+            _psi 7.25 "${_cg}${_rel%/}/cpu.pressure"
+            DBX_CONTAINER_MANAGER="${_engine}" run bash -c \
+                'unset BENCH_BOX_PSI_FILE; source "$1"; CGROUP_FS="$2"; PROC_ROOT="$3"; bench_run --runs 1 --warmup 0 --max-ms 300 --max-wait 5' \
+                _ "${BENCH}" "${_cg}" "${_proc}"
+            assert_failure 3
+            assert_line --partial "${_cg}${_rel%/}/cpu.pressure some avg10=7.25"
+            refute_output --partial "box cgroup check skipped"
+        done
+    done
+    assert_equal "$(_calls)" ""
+}
+
+@test "box PSI: a failed warmup that makes the box busy voids the batch before a latency verdict" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 0.00 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_PSI_FILE="${_box}" \
+        FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=2.001 FAKE_DBX_EXIT=4 \
+        "${BENCH}" --runs 1 --warmup 1 --max-ms 300
+    assert_failure 3
+    assert_line "[INFO] psi before enter run 1: ${_box} some avg10=0.00"
+    assert_line "[INFO] psi after enter run 1: ${_box} some avg10=2.001"
+    assert_line --partial "${_box} some avg10=2.001 after enter run 1"
+    refute_output --partial "measurement aborted"
+    refute_output --regexp '^shell: min='
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
+}
+
+@test "box PSI: help names both sources and the test-only box injection" {
+    run "${BENCH}" --help
+    assert_success
+    assert_output --partial "BENCH_BOX_PSI_FILE"
+    assert_output --partial "maximum of both"
+    assert_output --partial "box cgroup"
+    assert_output --partial "tests only"
+}
+
+@test "box PSI: lost box readings warn and never claim the box stayed quiet" {
+    local _box="${TMP}/box.cpu.pressure"
+    _psi 0.00 "${_box}"
+    run env BENCH_BOX_PSI_FILE="${_box}" FAKE_DBX_PSI_FILE="${_box}" \
+        FAKE_DBX_PSI_AT=1 FAKE_DBX_PSI_VALUE=garbage \
+        "${BENCH}" --runs 1 --warmup 0
+    assert_success
+    assert_line --partial "box cgroup PSI unreadable (${_box}) - box cgroup check skipped at after enter run 1"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    refute_output --partial "host stayed quiet: ${_box}"
+}
+
+# A stopped engine reports PID 0 until the first enter starts the box.
+_install_cold_box() {
+    export DBX_CONTAINER_MANAGER=docker
+    export FAKE_ENGINE_CALLS="${TMP}/engine.calls"
+    mkdir -p "${TMP}/proc/4321" "${TMP}/cgfs/box.scope"
+    printf '0::/box.scope\n' >"${TMP}/proc/4321/cgroup"
+    _psi "$1" "${TMP}/cgfs/box.scope/cpu.pressure"
+    cat >"${MOCKBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == "inspect --format {{.State.Pid}} dev" ]] || exit 1
+printf 'inspect\n' >>"${FAKE_ENGINE_CALLS}"
+if [[ -s "${FAKE_DBX_CALLS}" ]]; then
+    printf '4321\n'
+else
+    printf '0\n'
+fi
+EOF
+    chmod +x "${MOCKBIN}/docker"
+}
+
+_run_cold_box() {
+    bash -c 'unset BENCH_BOX_PSI_FILE; source "$1"; CGROUP_FS="$2"; PROC_ROOT="$3"; shift 3; bench_run "$@"' \
+        _ "${BENCH}" "${TMP}/cgfs" "${TMP}/proc" "$@"
+}
+
+@test "cold box PSI: busy box resolved after first enter voids the second warmup" {
+    _install_cold_box 7.25
+    FAKE_DBX_SLEEP_MS=400 run _run_cold_box --runs 1 --warmup 2 --max-ms 300
+    assert_failure 3
+    assert_line "[INFO] psi before enter run 2: ${TMP}/cgfs/box.scope/cpu.pressure some avg10=7.25"
+    assert_line --partial "${TMP}/cgfs/box.scope/cpu.pressure some avg10=7.25 before enter run 2"
+    refute_output --regexp '^shell: min='
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "1"
+    assert_equal "$(_sleeps)" "5"
+}
+
+@test "cold box PSI: late quiet resolution logs every later boundary and names unchecked runs" {
+    _install_cold_box 1.25
+    FAKE_DBX_SLEEP_MS=300 run _run_cold_box --runs 1 --warmup 2 --max-ms 300
+    assert_success
+    assert_line --partial 'box cgroup PSI not checked at: before enter run 1; after enter run 1'
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
+    local _metric _run _boundary
+    for _metric in enter shell inbox; do
+        for _run in 1 2 3; do
+            [[ "${_metric} ${_run}" != 'enter 1' ]] || continue
+            for _boundary in before after; do
+                assert_line "[INFO] psi ${_boundary} ${_metric} run ${_run}: ${TMP}/cgfs/box.scope/cpu.pressure some avg10=1.25"
+            done
+        done
+    done
+    assert_line --partial 'shell median 300.0 ms within --max-ms 300'
+    assert_equal "$(wc -l <"${FAKE_ENGINE_CALLS}" | tr -d ' ')" "3"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "9"
+    assert_equal "$(_sleeps)" "5"
+}
+
+@test "cold box PSI: never resolved warns once, lists every unchecked run and retains latency judgement" {
+    _install_cold_box 0.00
+    rm "${TMP}/proc/4321/cgroup"
+    FAKE_DBX_SLEEP_MS=400 run _run_cold_box --runs 1 --warmup 1 --max-ms 300
+    assert_failure 1
+    assert_line '[WARN] box cgroup PSI unreadable (unresolved) - box cgroup check skipped'
+    local _metric _run _missing='' _line _warnings=0
+    for _metric in enter shell inbox; do
+        for _run in 1 2; do
+            _missing+="before ${_metric} run ${_run}; after ${_metric} run ${_run}; "
+        done
+    done
+    assert_line "[WARN] box cgroup PSI not checked at: ${_missing%; }"
+    for _line in "${lines[@]}"; do
+        if [[ "${_line}" == *'box cgroup PSI unreadable'* ]]; then
+            _warnings=$(( _warnings + 1 ))
+        fi
+    done
+    assert_equal "${_warnings}" "1"
+    assert_line --partial "host stayed quiet: ${BENCH_PSI_FILE} some avg10 peak=0.00"
+    assert_line --partial 'shell median 400.0 ms exceeds --max-ms 300'
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
+    assert_equal "$(_calls | wc -l | tr -d ' ')" "6"
+    assert_equal "$(_sleeps)" "5"
+}
+
+@test "cold box PSI: unresolved box reports unchecked boundaries when a run fails" {
+    _install_cold_box 0.00
+    rm "${TMP}/proc/4321/cgroup"
+    FAKE_DBX_EXIT=4 run _run_cold_box --runs 1 --warmup 1
+    assert_failure 1
+    assert_line --partial 'measurement aborted'
+    assert_line '[WARN] box cgroup PSI unreadable (unresolved) - box cgroup check skipped'
+    assert_line '[WARN] box cgroup PSI not checked at: before enter run 1; after enter run 1'
+    refute_output --regexp '^shell: min='
+    refute_output --partial "host stayed quiet: ${TMP}/cgfs/box.scope/cpu.pressure"
 }
