@@ -199,6 +199,16 @@ _listed_names() {
     assert_output "${_expected}"
 }
 
+@test "#665: box descriptions do not promise rm in M3" {
+    _just --list
+    assert_success
+    refute_output --regexp 'M3.*rm'
+
+    run grep -F 'justfile.box' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    refute_output --regexp 'M3.*rm'
+}
+
 @test "just box lists assemble, bench, default, enter, help (alias h), setup and status only" {
     _just box
     assert_success

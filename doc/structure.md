@@ -28,7 +28,7 @@ worktool/
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
 │   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh(M3 再加 rm)
+│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --home / --help);建立時指定盒子獨立 HOME
 │       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --box / --distrobox / --dry-run / --help;寫單一設定檔 + Ghostty 受管區塊 `command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<盒>'`(wrapper 與 distrobox 都是已 quote 的絕對路徑,#180;不開 tmux、不碰 ~/.tmux.conf,#179),每次另寫 distrobox.conf 受管區塊(進盒時丟掉 TMUX / TMUX_PANE,#179);見 enter.md)
 │       ├── enter.sh             Ghostty 受管命令與手動進盒共用的包裝層(just box enter):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
