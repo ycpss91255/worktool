@@ -3008,7 +3008,7 @@ _handover_replies() {
         "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
-        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
+        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
         "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks'
 }
@@ -4362,4 +4362,117 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ([.ran[].cmd | contains("gh api --paginate") or contains("gh pr comment") or
             contains("api.github.com") or contains("codex node -e")]|any|not)' <<<"$json"
     assert_success
+}
+
+@test "doc/workflow.md explains independent report classification and coverage (#669)" {
+    run sed -n '/^8\. \*\*獨立報告彙整與發布/,/^9\. /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '任一報告有程式、文件或測試缺陷（defects）就阻擋'
+    assert_output --partial '同一 frozen head 的 passingEvidence 補足，就不阻擋'
+    assert_output --partial 'coveredEvidence 記錄項目、缺證據的報告（missingFrom）、補足的報告（coveredBy）'
+    assert_output --partial '兩份報告都沒有該 head 的通過證據時仍阻擋'
+    assert_output --partial '主觀感受、人類 gate、維護者自己的主機'
+    assert_output --partial '桌面鎖定或沒有圖形 session 而回未判定 rc=3'
+    assert_output --partial 'pendingHuman，不阻擋，但不能寫成已通過'
+    assert_output --partial '任一報告無法分類或分類格式不符都失敗收場'
+    assert_output --partial '判定留言與 ready 草稿都要分開列出 defects、agent 能取得的證據缺口與 pendingHuman'
+}
+
+@test "milestone-handover credits same-head evidence from the other report (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".codex.insufficientEvidence=["5.1"] |
+        ."independent-assess:".claude.passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and
+        .result.coveredEvidence == [{item:"5.1",missingFrom:"codex",coveredBy:"claude",head:("a" * 40),evidence:"command rc=0; expected output"}] and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") |
+            .prompt | contains("coveredBy") and contains("5.1")] | all)' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover rejects a report's own passing evidence for its gap (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].insufficientEvidence=["5.1"] |
+            ."independent-assess:"[$reviewer].passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.issues == ["5.1"] and .result.coveredEvidence == [] and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover blocks uncovered gaps and rejects malformed coverage (#669)" {
+    local replies coverage
+    for coverage in '[]' '[{"item":"5.1","head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence":"rc=0"}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '
+            ."independent-assess:".codex.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.passingEvidence=$coverage |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.coveredEvidence == [] and .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+    for coverage in 'null' '{}' '[{"item":"5.1","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","evidence":""}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '."independent-assess:".claude.passingEvidence=$coverage')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover lists maintainer reservations separately without claiming passes (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".claude.pendingHuman=["subjective feel", "human gate", "maintainer host", "locked desktop rc=3", "no graphical session rc=3"]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and (.result.pendingHuman | length == 5) and
+        .result.verdict == ("交出判定：可交出 head=" + ("a" * 40)) and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") | .prompt |
+            contains("Separate defects, agent-obtainable evidence gaps and pendingHuman") and
+            contains("Never present pendingHuman as passed") and contains("locked desktop rc=3") and
+            contains("no graphical session rc=3")] | all) and
+        (.calls[] | select(.role == "independent-assess:") | .prompt |
+            contains("subjective feel, human gates") and
+            contains("locked desktop or no graphical session") and contains("rc=3"))' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover blocks every defect even with passing evidence (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].defects=["documented output mismatch", "wrong comment", "test defect"] |
+            ."independent-assess:".claude.passingEvidence=[{item:"documented output mismatch",head:("a" * 40),evidence:"rc=0"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and (.result.defects | length == 3) and
+            .result.issues == .result.defects and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            (.calls[] | select(.role == "independent-assess:") | .prompt |
+                contains("Code, documentation and test defects") and contains("documentation versus actual output mismatches") and
+                contains("wrong comments") and contains("Any defect in either report blocks"))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover never treats unclassifiable reports as empty success (#669)" {
+    local mutation replies
+    for mutation in '."independent-assess:"="unclassifiable"' \
+        '."independent-assess:".error="cannot classify"' \
+        '."independent-assess:".codex.error="cannot classify codex"' \
+        'del(."independent-assess:".claude.defects)' \
+        '."independent-assess:".claude.pendingHuman=[""]'; do
+        replies="$(_handover_replies | jq "${mutation}")"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
 }
