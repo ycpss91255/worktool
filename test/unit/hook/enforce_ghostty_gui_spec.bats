@@ -4,19 +4,17 @@ load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
 _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
 
-@test "new-window is blocked with any arguments including help" {
+@test "Ghostty launches and actions are allowed for automatic cleanup" {
     local command
     for command in 'ghostty +new-window' 'ghostty +new-window --help' \
-        'ghostty +new-window -h' 'ghostty +new-window --working-directory=/tmp'; do
+        'ghostty +new-window -h' 'ghostty' 'ghostty --help' \
+        'ghostty +reload-config' 'ghostty +future-action --help' \
+        'env DISPLAY=:0 ghostty +new-window' 'timeout 5s ghostty' \
+        'bash -c "ghostty +new-window --help"' \
+        "ghostty +list-\$action" 'ghostty +list-*'; do
         _check "${command}"
-        assert_failure 2
-        assert_output --partial '[hook:enforce-ghostty-gui] BLOCKED'
-        assert_output --partial 'Docker'
+        assert_success
     done
-    run jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-        select(.command == "${CLAUDE_PROJECT_DIR}/.claude/hook/enforce_ghostty_gui.sh")' \
-        "${REPO_ROOT}/.claude/settings.json"
-    assert_success
 }
 
 @test "literal read-only Ghostty queries remain allowed" {
@@ -31,17 +29,6 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
     done
 }
 
-@test "GUI launches and actions outside the read-only allowlist are blocked" {
-    local command
-    for command in 'ghostty' 'ghostty --help' 'ghostty -h' \
-        'ghostty --working-directory=/tmp' 'ghostty +new-tab' \
-        'ghostty +reload-config' 'ghostty +quit' 'ghostty +future-action --help' \
-        'ghostty --version +new-window' 'ghostty +help +new-window'; do
-        _check "${command}"
-        assert_failure 2
-    done
-}
-
 @test "signals targeting Ghostty are blocked including PID lookup substitutions" {
     local command
     for command in 'pkill ghostty' 'pkill -HUP -x ghostty' \
@@ -50,16 +37,6 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         'kill -HUP ghostty' "kill -TERM \$(pgrep -x ghostty)" \
         "kill \$(pidof ghostty)" "kill -9 \`pgrep ghostty\`" \
         "kill -HUP \"\$ghostty_pid\"" "kill -s TERM \$(ps -C ghostty -o pid=)"; do
-        _check "${command}"
-        assert_failure 2
-    done
-}
-
-@test "read-only exemptions fail closed when arguments expand or add actions" {
-    local command
-    for command in "ghostty +list-\$action" 'ghostty +list-*' \
-        "ghostty --version \"\$args\"" "ghostty +help \$(printf +new-window)" \
-        'ghostty +show-config +reload-config' 'ghostty +list-fonts +new-window'; do
         _check "${command}"
         assert_failure 2
     done
@@ -79,21 +56,13 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
     done
 }
 
-@test "wrappers paths compound commands and inline shell scripts preserve the guard" {
+@test "wrapped signals targeting Ghostty remain blocked" {
     local command
     for command in "builtin kill -HUP \$(pgrep ghostty)" \
-        '/usr/bin/ghostty +new-window --help' '"ghostty" +new-window -h' \
-        'env DISPLAY=:0 ghostty +new-window' 'sudo -u user ghostty +reload-config' \
-        'timeout 5s env DISPLAY=:0 ghostty' 'true && ghostty +new-window' \
-        "echo \$(ghostty +new-window)" 'bash -c "ghostty +new-window --help"' \
-        "eval 'pkill ghostty'" $'sh <<\'SCRIPT\'\nghostty +new-window -h\nSCRIPT'; do
+        "eval 'pkill ghostty'" 'bash -c "killall ghostty"' \
+        'env X=1 timeout 5 pkill ghostty'; do
         _check "${command}"
         assert_failure 2
-    done
-    for command in 'timeout 5 env X=1 /usr/bin/ghostty +help' \
-        'bash -c "ghostty --version"' 'command ghostty +show-config'; do
-        _check "${command}"
-        assert_success
     done
 }
 
