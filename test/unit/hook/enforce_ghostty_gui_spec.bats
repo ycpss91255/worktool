@@ -54,3 +54,13 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         assert_failure 2
     done
 }
+
+@test "read-only exemptions fail closed when arguments expand or add actions" {
+    local command
+    for command in 'ghostty +list-$action' 'ghostty +list-*' \
+        'ghostty --version "$args"' 'ghostty +help $(printf +new-window)' \
+        'ghostty +show-config +reload-config' 'ghostty +list-fonts +new-window'; do
+        _check "${command}"
+        assert_failure 2
+    done
+}

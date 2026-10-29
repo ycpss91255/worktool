@@ -15,6 +15,7 @@ _deny_gui() {
 
 _check_query() {
     local _word _action
+    hook_word_has_expansion "${1:-}" && _deny_gui
     _action="$(hook_word "${1:-}")"
     case "${_action}" in
         --version|+help|+version|+show-config|+list-?*) ;;
