@@ -766,8 +766,8 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_apply_require_tools() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath \
-        gapplication mktemp sleep kill
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
+    _52_window_require_tools
 }
 
 _52_step2_apply() {
@@ -817,8 +817,16 @@ _52_confirm_window() {
 
 # Request reload through the GTK action before requesting the new window.
 # IPC delivery alone is insufficient: the new shell must pass namespace checks.
+_52_window_require_tools() {
+    guard_require gapplication mktemp sleep || return $?
+    type -P kill >/dev/null || {
+        printf '[UNAVAILABLE] %s: kill not found on PATH (external binary required)\n' "${0##*/}" >&2
+        return 3
+    }
+}
+
 _52_open_window() {
-    guard_require gapplication mktemp sleep kill || return $?
+    _52_window_require_tools || return $?
     _52_desktop_preflight || return $?
     _52_WINDOW_DIR="$(mktemp -d "${CFGBK_B}/window.XXXXXXXX")" || return 1
     _cleanup_push 52-window
@@ -1155,7 +1163,8 @@ _52_report_restore_window() {
 
 _52_restore_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch gapplication mktemp sleep kill
+        ps find cmp stat touch || return $?
+    _52_window_require_tools
 }
 
 _52_step3_restore() {
@@ -1296,7 +1305,8 @@ _52_desktop_preflight() {
 
 _52_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch gapplication mktemp sleep kill
+        grep cut id cat find sort cmp ps realpath stat touch || return $?
+    _52_window_require_tools
 }
 
 item_52() {

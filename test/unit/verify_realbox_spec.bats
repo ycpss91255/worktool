@@ -3760,7 +3760,7 @@ STUB
     cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
     _reset_log
     local tool item path
-    for tool in gapplication mktemp sleep; do
+    for tool in gapplication mktemp sleep kill; do
         path="$(_path_without "${tool}")"
         for item in 5.2 5.2.2 5.2.3; do
             run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
