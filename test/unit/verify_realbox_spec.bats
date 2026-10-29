@@ -3652,3 +3652,36 @@ STUB
     assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
     assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
 }
+
+@test "#663: restore inventory failure still reports and cleans owned state" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    cp "${STUBS}/ps" "${STATE}/inventory-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,comm=' ]]; then
+    count=0
+    if [[ -f "${FAKE_STATE_DIR}/inventories" ]]; then
+        read -r count <"${FAKE_STATE_DIR}/inventories"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "${count}" >"${FAKE_STATE_DIR}/inventories"
+    if [[ "${count}" -eq 2 ]]; then exit 1; fi
+fi
+exec "${FAKE_STATE_DIR}/inventory-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    assert_failure 1
+    assert_line 'restore-files-ok=1'
+    assert_line 'restore-window-ok=0'
+    assert_line 'restore-ok=0'
+    assert_line 'dev-gone=1'
+    assert_line --partial 'backup kept at '
+    refute_output --partial 'bad array subscript'
+    assert_equal "${lines[-1]}" '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。'
+    [ ! -s "${STATE}/boxes" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}

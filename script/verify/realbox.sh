@@ -819,8 +819,8 @@ _52_open_window() {
     guard_require gapplication mktemp sleep kill || return $?
     _52_desktop_preflight || return $?
     _52_WINDOW_DIR="$(mktemp -d "${CFGBK_B}/window.XXXXXXXX")" || return 1
-    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${_52_WINDOW_DIR}/before" || return 1
     _cleanup_push 52-window
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${_52_WINDOW_DIR}/before" || return 1
     guard_timed 5 gapplication action com.mitchellh.ghostty reload-config \
         || { log_warn "Ghostty reload IPC unavailable"; return 3; }
     printf 'ghostty-reload=1\n'
@@ -946,7 +946,8 @@ _52_auto_window() {
     if [[ "${rc}" -eq 0 ]]; then
         _52_find_window "${mode}" || rc=$?
     fi
-    if [[ -n "${_52_WINDOW_DIR:-}" && "${CLEANUP_STACK[-1]:-}" == 52-window ]]; then
+    if [[ -n "${_52_WINDOW_DIR:-}" && ${#CLEANUP_STACK[@]} -gt 0
+        && "${CLEANUP_STACK[-1]}" == 52-window ]]; then
         _cleanup_pop_run || rc=1
     fi
     return "${rc}"
