@@ -1003,9 +1003,10 @@ _52_sweep_window() {
 
 _52_close_window() {
     [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
-    # Reserve one second for a snapshot or cwd probe at the end of the sweep.
-    local _52_DEADLINE=$((SECONDS + 4)) rc
-    while (( SECONDS < _52_DEADLINE )); do
+    # Start retries only while a full second remains, so a retry sweep is
+    # never cut off by the deadline mid-snapshot.
+    local _52_DEADLINE=$((SECONDS + 4)) rc retry_until=$((SECONDS + 3))
+    while (( SECONDS < retry_until )); do
         rc=0
         _52_sweep_window || rc=$?
         [[ "${rc}" -ne 1 ]] || return 1

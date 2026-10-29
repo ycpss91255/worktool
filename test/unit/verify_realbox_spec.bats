@@ -3922,7 +3922,7 @@ if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory
         exit 1
     fi
     read -r started <"${FAKE_STATE_DIR}/sweep-start"
-    if (( EPOCHSECONDS - started >= 3 )); then /bin/sleep 2; fi
+    if (( EPOCHSECONDS - started >= 2 )); then /bin/sleep 2; fi
     printf '1 0 init\n900 1 ghostty\n'
     exit 0
 fi
@@ -3936,4 +3936,27 @@ STUB
     [ -f "${directory}/before" ]
     [ -f "$(_backup_dir)/manifest" ]
     [ ! -e "${STATE}/closed" ]
+}
+
+@test "#663: a slow sweep retry near its deadline stays inconclusive" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/slow-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    /bin/sleep 0.6
+fi
+exec "${FAKE_STATE_DIR}/slow-ps" "$@"
+STUB
+    local attempt
+    for attempt in 1 2 3; do
+        FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 3
+        refute_output --partial 'cannot inventory owned window'
+        rm -f "${STATE}/window-directory"
+        _realbox_quiet 5.2.3
+        _realbox_quiet 5.2.1
+    done
 }
