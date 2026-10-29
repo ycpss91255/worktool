@@ -2828,7 +2828,7 @@ STUB
     assert_success
     run cat "${RESTORE_STDERR}"
     assert_success
-    refute_line --partial 'Ctrl-D'
+    refute_output --partial 'Ctrl-D'
 }
 
 @test "5.2.3: retry after box cleanup does not reclaim the removed box" {
