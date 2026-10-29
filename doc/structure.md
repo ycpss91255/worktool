@@ -140,7 +140,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:五個 `mod?`(test / box / agent / worktree / job)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs + review-log；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -489,7 +489,7 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 PR 的 labeled / unlabeled 事件會重新計算 CI。
 
 `ci-passed` 要求映像建置、每個 matrix gate、`test-system-real`、`commit-email`、
-`commit-attribution`、`commit-refs` 都 `success`;這些必要 gate 被 skip、取消或缺席
+`commit-attribution`、`commit-refs`、`review-log` 都 `success`;這些必要 gate 被 skip、取消或缺席
 一律視為失敗。只有 `milestone-gate` PR 額外要求 `verify-all` 全部成功;
 普通 PR 與 main push 的 `verify-all` 預期 skipped,不列為必要 gate。
 映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
@@ -537,6 +537,22 @@ PR 的 labeled / unlabeled 事件會重新計算 CI。
   shallow boundary 可能被 Git 當成檔案新增點，因此拒絕淺層歷史而不猜測。
   CI checkout 已設定 `fetch-depth: 0`，結果納入 `ci-passed`。
   `test/unit/commit_refs_spec.bats` 以暫存 Git repo 驗證規則前後與淺層歷史的行為。
+
+### 審查紀錄不得進入版本歷史（`review-log`，#675）
+
+- 審查紀錄、回合證據、協調筆記放 PR 留言或被 gitignore 的 `.agents/state/`；
+  `doc/evidence/` 只放驗收證據。
+- CI 沿用 `commit_email_range` 的 PR、push 與新 ref 範圍，透過
+  `lib/review_log.sh` 檢查每個 commit 新增的檔案，包括之後又刪除的檔案；
+  merge commit 以所有 parent 比較，rename 以新增與刪除看待。
+- `doc/evidence/` 下檔名含 `review`，或任意目錄檔名為
+  `<issue>-review-round-<n>`（可帶副檔名）就失敗，提示改貼 PR 留言。
+  比對不分大小寫；既有檔案的修改、刪除及一般驗收證據不受影響。
+  合併提交只有在所有 parent 都不存在的檔案才算新增；同步 main 帶入的既有
+  檔案放行，合併解衝突時才新增的審查紀錄仍會被擋下。
+- `review-log` job 納入 `ci-passed`。這是路徑與檔名檢查，改名可避開，
+  不判讀檔案內容。`test/unit/review_log_spec.bats` 驗證 Git 歷史，
+  `test/unit/ci_yml_spec.bats` 驗證 CI 接線。
 
 ### milestone 驗收 PR 的核准 gate(`milestone-gate-approval`,#187)
 
