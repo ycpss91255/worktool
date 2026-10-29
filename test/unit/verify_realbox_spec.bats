@@ -4021,3 +4021,15 @@ STUB
         _realbox_quiet 5.2.1
     done
 }
+
+@test "#663: 5.3 refuses missing window tools before publishing any backup" {
+    _auto_window_tools
+    local path
+    path="$(_path_without gapplication)"
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial 'gapplication not found on PATH'
+    [ ! -e "$(_backup_dir)" ]
+    assert_equal "$(_count_calls distrobox)" 0
+    assert_equal "$(_count_calls just)" 0
+}
