@@ -120,3 +120,9 @@ STUB
     run cat "${SIGNAL_LOG}"
     assert_output '-HUP -- 102'
 }
+
+@test "missing invocation identity fails closed before recording a window baseline" {
+    run_hook enforce_ghostty_gui "$(hook_json 'ghostty +new-window')"
+    assert_failure 2
+    assert_output --partial 'cannot identify the Bash invocation'
+}

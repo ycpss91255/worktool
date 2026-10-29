@@ -82,7 +82,8 @@ ghostty_windows_track() {
     local event path
     event="$(hook_field '.hook_event_name')"
     # Empty compatibility probes do not represent Bash executions.
-    [[ -n "$(hook_command)" && -n "${event}" ]] || return 0
+    [[ -n "$(hook_command)" ]] || return 0
+    event="${event:-PreToolUse}"
     path="$(ghostty_windows_path)"
     case "${event}" in
         PreToolUse) ghostty_windows_pre "${path}" ;;

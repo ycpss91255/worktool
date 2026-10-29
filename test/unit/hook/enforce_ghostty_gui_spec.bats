@@ -2,7 +2,20 @@
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
-_check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
+setup() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf '%s\n' '#!/usr/bin/env bash' \
+        "printf '%s\\n' '1 0 Thu Oct 29 10:00:00 2026 init'" > "${BATS_TEST_TMPDIR}/bin/ps"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/ps"
+    export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
+}
+
+_check() {
+    local payload
+    payload="$(hook_json "$1" | jq --arg id "${BATS_TEST_TMPDIR}" \
+        '. + {hook_event_name:"PreToolUse",session_id:$id,tool_use_id:"call"}')"
+    run_hook enforce_ghostty_gui "${payload}"
+}
 
 @test "Ghostty launches and actions are allowed for automatic cleanup" {
     local command
