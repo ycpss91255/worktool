@@ -936,10 +936,25 @@ _52_find_window() {
         sleep 0.1 || return 3
     done
     if [[ -n "${nonfish}" ]]; then
-        _52_window_evidence "${nonfish}"
+        _52_final_nonfish "${nonfish}"
         return $?
     fi
     log_warn "Ghostty new shell timed out; acceptance inconclusive"
+    return 3
+}
+
+# A final snapshot can outlive a transient login wrapper. Only a successful,
+# nonempty comm probe can establish that the last candidate is still non-fish.
+_52_final_nonfish() {
+    local comm
+    comm="$(timeout -s KILL 1 ps -p "$1" -o comm=)" || return 3
+    case "${comm}" in
+        bash|sh|zsh|dash|ksh)
+            guard_fail "PID $1 is not fish"
+            return 1
+            ;;
+    esac
+    log_warn "Ghostty new shell not confirmed at deadline; acceptance inconclusive"
     return 3
 }
 
@@ -1211,7 +1226,6 @@ _52_step3_restore() {
     printf 'restore-rc=%s\n' "${_rrc}"
     [[ "${_rrc}" -eq 0 ]] \
         || { guard_fail "just box setup --auto-enter no exited ${_rrc}"; _rc=1; }
-
     cfgbk_restore_all || _rc=1
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-files-ok=1\n'; else printf 'restore-files-ok=0\n'; fi
     if [[ "${_rc}" -eq 0 ]]; then

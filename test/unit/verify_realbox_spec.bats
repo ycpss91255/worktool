@@ -4113,3 +4113,31 @@ STUB
     assert_equal "$(wc -l <"${STATE}/restore-sweeps")" 1
     [ -f "$(_backup_dir)/manifest" ]
 }
+
+@test "#663: a non-fish wrapper gone or uninspectable at the deadline is inconclusive" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/exited-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-p 4242 -o comm=' ]]; then
+    touch "${FAKE_STATE_DIR}/deadline-inspected"
+    exit "${FAKE_DEADLINE_RC:-0}"
+fi
+exec "${FAKE_STATE_DIR}/exited-ps" "$@"
+STUB
+    local probe_rc
+    for probe_rc in 0 1; do
+        rm -f "${STATE}/deadline-inspected" "${STATE}/closed"
+        FAKE_WINDOW_COMM=sh FAKE_DEADLINE_RC="${probe_rc}" \
+            run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 3
+        [ -e "${STATE}/deadline-inspected" ]
+        refute_output --partial 'is not fish'
+        [ -f "$(_backup_dir)/manifest" ]
+        assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
+        _realbox_quiet 5.2.3
+        _realbox_quiet 5.2.1
+    done
+}
