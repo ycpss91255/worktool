@@ -13,8 +13,10 @@ ghostty_windows_read() {
     [[ -n "${table}" ]] || ghostty_windows_error 'empty process list.'
     jq -Rsen '
         [inputs | split("\n")[] | select(test("\\S")) |
-        capture("^\\s*(?<pid>[0-9]+)\\s+(?<ppid>[0-9]+)\\s+(?<start>\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+)\\s+(?<comm>.+?)\\s*$") |
+        (capture("^\\s*(?<pid>[0-9]+)\\s+(?<ppid>[0-9]+)\\s+(?<start>\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+)\\s+(?<comm>.+?)\\s*$") // error("invalid process row")) |
         .start |= gsub("\\s+"; " ")] as $all |
+        if ($all | length) == 0 or ($all | map(.pid) | unique | length) != ($all | length)
+        then error("invalid process table") else . end |
         [$all[] | select((.comm | ascii_downcase) == "ghostty")] as $parents |
         [$all[] as $child | $parents[] | select(.pid == $child.ppid) |
         {pid:$child.pid, start:$child.start, parent:.pid, parentStart:.start}]

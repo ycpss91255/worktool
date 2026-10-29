@@ -12,6 +12,7 @@ setup() {
     export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
     cat > "${BATS_TEST_TMPDIR}/bin/ps" <<'STUB'
 #!/usr/bin/env bash
+[[ "${PS_FAIL:-0}" == 0 ]] || exit 1
 cat "${PS_FIXTURE}"
 STUB
     cat > "${BATS_TEST_TMPDIR}/bin/kill" <<'STUB'
@@ -44,4 +45,28 @@ _event() {
     assert_output --partial '201'
     run cat "${SIGNAL_LOG}"
     assert_output $'-TERM -- 102\n-TERM -- 201'
+}
+
+@test "malformed process lists are reported instead of erasing pre-existing windows" {
+    local event mode
+    for event in PreToolUse PostToolUse; do
+        for mode in malformed empty failed; do
+            export PS_FAIL=0
+            printf '%s\n' '100 1 Thu Oct 29 10:00:00 2026 ghostty' > "${PS_FIXTURE}"
+            if [[ "${event}" == PostToolUse ]]; then
+                _event PreToolUse
+                assert_success
+            fi
+            case "${mode}" in
+                malformed) printf '%s\n' 'unreadable process row' > "${PS_FIXTURE}" ;;
+                empty) : > "${PS_FIXTURE}" ;;
+                failed) export PS_FAIL=1 ;;
+            esac
+            _event "${event}"
+            assert_failure 2
+            assert_output --partial 'Ghostty window cleanup failed'
+        done
+    done
+    run cat "${SIGNAL_LOG}"
+    assert_output ''
 }
