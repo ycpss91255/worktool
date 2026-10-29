@@ -58,3 +58,21 @@ _check() {
     run _check
     assert_success
 }
+
+@test "review-log check allows existing review files brought in by merging main (#675)" {
+    git -C "$REPO" branch -m main
+    git -C "$REPO" branch topic
+    mkdir -p "$REPO/doc/evidence"
+    printf 'old notes\n' > "$REPO/doc/evidence/363-review-round-1.md"
+    printf 'old notes\n' > "$REPO/doc/evidence/607-review-round-1.md"
+    git -C "$REPO" add .
+    git -C "$REPO" commit -q -m 'Existing review evidence on main'
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q topic
+    git -C "$REPO" commit -q --allow-empty -m 'Topic work'
+    git -C "$REPO" merge -q --no-ff main -m 'Sync main'
+
+    run _check
+    assert_success
+    assert_output ''
+}

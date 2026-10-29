@@ -548,6 +548,8 @@ PR 的 labeled / unlabeled 事件會重新計算 CI。
 - `doc/evidence/` 下檔名含 `review`，或任意目錄檔名為
   `<issue>-review-round-<n>`（可帶副檔名）就失敗，提示改貼 PR 留言。
   比對不分大小寫；既有檔案的修改、刪除及一般驗收證據不受影響。
+  合併提交只有在所有 parent 都不存在的檔案才算新增；同步 main 帶入的既有
+  檔案放行，合併解衝突時才新增的審查紀錄仍會被擋下。
 - `review-log` job 納入 `ci-passed`。這是路徑與檔名檢查，改名可避開，
   不判讀檔案內容。`test/unit/review_log_spec.bats` 驗證 Git 歷史，
   `test/unit/ci_yml_spec.bats` 驗證 CI 接線。
