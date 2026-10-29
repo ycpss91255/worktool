@@ -2356,6 +2356,7 @@ STUB
 }
 
 @test "5.2.2: acceptance uses an owned box HOME inside its backup" {
+    _auto_window_tools
     _realbox_quiet 5.2.1
     run "${REALBOX}" --allow-real-box 5.2.2
     assert_success
