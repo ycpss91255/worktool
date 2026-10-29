@@ -3481,3 +3481,70 @@ STUB
         install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
     done
 }
+
+_auto_window_tools() {
+    _fake_window_process
+    _install_restore_window_tools
+    cp "${STUBS}/ps" "${STATE}/auto-ps"
+    cp "${STUBS}/readlink" "${STATE}/auto-readlink"
+    rm "${STUBS}/ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/windows"
+printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
+STUB
+    cat >"${STUBS}/gapplication" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/reloads"
+STUB
+    cat >"${STUBS}/kill" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
+rm -f "${FAKE_STATE_DIR}/window-directory"
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    '-e -o pid=,comm=')
+        printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
+        if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0 ]]; then
+            printf '4240 distrobox\n'
+            if [[ $(wc -l <"${FAKE_STATE_DIR}/windows") == 1 ]]; then
+                printf '4242 fish\n'
+            else
+                printf '4344 fish\n'
+            fi
+        fi ;;
+    '-p 900 -o comm=') printf 'ghostty\n' ;;
+    '-p 4240 -o ppid=,args=') printf '900 /bin/sh\n' ;;
+    '-p 4242 -o ppid=,args=') printf '4240 fish\n' ;;
+    '-p 4344 -o ppid=,args=') printf '4240 fish\n' ;;
+    '-p 4240 -o pgid=,sid=') printf '4240 4240\n' ;;
+    *) exec "${FAKE_STATE_DIR}/auto-ps" "$@" ;;
+esac
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    /proc/4240/cwd) cat "${FAKE_STATE_DIR}/window-directory" ;;
+    *) exec "${FAKE_STATE_DIR}/auto-readlink" "$@" ;;
+esac
+STUB
+    chmod +x "${STUBS}/"{ghostty,gapplication,kill,ps,readlink}
+}
+
+@test "#663: non-tty 5.2 automatically reloads and verifies its new windows" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line 'backup-removed=1'
+    assert_equal "$(wc -l <"${STATE}/reloads")" 2
+    assert_equal "$(wc -l <"${STATE}/closed")" 2
+}

@@ -407,6 +407,7 @@ _cleanup_run() {
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
         52-restore) _52_cleanup_report ;;
+        52-window) _52_close_window ;;
         53) _53_cleanup ;;
         54) _54_cleanup ;;
         *) guard_fail "internal: unknown cleanup token '$1'"; return 1 ;;
@@ -803,19 +804,105 @@ _52_apply_only() {
 
 # --- objective new-window check ---------------------------------------------
 _52_confirm_window() {
-    local _pid
-    printf 'Ghostty already running when setup applied? Reload config (Linux default Ctrl+Shift+,).\n'
-    printf 'Reload is asynchronous: wait for evidence that config.ghostty was read (e.g. Ghostty logs),\n'
-    printf 'or start a new Ghostty process with the updated config before opening a new window.\n'
-    printf 'Never close your existing windows.\n'
-    printf 'Open a NEW ghostty window now and run: echo %s\n' "\$fish_pid"
-    [[ -t 0 ]] \
-        || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }
-    printf 'Enter the fish PID from the new window: '
-    IFS= read -r _pid || { guard_fail "reading the fish PID failed"; return 1; }
-    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "expected a fish PID; a typed yes is not objective evidence"; return 1; }
-    _52_window_evidence "${_pid}"
+    _52_auto_window apply
+}
+
+# IPC is ordered on the running GTK application's D-Bus connection. Unlike a
+# signal followed by a sleep, reload-config and new-window have explicit order.
+_52_open_window() {
+    guard_require gapplication mktemp sleep kill || return $?
+    _52_desktop_preflight || return $?
+    _52_WINDOW_DIR="$(mktemp -d "${CFGBK_B}/window.XXXXXXXX")" || return 1
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${_52_WINDOW_DIR}/before" || return 1
+    _cleanup_push 52-window
+    guard_timed 5 gapplication action com.mitchellh.ghostty reload-config \
+        || { log_warn "Ghostty reload IPC unavailable"; return 3; }
+    printf 'ghostty-reload=1\n'
+    guard_timed 5 ghostty +new-window "--working-directory=${_52_WINDOW_DIR}" \
+        || { log_warn "Ghostty new-window IPC unavailable"; return 3; }
+    printf 'ghostty-new-window=1\n'
+}
+
+# Ownership comes from our unique working directory on the direct Ghostty
+# child, never just from a process appearing after the snapshot.
+_52_window_root() {
+    local pid="$1" row parent args cwd depth
+    for ((depth=0; depth<64; depth++)); do
+        [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+        row="$(guard_timed 1 ps -p "${pid}" -o ppid=,args=)" || return 1
+        read -r parent args <<<"${row}"
+        [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" != "${pid}" ]] || return 1
+        if cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null)" && [[ "${cwd}" == "${_52_WINDOW_DIR}" ]]; then
+            row="$(guard_timed 1 ps -p "${parent}" -o comm=)" || return 1
+            if [[ "${row}" == ghostty ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
+                printf '%s\n' "${pid}"
+                return 0
+            fi
+        fi
+        pid="${parent}"
+    done
+    return 1
+}
+
+_52_find_window() {
+    local mode="$1" deadline=$((SECONDS + 10)) rows pid comm root
+    while (( SECONDS < deadline )); do
+        rows="$(guard_timed 1 ps -e -o pid=,comm=)" || return 3
+        while read -r pid comm; do
+            [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
+            if [[ "${mode}" == apply ]]; then
+                [[ "${comm}" == fish ]] || continue
+            else
+                case "${comm}" in fish|bash|sh|zsh|dash|ksh) ;; *) continue ;; esac
+            fi
+            grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
+            root="$(_52_window_root "${pid}")" || continue
+            [[ -n "${root}" ]] || continue
+            if [[ "${mode}" == apply ]]; then
+                _52_window_evidence "${pid}"
+            else
+                _52_restored_window_evidence "${pid}"
+            fi
+            return $?
+        done <<<"${rows}"
+        sleep 0.1 || return 3
+    done
+    log_warn "Ghostty new shell timed out; acceptance inconclusive"
+    return 3
+}
+
+_52_close_window() {
+    [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
+    local rows pid comm root group rc=0
+    rows="$(guard_timed 1 ps -e -o pid=,comm=)" || return 1
+    while read -r pid comm; do
+        root="$(_52_window_root "${pid}")" || continue
+        [[ "${root}" == "${pid}" ]] || continue
+        group="$(guard_timed 1 ps -p "${root}" -o pgid=,sid=)" || { rc=1; continue; }
+        read -r _52_PGID _52_SID <<<"${group}"
+        if [[ "${_52_PGID}" == "${root}" && "${_52_SID}" == "${root}" ]]; then
+            guard_timed 1 kill -HUP -- "-${root}" || rc=1
+        else
+            log_warn "owned window is not an isolated session; keeping ownership evidence"
+            rc=1
+        fi
+    done <<<"${rows}"
+    [[ "${rc}" -eq 0 ]] || return 1
+    rm -rf -- "${_52_WINDOW_DIR}" || return 1
+    _52_WINDOW_DIR=''
+}
+
+_52_auto_window() {
+    local mode="$1" rc=0
+    _52_open_window || rc=$?
+    if [[ "${rc}" -eq 0 ]]; then
+        _52_find_window "${mode}" || rc=$?
+    fi
+    if [[ -n "${_52_WINDOW_DIR:-}" && "${CLEANUP_STACK[-1]:-}" == 52-window ]]; then
+        _cleanup_pop_run || rc=1
+    fi
+    printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
+    return "${rc}"
 }
 
 _52_dev_namespace() {
@@ -893,23 +980,9 @@ _52_cleanup_state() {
 }
 
 _52_confirm_restore() {
-    local _pid
-    guard_require ghostty ps readlink || return $?
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before-restore-window" \
         || { guard_fail "cannot inventory processes before restore window"; return 1; }
-    printf 'Reload the RESTORED Ghostty config (Linux default Ctrl+Shift+,).\n'
-    printf 'Reload is asynchronous: wait for evidence that the restored config was read (e.g. Ghostty logs).\n'
-    printf 'Never close or modify your existing windows or Ghostty process.\n'
-    printf 'After reload, open a NEW Ghostty window and run: echo %s (fish) or echo %s (POSIX shell).\n' \
-        "\$fish_pid" "\$\$"
-    [[ -t 0 ]] \
-        || { guard_fail "stdin is not a tty; re-run 5.2.3 from an interactive shell to confirm reload"; return 1; }
-    printf 'Ctrl-D skips confirmation; the backup is kept for a 5.2.3 retry.\n' >&2
-    printf 'Enter the shell PID from the new window after reload: '
-    IFS= read -r _pid || { guard_fail "reading the restored window PID failed"; return 1; }
-    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "expected a shell PID; a typed yes is not objective reload evidence"; return 1; }
-    _52_restored_window_evidence "${_pid}"
+    _52_auto_window restore
 }
 
 _52_restored_window_evidence() {
@@ -956,8 +1029,9 @@ _52_report_restore_window() {
     if _52_confirm_restore; then
         printf 'restore-window-ok=1\n'
     else
+        local rc=$?
         printf 'restore-window-ok=0\n'
-        return 1
+        return "${rc}"
     fi
 }
 
@@ -995,7 +1069,7 @@ _52_step3_restore() {
     cfgbk_restore_all || _rc=1
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-files-ok=1\n'; else printf 'restore-files-ok=0\n'; fi
     if [[ "${_rc}" -eq 0 ]]; then
-        _52_report_restore_window || _rc=1
+        _52_report_restore_window || _rc=$?
     fi
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-ok=1\n'; else printf 'restore-ok=0\n'; fi
     cfgbk_report_blocks || _rc=1
@@ -1004,7 +1078,7 @@ _52_step3_restore() {
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"
-        return 1
+        return "${_rc}"
     fi
     # Only claim the backup is gone once the removal actually succeeded.
     rm -rf -- "${CFGBK_B}" \
