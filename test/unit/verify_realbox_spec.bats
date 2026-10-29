@@ -3554,7 +3554,12 @@ case "$*" in
         exit "${FAKE_WINDOW_BASELINE_RC:-0}" ;;
     '-p 900 -o comm=') printf 'ghostty\n' ;;
     '-p 4240 -o ppid=,args=') printf '900 /bin/sh\n' ;;
-    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-${FAKE_APPLY_PARENT:-6000 fish}}" ;;
+    '-p 4242 -o ppid=,args=')
+        parent='6000 fish'
+        if [[ $(cat "${FAKE_STATE_DIR}/window-mode") == restore ]]; then
+            parent='4240 fish'
+        fi
+        printf '%s\n' "${FAKE_RESTORE_PARENT:-${FAKE_APPLY_PARENT:-${parent}}}" ;;
     '-p 6000 -o ppid=,args=') printf '1 conmon\n' ;;
     'eww -p 4240 -o args='|'eww -p 4242 -o args=')
         printf 'fish %s\n' "$(cat "${FAKE_STATE_DIR}/window-marker")" ;;
