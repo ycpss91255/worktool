@@ -3528,7 +3528,8 @@ set -euo pipefail
 case "$*" in
     '-e -o pid=,comm=')
         printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
-        if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0 ]]; then
+        if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0
+            && -d "$(cat "${FAKE_STATE_DIR}/window-directory")" ]]; then
             printf '4240 distrobox\n'
             if [[ $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
                 printf '4242 %s\n' "${FAKE_WINDOW_COMM:-fish}"
