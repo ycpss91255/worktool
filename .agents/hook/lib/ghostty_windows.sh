@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Track direct window shells without ever signaling the Ghostty process.
+
+ghostty_windows_error() {
+    hook_block "Ghostty window cleanup failed: $1" \
+        'No unreadable process list or snapshot is treated as an empty window list.'
+}
+
+ghostty_windows_read() {
+    local table
+    table="$(LC_ALL=C ps -eo pid=,ppid=,lstart=,comm=)" ||
+        ghostty_windows_error 'cannot read process list.'
+    [[ -n "${table}" ]] || ghostty_windows_error 'empty process list.'
+    jq -Rsen '
+        [inputs | split("\n")[] | select(test("\\S")) |
+        capture("^\\s*(?<pid>[0-9]+)\\s+(?<ppid>[0-9]+)\\s+(?<start>\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+)\\s+(?<comm>.+?)\\s*$") |
+        .start |= gsub("\\s+"; " ")] as $all |
+        [$all[] | select((.comm | ascii_downcase) == "ghostty")] as $parents |
+        [$all[] as $child | $parents[] | select(.pid == $child.ppid) |
+        {pid:$child.pid, start:$child.start, parent:.pid, parentStart:.start}]
+    ' <<<"${table}" || ghostty_windows_error 'cannot parse process list.'
+}
+
+ghostty_windows_path() {
+    local key
+    key="$(jq -ce '[.session_id,.tool_use_id] |
+        if all(.[]; type == "string" and length > 0) then .
+        else error("missing session/tool ID") end' <<<"${HOOK_INPUT}" | sha256sum)" ||
+        ghostty_windows_error 'cannot identify the Bash invocation.'
+    printf '%s/.agents/state/ghostty-windows/%s.json' "${HOOK_REPO_ROOT}" "${key%% *}"
+}
+
+ghostty_windows_pre() {
+    local path="$1" windows temp
+    windows="$(ghostty_windows_read)"
+    mkdir -p -- "${path%/*}" || ghostty_windows_error 'cannot create snapshot directory.'
+    temp="$(mktemp "${path}.XXXXXX")" || ghostty_windows_error 'cannot create snapshot.'
+    if ! jq -n --arg command "$(hook_command)" --argjson windows "${windows}" \
+        '{command:$command,windows:$windows}' > "${temp}" || ! mv -- "${temp}" "${path}"; then
+        ghostty_windows_error 'cannot save snapshot.'
+    fi
+}
+
+ghostty_windows_post() {
+    local path="$1" current added pid closed=''
+    current="$(ghostty_windows_read)"
+    added="$(jq -ce --arg command "$(hook_command)" --argjson current "${current}" '
+        if .command != $command or (.windows | type) != "array" then
+            error("invalid snapshot") else $current - .windows end' "${path}")" ||
+        ghostty_windows_error 'cannot compare window snapshots.'
+    while IFS= read -r pid; do
+        [[ -n "${pid}" ]] || continue
+        if ! env kill -TERM -- "${pid}"; then
+            ghostty_windows_error "cannot terminate window shell PID ${pid}."
+        fi
+        closed+=" ${pid}"
+    done < <(jq -r '.[].pid' <<<"${added}")
+    rm -- "${path}" || ghostty_windows_error 'cannot remove consumed snapshot.'
+    [[ -n "${closed}" ]] || return 0
+    hook_context "Closed new Ghostty window shell PIDs:${closed}" PostToolUse
+}
+
+ghostty_windows_track() {
+    local event path
+    event="$(hook_field '.hook_event_name')"
+    # Empty compatibility probes do not represent Bash executions.
+    [[ -n "$(hook_command)" && -n "${event}" ]] || return 0
+    path="$(ghostty_windows_path)"
+    case "${event}" in
+        PreToolUse) ghostty_windows_pre "${path}" ;;
+        PostToolUse) ghostty_windows_post "${path}" ;;
+        *) ghostty_windows_error 'unknown hook event.' ;;
+    esac
+}

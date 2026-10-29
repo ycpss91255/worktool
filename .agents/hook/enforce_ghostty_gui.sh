@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Inspect direct Bash launches only; never execute Ghostty or read script files.
+# Guard signals and clean up new window shells after each Bash command.
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh
 source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 # shellcheck source=subcommand.sh
 source "${_HOOK_HERE}/lib/subcommand.sh"
+# shellcheck source=ghostty_windows.sh
+source "${_HOOK_HERE}/lib/ghostty_windows.sh"
 hook_bootstrap "enforce-ghostty-gui"
 
 _deny_gui() {
@@ -61,6 +63,10 @@ main() {
         hook_block 'Cannot read the Bash command payload (fail closed).' \
             'Provide a literal command; use documentation, source code or Docker stubs for Ghostty.'
     fi
+    if [[ "$(hook_field '.hook_event_name')" == PostToolUse ]]; then
+        ghostty_windows_track
+        hook_allow
+    fi
     local _launch _command _launches _ghostty_lookup=0
     _command="$(hook_command)"
     _launches="$(hook_subcommands_raw "${_command}")" || _deny_gui
@@ -70,6 +76,7 @@ main() {
     while IFS= read -r _launch; do
         _check_launch "${_launch}"
     done <<<"${_launches}"
+    ghostty_windows_track
     hook_allow
 }
 main "$@"
