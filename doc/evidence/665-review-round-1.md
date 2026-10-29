@@ -105,4 +105,16 @@ just test lint
 
 Reason: 第 3 輪只更正 PR 發布紀錄、八個已推送 commit 清單與 #666 來源註記協調紀錄；沒有新增或修改產品行為、介面、測試或驗收判準，因此不新增行為測試，也不製造 RED。
 
+## #666 協調
+
+已在 #666 發布[來源註記協調留言](https://github.com/ycpss91255/worktool/issues/666#issuecomment-6499711326)，說明兩次 acceptance.md 改動、沿用現有 #665／PR #673 註記，以及 #666 自身仍須處理的範圍。
+
 <!-- PR-BODY-END -->
+
+## 第 2 項執行證據
+
+協調留言已實際送達 #666，並再次讀取確認內容與連結：
+https://github.com/ycpss91255/worktool/issues/666#issuecomment-6499711326
+
+留言使用 `[codex]` 開頭及 body-file 送出；上方 PR 描述替換稿已包含實際連結。
+PR 描述保持原樣，第 1 項仍待 workflow 發布替換稿。
