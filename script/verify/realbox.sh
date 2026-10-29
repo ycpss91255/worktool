@@ -825,7 +825,6 @@ _52_open_window() {
         || { log_warn "Ghostty reload IPC unavailable"; return 3; }
     printf 'ghostty-reload=1\n'
     guard_timed 5 ghostty +new-window "--working-directory=${_52_WINDOW_DIR}" \
-        "--env=WORKTOOL_VERIFY_WINDOW=${_52_WINDOW_DIR##*/}" \
         || { log_warn "Ghostty new-window IPC unavailable"; return 3; }
     printf 'ghostty-new-window=1\n'
 }
@@ -851,12 +850,12 @@ _52_window_root() {
     return 1
 }
 
-# Distrobox forwards this environment variable to engine exec. The in-box
-# shell belongs to conmon/containerd-shim, so its PPID cannot prove ownership.
-_52_window_marker() {
-    local row marker="WORKTOOL_VERIFY_WINDOW=${_52_WINDOW_DIR##*/}"
-    row="$(guard_timed 1 ps eww -p "$1" -o args=)" || return 1
-    [[ " ${row} " == *" ${marker} "* ]]
+# Distrobox preserves the requested working directory inside the box.
+# The in-box shell's runtime parent cannot prove Ghostty ownership.
+_52_window_directory() {
+    local cwd
+    cwd="$(readlink "/proc/$1/cwd" 2>/dev/null)" || return 1
+    [[ "${cwd}" == "${_52_WINDOW_DIR}" || "${cwd}" == "/run/host${_52_WINDOW_DIR}" ]]
 }
 
 _52_apply_window_root() {
@@ -864,7 +863,6 @@ _52_apply_window_root() {
     while read -r pid comm; do
         root="$(_52_window_root "${pid}")" || continue
         [[ "${root}" == "${pid}" ]] || continue
-        _52_window_marker "${root}" || continue
         printf '%s\n' "${root}"
         return 0
     done <<<"${rows}"
@@ -885,7 +883,7 @@ _52_find_window() {
             grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
             if [[ "${mode}" == apply ]]; then
                 root="$(_52_apply_window_root "${rows}")" || continue
-                _52_window_marker "${pid}" || continue
+                _52_window_directory "${pid}" || continue
             else
                 root="$(_52_window_root "${pid}")" || continue
             fi

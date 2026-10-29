@@ -3514,7 +3514,7 @@ _auto_window_commands() {
 set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/windows"
 printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
-printf '%s\n' "${3#--env=}" >"${FAKE_STATE_DIR}/window-marker"
+[[ "$1" == +new-window && "$#" -eq 2 && "$2" == --working-directory=* ]] || exit 2
 if [[ -f "${2#--working-directory=}/../processes-before-restore-window" || "${FAKE_AUTO_RESTORE:-0}" == 1 ]]; then
     printf restore >"${FAKE_STATE_DIR}/window-mode"
 else
@@ -3561,9 +3561,6 @@ case "$*" in
         fi
         printf '%s\n' "${FAKE_RESTORE_PARENT:-${FAKE_APPLY_PARENT:-${parent}}}" ;;
     '-p 6000 -o ppid=,args=') printf '1 conmon\n' ;;
-    'eww -p 4240 -o args='|'eww -p 4242 -o args=')
-        printf 'fish %s\n' "$(cat "${FAKE_STATE_DIR}/window-marker")" ;;
-    'eww -p 5556 -o args=') printf 'fish WORKTOOL_VERIFY_WINDOW=unrelated\n' ;;
     '-p 5556 -o ppid=,args=') printf '900 fish\n' ;;
     '-p 800 -o ppid=,args=') printf '4240 /repo/script/box/enter.sh\n' ;;
     '-p 4344 -o ppid=,args=') printf '4240 fish\n' ;;
@@ -3576,6 +3573,8 @@ STUB
 set -euo pipefail
 case "$*" in
     /proc/4240/cwd) cat "${FAKE_STATE_DIR}/window-directory" ;;
+    /proc/4242/cwd) printf '/run/host%s\n' "$(cat "${FAKE_STATE_DIR}/window-directory")" ;;
+    /proc/5556/cwd) printf '/unrelated/window\n' ;;
     *) exec "${FAKE_STATE_DIR}/auto-readlink" "$@" ;;
 esac
 STUB
@@ -3641,5 +3640,15 @@ STUB
     run "${REALBOX}" --allow-real-box 5.2 </dev/null
     assert_success
     assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
+}
+
+@test "#663: Ghostty 1.3.1 supported IPC finds the in-box fish by its window directory" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    refute_output --partial 'window-evidence: pid=5556'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
     assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
 }
