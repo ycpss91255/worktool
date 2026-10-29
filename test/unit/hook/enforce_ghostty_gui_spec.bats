@@ -1,8 +1,14 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
+load "${BATS_TEST_DIRNAME}/../../helper/hook_state"
 
 setup() {
+    local project="${BATS_TEST_TMPDIR}/project"
+    mkdir -p "${project}/.agents/hook"
+    cp "${HOOK_DIR}/enforce_ghostty_gui.sh" "${project}/.agents/hook/"
+    cp -R "${HOOK_DIR}/lib" "${project}/.agents/hook/"
+    HOOK_DIR="${project}/.agents/hook"
     mkdir -p "${BATS_TEST_TMPDIR}/bin"
     printf '%s\n' '#!/usr/bin/env bash' \
         "printf '%s\\n' '1 0 Thu Oct 29 10:00:00 2026 init'" > "${BATS_TEST_TMPDIR}/bin/ps"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 load "${BATS_TEST_DIRNAME}/../../helper/hook"
+load "${BATS_TEST_DIRNAME}/../../helper/hook_state"
 
 setup() {
     local project="${BATS_TEST_TMPDIR}/project"
