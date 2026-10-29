@@ -1446,7 +1446,7 @@ _window_input() {
     printf '%s\n' "${rc}" >"${STATE}/window-rc"
 }
 
-@test "#362: 5.2 uses objective evidence without reading supplied input" {
+@test "#362: _window_input ignores its argument while verifying automatic window evidence" {
     export REALBOX
     run _window_input yes
     assert_equal "$(cat "${STATE}/window-rc")" "0"
