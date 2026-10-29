@@ -2028,7 +2028,17 @@ STUB
 @test "5.2.3: a backup that cannot be removed is never reported as removed" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    SHIM_RM_ON='-rf --' SHIM_RM_RC=1 run _restore_input 4242
+    export VERIFY_FAIL_BACKUP
+    VERIFY_FAIL_BACKUP="$(_backup_dir)"
+    cat >"${STUBS}/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == "-rf -- ${VERIFY_FAIL_BACKUP}" ]]; then
+    exit 1
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/rm")" "$@"
+STUB
+    run _restore_input 4242
     assert_failure
     assert_line "dev-gone=1"
     refute_output --partial "backup-removed=1"
