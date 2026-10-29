@@ -917,6 +917,7 @@ _52_close_window() {
 
 _52_auto_window() {
     local mode="$1" rc=0
+    _52_REMIND=1
     _52_open_window || rc=$?
     if [[ "${rc}" -eq 0 ]]; then
         _52_find_window "${mode}" || rc=$?
@@ -1484,7 +1485,6 @@ _run_requested_items() {
     trap 'trap "" INT TERM HUP; exit 129' HUP
     local _rc=0 _i
     for _i in "$@"; do
-        case "${_i}" in 5.2|5.2.2|5.2.3) _52_REMIND=1 ;; esac
         _dispatch_item "${_i}" || {
             _rc=$?
             if [[ "${_rc}" -ne 3 ]]; then
