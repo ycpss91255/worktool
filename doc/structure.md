@@ -544,7 +544,7 @@ PR 的 labeled / unlabeled 事件會重新計算 CI。
   `doc/evidence/` 只放驗收證據。
 - CI 沿用 `commit_email_range` 的 PR、push 與新 ref 範圍，透過
   `lib/review_log.sh` 檢查每個 commit 新增的檔案，包括之後又刪除的檔案；
-  merge commit 以第一個 parent 比較，rename 以新增與刪除看待。
+  merge commit 以所有 parent 比較，rename 以新增與刪除看待。
 - `doc/evidence/` 下檔名含 `review`，或任意目錄檔名為
   `<issue>-review-round-<n>`（可帶副檔名）就失敗，提示改貼 PR 留言。
   比對不分大小寫；既有檔案的修改、刪除及一般驗收證據不受影響。
