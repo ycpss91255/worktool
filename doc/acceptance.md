@@ -1058,19 +1058,17 @@ rc=0
       預期 `rc=0`。5.2 套用與 5.2.3 還原均可使用非 tty stdin，自動重新載入、開窗並尋找新 shell。找不到新視窗或開窗逾時回 rc=3，仍保留還原能力；完整 5.2 仍會還原磁碟檔案並清理本輪盒子，還原確認未通過時保留備份。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權沿用 5.1 的「assemble 前確認不存在、執行後確認存在」證據；assemble 嘗試紀錄不代表所有權，中斷也須在子行程停止後確認，清理會判斷盒是否真的消失。
       自動化機制（Linux GTK Ghostty 1.3.1）：先以 `gapplication action com.mitchellh.ghostty reload-config` 呼叫執行中應用的 action，再以 `ghostty +new-window --working-directory=<本輪專屬目錄>` 請它開窗。依據 [Ghostty v1.3.1 GTK application 原始碼](https://github.com/ghostty-org/ghostty/blob/v1.3.1/src/apprt/gtk/class/application.zig) 的 `initActions`、`actionReloadConfig` 與 `actionNewWindow`：前者註冊 reload-config，後兩者執行 reload 與解析 working-directory。此處依原始碼確認，沒有在維護者桌面執行驗證；不對 Ghostty 行程發送訊號。IPC 成功只代表請求已送出，最終仍須通過新 shell 的客觀證據。
       腳本在開窗前記錄行程，最多等待 10 秒尋找新 fish（還原後接受 fish／bash／sh／zsh／dash／ksh）。每次 ps 探測也有 timeout。候選 shell 必須是新行程，祖先鏈中的新 Ghostty 直接子行程工作目錄必須等於本輪專屬目錄，才能視為本輪視窗；不會因使用者同時開窗就取得所有權。套用判準沿用 `_52_window_evidence`：fish 不在 setup 前清單中，mount namespace 不同於 host 且等於本輪盒子；盒子 namespace 由 distrobox 引擎的 `exec <box> readlink /proc/self/ns/mnt` 取得。錯誤 namespace、讀取失敗或格式錯誤均回非零，不算通過。還原要求新 shell 的 namespace 等於 host、祖先鏈到達 Ghostty 且不含 `script/box/enter.sh`；沒有套用紀錄的備份還原無須開窗確認。
-      成功、失敗與中斷都會清理本輪視窗：重新核對專屬目錄、Ghostty 祖先與獨立 session 後，只向該視窗行程群組送 HUP，未退出才依序 TERM、KILL；不關閉既有視窗、不向 Ghostty 本身送訊號。無法安全清理時回非零並保留所有權證據。每次自動確認最後印「請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。」
+      成功、失敗與中斷都會清理本輪視窗：重新核對專屬目錄、Ghostty 祖先與獨立 session 後，只向該視窗行程群組送 HUP，未退出才依序 TERM、KILL；不關閉既有視窗、不向 Ghostty 本身送訊號。無法安全清理時回非零並保留所有權證據。本輪結束最後印「請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。」
       stubbed 非 tty 完整執行的視窗與還原輸出如下（其餘備份明細如上；PID 與 namespace 由 fixture 固定）：
       ```text
       ghostty-reload=1
       ghostty-new-window=1
       window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]
-      請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
       restore-rc=0
       restore-files-ok=1
       ghostty-reload=1
       ghostty-new-window=1
       restore-window-evidence: pid=4344 comm=fish host=mnt:[100] window=mnt:[100] enter=absent
-      請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
       restore-window-ok=1
       restore-ok=1
       blocks=0
@@ -1083,6 +1081,7 @@ rc=0
       host-state after-cleanup: new=0
       backup-removed=1
       cleanup-rc=0
+      請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
       ```
   - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除。最後清理本輪建立的 decoy，`decoy-cleanup-rc` 與 5.1 相同，納入盒子、獨立 HOME、host 狀態與 scratch 的最終結果後只印一次；任何一步失敗都印 1、回非零，HOME 或 host 狀態失敗時保留 scratch 與未知資料。
     - decoy create 失敗（包含檢查後發生的同名衝突）時，不取得刪盒權、不呼叫 `distrobox rm`；印出所有權未確認的診斷與 `decoy-cleanup-rc=1`，保留盒子與 scratch 供人工檢查。

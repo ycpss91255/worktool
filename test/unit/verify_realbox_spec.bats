@@ -3603,3 +3603,10 @@ STUB
     assert_success
     assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-HUP -- -4240\n-TERM -- -4240'
 }
+
+@test "#663: subjective reminder is the final line after automatic restore" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_equal "${lines[-1]}" '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。'
+}

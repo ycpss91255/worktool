@@ -22,8 +22,8 @@
 #     - `grep`'s exit 1 ("matched nothing") is kept apart from its exit >= 2
 #       ("could not read the file"), and a count is validated as a number
 #       before it is compared;
-#     - anything this environment cannot do (a missing tool, no terminal for
-#       the one subjective check) is REPORTED and exits non-zero. Nothing is
+#     - anything this environment cannot do (a missing tool or no graphical
+#       session for automatic window evidence) is REPORTED and exits non-zero. Nothing is
 #       skipped quietly.
 #
 #   The primitives that enforce this live in lib/guard.sh; the config backup
@@ -463,6 +463,9 @@ _on_exit() {
         _cleanup_pop_run || _crc=1
     done
     rmdir -- "${VERIFY_RUN_GUARD_DIR}" || _crc=1
+    if [[ "${_52_REMIND:-0}" -eq 1 ]]; then
+    printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
+    fi
     [[ "${_crc}" -eq 0 ]] || exit 1
     exit "${_st}"
 }
@@ -921,7 +924,6 @@ _52_auto_window() {
     if [[ -n "${_52_WINDOW_DIR:-}" && "${CLEANUP_STACK[-1]:-}" == 52-window ]]; then
         _cleanup_pop_run || rc=1
     fi
-    printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
     return "${rc}"
 }
 
@@ -1482,6 +1484,7 @@ _run_requested_items() {
     trap 'trap "" INT TERM HUP; exit 129' HUP
     local _rc=0 _i
     for _i in "$@"; do
+        case "${_i}" in 5.2|5.2.2|5.2.3) _52_REMIND=1 ;; esac
         _dispatch_item "${_i}" || {
             _rc=$?
             if [[ "${_rc}" -ne 3 ]]; then
