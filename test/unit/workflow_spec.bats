@@ -4363,3 +4363,15 @@ Reason: 僅修正文句，沒有行為變更。'; do
             contains("api.github.com") or contains("codex node -e")]|any|not)' <<<"$json"
     assert_success
 }
+
+@test "milestone-handover credits same-head evidence from the other report (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".codex.insufficientEvidence=["5.1"] |
+        ."independent-assess:".claude.passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and
+        .result.coveredEvidence == [{item:"5.1",missingFrom:"codex",coveredBy:"claude",head:("a" * 40),evidence:"command rc=0; expected output"}] and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") |
+            .prompt | contains("coveredBy") and contains("5.1")] | all)' <<<"${output}"
+    assert_success
+}

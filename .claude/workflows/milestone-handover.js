@@ -477,8 +477,8 @@ if (!claudeCleanup || claudeCleanup.restored !== true || typeof claudeAcceptance
 const assessedRaw = await agent(`${CONTEXT}
 Classify these two completed independent reports without rewriting them:
 ${JSON.stringify({ codex: codexAcceptance, claude: claudeAcceptance })}
-Return {codex: {defects: string[], insufficientEvidence: string[], pendingHuman: string[]}, claude: {defects: string[], insufficientEvidence: string[], pendingHuman: string[]}}.
-Retain every defect and evidence gap, including uncertain or unverified required behaviour, as an actionable issue to open. An explicit report of missing/insufficient evidence is blocking. Only items explicitly reserved for the maintainer's human interaction belong in pendingHuman; they do not block. Do not reclassify a defect or missing agent-obtainable evidence as human pending. If a report cannot be classified, return error, never empty success arrays.`,
+Return {codex: {defects: string[], insufficientEvidence: string[], pendingHuman: string[], passingEvidence: {item: string, head: string, evidence: string}[]}, claude: {defects: string[], insufficientEvidence: string[], pendingHuman: string[], passingEvidence: {item: string, head: string, evidence: string}[]}}.
+Retain every agent-obtainable evidence gap in insufficientEvidence using a stable item identifier shared across reports. Record passingEvidence only for explicit passing evidence in that report, with the same item identifier, full head SHA and concrete evidence. A gap blocks only when neither report has passing evidence for that item on the frozen head; record which report covered it. Only items explicitly reserved for the maintainer's human interaction belong in pendingHuman; they do not block. Do not reclassify a defect or missing agent-obtainable evidence as human pending. If a report cannot be classified, return error, never empty success arrays.`,
 { label: `${RUN_ID} independent-assess:`, phase: 'Independent acceptance assessment', agentType: 'general-purpose' })
 const assessed = decode(assessedRaw)
 const validAssessment = value => value && ['defects', 'insufficientEvidence', 'pendingHuman'].every(key =>
@@ -486,7 +486,19 @@ const validAssessment = value => value && ['defects', 'insufficientEvidence', 'p
 if (!assessed || assessed.error || !validAssessment(assessed.codex) || !validAssessment(assessed.claude)) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', verdict: verdicts[1], report: assessed }
 }
-const issues = [...new Set([assessed.codex, assessed.claude].flatMap(r => [...r.defects, ...r.insufficientEvidence]))]
+const defects = [...new Set([assessed.codex, assessed.claude].flatMap(r => r.defects))]
+const coveredEvidence = []
+const evidenceGaps = []
+for (const [missingFrom, report] of Object.entries({ codex: assessed.codex, claude: assessed.claude })) {
+  for (const item of report.insufficientEvidence) {
+    const coverage = Object.entries({ codex: assessed.codex, claude: assessed.claude }).flatMap(([coveredBy, r]) =>
+      (r.passingEvidence || []).filter(e => e.item === item && e.head === head.sha).map(e => ({ ...e, missingFrom, coveredBy })))
+    if (coverage.length) coveredEvidence.push(...coverage)
+    else evidenceGaps.push(item)
+  }
+}
+const insufficientEvidence = [...new Set(evidenceGaps)]
+const issues = [...new Set([...defects, ...insufficientEvidence])]
 const pendingHuman = [...new Set([assessed.codex, assessed.claude].flatMap(r => r.pendingHuman))]
 const verdict = issues.length || review.line === verdicts[1] ? verdicts[1] : verdicts[0]
 const reportsWrite = await persistArtifacts('Independent reports', {
@@ -507,7 +519,7 @@ BEGIN CODEX TASK
 ${CODEX_CONTEXT}
 Post the existing codex.md verbatim yourself using your own codex hooks; do not rewrite it or repeat the review. Validate it starts [codex] and has exactly one standalone verdict line matching ${review.line}. Re-query the frozen head immediately before posting and stop on mismatch or query failure. Post your original file yourself via \`gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/codex.md`)}\`. Do not post on malformed/failed output. Read the posted comment back and verify its body matches the original file verbatim. Return {line: exact verdict line, url: actual posted comment URL, error?: reason}; never invent a URL.
 END CODEX TASK
-Use bounded foreground calls and literal paths (never detached). The Codex process itself must post; Claude must never post or retype the codex comment. Any failed launch, nonzero exit, malformed result, changed head, or unverifiable post stops before the final verdict. Then launch a fresh Codex publisher with bounded foreground calls and literal paths (never detached), using its own codex hooks to write and post independent-verdict.md starting [codex], with exactly this standalone line: ${verdict}. Include both report links, issues to open ${JSON.stringify(issues)}, and pending human items ${JSON.stringify(pendingHuman)}; do not claim human acceptance passed. The publisher must verify the frozen head immediately before posting via gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-verdict.md`)}. Pass these artifact rules verbatim to this publisher: ${CODEX_ARTIFACT_RULES}
+Use bounded foreground calls and literal paths (never detached). The Codex process itself must post; Claude must never post or retype the codex comment. Any failed launch, nonzero exit, malformed result, changed head, or unverifiable post stops before the final verdict. Then launch a fresh Codex publisher with bounded foreground calls and literal paths (never detached), using its own codex hooks to write and post independent-verdict.md starting [codex], with exactly this standalone line: ${verdict}. Include both report links, issues to open ${JSON.stringify(issues)}, and pending human items ${JSON.stringify(pendingHuman)}; Evidence coverage: ${JSON.stringify(coveredEvidence)}; do not claim human acceptance passed. The publisher must verify the frozen head immediately before posting via gh pr comment ${A.pr} --repo ${A.repo} --body-file ${sq(`${SCRATCH}/independent-verdict.md`)}. Pass these artifact rules verbatim to this publisher: ${CODEX_ARTIFACT_RULES}
 Claude never impersonates Codex. Verify the posted verdict body and head. Any failed launch, nonzero exit, empty file, malformed body, changed head, or unverifiable post returns error; never invent links or report success after partial publication.
 Return {sha: frozen full SHA, reports: [actual Codex-report comment URL, actual Claude-report comment URL], line: exact final verdict line, url: actual final Codex-verdict comment URL, reviewUrl: actual hand-over review comment URL}.`,
 { label: `${RUN_ID} independent-publish:`, phase: 'Independent acceptance publication', agentType: 'general-purpose' })
@@ -528,10 +540,10 @@ Read doc/workflow.md's single evidence template, milestone goals, ${SCRATCH}/fin
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|
-Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. If verdict is negative (${verdict}) or any required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
+Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. If verdict is negative (${verdict}) or any required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. Evidence coverage: ${JSON.stringify(coveredEvidence)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
 const evidence = decode(evidenceResult)
 const evidenceWrite = evidence && !evidence.error ? await persistArtifacts('Evidence', { 'evidence.md': evidence.evidenceContent, 'ready.md': evidence.readyContent }) : evidence || { error: 'Missing evidence.md / ready.md content' }
 if (evidenceWrite) return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidenceWrite }
 const preparedFiles = await verifyArtifacts('Prepared', [...evidenceFiles, 'evidence.md', 'ready.md'])
 if (preparedFiles) return preparedFiles
-return { pr: A.pr, sha: head.sha, status: 'prepared', verdict, issues, pendingHuman, comment: publication.url, acceptanceComments: publication.reports, evidence: `${SCRATCH}/evidence.md`, draft: `${SCRATCH}/ready.md` }
+return { pr: A.pr, sha: head.sha, status: 'prepared', verdict, issues, defects, insufficientEvidence, coveredEvidence, pendingHuman, comment: publication.url, acceptanceComments: publication.reports, evidence: `${SCRATCH}/evidence.md`, draft: `${SCRATCH}/ready.md` }
