@@ -482,7 +482,9 @@ Retain every agent-obtainable evidence gap in insufficientEvidence using a stabl
 { label: `${RUN_ID} independent-assess:`, phase: 'Independent acceptance assessment', agentType: 'general-purpose' })
 const assessed = decode(assessedRaw)
 const validAssessment = value => value && ['defects', 'insufficientEvidence', 'pendingHuman'].every(key =>
-  Array.isArray(value[key]) && value[key].every(item => typeof item === 'string' && item.trim()))
+  Array.isArray(value[key]) && value[key].every(item => typeof item === 'string' && item.trim())) &&
+  Array.isArray(value.passingEvidence) && value.passingEvidence.every(e => e &&
+    ['item', 'head', 'evidence'].every(key => typeof e[key] === 'string' && e[key].trim()) && /^[0-9a-f]{40}$/.test(e.head))
 if (!assessed || assessed.error || !validAssessment(assessed.codex) || !validAssessment(assessed.claude)) {
   return { pr: A.pr, sha: head.sha, status: 'independent-failed', verdict: verdicts[1], report: assessed }
 }
@@ -492,7 +494,7 @@ const evidenceGaps = []
 for (const [missingFrom, report] of Object.entries({ codex: assessed.codex, claude: assessed.claude })) {
   for (const item of report.insufficientEvidence) {
     const coverage = Object.entries({ codex: assessed.codex, claude: assessed.claude }).flatMap(([coveredBy, r]) =>
-      (r.passingEvidence || []).filter(e => e.item === item && e.head === head.sha).map(e => ({ ...e, missingFrom, coveredBy })))
+      r.passingEvidence.filter(e => e.item === item && e.head === head.sha).map(e => ({ ...e, missingFrom, coveredBy })))
     if (coverage.length) coveredEvidence.push(...coverage)
     else evidenceGaps.push(item)
   }

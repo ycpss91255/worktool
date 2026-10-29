@@ -3008,7 +3008,7 @@ _handover_replies() {
         "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
-        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
+        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
         "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks'
 }
@@ -4374,4 +4374,26 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") |
             .prompt | contains("coveredBy") and contains("5.1")] | all)' <<<"${output}"
     assert_success
+}
+
+@test "milestone-handover blocks uncovered gaps and rejects malformed coverage (#669)" {
+    local replies coverage
+    for coverage in '[]' '[{"item":"5.1","head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence":"rc=0"}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '
+            ."independent-assess:".codex.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.passingEvidence=$coverage |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.coveredEvidence == [] and .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+    for coverage in 'null' '{}' '[{"item":"5.1","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","evidence":""}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '."independent-assess:".claude.passingEvidence=$coverage')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
 }
