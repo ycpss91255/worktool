@@ -317,6 +317,33 @@ jobs:
           mapfile -t revs <<< "${range}"
           commit_refs_check_commits . "${revs[@]}"
 
+  review-log:
+    name: review-log
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reject committed review logs
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+          DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+        run: |
+          set -uo pipefail
+          source lib/commit_email.sh
+          source lib/review_log.sh
+          range="$(commit_email_range "${EVENT}" "${PR_BASE}" "${PR_HEAD}" "${PUSH_BEFORE}" "${PUSH_AFTER}" "${DEFAULT_REF}")" || exit 1
+          mapfile -t revs <<< "${range}"
+          review_log_check_commits . "${revs[@]}"
+
   # Single required status: green only if every build-image leg AND every
   # matrix gate leg AND every real-engine leg AND all commit policy jobs
   # succeeded, plus verify-all on milestone-gate PRs. `needs` on a matrix
@@ -327,7 +354,7 @@ jobs:
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs, verify-all]
+    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs, review-log, verify-all]
     if: always()
     steps:
       - name: Verify every leg succeeded
@@ -338,6 +365,7 @@ jobs:
           EMAIL_RESULT: ${{ needs.commit-email.result }}
           ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
           REFS_RESULT: ${{ needs.commit-refs.result }}
+          REVIEW_LOG_RESULT: ${{ needs.review-log.result }}
           VERIFY_REQUIRED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}
           VERIFY_RESULT: ${{ needs.verify-all.result }}
         run: |
@@ -347,12 +375,14 @@ jobs:
           echo "commit-email (noreply author and committer): ${EMAIL_RESULT}"
           echo "commit-attribution (commit messages and PR body): ${ATTRIBUTION_RESULT}"
           echo "commit-refs (issue footers): ${REFS_RESULT}"
+          echo "review-log (no committed review notes): ${REVIEW_LOG_RESULT}"
           [ "${BUILD_RESULT}" = "success" ] || exit 1
           [ "${GATE_RESULT}" = "success" ] || exit 1
           [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
           [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
           [ "${REFS_RESULT}" = "success" ] || exit 1
+          [ "${REVIEW_LOG_RESULT}" = "success" ] || exit 1
           echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
           if [ "${VERIFY_REQUIRED}" = "true" ]; then
             [ "${VERIFY_RESULT}" = "success" ] || exit 1

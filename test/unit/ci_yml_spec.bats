@@ -248,9 +248,10 @@ _trigger_branches() {
     assert_line "commit-email"
     assert_line "commit-attribution"
     assert_line "commit-refs"
+    assert_line "review-log"
     assert_line "verify-all"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 8
+    assert_equal "${#lines[@]}" 9
 }
 
 # ADR 0012 cites the next two case names verbatim as guards; keep them.
@@ -407,7 +408,7 @@ _trigger_branches() {
 
 @test "--privileged is named by the test-system-real job only" {
     local _job
-    for _job in build-image gate verify-all commit-email commit-attribution commit-refs ci-passed; do
+    for _job in build-image gate verify-all commit-email commit-attribution commit-refs review-log ci-passed; do
         run _job_block "${_job}"
         refute_output --partial '--privileged'
     done
@@ -523,7 +524,7 @@ _run_aggregator() {
         script { print substr($0, 11) }
     ')"
     env BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
-        EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success \
+        EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success REVIEW_LOG_RESULT=success \
         "VERIFY_REQUIRED=$1" "VERIFY_RESULT=$2" "${3:-GATE_RESULT=success}" \
         bash -eo pipefail -c "${_script}"
 }
@@ -542,7 +543,7 @@ _run_aggregator() {
             fi
         done
     done
-    for _gate in BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS; do
+    for _gate in BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
         run _run_aggregator false skipped "${_gate}_RESULT=failure"
         assert_failure
     done
@@ -556,4 +557,46 @@ _run_aggregator() {
     assert_success
     assert_output --partial 'run: just test verify-env'
     assert_output --partial 'uses: extractions/setup-just@'
+}
+
+@test "review-log CI rejects new review files and blocks ci-passed (#675)" {
+    local repo="$BATS_TEST_TMPDIR/review-repo" base head script
+    run _job_block review-log
+    assert_success
+    assert_output --partial 'fetch-depth: 0'
+    assert_output --partial 'persist-credentials: false'
+    assert_output --partial 'EVENT: ${{ github.event_name }}'
+    assert_output --partial 'PR_BASE: ${{ github.event.pull_request.base.sha }}'
+    assert_output --partial 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'
+    assert_output --partial 'PUSH_BEFORE: ${{ github.event.before }}'
+    assert_output --partial 'PUSH_AFTER: ${{ github.event.after }}'
+    assert_output --partial 'DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}'
+    script="$(_job_block review-log | awk '
+        /^        run: \|$/ { script = 1; next }
+        script { print substr($0, 11) }
+    ')"
+    mkdir -p "$repo/lib" "$repo/doc/evidence"
+    cp "$LIB_DIR"/{log,commit_email,review_log}.sh "$repo/lib/"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Test User'
+    git -C "$repo" config user.email '12345+test@users.noreply.github.com'
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m base
+    base="$(git -C "$repo" rev-parse HEAD)"
+    printf 'notes\n' > "$repo/doc/evidence/675-review-round-1.md"
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m review
+    head="$(git -C "$repo" rev-parse HEAD)"
+    cd "$repo"
+    run env EVENT=pull_request PR_BASE="$base" PR_HEAD="$head" PUSH_BEFORE='' \
+        PUSH_AFTER='' DEFAULT_REF=refs/remotes/origin/main bash -euo pipefail -c "$script"
+    assert_failure 1
+    assert_output --partial '675-review-round-1.md'
+    assert_output --partial 'PR comment'
+    run _job_block ci-passed
+    assert_output --partial 'needs.review-log.result'
+    run _run_aggregator false skipped REVIEW_LOG_RESULT=failure
+    assert_failure
+    run _run_aggregator false skipped REVIEW_LOG_RESULT=skipped
+    assert_failure
 }
