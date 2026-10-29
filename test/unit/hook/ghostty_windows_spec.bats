@@ -70,3 +70,16 @@ _event() {
     run cat "${SIGNAL_LOG}"
     assert_output ''
 }
+
+@test "corrupt comparison snapshots never turn pre-existing windows into cleanup targets" {
+    _event PreToolUse
+    assert_success
+    local snapshot
+    snapshot="$(find "${HOOK_DIR}/../state/ghostty-windows" -name '*.json')"
+    printf '%s\n' '{"command":"ghostty +new-window --help","windows":[{}]}' > "${snapshot}"
+    _event PostToolUse
+    assert_failure 2
+    assert_output --partial 'cannot compare window snapshots'
+    run cat "${SIGNAL_LOG}"
+    assert_output ''
+}

@@ -47,7 +47,12 @@ ghostty_windows_post() {
     local path="$1" current added pid closed=''
     current="$(ghostty_windows_read)"
     added="$(jq -ce --arg command "$(hook_command)" --argjson current "${current}" '
-        if .command != $command or (.windows | type) != "array" then
+        def valid_window:
+            type == "object" and
+            all(.pid, .parent; type == "string" and test("^[1-9][0-9]*$")) and
+            all(.start, .parentStart; type == "string" and length > 0);
+        if type != "object" or .command != $command or
+            (.windows | type) != "array" or (all(.windows[]; valid_window) | not) then
             error("invalid snapshot") else $current - .windows end' "${path}")" ||
         ghostty_windows_error 'cannot compare window snapshots.'
     while IFS= read -r pid; do
