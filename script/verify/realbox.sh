@@ -905,7 +905,8 @@ _52_find_window() {
             (( SECONDS < _52_DEADLINE )) && return 3
             break
         fi
-        apply_root='' nonfish=''
+        # A wrapper seen by an earlier sweep stays the deadline candidate.
+        apply_root=''
         if [[ "${mode}" == apply ]]; then
             apply_root="$(_52_apply_window_root)" || { sleep 0.1; continue; }
         fi

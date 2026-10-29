@@ -4141,3 +4141,35 @@ STUB
         _realbox_quiet 5.2.1
     done
 }
+
+@test "#663: a non-fish wrapper seen once keeps its deadline probe after later sweeps lose it" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/exited-ps"
+    cp "${STUBS}/readlink" "${STATE}/seen-readlink"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-p 4242 -o comm=' ]]; then
+    touch "${FAKE_STATE_DIR}/deadline-inspected"
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/exited-ps" "$@"
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4242/cwd ]]; then
+    [[ ! -e "${FAKE_STATE_DIR}/wrapper-seen" ]] || exit 1
+    touch "${FAKE_STATE_DIR}/wrapper-seen"
+fi
+exec "${FAKE_STATE_DIR}/seen-readlink" "$@"
+STUB
+    chmod +x "${STUBS}/"{ps,readlink}
+    FAKE_WINDOW_COMM='sh' run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    [ -e "${STATE}/wrapper-seen" ]
+    [ -e "${STATE}/deadline-inspected" ]
+    refute_output --partial 'is not fish'
+    [ -f "$(_backup_dir)/manifest" ]
+}
