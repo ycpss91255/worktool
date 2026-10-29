@@ -23,8 +23,8 @@
 #       ("could not read the file"), and a count is validated as a number
 #       before it is compared;
 #     - anything this environment cannot do (a missing tool or no graphical
-#       session for automatic window evidence) is REPORTED and exits non-zero. Nothing is
-#       skipped quietly.
+#       session for automatic window evidence) is REPORTED and exits non-zero.
+#       Nothing is skipped quietly.
 #
 #   The primitives that enforce this live in lib/guard.sh; the config backup
 #   and restore machinery of 5.2 lives in lib/config_backup.sh.
@@ -134,7 +134,7 @@ Items:
           run's dev container, then restore everything and remove the box.
   5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
   5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
-          check the user's own content survived).
+          check the user's own content survived and verify a new fish automatically).
   5.2.3   5.2 step 3 only (restore). The recovery entry: safe to run alone
           after an interrupt, and a no-op when there is no backup.
   5.3     Negative: with a `dev` box present, prove 5.1 and 5.2 step 2 refuse
@@ -464,7 +464,7 @@ _on_exit() {
     done
     rmdir -- "${VERIFY_RUN_GUARD_DIR}" || _crc=1
     if [[ "${_52_REMIND:-0}" -eq 1 ]]; then
-    printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
+        printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
     fi
     [[ "${_crc}" -eq 0 ]] || exit 1
     exit "${_st}"
@@ -813,8 +813,8 @@ _52_confirm_window() {
     _52_auto_window apply
 }
 
-# IPC is ordered on the running GTK application's D-Bus connection. Unlike a
-# signal followed by a sleep, reload-config and new-window have explicit order.
+# Request reload through the GTK action before requesting the new window.
+# IPC delivery alone is insufficient: the new shell must pass namespace checks.
 _52_open_window() {
     guard_require gapplication mktemp sleep kill || return $?
     _52_desktop_preflight || return $?
