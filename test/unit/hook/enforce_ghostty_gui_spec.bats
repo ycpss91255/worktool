@@ -18,3 +18,14 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         "${REPO_ROOT}/.claude/settings.json"
     assert_success
 }
+
+@test "GUI launches and actions outside the read-only allowlist are blocked" {
+    local command
+    for command in 'ghostty' 'ghostty --help' 'ghostty -h' \
+        'ghostty --working-directory=/tmp' 'ghostty +new-tab' \
+        'ghostty +reload-config' 'ghostty +quit' 'ghostty +future-action --help' \
+        'ghostty --version +new-window' 'ghostty +help +new-window'; do
+        _check "${command}"
+        assert_failure 2
+    done
+}

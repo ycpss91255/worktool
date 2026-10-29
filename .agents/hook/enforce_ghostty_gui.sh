@@ -21,8 +21,7 @@ _check_launch() {
     read -r -a _words <<<"${_launch}"
     _exe="$(hook_word "${_words[0]:-}")"
     case "${_exe##*/}" in
-        ghostty)
-            [[ "$(hook_word "${_words[1]:-}")" != +new-window ]] || _deny_gui ;;
+        ghostty) _deny_gui ;;
     esac
 }
 
