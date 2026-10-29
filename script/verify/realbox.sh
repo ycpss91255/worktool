@@ -765,7 +765,8 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_apply_require_tools() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath \
+        gapplication mktemp sleep kill
 }
 
 _52_step2_apply() {
@@ -1085,7 +1086,7 @@ _52_report_restore_window() {
 
 _52_restore_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch
+        ps find cmp stat touch gapplication mktemp sleep kill
 }
 
 _52_step3_restore() {
@@ -1226,7 +1227,7 @@ _52_desktop_preflight() {
 
 _52_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch
+        grep cut id cat find sort cmp ps realpath stat touch gapplication mktemp sleep kill
 }
 
 item_52() {

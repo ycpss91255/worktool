@@ -309,6 +309,7 @@ setup() {
         install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_shim.sh" "${STUBS}/${_t}"
     done
     ln -s "$(type -P true)" "${STUBS}/ghostty"
+    cp "$(type -P true)" "${STUBS}/gapplication"
 
     printf 'font-size = 12\n' >"${BATS_TEST_TMPDIR}/home/.config/ghostty/config"
 
@@ -427,9 +428,9 @@ EOF
 _path_without() {
     local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
     mkdir -p "${_path}"
-    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch; do
+    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch gapplication sleep kill; do
         [[ "${_tool}" != "$1" ]] || continue
-        ln -sf "$(command -v "${_tool}")" "${_path}/${_tool}"
+        ln -sf "$(type -P "${_tool}")" "${_path}/${_tool}"
     done
     printf '%s\n' "${_path}"
 }
@@ -2047,16 +2048,16 @@ STUB
 
 # --- 5.2 as a whole ----------------------------------------------------------
 
-@test "5.2 without a tty says the subjective check cannot be made, and still restores" {
-    run "${REALBOX}" --allow-real-box 5.2
-    assert_failure
+@test "5.2: missing gapplication refuses before backup or apply" {
+    rm "${STUBS}/gapplication"
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 3
     assert_output --partial "gapplication not found"
-    # The restore ran anyway: the config is back and the box is gone.
-    assert_line "restore-files-ok=1"
-    assert_line "restore-ok=0"
-    assert_line "dev-gone=1"
-    refute_line "backup-removed=1"
-    [ -d "$(_backup_dir)" ]
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
 }
 
 # --- 5.2 and the user's own content (GAP A) ----------------------------------
@@ -2065,50 +2066,45 @@ STUB
 # contains a user-config link; bare setup still writes distrobox.conf
 # whether or not this run asked it to.
 
-@test "5.2: the apply keeps the user's own content in every managed file (the degraded case below is not vacuous)" {
+@test "5.2: missing gapplication leaves the user's managed files untouched" {
+    rm "${STUBS}/gapplication"
     local _repo
     _repo="$(_repo_copy)"
     _seed_distrobox_conf
     _seed_shared_state
+    cp -a "${HOME}" "${STATE}/baseline-home"
     FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
         run "${REALBOX}" --allow-real-box 5.2
-    # The item still ends at the subjective check, which needs a tty.
-    assert_failure
-    assert_line "backup-covers=5/5"
-    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
+    assert_failure 3
     assert_output --partial "gapplication not found"
-    assert_line "restore-files-ok=1"
-    assert_line "restore-ok=0"
-    assert_line "blocks=0"
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
 }
 
-@test "5.2: a product whose distrobox isolation path overwrites the whole distrobox.conf is caught after the apply, and the backup puts it back (GAP A)" {
-    # Every signal 5.2 used to have stays green: setup exits 0, status is
-    # fine, the managed block is in the file, and step 3 reports a clean
-    # restore. What says the apply destroyed the maintainer's distrobox
-    # configuration is the user-content line - checked BEFORE step 3, or
-    # the restore would hide the damage it was meant to undo.
+@test "5.2: missing gapplication refuses even a product that would destroy user content" {
+    rm "${STUBS}/gapplication"
     local _repo
     _repo="$(_repo_copy)"
     _degrade_distrobox_overwrites "${_repo}"
     _seed_distrobox_conf
     _seed_shared_state
+    cp -a "${HOME}" "${STATE}/baseline-home"
     FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
         run "${REALBOX}" --allow-real-box 5.2
-    assert_failure
-    assert_line "setup-rc=0"
-    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=LOST"
-    assert_output --partial "lost content the user had before this run"
-    assert_output --partial "run 5.2.3 to restore it from the backup"
-    # The subjective check is never reached; the restore still runs.
+    assert_failure 3
     assert_output --partial "gapplication not found"
-    assert_line "restore-files-ok=1"
-    assert_line "restore-ok=0"
-    refute_line "backup-removed=1"
-    # And the file is back, byte for byte - only possible because the backup
-    # set covers distrobox.conf.
-    run cat "$(_distrobox_conf)"
-    assert_output "$(printf '%s\n' "${DISTROBOX_USER_LINES[@]}")"
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
 }
 
 @test "5.2: existing distrobox blocks survive a successful baseline restore" {
@@ -3684,4 +3680,29 @@ STUB
     [ ! -s "${STATE}/boxes" ]
     run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
     assert_output ''
+}
+
+@test "#663: missing window tools refuse every mutating entry before side effects" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
+    _reset_log
+    local tool item path
+    for tool in gapplication mktemp sleep; do
+        path="$(_path_without "${tool}")"
+        for item in 5.2 5.2.2 5.2.3; do
+            run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+            assert_failure 3
+            assert_output --partial "${tool} not found on PATH"
+            refute_output --partial 'revalidate=1'
+            refute_output --partial 'restore-files-ok='
+            assert_equal "$(_count_calls just)" 0
+            assert_equal "$(_count_calls distrobox)" 0
+            run diff -r "${STATE}/baseline-home" "${HOME}"
+            assert_success
+            run diff -r "${STATE}/baseline-backup" "$(_backup_dir)"
+            assert_success
+        done
+    done
 }
