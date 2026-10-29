@@ -2344,14 +2344,15 @@ STUB
     assert_output 'container_manager=docker'
 }
 
-@test "5.2: new-window instructions check direct fish entry without a tmux session" {
-    run "${REALBOX}" --allow-real-box 5.2
-    assert_failure
-    assert_output --partial "echo \$fish_pid"
-    assert_output --partial "Open a NEW ghostty window"
+@test "5.2: automatic window check verifies direct fish entry without a tmux session" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_output --partial "window-evidence: pid=4242 comm=fish"
+    refute_output --partial "echo \$fish_pid"
     refute_output --partial "tmux display"
     assert_line "restore-files-ok=1"
-    assert_line "restore-ok=0"
+    assert_line "restore-ok=1"
 }
 
 @test "5.2.2: acceptance uses an owned box HOME inside its backup" {
