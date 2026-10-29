@@ -911,11 +911,7 @@ _52_find_window() {
         while read -r pid parent comm; do
             (( SECONDS < _52_DEADLINE )) || break
             [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
-            if [[ "${mode}" == apply ]]; then
-                [[ "${comm}" == fish ]] || continue
-            else
-                case "${comm}" in fish|bash|sh|zsh|dash|ksh) ;; *) continue ;; esac
-            fi
+            case "${comm}" in fish|bash|sh|zsh|dash|ksh) ;; *) continue ;; esac
             grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
             if [[ "${mode}" == apply ]]; then
                 root="${apply_root}"

@@ -1613,11 +1613,7 @@ STUB
             malformed) export FAKE_WINDOW_NS='different' ;;
         esac
         run _window_input 4242
-        if [[ "${_mode}" == non-fish ]]; then
-            assert_equal "$(cat "${STATE}/window-rc")" "3"
-        else
-            assert_equal "$(cat "${STATE}/window-rc")" "1"
-        fi
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
         refute_output --partial "container-marker=confirmed"
         assert_output --partial "restore-ok=1"
     done
