@@ -367,6 +367,11 @@ const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
+  if (mode === 'exec-red-record' && role.startsWith('red-record:')) {
+    const { ok, stdout } = play(prompt)
+    if (ran.length) ran[ran.length - 1].stdout = stdout
+    return ok ? withStdout(reply(role), stdout) : null
+  }
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
   if (mode === 'exec-handover-snapshots') return playHandoverSnapshots(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)

@@ -126,7 +126,9 @@ PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 
 以及 `env`、`sudo` 等包裝指令不接受；仍須有同一區塊內的失敗 TAP 行。
 不能在 GREEN 後虛構或重編 RED 證據。
 
-full 模式每輪獨立審查前，以 `gh pr view --json body,comments` 讀取 PR 原文，
+full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...` 在 gh 端篩選，
+只傳回含 `## RED` 標題的 PR 說明與留言 body；無關留言不增加傳輸量，
+仍保留說明與留言的來源區別以判定豁免。
 由 workflow 程式檢查 RED 紀錄。缺少紀錄、讀取失敗或資料格式錯誤時，
 直接回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
 也不會宣告 mergeable。補上原始證據後可接續同一 PR。

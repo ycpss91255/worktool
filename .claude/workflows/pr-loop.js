@@ -299,8 +299,9 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
 
 // Only transport raw GitHub data through the agent; decide the gate here.
 const checkRedRecord = async (pr) => {
+  const query = '{body: (if (.body | test("^## RED"; "m")) then .body else "" end), comments: [.comments[] | select(.body | test("^## RED"; "m")) | {body}]}'
   try {
-    const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
+    const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
       label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
       schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
     })

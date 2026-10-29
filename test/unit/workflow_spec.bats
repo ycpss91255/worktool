@@ -360,7 +360,7 @@ _pl_run() {
     fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
-        "${replies}"
+        "${replies}" "${4:-}"
 }
 
 _pl_job_results() {
@@ -4096,6 +4096,34 @@ _handover_snapshot_run() {
             ."independent-claude-cleanup:"={restored:false,childrenStopped:true}')"
     run jq -e '.result.status == "prepared" and
         ([.calls[].role] | index("independent-claude:") != null)' <<<"${output}"
+    assert_success
+}
+
+@test "pr-loop finds RED among many comments using only filtered evidence (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    mkdir -p "${root}/bin"
+    jq -n '{body:"PR description", comments:([range(0;500) | {body:("review note " + tostring)}] +
+        [{body:"## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"}])}' > "${root}/pr.json"
+    cat > "${root}/bin/gh" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$RED_SOURCE"
+        exit "$?"
+    fi
+    shift
+done
+cat "$RED_SOURCE"
+SH
+    chmod +x "${root}/bin/gh"
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | fromjson |
+            .body == "" and (.comments | length == 1) and (.comments[0].body | contains("not ok 1")))' <<<"$json"
     assert_success
 }
 
