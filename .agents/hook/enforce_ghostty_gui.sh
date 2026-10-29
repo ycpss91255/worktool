@@ -13,6 +13,20 @@ _deny_gui() {
         'Read documentation or source code, or test with a stub in Docker instead.'
 }
 
+_check_query() {
+    local _word _action
+    _action="$(hook_word "${1:-}")"
+    case "${_action}" in
+        --version|+help|+version|+show-config|+list-?*) ;;
+        *) _deny_gui ;;
+    esac
+    shift
+    for _word in "$@"; do
+        hook_word_has_expansion "${_word}" && _deny_gui
+        [[ "$(hook_word "${_word}")" != +* ]] || _deny_gui
+    done
+}
+
 _check_launch() {
     local _launch="$1" _lead _exe
     local -a _words=()
@@ -21,7 +35,7 @@ _check_launch() {
     read -r -a _words <<<"${_launch}"
     _exe="$(hook_word "${_words[0]:-}")"
     case "${_exe##*/}" in
-        ghostty) _deny_gui ;;
+        ghostty) _check_query "${_words[@]:1}" ;;
     esac
 }
 

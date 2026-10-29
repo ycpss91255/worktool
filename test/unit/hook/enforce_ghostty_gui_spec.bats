@@ -19,6 +19,18 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
     assert_success
 }
 
+@test "literal read-only Ghostty queries remain allowed" {
+    local command
+    for command in 'ghostty --version' 'ghostty +help' 'ghostty +version' \
+        'ghostty +show-config' 'ghostty +show-config --default' \
+        'ghostty +list-fonts' 'ghostty +list-themes' 'ghostty +list-keybinds' \
+        'ghostty +list-actions' 'ghostty +list-colors'; do
+        _check "${command}"
+        assert_success
+        assert_output ''
+    done
+}
+
 @test "GUI launches and actions outside the read-only allowlist are blocked" {
     local command
     for command in 'ghostty' 'ghostty --help' 'ghostty -h' \
