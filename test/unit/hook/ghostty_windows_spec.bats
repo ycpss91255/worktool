@@ -53,6 +53,8 @@ _event() {
     printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 fish' >> "${PS_FIXTURE}"
     _event PostToolUseFailure
     assert_success
+    run jq -r '.hookSpecificOutput.hookEventName' <<<"${output}"
+    assert_output 'PostToolUseFailure'
     run cat "${SIGNAL_LOG}"
     assert_output '-HUP -- 102'
     run find "${HOOK_DIR}/../state/ghostty-windows" -name '*.json'

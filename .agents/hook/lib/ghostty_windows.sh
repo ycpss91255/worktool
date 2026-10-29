@@ -85,7 +85,7 @@ ghostty_windows_post() {
     done < <(jq -c '.[]' <<<"${added}")
     rm -- "${path}" || ghostty_windows_error 'cannot remove consumed snapshot.'
     [[ -n "${closed}" ]] || return 0
-    hook_context "Closed new Ghostty window shell PIDs:${closed}" PostToolUse
+    hook_context "Closed new Ghostty window shell PIDs:${closed}" "$(hook_field '.hook_event_name')"
 }
 
 ghostty_windows_track() {
