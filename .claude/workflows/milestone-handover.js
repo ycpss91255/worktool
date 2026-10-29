@@ -478,7 +478,7 @@ const assessedRaw = await agent(`${CONTEXT}
 Classify these two completed independent reports without rewriting them:
 ${JSON.stringify({ codex: codexAcceptance, claude: claudeAcceptance })}
 Return {codex: {defects: string[], insufficientEvidence: string[], pendingHuman: string[], passingEvidence: {item: string, head: string, evidence: string}[]}, claude: {defects: string[], insufficientEvidence: string[], pendingHuman: string[], passingEvidence: {item: string, head: string, evidence: string}[]}}.
-Code, documentation and test defects include documentation versus actual output mismatches and wrong comments. Any defect in either report blocks, regardless of passing evidence elsewhere. Retain every agent-obtainable evidence gap in insufficientEvidence using a stable item identifier shared across reports. Record passingEvidence only for explicit passing evidence in that report, with the same item identifier, full head SHA and concrete evidence. A gap blocks only when neither report has passing evidence for that item on the frozen head; record which report covered it. Reserve subjective feel, human gates, the maintainer's own host and items requiring an unlocked desktop that returned inconclusive rc=3 due to a locked desktop or no graphical session for pendingHuman; they do not block. List them in full, never as passing evidence. Do not reclassify a defect or missing agent-obtainable evidence as human pending. If a report cannot be classified, return error, never empty success arrays.`,
+Code, documentation and test defects include documentation versus actual output mismatches and wrong comments. Any defect in either report blocks, regardless of passing evidence elsewhere. Retain every agent-obtainable evidence gap in insufficientEvidence using a stable item identifier shared across reports. Record passingEvidence only for explicit passing evidence in that report, with the same item identifier, full head SHA and concrete evidence. A gap blocks unless the other report has passing evidence for that item on the frozen head; a report cannot cover its own gap. Record which other report covered it. Reserve subjective feel, human gates, the maintainer's own host and items requiring an unlocked desktop that returned inconclusive rc=3 due to a locked desktop or no graphical session for pendingHuman; they do not block. List them in full, never as passing evidence. Do not reclassify a defect or missing agent-obtainable evidence as human pending. If a report cannot be classified, return error, never empty success arrays.`,
 { label: `${RUN_ID} independent-assess:`, phase: 'Independent acceptance assessment', agentType: 'general-purpose' })
 const assessed = decode(assessedRaw)
 const validAssessment = value => value && !Object.hasOwn(value, 'error') && ['defects', 'insufficientEvidence', 'pendingHuman'].every(key =>
@@ -494,7 +494,7 @@ const evidenceGaps = []
 for (const [missingFrom, report] of Object.entries({ codex: assessed.codex, claude: assessed.claude })) {
   for (const item of report.insufficientEvidence) {
     const coverage = Object.entries({ codex: assessed.codex, claude: assessed.claude }).flatMap(([coveredBy, r]) =>
-      r.passingEvidence.filter(e => e.item === item && e.head === head.sha).map(e => ({ ...e, missingFrom, coveredBy })))
+      r.passingEvidence.filter(e => coveredBy !== missingFrom && e.item === item && e.head === head.sha).map(e => ({ ...e, missingFrom, coveredBy })))
     if (coverage.length) coveredEvidence.push(...coverage)
     else evidenceGaps.push(item)
   }

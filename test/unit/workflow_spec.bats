@@ -4390,6 +4390,21 @@ Reason: 僅修正文句，沒有行為變更。'; do
     assert_success
 }
 
+@test "milestone-handover rejects a report's own passing evidence for its gap (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].insufficientEvidence=["5.1"] |
+            ."independent-assess:"[$reviewer].passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.issues == ["5.1"] and .result.coveredEvidence == [] and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+}
+
 @test "milestone-handover blocks uncovered gaps and rejects malformed coverage (#669)" {
     local replies coverage
     for coverage in '[]' '[{"item":"5.1","head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence":"rc=0"}]'; do
