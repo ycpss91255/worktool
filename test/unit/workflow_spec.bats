@@ -4364,6 +4364,20 @@ Reason: 僅修正文句，沒有行為變更。'; do
     assert_success
 }
 
+@test "doc/workflow.md explains independent report classification and coverage (#669)" {
+    run sed -n '/^8\. \*\*獨立報告彙整與發布/,/^9\. /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '任一報告有程式、文件或測試缺陷（defects）就阻擋'
+    assert_output --partial '同一 frozen head 的 passingEvidence 補足，就不阻擋'
+    assert_output --partial 'coveredEvidence 記錄項目、缺證據的報告（missingFrom）、補足的報告（coveredBy）'
+    assert_output --partial '兩份報告都沒有該 head 的通過證據時仍阻擋'
+    assert_output --partial '主觀感受、人類 gate、維護者自己的主機'
+    assert_output --partial '桌面鎖定或沒有圖形 session 而回未判定 rc=3'
+    assert_output --partial 'pendingHuman，不阻擋，但不能寫成已通過'
+    assert_output --partial '任一報告無法分類或分類格式不符都失敗收場'
+    assert_output --partial '判定留言與 ready 草稿都要分開列出 defects、agent 能取得的證據缺口與 pendingHuman'
+}
+
 @test "milestone-handover credits same-head evidence from the other report (#669)" {
     local replies
     replies="$(_handover_replies | jq '."independent-assess:".codex.insufficientEvidence=["5.1"] |
