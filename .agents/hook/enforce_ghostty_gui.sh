@@ -50,7 +50,7 @@ _check_launch() {
     _exe="$(hook_word "${_words[0]:-}")"
     if [[ "${_exe}" == builtin && "$(hook_word "${_words[1]:-}")" == kill ]]; then
         _words=("${_words[@]:1}")
-        _exe=kill
+        _exe='kill'
     fi
     if [[ "${2:-}" == lookup ]]; then
         case "${_exe##*/}" in

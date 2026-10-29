@@ -47,9 +47,9 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
     for command in 'pkill ghostty' 'pkill -HUP -x ghostty' \
         'pkill -f /usr/bin/ghostty' 'pkill -if Ghostty' \
         'killall ghostty' 'killall -s HUP /usr/bin/ghostty' \
-        'kill -HUP ghostty' 'kill -TERM $(pgrep -x ghostty)' \
-        'kill $(pidof ghostty)' 'kill -9 `pgrep ghostty`' \
-        'kill -HUP "$ghostty_pid"' 'kill -s TERM $(ps -C ghostty -o pid=)'; do
+        'kill -HUP ghostty' "kill -TERM \$(pgrep -x ghostty)" \
+        "kill \$(pidof ghostty)" "kill -9 \`pgrep ghostty\`" \
+        "kill -HUP \"\$ghostty_pid\"" "kill -s TERM \$(ps -C ghostty -o pid=)"; do
         _check "${command}"
         assert_failure 2
     done
@@ -57,8 +57,8 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
 
 @test "read-only exemptions fail closed when arguments expand or add actions" {
     local command
-    for command in 'ghostty +list-$action' 'ghostty +list-*' \
-        'ghostty --version "$args"' 'ghostty +help $(printf +new-window)' \
+    for command in "ghostty +list-\$action" 'ghostty +list-*' \
+        "ghostty --version \"\$args\"" "ghostty +help \$(printf +new-window)" \
         'ghostty +show-config +reload-config' 'ghostty +list-fonts +new-window'; do
         _check "${command}"
         assert_failure 2
@@ -69,8 +69,8 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
     local command
     for command in 'printf "%s" "ghostty +new-window"' \
         'rg ghostty script/' 'command -v ghostty' 'kill -HUP 1234' \
-        'pkill bash' 'killall sleep' 'kill $(pgrep bash)' \
-        'printf "%s" ghostty; kill "$other_pid"' \
+        'pkill bash' 'killall sleep' "kill \$(pgrep bash)" \
+        "printf \"%s\" ghostty; kill \"\$other_pid\"" \
         'bash script/verify/realbox.sh' 'just verify realbox --allow-real-box 5.2' \
         $'cat <<\'DOC\'\nghostty +new-window\npkill ghostty\nDOC'; do
         _check "${command}"
@@ -81,11 +81,11 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
 
 @test "wrappers paths compound commands and inline shell scripts preserve the guard" {
     local command
-    for command in 'builtin kill -HUP $(pgrep ghostty)' \
+    for command in "builtin kill -HUP \$(pgrep ghostty)" \
         '/usr/bin/ghostty +new-window --help' '"ghostty" +new-window -h' \
         'env DISPLAY=:0 ghostty +new-window' 'sudo -u user ghostty +reload-config' \
         'timeout 5s env DISPLAY=:0 ghostty' 'true && ghostty +new-window' \
-        'echo $(ghostty +new-window)' 'bash -c "ghostty +new-window --help"' \
+        "echo \$(ghostty +new-window)" 'bash -c "ghostty +new-window --help"' \
         "eval 'pkill ghostty'" $'sh <<\'SCRIPT\'\nghostty +new-window -h\nSCRIPT'; do
         _check "${command}"
         assert_failure 2
