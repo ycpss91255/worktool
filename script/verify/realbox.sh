@@ -798,6 +798,9 @@ _52_apply_only() {
     local _rc=0
     _cleanup_push 52-restore
     _52_step2_apply || _rc=$?
+    if [[ "${_rc}" -eq 0 ]]; then
+        _52_confirm_window || _rc=$?
+    fi
     _cleanup_drop
     return "${_rc}"
 }

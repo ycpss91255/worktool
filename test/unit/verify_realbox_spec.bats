@@ -3548,3 +3548,16 @@ STUB
     assert_equal "$(wc -l <"${STATE}/reloads")" 2
     assert_equal "$(wc -l <"${STATE}/closed")" 2
 }
+
+@test "#663: standalone apply times out inconclusively and keeps restore available" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    export FAKE_NO_WINDOW=1
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    [ -f "$(_backup_dir)/manifest" ]
+    [ ! -e "${STATE}/closed" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
