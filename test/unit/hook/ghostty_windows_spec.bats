@@ -92,3 +92,21 @@ _event() {
         assert_success
     done
 }
+
+@test "cleanup revalidates shell identity before signaling a reused PID" {
+    _event PreToolUse
+    assert_success
+    printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 fish' >> "${PS_FIXTURE}"
+    cp "${PS_FIXTURE}" "${PS_FIXTURE}.next"
+    sed -i 's/102 100 Thu Oct 29 10:01:00 2026 fish/102 1 Thu Oct 29 10:02:00 2026 unrelated/' "${PS_FIXTURE}.next"
+    cat > "${BATS_TEST_TMPDIR}/bin/ps" <<'STUB'
+#!/usr/bin/env bash
+cat "${PS_FIXTURE}"
+cp "${PS_FIXTURE}.next" "${PS_FIXTURE}"
+STUB
+    _event PostToolUse
+    assert_failure 2
+    assert_output --partial 'identity changed'
+    run cat "${SIGNAL_LOG}"
+    assert_output ''
+}

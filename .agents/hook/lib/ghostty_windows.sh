@@ -43,8 +43,21 @@ ghostty_windows_pre() {
     fi
 }
 
+ghostty_windows_close() {
+    local candidate="$1" current pid
+    pid="$(jq -r '.pid' <<<"${candidate}")"
+    current="$(ghostty_windows_read)"
+    if ! jq -e --argjson candidate "${candidate}" 'index($candidate) != null' \
+        <<<"${current}" >/dev/null; then
+        ghostty_windows_error "window shell PID ${pid} identity changed; no signal sent."
+    fi
+    if ! env kill -TERM -- "${pid}"; then
+        ghostty_windows_error "cannot terminate window shell PID ${pid}."
+    fi
+}
+
 ghostty_windows_post() {
-    local path="$1" current added pid closed=''
+    local path="$1" current added candidate closed=''
     current="$(ghostty_windows_read)"
     added="$(jq -ce --arg command "$(hook_command)" --argjson current "${current}" '
         def valid_window:
@@ -55,13 +68,11 @@ ghostty_windows_post() {
             (.windows | type) != "array" or (all(.windows[]; valid_window) | not) then
             error("invalid snapshot") else $current - .windows end' "${path}")" ||
         ghostty_windows_error 'cannot compare window snapshots.'
-    while IFS= read -r pid; do
-        [[ -n "${pid}" ]] || continue
-        if ! env kill -TERM -- "${pid}"; then
-            ghostty_windows_error "cannot terminate window shell PID ${pid}."
-        fi
-        closed+=" ${pid}"
-    done < <(jq -r '.[].pid' <<<"${added}")
+    while IFS= read -r candidate; do
+        [[ -n "${candidate}" ]] || continue
+        ghostty_windows_close "${candidate}"
+        closed+=" $(jq -r '.pid' <<<"${candidate}")"
+    done < <(jq -c '.[]' <<<"${added}")
     rm -- "${path}" || ghostty_windows_error 'cannot remove consumed snapshot.'
     [[ -n "${closed}" ]] || return 0
     hook_context "Closed new Ghostty window shell PIDs:${closed}" PostToolUse
