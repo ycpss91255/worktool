@@ -27,6 +27,19 @@ _check_query() {
     done
 }
 
+_check_signal() {
+    local _encoded _word
+    for _encoded in "$@"; do
+        _word="$(hook_word "${_encoded}")"
+        [[ "${_word,,}" != *ghostty* ]] || _deny_gui
+        # PID substitutions lose their body in the shared launch parser.
+        # A signal with an expansion and a Ghostty reference is ambiguous.
+        if hook_word_has_expansion "${_encoded}" && [[ "${_command,,}" == *ghostty* ]]; then
+            _deny_gui
+        fi
+    done
+}
+
 _check_launch() {
     local _launch="$1" _lead _exe
     local -a _words=()
@@ -36,15 +49,17 @@ _check_launch() {
     _exe="$(hook_word "${_words[0]:-}")"
     case "${_exe##*/}" in
         ghostty) _check_query "${_words[@]:1}" ;;
+        kill|pkill|killall) _check_signal "${_words[@]:1}" ;;
     esac
 }
 
 main() {
     hook_read_input
-    local _launch
+    local _launch _command
+    _command="$(hook_command)"
     while IFS= read -r _launch; do
         _check_launch "${_launch}"
-    done < <(hook_subcommands_raw "$(hook_command)")
+    done < <(hook_subcommands_raw "${_command}")
     hook_allow
 }
 main "$@"

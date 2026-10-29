@@ -41,3 +41,16 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         assert_failure 2
     done
 }
+
+@test "signals targeting Ghostty are blocked including PID lookup substitutions" {
+    local command
+    for command in 'pkill ghostty' 'pkill -HUP -x ghostty' \
+        'pkill -f /usr/bin/ghostty' 'pkill -if Ghostty' \
+        'killall ghostty' 'killall -s HUP /usr/bin/ghostty' \
+        'kill -HUP ghostty' 'kill -TERM $(pgrep -x ghostty)' \
+        'kill $(pidof ghostty)' 'kill -9 `pgrep ghostty`' \
+        'kill -HUP "$ghostty_pid"' 'kill -s TERM $(ps -C ghostty -o pid=)'; do
+        _check "${command}"
+        assert_failure 2
+    done
+}
