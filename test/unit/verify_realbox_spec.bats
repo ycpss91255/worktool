@@ -3580,11 +3580,33 @@ STUB
     chmod +x "${STUBS}/"{ghostty,gapplication,kill}
 }
 
+_auto_window_snapshot_stub() {
+    cat >"${STATE}/auto-snapshot" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+        printf '1 0 init\n900 1 ghostty\n6000 1 conmon\n'
+        if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0
+            && -d "$(cat "${FAKE_STATE_DIR}/window-directory")" ]]; then
+            printf '4240 900 distrobox\n5556 900 fish\n'
+            if [[ $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+                printf '4242 6000 %s\n' "${FAKE_WINDOW_COMM:-fish}"
+            else
+                parent="${FAKE_RESTORE_PARENT:-4240 fish}"
+                printf '%s %s fish\n' "${FAKE_AUTO_RESTORE_PID:-4344}" "${parent%% *}"
+                printf '800 4240 sh\n'
+            fi
+        fi
+exit "${FAKE_WINDOW_BASELINE_RC:-0}"
+STUB
+}
+
 _auto_window_processes() {
+    _auto_window_snapshot_stub
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+    '-e -o pid=,ppid=,comm=') exec bash "${FAKE_STATE_DIR}/auto-snapshot" ;;
     '-e -o pid=,comm=')
         printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
         if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0
@@ -3754,4 +3776,47 @@ STUB
             assert_success
         done
     done
+}
+
+@test "#663: a crowded process scan ends the shell search within ten seconds" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/crowded-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "${FAKE_STATE_DIR}/window-directory" && ! -e "${FAKE_STATE_DIR}/search-start" ]]; then
+    printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/search-start"
+fi
+if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    printf '1 init\n5556 fish\n'
+    for ((pid=10000; pid<10020; pid++)); do printf '%s worker\n' "${pid}"; done
+    exit 0
+fi
+if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
+    printf '1 0 init\n900 1 ghostty\n5556 900 fish\n'
+    for ((pid=10000; pid<10020; pid++)); do printf '%s 1 worker\n' "${pid}"; done
+    exit 0
+fi
+if [[ "$1" == -p && "$2" -ge 10000 ]]; then
+    /bin/sleep 0.7
+    printf '1 worker\n'
+    exit 0
+fi
+exec "${FAKE_STATE_DIR}/crowded-ps" "$@"
+STUB
+    run bash -c '
+        "$1" --allow-real-box 5.2.2 2> >(while IFS= read -r line; do
+            if [[ "$line" == *"new shell timed out"* ]]; then
+                printf "%s\n" "$EPOCHSECONDS" >"${FAKE_STATE_DIR}/search-end"
+            fi
+            printf "%s\n" "$line" >&2
+        done)
+    ' _ "${REALBOX}" </dev/null
+    local started ended
+    read -r started <"${STATE}/search-start"
+    read -r ended <"${STATE}/search-end"
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    [[ $((ended - started)) -le 10 ]]
 }

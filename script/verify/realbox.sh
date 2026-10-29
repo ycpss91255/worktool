@@ -832,16 +832,28 @@ _52_open_window() {
 
 # Ownership comes from our unique working directory on the direct Ghostty
 # child, never just from a process appearing after the snapshot.
+_52_process_snapshot() {
+    local pid parent comm
+    _52_ROWS="$(guard_timed 1 ps -e -o pid=,ppid=,comm=)" || return 1
+    _52_PARENTS=() _52_COMMS=()
+    while read -r pid parent comm; do
+        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 1
+        [[ "${pid}" =~ ^[1-9][0-9]*$ && "${parent}" =~ ^[0-9]+$ ]] || continue
+        _52_PARENTS[${pid}]="${parent}"
+        _52_COMMS[${pid}]="${comm}"
+    done <<<"${_52_ROWS}"
+}
+
 _52_window_root() {
-    local pid="$1" row parent _args cwd depth
+    local pid="$1" parent cwd depth
     for ((depth=0; depth<64; depth++)); do
+        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 1
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-        row="$(guard_timed 1 ps -p "${pid}" -o ppid=,args=)" || return 1
-        read -r parent _args <<<"${row}"
+        parent="${_52_PARENTS[${pid}]:-0}"
         [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" != "${pid}" ]] || return 1
-        if cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null)" && [[ "${cwd}" == "${_52_WINDOW_DIR}" ]]; then
-            row="$(guard_timed 1 ps -p "${parent}" -o comm=)" || return 1
-            if [[ "${row}" == ghostty ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
+        if [[ "${_52_COMMS[${parent}]:-}" == ghostty ]]; then
+            cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null)" || return 1
+            if [[ "${cwd}" == "${_52_WINDOW_DIR}" ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
                 printf '%s\n' "${pid}"
                 return 0
             fi
@@ -860,21 +872,30 @@ _52_window_directory() {
 }
 
 _52_apply_window_root() {
-    local rows="$1" pid comm root
-    while read -r pid comm; do
+    local pid parent comm root
+    while read -r pid parent comm; do
+        (( SECONDS < _52_DEADLINE )) || return 1
+        [[ "${parent}" =~ ^[1-9][0-9]*$ ]] || continue
+        [[ "${_52_COMMS[${parent}]:-}" == ghostty ]] || continue
         root="$(_52_window_root "${pid}")" || continue
         [[ "${root}" == "${pid}" ]] || continue
         printf '%s\n' "${root}"
         return 0
-    done <<<"${rows}"
+    done <<<"${_52_ROWS}"
     return 1
 }
 
 _52_find_window() {
-    local mode="$1" deadline=$((SECONDS + 10)) rows pid comm root
-    while (( SECONDS < deadline )); do
-        rows="$(guard_timed 1 ps -e -o pid=,comm=)" || return 3
-        while read -r pid comm; do
+    local mode="$1" _52_DEADLINE=$((SECONDS + 10)) _52_ROWS pid parent comm root apply_root
+    local -A _52_PARENTS=() _52_COMMS=()
+    while (( SECONDS < _52_DEADLINE )); do
+        _52_process_snapshot || return 3
+        apply_root=''
+        if [[ "${mode}" == apply ]]; then
+            apply_root="$(_52_apply_window_root)" || { sleep 0.1; continue; }
+        fi
+        while read -r pid parent comm; do
+            (( SECONDS < _52_DEADLINE )) || break
             [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
             if [[ "${mode}" == apply ]]; then
                 [[ "${comm}" == fish ]] || continue
@@ -883,7 +904,7 @@ _52_find_window() {
             fi
             grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
             if [[ "${mode}" == apply ]]; then
-                root="$(_52_apply_window_root "${rows}")" || continue
+                root="${apply_root}"
                 _52_window_directory "${pid}" || continue
             else
                 root="$(_52_window_root "${pid}")" || continue
@@ -895,22 +916,29 @@ _52_find_window() {
                 _52_restored_window_evidence "${pid}"
             fi
             return $?
-        done <<<"${rows}"
+        done <<<"${_52_ROWS}"
         sleep 0.1 || return 3
     done
     log_warn "Ghostty new shell timed out; acceptance inconclusive"
     return 3
 }
 
+_52_current_root() {
+    local _52_ROWS
+    local -A _52_PARENTS=() _52_COMMS=()
+    _52_process_snapshot || return 1
+    _52_window_root "$1"
+}
+
 _52_stop_window() {
     local root="$1" signal deadline current
     for signal in HUP TERM KILL; do
-        current="$(_52_window_root "${root}")" || return 0
+        current="$(_52_current_root "${root}")" || return 0
         [[ "${current}" == "${root}" ]] || return 1
         guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
         deadline=$((SECONDS + 1))
         while (( SECONDS < deadline )); do
-            current="$(_52_window_root "${root}")" || return 0
+            current="$(_52_current_root "${root}")" || return 0
             [[ "${current}" == "${root}" ]] || return 1
             sleep 0.1 || return 1
         done
@@ -921,9 +949,11 @@ _52_stop_window() {
 
 _52_close_window() {
     [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
-    local rows pid comm root group pgid sid rc=0
-    rows="$(guard_timed 1 ps -e -o pid=,comm=)" || return 1
-    while read -r pid comm; do
+    local _52_ROWS pid parent comm root group pgid sid rc=0
+    local -A _52_PARENTS=() _52_COMMS=()
+    _52_process_snapshot || return 1
+    while read -r pid parent comm; do
+        [[ "${parent}" =~ ^[1-9][0-9]*$ && "${_52_COMMS[${parent}]:-}" == ghostty ]] || continue
         root="$(_52_window_root "${pid}")" || continue
         [[ "${root}" == "${pid}" ]] || continue
         group="$(guard_timed 1 ps -p "${root}" -o pgid=,sid=)" || { rc=1; continue; }
@@ -934,7 +964,7 @@ _52_close_window() {
             log_warn "owned window is not an isolated session; keeping ownership evidence"
             rc=1
         fi
-    done <<<"${rows}"
+    done <<<"${_52_ROWS}"
     [[ "${rc}" -eq 0 ]] || return 1
     rm -rf -- "${_52_WINDOW_DIR}" || return 1
     _52_WINDOW_DIR=''
