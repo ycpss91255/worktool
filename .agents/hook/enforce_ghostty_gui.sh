@@ -20,6 +20,15 @@ _check_signal() {
     for _encoded in "$@"; do
         _word="$(hook_word "${_encoded}")"
         [[ "${_word,,}" != *ghostty* ]] || _deny_gui
+        if [[ "${_exe##*/}" == kill && "${_word}" =~ ^[0-9]+$ ]]; then
+            local _processes
+            _processes="$(ghostty_processes_read)"
+            if jq -e --arg pid "${_word}" 'any(.[];
+                .pid == $pid and (.comm | ascii_downcase) == "ghostty")' \
+                <<<"${_processes}" >/dev/null; then
+                _deny_gui
+            fi
+        fi
         # PID substitutions lose their body in the shared launch parser.
         # Fail closed when a PID lookup and an expanded signal target coexist.
         if hook_word_has_expansion "${_encoded}" && [[ "${_ghostty_lookup}" == 1 ]]; then

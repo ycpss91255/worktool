@@ -6,7 +6,7 @@ ghostty_windows_error() {
         'No unreadable process list or snapshot is treated as an empty window list.'
 }
 
-ghostty_windows_read() {
+ghostty_processes_read() {
     local table
     table="$(LC_ALL=C ps -eo pid=,ppid=,lstart=,comm=)" ||
         ghostty_windows_error 'cannot read process list.'
@@ -17,10 +17,19 @@ ghostty_windows_read() {
         .start |= gsub("\\s+"; " ")] as $all |
         if ($all | length) == 0 or ($all | map(.pid) | unique | length) != ($all | length)
         then error("invalid process table") else . end |
+        $all
+    ' <<<"${table}" || ghostty_windows_error 'cannot parse process list.'
+}
+
+ghostty_windows_read() {
+    local processes
+    processes="$(ghostty_processes_read)"
+    jq -ce '
+        . as $all |
         [$all[] | select((.comm | ascii_downcase) == "ghostty")] as $parents |
         [$all[] as $child | $parents[] | select(.pid == $child.ppid) |
         {pid:$child.pid, start:$child.start, parent:.pid, parentStart:.start}]
-    ' <<<"${table}" || ghostty_windows_error 'cannot parse process list.'
+    ' <<<"${processes}" || ghostty_windows_error 'cannot extract window shells.'
 }
 
 ghostty_windows_path() {

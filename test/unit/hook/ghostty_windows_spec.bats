@@ -126,3 +126,14 @@ STUB
     assert_failure 2
     assert_output --partial 'cannot identify the Bash invocation'
 }
+
+@test "numeric signals aimed at host Ghostty PIDs are denied" {
+    local command payload
+    for command in 'kill -HUP 100' '/bin/kill -9 100' 'builtin kill -s TERM 100'; do
+        payload="$(hook_json "${command}" | jq \
+            '. + {hook_event_name:"PreToolUse",session_id:"s",tool_use_id:"call"}')"
+        run_hook enforce_ghostty_gui "${payload}"
+        assert_failure 2
+        assert_output --partial 'Do not signal host Ghostty'
+    done
+}
