@@ -4086,3 +4086,30 @@ STUB
     [ -f "$(cat "${STATE}/window-directory")/before" ]
     [ -f "$(_backup_dir)/manifest" ]
 }
+
+@test "#663: restore reload failure does not inherit a timed-out apply request" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/pending-ps"
+    cat >"${STUBS}/gapplication" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${FAKE_STATE_DIR}/first-reload" ]]; then
+    touch "${FAKE_STATE_DIR}/restore-reload-failed"
+    exit 1
+fi
+touch "${FAKE_STATE_DIR}/first-reload"
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/restore-reload-failed" ]]; then
+    printf 'sweep\n' >>"${FAKE_STATE_DIR}/restore-sweeps"
+fi
+exec "${FAKE_STATE_DIR}/pending-ps" "$@"
+STUB
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 3
+    assert_line 'restore-window-ok=0'
+    assert_equal "$(wc -l <"${STATE}/restore-sweeps")" 1
+    [ -f "$(_backup_dir)/manifest" ]
+}

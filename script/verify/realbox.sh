@@ -826,6 +826,7 @@ _52_window_require_tools() {
 }
 
 _52_open_window() {
+    _52_WINDOW_PENDING=0
     _52_window_require_tools || return $?
     _52_desktop_preflight || return $?
     _52_WINDOW_DIR="$(mktemp -d "${CFGBK_B}/window.XXXXXXXX")" || return 1
