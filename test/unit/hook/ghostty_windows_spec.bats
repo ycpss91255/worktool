@@ -44,7 +44,7 @@ _event() {
     assert_output --partial '102'
     assert_output --partial '201'
     run cat "${SIGNAL_LOG}"
-    assert_output $'-TERM -- 102\n-TERM -- 201'
+    assert_output $'-HUP -- 102\n-HUP -- 201'
 }
 
 @test "malformed process lists are reported instead of erasing pre-existing windows" {
@@ -109,4 +109,14 @@ STUB
     assert_output --partial 'identity changed'
     run cat "${SIGNAL_LOG}"
     assert_output ''
+}
+
+@test "window cleanup uses hangup for interactive shells that can ignore TERM" {
+    _event PreToolUse
+    assert_success
+    printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 bash' >> "${PS_FIXTURE}"
+    _event PostToolUse
+    assert_success
+    run cat "${SIGNAL_LOG}"
+    assert_output '-HUP -- 102'
 }

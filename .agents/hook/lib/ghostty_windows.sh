@@ -51,7 +51,7 @@ ghostty_windows_close() {
         <<<"${current}" >/dev/null; then
         ghostty_windows_error "window shell PID ${pid} identity changed; no signal sent."
     fi
-    if ! env kill -TERM -- "${pid}"; then
+    if ! env kill -HUP -- "${pid}"; then
         ghostty_windows_error "cannot terminate window shell PID ${pid}."
     fi
 }
