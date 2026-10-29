@@ -3514,6 +3514,7 @@ _auto_window_commands() {
 set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/windows"
 printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
+printf '%s\n' "${3#--env=}" >"${FAKE_STATE_DIR}/window-marker"
 if [[ -f "${2#--working-directory=}/../processes-before-restore-window" || "${FAKE_AUTO_RESTORE:-0}" == 1 ]]; then
     printf restore >"${FAKE_STATE_DIR}/window-mode"
 else
@@ -3543,18 +3544,21 @@ case "$*" in
         printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
         if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0
             && -d "$(cat "${FAKE_STATE_DIR}/window-directory")" ]]; then
-            printf '4240 distrobox\n'
+            printf '4240 distrobox\n5556 fish\n'
             if [[ $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
                 printf '4242 %s\n' "${FAKE_WINDOW_COMM:-fish}"
             else
                 printf '%s fish\n' "${FAKE_AUTO_RESTORE_PID:-4344}"
             fi
-            printf '5556 fish\n'
         fi
         exit "${FAKE_WINDOW_BASELINE_RC:-0}" ;;
     '-p 900 -o comm=') printf 'ghostty\n' ;;
     '-p 4240 -o ppid=,args=') printf '900 /bin/sh\n' ;;
-    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-4240 fish}" ;;
+    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-${FAKE_APPLY_PARENT:-6000 fish}}" ;;
+    '-p 6000 -o ppid=,args=') printf '1 conmon\n' ;;
+    'eww -p 4240 -o args='|'eww -p 4242 -o args=')
+        printf 'fish %s\n' "$(cat "${FAKE_STATE_DIR}/window-marker")" ;;
+    'eww -p 5556 -o args=') printf 'fish WORKTOOL_VERIFY_WINDOW=unrelated\n' ;;
     '-p 5556 -o ppid=,args=') printf '900 fish\n' ;;
     '-p 800 -o ppid=,args=') printf '4240 /repo/script/box/enter.sh\n' ;;
     '-p 4344 -o ppid=,args=') printf '4240 fish\n' ;;
@@ -3624,4 +3628,13 @@ STUB
     run "${REALBOX}" --allow-real-box 5.2 </dev/null
     assert_success
     assert_equal "${lines[-1]}" '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。'
+}
+
+@test "#663: apply matches a runtime-parented fish to its owned Ghostty exec session" {
+    _auto_window_tools
+    export FAKE_APPLY_PARENT='6000 fish'
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
 }
