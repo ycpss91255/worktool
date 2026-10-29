@@ -4397,3 +4397,19 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "milestone-handover lists maintainer reservations separately without claiming passes (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".claude.pendingHuman=["subjective feel", "human gate", "maintainer host", "locked desktop rc=3", "no graphical session rc=3"]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and (.result.pendingHuman | length == 5) and
+        .result.verdict == ("交出判定：可交出 head=" + ("a" * 40)) and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") | .prompt |
+            contains("Separate defects, agent-obtainable evidence gaps and pendingHuman") and
+            contains("Never present pendingHuman as passed") and contains("locked desktop rc=3") and
+            contains("no graphical session rc=3")] | all) and
+        (.calls[] | select(.role == "independent-assess:") | .prompt |
+            contains("subjective feel, human gates, the maintainer own host") and
+            contains("locked desktop or no graphical session") and contains("rc=3"))' <<<"${output}"
+    assert_success
+}
