@@ -4033,3 +4033,14 @@ STUB
     assert_equal "$(_count_calls distrobox)" 0
     assert_equal "$(_count_calls just)" 0
 }
+
+@test "#663: no-backup restore needs no window tools" {
+    _auto_window_tools
+    local path
+    path="$(_path_without gapplication)"
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'no-backup=1'
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+}
