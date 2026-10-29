@@ -3903,10 +3903,44 @@ STUB
         [ -f "${directory}/before" ]
         [ -f "$(_backup_dir)/manifest" ]
         [ ! -e "${STATE}/closed" ]
-        # Simulate manual closure before the separate restore invocation.
+        # Simulate manual closure and removal of its retained evidence.
         rm -f "${STATE}/window-directory"
+        rm -rf -- "${directory}"
         _realbox_quiet 5.2.3
     done
+}
+
+@test "#663: full 5.2 retains apply window evidence after cleanup inventory failure" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/cleanup-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# The fixture reuses process IDs for the restore window; keep its baseline fresh.
+if [[ "$*" == '-e -o pid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+    printf '1 init\n'
+    exit 0
+fi
+if [[ -f "${FAKE_STATE_DIR}/window-mode" && $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+    if [[ "$*" == '-p 4240 -o pgid=,sid=' ]]; then
+        cp "${FAKE_STATE_DIR}/window-directory" "${FAKE_STATE_DIR}/retained-window"
+        touch "${FAKE_STATE_DIR}/cleanup-inventory"
+    elif [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+        exit 1
+    fi
+fi
+exec "${FAKE_STATE_DIR}/cleanup-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 1
+    assert_line 'restore-window-ok=1'
+    local directory
+    directory="$(cat "${STATE}/retained-window")"
+    [ -f "${directory}/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    refute_line 'backup-removed=1'
+    assert_line 'cleanup-rc=1'
+    assert_output --partial 'keeping ownership evidence'
 }
 
 @test "#663: a final sweep inventory timeout keeps ownership evidence at its deadline" {

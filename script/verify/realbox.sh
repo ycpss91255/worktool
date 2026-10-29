@@ -1168,6 +1168,15 @@ _52_restore_require_tools() {
     _52_window_require_tools
 }
 
+_52_windows_closed() {
+    local directory
+    for directory in "${CFGBK_B}"/window.*; do
+        [[ -d "${directory}" ]] || continue
+        guard_fail "window cleanup incomplete at ${directory}; keeping ownership evidence"
+        return 1
+    done
+}
+
 _52_step3_restore() {
     verify_restore_allowed || return 1
     _52_restore_require_tools || return $?
@@ -1203,6 +1212,7 @@ _52_step3_restore() {
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
     _52_cleanup_state || _rc=1
+    _52_windows_closed || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"
