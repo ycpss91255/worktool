@@ -874,17 +874,34 @@ _52_find_window() {
     return 3
 }
 
+_52_stop_window() {
+    local root="$1" signal deadline current
+    for signal in HUP TERM KILL; do
+        current="$(_52_window_root "${root}")" || return 0
+        [[ "${current}" == "${root}" ]] || return 1
+        guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
+        deadline=$((SECONDS + 1))
+        while (( SECONDS < deadline )); do
+            current="$(_52_window_root "${root}")" || return 0
+            [[ "${current}" == "${root}" ]] || return 1
+            sleep 0.1 || return 1
+        done
+    done
+    guard_fail "owned Ghostty window did not close; keeping ownership evidence"
+    return 1
+}
+
 _52_close_window() {
     [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
-    local rows pid comm root group rc=0
+    local rows pid comm root group pgid sid rc=0
     rows="$(guard_timed 1 ps -e -o pid=,comm=)" || return 1
     while read -r pid comm; do
         root="$(_52_window_root "${pid}")" || continue
         [[ "${root}" == "${pid}" ]] || continue
         group="$(guard_timed 1 ps -p "${root}" -o pgid=,sid=)" || { rc=1; continue; }
-        read -r _52_PGID _52_SID <<<"${group}"
-        if [[ "${_52_PGID}" == "${root}" && "${_52_SID}" == "${root}" ]]; then
-            guard_timed 1 kill -HUP -- "-${root}" || rc=1
+        read -r pgid sid <<<"${group}"
+        if [[ "${pgid}" == "${root}" && "${sid}" == "${root}" ]]; then
+            _52_stop_window "${root}" || rc=1
         else
             log_warn "owned window is not an isolated session; keeping ownership evidence"
             rc=1

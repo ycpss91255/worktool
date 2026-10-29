@@ -3561,3 +3561,18 @@ STUB
     run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
     assert_output ''
 }
+
+@test "#663: cleanup escalates only its owned window when HUP is ignored" {
+    _auto_window_tools
+    cat >"${STUBS}/kill" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
+if [[ "$1" == -TERM ]]; then
+    rm -f "${FAKE_STATE_DIR}/window-directory"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-HUP -- -4240\n-TERM -- -4240'
+}
