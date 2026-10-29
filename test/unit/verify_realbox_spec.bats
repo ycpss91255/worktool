@@ -3536,7 +3536,8 @@ case "$*" in
                 printf '%s fish\n' "${FAKE_AUTO_RESTORE_PID:-4344}"
             fi
             printf '5556 fish\n'
-        fi ;;
+        fi
+        exit "${FAKE_WINDOW_BASELINE_RC:-0}" ;;
     '-p 900 -o comm=') printf 'ghostty\n' ;;
     '-p 4240 -o ppid=,args=') printf '900 /bin/sh\n' ;;
     '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-4240 fish}" ;;
