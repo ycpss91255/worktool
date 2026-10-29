@@ -28,8 +28,9 @@ STUB
 _event() {
     local payload
     payload="$(jq -n --arg e "$1" --arg id "${2:-call-1}" \
+        --arg command "${3:-ghostty +new-window --help}" \
         '{hook_event_name:$e,session_id:"session-1",tool_use_id:$id,
-        tool_name:"Bash",tool_input:{command:"ghostty +new-window --help"}}')"
+        tool_name:"Bash",tool_input:{command:$command}}')"
     run_hook enforce_ghostty_gui "${payload}"
 }
 
@@ -47,6 +48,25 @@ _event() {
     assert_output $'-HUP -- 102\n-HUP -- 201'
 }
 
+@test "unrelated commands never track or close the maintainer's new windows" {
+    local event
+    for event in PostToolUse PostToolUseFailure; do
+        _event PreToolUse unrelated 'just test lint'
+        assert_success
+        printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 fish' >> "${PS_FIXTURE}"
+        _event "${event}" unrelated 'just test lint'
+        assert_success
+        run cat "${SIGNAL_LOG}"
+        assert_output ''
+        [[ ! -d "${HOOK_DIR}/../state/ghostty-windows" ]]
+        # No baseline, invocation identity or readable process list is needed.
+        rm -- "${PS_FIXTURE}"
+        run_hook enforce_ghostty_gui "$(hook_json 'printf done' | jq --arg e "${event}" \
+            '. + {hook_event_name:$e}')"
+        assert_success
+    done
+}
+
 @test "failed Bash commands close new window shells and consume their snapshot" {
     _event PreToolUse
     assert_success
@@ -59,6 +79,29 @@ _event() {
     assert_output '-HUP -- 102'
     run find "${HOOK_DIR}/../state/ghostty-windows" -name '*.json'
     assert_output ''
+}
+
+@test "raw Ghostty mentions retain cleanup through help flags and shell wrappers" {
+    local command event
+    for command in 'ghostty +new-window --help' 'env ghostty +new-window' \
+        'bash -c "GhOsTtY +new-window"' 'timeout 5s ghostty' \
+        $'bash <<\'SH\'\nghostty +new-window\nSH'; do
+        for event in PostToolUse PostToolUseFailure; do
+            sed -i '/^102 /d' "${PS_FIXTURE}"
+            : > "${SIGNAL_LOG}"
+            _event PreToolUse wrapped "${command}"
+            assert_success
+            printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 fish' >> "${PS_FIXTURE}"
+            _event "${event}" wrapped "${command}"
+            assert_success
+            run cat "${SIGNAL_LOG}"
+            assert_output '-HUP -- 102'
+            # A tracked command still fails explicitly without its snapshot.
+            _event "${event}" wrapped "${command}"
+            assert_failure 2
+            assert_output --partial 'cannot compare window snapshots'
+        done
+    done
 }
 
 @test "malformed process lists are reported instead of erasing pre-existing windows" {

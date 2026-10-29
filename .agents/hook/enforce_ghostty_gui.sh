@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guard signals and clean up new window shells after each Bash command.
+# Guard signals and clean up new window shells for Bash text mentioning Ghostty.
 # shellcheck source-path=SCRIPTDIR/lib
 _HOOK_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=hook_bootstrap.sh

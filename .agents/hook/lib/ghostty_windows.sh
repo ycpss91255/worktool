@@ -89,10 +89,11 @@ ghostty_windows_post() {
 }
 
 ghostty_windows_track() {
-    local event path
+    local event path command
+    command="$(hook_command)"
+    # Use the same raw-text scope before and after wrapped or inline launches.
+    [[ "${command,,}" == *ghostty* ]] || return 0
     event="$(hook_field '.hook_event_name')"
-    # Empty compatibility probes do not represent Bash executions.
-    [[ -n "$(hook_command)" ]] || return 0
     event="${event:-PreToolUse}"
     path="$(ghostty_windows_path)"
     case "${event}" in
