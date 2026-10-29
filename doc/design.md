@@ -172,7 +172,7 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 
 ```just
 mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
-mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status | enter [--box N] [-- CMD]
 
 # Default: list the namespaces.
 default:

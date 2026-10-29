@@ -10,9 +10,8 @@
 # "$@" hands the arguments over VERBATIM (argv boundaries intact), nothing
 # is validated here and no usage text lives here: `just box help` runs each
 # script's --help in turn, and an unknown option is refused by the script
-# itself (`<script>.sh: unknown option '<x>' (see --help)`, exit 2). M2 had
-# assemble as the only verb; M3 adds bench (#150, #162), setup / status (#21),
-# enter (#180) and later rm.
+# itself (`<script>.sh: unknown option '<x>' (see --help)`, exit 2). The box
+# verbs are assemble, bench (#150, #162), setup / status (#21) and enter (#180).
 #
 # The one-line comment above each recipe is what `just --list` shows.
 
