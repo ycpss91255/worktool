@@ -952,8 +952,9 @@ _52_current_root() {
 
 _52_stop_window() {
     local root="$1" signal deadline current rc
-    local _52_DEADLINE=$((SECONDS + 5))
+    local _52_DEADLINE=${_52_DEADLINE:-$((SECONDS + 4))}
     for signal in HUP TERM KILL; do
+        (( SECONDS < _52_DEADLINE )) || break
         rc=0
         current="$(_52_current_root "${root}")" || rc=$?
         [[ "${rc}" -ne 1 ]] || return 0
@@ -962,9 +963,10 @@ _52_stop_window() {
             return 1
         }
         [[ "${current}" == "${root}" ]] || return 1
+        (( SECONDS < _52_DEADLINE )) || break
         guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
         deadline=$((SECONDS + 1))
-        while (( SECONDS < deadline )); do
+        while (( SECONDS < deadline && SECONDS < _52_DEADLINE )); do
             rc=0
             current="$(_52_current_root "${root}")" || rc=$?
             [[ "${rc}" -ne 1 ]] || return 0
@@ -993,6 +995,7 @@ _52_sweep_window() {
         root="$(_52_window_root "${pid}")" || continue
         [[ "${root}" == "${pid}" ]] || continue
         found=1
+        (( SECONDS < _52_DEADLINE )) || return 1
         group="$(guard_timed 1 ps -p "${root}" -o pgid=,sid=)" || { rc=1; continue; }
         read -r pgid sid <<<"${group}"
         if [[ "${pgid}" == "${root}" && "${sid}" == "${root}" ]]; then

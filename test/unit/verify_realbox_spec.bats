@@ -4044,3 +4044,45 @@ STUB
     assert_equal "$(_count_calls just)" 0
     assert_equal "$(_count_calls distrobox)" 0
 }
+
+@test "#663: late sweep escalation shares the documented five-second bound" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/bound-ps"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
+printf apply >"${FAKE_STATE_DIR}/window-mode"
+exit 1
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    if [[ ! -f "${FAKE_STATE_DIR}/sweep-ms" ]]; then
+        date +%s%3N >"${FAKE_STATE_DIR}/sweep-ms"
+    fi
+    read -r started <"${FAKE_STATE_DIR}/sweep-ms"
+    if (( $(date +%s%3N) - started < 2000 )); then
+        printf '1 0 init\n900 1 ghostty\n'
+        exit 0
+    fi
+    /bin/sleep 0.4
+fi
+exec "${FAKE_STATE_DIR}/bound-ps" "$@"
+STUB
+    cat >"${STUBS}/kill" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    local finished started
+    finished="$(date +%s%3N)"
+    read -r started <"${STATE}/sweep-ms"
+    assert_failure 1
+    [ "$((finished - started))" -lt 5000 ]
+    [ -f "$(cat "${STATE}/window-directory")/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+}
