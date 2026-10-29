@@ -119,7 +119,8 @@ _registered_names() {
         "UserPromptSubmit||${_p}/remind_no_emoji.sh" \
         "Stop||${_p}/enforce_reply_language.sh" \
         "PostToolUse|Bash|${_p}/enforce_ghostty_gui.sh" \
-        "PostToolUse|Bash|${_p}/remind_main_sync.sh")"
+        "PostToolUse|Bash|${_p}/remind_main_sync.sh" \
+        "PostToolUseFailure|Bash|${_p}/enforce_ghostty_gui.sh")"
 }
 
 @test "codex registers shared Claude Bash hooks except the Claude identity guard" {
