@@ -979,8 +979,8 @@ _52_sweep_window() {
     local _52_ROWS pid parent comm root group pgid sid rc=0 found=0
     local -A _52_PARENTS=() _52_COMMS=()
     _52_process_snapshot || {
-        (( SECONDS < _52_DEADLINE )) && return 1
-        return 2
+        guard_fail "cannot inventory owned window; keeping ownership evidence"
+        return 1
     }
     while read -r pid parent comm; do
         (( SECONDS < _52_DEADLINE )) || break

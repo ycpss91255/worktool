@@ -3908,3 +3908,32 @@ STUB
         _realbox_quiet 5.2.3
     done
 }
+
+@test "#663: a final sweep inventory timeout keeps ownership evidence at its deadline" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/sweep-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    if [[ ! -e "${FAKE_STATE_DIR}/sweep-start" ]]; then
+        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/sweep-start"
+        exit 1
+    fi
+    read -r started <"${FAKE_STATE_DIR}/sweep-start"
+    if (( EPOCHSECONDS - started >= 3 )); then /bin/sleep 2; fi
+    printf '1 0 init\n900 1 ghostty\n'
+    exit 0
+fi
+exec "${FAKE_STATE_DIR}/sweep-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    local directory
+    directory="$(cat "${STATE}/window-directory")"
+    [ -d "${directory}" ]
+    [ -f "${directory}/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    [ ! -e "${STATE}/closed" ]
+}
