@@ -137,3 +137,14 @@ STUB
         assert_output --partial 'Do not signal host Ghostty'
     done
 }
+
+@test "cleanup never signals a Ghostty process nested under another Ghostty process" {
+    _event PreToolUse
+    assert_success
+    printf '%s\n' '200 100 Thu Oct 29 10:01:00 2026 Ghostty' \
+        '201 200 Thu Oct 29 10:01:01 2026 zsh' >> "${PS_FIXTURE}"
+    _event PostToolUse
+    assert_success
+    run cat "${SIGNAL_LOG}"
+    assert_output '-HUP -- 201'
+}

@@ -27,7 +27,8 @@ ghostty_windows_read() {
     jq -ce '
         . as $all |
         [$all[] | select((.comm | ascii_downcase) == "ghostty")] as $parents |
-        [$all[] as $child | $parents[] | select(.pid == $child.ppid) |
+        [$all[] | select((.comm | ascii_downcase) != "ghostty") as $child |
+        $parents[] | select(.pid == $child.ppid) |
         {pid:$child.pid, start:$child.start, parent:.pid, parentStart:.start}]
     ' <<<"${processes}" || ghostty_windows_error 'cannot extract window shells.'
 }
