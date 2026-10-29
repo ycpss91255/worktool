@@ -2131,6 +2131,31 @@ STUB
     assert_success
 }
 
+@test "5.2: a product whose distrobox isolation path overwrites the whole distrobox.conf is caught after the apply, and the backup puts it back (GAP A)" {
+    _auto_window_tools
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_distrobox_overwrites "${_repo}"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp "$(_distrobox_conf)" "${STATE}/baseline-distrobox.conf"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 1
+    assert_line "setup-rc=0"
+    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=LOST"
+    assert_output --partial "lost content the user had before this run"
+    assert_output --partial "the apply destroyed user content -- run 5.2.3 to restore it from the backup"
+    # Damage must be detected before restore can hide it; skip the apply window.
+    refute_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line "restore-files-ok=1"
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline-distrobox.conf" "$(_distrobox_conf)"
+    assert_success
+}
+
 @test "5.2: existing distrobox blocks survive a successful baseline restore" {
     _seed_distrobox_conf
     printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
