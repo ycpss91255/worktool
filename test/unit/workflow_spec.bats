@@ -4409,7 +4409,25 @@ Reason: 僅修正文句，沒有行為變更。'; do
             contains("Never present pendingHuman as passed") and contains("locked desktop rc=3") and
             contains("no graphical session rc=3")] | all) and
         (.calls[] | select(.role == "independent-assess:") | .prompt |
-            contains("subjective feel, human gates, the maintainer own host") and
+            contains("subjective feel, human gates") and
             contains("locked desktop or no graphical session") and contains("rc=3"))' <<<"${output}"
     assert_success
+}
+
+@test "milestone-handover blocks every defect even with passing evidence (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].defects=["documented output mismatch", "wrong comment", "test defect"] |
+            ."independent-assess:".claude.passingEvidence=[{item:"documented output mismatch",head:("a" * 40),evidence:"rc=0"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and (.result.defects | length == 3) and
+            .result.issues == .result.defects and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            (.calls[] | select(.role == "independent-assess:") | .prompt |
+                contains("Code, documentation and test defects") and contains("documentation versus actual output mismatches") and
+                contains("wrong comments") and contains("Any defect in either report blocks"))' <<<"${output}"
+        assert_success
+    done
 }
