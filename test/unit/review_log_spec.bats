@@ -35,3 +35,26 @@ _check() {
         BASE="$(git -C "$REPO" rev-parse HEAD)"
     done
 }
+
+@test "review-log check allows existing review files and acceptance evidence (#675)" {
+    local path
+    mkdir -p "$REPO/doc/evidence"
+    printf 'old notes\n' > "$REPO/doc/evidence/old-review.md"
+    git -C "$REPO" add .
+    git -C "$REPO" commit -q -m 'Existing evidence'
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'updated\n' >> "$REPO/doc/evidence/old-review.md"
+    for path in README.md tdd.sh negative/example.txt; do
+        mkdir -p "$REPO/doc/evidence/$(dirname "$path")"
+        printf 'acceptance\n' > "$REPO/doc/evidence/$path"
+    done
+    git -C "$REPO" add .
+    git -C "$REPO" commit -q -m 'Update acceptance evidence'
+    run _check
+    assert_success
+    assert_output ''
+    git -C "$REPO" rm -q doc/evidence/old-review.md
+    git -C "$REPO" commit -q -m 'Remove old review'
+    run _check
+    assert_success
+}

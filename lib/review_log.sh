@@ -18,7 +18,7 @@ _review_log_check_commit() {
     local repo="$1" sha="$2" files path bad=0
     files="$(mktemp)" || return 1
     if ! git -C "$repo" diff-tree --root --first-parent -m -r --no-renames \
-        --no-commit-id --name-only -z "$sha" > "$files"; then
+        --diff-filter=A --no-commit-id --name-only -z "$sha" > "$files"; then
         rm -f "$files"
         return 1
     fi
