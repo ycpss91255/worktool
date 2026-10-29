@@ -174,6 +174,6 @@ CREDITS
     [[ "${section}" == *'ghostty +new-window'* ]]
     [[ "${section}" == *'主觀項目，不影響 rc'* ]]
     [[ "${section}" != *'輸入 PID'* ]]
-    [[ "${section}" != *'echo $fish_pid'* ]]
+    [[ "${section}" != *"echo \$fish_pid"* ]]
     [[ "${section}" != *'需互動 tty'* ]]
 }

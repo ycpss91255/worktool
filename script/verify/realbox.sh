@@ -832,11 +832,11 @@ _52_open_window() {
 # Ownership comes from our unique working directory on the direct Ghostty
 # child, never just from a process appearing after the snapshot.
 _52_window_root() {
-    local pid="$1" row parent args cwd depth
+    local pid="$1" row parent _args cwd depth
     for ((depth=0; depth<64; depth++)); do
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
         row="$(guard_timed 1 ps -p "${pid}" -o ppid=,args=)" || return 1
-        read -r parent args <<<"${row}"
+        read -r parent _args <<<"${row}"
         [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" != "${pid}" ]] || return 1
         if cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null)" && [[ "${cwd}" == "${_52_WINDOW_DIR}" ]]; then
             row="$(guard_timed 1 ps -p "${parent}" -o comm=)" || return 1
