@@ -76,3 +76,22 @@ _check() {
     assert_success
     assert_output ''
 }
+
+@test "review-log check rejects a review file added by the merge itself (#675)" {
+    git -C "$REPO" branch -m main
+    git -C "$REPO" branch topic
+    git -C "$REPO" commit -q --allow-empty -m 'Main work'
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q topic
+    git -C "$REPO" commit -q --allow-empty -m 'Topic work'
+    git -C "$REPO" merge -q --no-ff --no-commit main
+    mkdir -p "$REPO/doc/evidence"
+    printf 'new notes\n' > "$REPO/doc/evidence/675-review-round-1.md"
+    git -C "$REPO" add .
+    git -C "$REPO" commit -q -m 'Add review notes during merge'
+
+    run _check
+    assert_failure 1
+    assert_output --partial 'doc/evidence/675-review-round-1.md'
+    assert_output --partial 'PR comment'
+}
