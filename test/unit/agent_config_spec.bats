@@ -118,6 +118,7 @@ _registered_names() {
         "UserPromptSubmit||${_p}/remind_workflow_tdd.sh" \
         "UserPromptSubmit||${_p}/remind_no_emoji.sh" \
         "Stop||${_p}/enforce_reply_language.sh" \
+        "PostToolUse|Bash|${_p}/enforce_ghostty_gui.sh" \
         "PostToolUse|Bash|${_p}/remind_main_sync.sh")"
 }
 
@@ -136,6 +137,11 @@ _registered_names() {
     cp -R "${REPO_ROOT}/.agents" "${_repo}/.agents"
     cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
     git init -q "${_repo}"
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf '%s\n' '#!/usr/bin/env bash' \
+        "printf '%s\\n' '1 0 Thu Oct 29 10:00:00 2026 init'" > "${BATS_TEST_TMPDIR}/bin/ps"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/ps"
+    export PATH="${BATS_TEST_TMPDIR}/bin:${PATH}"
 
     while IFS= read -r _command; do
         run bash -c 'cd "$1" && printf "%s" "$2" | bash -c "$3"' _ \

@@ -83,3 +83,12 @@ _event() {
     run cat "${SIGNAL_LOG}"
     assert_output ''
 }
+
+@test "both agents register window cleanup after Bash commands" {
+    local config
+    for config in .claude/settings.json .codex/hooks.json; do
+        run jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[] |
+            select(.command | contains("/enforce_ghostty_gui.sh"))' "${REPO_ROOT}/${config}"
+        assert_success
+    done
+}
