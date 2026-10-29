@@ -4127,6 +4127,21 @@ SH
     assert_success
 }
 
+@test "pr-loop retries unreadable RED evidence once and reports a read failure (#678)" {
+    local record json
+    for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
+        '{"evidence":"{\"body\":\"\",\"comments\":[{}]}"}'; do
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        assert_success
+        json="$output"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            .result.blockingLeft == ["無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑"] and
+            ([.calls[] | select(.role | startswith("red-record:"))] | length == 2) and
+            ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+        assert_success
+    done
+}
+
 @test "pr-loop blocks missing RED records before codex review (#607)" {
     local record json
     for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do

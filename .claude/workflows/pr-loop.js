@@ -298,26 +298,39 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
 }
 
 // Only transport raw GitHub data through the agent; decide the gate here.
-const checkRedRecord = async (pr) => {
+const readRedRecord = async (pr) => {
   const query = '{body: (if (.body | test("^## RED"; "m")) then .body else "" end), comments: [.comments[] | select(.body | test("^## RED"; "m")) | {body}]}'
-  try {
-    const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
-      label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
-      schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
-    })
-    const data = JSON.parse(fetched.evidence)
-    if (typeof data.body !== 'string' || !Array.isArray(data.comments)) return false
-    const exemption = data.body.match(/^## RED exemption[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
-    if (exemption && /^Reason:[ \t]*\S[^\r\n]*$/m.test(exemption[1])) return true
-    return [data.body, ...data.comments.map(comment => comment.body)].some(body => {
-      if (typeof body !== 'string') return false
-      const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
-      if (!section) return false
-      return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
-        /^\s*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
-        /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
-    })
-  } catch { return false }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
+        label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
+        schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+      })
+      const data = JSON.parse(fetched.evidence)
+      if (!data || typeof data.body !== 'string' || !Array.isArray(data.comments) ||
+          data.comments.some(comment => !comment || typeof comment.body !== 'string')) throw new Error('Invalid RED evidence')
+      return data
+    } catch {
+      // A failed read is retried once; it never proves absence of RED.
+    }
+  }
+  return null
+}
+
+const checkRedRecord = async (pr) => {
+  const data = await readRedRecord(pr)
+  if (!data) return 'unreadable'
+  const exemption = data.body.match(/^## RED exemption[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+  if (exemption && /^Reason:[ \t]*\S[^\r\n]*$/m.test(exemption[1])) return 'present'
+  const present = [data.body, ...data.comments.map(comment => comment.body)].some(body => {
+    if (typeof body !== 'string') return false
+    const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+    if (!section) return false
+    return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
+      /^\s*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
+      /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
+  })
+  return present ? 'present' : 'missing'
 }
 
 // Read fresh remote state rather than trusting an implementer's completion prose.
@@ -538,7 +551,8 @@ if (!CODEX) {
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
-  if (!await checkRedRecord(pr)) return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['PR 缺少 RED 紀錄或讀取失敗；請補上實際指令與失敗 TAP 輸出後重跑'] })
+  const redRecord = await checkRedRecord(pr)
+  if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄或讀取失敗；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
