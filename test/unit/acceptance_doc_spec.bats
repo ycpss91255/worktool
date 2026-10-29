@@ -167,7 +167,7 @@ CREDITS
     local paragraph section entry
     paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
     for entry in 'realbox.sh' 'verify_realbox_spec.bats' 'doc/acceptance.md' 'test/unit/acceptance_doc_spec.bats'; do
-        [[ "${paragraph}" == *"\`${entry}\`（#663／PR #665"* ]]
+        [[ "${paragraph}" == *"\`${entry}\`（#663／PR #668"* ]]
     done
     section="$(sed -n '/^  - \[ \] 5\.2 開終端/,/^  - \[ \] 5\.3 先建/p' "${REPO_ROOT}/doc/acceptance.md")"
     [[ "${section}" == *'Ghostty 1.3.1'*'reload-config'* ]]
