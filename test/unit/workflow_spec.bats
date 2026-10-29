@@ -4431,3 +4431,19 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "milestone-handover never treats unclassifiable reports as empty success (#669)" {
+    local mutation replies
+    for mutation in '."independent-assess:"="unclassifiable"' \
+        '."independent-assess:".error="cannot classify"' \
+        '."independent-assess:".codex.error="cannot classify codex"' \
+        'del(."independent-assess:".claude.defects)' \
+        '."independent-assess:".claude.pendingHuman=[""]'; do
+        replies="$(_handover_replies | jq "${mutation}")"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
