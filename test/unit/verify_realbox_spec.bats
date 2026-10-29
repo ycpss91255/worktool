@@ -3820,3 +3820,33 @@ STUB
     assert_output --partial 'new shell timed out'
     [[ $((ended - started)) -le 10 ]]
 }
+
+@test "#663: a queued owned window appearing after timeout is closed by the final sweep" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/late-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    if [[ ! -e "${FAKE_STATE_DIR}/queued-at" ]]; then
+        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/queued-at"
+    fi
+    read -r queued <"${FAKE_STATE_DIR}/queued-at"
+    export FAKE_NO_WINDOW=1
+    if (( EPOCHSECONDS - queued >= 11 )); then
+        export FAKE_NO_WINDOW=0
+        printf 'late-window-visible\n' >"${FAKE_STATE_DIR}/late-visible"
+    fi
+fi
+exec "${FAKE_STATE_DIR}/late-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    assert [ -f "${STATE}/late-visible" ]
+    assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
+    [ -f "$(_backup_dir)/manifest" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
