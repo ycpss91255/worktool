@@ -64,3 +64,17 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         assert_failure 2
     done
 }
+
+@test "unrelated commands documentation text and script files remain allowed" {
+    local command
+    for command in 'printf "%s" "ghostty +new-window"' \
+        'rg ghostty script/' 'command -v ghostty' 'kill -HUP 1234' \
+        'pkill bash' 'killall sleep' 'kill $(pgrep bash)' \
+        'printf "%s" ghostty; kill "$other_pid"' \
+        'bash script/verify/realbox.sh' 'just verify realbox --allow-real-box 5.2' \
+        $'cat <<\'DOC\'\nghostty +new-window\npkill ghostty\nDOC'; do
+        _check "${command}"
+        assert_success
+        assert_output ''
+    done
+}

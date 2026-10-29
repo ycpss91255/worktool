@@ -34,8 +34,8 @@ _check_signal() {
         _word="$(hook_word "${_encoded}")"
         [[ "${_word,,}" != *ghostty* ]] || _deny_gui
         # PID substitutions lose their body in the shared launch parser.
-        # A signal with an expansion and a Ghostty reference is ambiguous.
-        if hook_word_has_expansion "${_encoded}" && [[ "${_command,,}" == *ghostty* ]]; then
+        # Fail closed when a PID lookup and an expanded signal target coexist.
+        if hook_word_has_expansion "${_encoded}" && [[ "${_ghostty_lookup}" == 1 ]]; then
             _deny_gui
         fi
     done
@@ -48,6 +48,17 @@ _check_launch() {
     _launch="$(_hook_strip_wrappers "${_launch#"${_lead}"}")"
     read -r -a _words <<<"${_launch}"
     _exe="$(hook_word "${_words[0]:-}")"
+    if [[ "${2:-}" == lookup ]]; then
+        case "${_exe##*/}" in
+            pgrep|pidof|ps)
+                local _word
+                for _word in "${_words[@]:1}"; do
+                    _word="$(hook_word "${_word}")"
+                    [[ "${_word,,}" != *ghostty* ]] || _ghostty_lookup=1
+                done ;;
+        esac
+        return 0
+    fi
     case "${_exe##*/}" in
         ghostty) _check_query "${_words[@]:1}" ;;
         kill|pkill|killall) _check_signal "${_words[@]:1}" ;;
@@ -56,11 +67,15 @@ _check_launch() {
 
 main() {
     hook_read_input
-    local _launch _command
+    local _launch _command _launches _ghostty_lookup=0
     _command="$(hook_command)"
+    _launches="$(hook_subcommands_raw "${_command}")" || _deny_gui
+    while IFS= read -r _launch; do
+        _check_launch "${_launch}" lookup
+    done <<<"${_launches}"
     while IFS= read -r _launch; do
         _check_launch "${_launch}"
-    done < <(hook_subcommands_raw "${_command}")
+    done <<<"${_launches}"
     hook_allow
 }
 main "$@"
