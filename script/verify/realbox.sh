@@ -897,14 +897,14 @@ _52_apply_window_root() {
 
 _52_find_window() {
     # Reserve one second for the final bounded probe before the ten-second limit.
-    local mode="$1" _52_DEADLINE=$((SECONDS + 9)) _52_ROWS pid parent comm root apply_root
+    local mode="$1" _52_DEADLINE=$((SECONDS + 9)) _52_ROWS pid parent comm root apply_root nonfish=''
     local -A _52_PARENTS=() _52_COMMS=()
     while (( SECONDS < _52_DEADLINE )); do
         if ! _52_process_snapshot; then
             (( SECONDS < _52_DEADLINE )) && return 3
             break
         fi
-        apply_root=''
+        apply_root='' nonfish=''
         if [[ "${mode}" == apply ]]; then
             apply_root="$(_52_apply_window_root)" || { sleep 0.1; continue; }
         fi
@@ -921,6 +921,11 @@ _52_find_window() {
             fi
             [[ -n "${root}" ]] || continue
             if [[ "${mode}" == apply ]]; then
+                # Login wrappers share the owned cwd before exec into fish.
+                if [[ "${comm}" != fish ]]; then
+                    nonfish="${pid}"
+                    continue
+                fi
                 _52_window_evidence "${pid}"
             else
                 _52_restored_window_evidence "${pid}"
@@ -929,6 +934,10 @@ _52_find_window() {
         done <<<"${_52_ROWS}"
         sleep 0.1 || return 3
     done
+    if [[ -n "${nonfish}" ]]; then
+        _52_window_evidence "${nonfish}"
+        return $?
+    fi
     log_warn "Ghostty new shell timed out; acceptance inconclusive"
     return 3
 }

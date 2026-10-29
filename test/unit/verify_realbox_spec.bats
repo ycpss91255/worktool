@@ -3662,6 +3662,37 @@ STUB
     assert_equal "$(wc -l <"${STATE}/closed")" 2
 }
 
+@test "#663: apply waits for a transient owned sh to become fish" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/transient-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "${FAKE_STATE_DIR}/window-directory"
+    && $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+    if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
+        if [[ ! -f "${FAKE_STATE_DIR}/wrapper-seen" ]]; then
+            touch "${FAKE_STATE_DIR}/wrapper-seen" "${FAKE_STATE_DIR}/wrapper-active"
+            FAKE_WINDOW_COMM=sh exec "${FAKE_STATE_DIR}/transient-ps" "$@"
+        fi
+        rm -f "${FAKE_STATE_DIR}/wrapper-active"
+    elif [[ "$*" == '-p 4242 -o comm='
+        && -f "${FAKE_STATE_DIR}/wrapper-active" ]]; then
+        printf 'sh\n'
+        exit 0
+    fi
+fi
+exec "${FAKE_STATE_DIR}/transient-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    [ -f "${STATE}/wrapper-seen" ]
+    [ ! -f "${STATE}/wrapper-active" ]
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
+}
+
 @test "#663: standalone apply times out inconclusively and keeps restore available" {
     _auto_window_tools
     _realbox_quiet 5.2.1
