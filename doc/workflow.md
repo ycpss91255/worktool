@@ -131,6 +131,7 @@ full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...
 仍保留說明與留言的來源區別以判定豁免。
 由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
 會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
+成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。
 缺少紀錄或重讀失敗時，回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
 也不會宣告 mergeable。補上原始證據後可接續同一 PR。
 `milestone-fanout` 呼叫同一份 `pr-loop`，因此沿用此檢查。

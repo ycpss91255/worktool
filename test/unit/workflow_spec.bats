@@ -4142,18 +4142,16 @@ SH
     done
 }
 
-@test "pr-loop blocks missing RED records before codex review (#607)" {
-    local record json
-    for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
-        assert_success
-        json="$output"
-        run jq -e '.error == null and .result.codexVerdict == "blocked" and
-            (.result.blockingLeft | join(" ") | contains("RED")) and
-            ([.calls[].role | startswith("red-record:")] | any) and
-            ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
-        assert_success
-    done
+@test "pr-loop reports genuine RED absence without retrying the read (#678)" {
+    run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' \
+        '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'
+    assert_success
+    local json="$output"
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] and
+        ([.calls[] | select(.role | startswith("red-record:"))] | length == 1) and
+        ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+    assert_success
 }
 
 @test "pr-loop accepts only shell assignment prefixes in RED commands (#619)" {

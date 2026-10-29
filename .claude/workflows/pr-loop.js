@@ -552,7 +552,7 @@ if (!CODEX) {
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
   const redRecord = await checkRedRecord(pr)
-  if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄或讀取失敗；請補上實際指令與失敗 TAP 輸出後重跑'] })
+  if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
