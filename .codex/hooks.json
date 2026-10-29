@@ -6,6 +6,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_ghostty_gui.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/test-must-use-docker.sh\""
           },
           {

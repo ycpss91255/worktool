@@ -92,6 +92,7 @@ _registered_names() {
     assert_success
     local _p="\${CLAUDE_PROJECT_DIR}/.claude/hook"
     assert_output "$(printf '%s\n' \
+        "PreToolUse|Bash|${_p}/enforce_ghostty_gui.sh" \
         "PreToolUse|Bash|${_p}/test-must-use-docker.sh" \
         "PreToolUse|Bash|${_p}/enforce_local_test_scope.sh" \
         "PreToolUse|Bash|${_p}/enforce_long_job_timeout.sh" \
