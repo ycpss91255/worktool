@@ -200,13 +200,18 @@ _listed_names() {
 }
 
 @test "#665: box descriptions do not promise rm in M3" {
+    local _stale_promise='((adds|再加|later)[[:space:]]+rm|adds[[:space:]]+enter[[:space:]]*/[[:space:]]*rm)([[:space:][:punct:]]|$)'
     _just --list
     assert_success
-    refute_output --regexp 'M3.*rm'
+    refute_output --regexp "${_stale_promise}"
 
-    run grep -F 'justfile.box' "${REPO_ROOT}/doc/structure.md"
-    assert_success
-    refute_output --regexp 'M3.*rm'
+    run grep -nE "${_stale_promise}" \
+        "${REPO_ROOT}/justfile" \
+        "${REPO_ROOT}/doc/structure.md" \
+        "${REPO_ROOT}/script/box/justfile.box" \
+        "${REPO_ROOT}/doc/design.md"
+    assert_failure 1
+    assert_output ""
 }
 
 @test "just box lists assemble, bench, default, enter, help (alias h), setup and status only" {
