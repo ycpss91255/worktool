@@ -78,3 +78,21 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         assert_output ''
     done
 }
+
+@test "wrappers paths compound commands and inline shell scripts preserve the guard" {
+    local command
+    for command in 'builtin kill -HUP $(pgrep ghostty)' \
+        '/usr/bin/ghostty +new-window --help' '"ghostty" +new-window -h' \
+        'env DISPLAY=:0 ghostty +new-window' 'sudo -u user ghostty +reload-config' \
+        'timeout 5s env DISPLAY=:0 ghostty' 'true && ghostty +new-window' \
+        'echo $(ghostty +new-window)' 'bash -c "ghostty +new-window --help"' \
+        "eval 'pkill ghostty'" $'sh <<\'SCRIPT\'\nghostty +new-window -h\nSCRIPT'; do
+        _check "${command}"
+        assert_failure 2
+    done
+    for command in 'timeout 5 env X=1 /usr/bin/ghostty +help' \
+        'bash -c "ghostty --version"' 'command ghostty +show-config'; do
+        _check "${command}"
+        assert_success
+    done
+}

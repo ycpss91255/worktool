@@ -48,6 +48,10 @@ _check_launch() {
     _launch="$(_hook_strip_wrappers "${_launch#"${_lead}"}")"
     read -r -a _words <<<"${_launch}"
     _exe="$(hook_word "${_words[0]:-}")"
+    if [[ "${_exe}" == builtin && "$(hook_word "${_words[1]:-}")" == kill ]]; then
+        _words=("${_words[@]:1}")
+        _exe=kill
+    fi
     if [[ "${2:-}" == lookup ]]; then
         case "${_exe##*/}" in
             pgrep|pidof|ps)
