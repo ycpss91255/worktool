@@ -3874,3 +3874,37 @@ STUB
     assert_line 'cleanup-rc=1'
     [ -f "$(_backup_dir)/manifest" ]
 }
+
+@test "#663: failed cleanup inventories preserve owned window evidence" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/cleanup-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${FAKE_CLEANUP_INVENTORY:-}" ]]; then
+    if [[ "$*" == '-p 4240 -o pgid=,sid=' ]]; then
+        touch "${FAKE_STATE_DIR}/cleanup-inventory"
+    elif [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+        if [[ "${FAKE_CLEANUP_INVENTORY}" == timeout ]]; then /bin/sleep 2; fi
+        exit 1
+    fi
+fi
+exec "${FAKE_STATE_DIR}/cleanup-ps" "$@"
+STUB
+    local mode directory
+    for mode in failure timeout; do
+        rm -f "${STATE}/cleanup-inventory" "${STATE}/closed"
+        _realbox_quiet 5.2.1
+        FAKE_CLEANUP_INVENTORY="${mode}" run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 1
+        assert_line --partial 'window-evidence: pid=4242 comm=fish'
+        directory="$(cat "${STATE}/window-directory")"
+        [ -d "${directory}" ]
+        [ -f "${directory}/before" ]
+        [ -f "$(_backup_dir)/manifest" ]
+        [ ! -e "${STATE}/closed" ]
+        # Simulate manual closure before the separate restore invocation.
+        rm -f "${STATE}/window-directory"
+        _realbox_quiet 5.2.3
+    done
+}

@@ -932,24 +932,31 @@ _52_find_window() {
 _52_current_root() {
     local _52_ROWS
     local -A _52_PARENTS=() _52_COMMS=()
-    _52_process_snapshot || return 1
-    _52_window_root "$1"
+    _52_process_snapshot || return 2
+    [[ -n "${_52_COMMS[$1]+present}" ]] || return 1
+    _52_window_root "$1" || return 2
 }
 
 _52_stop_window() {
-    local root="$1" signal deadline current
+    local root="$1" signal deadline current rc
     local _52_DEADLINE=$((SECONDS + 5))
     for signal in HUP TERM KILL; do
-        current="$(_52_current_root "${root}")" || {
-            (( SECONDS < _52_DEADLINE )) && return 0
+        rc=0
+        current="$(_52_current_root "${root}")" || rc=$?
+        [[ "${rc}" -ne 1 ]] || return 0
+        [[ "${rc}" -eq 0 ]] || {
+            guard_fail "cannot inventory owned window; keeping ownership evidence"
             return 1
         }
         [[ "${current}" == "${root}" ]] || return 1
         guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
         deadline=$((SECONDS + 1))
         while (( SECONDS < deadline )); do
-            current="$(_52_current_root "${root}")" || {
-                (( SECONDS < _52_DEADLINE )) && return 0
+            rc=0
+            current="$(_52_current_root "${root}")" || rc=$?
+            [[ "${rc}" -ne 1 ]] || return 0
+            [[ "${rc}" -eq 0 ]] || {
+                guard_fail "cannot inventory owned window; keeping ownership evidence"
                 return 1
             }
             [[ "${current}" == "${root}" ]] || return 1
