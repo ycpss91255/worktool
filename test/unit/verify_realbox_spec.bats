@@ -637,7 +637,12 @@ STUB
 
 # Run realbox.sh for real (not under `run`), so $output stays whatever the
 # case under test put there.
-_realbox_quiet() { "${REALBOX}" --allow-real-box "$@" >/dev/null 2>&1; }
+_realbox_quiet() {
+    if [[ "$1" == 5.2.2 && ! -f "${STATE}/auto-ready" ]]; then
+        _auto_window_tools
+    fi
+    "${REALBOX}" --allow-real-box "$@" >/dev/null 2>&1
+}
 
 _reset_log() {
     : >"${STATE}/calls.log"
@@ -1430,24 +1435,21 @@ STUB
 }
 
 _window_input() {
-    cat >"${STATE}/window-run" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-rc=0
-"${REALBOX}" --allow-real-box 5.2 || rc=$?
-printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/window-rc"
-STUB
-    chmod +x "${STATE}/window-run"
-    _install_restore_window_tools
-    printf '%s\n' "$1" 4344 | script -q -c \
-        "\"${STATE}/window-run\"" /dev/null
+    [[ -f "${STUBS}/ps" ]] || _fake_window_process
+    if [[ ! -f "${STATE}/auto-ready" ]]; then
+        _install_restore_window_tools
+        _auto_window_ipc
+    fi
+    local rc=0
+    "${REALBOX}" --allow-real-box 5.2 </dev/null || rc=$?
+    printf '%s\n' "${rc}" >"${STATE}/window-rc"
 }
 
-@test "#362: 5.2 refuses typed yes without objective window evidence" {
+@test "#362: 5.2 uses objective evidence without reading supplied input" {
     export REALBOX
     run _window_input yes
-    assert_equal "$(cat "${STATE}/window-rc")" "1"
-    assert_output --partial "expected a fish PID"
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence:"
     refute_output --partial "container-marker=confirmed"
     assert_output --partial "restore-ok=1"
     assert_output --partial "backup-removed=1"
@@ -1457,7 +1459,7 @@ _fake_window_process() {
     cat >"${STUBS}/docker" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == 'exec dev readlink /proc/self/ns/mnt' ]] || exit 2
+[[ "$*" == "exec ${FAKE_BOX_NAME:-dev} readlink /proc/self/ns/mnt" ]] || exit 2
 printf '%s\n' "${FAKE_DEV_NS-mnt:[200]}"
 exit "${FAKE_DEV_NS_RC:-0}"
 STUB
@@ -1511,8 +1513,8 @@ STUB
     _fake_window_process
     export FAKE_WINDOW_BASELINE='4242 fish'
     run _window_input 4242
-    assert_equal "$(cat "${STATE}/window-rc")" "1"
-    assert_output --partial "fish PID 4242 existed before setup"
+    assert_equal "$(cat "${STATE}/window-rc")" "3"
+    assert_output --partial "new shell timed out"
     assert_output --partial "restore-ok=1"
     export FAKE_WINDOW_BASELINE_RC=1
     run _window_input 4242
@@ -1522,16 +1524,12 @@ STUB
     assert_output --partial "restore-ok=0"
 }
 
-@test "#362: 5.2 explains asynchronous reload for an already running Ghostty" {
+@test "#362: 5.2 automatically reloads an already running Ghostty" {
     export REALBOX
     run _window_input yes
-    assert_output --partial "Ghostty already running"
-    assert_output --partial "Ctrl+Shift+,"
-    assert_output --partial "asynchronous"
-    assert_output --partial "config.ghostty"
-    assert_output --partial "start a new Ghostty process"
-    assert_output --partial "Never close your existing windows"
-    assert_output --partial "echo \$fish_pid"
+    assert_output --partial 'ghostty-reload=1'
+    assert_output --partial 'ghostty-new-window=1'
+    refute_output --partial 'Enter the fish PID'
 }
 
 @test "#362: realbox help names the five actual backup files" {
@@ -1614,7 +1612,11 @@ STUB
             malformed) export FAKE_WINDOW_NS='different' ;;
         esac
         run _window_input 4242
-        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        if [[ "${_mode}" == non-fish ]]; then
+            assert_equal "$(cat "${STATE}/window-rc")" "3"
+        else
+            assert_equal "$(cat "${STATE}/window-rc")" "1"
+        fi
         refute_output --partial "container-marker=confirmed"
         assert_output --partial "restore-ok=1"
     done
@@ -1763,6 +1765,7 @@ STUB
 # --- 5.2 step 2: re-validate, then apply -------------------------------------
 
 @test "#487: 5.2 apply overrides saved terminal none and restores the original state bytes" {
+    _auto_window_tools
     local _repo _state="${HOME}/.config/worktool/config"
     _repo="$(_repo_copy)"
     _seed_shared_state
@@ -1784,6 +1787,7 @@ STUB
 }
 
 @test "#487: 5.2 apply overrides saved auto-enter no and box with the manifest decisions" {
+    _auto_window_tools
     local _repo _state="${HOME}/.config/worktool/config"
     _repo="$(_repo_copy)"
     sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
@@ -1808,6 +1812,7 @@ STUB
 }
 
 @test "5.2.2 happy path re-validates the published backup and applies" {
+    _auto_window_tools
     _realbox_quiet 5.2.1
     run "${REALBOX}" --allow-real-box 5.2.2
     assert_success
@@ -2035,7 +2040,7 @@ STUB
 @test "5.2 without a tty says the subjective check cannot be made, and still restores" {
     run "${REALBOX}" --allow-real-box 5.2
     assert_failure
-    assert_output --partial "stdin is not a tty"
+    assert_output --partial "gapplication not found"
     # The restore ran anyway: the config is back and the box is gone.
     assert_line "restore-files-ok=1"
     assert_line "restore-ok=0"
@@ -2061,7 +2066,7 @@ STUB
     assert_failure
     assert_line "backup-covers=5/5"
     assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
-    assert_output --partial "stdin is not a tty"
+    assert_output --partial "gapplication not found"
     assert_line "restore-files-ok=1"
     assert_line "restore-ok=0"
     assert_line "blocks=0"
@@ -2086,7 +2091,7 @@ STUB
     assert_output --partial "lost content the user had before this run"
     assert_output --partial "run 5.2.3 to restore it from the backup"
     # The subjective check is never reached; the restore still runs.
-    assert_output --partial "re-run 5.2.3 from an interactive shell"
+    assert_output --partial "gapplication not found"
     assert_line "restore-files-ok=1"
     assert_line "restore-ok=0"
     refute_line "backup-removed=1"
@@ -2772,10 +2777,9 @@ STUB
 @test "#471: restore cannot complete before reload evidence" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure 1
-    assert_output --partial 'Reload the RESTORED Ghostty config'
-    assert_output --partial 'Ctrl+Shift+,'
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
+    assert_output --partial 'Ghostty new shell timed out'
     refute_line 'restore-ok=1'
     assert_line 'restore-window-ok=0'
     refute_line 'backup-removed=1'
@@ -2805,18 +2809,12 @@ fi
 exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" "$@"
 STUB
     chmod +x "${STUBS}/ps" "${STUBS}/readlink"
-    cat >"${STATE}/restore-run" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-rc=0
-"${REALBOX}" --allow-real-box 5.2.3 || rc=$?
-printf '%s\n' "${rc}" >"${FAKE_STATE_DIR}/restore-rc"
-STUB
-    printf '%s\n' "$1" | script -q -c "bash '${STATE}/restore-run'" /dev/null | tr -d '\r'
-    return "$(cat "${STATE}/restore-rc")"
+    export FAKE_AUTO_RESTORE=1 FAKE_AUTO_RESTORE_PID=4242
+    _auto_window_ipc
+    "${REALBOX}" --allow-real-box 5.2.3 </dev/null
 }
 
-@test "#513: the interactive restore prompt explains Ctrl-D on stderr" {
+@test "#513: automated restore needs no terminal prompt" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
     export ORIGINAL_REALBOX="${REALBOX}" RESTORE_STDERR="${STATE}/restore-stderr"
@@ -2830,14 +2828,14 @@ STUB
     assert_success
     run cat "${RESTORE_STDERR}"
     assert_success
-    assert_line --partial 'Ctrl-D skips confirmation'
+    refute_line --partial 'Ctrl-D'
 }
 
 @test "5.2.3: retry after box cleanup does not reclaim the removed box" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
-    run "${REALBOX}" --allow-real-box 5.2.3
-    assert_failure 1
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
     assert_line 'dev-gone=1'
     assert_line 'restore-window-ok=0'
     assert_equal "$(_count_calls 'distrobox rm')" '1'
@@ -3485,14 +3483,29 @@ STUB
 _auto_window_tools() {
     _fake_window_process
     _install_restore_window_tools
+    _auto_window_ipc
+}
+
+_auto_window_ipc() {
     cp "${STUBS}/ps" "${STATE}/auto-ps"
     cp "${STUBS}/readlink" "${STATE}/auto-readlink"
-    rm "${STUBS}/ghostty"
+    rm -f "${STUBS}/ghostty"
+    : >"${STATE}/auto-ready"
+    _auto_window_commands
+    _auto_window_processes
+}
+
+_auto_window_commands() {
     cat >"${STUBS}/ghostty" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/windows"
 printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
+if [[ -f "${2#--working-directory=}/../processes-before-restore-window" || "${FAKE_AUTO_RESTORE:-0}" == 1 ]]; then
+    printf restore >"${FAKE_STATE_DIR}/window-mode"
+else
+    printf apply >"${FAKE_STATE_DIR}/window-mode"
+fi
 STUB
     cat >"${STUBS}/gapplication" <<'STUB'
 #!/usr/bin/env bash
@@ -3505,6 +3518,10 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
 rm -f "${FAKE_STATE_DIR}/window-directory"
 STUB
+    chmod +x "${STUBS}/"{ghostty,gapplication,kill}
+}
+
+_auto_window_processes() {
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -3513,15 +3530,18 @@ case "$*" in
         printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
         if [[ -f "${FAKE_STATE_DIR}/window-directory" && "${FAKE_NO_WINDOW:-0}" == 0 ]]; then
             printf '4240 distrobox\n'
-            if [[ $(wc -l <"${FAKE_STATE_DIR}/windows") == 1 ]]; then
-                printf '4242 fish\n'
+            if [[ $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+                printf '4242 %s\n' "${FAKE_WINDOW_COMM:-fish}"
             else
-                printf '4344 fish\n'
+                printf '%s fish\n' "${FAKE_AUTO_RESTORE_PID:-4344}"
             fi
+            printf '5556 fish\n'
         fi ;;
     '-p 900 -o comm=') printf 'ghostty\n' ;;
     '-p 4240 -o ppid=,args=') printf '900 /bin/sh\n' ;;
-    '-p 4242 -o ppid=,args=') printf '4240 fish\n' ;;
+    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-4240 fish}" ;;
+    '-p 5556 -o ppid=,args=') printf '900 fish\n' ;;
+    '-p 800 -o ppid=,args=') printf '4240 /repo/script/box/enter.sh\n' ;;
     '-p 4344 -o ppid=,args=') printf '4240 fish\n' ;;
     '-p 4240 -o pgid=,sid=') printf '4240 4240\n' ;;
     *) exec "${FAKE_STATE_DIR}/auto-ps" "$@" ;;
@@ -3535,7 +3555,7 @@ case "$*" in
     *) exec "${FAKE_STATE_DIR}/auto-readlink" "$@" ;;
 esac
 STUB
-    chmod +x "${STUBS}/"{ghostty,gapplication,kill,ps,readlink}
+    chmod +x "${STUBS}/"{ps,readlink}
 }
 
 @test "#663: non-tty 5.2 automatically reloads and verifies its new windows" {
@@ -3545,6 +3565,13 @@ STUB
     assert_line --partial 'window-evidence: pid=4242 comm=fish'
     assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
     assert_line 'backup-removed=1'
+    local expected
+    expected="$(awk '/stubbed 非 tty/{section=1; next}
+        section && /```text/{block=1; next}
+        block && /```/{exit}
+        block {sub(/^      /, ""); print}' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ -n "${expected}" ]]
+    assert_output --partial "${expected}"
     assert_equal "$(wc -l <"${STATE}/reloads")" 2
     assert_equal "$(wc -l <"${STATE}/closed")" 2
 }
