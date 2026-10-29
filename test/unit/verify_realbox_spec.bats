@@ -2060,7 +2060,7 @@ STUB
     [ ! -e "$(_backup_dir)" ]
 }
 
-# --- 5.2 and the user's own content (GAP A) ----------------------------------
+# --- 5.2 missing-tool preflight preserves user content -----------------------
 # These run the REAL product out of a copy of the checkout, so the output is
 # what it really prints. The scenario is the maintainer's: the state file
 # contains a user-config link; bare setup still writes distrobox.conf
@@ -2104,6 +2104,30 @@ STUB
     assert_equal "$(_count_calls distrobox)" 0
     [ ! -e "$(_backup_dir)" ]
     run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+}
+
+# --- 5.2 and the user's own content (GAP A) ----------------------------------
+
+@test "5.2: the apply keeps the user's own content in every managed file (GAP A)" {
+    _auto_window_tools
+    local _repo
+    _repo="$(_repo_copy)"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp "$(_distrobox_conf)" "${STATE}/baseline-distrobox.conf"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line "backup-covers=5/5"
+    assert_line "setup-rc=0"
+    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline-distrobox.conf" "$(_distrobox_conf)"
     assert_success
 }
 
