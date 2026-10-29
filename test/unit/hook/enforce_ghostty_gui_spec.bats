@@ -96,3 +96,14 @@ _check() { run_hook enforce_ghostty_gui "$(hook_json "$1")"; }
         assert_success
     done
 }
+
+@test "unreadable command payloads fail closed while empty payloads remain allowed" {
+    local payload
+    for payload in '{' '{"tool_input":{"command":["ghostty","+new-window"]}}'; do
+        run_hook enforce_ghostty_gui "${payload}"
+        assert_failure 2
+        assert_output --partial 'fail closed'
+    done
+    run_hook enforce_ghostty_gui '{}'
+    assert_success
+}

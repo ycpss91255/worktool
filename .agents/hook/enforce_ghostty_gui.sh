@@ -71,6 +71,12 @@ _check_launch() {
 
 main() {
     hook_read_input
+    if ! jq -e 'type == "object" and
+        (.tool_input.command == null or (.tool_input.command | type == "string"))' \
+        <<<"${HOOK_INPUT}" >/dev/null 2>&1; then
+        hook_block 'Cannot read the Bash command payload (fail closed).' \
+            'Provide a literal command; use documentation, source code or Docker stubs for Ghostty.'
+    fi
     local _launch _command _launches _ghostty_lookup=0
     _command="$(hook_command)"
     _launches="$(hook_subcommands_raw "${_command}")" || _deny_gui
