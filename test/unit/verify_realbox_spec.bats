@@ -3850,3 +3850,27 @@ STUB
     run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
     assert_output ''
 }
+
+@test "#663: failed ownership confirmation outranks a restore window timeout" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    mkdir "${STATE}/confirmation"
+    cp "${STUBS}/distrobox" "${STATE}/confirmation/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == list && ! -e "${FAKE_STATE_DIR}/confirmation-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/confirmation-failed"
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/confirmation/distrobox" "$@"
+STUB
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    assert_failure 1
+    assert_line --partial "cannot confirm box 'dev'"
+    assert_line 'restore-window-ok=0'
+    assert_output --partial 'new shell timed out'
+    assert_line 'cleanup-rc=1'
+    [ -f "$(_backup_dir)/manifest" ]
+}

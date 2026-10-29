@@ -416,9 +416,10 @@ _cleanup_run() {
 
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
-    local _rc=0
+    local _rc=0 _restore_rc=0
     _finish_box_confirmation "${CFGBK_B}" || _rc=1
-    _52_step3_restore || _rc=$?
+    _52_step3_restore || _restore_rc=$?
+    [[ "${_rc}" -eq 1 ]] || _rc="${_restore_rc}"
     printf 'cleanup-rc=%s\n' "${_rc}"
     return "${_rc}"
 }
