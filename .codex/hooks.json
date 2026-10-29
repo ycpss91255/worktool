@@ -6,6 +6,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_ghostty_gui.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/test-must-use-docker.sh\""
           },
           {
@@ -84,6 +88,10 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/enforce_ghostty_gui.sh\""
+          },
           {
             "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.agents/hook/remind_main_sync.sh\""

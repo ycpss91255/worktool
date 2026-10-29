@@ -30,8 +30,9 @@
 // Prints ONE JSON object: { result, error, calls: [{label, role, phase, schema, prompt}],
 // ran: [{cmd, rc}] }.
 
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync, renameSync, utimesSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync, renameSync, utimesSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -54,16 +55,30 @@ const ran = []
 const workflowCalls = []
 const logs = []
 
-// Check the body before each shell launch, as registered PreToolUse hooks do.
+let hookCalls = 0
+let hookPath
+// Test images ship busybox ps; give hooks a procps-shaped process table.
+const hookEnv = (root) => {
+  if (!hookPath) {
+    hookPath = mkdtempSync(`${tmpdir()}/workflow-hook-bin-`)
+    writeFileSync(`${hookPath}/ps`, "#!/bin/sh\nprintf '%s\\n' '1 0 Thu Oct 29 10:00:00 2026 init'\n", { mode: 0o755 })
+  }
+  return { ...process.env, PATH: `${hookPath}:${process.env.PATH}`, CLAUDE_PROJECT_DIR: root }
+}
+// Check the body before each shell launch, as registered Bash hooks do.
 const checkHooks = (cmd) => {
   if (process.env.HANDOVER_REAL_HOOKS) {
     const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '')
     const settings = JSON.parse(readFileSync(`${root}/.claude/settings.json`))
-    const input = JSON.stringify({ cwd: root, tool_name: 'Bash', tool_input: { command: cmd } })
-    for (const entry of settings.hooks.PreToolUse.filter(entry => entry.matcher === 'Bash')) {
-      for (const hook of entry.hooks) {
-        const path = hook.command.replace('${CLAUDE_PROJECT_DIR}', root)
-        execFileSync('bash', [path], { input, env: { ...process.env, CLAUDE_PROJECT_DIR: root }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Claude sends the session and tool-use identity on every hook event.
+    const identity = { session_id: 'fixture-session', tool_use_id: `fixture-${++hookCalls}` }
+    for (const event of ['PreToolUse', 'PostToolUse']) {
+      const input = JSON.stringify({ cwd: root, hook_event_name: event, ...identity, tool_name: 'Bash', tool_input: { command: cmd } })
+      for (const entry of (settings.hooks[event] ?? []).filter(entry => entry.matcher === 'Bash')) {
+        for (const hook of entry.hooks) {
+          const path = hook.command.replace('${CLAUDE_PROJECT_DIR}', root)
+          execFileSync('bash', [path], { input, env: hookEnv(root), stdio: ['pipe', 'pipe', 'pipe'] })
+        }
       }
     }
   }

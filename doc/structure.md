@@ -168,6 +168,18 @@ commit,所有分支 worktree 放在 `<workspace>/worktree/<name>`,agent 暫存�
 
 ## Agent hook
 
+`enforce_ghostty_gui.sh` 僅在 Bash 原始指令文字含 `ghostty`（不分大小寫）時
+追蹤視窗；PreToolUse 記錄快照，PostToolUse／PostToolUseFailure 比對並以 HUP
+關閉新增的 Ghostty 直接子 shell，既有視窗不受影響。原始文字比對涵蓋
+`env`、`timeout`、`bash -c` 與 heredoc 包裝，也包含文件文字中的提及。
+無關指令在前後事件都略過追蹤，不需要快照；符合條件的指令缺少快照時明確報錯。
+對 Ghostty 行程發訊號的阻擋維持不變，包含原始文字未提及 Ghostty 的數字 PID。
+
+已知限制：agent 執行提到 ghostty 的指令期間，維護者剛好自己開的新視窗可能會被一起關掉。
+原始指令未提及 ghostty、但腳本內部開的視窗，由腳本自己負責關閉。
+背景指令在 PostToolUse 之後才開的視窗不會被清理；PostToolUse／PostToolUseFailure
+未觸發時，快照會留在被 gitignore 的 `.agents/state/ghostty-windows/`。
+
 `.codex/hooks.json` 以 `Bash` matcher 註冊 `.claude/settings.json` 裡共用的
 PreToolUse Bash hook，但排除 `enforce_main_session_coordinates_only.sh`：Codex 的
 hook payload 沒有 Claude 的 `agent_id`，不能以此判斷主 session 與實作者。
