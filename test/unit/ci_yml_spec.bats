@@ -565,12 +565,12 @@ _run_aggregator() {
     assert_success
     assert_output --partial 'fetch-depth: 0'
     assert_output --partial 'persist-credentials: false'
-    assert_output --partial 'EVENT: ${{ github.event_name }}'
-    assert_output --partial 'PR_BASE: ${{ github.event.pull_request.base.sha }}'
-    assert_output --partial 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'
-    assert_output --partial 'PUSH_BEFORE: ${{ github.event.before }}'
-    assert_output --partial 'PUSH_AFTER: ${{ github.event.after }}'
-    assert_output --partial 'DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}'
+    assert_output --partial "EVENT: \${{ github.event_name }}"
+    assert_output --partial "PR_BASE: \${{ github.event.pull_request.base.sha }}"
+    assert_output --partial "PR_HEAD: \${{ github.event.pull_request.head.sha }}"
+    assert_output --partial "PUSH_BEFORE: \${{ github.event.before }}"
+    assert_output --partial "PUSH_AFTER: \${{ github.event.after }}"
+    assert_output --partial "DEFAULT_REF: refs/remotes/origin/\${{ github.event.repository.default_branch }}"
     script="$(_job_block review-log | awk '
         /^        run: \|$/ { script = 1; next }
         script { print substr($0, 11) }
