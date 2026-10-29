@@ -72,7 +72,7 @@ main() {
         hook_block 'Cannot read the Bash command payload (fail closed).' \
             'Provide a literal command; use documentation, source code or Docker stubs for Ghostty.'
     fi
-    if [[ "$(hook_field '.hook_event_name')" == PostToolUse ]]; then
+    if [[ "$(hook_field '.hook_event_name')" =~ ^PostToolUse(Failure)?$ ]]; then
         ghostty_windows_track
         hook_allow
     fi

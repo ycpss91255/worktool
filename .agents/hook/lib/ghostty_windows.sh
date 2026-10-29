@@ -97,7 +97,7 @@ ghostty_windows_track() {
     path="$(ghostty_windows_path)"
     case "${event}" in
         PreToolUse) ghostty_windows_pre "${path}" ;;
-        PostToolUse) ghostty_windows_post "${path}" ;;
+        PostToolUse|PostToolUseFailure) ghostty_windows_post "${path}" ;;
         *) ghostty_windows_error 'unknown hook event.' ;;
     esac
 }

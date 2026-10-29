@@ -47,6 +47,18 @@ _event() {
     assert_output $'-HUP -- 102\n-HUP -- 201'
 }
 
+@test "failed Bash commands close new window shells and consume their snapshot" {
+    _event PreToolUse
+    assert_success
+    printf '%s\n' '102 100 Thu Oct 29 10:01:00 2026 fish' >> "${PS_FIXTURE}"
+    _event PostToolUseFailure
+    assert_success
+    run cat "${SIGNAL_LOG}"
+    assert_output '-HUP -- 102'
+    run find "${HOOK_DIR}/../state/ghostty-windows" -name '*.json'
+    assert_output ''
+}
+
 @test "malformed process lists are reported instead of erasing pre-existing windows" {
     local event mode
     for event in PreToolUse PostToolUse; do
