@@ -32,9 +32,21 @@ _review_log_check_commit() {
     return "$bad"
 }
 
+_review_log_enforcing_commit() {
+    local repo="$1" enforcing
+    enforcing="$(git -C "$repo" log --format=%H --reverse --diff-filter=A -- lib/review_log.sh)" || return 1
+    enforcing="${enforcing%%$'\n'*}"
+    if [[ -z "$enforcing" ]]; then
+        log_error 'Cannot find enforcing commit for lib/review_log.sh; fetch full history (fail closed).'
+        return 1
+    fi
+    printf '%s\n' "$enforcing"
+}
+
 review_log_check_commits() {
     local repo="$1" commits sha bad=0
     shift
+    _review_log_enforcing_commit "$repo" > /dev/null || return 1
     commits="$(git -C "$repo" rev-list "$@" --)" || return 1
     while IFS= read -r sha; do
         [[ -n "$sha" ]] || continue

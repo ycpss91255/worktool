@@ -9,13 +9,33 @@ setup() {
     git -C "$REPO" config user.name 'Test User'
     git -C "$REPO" config user.email '12345+test@users.noreply.github.com'
     git -C "$REPO" commit -q --allow-empty -m base
+    PRE_RULE="$(git -C "$REPO" rev-parse HEAD)"
+    _introduce_rule
     BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+_introduce_rule() {
+    mkdir -p "$REPO/lib"
+    cp "${LIB_DIR}/review_log.sh" "$REPO/lib/review_log.sh"
+    git -C "$REPO" add lib/review_log.sh
+    git -C "$REPO" commit -q -m 'Introduce review log check'
 }
 
 _check() {
     # shellcheck source=../../lib/review_log.sh
     source "${LIB_DIR}/review_log.sh"
     review_log_check_commits "$REPO" "$BASE..HEAD"
+}
+
+@test "review-log check fails closed when the introduction point is missing (#684)" {
+    git -C "$REPO" checkout -q -b old-topic "$PRE_RULE"
+    git -C "$REPO" commit -q --allow-empty -m 'Old topic work'
+    BASE="$PRE_RULE"
+
+    run _check
+    assert_failure 1
+    assert_output --partial 'Cannot find enforcing commit for lib/review_log.sh'
+    assert_output --partial 'fetch full history (fail closed)'
 }
 
 @test "review-log check rejects newly committed review files even if later deleted (#675)" {
