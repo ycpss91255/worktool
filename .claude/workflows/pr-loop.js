@@ -295,6 +295,7 @@ const collectReview = (review) => {
 const autoBodyCommand = (pr, conclusion) => {
   const input = `${WT}/.agents/state/pr-loop-body-input.json`
   const output = `${WT}/.agents/state/pr-loop-body.md`
+  const status = `${WT}/.agents/state/pr-loop-body-status`
   const program = `
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
@@ -320,9 +321,10 @@ if ((from < 0) !== (to < 0) || (from >= 0 && to < from)) throw Error('Malformed 
 const body = from < 0 ? data.body + '\\n\\n' + section :
   data.body.slice(0, from) + section + data.body.slice(to + end.length);
 fs.writeFileSync(${JSON.stringify(output)}, body);
+fs.writeFileSync(${JSON.stringify(status)}, body === data.body ? 'unchanged' : 'changed');
 process.stdout.write(body === data.body ? 'unchanged' : 'changed');
 `
-  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && changed=$(node -e ${sq(program)}) && if [ "$changed" = changed ]; then gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && printf '%s' "$changed"`
+  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && node -e ${sq(program)}\`. Then in a separate Bash call run \`cd ${sq(WT)} && if [ "$(cat ${sq(status)})" = changed ]; then gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && cat ${sq(status)}`
 }
 const updateAutoBody = (pr, conclusion) => agent(`Run this fixed command verbatim in the foreground; never write or paraphrase the body yourself: \`${autoBodyCommand(pr, conclusion)}\`. Return ok true only on exit 0 and changed true only when stdout is changed.`, {
   label: `${RUN_ID} auto-body:#${pr}:${conclusion}`, phase: 'CI', effort: 'low', agentType: 'general-purpose',

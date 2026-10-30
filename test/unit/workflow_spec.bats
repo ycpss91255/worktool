@@ -4847,3 +4847,15 @@ SH
         "- 1111111 mention <!-- pr-loop:auto:end -->\n\nCI: green\n<!-- pr-loop:auto:end -->\nHuman tail")' "$root/pr.json"
     assert_success
 }
+
+@test "pr-loop publishes a fresh machine body through registered Bash hooks (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    HANDOVER_REAL_HOOKS=1 _pl_auto_body
+    run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$output"
+    assert_success
+    run jq -e '.body | contains("CI: green")' "$root/pr.json"
+    assert_success
+}

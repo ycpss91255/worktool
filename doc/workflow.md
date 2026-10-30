@@ -160,7 +160,8 @@ workflow 在推送後、等待 CI 前，以固定命令讀取
 只有單邊標記或順序錯誤時停止，避免覆蓋人寫文字。
 
 命令將結果寫入 worktree 的 `.agents/state/pr-loop-body.md`，
-使用字面路徑的 `gh pr edit --body-file` 發布，內容相同時不 edit。
+先完成產檔，再用另一個 Bash 呼叫、以字面路徑的 `gh pr edit --body-file` 發布，
+讓 PreToolUse hook 檢查本次將發布的檔案；內容相同時不 edit。
 CI 內部修正並推送後也必須先執行同一固定命令，再等待 CI；
 機械段落不由 agent 撰寫。workflow 結束前再以最終 CI 結論更新；
 若成功結論造成 edit，會再等該版說明的 CI 並要求 head 相同。
