@@ -3886,6 +3886,7 @@ STUB
 # and ownership decisions remain shipped code; subprocesses share logical time.
 _control_window_clock() {
     local repo
+    export FAKE_CLOCK_DELAY="${1:-0}"
     repo="$(_repo_copy)"
     REALBOX="${repo}/script/verify/realbox.sh"
     printf '0\n' >"${STATE}/clock"
@@ -3893,6 +3894,7 @@ _control_window_clock() {
     cat >"${STUBS}/sleep" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${FAKE_CLOCK_DELAY}" != 0 ]]; then /bin/sleep "${FAKE_CLOCK_DELAY}"; fi
 read -r now <"${FAKE_STATE_DIR}/clock"
 printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
 STUB
@@ -3901,7 +3903,7 @@ STUB
 
 @test "#663: late sweep escalation shares the documented five-second bound" {
     _auto_window_tools
-    _control_window_clock
+    _control_window_clock "${WORKTOOL_STRESS:+3.2}"
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/bound-ps"
     cat >"${STUBS}/ghostty" <<'STUB'
