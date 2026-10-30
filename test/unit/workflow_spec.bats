@@ -4684,3 +4684,21 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "milestone-handover waits for a latest in-progress run instead of accepting older success (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {completedAt:"2026-10-30T01:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"IN_PROGRESS",conclusion:null,
+                completedAt:null,runCreatedAt:"2026-10-30T02:00:00Z",url:"https://example.test/running"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e --arg role "${stage}:" '
+            .result.status != "prepared" and
+            (.calls[] | select(.role == $role) | .prompt |
+                contains("A latest IN_PROGRESS or QUEUED entry means wait, never green") and
+                contains("total elapsed wall-clock cap of 7200 seconds"))' <<<"${output}"
+        assert_success
+    done
+}

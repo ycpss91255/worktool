@@ -483,10 +483,13 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    Sync、Head、Evidence 共用同一份 check 選取規則：同名只保留最新一筆，依 `completedAt`，
    未完成時依 workflow run 的建立時間 `runCreatedAt`（必要時查詢取得）判斷；已被同 workflow
    新 run 取代的舊 run 不參與成敗判定。時間缺失或相同而無法判定先後時保留候選，
-   除非全部成功，否則封閉失敗。只排除 `milestone-gate-approval`，其餘最新結果仍須 COMPLETED／SUCCESS。
+   除非全部成功，否則封閉失敗。最新一筆為 IN_PROGRESS／QUEUED 或缺少必要 check 時，
+   三階段都分輪前景等待（每輪最多 540 秒、總計最多 7200 秒且不重設；Sync 沿用既有等待預算），
+   每次 poll 重查 head 與 checks，套用相同選取規則；最新失敗、查詢失敗或 head 改變立即停止。
+   上限到期仍未完成才回報含 pending 名稱、狀態、URL 的錯誤，不能判綠。只排除 `milestone-gate-approval`，其餘最新結果仍須 COMPLETED／SUCCESS。
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
-   缺少、查詢失敗或未綠即回報並停止。
+   最新仍在執行或缺少必要 check 時依共用規則等待；失敗或逾時即回報並停止。
 3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
    初始化失敗即停止，不進入 Findings。
    所有 scratch 報告都視為 workflow 產物：Findings、Machine、Evidence agent 只回傳內容字串，
