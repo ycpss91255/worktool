@@ -3872,8 +3872,26 @@ STUB
     assert_output ''
 }
 
+# Replace only Bash's clock in a private script copy. All deadline arithmetic
+# and ownership decisions remain shipped code; subprocesses share logical time.
+_control_window_clock() {
+    local repo
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    printf '0\n' >"${STATE}/clock"
+    sed -i 's/SECONDS/$(<"${FAKE_STATE_DIR}\/clock")/g' "${REALBOX}"
+    cat >"${STUBS}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+read -r now <"${FAKE_STATE_DIR}/clock"
+printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
+STUB
+    chmod +x "${STUBS}/sleep"
+}
+
 @test "#663: late sweep escalation shares the documented five-second bound" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/bound-ps"
     cat >"${STUBS}/ghostty" <<'STUB'
@@ -3887,15 +3905,11 @@ STUB
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
-    if [[ ! -f "${FAKE_STATE_DIR}/sweep-ms" ]]; then
-        date +%s%3N >"${FAKE_STATE_DIR}/sweep-ms"
-    fi
-    read -r started <"${FAKE_STATE_DIR}/sweep-ms"
-    if (( $(date +%s%3N) - started < 2000 )); then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    if (( now < 2 )); then
         printf '1 0 init\n900 1 ghostty\n'
         exit 0
     fi
-    /bin/sleep 0.4
 fi
 exec "${FAKE_STATE_DIR}/bound-ps" "$@"
 STUB
@@ -3905,11 +3919,9 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
 STUB
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
-    local finished started
-    finished="$(date +%s%3N)"
-    read -r started <"${STATE}/sweep-ms"
     assert_failure 1
-    [ "$((finished - started))" -lt 5000 ]
+    assert_equal "$(cat "${STATE}/clock")" 4
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240'
     [ -f "$(cat "${STATE}/window-directory")/before" ]
     [ -f "$(_backup_dir)/manifest" ]
 }
