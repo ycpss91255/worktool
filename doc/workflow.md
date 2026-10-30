@@ -164,7 +164,8 @@ workflow 在推送後、等待 CI 前，以固定命令讀取
 CI 內部修正並推送後也必須先執行同一固定命令，再等待 CI；
 機械段落不由 agent 撰寫。workflow 結束前再以最終 CI 結論更新；
 若成功結論造成 edit，會再等該版說明的 CI 並要求 head 相同。
-產檔時記錄既有 CI run ID 與時間；最終等待只接受該時間起建立、
+發布呼叫完成 hook 檢查後、edit 前記錄既有 CI run ID 與時間，
+排除產檔期間才出現的舊 run；最終等待只接受該時間起建立、
 不在既有清單、event 為 pull_request 且 head 相符的 `ci.yml` run，
 先以 `gh run watch --exit-status` 確認該 run 成功，再確認 PR checks。
 等待前後都用 `gh pr view --json headRefOid --jq .headRefOid` 讀取實際遠端 head；

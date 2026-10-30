@@ -300,8 +300,6 @@ const autoBodyCommand = (pr, conclusion) => {
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
 const data = JSON.parse(fs.readFileSync(${JSON.stringify(input)}, 'utf8'));
-const previous = JSON.parse(execFileSync('gh', ['run', 'list', '--repo', ${JSON.stringify(REPO)}, '--workflow', 'ci.yml', '--commit', data.headRefOid, '--limit', '100', '--json', 'databaseId'], {encoding:'utf8'}));
-fs.writeFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-edit.json`)}, JSON.stringify({previous: previous.map(run => run.databaseId), since: new Date().toISOString()}));
 const head = data.headRefOid, base = data.baseRefOid;
 if (!/^[a-f0-9]+$/.test(head) || !/^[a-f0-9]+$/.test(base)) throw Error('Invalid PR commit');
 execFileSync('git', ['fetch', 'origin', base, head], {stdio:'pipe'});
@@ -326,7 +324,7 @@ fs.writeFileSync(${JSON.stringify(output)}, body);
 fs.writeFileSync(${JSON.stringify(status)}, body === data.body ? 'unchanged' : 'changed');
 process.stdout.write(body === data.body ? 'unchanged' : 'changed');
 `
-  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && node -e ${sq(program)}\`. Then in a separate Bash call run \`cd ${sq(WT)} && if [ "$(cat ${sq(status)})" = changed ]; then gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && cat ${sq(status)}`
+  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && node -e ${sq(program)}\`. Then in a separate Bash call run \`cd ${sq(WT)} && if [ "$(cat ${sq(status)})" = changed ]; then gh run list --repo ${REPO} --workflow ci.yml --limit 100 --json databaseId > ${sq(`${WT}/.agents/state/pr-loop-ci-previous.json`)} && date -u +%Y-%m-%dT%H:%M:%SZ > ${sq(`${WT}/.agents/state/pr-loop-ci-since`)} && gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && cat ${sq(status)}`
 }
 const updateAutoBody = (pr, conclusion) => agent(`Run this fixed command verbatim in the foreground; never write or paraphrase the body yourself: \`${autoBodyCommand(pr, conclusion)}\`. Return ok true only on exit 0 and changed true only when stdout is changed.`, {
   label: `${RUN_ID} auto-body:#${pr}:${conclusion}`, phase: 'CI', effort: 'low', agentType: 'general-purpose',
@@ -338,7 +336,10 @@ const finalCICommand = (pr, sha) => {
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
 const gh = argv => execFileSync('gh', [...argv, '--repo', ${JSON.stringify(REPO)}], {encoding:'utf8'}).trim();
-const edit = JSON.parse(fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-edit.json`)}, 'utf8'));
+const edit = {
+  previous: JSON.parse(fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-previous.json`)}, 'utf8')).map(run => run.databaseId),
+  since: fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-since`)}, 'utf8').trim()
+};
 const checkHead = () => {
   if (gh(['pr', 'view', String(${pr}), '--json', 'headRefOid', '--jq', '.headRefOid']) !== ${JSON.stringify(sha)}) throw Error('PR head changed');
 };

@@ -4678,9 +4678,8 @@ Reason: 僅修正文句，沒有行為變更。'; do
     done
 }
 
-_pl_auto_body() {
-    local root="$BATS_TEST_TMPDIR/auto" mode="${1:-full}"
-    mkdir -p "$root/bin" "$root/src" "$root/worktree/n"
+_pl_auto_gh() {
+    local root="$1"
     cat > "$root/bin/gh" <<'SH'
 #!/bin/sh
 set -eu
@@ -4706,6 +4705,8 @@ case "$1 $2" in
     "run list")
         if [ "${*#*--created}" != "$*" ]; then
             printf '%s\n' '[{"databaseId":2,"createdAt":"2099-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
+        elif [ "${AUTO_DELAYED_OLD:-0}" = 1 ] && [ -e "$AUTO_ROOT/second-log" ]; then
+            printf '%s\n' '[{"databaseId":2}]'
         else
             printf '%s\n' '[{"databaseId":1,"createdAt":"2020-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
         fi ;;
@@ -4715,18 +4716,29 @@ case "$1 $2" in
     *) exit 1 ;;
 esac
 SH
+}
+
+_pl_auto_git() {
+    local root="$1"
     if [[ "${AUTO_REAL_GIT:-0}" != 1 ]]; then
     cat > "$root/bin/git" <<'SH'
 #!/bin/sh
 set -eu
 case "$1" in
     fetch) exit 0 ;;
-    log) cat "$AUTO_ROOT/commits" ;;
+    log)
+        if [ -e "$AUTO_ROOT/first-log" ]; then touch "$AUTO_ROOT/second-log"; fi
+        touch "$AUTO_ROOT/first-log"
+        cat "$AUTO_ROOT/commits" ;;
     *) exit 1 ;;
 esac
 SH
     chmod +x "$root/bin/git"
     fi
+}
+
+_pl_auto_job() {
+    local root="$1"
     cat > "$root/bin/just" <<'SH'
 #!/bin/sh
 set -eu
@@ -4744,6 +4756,19 @@ case "$2" in
     *) exit 1 ;;
 esac
 SH
+}
+
+_pl_auto_body() {
+    local root="$BATS_TEST_TMPDIR/auto" mode="${1:-full}"
+    mkdir -p "$root/bin" "$root/src" "$root/worktree/n"
+    _pl_auto_gh "$root"
+    _pl_auto_git "$root"
+    _pl_auto_job "$root"
+    # Fail immediately when a scenario deliberately exposes no fresh run.
+    if [[ "${AUTO_DELAYED_OLD:-0}" == 1 ]]; then
+        printf '#!/bin/sh\nexit 1\n' > "$root/bin/sleep"
+        chmod +x "$root/bin/sleep"
+    fi
     chmod +x "$root/bin/gh" "$root/bin/just"
     AUTO_ROOT="$root" PATH="$root/bin:$PATH" run _pl_run \
         "$(jq -cn --arg dir "$root/src" --arg mode "$mode" '{repoDir:$dir,mode:$mode}')" \
@@ -4927,4 +4952,17 @@ SH
     assert_output --partial 'ci-final-'
     run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$json"
     assert_success
+}
+
+@test "pr-loop excludes CI runs appearing during final body generation (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_REAL_CI=1 AUTO_DELAYED_OLD=1 _pl_auto_body
+    json="$output"
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$json"
+    assert_success
+    [[ ! -e "$root/watched" ]]
 }
