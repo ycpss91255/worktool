@@ -251,7 +251,7 @@ _normalize_realbox_doc_stderr() {
 }
 
 _assert_realbox_doc_streams() {
-    local section expected actual stderr=""
+    local section expected actual output="" stderr=""
     section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
     # Compare complete streams after normalizing environment-dependent fields.
     expected="$(awk '/^      ````text$/ { block=1; next }
@@ -299,7 +299,7 @@ _assert_realbox_doc_streams() {
 
 _assert_51_credits() {
     local paragraph entry path
-    paragraph="$(sed -n '/^本 PR(#157)/p' "${1:-${REPO_ROOT}/doc/acceptance.md}")"
+    paragraph="$(sed -n '/^本 PR(#157)/p' "$1")"
     for path in doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
         entry="${paragraph#*\`"${path}"\`（}"
         [[ "${entry}" != "${paragraph}" ]]
@@ -315,7 +315,7 @@ _assert_51_credits() {
 }
 
 @test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
-    _assert_51_credits
+    _assert_51_credits "${REPO_ROOT}/doc/acceptance.md"
 }
 
 @test "acceptance 5.1 credits reject a different PR or a longer PR number (#666)" {
