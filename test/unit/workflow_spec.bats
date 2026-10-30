@@ -262,7 +262,7 @@ _meta_skeleton() {
     for mode in '{}' '{"mode":"full"}'; do
         for implementer in codex claude; do
             run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" \
-                '{"verdict":"no-output","blocking":[],"nonBlocking":[],"answer":""}'
+                '{"verdict":"no-output","defects":[],"limitations":[],"answer":"","suggestions":[]}'
             assert_success
             run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.role | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
             assert_output '[null,true,true,0,0]'
@@ -351,7 +351,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
-    local replies='{"implement:": {"status":"ready"}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    local replies='{"implement:": {"status":"ready"}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
@@ -422,7 +422,7 @@ SH
 
 _pl_blocked_run() {
     local implementer="$1"
-    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict":"blocked","defects":["broken"],"limitations":[],"answer":"不可合併","suggestions":[]}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg implementer "${implementer}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
@@ -532,7 +532,7 @@ _pl_blocked_run() {
 @test "workflows: custom gates are the only pre-push gate in every role (#385)" {
     local template mode implementer args json
     local gate='just test unit test/unit/workflow_spec.bats'
-    local replies='{"implement:":{"status":"ready"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc"},"review:#385:light":{"verdict":"mergeable"},"review:":{"verdict":"blocked","blocking":["broken"]}}'
+    local replies='{"implement:":{"status":"ready"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc"},"review:#385:light":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"},"review:":{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"ok"}}'
     for template in "${PR_LOOP}" "${FANOUT}"; do
         for mode in full light; do
             for implementer in codex claude; do
@@ -746,7 +746,7 @@ _pl_launch_checks() {
 
 @test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
     local implementer replies
-    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     for implementer in codex claude; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
             "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
@@ -831,7 +831,7 @@ JS
 
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
-    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
         "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
     assert_success
@@ -1584,7 +1584,7 @@ _codex_rel_answer() {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
-        "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
+        "review:": {"verdict":"mergeable","defects":[],"limitations":[],"answer":"","suggestions":[]}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
     assert_success
@@ -2034,7 +2034,7 @@ _pl_stage_run() {
     # The first review creates the requested Fix result, before the check runs.
     local replies
     replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:": {"status":"ready","reason":""}, "locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
-        "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
+        "review:":{verdict:"blocked",defects:["broken"],limitations:[],suggestions:[],answer:"blocked"},
         "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
     PL_ACTION="${action}" PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -2102,7 +2102,7 @@ _pl_stage_run() {
         _pl_stage_setup
         local root="${BATS_TEST_TMPDIR}" replies json
         replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:":{status:"ready",reason:""},"locate:":{pr:7,sha:$sha},
-            "review:":{verdict:"mergeable",blocking:[],nonBlocking:[],answer:"ok"},
+            "review:":{verdict:"mergeable",defects:[],limitations:[],suggestions:[],answer:"ok"},
             "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
         PL_STAGE=Implement PL_ACTION=dirty PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
             "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
@@ -2708,7 +2708,7 @@ _pl_resume_codex_complete() {
 
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
-    replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     if [[ $# -ge 3 ]]; then
         replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
     fi
@@ -2820,7 +2820,7 @@ _pl_resume_run() {
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local review json extra
     for extra in '{"mode":"light"}' '{"mode":"light","pr":7}'; do
-        for review in '{"verdict":"mergeable"}' '{"verdict":"blocked","blocking":["required fix"]}' null; do
+        for review in '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"verdict":"blocked","defects":["required fix"],"limitations":[],"suggestions":[],"answer":"ok"}' null; do
             run _pl_resume_run "${extra}" "${PR_LOOP}" "${review}"
             assert_success
             json="${output}"
@@ -2873,7 +2873,7 @@ _pl_resume_run() {
     _pl_resume_setup
     _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}"
-    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
+    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume
@@ -2902,7 +2902,7 @@ _pl_resume_run() {
     _pl_stage_setup
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'fix: pending' -m 'Refs: #396' --allow-empty
     local root="${BATS_TEST_TMPDIR}" replies json
-    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
@@ -2922,7 +2922,7 @@ _pl_resume_run() {
 @test "pr-loop resume: unpushed CI repair blocks without publication or review (#396)" {
     _pl_stage_setup
     local root="${BATS_TEST_TMPDIR}" replies json
-    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable"}}'
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     PL_ACTION=unpushed PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
@@ -3155,7 +3155,7 @@ _pl_retry_run() {
         "implement:": {status:"failed",reason:$reason},
         "locate:": {pr:7,sha:"abc"},
         "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
-        "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
+        "ci:": {state:"green",sha:"abc"},"review:":{defects:[],limitations:[],suggestions:[],answer:"ok"}}')"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg tag "${3:-test-run}" '{runTag:$tag,repo:"o/r",repoDir:"/work",issue:417,branch:"b",name:"n",task:"t"}')" "${replies}"
 }
@@ -3599,7 +3599,7 @@ _pl_retry_run() {
 
 @test "pr-loop delegates local gates to a low effort job stage before publication (#550)" {
     local replies
-    replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.error == null and .result.ciState == "green" and
@@ -3611,7 +3611,7 @@ _pl_retry_run() {
 
 @test "pr-loop sends only the failed gate summary to codex and reruns gates after repair (#550)" {
     local replies
-    replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.result.ciState == "green" and
@@ -4122,7 +4122,7 @@ SH
         [{body:"## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"}])}' > "${root}/pr.json"
     _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
     run jq -e '.result.codexVerdict == "mergeable" and
@@ -4143,7 +4143,7 @@ SH
                 "\nnot ok 1 regression " + ("失敗" * 20000) + "\n```\n## Notes\n" + $large)}])}' > "${root}/pr.json"
     _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
     run jq -e '.result.codexVerdict == "mergeable" and
@@ -4163,7 +4163,7 @@ SH
             elif $scenario == "null-comment" then {body:"",comments:[{body:null},{body:$red}]}
             else {body:null,comments:[{body:null}]} end' > "${root}/pr.json"
         RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+            run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
         assert_success
         json="$output"
         expected=mergeable
@@ -4183,7 +4183,7 @@ SH
         comments:[{body:"RED exemption\nReason: missing heading"}]}' > "${root}/pr.json"
     _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
     run jq -e '.result.codexVerdict == "blocked" and
@@ -4199,7 +4199,7 @@ SH
         comments:[]}' > "${root}/pr.json"
     _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
     run jq -e '.result.codexVerdict == "mergeable" and
@@ -4213,7 +4213,7 @@ SH
     local record json
     for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
         '{"evidence":"{\"body\":\"\",\"comments\":[{}]}"}'; do
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' "$record"
         assert_success
         json="$output"
         run jq -e '.error == null and .result.codexVerdict == "blocked" and
@@ -4225,7 +4225,7 @@ SH
 }
 
 @test "pr-loop reports genuine RED absence without retrying the read (#678)" {
-    run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' \
+    run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
         '{"evidence":"[]"}'
     assert_success
     local json="$output"
@@ -4244,7 +4244,7 @@ SH
             ("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"),
             comments:[]}' > "${BATS_TEST_TMPDIR}/pr.json"
         RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
-            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+            run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
         assert_success
         json="$output"
         run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
@@ -4281,7 +4281,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
             jq -n --arg body "$body" --argjson comments "$comments" \
                 '{body:$body,comments:$comments}' > "${BATS_TEST_TMPDIR}/pr.json"
             RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
-                run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+                run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
             assert_success
             json="$output"
             expected=blocked
@@ -4627,5 +4627,35 @@ Reason: 僅修正文句，沒有行為變更。'; do
                 length > 0 and all' <<<"$json"
             assert_success
         done
+    done
+}
+
+@test "pr-loop fixes defects despite a mergeable reviewer verdict in the same run (#680)" {
+    local implementer json
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\",\"maxRounds\":1}" \
+            '{"verdict":"mergeable","defects":["wrong exit code"],"limitations":[],"suggestions":[],"answer":"可合併"}'
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            .result.rounds == 1 and (.result.blockingLeft | index("wrong exit code") != null) and
+            ([.calls[] | select(.role | startswith("fix:"))] | length) == 1 and
+            (.calls[] | select(.role | startswith("fix:")) | .prompt | contains("wrong exit code"))' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "pr-loop returns limitations for the PR known limitations section without blocking (#680)" {
+    local verdict json
+    for verdict in blocked no-output mergeable; do
+        run _pl_run '{"maxRounds":0}' \
+            "{\"verdict\":\"${verdict}\",\"defects\":[],\"limitations\":[\"environment risk\"],\"suggestions\":[\"optional cleanup\"],\"answer\":\"review complete\"}"
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+            .result.blockingLeft == [] and .result.limitations == ["environment risk"] and
+            .result.suggestions == ["optional cleanup"] and
+            ([.calls[] | select(.role | startswith("fix:"))] | length) == 0' <<<"${json}"
+        assert_success
     done
 }
