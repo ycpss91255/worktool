@@ -4065,6 +4065,33 @@ STUB
     done
 }
 
+@test "#663: restore with processes-before and missing gapplication restores files before rc 3" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    [ -f "$(_backup_dir)/processes-before" ]
+    printf 'changed config\n' >"$(_ghostty_config)"
+    local path
+    path="$(_path_without gapplication)"
+    _reset_log
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
+    assert_line 'restore-files-ok=1'
+    assert_line 'restore-window-ok=0'
+    assert_line 'restore-ok=0'
+    assert_output --partial 'config restored, but the window check could not run'
+    assert_output --partial 'gapplication not found on PATH'
+    refute_output --partial 'ghostty-reload=1'
+    refute_output --partial 'backup-removed=1'
+    assert_line 'dev-gone=1'
+    [ ! -s "${STATE}/boxes" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    run cat "$(_ghostty_config)"
+    assert_output 'font-size = 12'
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
+
 @test "#663: late sweep escalation shares the documented five-second bound" {
     _auto_window_tools
     _realbox_quiet 5.2.1

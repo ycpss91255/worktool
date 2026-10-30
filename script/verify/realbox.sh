@@ -1178,10 +1178,17 @@ _52_restored_window_chain() {
 
 _52_report_restore_window() {
     [[ -f "${CFGBK_B}/processes-before" ]] || return 0
+    local rc=0
+    _52_window_require_tools || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        log_warn "config restored, but the window check could not run; install the missing tools and retry 5.2.3"
+        printf 'restore-window-ok=0\n'
+        return "${rc}"
+    fi
     if _52_confirm_restore; then
         printf 'restore-window-ok=1\n'
     else
-        local rc=$?
+        rc=$?
         printf 'restore-window-ok=0\n'
         return "${rc}"
     fi
