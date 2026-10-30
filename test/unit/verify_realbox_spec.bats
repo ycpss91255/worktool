@@ -3587,13 +3587,14 @@ STUB
 
 @test "#663: a crowded process scan ends the shell search within ten seconds" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/crowded-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ -f "${FAKE_STATE_DIR}/window-directory" && ! -e "${FAKE_STATE_DIR}/search-start" ]]; then
-    printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/search-start"
+    printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/search-start"
 fi
 if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     printf '1 init\n5556 fish\n'
@@ -3601,31 +3602,28 @@ if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; 
     exit 0
 fi
 if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
+    # The first cleanup inventory marks the completed search budget.
+    if (( $(<"${FAKE_STATE_DIR}/clock") >= 9 )) && [[ ! -e "${FAKE_STATE_DIR}/search-end" ]]; then
+        cat "${FAKE_STATE_DIR}/clock" >"${FAKE_STATE_DIR}/search-end"
+    fi
     printf '1 0 init\n900 1 ghostty\n5556 900 fish\n'
     for ((pid=10000; pid<10020; pid++)); do printf '%s 1 worker\n' "${pid}"; done
     exit 0
 fi
 if [[ "$1" == -p && "$2" -ge 10000 ]]; then
-    /bin/sleep 0.7
+    sleep 0.7
     printf '1 worker\n'
     exit 0
 fi
 exec "${FAKE_STATE_DIR}/crowded-ps" "$@"
 STUB
-    run bash -c '
-        "$1" --allow-real-box 5.2.2 2> >(while IFS= read -r line; do
-            if [[ "$line" == *"new shell timed out"* ]]; then
-                printf "%s\n" "$EPOCHSECONDS" >"${FAKE_STATE_DIR}/search-end"
-            fi
-            printf "%s\n" "$line" >&2
-        done)
-    ' _ "${REALBOX}" </dev/null
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     local started ended
     read -r started <"${STATE}/search-start"
     read -r ended <"${STATE}/search-end"
     assert_failure 3
     assert_output --partial 'new shell timed out'
-    [[ $((ended - started)) -le 10 ]]
+    assert_equal "$((ended - started))" 9
 }
 
 @test "#663: a queued owned window appearing after timeout is closed by the final sweep" {
