@@ -3585,15 +3585,16 @@ STUB
     done
 }
 
-@test "#663: a crowded process scan ends the shell search within ten seconds" {
+_crowded_window_tools() {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/crowded-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ -f "${FAKE_STATE_DIR}/window-directory" && ! -e "${FAKE_STATE_DIR}/search-start" ]]; then
-    printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/search-start"
+    printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/search-start"
 fi
 if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     printf '1 init\n5556 fish\n'
@@ -3606,30 +3607,38 @@ if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
     exit 0
 fi
 if [[ "$1" == -p && "$2" -ge 10000 ]]; then
-    /bin/sleep 0.7
+    sleep 0.7
     printf '1 worker\n'
     exit 0
 fi
 exec "${FAKE_STATE_DIR}/crowded-ps" "$@"
 STUB
-    run bash -c '
-        "$1" --allow-real-box 5.2.2 2> >(while IFS= read -r line; do
-            if [[ "$line" == *"new shell timed out"* ]]; then
-                printf "%s\n" "$EPOCHSECONDS" >"${FAKE_STATE_DIR}/search-end"
-            fi
-            printf "%s\n" "$line" >&2
-        done)
-    ' _ "${REALBOX}" </dev/null
+    # Observe the timeout diagnostic synchronously, before cleanup advances time.
+    cat >>"${REALBOX%/script/verify/realbox.sh}/lib/log.sh" <<'STUB'
+log_warn() {
+    if [[ "$*" == 'Ghostty new shell timed out; acceptance inconclusive' ]]; then
+        cat "${FAKE_STATE_DIR}/clock" >"${FAKE_STATE_DIR}/search-finished"
+    fi
+    _log_emit '[WARN]' "$@"
+}
+STUB
+}
+
+@test "#663: a crowded process scan ends the shell search within ten seconds" {
+    _crowded_window_tools
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     local started ended
     read -r started <"${STATE}/search-start"
-    read -r ended <"${STATE}/search-end"
     assert_failure 3
     assert_output --partial 'new shell timed out'
-    [[ $((ended - started)) -le 10 ]]
+    assert [ -f "${STATE}/search-finished" ]
+    read -r ended <"${STATE}/search-finished"
+    assert_equal "$((ended - started))" 9
 }
 
 @test "#663: a queued owned window appearing after timeout is closed by the final sweep" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/late-ps"
     cat >"${STUBS}/ps" <<'STUB'
@@ -3637,11 +3646,11 @@ STUB
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     if [[ ! -e "${FAKE_STATE_DIR}/queued-at" ]]; then
-        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/queued-at"
+        printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/queued-at"
     fi
     read -r queued <"${FAKE_STATE_DIR}/queued-at"
     export FAKE_NO_WINDOW=1
-    if (( EPOCHSECONDS - queued >= 11 )); then
+    if (( $(<"${FAKE_STATE_DIR}/clock") - queued >= 11 )); then
         export FAKE_NO_WINDOW=0
         printf 'late-window-visible\n' >"${FAKE_STATE_DIR}/late-visible"
     fi
@@ -3750,20 +3759,33 @@ STUB
     assert_output --partial 'keeping ownership evidence'
 }
 
-@test "#663: a final sweep inventory timeout keeps ownership evidence at its deadline" {
+@test "#663: a final sweep inventory timeout keeps ownership evidence before the shared deadline" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
+    export FAKE_SNAPSHOT_TIMEOUT_REAL
+    FAKE_SNAPSHOT_TIMEOUT_REAL="$(command -v timeout)"
+    cat >"${STUBS}/timeout" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Model the fixed one-second snapshot timeout, before the shared deadline.
+if [[ "$*" == '-s KILL 1 ps -e -o pid=,ppid=,comm='
+    && -e "${FAKE_STATE_DIR}/sweep-start" ]] && (( $(<"${FAKE_STATE_DIR}/clock") >= 2 )); then
+    printf '%s\n' "$*" >"${FAKE_STATE_DIR}/snapshot-timeout"
+    exit 137
+fi
+exec "${FAKE_SNAPSHOT_TIMEOUT_REAL}" "$@"
+STUB
+    chmod +x "${STUBS}/timeout"
     cp "${STUBS}/ps" "${STATE}/sweep-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     if [[ ! -e "${FAKE_STATE_DIR}/sweep-start" ]]; then
-        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/sweep-start"
+        touch "${FAKE_STATE_DIR}/sweep-start"
         exit 1
     fi
-    read -r started <"${FAKE_STATE_DIR}/sweep-start"
-    if (( EPOCHSECONDS - started >= 2 )); then /bin/sleep 2; fi
     printf '1 0 init\n900 1 ghostty\n'
     exit 0
 fi
@@ -3771,6 +3793,9 @@ exec "${FAKE_STATE_DIR}/sweep-ps" "$@"
 STUB
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     assert_failure 1
+    assert_output --partial 'cannot inventory owned window'
+    assert_equal "$(cat "${STATE}/clock")" 2
+    assert_equal "$(cat "${STATE}/snapshot-timeout")" '-s KILL 1 ps -e -o pid=,ppid=,comm='
     local directory
     directory="$(cat "${STATE}/window-directory")"
     [ -d "${directory}" ]
@@ -3781,20 +3806,24 @@ STUB
 
 @test "#663: a slow sweep retry near its deadline stays inconclusive" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/slow-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
-    /bin/sleep 0.6
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
 fi
 exec "${FAKE_STATE_DIR}/slow-ps" "$@"
 STUB
     local attempt
     for attempt in 1 2 3; do
+        printf '0\n' >"${STATE}/clock"
         FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
         assert_failure 3
+        assert_equal "$(cat "${STATE}/clock")" 13
         refute_output --partial 'cannot inventory owned window'
         rm -f "${STATE}/window-directory"
         _realbox_quiet 5.2.3
@@ -3872,8 +3901,32 @@ STUB
     assert_output ''
 }
 
+# Replace only Bash's clock in a private script copy. All deadline arithmetic
+# and ownership decisions remain shipped code; subprocesses share logical time.
+_control_window_clock() {
+    local repo clock_expression
+    export FAKE_CLOCK_DELAY="${1:-0}"
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    printf '0\n' >"${STATE}/clock"
+    clock_expression="\$(<\"\${FAKE_STATE_DIR}/clock\")"
+    sed -i "s|SECONDS|${clock_expression}|g" "${REALBOX}"
+    cat >"${STUBS}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FAKE_CLOCK_DELAY}" != 0 ]]; then /bin/sleep "${FAKE_CLOCK_DELAY}"; fi
+read -r now <"${FAKE_STATE_DIR}/clock"
+printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
+STUB
+    chmod +x "${STUBS}/sleep"
+}
+
 @test "#663: late sweep escalation shares the documented five-second bound" {
     _auto_window_tools
+    local delay=0
+    if [[ "${WORKTOOL_STRESS:-}" == 1 ]]; then delay=3.2; fi
+    _control_window_clock "${delay}"
+    printf '# late sweep: logical clock; FAKE_CLOCK_DELAY=%s per retry sleep\n' "${FAKE_CLOCK_DELAY}" >&3
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/bound-ps"
     cat >"${STUBS}/ghostty" <<'STUB'
@@ -3887,15 +3940,11 @@ STUB
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
-    if [[ ! -f "${FAKE_STATE_DIR}/sweep-ms" ]]; then
-        date +%s%3N >"${FAKE_STATE_DIR}/sweep-ms"
-    fi
-    read -r started <"${FAKE_STATE_DIR}/sweep-ms"
-    if (( $(date +%s%3N) - started < 2000 )); then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    if (( now < 2 )); then
         printf '1 0 init\n900 1 ghostty\n'
         exit 0
     fi
-    /bin/sleep 0.4
 fi
 exec "${FAKE_STATE_DIR}/bound-ps" "$@"
 STUB
@@ -3905,11 +3954,9 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
 STUB
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
-    local finished started
-    finished="$(date +%s%3N)"
-    read -r started <"${STATE}/sweep-ms"
     assert_failure 1
-    [ "$((finished - started))" -lt 5000 ]
+    assert_equal "$(cat "${STATE}/clock")" 4
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240'
     [ -f "$(cat "${STATE}/window-directory")/before" ]
     [ -f "$(_backup_dir)/manifest" ]
 }
