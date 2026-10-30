@@ -480,7 +480,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    不列入 milestone-gate-approval，並保存最後一輪證據。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
    `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
-   Sync、Head、Evidence 共用同一份 check 選取規則：同名只保留最新一筆，候選都有
+   Sync、Head、Evidence 的選取、等待與成敗判定只由共用的 `CHECK_POLICY` 定義，
+   各階段僅補充操作與輸出要求；回傳篩選後的候選（包含仍保留的失敗），不另設未篩選判定。
+   共用 check 選取規則：同名只保留最新一筆，候選都有
    workflow run 建立時間 `runCreatedAt` 時依此比較，避免舊 run 較晚完成蓋過新 run；
    只要任一候選提供 `runCreatedAt`，就必須全部以此欄位比較（缺漏時先嘗試查詢）；
    全部未提供時才統一比較 `completedAt`。不得混用完成時間與建立時間。已被同 workflow
