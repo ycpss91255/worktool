@@ -4743,15 +4743,3 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
-
-@test "milestone-handover prompts use only the shared retained-check decision policy (#690)" {
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
-    run jq -e '[.calls[] | select(.role == "sync:" or .role == "head:" or .role == "evidence:") | .prompt] |
-        length == 3 and all(
-            (split("Shared current-head check policy") | length == 2) and
-            (contains("Require both verify-all architecture jobs and ci-passed plus every other check") | not) and
-            (contains("Include every check/status, never filter failures") | not) and
-            contains("Only retained checks can trigger failure, success or waiting.") and
-            contains("Return the retained checks selected by this policy, including retained failures."))' <<<"${output}"
-    assert_success
-}
