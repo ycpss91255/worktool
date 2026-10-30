@@ -4659,3 +4659,14 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "milestone-handover ignores superseded cancelled checks in Sync and Head (#690)" {
+    local replies
+    replies="$(_handover_replies | jq '
+        ."head:".checks |= map(. + {completedAt:"2026-10-30T02:00:00Z"}) |
+        ."head:".checks += (."head:".checks | map(. + {conclusion:"CANCELLED",completedAt:"2026-10-30T01:00:00Z"})) |
+        ."sync:".checks=."head:".checks')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared"' <<<"${output}"
+    assert_success
+}

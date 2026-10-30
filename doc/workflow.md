@@ -462,7 +462,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 
 1. **Sync**：從 `git worktree list --porcelain` 找到 `base` 的 linked worktree，
    沒有時在 repo 同層 `worktree/` 建立；不使用主 checkout。先確認乾淨且 PR head 分支相符，
-   fetch `origin/main`。main 已是 HEAD 的祖先時略過 merge、gate、push 和等待，直接進 Head。
+   fetch `origin/main`。main 已是 HEAD 的祖先時略過 merge、gate、push，仍須確認同 head CI 全綠才進 Head。
    否則以 merge commit 合入，訊息透過 `-F` 檔案提供，末段為 milestone issue 的 `Refs: #N`，
    author 與 committer 使用 GitHub noreply，不加署名、不改寫歷史、不 force push。
    衝突逐處記錄兩邊意圖、解法、理由與驗證；無法安全解決就列出路徑和原因並停止。
@@ -480,6 +480,10 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    不列入 milestone-gate-approval，並保存最後一輪證據。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
    `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
+   Sync、Head、Evidence 共用同一份 check 選取規則：同名只保留最新一筆，依 `completedAt`，
+   未完成時依 workflow run 的建立時間 `runCreatedAt`（必要時查詢取得）判斷；已被同 workflow
+   新 run 取代的舊 run 不參與成敗判定。時間缺失或相同而無法判定先後時保留候選，
+   除非全部成功，否則封閉失敗。只排除 `milestone-gate-approval`，其餘最新結果仍須 COMPLETED／SUCCESS。
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    缺少、查詢失敗或未綠即回報並停止。
