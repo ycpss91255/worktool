@@ -3749,24 +3749,32 @@ STUB
     assert_output --partial 'keeping ownership evidence'
 }
 
-@test "#663: a final sweep inventory timeout keeps ownership evidence at its deadline" {
+@test "#663: a final sweep inventory timeout keeps ownership evidence before the shared deadline" {
     _auto_window_tools
     _control_window_clock
     _realbox_quiet 5.2.1
+    export FAKE_SNAPSHOT_TIMEOUT_REAL
+    FAKE_SNAPSHOT_TIMEOUT_REAL="$(command -v timeout)"
+    cat >"${STUBS}/timeout" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Model the fixed one-second snapshot timeout, before the shared deadline.
+if [[ "$*" == '-s KILL 1 ps -e -o pid=,ppid=,comm='
+    && -e "${FAKE_STATE_DIR}/sweep-start" ]] && (( $(<"${FAKE_STATE_DIR}/clock") >= 2 )); then
+    printf '%s\n' "$*" >"${FAKE_STATE_DIR}/snapshot-timeout"
+    exit 137
+fi
+exec "${FAKE_SNAPSHOT_TIMEOUT_REAL}" "$@"
+STUB
+    chmod +x "${STUBS}/timeout"
     cp "${STUBS}/ps" "${STATE}/sweep-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     if [[ ! -e "${FAKE_STATE_DIR}/sweep-start" ]]; then
-        printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/sweep-start"
+        touch "${FAKE_STATE_DIR}/sweep-start"
         exit 1
-    fi
-    read -r started <"${FAKE_STATE_DIR}/sweep-start"
-    if (( $(<"${FAKE_STATE_DIR}/clock") - started >= 2 )); then
-        # Model the bounded snapshot being killed as its shared budget expires.
-        printf '%s\n' "$((started + 4))" >"${FAKE_STATE_DIR}/clock"
-        exit 137
     fi
     printf '1 0 init\n900 1 ghostty\n'
     exit 0
@@ -3776,7 +3784,8 @@ STUB
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     assert_failure 1
     assert_output --partial 'cannot inventory owned window'
-    assert_equal "$(cat "${STATE}/clock")" 4
+    assert_equal "$(cat "${STATE}/clock")" 2
+    assert_equal "$(cat "${STATE}/snapshot-timeout")" '-s KILL 1 ps -e -o pid=,ppid=,comm='
     local directory
     directory="$(cat "${STATE}/window-directory")"
     [ -d "${directory}" ]
