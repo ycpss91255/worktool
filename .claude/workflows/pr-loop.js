@@ -339,6 +339,10 @@ const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
 const gh = argv => execFileSync('gh', [...argv, '--repo', ${JSON.stringify(REPO)}], {encoding:'utf8'}).trim();
 const edit = JSON.parse(fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-edit.json`)}, 'utf8'));
+const checkHead = () => {
+  if (gh(['pr', 'view', String(${pr}), '--json', 'headRefOid', '--jq', '.headRefOid']) !== ${JSON.stringify(sha)}) throw Error('PR head changed');
+};
+checkHead();
 const runs = () => JSON.parse(gh(['run', 'list', '--workflow', 'ci.yml', '--commit', ${JSON.stringify(sha)}, '--event', 'pull_request', '--created', '>=' + edit.since.slice(0, 19) + 'Z', '--limit', '100', '--json', 'databaseId,createdAt,headSha,event']));
 let selected;
 for (let attempt = 0; attempt < 60; attempt++) {
@@ -349,6 +353,7 @@ for (let attempt = 0; attempt < 60; attempt++) {
 if (!selected) throw Error('No CI run observed after the final body edit');
 gh(['run', 'watch', String(selected.databaseId), '--exit-status', '--interval', '10']);
 gh(['pr', 'checks', String(${pr}), '--watch', '--fail-fast']);
+checkHead();
 process.stdout.write(JSON.stringify({state:'green', sha:${JSON.stringify(sha)}, detail:'Final body CI run ' + selected.databaseId}));
 `
   return `cd ${sq(WT)} && timeout 1800 node -e ${sq(program)}`

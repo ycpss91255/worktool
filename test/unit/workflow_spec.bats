@@ -4706,7 +4706,17 @@ _pl_auto_body() {
 #!/bin/sh
 set -eu
 case "$1 $2" in
-    "pr view") cat "$AUTO_ROOT/pr.json" ;;
+    "pr view")
+        if [ "${*#*--jq}" != "$*" ]; then
+            case "${AUTO_HEAD_CHANGE:-}" in
+                before) printf '%s\n' def ;;
+                after) if [ -e "$AUTO_ROOT/watched" ]; then printf '%s\n' def; else printf '%s\n' abc; fi ;;
+                unreadable) exit 1 ;;
+                *) jq -r .headRefOid "$AUTO_ROOT/pr.json" ;;
+            esac
+        else
+            cat "$AUTO_ROOT/pr.json"
+        fi ;;
     "pr edit")
         while [ "$1" != --body-file ]; do shift; done
         cp "$2" "$AUTO_ROOT/body"
@@ -4882,4 +4892,19 @@ SH
     run jq -e '.result.ciState == "red" and
         (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$json"
     assert_success
+}
+
+@test "pr-loop verifies the actual remote head before and after final CI (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" change expected
+    mkdir -p "$root"
+    printf '1111111 first commit\n' > "$root/commits"
+    for change in stable before after unreadable; do
+        rm -f "$root/body" "$root/watched"
+        jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+        AUTO_REAL_CI=1 AUTO_HEAD_CHANGE="$change" _pl_auto_body
+        expected=red
+        [[ "$change" != stable ]] || expected=green
+        run jq -e --arg expected "$expected" '.result.ciState == $expected' <<<"$output"
+        assert_success
+    done
 }
