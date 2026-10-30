@@ -33,7 +33,12 @@ _review_log_check_commit() {
 }
 
 _review_log_enforcing_commit() {
-    local repo="$1" enforcing
+    local repo="$1" enforcing shallow
+    shallow="$(git -C "$repo" rev-parse --is-shallow-repository)" || return 1
+    if [[ "$shallow" == true ]]; then
+        log_error 'Cannot find enforcing commit reliably in shallow history; fetch full history (fail closed).'
+        return 1
+    fi
     enforcing="$(git -C "$repo" log --format=%H --reverse --diff-filter=A -- lib/review_log.sh)" || return 1
     enforcing="${enforcing%%$'\n'*}"
     if [[ -z "$enforcing" ]]; then

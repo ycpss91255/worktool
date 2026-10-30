@@ -38,6 +38,19 @@ _check() {
     assert_output --partial 'fetch full history (fail closed)'
 }
 
+@test "review-log check fails closed with shallow history (#684)" {
+    local shallow="${BATS_TEST_TMPDIR}/shallow"
+    git -C "$REPO" commit -q --allow-empty -m 'Work after the rule'
+    git clone -q --depth 1 "file://$REPO" "$shallow"
+    # Check HEAD directly: even an apparently discoverable addition is unreliable.
+    # shellcheck source=../../lib/review_log.sh
+    source "${LIB_DIR}/review_log.sh"
+    run review_log_check_commits "$shallow" HEAD
+    assert_failure 1
+    assert_output --partial 'shallow history'
+    assert_output --partial 'fetch full history (fail closed)'
+}
+
 @test "review-log check rejects newly committed review files even if later deleted (#675)" {
     local path
     for path in doc/evidence/review-notes.md doc/evidence/nested/675-REVIEW.md \
