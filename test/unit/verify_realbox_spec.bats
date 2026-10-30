@@ -3753,6 +3753,7 @@ STUB
 
 @test "#663: a final sweep inventory timeout keeps ownership evidence at its deadline" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/sweep-ps"
     cat >"${STUBS}/ps" <<'STUB'
@@ -3760,11 +3761,15 @@ STUB
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     if [[ ! -e "${FAKE_STATE_DIR}/sweep-start" ]]; then
-        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/sweep-start"
+        printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/sweep-start"
         exit 1
     fi
     read -r started <"${FAKE_STATE_DIR}/sweep-start"
-    if (( EPOCHSECONDS - started >= 2 )); then /bin/sleep 2; fi
+    if (( $(<"${FAKE_STATE_DIR}/clock") - started >= 2 )); then
+        # Model the bounded snapshot being killed as its shared budget expires.
+        printf '%s\n' "$((started + 4))" >"${FAKE_STATE_DIR}/clock"
+        exit 137
+    fi
     printf '1 0 init\n900 1 ghostty\n'
     exit 0
 fi
@@ -3772,6 +3777,8 @@ exec "${FAKE_STATE_DIR}/sweep-ps" "$@"
 STUB
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     assert_failure 1
+    assert_output --partial 'cannot inventory owned window'
+    assert_equal "$(cat "${STATE}/clock")" 4
     local directory
     directory="$(cat "${STATE}/window-directory")"
     [ -d "${directory}" ]
