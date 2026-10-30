@@ -356,14 +356,14 @@ gh(['pr', 'checks', String(${pr}), '--watch', '--fail-fast']);
 checkHead();
 process.stdout.write(JSON.stringify({state:'green', sha:${JSON.stringify(sha)}, detail:'Final body CI run ' + selected.databaseId}));
 `
-  return `cd ${sq(WT)} && timeout 1800 node -e ${sq(program)}`
+  return `timeout 1800 node -e ${sq(program)}`
 }
 const result = async (extra) => {
   if (extra.pr && ['green', 'red'].includes(extra.ciState)) {
     const updated = await updateAutoBody(extra.pr, extra.ciState)
     if (!updated?.ok) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'machine PR body update failed'] }
     if (updated.changed && extra.ciState === 'green') {
-      const final = await agent(`Run this fixed command verbatim; never edit, commit or push: \`${finalCICommand(extra.pr, extra.sha)}\`. Return its JSON on exit 0; any command failure is red.`, {
+      const final = await agent(`Only collect final body CI; never edit, commit or push. ${jobInstructions('ci-final-' + A.issue, [finalCICommand(extra.pr, extra.sha)])} Return the command JSON from the successful job log; any command failure is red.`, {
         label: `${RUN_ID} auto-ci:#${extra.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose',
       })
       if (!final || final.state !== 'green' || final.sha !== extra.sha) {

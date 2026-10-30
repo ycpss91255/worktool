@@ -169,6 +169,8 @@ CI 內部修正並推送後也必須先執行同一固定命令，再等待 CI�
 先以 `gh run watch --exit-status` 確認該 run 成功，再確認 PR checks。
 等待前後都用 `gh pr view --json headRefOid --jq .headRefOid` 讀取實際遠端 head；
 任一次讀取失敗或與預期 SHA 不同都阻擋，不採信 agent 自報的 SHA。
+最終 CI 固定命令仍透過既有 `just job start`／`wait` 收集結果，
+避免 CI 等待超過單次 Bash 呼叫時限。
 未觀察到新 run、查詢失敗或等待失敗都視為 red，不沿用同 SHA 的舊綠燈。
 最後一次 CI 失敗或 head 改變時回報阻擋，機械結論改為 red；
 機械更新失敗也阻擋，不宣告成功。

@@ -4727,7 +4727,24 @@ esac
 SH
     chmod +x "$root/bin/git"
     fi
-    chmod +x "$root/bin/gh"
+    cat > "$root/bin/just" <<'SH'
+#!/bin/sh
+set -eu
+[ "$1" = job ]
+case "$2" in
+    start)
+        printf '%s\n' "$3" >> "$AUTO_ROOT/jobs"
+        shift 4
+        rc=0
+        "$@" > "$AUTO_ROOT/job-output" 2>/dev/null || rc=$?
+        printf '%s\n' "$rc" > "$AUTO_ROOT/job-rc" ;;
+    wait)
+        cat "$AUTO_ROOT/job-output"
+        exit "$(cat "$AUTO_ROOT/job-rc")" ;;
+    *) exit 1 ;;
+esac
+SH
+    chmod +x "$root/bin/gh" "$root/bin/just"
     AUTO_ROOT="$root" PATH="$root/bin:$PATH" run _pl_run \
         "$(jq -cn --arg dir "$root/src" --arg mode "$mode" '{repoDir:$dir,mode:$mode}')" \
         '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
@@ -4895,5 +4912,19 @@ SH
     run _pl_run '{}' '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' "$evidence" canned
     assert_success
     run jq -e '.result.codexVerdict == "mergeable"' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop collects final body CI through bounded jobs and registered hooks (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    HANDOVER_REAL_HOOKS=1 AUTO_REAL_CI=1 _pl_auto_body
+    json="$output"
+    run cat "$root/jobs"
+    assert_success
+    assert_output --partial 'ci-final-'
+    run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$json"
     assert_success
 }
