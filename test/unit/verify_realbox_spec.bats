@@ -4038,6 +4038,7 @@ STUB
 }
 
 _assert_initialisation_cleanup_order() {
+    local transcript="$1"
     assert_line 'restore-files-ok=1'
     assert_line 'dev-gone=1'
     assert_line --regexp '^box-state before-cleanup: home=[01] tmux=[01]$'
@@ -4046,7 +4047,7 @@ _assert_initialisation_cleanup_order() {
         /^dev-gone=1$/ { removed = NR }
         /^box-state before-cleanup:/ { home = NR }
         END { exit !(restored && removed > restored && home > removed) }
-    ' <<<"${output}"
+    ' <<<"${transcript}"
 }
 
 @test "#691: cleanup order assertion rejects box or HOME cleanup before restore" {
@@ -4055,7 +4056,7 @@ _assert_initialisation_cleanup_order() {
     for transcript in "${deletion}"$'\n'"${restore}"$'\n'"${home}" \
         "${home}"$'\n'"${restore}"$'\n'"${deletion}"; do
         run bash -c 'printf "%s\n" "$1"' -- "${transcript}"
-        run _assert_initialisation_cleanup_order
+        run _assert_initialisation_cleanup_order "${transcript}"
         assert_failure
     done
 }
@@ -4075,7 +4076,7 @@ STUB
         run "${REALBOX}" --allow-real-box "${item}" </dev/null
         assert_failure 1
         assert_line --partial 'just box enter failed during first start'
-        _assert_initialisation_cleanup_order
+        _assert_initialisation_cleanup_order "${output}"
         assert_line 'cleanup-rc=0'
         refute_output --partial 'ghostty-new-window=1'
         [ ! -s "${STATE}/boxes" ]
