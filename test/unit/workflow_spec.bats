@@ -4272,21 +4272,25 @@ CASES
 }
 
 @test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
-    local body comments record json expected
+    local body comments json expected
+    _pl_red_gh
     for body in '## RED exemption' '## RED exemption
 Reason:   ' '## RED exemption
 Reason: 僅修正文句，沒有行為變更。'; do
         for comments in '[]' '[{"body":"## RED exemption\nReason: docs only"}]'; do
-            record="$(jq -cn --arg body "$body" --argjson comments "$comments" '{evidence:([{source:"body",body:$body}] + [$comments[] | {source:"comment",body}] | .[0:1] | tojson)}')"
-            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+            jq -n --arg body "$body" --argjson comments "$comments" \
+                '{body:$body,comments:$comments}' > "${BATS_TEST_TMPDIR}/pr.json"
+            RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
+                run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
             assert_success
             json="$output"
             expected=blocked
             if [[ "$body" == *'Reason: 僅'* ]]; then expected=mergeable; fi
-            run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
-                (if $expected == "mergeable" then
-                    ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
-                else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+            run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
+                .result.blockingLeft == (if $expected == "blocked" then
+                    ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end) and
+                ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+                (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
             assert_success
         done
     done
