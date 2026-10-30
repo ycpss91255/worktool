@@ -42,7 +42,7 @@ const [script, argsJson, repliesJson, mode] = process.argv.slice(2)
 // default. Individual scenarios override either reply (including null).
 const replies = {
   ...(process.env.WORKFLOW_JOB_REPLIES ? {
-    'red-record:': { evidence: JSON.stringify({ body: '## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```', comments: [] }) },
+    'red-record:': { evidence: JSON.stringify([{ source: 'body', body: '## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```' }]) },
     'gates:': { state: 'green', detail: 'success' },
     'publish:Implement': { pr: 7, sha: 'abc' },
     'publish:Fix': { pr: 7, sha: 'def' },
@@ -367,6 +367,11 @@ const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
+  if (mode === 'exec-red-record' && role.startsWith('red-record:')) {
+    const { ok, stdout } = play(prompt)
+    if (ran.length) ran[ran.length - 1].stdout = stdout
+    return ok ? withStdout(reply(role), stdout) : null
+  }
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
   if (mode === 'exec-handover-snapshots') return playHandoverSnapshots(role, prompt)
   if (mode === 'exec-handover-files') return playHandoverFiles(role, prompt)

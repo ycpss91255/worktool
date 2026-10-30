@@ -126,9 +126,18 @@ PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 
 以及 `env`、`sudo` 等包裝指令不接受；仍須有同一區塊內的失敗 TAP 行。
 不能在 GREEN 後虛構或重編 RED 證據。
 
-full 模式每輪獨立審查前，以 `gh pr view --json body,comments` 讀取 PR 原文，
-由 workflow 程式檢查 RED 紀錄。缺少紀錄、讀取失敗或資料格式錯誤時，
-直接回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
+full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...` 在 gh 端篩選，
+只擷取 `## RED` 或 `## RED exemption` 區段，最多傳回第一筆合格紀錄，
+不傳送完整 body；傳輸量不隨留言數或 body 長度成長。RED 必須在同一 fenced block
+具有上述指令與失敗 TAP 行；只保留第一個匹配的指令行與 TAP 行，各截取至 1024 字元，
+組成一個 fenced block。豁免只從 PR 說明取出非空 `Reason:` 行，截取至 1024 字元。
+回傳陣列保留說明與留言的來源區別；沒有合格紀錄時回傳空陣列。
+說明或留言的 body 為 null 時視為空字串，不算讀取失敗；LF 與 CRLF 紀錄均可，
+擷取出的證據統一使用 LF。
+由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
+會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
+成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。
+缺少紀錄或重讀失敗時，回傳 `codexVerdict: "blocked"` 與含 RED 的 `blockingLeft`，不啟動該輪審查，
 也不會宣告 mergeable。補上原始證據後可接續同一 PR。
 `milestone-fanout` 呼叫同一份 `pr-loop`，因此沿用此檢查。
 
