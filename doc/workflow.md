@@ -134,7 +134,6 @@ full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...
 回傳陣列保留說明與留言的來源區別；沒有合格紀錄時回傳空陣列。
 說明或留言的 body 為 null 時視為空字串，不算讀取失敗；LF 與 CRLF 紀錄均可，
 擷取出的證據統一使用 LF。
-擷取查詢與 workflow 的 JS 複驗共用唯一的 `RED_COMMAND` 指令規則，避免判定分歧。
 由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
 會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
 成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。

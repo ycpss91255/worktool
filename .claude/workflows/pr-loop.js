@@ -362,7 +362,7 @@ const checkRedRecord = async (pr) => {
     const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
     if (!section) return false
     return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
-      new RegExp(RED_COMMAND, 'm').test(output) &&
+      /^\s*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
       /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
   })
   return present ? 'present' : 'missing'

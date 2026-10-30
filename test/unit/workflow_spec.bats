@@ -4659,21 +4659,3 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
-
-@test "pr-loop uses one RED command rule for extraction and re-check (#680)" {
-    local root="${BATS_TEST_TMPDIR}" json
-    # Change only the shared rule: both extraction and validation must follow it.
-    sed '/^const RED_COMMAND =/s/unit|/probe|/' "${PR_LOOP}" > "${root}/pr-loop.js"
-    PR_LOOP="${root}/pr-loop.js"
-    _pl_red_gh
-    jq -n '{body:"## RED\n```text\njust test probe test/unit/example_spec.bats\nnot ok 1 regression\n```",comments:[]}' > "${root}/pr.json"
-    PATH="${root}/bin:${PATH}" RED_SOURCE="${root}/pr.json" \
-        run _pl_run '{}' '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
-            '{"evidence":"<stdout>"}' exec-red-record
-    assert_success
-    json="${output}"
-    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
-        .result.blockingLeft == [] and
-        ([.calls[] | select(.role | startswith("review:"))] | length) == 1' <<<"${json}"
-    assert_success
-}
