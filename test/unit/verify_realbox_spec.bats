@@ -428,7 +428,7 @@ EOF
 _path_without() {
     local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
     mkdir -p "${_path}"
-    for _tool in bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch gapplication sleep kill; do
+    for _tool in env bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch gapplication sleep kill; do
         [[ "${_tool}" != "$1" ]] || continue
         ln -sf "$(type -P "${_tool}")" "${_path}/${_tool}"
     done
@@ -3780,7 +3780,7 @@ STUB
     assert_output ''
 }
 
-@test "#663: missing window tools refuse every mutating entry before side effects" {
+@test "#663: missing window tools refuse apply entries before side effects" {
     _auto_window_tools
     _realbox_quiet 5.2.1
     cp -a "${HOME}" "${STATE}/baseline-home"
@@ -3789,7 +3789,7 @@ STUB
     local tool item path
     for tool in gapplication mktemp sleep kill; do
         path="$(_path_without "${tool}")"
-        for item in 5.2 5.2.2 5.2.3; do
+        for item in 5.2 5.2.2; do
             run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
             assert_failure 3
             assert_output --partial "${tool} not found on PATH"
@@ -4043,6 +4043,26 @@ STUB
     assert_line 'no-backup=1'
     assert_equal "$(_count_calls just)" 0
     assert_equal "$(_count_calls distrobox)" 0
+}
+
+@test "#663: backup without processes-before restores without window tools" {
+    _auto_window_tools
+    local tool path
+    for tool in gapplication sleep kill; do
+        _realbox_quiet 5.2.1
+        [ ! -e "$(_backup_dir)/processes-before" ]
+        printf 'changed config\n' >"$(_ghostty_config)"
+        path="$(_path_without "${tool}")"
+        run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+        assert_success
+        assert_line 'restore-files-ok=1'
+        assert_line 'restore-ok=1'
+        assert_line 'backup-removed=1'
+        refute_output --partial 'restore-window-ok='
+        run cat "$(_ghostty_config)"
+        assert_output 'font-size = 12'
+        [ ! -e "$(_backup_dir)" ]
+    done
 }
 
 @test "#663: late sweep escalation shares the documented five-second bound" {

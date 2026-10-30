@@ -1211,7 +1211,6 @@ _52_step3_restore() {
         log_info "${CFGBK_B} absent; already restored, or step 1 never ran"
         return 0
     fi
-    _52_window_require_tools || return $?
     if [[ ! -f "${CFGBK_B}/manifest" ]]; then
         printf 'incomplete-backup=1 (%s has no published manifest, so step 2 never applied anything; inspect it, then: rm -rf %s)\n' \
             "${CFGBK_B}" "${CFGBK_B}"
