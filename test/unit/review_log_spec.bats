@@ -52,7 +52,8 @@ _check() {
 }
 
 @test "review-log check skips pre-rule additions with notes in a PR 157 shaped history (#684)" {
-    local enforcing="$BASE" old
+    local enforcing old
+    enforcing="$(git -C "$REPO" rev-parse HEAD)"
     git -C "$REPO" branch -m main
     git -C "$REPO" checkout -q -b old-topic "$PRE_RULE"
     mkdir -p "$REPO/doc/evidence"
