@@ -4225,6 +4225,33 @@ SH
     assert_success
 }
 
+@test "pr-loop preserves CRLF exemption records during transport (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    mkdir -p "${root}/bin"
+    jq -n '{body:"## RED exemption\r\nReason: docs only\r\n## Notes\r\nUnrelated",
+        comments:[]}' > "${root}/pr.json"
+    cat > "${root}/bin/gh" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$RED_SOURCE"
+        exit "$?"
+    fi
+    shift
+done
+exit 1
+SH
+    chmod +x "${root}/bin/gh"
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and
+            (.stdout | fromjson) == [{source:"body",body:"## RED exemption\nReason: docs only"}])' <<<"$json"
+    assert_success
+}
+
 @test "pr-loop retries unreadable RED evidence once and reports a read failure (#678)" {
     local record json
     for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
