@@ -4,6 +4,13 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 
 bats_require_minimum_version 1.5.0
 
+@test "#691: acceptance scope credits the first-start fix to PR 693" {
+    local paragraph
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ "${paragraph}" == *'本輪 #691／PR #693 的首次初始化修正涉及'* ]]
+    [[ "${paragraph}" != *'修正子 PR 由發布流程補記'* ]]
+}
+
 @test "acceptance PR 157 scope credits interrupt, pairing and verbatim fixes (#659)" {
     local paragraph entry path credit
     paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
