@@ -3885,12 +3885,13 @@ STUB
 # Replace only Bash's clock in a private script copy. All deadline arithmetic
 # and ownership decisions remain shipped code; subprocesses share logical time.
 _control_window_clock() {
-    local repo
+    local repo clock_expression
     export FAKE_CLOCK_DELAY="${1:-0}"
     repo="$(_repo_copy)"
     REALBOX="${repo}/script/verify/realbox.sh"
     printf '0\n' >"${STATE}/clock"
-    sed -i 's/SECONDS/$(<"${FAKE_STATE_DIR}\/clock")/g' "${REALBOX}"
+    clock_expression="\$(<\"\${FAKE_STATE_DIR}/clock\")"
+    sed -i "s|SECONDS|${clock_expression}|g" "${REALBOX}"
     cat >"${STUBS}/sleep" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
