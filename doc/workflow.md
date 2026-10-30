@@ -109,7 +109,7 @@ CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base
 未傳 `pr` 且相對 `origin/<base>` 沒有新增 commit 時，以結構化查詢確認是否已有相同分支與 base 的開啟 PR；沒有 PR 就在原 worktree 進入實作，不另建分支或 worktree。保留 `.agents/state/` 的既有診斷，實作 brief 明確指出該目錄，要求先讀診斷並將測試證據留在其中。查詢失敗或回傳格式無效則停止。
 有既有 commit、工作區乾淨（codex 實作另須前次 rc 不為非零且有非空實作報告）時，判為 `resume`，接續發布：先查相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有未推送 commit 或查詢失敗則停止。
 CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR head 相同，未通過就停止，不相信 CI agent 的完成敘述。
-接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
+接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有有效審查的 `defects` 為空才能繼續；有缺陷或無有效結果就停止，忽略 reviewer 的 `verdict`。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## PR 上的 RED 紀錄（#607）
@@ -178,16 +178,21 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 4. **Codex**:agent 把 **PR 描述 + 對應 issue + 完整 diff** 餵給 `codex exec`,逐項確認
    (一件事 / TDD 證據 / 自足 / 正確性與健壯性 / 文件一致 / 新問題),把 codex 原文以 `[codex]`
    貼到 PR,加一行 `[claude] double-check`(上下文是否完整、每項是否引用 diff 位置)與可重現指令。
-   issue 本文的「## 範圍」段(擋 / 不擋 / 已知限制)由 shell 切出、逐字貼進 prompt,codex 只把範圍內的具體問題列為阻擋項;
+   issue 本文的「## 範圍」段(擋 / 不擋 / 已知限制)由 shell 切出、逐字貼進 prompt,審查只把範圍內的具體問題列為缺陷;
    issue 沒有該段時 prompt 註明「issue 未定範圍」(#238;攔截型 issue 缺範圍段在建立時就會被 `enforce_scope_on_guard_issues` hook 擋下)。
    讀取 issue 失敗(`gh` 非零)不會被當成「未定範圍」:重試一次仍失敗就不跑 codex,以 `no-output` 結束本輪。
-   第二輪起會把上一輪判定逐字附在 prompt 裡,要求逐項確認是否已修正。判定是結構化欄位(`mergeable` /
-   `blocked` / `no-output`):codex 無輸出或格式不明**不算通過**。
-5. **Fix**:codex「不可合併」時,agent 在同一 worktree 針對每個阻擋項先補失敗測試再修,獨立 commit,
+   第二輪起會把上一輪判定逐字附在 prompt 裡,要求逐項確認是否已修正。審查結構化回傳 `defects`（缺陷）、`limitations`（已知限制）、`suggestions`（改善建議）與原文 `answer`。
+   文件、輸出或 PR 說明與行為不符（含過時的 PR 說明）、錯誤的說明或註解、錯誤退出碼、fail-open 路徑、
+   只驗實作細節而驗不到保護行為的測試，以及未達成的 issue 預期，一律是缺陷，不得降級為限制或建議。
+   環境或效能風險列為限制，其他可選改善列為建議；兩者不阻擋。此分類規則也適用 Claude 審查與 light diff 審查。
+   workflow 只在有效審查的 `defects` 為空時判定 `mergeable`，忽略 reviewer 的 `verdict`；無輸出、分類欄位缺漏或格式錯誤回報 `no-output`，停止且不修正。
+5. **Fix**:`defects` 非空時（即使 reviewer 寫 `mergeable`），直接在同一次 workflow 進入既有 Fix 迴圈，不必重開或手動設定 `implement.rc`；agent 在同一 worktree 針對每個缺陷先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
    Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
-6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
+6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷（流程失敗時保留失敗原因）。
+   `limitations` 與 `suggestions` 累積各輪有效審查的內容並去重，包含 Fix 後或流程失敗的回傳；
+   `limitations` 提供呼叫者寫入 PR 說明的「已知限制」段落，workflow 不在此機械改寫 PR 說明。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
 ## milestone-fanout
 
