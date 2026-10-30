@@ -2,6 +2,8 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+bats_require_minimum_version 1.5.0
+
 @test "acceptance PR 157 scope credits interrupt, pairing and verbatim fixes (#659)" {
     local paragraph entry path credit
     paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
@@ -161,4 +163,69 @@ CREDITS
     assert_output --partial "空的 \`.tsha\`"
     assert_output --partial '刪除原本不存在、驗收期間才建立的目標檔'
     assert_output --partial '無法確定目標是否不存在時拒絕備份'
+}
+
+_prepare_realbox_doc_stubs() {
+    export FAKE_STATE_DIR="${BATS_TEST_TMPDIR}/state"
+    export HOME="${BATS_TEST_TMPDIR}/home" TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+    export FAKE_WORKTOOL_LIB_DIR="${REPO_ROOT}/lib"
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
+    local bin="${BATS_TEST_TMPDIR}/bin" tool
+    mkdir -p "${FAKE_STATE_DIR}" "${HOME}" "${TMPDIR}" "${bin}"
+    touch "${FAKE_STATE_DIR}/boxes" "${FAKE_STATE_DIR}/calls.log" "${FAKE_STATE_DIR}/list-calls"
+    for tool in distrobox gh jq; do
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${bin}/${tool}"
+    done
+    export DOC_REAL_JUST
+    DOC_REAL_JUST="$(command -v just)"
+    export DOC_TOOL="${FAKE_STATE_DIR}/just"
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${DOC_TOOL}"
+    cat >"${bin}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == verify ]]; then exec "${DOC_REAL_JUST}" "$@"; fi
+# Match bench.sh's stream contract while keeping all container calls stubbed.
+if [[ "${2:-}" == bench ]]; then
+    printf '[INFO] shell median 176.9 ms within --max-ms 300\n' >&2
+    export FAKE_JUST_BENCH_OUT=$'enter: min=136.1 median=171.1 max=197.0 ms\nshell: min=143.8 median=176.9 max=215.5 ms\ninbox: min=14.9 median=17.5 max=25.4 ms'
+fi
+exec bash "${DOC_TOOL}" "$@"
+STUB
+    chmod +x "${bin}/just"
+    export PATH="${bin}:${PATH}"
+}
+
+_normalize_realbox_doc_output() {
+    sed -E '/^\.\/script\//d;
+        s/m3-51-[0-9]{8}T[0-9]{6}Z-[0-9]+/<run>/g;
+        s/comment=[0-9]+/comment=<id>/g;
+        s/(min=|median=|max=)[0-9]+([.][0-9]+)?/\1<n>/g;
+        s/median [0-9]+([.][0-9]+)? ms/median <n> ms/g;
+        s/(box-state before-cleanup: home=)[01] tmux=[01]/\1<n> tmux=<n>/;
+        s@/[^ ]+@<path>@g'
+}
+
+@test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
+    _prepare_realbox_doc_stubs
+    local section expected actual stream
+    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
+    # Capture the current block too: the first RED must expose its omitted lines.
+    expected="$(awk '/^      ````text$/ { block=1; next }
+        /^      ````$/ && block { exit }
+        block { sub(/^      /, ""); print }' <<<"${section}")"
+    [[ -n "${expected}" ]]
+    run --separate-stderr just verify realbox --allow-real-box 5.1
+    assert_success
+    actual="${output}"$'\nrc=0'
+    printf '# stdout:\n%s\n# stderr:\n%s\n' "${actual}" "${stderr}" >&3
+    assert_equal "$(printf '%s\n' "${actual}" | _normalize_realbox_doc_output)" \
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
+    for stream in stderr; do
+        expected="$(awk -v stream="${stream}" '
+            $0 == "      ````text " stream { block=1; next }
+            /^      ````$/ && block { exit }
+            block { sub(/^      /, ""); print }' <<<"${section}")"
+        assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_output)" \
+            "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
+    done
 }

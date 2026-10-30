@@ -1007,17 +1007,28 @@ rc=0
   - 盒名由交付的 `box/dev.ini` manifest 決定（目前為 `[dev]`），不支援自訂 manifest。省略 `--box` 時沿用該盒名；`--box <name>` 只能指定相同名稱。若不一致（例如 `--box work`），在任何副作用前以 exit 2 拒絕，stderr 的 `realbox.sh: ...` 訊息會說明 manifest 決定盒名；不呼叫 assemble、distrobox 或 gh。5.3 的 decoy 仍使用 manifest 的盒名。
   - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。assemble、首次初始化或 bench 中斷時，腳本先停止本輪子行程群組，再自行清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理失敗優先，以 exit 1 結束。
     - assemble 完成後先以 `just box enter --box dev -- true` 完成首次啟動與初始化（沿用本輪 data／cache／config 隔離，stdin 關閉以避免失敗等待互動確認），再呼叫 bench，讓既有 quiet-wait 等待主機安靜後才量測。stderr 依序印 `phase=first-start`、產品首次初始化進度、`phase=bench` 與 bench 診斷；初始化失敗回 1、清理且不執行 bench、不發留言。ADR 0003 的 2.00 門檻、連續 5 秒、warmup 檢查、300 ms 與 exit 3 語意不變。
-    - 預期看到資訊(assemble 的輸出略;數字是你機器的實測,`run` 每次不同)
+    - 預期看到資訊（stdout 如下；assemble 的輸出略；數字是實測值，`comment` 與 `run` 每次不同；最後一行是 `echo rc=$?`）。清理狀態行出現在 `posted=1` 之後、`cleanup-rc=0` 之前，依序回報盒 HOME／tmux 清理前後與 host 狀態清理前、保留未知項目數、清理後。
       ````text
       preexisting-dev=0
+      host-state baseline: present=0
       enter: min=136.1 median=171.1 max=197.0 ms
       shell: min=143.8 median=176.9 max=215.5 ms
       inbox: min=14.9 median=17.5 max=25.4 ms
-      [INFO] shell median 176.9 ms within --max-ms 300
       rc=0
-      posted=1 comment=<id> run=m3-51-20260928T112604Z-<pid>
+      posted=1 comment=<id> run=<run>
+      box-state before-cleanup: home=1 tmux=1
+      box-state after-cleanup: home=0 tmux=0
+      host-state before-cleanup: new=0
+      host-state kept-unknown=0
+      host-state after-cleanup: new=0
       cleanup-rc=0
       rc=0
+      ````
+      stderr 的固定階段與摘要行如下；首次初始化進度、bench 的 PSI／量測進度與 just recipe echo 屬額外診斷，不是 stdout。兩個串流交錯顯示時，不保證相對順序。stub 不建立盒 HOME／tmux，因此其 `box-state before-cleanup` 為 `home=0 tmux=0`；實機正常建盒後為 `home=1 tmux=1`。
+      ````text stderr
+      phase=first-start
+      phase=bench
+      [INFO] shell median 176.9 ms within --max-ms 300
       ````
       (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於或等於這一輪真的傳給 `bench` 的 `--max-ms`(300;剛好等於門檻算通過,與 `bench` 及 #181 一致)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
       `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc` 在盒子、獨立 HOME、host 狀態與 scratch 清理結果都確定後只印一次；任何一步失敗都印 `cleanup-rc=1` 並讓本項 exit 非 0。盒子仍在時需手動移除；HOME 或 host 狀態清理失敗時保留 scratch 與未知資料供檢查，scratch 刪除失敗時也回報 1，不能將盒子已移除讀成整體清理成功。所有權須以 assemble 前確認盒子不存在、執行後合法列表確認盒子存在為證據，才把該盒的 container ID 寫入 `created-box`。清理前必須以合法列表比對本輪記錄的 ID；ID 不同或取不到時拒絕刪盒、回非零並保留證據。ID 相符的盒子照常清理；空表仍代表盒子不存在。`assemble-started` 只記錄已確認不存在後的 assemble 嘗試，不授予所有權；正常成功另記 `assemble-success`，仍須再次查到盒子。中斷後 assemble 回非零時，先停止本輪子行程群組，再於本次 realbox 執行內以合法列表確認盒子存在並記下 ID（assemble 子 shell 被中斷時，由已停止子行程的父行程在還原與互動前完成最後一次確認，隨即取消補記權限），才取得清理所有權；因此 Ctrl-C 跑到一半仍可清掉本輪已確認 ID 的盒。若本次執行結束時仍未記下 ID，後續獨立執行 5.2.3 不得只憑名稱補取得所有權。失敗且確認盒子不存在時不取得所有權、不呼叫刪盒，並清除嘗試紀錄，避免日後還原誤認使用者新建的同名盒；列表失敗或無法解析時拒絕刪盒、回非零並保留證據；assemble 失敗且確認列表無法解析（列表狀態 2）時，必須保留 `assemble-started`、印 `cleanup-rc=1`，且不呼叫 `distrobox rm`。取得所有權後清理只看最後盒子是否確定不存在，`distrobox rm` 沒東西可刪不算失敗。)
