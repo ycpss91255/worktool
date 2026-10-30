@@ -3585,7 +3585,7 @@ STUB
     done
 }
 
-@test "#663: a crowded process scan ends the shell search within ten seconds" {
+_crowded_window_tools() {
     _auto_window_tools
     _control_window_clock
     _realbox_quiet 5.2.1
@@ -3602,10 +3602,6 @@ if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; 
     exit 0
 fi
 if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
-    # The first cleanup inventory marks the completed search budget.
-    if (( $(<"${FAKE_STATE_DIR}/clock") >= 9 )) && [[ ! -e "${FAKE_STATE_DIR}/search-end" ]]; then
-        cat "${FAKE_STATE_DIR}/clock" >"${FAKE_STATE_DIR}/search-end"
-    fi
     printf '1 0 init\n900 1 ghostty\n5556 900 fish\n'
     for ((pid=10000; pid<10020; pid++)); do printf '%s 1 worker\n' "${pid}"; done
     exit 0
@@ -3617,12 +3613,26 @@ if [[ "$1" == -p && "$2" -ge 10000 ]]; then
 fi
 exec "${FAKE_STATE_DIR}/crowded-ps" "$@"
 STUB
+    # Observe the timeout diagnostic synchronously, before cleanup advances time.
+    cat >>"${REALBOX%/script/verify/realbox.sh}/lib/log.sh" <<'STUB'
+log_warn() {
+    if [[ "$*" == 'Ghostty new shell timed out; acceptance inconclusive' ]]; then
+        cat "${FAKE_STATE_DIR}/clock" >"${FAKE_STATE_DIR}/search-finished"
+    fi
+    _log_emit '[WARN]' "$@"
+}
+STUB
+}
+
+@test "#663: a crowded process scan ends the shell search within ten seconds" {
+    _crowded_window_tools
     run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
     local started ended
     read -r started <"${STATE}/search-start"
-    read -r ended <"${STATE}/search-end"
     assert_failure 3
     assert_output --partial 'new shell timed out'
+    assert [ -f "${STATE}/search-finished" ]
+    read -r ended <"${STATE}/search-finished"
     assert_equal "$((ended - started))" 9
 }
 
