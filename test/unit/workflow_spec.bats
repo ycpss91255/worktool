@@ -4682,7 +4682,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
 }
 
 _pl_auto_body() {
-    local root="$BATS_TEST_TMPDIR/auto"
+    local root="$BATS_TEST_TMPDIR/auto" mode="${1:-full}"
     mkdir -p "$root/bin" "$root/src" "$root/worktree/n"
     cat > "$root/bin/gh" <<'SH'
 #!/bin/sh
@@ -4699,6 +4699,7 @@ case "$1 $2" in
     *) exit 1 ;;
 esac
 SH
+    if [[ "${AUTO_REAL_GIT:-0}" != 1 ]]; then
     cat > "$root/bin/git" <<'SH'
 #!/bin/sh
 set -eu
@@ -4708,27 +4709,47 @@ case "$1" in
     *) exit 1 ;;
 esac
 SH
-    chmod +x "$root/bin/gh" "$root/bin/git"
+    chmod +x "$root/bin/git"
+    fi
+    chmod +x "$root/bin/gh"
     AUTO_ROOT="$root" PATH="$root/bin:$PATH" run _pl_run \
-        "$(jq -cn --arg dir "$root/src" '{repoDir:$dir}')" \
+        "$(jq -cn --arg dir "$root/src" --arg mode "$mode" '{repoDir:$dir,mode:$mode}')" \
         '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
         '{"evidence":"[{\"source\":\"body\",\"body\":\"## RED exemption\\nReason: fixture\"}]"}' exec-auto-body
     assert_success
 }
 
 @test "pr-loop regenerates the machine head and full commit list after a push (#681)" {
-    local root="$BATS_TEST_TMPDIR/auto" head
-    mkdir -p "$root"
-    for head in aaaaaaa bbbbbbb; do
-        jq -n --arg head "$head" '{body:"[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->\nstale\n<!-- pr-loop:auto:end -->\r\nTail  \n",
-            headRefOid:$head,baseRefOid:"abcdef"}' > "$root/pr.json"
-        printf '1111111 first commit\n%s next commit\n' "$head" > "$root/commits"
-        _pl_auto_body
+    local root="$BATS_TEST_TMPDIR/auto" head base subject
+    mkdir -p "$root/worktree/n"
+    git init -q --bare "$root/remote.git"
+    git init -q "$root/worktree/n"
+    git -C "$root/worktree/n" config user.name Fixture
+    git -C "$root/worktree/n" config user.email '1+fixture@users.noreply.github.com'
+    git -C "$root/worktree/n" remote add origin "$root/remote.git"
+    printf 'base\n' > "$root/worktree/n/file"
+    git -C "$root/worktree/n" add file
+    git -C "$root/worktree/n" commit -qm base
+    base="$(git -C "$root/worktree/n" rev-parse HEAD)"
+    for subject in first second; do
+        printf '%s\n' "$subject" >> "$root/worktree/n/file"
+        git -C "$root/worktree/n" commit -qam "$subject commit"
+        git -C "$root/worktree/n" push -q origin HEAD:refs/heads/b
+        head="$(git -C "$root/worktree/n" rev-parse HEAD)"
+        if [[ "$subject" == first ]]; then
+            jq -n --arg head "$head" --arg base "$base" '{body:
+                "[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->\nstale\n<!-- pr-loop:auto:end -->\r\nTail  \n",
+                headRefOid:$head,baseRefOid:$base}' > "$root/pr.json"
+        else
+            jq --arg head "$head" '.headRefOid=$head' "$root/pr.json" > "$root/next.json"
+            mv "$root/next.json" "$root/pr.json"
+        fi
+        AUTO_REAL_GIT=1 _pl_auto_body
         run cat "$root/body"
         assert_success
         assert_output --partial "head: $head"
-        assert_output --partial '- 1111111 first commit'
-        assert_output --partial "- $head next commit"
+        assert_output --partial 'first commit'
+        assert_output --partial "- ${head:0:7} $subject commit"
         assert_output --partial 'CI: green'
         run jq -e '.body | startswith("[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->") and
             endswith("<!-- pr-loop:auto:end -->\r\nTail  \n")' "$root/pr.json"
@@ -4781,4 +4802,16 @@ SH
             assert_success
         done
     done
+}
+
+@test "pr-loop light blocks CI when machine metadata generation fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->broken",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    _pl_auto_body light
+    run jq -e '.result.blockingLeft == ["machine PR body update failed"] and
+        ([.calls[] | select(.role | startswith("ci:"))] | length == 0)' <<<"$output"
+    assert_success
 }
