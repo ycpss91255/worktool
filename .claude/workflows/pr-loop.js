@@ -305,7 +305,7 @@ const RED_QUERY = String.raw`
     select(test("^RED(?: exemption)?[ \\t]*\\r?\\n")) | "## " + .;
   def line($pattern): first(split("\n")[] | select(test($pattern))) | .[0:1024];
   def records:
-    . as $record | .body | sections |
+    . as $record | (.body // "") | sections |
     if startswith("## RED exemption") then
       select($record.source == "body") |
       line("^Reason:[ \\t]*\\S[^\\r\\n]*$") |

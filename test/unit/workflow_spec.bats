@@ -4161,6 +4161,43 @@ SH
     assert_success
 }
 
+@test "pr-loop treats null RED bodies as empty without read errors (#678)" {
+    local root="${BATS_TEST_TMPDIR}" scenario expected json
+    mkdir -p "${root}/bin"
+    cat > "${root}/bin/gh" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$RED_SOURCE"
+        exit "$?"
+    fi
+    shift
+done
+exit 1
+SH
+    chmod +x "${root}/bin/gh"
+    for scenario in null-description null-comment absent; do
+        jq -n --arg scenario "$scenario" '
+            "## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```" as $red |
+            if $scenario == "null-description" then {body:null,comments:[{body:$red}]}
+            elif $scenario == "null-comment" then {body:"",comments:[{body:null},{body:$red}]}
+            else {body:null,comments:[{body:null}]} end' > "${root}/pr.json"
+        RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+        assert_success
+        json="$output"
+        expected=mergeable
+        if [ "$scenario" = absent ]; then expected=blocked; fi
+        run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+            ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+            (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and
+                (.stdout | fromjson | if $expected == "blocked" then . == [] else length == 1 end)) and
+            (if $expected == "blocked" then .result.blockingLeft ==
+                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else true end)' <<<"$json"
+        assert_success
+    done
+}
+
 @test "pr-loop retries unreadable RED evidence once and reports a read failure (#678)" {
     local record json
     for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
