@@ -301,7 +301,7 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
 const RED_COMMAND = String.raw`^[ \t]*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+`
 const RED_QUERY = String.raw`
   def sections:
-    split("\n## ")[] | ltrimstr("## ") |
+    ("\n" + .) | split("\n## ")[1:][] |
     select(test("^RED(?: exemption)?[ \\t]*\\r?\\n")) | "## " + .;
   def line($pattern): first(split("\n")[] | select(test($pattern))) | .[0:1024];
   def records:

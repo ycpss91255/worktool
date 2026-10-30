@@ -4198,6 +4198,33 @@ SH
     done
 }
 
+@test "pr-loop rejects RED prose without a Markdown heading during transport (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    mkdir -p "${root}/bin"
+    jq -n '{body:"RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```",
+        comments:[{body:"RED exemption\nReason: missing heading"}]}' > "${root}/pr.json"
+    cat > "${root}/bin/gh" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$RED_SOURCE"
+        exit "$?"
+    fi
+    shift
+done
+exit 1
+SH
+    chmod +x "${root}/bin/gh"
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and (.stdout | fromjson) == [])' <<<"$json"
+    assert_success
+}
+
 @test "pr-loop retries unreadable RED evidence once and reports a read failure (#678)" {
     local record json
     for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
