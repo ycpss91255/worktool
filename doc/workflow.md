@@ -525,7 +525,9 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 7. **Independent Codex → Independent Claude**：先啟動全新 Codex session，完成且確認
    真實設定已還原後，才啟動全新 Claude agent；同一時間只有一位驗收者操作真實設定。
    兩者只收到 `maintainerSentence`（或預設開放式驗證句）及操作／安全限制：
-   真實設定先備份、所有退出路徑還原並核對；除文件規定且有 agent 標記的 #22 發文外
+   真實設定先備份、所有退出路徑還原並核對；每份 live config 備份必須是獨立副本
+   （`cp -p` 或等效方式），禁止 hardlink 或指向 live 檔案的參照；任何設定變更前確認
+   備份與 live 檔案的 inode 不同，並將核對結果記入 recovery journal。除文件規定且有 agent 標記的 #22 發文外
    不寫 GitHub；不寫維護者核准片語；長指令背景執行並輪詢到完成；報告不含本機路徑。
    repo 操作仍透過 just，測試只在 Docker，禁止 host 安裝與本機整個 tier。
    Codex 的 launcher 本身遵守前景、字面路徑與 bounded call 限制；不沿用 Review session。

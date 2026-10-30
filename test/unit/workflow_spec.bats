@@ -4702,3 +4702,13 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "milestone-handover requires independent live-config backups in both assessor prompts (#690)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    run jq -e '[.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:")] |
+        length == 2 and all(.prompt | contains("independent copy (cp -p or equivalent)") and
+            contains("never a hardlink or a reference to the live file") and
+            contains("verify the backup inode differs from the live file inode") and
+            contains("before any config mutation"))' <<<"${output}"
+    assert_success
+}
