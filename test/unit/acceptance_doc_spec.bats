@@ -252,7 +252,7 @@ _normalize_realbox_doc_stderr() {
 
 _assert_realbox_doc_streams() {
     local section expected actual output="" stderr=""
-    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${1:-${REPO_ROOT}/doc/acceptance.md}")"
+    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "$1")"
     # Compare complete streams after normalizing environment-dependent fields.
     expected="$(awk '/^      ````text$/ { block=1; next }
         /^      ````$/ && block { exit }
@@ -274,7 +274,7 @@ _assert_realbox_doc_streams() {
 
 @test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
     _prepare_realbox_doc_stubs
-    _assert_realbox_doc_streams
+    _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md"
 }
 
 @test "acceptance 5.1 comparison rejects stub cleanup state in the real host block (#666)" {
@@ -289,7 +289,7 @@ _assert_realbox_doc_streams() {
 @test "acceptance 5.1 successful comparison emits no fd 3 dump (#666)" {
     _prepare_realbox_doc_stubs
     local dump="${BATS_TEST_TMPDIR}/diagnostics"
-    run _assert_realbox_doc_streams 3>"${dump}"
+    run _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md" 3>"${dump}"
     assert_success
     [[ ! -s "${dump}" ]]
 }
@@ -301,7 +301,7 @@ _assert_realbox_doc_streams() {
     cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${mutant}/"
     export DOC_BENCH="${mutant}/script/box/bench.sh"
     sed -i 's/log_info "shell median \(.*within --max-ms.*\)"/echo "[INFO] shell median \1"/' "${DOC_BENCH}"
-    run _assert_realbox_doc_streams
+    run _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md"
     assert_failure
     assert_output --partial '-- values do not equal --'
     assert_output --partial '[INFO] shell median'
@@ -330,7 +330,7 @@ _assert_51_credits() {
 
 @test "acceptance 5.1 credits reject missing box interface credit (#666)" {
     local doc="${BATS_TEST_TMPDIR}/acceptance.md"
-    sed 's@`script/box/justfile.box`；#665／PR #673@`script/box/justfile.box`；missing@' \
+    sed "s@\`script/box/justfile.box\`；#665／PR #673@\`script/box/justfile.box\`；missing@" \
         "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
     run _assert_51_credits "${doc}"
     assert_failure
