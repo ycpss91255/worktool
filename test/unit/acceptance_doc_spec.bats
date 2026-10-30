@@ -206,7 +206,7 @@ _normalize_realbox_doc_output() {
 
 @test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
     _prepare_realbox_doc_stubs
-    local section expected actual stream
+    local section expected actual stderr=""
     section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
     # Capture the current block too: the first RED must expose its omitted lines.
     expected="$(awk '/^      ````text$/ { block=1; next }
@@ -219,14 +219,12 @@ _normalize_realbox_doc_output() {
     printf '# stdout:\n%s\n# stderr:\n%s\n' "${actual}" "${stderr}" >&3
     assert_equal "$(printf '%s\n' "${actual}" | _normalize_realbox_doc_output)" \
         "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
-    for stream in stderr; do
-        expected="$(awk -v stream="${stream}" '
-            $0 == "      ````text " stream { block=1; next }
-            /^      ````$/ && block { exit }
-            block { sub(/^      /, ""); print }' <<<"${section}")"
-        assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_output)" \
-            "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
-    done
+    expected="$(awk '
+        /^      ````text stderr$/ { block=1; next }
+        /^      ````$/ && block { exit }
+        block { sub(/^      /, ""); print }' <<<"${section}")"
+    assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_output)" \
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
 }
 
 @test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
@@ -238,10 +236,10 @@ _normalize_realbox_doc_output() {
         entry="${entry%%）*}"
         [[ "${entry}" =~ \#666／PR[[:space:]](\#[0-9]+|待建立) ]]
     done
-    [[ "${paragraph}" == *'`script/box/justfile.box`；#665／PR #673'* ]]
+    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
     [[ "${paragraph}" != *'665-review-round'* ]]
     run grep -F '(M3 adds enter / rm)' "${REPO_ROOT}/doc/acceptance.md"
     assert_failure 1
-    run grep -F 'recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`script/test/justfile.test` 為唯一來源' "${REPO_ROOT}/doc/acceptance.md"
+    run grep -F "recipe 名稱與說明以根目錄 \`justfile\`、\`script/box/justfile.box\`、\`script/test/justfile.test\` 為唯一來源" "${REPO_ROOT}/doc/acceptance.md"
     assert_success
 }
