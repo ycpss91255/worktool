@@ -234,7 +234,7 @@ _normalize_realbox_doc_output() {
         entry="${paragraph#*\`"${path}"\`（}"
         [[ "${entry}" != "${paragraph}" ]]
         entry="${entry%%）*}"
-        [[ "${entry}" =~ \#666／PR[[:space:]](\#[0-9]+|待建立) ]]
+        [[ "${entry}" =~ \#666／PR[[:space:]]\#[0-9]+ ]]
     done
     [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
     [[ "${paragraph}" != *'665-review-round'* ]]
