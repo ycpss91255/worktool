@@ -22,9 +22,9 @@
 #     - `grep`'s exit 1 ("matched nothing") is kept apart from its exit >= 2
 #       ("could not read the file"), and a count is validated as a number
 #       before it is compared;
-#     - anything this environment cannot do (a missing tool, no terminal for
-#       the one subjective check) is REPORTED and exits non-zero. Nothing is
-#       skipped quietly.
+#     - anything this environment cannot do (a missing tool or no graphical
+#       session for automatic window evidence) is REPORTED and exits non-zero.
+#       Nothing is skipped quietly.
 #
 #   The primitives that enforce this live in lib/guard.sh; the config backup
 #   and restore machinery of 5.2 lives in lib/config_backup.sh.
@@ -134,7 +134,7 @@ Items:
           run's dev container, then restore everything and remove the box.
   5.2.1   5.2 step 1 only (back up; refuses unless the whole set is coverable).
   5.2.2   5.2 step 2 only (re-validate the published backup, apply, then
-          check the user's own content survived).
+          check the user's own content survived and verify a new fish automatically).
   5.2.3   5.2 step 3 only (restore). The recovery entry: safe to run alone
           after an interrupt, and a no-op when there is no backup.
   5.3     Negative: with a `dev` box present, prove 5.1 and 5.2 step 2 refuse
@@ -407,6 +407,7 @@ _cleanup_run() {
         51) _51_cleanup ;;
         52-abort-backup) cfgbk_abort ;;
         52-restore) _52_cleanup_report ;;
+        52-window) _52_close_window ;;
         53) _53_cleanup ;;
         54) _54_cleanup ;;
         *) guard_fail "internal: unknown cleanup token '$1'"; return 1 ;;
@@ -415,9 +416,10 @@ _cleanup_run() {
 
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
-    local _rc=0
+    local _rc=0 _restore_rc=0
     _finish_box_confirmation "${CFGBK_B}" || _rc=1
-    _52_step3_restore || _rc=$?
+    _52_step3_restore || _restore_rc=$?
+    [[ "${_rc}" -eq 1 ]] || _rc="${_restore_rc}"
     printf 'cleanup-rc=%s\n' "${_rc}"
     return "${_rc}"
 }
@@ -462,6 +464,9 @@ _on_exit() {
         _cleanup_pop_run || _crc=1
     done
     rmdir -- "${VERIFY_RUN_GUARD_DIR}" || _crc=1
+    if [[ "${_52_REMIND:-0}" -eq 1 ]]; then
+        printf '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。\n'
+    fi
     [[ "${_crc}" -eq 0 ]] || exit 1
     exit "${_st}"
 }
@@ -761,7 +766,8 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_apply_require_tools() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
+    _52_window_require_tools
 }
 
 _52_step2_apply() {
@@ -797,25 +803,258 @@ _52_apply_only() {
     local _rc=0
     _cleanup_push 52-restore
     _52_step2_apply || _rc=$?
+    if [[ "${_rc}" -eq 0 ]]; then
+        _52_confirm_window || _rc=$?
+    fi
     _cleanup_drop
     return "${_rc}"
 }
 
 # --- objective new-window check ---------------------------------------------
 _52_confirm_window() {
-    local _pid
-    printf 'Ghostty already running when setup applied? Reload config (Linux default Ctrl+Shift+,).\n'
-    printf 'Reload is asynchronous: wait for evidence that config.ghostty was read (e.g. Ghostty logs),\n'
-    printf 'or start a new Ghostty process with the updated config before opening a new window.\n'
-    printf 'Never close your existing windows.\n'
-    printf 'Open a NEW ghostty window now and run: echo %s\n' "\$fish_pid"
-    [[ -t 0 ]] \
-        || { guard_fail "stdin is not a tty; re-run 5.2 from an interactive shell"; return 1; }
-    printf 'Enter the fish PID from the new window: '
-    IFS= read -r _pid || { guard_fail "reading the fish PID failed"; return 1; }
-    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "expected a fish PID; a typed yes is not objective evidence"; return 1; }
-    _52_window_evidence "${_pid}"
+    _52_auto_window apply
+}
+
+# Request reload through the GTK action before requesting the new window.
+# IPC delivery alone is insufficient: the new shell must pass namespace checks.
+_52_window_require_tools() {
+    guard_require gapplication mktemp sleep || return $?
+    type -P kill >/dev/null || {
+        printf '[UNAVAILABLE] %s: kill not found on PATH (external binary required)\n' "${0##*/}" >&2
+        return 3
+    }
+}
+
+_52_open_window() {
+    _52_WINDOW_PENDING=0
+    _52_window_require_tools || return $?
+    _52_desktop_preflight || return $?
+    _52_WINDOW_DIR="$(mktemp -d "${CFGBK_B}/window.XXXXXXXX")" || return 1
+    _cleanup_push 52-window
+    guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${_52_WINDOW_DIR}/before" || return 1
+    guard_timed 5 gapplication action com.mitchellh.ghostty reload-config \
+        || { log_warn "Ghostty reload IPC unavailable"; return 3; }
+    printf 'ghostty-reload=1\n'
+    _52_WINDOW_PENDING=1
+    guard_timed 5 ghostty +new-window "--working-directory=${_52_WINDOW_DIR}" \
+        || { log_warn "Ghostty new-window IPC unavailable"; return 3; }
+    printf 'ghostty-new-window=1\n'
+}
+
+# Ownership comes from our unique working directory on the direct Ghostty
+# child, never just from a process appearing after the snapshot.
+_52_process_snapshot() {
+    local pid parent comm
+    _52_ROWS="$(timeout -s KILL 1 ps -e -o pid=,ppid=,comm=)" || return 1
+    _52_PARENTS=() _52_COMMS=()
+    while read -r pid parent comm; do
+        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 1
+        [[ "${pid}" =~ ^[1-9][0-9]*$ && "${parent}" =~ ^[0-9]+$ ]] || continue
+        _52_PARENTS[${pid}]="${parent}"
+        _52_COMMS[${pid}]="${comm}"
+    done <<<"${_52_ROWS}"
+}
+
+_52_window_root() {
+    local pid="$1" parent cwd depth
+    for ((depth=0; depth<64; depth++)); do
+        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 1
+        [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+        parent="${_52_PARENTS[${pid}]:-0}"
+        [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" != "${pid}" ]] || return 1
+        if [[ "${_52_COMMS[${parent}]:-}" == ghostty ]]; then
+            cwd="$(timeout -s KILL 1 readlink "/proc/${pid}/cwd" 2>/dev/null)" || return 1
+            if [[ "${cwd}" == "${_52_WINDOW_DIR}" ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
+                printf '%s\n' "${pid}"
+                return 0
+            fi
+        fi
+        pid="${parent}"
+    done
+    return 1
+}
+
+# Distrobox preserves the requested working directory inside the box.
+# The in-box shell's runtime parent cannot prove Ghostty ownership.
+_52_window_directory() {
+    local cwd
+    cwd="$(timeout -s KILL 1 readlink "/proc/$1/cwd" 2>/dev/null)" || return 1
+    [[ "${cwd}" == "${_52_WINDOW_DIR}" || "${cwd}" == "/run/host${_52_WINDOW_DIR}" ]]
+}
+
+_52_apply_window_root() {
+    local pid parent comm root
+    while read -r pid parent comm; do
+        (( SECONDS < _52_DEADLINE )) || return 1
+        [[ "${parent}" =~ ^[1-9][0-9]*$ ]] || continue
+        [[ "${_52_COMMS[${parent}]:-}" == ghostty ]] || continue
+        root="$(_52_window_root "${pid}")" || continue
+        [[ "${root}" == "${pid}" ]] || continue
+        printf '%s\n' "${root}"
+        return 0
+    done <<<"${_52_ROWS}"
+    return 1
+}
+
+_52_find_window() {
+    # Reserve one second for the final bounded probe before the ten-second limit.
+    local mode="$1" _52_DEADLINE=$((SECONDS + 9)) _52_ROWS pid parent comm root apply_root nonfish=''
+    local -A _52_PARENTS=() _52_COMMS=()
+    while (( SECONDS < _52_DEADLINE )); do
+        if ! _52_process_snapshot; then
+            (( SECONDS < _52_DEADLINE )) && return 3
+            break
+        fi
+        # A wrapper seen by an earlier sweep stays the deadline candidate.
+        apply_root=''
+        if [[ "${mode}" == apply ]]; then
+            apply_root="$(_52_apply_window_root)" || { sleep 0.1; continue; }
+        fi
+        while read -r pid parent comm; do
+            (( SECONDS < _52_DEADLINE )) || break
+            [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
+            case "${comm}" in fish|bash|sh|zsh|dash|ksh) ;; *) continue ;; esac
+            grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
+            if [[ "${mode}" == apply ]]; then
+                root="${apply_root}"
+                _52_window_directory "${pid}" || continue
+            else
+                root="$(_52_window_root "${pid}")" || continue
+            fi
+            [[ -n "${root}" ]] || continue
+            if [[ "${mode}" == apply ]]; then
+                # Login wrappers share the owned cwd before exec into fish.
+                if [[ "${comm}" != fish ]]; then
+                    nonfish="${pid}"
+                    continue
+                fi
+                _52_window_evidence "${pid}"
+            else
+                _52_restored_window_evidence "${pid}"
+            fi
+            return $?
+        done <<<"${_52_ROWS}"
+        sleep 0.1 || return 3
+    done
+    if [[ -n "${nonfish}" ]]; then
+        _52_final_nonfish "${nonfish}"
+        return $?
+    fi
+    log_warn "Ghostty new shell timed out; acceptance inconclusive"
+    return 3
+}
+
+# A final snapshot can outlive a transient login wrapper. Only a successful,
+# nonempty comm probe can establish that the last candidate is still non-fish.
+_52_final_nonfish() {
+    local comm
+    comm="$(timeout -s KILL 1 ps -p "$1" -o comm=)" || return 3
+    case "${comm}" in
+        bash|sh|zsh|dash|ksh)
+            guard_fail "PID $1 is not fish"
+            return 1
+            ;;
+    esac
+    log_warn "Ghostty new shell not confirmed at deadline; acceptance inconclusive"
+    return 3
+}
+
+_52_current_root() {
+    local _52_ROWS
+    local -A _52_PARENTS=() _52_COMMS=()
+    _52_process_snapshot || return 2
+    [[ -n "${_52_COMMS[$1]+present}" ]] || return 1
+    _52_window_root "$1" || return 2
+}
+
+_52_stop_window() {
+    local root="$1" signal deadline current rc
+    local _52_DEADLINE=${_52_DEADLINE:-$((SECONDS + 4))}
+    for signal in HUP TERM KILL; do
+        (( SECONDS < _52_DEADLINE )) || break
+        rc=0
+        current="$(_52_current_root "${root}")" || rc=$?
+        [[ "${rc}" -ne 1 ]] || return 0
+        [[ "${rc}" -eq 0 ]] || {
+            guard_fail "cannot inventory owned window; keeping ownership evidence"
+            return 1
+        }
+        [[ "${current}" == "${root}" ]] || return 1
+        (( SECONDS < _52_DEADLINE )) || break
+        guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
+        deadline=$((SECONDS + 1))
+        while (( SECONDS < deadline && SECONDS < _52_DEADLINE )); do
+            rc=0
+            current="$(_52_current_root "${root}")" || rc=$?
+            [[ "${rc}" -ne 1 ]] || return 0
+            [[ "${rc}" -eq 0 ]] || {
+                guard_fail "cannot inventory owned window; keeping ownership evidence"
+                return 1
+            }
+            [[ "${current}" == "${root}" ]] || return 1
+            sleep 0.1 || return 1
+        done
+    done
+    guard_fail "owned Ghostty window did not close; keeping ownership evidence"
+    return 1
+}
+
+_52_sweep_window() {
+    local _52_ROWS pid parent comm root group pgid sid rc=0 found=0
+    local -A _52_PARENTS=() _52_COMMS=()
+    _52_process_snapshot || {
+        guard_fail "cannot inventory owned window; keeping ownership evidence"
+        return 1
+    }
+    while read -r pid parent comm; do
+        (( SECONDS < _52_DEADLINE )) || break
+        [[ "${parent}" =~ ^[1-9][0-9]*$ && "${_52_COMMS[${parent}]:-}" == ghostty ]] || continue
+        root="$(_52_window_root "${pid}")" || continue
+        [[ "${root}" == "${pid}" ]] || continue
+        found=1
+        (( SECONDS < _52_DEADLINE )) || return 1
+        group="$(guard_timed 1 ps -p "${root}" -o pgid=,sid=)" || { rc=1; continue; }
+        read -r pgid sid <<<"${group}"
+        if [[ "${pgid}" == "${root}" && "${sid}" == "${root}" ]]; then
+            _52_stop_window "${root}" || rc=1
+        else
+            log_warn "owned window is not an isolated session; keeping ownership evidence"
+            rc=1
+        fi
+    done <<<"${_52_ROWS}"
+    [[ "${rc}" -eq 0 ]] || return 1
+    [[ "${found}" -eq 1 ]] || return 2
+}
+
+_52_close_window() {
+    [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
+    # Start retries only while a full second remains, so a retry sweep is
+    # never cut off by the deadline mid-snapshot.
+    local _52_DEADLINE=$((SECONDS + 4)) rc retry_until=$((SECONDS + 3))
+    while (( SECONDS < retry_until )); do
+        rc=0
+        _52_sweep_window || rc=$?
+        [[ "${rc}" -ne 1 ]] || return 1
+        [[ "${rc}" -ne 0 && "${_52_WINDOW_PENDING:-0}" -eq 1 ]] || break
+        sleep 0.1 || return 1
+    done
+    rm -rf -- "${_52_WINDOW_DIR}" || return 1
+    _52_WINDOW_DIR=''
+}
+
+_52_auto_window() {
+    local mode="$1" rc=0
+    _52_REMIND=1
+    _52_open_window || rc=$?
+    if [[ "${rc}" -eq 0 ]]; then
+        _52_find_window "${mode}" || rc=$?
+        [[ "${rc}" -ne 0 ]] || _52_WINDOW_PENDING=0
+    fi
+    if [[ -n "${_52_WINDOW_DIR:-}" && ${#CLEANUP_STACK[@]} -gt 0
+        && "${CLEANUP_STACK[-1]}" == 52-window ]]; then
+        _cleanup_pop_run || rc=1
+    fi
+    return "${rc}"
 }
 
 _52_dev_namespace() {
@@ -893,23 +1132,9 @@ _52_cleanup_state() {
 }
 
 _52_confirm_restore() {
-    local _pid
-    guard_require ghostty ps readlink || return $?
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before-restore-window" \
         || { guard_fail "cannot inventory processes before restore window"; return 1; }
-    printf 'Reload the RESTORED Ghostty config (Linux default Ctrl+Shift+,).\n'
-    printf 'Reload is asynchronous: wait for evidence that the restored config was read (e.g. Ghostty logs).\n'
-    printf 'Never close or modify your existing windows or Ghostty process.\n'
-    printf 'After reload, open a NEW Ghostty window and run: echo %s (fish) or echo %s (POSIX shell).\n' \
-        "\$fish_pid" "\$\$"
-    [[ -t 0 ]] \
-        || { guard_fail "stdin is not a tty; re-run 5.2.3 from an interactive shell to confirm reload"; return 1; }
-    printf 'Ctrl-D skips confirmation; the backup is kept for a 5.2.3 retry.\n' >&2
-    printf 'Enter the shell PID from the new window after reload: '
-    IFS= read -r _pid || { guard_fail "reading the restored window PID failed"; return 1; }
-    [[ "${_pid}" =~ ^[1-9][0-9]*$ ]] \
-        || { guard_fail "expected a shell PID; a typed yes is not objective reload evidence"; return 1; }
-    _52_restored_window_evidence "${_pid}"
+    _52_auto_window restore
 }
 
 _52_restored_window_evidence() {
@@ -953,17 +1178,34 @@ _52_restored_window_chain() {
 
 _52_report_restore_window() {
     [[ -f "${CFGBK_B}/processes-before" ]] || return 0
+    local rc=0
+    _52_window_require_tools || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        log_warn "config restored, but the window check could not run; install the missing tools and retry 5.2.3"
+        printf 'restore-window-ok=0\n'
+        return "${rc}"
+    fi
     if _52_confirm_restore; then
         printf 'restore-window-ok=1\n'
     else
+        rc=$?
         printf 'restore-window-ok=0\n'
-        return 1
+        return "${rc}"
     fi
 }
 
 _52_restore_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch
+        ps find cmp stat touch || return $?
+}
+
+_52_windows_closed() {
+    local directory
+    for directory in "${CFGBK_B}"/window.*; do
+        [[ -d "${directory}" ]] || continue
+        guard_fail "window cleanup incomplete at ${directory}; keeping ownership evidence"
+        return 1
+    done
 }
 
 _52_step3_restore() {
@@ -991,20 +1233,20 @@ _52_step3_restore() {
     printf 'restore-rc=%s\n' "${_rrc}"
     [[ "${_rrc}" -eq 0 ]] \
         || { guard_fail "just box setup --auto-enter no exited ${_rrc}"; _rc=1; }
-
     cfgbk_restore_all || _rc=1
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-files-ok=1\n'; else printf 'restore-files-ok=0\n'; fi
     if [[ "${_rc}" -eq 0 ]]; then
-        _52_report_restore_window || _rc=1
+        _52_report_restore_window || _rc=$?
     fi
     if [[ "${_rc}" -eq 0 ]]; then printf 'restore-ok=1\n'; else printf 'restore-ok=0\n'; fi
     cfgbk_report_blocks || _rc=1
     cfgbk_report_leftover_dirs || _rc=1
     _52_cleanup_state || _rc=1
+    _52_windows_closed || _rc=1
 
     if [[ "${_rc}" -ne 0 ]]; then
         printf 'backup kept at %s -- fix the errors above and re-run 5.2.3\n' "${CFGBK_B}"
-        return 1
+        return "${_rc}"
     fi
     # Only claim the backup is gone once the removal actually succeeded.
     rm -rf -- "${CFGBK_B}" \
@@ -1104,7 +1346,8 @@ _52_desktop_preflight() {
 
 _52_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch
+        grep cut id cat find sort cmp ps realpath stat touch || return $?
+    _52_window_require_tools
 }
 
 item_52() {
@@ -1221,7 +1464,8 @@ _53_body() {
 
 _53_require_tools() {
     guard_require ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname \
-        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch
+        mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps realpath stat touch || return $?
+    _52_window_require_tools
 }
 
 item_53() {
