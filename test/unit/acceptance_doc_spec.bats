@@ -68,7 +68,7 @@ CREDITS
     reason="$(sed -n 's/.*reason = " \(.*\)"/\1/p' <<<"${policy}")"
     expected="$(sed -n "s/.*\$0 == \"\([^\"]*\)\" reason.*/\1/p" <<<"${policy}" |
         while IFS= read -r name; do printf '%s | %s\n' "${name}" "${reason}"; done | sort)"
-    [[ -n "${expected}" ]]
+    [[ -n "${expected}" ]] || return 1
     section="$(sed -n '/^  - \[ \] 2\.1 裸/,/^  - \[ \] 2\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
     documented="$(sed -n "s/^      | \`\([^\`]*\)\` | \`\([^\`]*\)\` |$/\1 | \2/p" <<<"${section}" | sort)"
     assert_equal "${documented}" "${expected}"
@@ -252,13 +252,13 @@ _normalize_realbox_doc_stderr() {
 
 _assert_realbox_doc_streams() {
     local section expected actual output="" stderr=""
-    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
+    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${1:-${REPO_ROOT}/doc/acceptance.md}")"
     # Compare complete streams after normalizing environment-dependent fields.
     expected="$(awk '/^      ````text$/ { block=1; next }
         /^      ````$/ && block { exit }
         block { sub(/^      /, ""); print }' <<<"${section}")"
-    [[ -n "${expected}" ]]
-    [[ "${expected}" == *"box-state before-cleanup: home=1 tmux=1"* ]]
+    [[ -n "${expected}" ]] || return 1
+    [[ "${expected}" == *"box-state before-cleanup: home=1 tmux=1"* ]] || return 1
     run --separate-stderr just verify realbox --allow-real-box 5.1
     if ! assert_success; then printf '%s\n' "${stderr}"; return 1; fi
     actual="${output}"$'\nrc=0'
@@ -275,6 +275,15 @@ _assert_realbox_doc_streams() {
 @test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
     _prepare_realbox_doc_stubs
     _assert_realbox_doc_streams
+}
+
+@test "acceptance 5.1 comparison rejects stub cleanup state in the real host block (#666)" {
+    _prepare_realbox_doc_stubs
+    local doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed 's/box-state before-cleanup: home=1 tmux=1/box-state before-cleanup: home=0 tmux=0/' \
+        "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+    run _assert_realbox_doc_streams "${doc}"
+    assert_failure
 }
 
 @test "acceptance 5.1 successful comparison emits no fd 3 dump (#666)" {
@@ -294,6 +303,7 @@ _assert_realbox_doc_streams() {
     sed -i 's/log_info "shell median \(.*within --max-ms.*\)"/echo "[INFO] shell median \1"/' "${DOC_BENCH}"
     run _assert_realbox_doc_streams
     assert_failure
+    assert_output --partial '-- values do not equal --'
     assert_output --partial '[INFO] shell median'
 }
 
