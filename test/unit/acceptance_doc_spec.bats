@@ -184,15 +184,50 @@ _prepare_realbox_doc_stubs() {
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == verify ]]; then exec "${DOC_REAL_JUST}" "$@"; fi
-# Match bench.sh's stream contract while keeping all container calls stubbed.
 if [[ "${2:-}" == bench ]]; then
-    printf '[INFO] shell median 176.9 ms within --max-ms 300\n' >&2
-    export FAKE_JUST_BENCH_OUT=$'enter: min=136.1 median=171.1 max=197.0 ms\nshell: min=143.8 median=176.9 max=215.5 ms\ninbox: min=14.9 median=17.5 max=25.4 ms'
+    exec bash "${DOC_BENCH}" "${@:3}"
 fi
 exec bash "${DOC_TOOL}" "$@"
 STUB
     chmod +x "${bin}/just"
     export PATH="${bin}:${PATH}"
+    _prepare_doc_bench_commands "${bin}"
+}
+
+# Stub only external commands; setup, enter, bench and log_info remain real.
+_prepare_doc_bench_commands() {
+    local bin="$1"
+    export DOC_BENCH="${REPO_ROOT}/script/box/bench.sh"
+    mkdir -p "${FAKE_STATE_DIR}/external"
+    export DOC_DISTROBOX="${FAKE_STATE_DIR}/external/distrobox"
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${DOC_DISTROBOX}"
+    export BENCH_PSI_FILE="${FAKE_STATE_DIR}/psi"
+    export BENCH_BOX_PSI_FILE="${BENCH_PSI_FILE}"
+    export BENCH_CLOCK="${bin}/bench-clock"
+    printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' >"${BENCH_PSI_FILE}"
+    printf '1000000\n' >"${FAKE_STATE_DIR}/clock"
+    cat >"${bin}/bench-clock" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${FAKE_STATE_DIR}/clock"
+STUB
+    cat >"${bin}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+STUB
+    cat >"${bin}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == enter ]]; then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    printf '%s\n' "$((now + 10000))" >"${FAKE_STATE_DIR}/clock"
+    if [[ "$*" == *bench-inbox* ]]; then printf '1000\n'; fi
+    exit 0
+fi
+exec bash "${DOC_DISTROBOX}" "$@"
+STUB
+    chmod +x "${bin}/bench-clock" "${bin}/sleep" "${bin}/distrobox"
 }
 
 _normalize_realbox_doc_output() {
@@ -206,8 +241,16 @@ _normalize_realbox_doc_output() {
         s@/[^ ]+@<path>@g'
 }
 
-@test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
-    _prepare_realbox_doc_stubs
+_normalize_realbox_doc_stderr() {
+    # Only omit the optional setup/PSI/progress diagnostics named in section 5.1.
+    # Apply this to stderr alone so a diagnostic moved to stdout still fails.
+    sed -E '/^\[INFO\] (auto-enter:|terminal:|box:|ghostty config:|distrobox:|wrote:|Ghostty config changed:)/d;
+        /^\[INFO\] (box psi wait |psi (before|after) |host (quiet|stayed quiet):)/d;
+        /^\[INFO\] (enter|shell|inbox): [0-9]+ warmup \+ [0-9]+ run\(s\) of /d' |
+        _normalize_realbox_doc_output
+}
+
+_assert_realbox_doc_streams() {
     local section expected actual stderr=""
     section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
     # Capture the current block too: the first RED must expose its omitted lines.
@@ -217,17 +260,34 @@ _normalize_realbox_doc_output() {
     [[ -n "${expected}" ]]
     [[ "${expected}" == *"box-state before-cleanup: home=1 tmux=1"* ]]
     run --separate-stderr just verify realbox --allow-real-box 5.1
-    assert_success
+    if ! assert_success; then printf '%s\n' "${stderr}"; return 1; fi
     actual="${output}"$'\nrc=0'
     printf '# stdout:\n%s\n# stderr:\n%s\n' "${actual}" "${stderr}" >&3
     assert_equal "$(printf '%s\n' "${actual}" | _normalize_realbox_doc_output)" \
-        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)" || return 1
     expected="$(awk '
         /^      ````text stderr$/ { block=1; next }
         /^      ````$/ && block { exit }
         block { sub(/^      /, ""); print }' <<<"${section}")"
-    assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_output)" \
-        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
+    assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_stderr)" \
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_stderr)"
+}
+
+@test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
+    _prepare_realbox_doc_stubs
+    _assert_realbox_doc_streams
+}
+
+@test "acceptance 5.1 comparison rejects a real bench summary moved to stdout (#666)" {
+    _prepare_realbox_doc_stubs
+    local mutant="${BATS_TEST_TMPDIR}/mutant"
+    mkdir -p "${mutant}"
+    cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${mutant}/"
+    export DOC_BENCH="${mutant}/script/box/bench.sh"
+    sed -i 's/log_info "shell median \(.*within --max-ms.*\)"/echo "[INFO] shell median \1"/' "${DOC_BENCH}"
+    run _assert_realbox_doc_streams
+    assert_failure
+    assert_output --partial '[INFO] shell median'
 }
 
 @test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {

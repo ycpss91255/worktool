@@ -1024,7 +1024,7 @@ rc=0
       cleanup-rc=0
       rc=0
       ````
-      stderr 的固定階段與摘要行如下；首次初始化進度、bench 的 PSI／量測進度與 just recipe echo 屬額外診斷，不是 stdout。兩個串流交錯顯示時，不保證相對順序。stub 不建立盒 HOME／tmux，因此其 `box-state before-cleanup` 為 `home=0 tmux=0`；實機正常建盒後為 `home=1 tmux=1`。
+      stderr 的固定階段與摘要行如下；首次初始化進度、bench 的 setup 決策／設定寫入與 PSI／量測進度、just recipe echo 屬額外診斷，不是 stdout。兩個串流交錯顯示時，不保證相對順序。stub 不建立盒 HOME／tmux，因此其 `box-state before-cleanup` 為 `home=0 tmux=0`；實機正常建盒後為 `home=1 tmux=1`。
       ````text stderr
       phase=first-start
       phase=bench
