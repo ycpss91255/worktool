@@ -3010,7 +3010,7 @@ _handover_replies() {
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
-        "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks'
+        "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks | ."evidence:" += {sha:."head:".sha,checks:."head:".checks}'
 }
 
 @test "milestone-handover defers every PR comment until both independent reports are ready (#603)" {
@@ -4321,7 +4321,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
     args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
     replies="$(_handover_replies | jq --arg d "$root" '
         ."sync:".repoDir=$d | ."machine:"={content:"機器證據\n\n"} |
-        ."evidence:"={evidenceContent:"[claude] 證據\n",readyContent:"[claude] 待驗收\n\n"}')"
+        ."evidence:" += {evidenceContent:"[claude] 證據\n",readyContent:"[claude] 待驗收\n\n"}')"
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" "$args" "$replies" exec-handover-files
     assert_success
@@ -4371,7 +4371,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ."sync:".repoDir=$d | ."findings:".content="ORIGINAL ledger\n" |
         ."machine:".content="ORIGINAL ledger\n" | ."independent-codex:"="ORIGINAL ledger\n" |
         ."independent-claude:"="ORIGINAL ledger\n" |
-        ."evidence:"={evidenceContent:"ORIGINAL ledger\n",readyContent:"ORIGINAL ledger\n"}')"
+        ."evidence:" += {evidenceContent:"ORIGINAL ledger\n",readyContent:"ORIGINAL ledger\n"}')"
     for row in 'Findings:findings.md:findings-failed' 'Machine:machine.md:machine-failed' \
         'Independent reports:independent-codex-report.md:independent-publish-failed' \
         'Independent reports:independent-claude-report.md:independent-publish-failed' \
@@ -4404,7 +4404,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
          ("允許" + "合併") + "\ncodex node -e\n中文𠮷 ` $HOME '\''\n\n") as $data |
         ."findings:".content=$data | ."machine:".content=$data |
         ."independent-codex:"=$data | ."independent-claude:"=$data |
-        ."evidence:"={evidenceContent:$data,readyContent:$data}' > "$replies"
+        ."evidence:" += {evidenceContent:$data,readyContent:$data}' > "$replies"
     run env HANDOVER_REAL_HOOKS=1 node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" "$args" "@$replies" exec-handover-files
     assert_success
@@ -4656,6 +4656,90 @@ Reason: 僅修正文句，沒有行為變更。'; do
             .result.blockingLeft == [] and .result.limitations == ["environment risk"] and
             .result.suggestions == ["optional cleanup"] and
             ([.calls[] | select(.role | startswith("fix:"))] | length) == 0' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "milestone-handover ignores superseded cancelled checks in Sync and Head (#690)" {
+    local replies
+    replies="$(_handover_replies | jq '
+        ."head:".checks |= map(. + {completedAt:"2026-10-30T02:00:00Z"}) |
+        ."head:".checks += (."head:".checks | map(. + {conclusion:"CANCELLED",completedAt:"2026-10-30T01:00:00Z"})) |
+        ."sync:".checks=."head:".checks')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared"' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover ignores superseded cancelled checks when Evidence re-queries (#690)" {
+    local replies
+    replies="$(_handover_replies | jq '
+        ."evidence:".checks |= map(. + {completedAt:"2026-10-30T02:00:00Z"}) |
+        ."evidence:".checks += (."evidence:".checks |
+            map(. + {conclusion:"CANCELLED",completedAt:"2026-10-30T01:00:00Z"}))')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared"' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover blocks a failing latest check in every check stage (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {completedAt:"2026-10-30T01:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"COMPLETED",conclusion:"FAILURE",
+                completedAt:"2026-10-30T02:00:00Z",url:"https://example.test/latest"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e --arg stage "${stage}" '.result.status == ($stage + (if $stage == "evidence" then "-failed" else "-blocked" end))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover waits for a latest in-progress run instead of accepting older success (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {completedAt:"2026-10-30T01:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"IN_PROGRESS",conclusion:null,
+                completedAt:null,runCreatedAt:"2026-10-30T02:00:00Z",url:"https://example.test/running"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e --arg role "${stage}:" '
+            .result.status != "prepared" and
+            (.calls[] | select(.role == $role) | .prompt |
+                contains("A latest IN_PROGRESS or QUEUED entry means wait, never green") and
+                contains("total elapsed wall-clock cap of 7200 seconds"))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover waits for newer running workflow even when older run completes later (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {runCreatedAt:"2026-10-30T01:00:00Z",completedAt:"2026-10-30T03:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"IN_PROGRESS",conclusion:null,
+                completedAt:null,runCreatedAt:"2026-10-30T02:00:00Z",url:"https://example.test/newer"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status != "prepared"' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover fails closed for mixed check timestamp kinds in every stage (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {completedAt:"2026-10-30T03:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"IN_PROGRESS",conclusion:null,
+                completedAt:null,runCreatedAt:"2026-10-30T02:00:00Z",url:"https://example.test/newer"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e --arg stage "${stage}" '
+            .result.status == ($stage + (if $stage == "evidence" then "-failed" else "-blocked" end)) and
+            (.result.report.checks | map(select(.name == "ci-passed")) | length == 2)' <<<"${output}"
         assert_success
     done
 }
