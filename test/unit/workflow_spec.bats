@@ -4671,6 +4671,17 @@ Reason: 僅修正文句，沒有行為變更。'; do
     assert_success
 }
 
+@test "milestone-handover ignores superseded cancelled checks when Evidence re-queries (#690)" {
+    local replies
+    replies="$(_handover_replies | jq '
+        ."evidence:".checks |= map(. + {completedAt:"2026-10-30T02:00:00Z"}) |
+        ."evidence:".checks += (."evidence:".checks |
+            map(. + {conclusion:"CANCELLED",completedAt:"2026-10-30T01:00:00Z"}))')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared"' <<<"${output}"
+    assert_success
+}
+
 @test "milestone-handover blocks a failing latest check in every check stage (#690)" {
     local stage replies
     for stage in sync head evidence; do
