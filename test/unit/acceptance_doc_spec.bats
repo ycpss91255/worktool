@@ -398,7 +398,11 @@ STUB
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-    inspect) printf '0001-01-01T00:00:00Z\n' ;;
+    inspect)
+        # enter.sh asks State.Running while the log follower may still be
+        # catching up; answer it as a running box, not the StartedAt value.
+        if [[ "$*" == *'.State.Running'* ]]; then printf 'true\n'
+        else printf '0001-01-01T00:00:00Z\n'; fi ;;
     start) mkdir -p "${XDG_CACHE_HOME%/cache}/box-home/.cache/tmux" ;;
     logs) printf 'container_setup_done\n' ;;
     *) exec "${FAKE_STATE_DIR}/docker" "$@" ;;
