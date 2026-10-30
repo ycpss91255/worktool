@@ -59,9 +59,8 @@ const latestChecks = checks => {
   }
   return [...groups.values()].flatMap(entries => {
     if (entries.length === 1) return entries
-    const created = entries.map(c => Date.parse(c?.runCreatedAt))
-    const times = created.every(t => Number.isFinite(t)) ? created :
-      entries.map(c => Date.parse(c?.completedAt || c?.runCreatedAt || c?.createdAt))
+    const field = entries.some(c => c?.runCreatedAt != null) ? 'runCreatedAt' : 'completedAt'
+    const times = entries.map(c => Date.parse(c?.[field]))
     if (times.some(t => !Number.isFinite(t))) return entries
     const newest = Math.max(...times)
     return entries.filter((_, i) => times[i] === newest)
@@ -70,7 +69,7 @@ const latestChecks = checks => {
 const checksGreen = checks => Array.isArray(checks) &&
   requiredChecks.every(n => checks.some(c => c?.name === n && green(c))) &&
   checks.every(c => c?.name === 'milestone-gate-approval' || green(c))
-const CHECK_POLICY = `Shared current-head check policy for Sync, Head and Evidence: normalize checks/statuses with name, status, conclusion, url, completedAt and runCreatedAt (the workflow run's creation time; fetch it when absent). Keep only the latest entry per check name before any failure or success decision, using this exact selection rule: ${latestChecks.toString()}. Superseded runs of the same workflow do not count. Missing or ambiguous timestamps retain all candidates and fail closed unless every candidate succeeds. Require both verify-all architecture jobs, ci-passed and every other retained check to be COMPLETED/SUCCESS; exclude only milestone-gate-approval. Commit statuses are COMPLETED/SUCCESS only for state SUCCESS. A latest IN_PROGRESS or QUEUED entry means wait, never green: poll in bounded foreground rounds of at most 540 seconds with a total elapsed wall-clock cap of 7200 seconds (never reset between rounds); Sync uses its existing CI wait budget. Re-query head and checks on every poll, stop on query failure or changed head, and apply this selection rule before deciding failure, success or timeout. Missing checks also wait. At the total cap, return error with pending names, statuses and URLs if still incomplete; never return success while pending.`
+const CHECK_POLICY = `Shared current-head check policy for Sync, Head and Evidence: normalize checks/statuses with name, status, conclusion, url, completedAt and runCreatedAt (the workflow run's creation time; fetch it when absent). Keep only the latest entry per check name before any failure or success decision, using this exact selection rule: ${latestChecks.toString()}. Superseded runs of the same workflow do not count. Compare runCreatedAt for all candidates if any candidate supplies it; otherwise compare completedAt for all candidates. Never compare different timestamp kinds. Missing or ambiguous timestamps retain all candidates and fail closed unless every candidate succeeds. Require both verify-all architecture jobs, ci-passed and every other retained check to be COMPLETED/SUCCESS; exclude only milestone-gate-approval. Commit statuses are COMPLETED/SUCCESS only for state SUCCESS. A latest IN_PROGRESS or QUEUED entry means wait, never green: poll in bounded foreground rounds of at most 540 seconds with a total elapsed wall-clock cap of 7200 seconds (never reset between rounds); Sync uses its existing CI wait budget. Re-query head and checks on every poll, stop on query failure or changed head, and apply this selection rule before deciding failure, success or timeout. Missing checks also wait. At the total cap, return error with pending names, statuses and URLs if still incomplete; never return success while pending.`
 
 let RULES = rules(A.repoDir)
 const syncResult = await agent(`${RULES}
