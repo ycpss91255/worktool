@@ -4735,3 +4735,15 @@ SH
         assert_success
     done
 }
+
+@test "pr-loop appends a missing machine section without changing existing bytes (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\r\nHuman text  \nwithout trailing newline",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    _pl_auto_body
+    run jq -e '.body | startswith("[codex]\r\nHuman text  \nwithout trailing newline\n\n<!-- pr-loop:auto:start -->") and
+        endswith("CI: green\n<!-- pr-loop:auto:end -->")' "$root/pr.json"
+    assert_success
+}

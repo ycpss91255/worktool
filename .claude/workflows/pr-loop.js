@@ -307,8 +307,9 @@ const section = start + '\\nhead: ' + head + '\\n\\n## commits\\n' +
   commits.split('\\n').filter(Boolean).map(line => '- ' + line).join('\\n') +
   '\\n\\nCI: ' + ${JSON.stringify(conclusion)} + '\\n' + end;
 const from = data.body.indexOf(start), to = data.body.indexOf(end, from);
-if (from < 0 || to < from) throw Error('Missing machine markers');
-const body = data.body.slice(0, from) + section + data.body.slice(to + end.length);
+if ((from < 0) !== (to < 0) || (from >= 0 && to < from)) throw Error('Malformed machine markers');
+const body = from < 0 ? data.body + '\\n\\n' + section :
+  data.body.slice(0, from) + section + data.body.slice(to + end.length);
 fs.writeFileSync(${JSON.stringify(output)}, body);
 process.stdout.write(body === data.body ? 'unchanged' : 'changed');
 `
