@@ -327,7 +327,11 @@ const result = async (extra) => {
       const final = await agent(`The final body is published. Only wait for its CI; never edit, commit or push. ${jobInstructions('ci-final-' + A.issue, [`timeout 1800 gh pr checks ${extra.pr} --repo ${REPO} --watch --fail-fast`])} Return green only when all checks pass, otherwise red; sha must remain ${extra.sha}.`, {
         label: `${RUN_ID} auto-ci:#${extra.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose',
       })
-      if (!final || final.state !== 'green' || final.sha !== extra.sha) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'final body CI did not go green on the same head'] }
+      if (!final || final.state !== 'green' || final.sha !== extra.sha) {
+        const failed = await updateAutoBody(extra.pr, 'red')
+        return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red',
+          blockingLeft: [...extra.blockingLeft, 'final body CI did not go green on the same head', ...(!failed?.ok ? ['machine PR body update failed'] : [])] }
+      }
     }
   }
   return { issue: A.issue, ...reviewFindings, ...extra }

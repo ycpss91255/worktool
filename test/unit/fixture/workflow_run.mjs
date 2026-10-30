@@ -371,7 +371,7 @@ const agent = async (prompt, opts = {}) => {
     const { ok, stdout } = play(prompt)
     return { ok, changed: stdout === 'changed' }
   }
-  if (mode === 'exec-auto-body' && role.startsWith('auto-ci:')) return { state: 'green', sha: 'abc', detail: 'success' }
+  if (mode === 'exec-auto-body' && role.startsWith('auto-ci:')) return { state: process.env.AUTO_FINAL_RED ? 'red' : 'green', sha: 'abc', detail: 'success' }
   if (role.startsWith('auto-body:')) return { ok: true, changed: false }
   if (mode === 'exec-red-record' && role.startsWith('red-record:')) {
     const { ok, stdout } = play(prompt)

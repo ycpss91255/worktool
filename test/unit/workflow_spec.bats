@@ -4747,3 +4747,17 @@ SH
         endswith("CI: green\n<!-- pr-loop:auto:end -->")' "$root/pr.json"
     assert_success
 }
+
+@test "pr-loop records failure when CI on the final body fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->old<!-- pr-loop:auto:end -->",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_FINAL_RED=1 _pl_auto_body
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$output"
+    assert_success
+    run jq -e '.body | contains("CI: red")' "$root/pr.json"
+    assert_success
+}
