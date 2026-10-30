@@ -201,7 +201,6 @@ _normalize_realbox_doc_output() {
         s/comment=[0-9]+/comment=<id>/g;
         s/(min=|median=|max=)[0-9]+([.][0-9]+)?/\1<n>/g;
         s/median [0-9]+([.][0-9]+)? ms/median <n> ms/g;
-        s/(box-state before-cleanup: home=)[01] tmux=[01]/\1<n> tmux=<n>/;
         s@/[^ ]+@<path>@g'
 }
 
