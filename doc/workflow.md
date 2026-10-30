@@ -462,7 +462,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 
 1. **Sync**：從 `git worktree list --porcelain` 找到 `base` 的 linked worktree，
    沒有時在 repo 同層 `worktree/` 建立；不使用主 checkout。先確認乾淨且 PR head 分支相符，
-   fetch `origin/main`。main 已是 HEAD 的祖先時略過 merge、gate、push 和等待，直接進 Head。
+   fetch `origin/main`。main 已是 HEAD 的祖先時略過 merge、gate、push，仍須確認同 head CI 全綠才進 Head。
    否則以 merge commit 合入，訊息透過 `-F` 檔案提供，末段為 milestone issue 的 `Refs: #N`，
    author 與 committer 使用 GitHub noreply，不加署名、不改寫歷史、不 force push。
    衝突逐處記錄兩邊意圖、解法、理由與驗證；無法安全解決就列出路徑和原因並停止。
@@ -480,9 +480,20 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    不列入 milestone-gate-approval，並保存最後一輪證據。
    命令、退出碼、衝突紀錄與 gate／CI 證據留在驗收 worktree 的
    `.agents/state/milestone-handover-<pr>-sync/`；保留 worktree 供後續階段使用。
+   Sync、Head、Evidence 的選取、等待與成敗判定只由共用的 `CHECK_POLICY` 定義，
+   各階段僅補充操作與輸出要求；回傳篩選後的候選（包含仍保留的失敗），不另設未篩選判定。
+   共用 check 選取規則：同名只保留最新一筆，候選都有
+   workflow run 建立時間 `runCreatedAt` 時依此比較，避免舊 run 較晚完成蓋過新 run；
+   只要任一候選提供 `runCreatedAt`，就必須全部以此欄位比較（缺漏時先嘗試查詢）；
+   全部未提供時才統一比較 `completedAt`。不得混用完成時間與建立時間。已被同 workflow
+   新 run 取代的舊 run 不參與成敗判定。時間缺失或相同而無法判定先後時保留候選，
+   除非全部成功，否則封閉失敗。最新一筆為 IN_PROGRESS／QUEUED 或缺少必要 check 時，
+   三階段都分輪前景等待（每輪最多 540 秒、總計最多 7200 秒且不重設；Sync 沿用既有等待預算），
+   每次 poll 重查 head 與 checks，套用相同選取規則；最新失敗、查詢失敗或 head 改變立即停止。
+   上限到期仍未完成才回報含 pending 名稱、狀態、URL 的錯誤，不能判綠。只排除 `milestone-gate-approval`，其餘最新結果仍須 COMPLETED／SUCCESS。
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
-   缺少、查詢失敗或未綠即回報並停止。
+   最新仍在執行或缺少必要 check 時依共用規則等待；失敗或逾時即回報並停止。
 3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
    初始化失敗即停止，不進入 Findings。
    所有 scratch 報告都視為 workflow 產物：Findings、Machine、Evidence agent 只回傳內容字串，
@@ -561,7 +572,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    Claude 不代貼或重寫；再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
    原 Review 的負面判定仍阻擋；最終正面判定必須在獨立驗收之後，不能只引用早期 Review。
    任一發布或核對失敗即停止，不宣告就緒。
-9. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+9. **Evidence**：再次查詢並回傳 SHA 與含時間欄位的 checks，workflow 依共用規則驗證同 head 全綠後，才產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目、兩份獨立報告與最終判定連結。ready 留言必須明列全部
