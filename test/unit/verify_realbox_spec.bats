@@ -3904,7 +3904,10 @@ STUB
 
 @test "#663: late sweep escalation shares the documented five-second bound" {
     _auto_window_tools
-    _control_window_clock "${WORKTOOL_STRESS:+3.2}"
+    local delay=0
+    if [[ "${WORKTOOL_STRESS:-}" == 1 ]]; then delay=3.2; fi
+    _control_window_clock "${delay}"
+    printf '# late sweep: logical clock; FAKE_CLOCK_DELAY=%s per retry sleep\n' "${FAKE_CLOCK_DELAY}" >&3
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/bound-ps"
     cat >"${STUBS}/ghostty" <<'STUB'
