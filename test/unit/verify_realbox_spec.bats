@@ -4220,3 +4220,39 @@ STUB
     refute_output --partial 'is not fish'
     [ -f "$(_backup_dir)/manifest" ]
 }
+
+_prepare_fresh_window() {
+    _auto_window_tools
+    cp "${STUBS}/just" "${STATE}/just"
+    cp "${STUBS}/ps" "${STATE}/fresh-ps"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then
+    [[ "$*" == 'box enter --box dev -- true' && ! -t 0 ]] || exit 2
+    [[ "${XDG_CACHE_HOME}" == */cache && "${XDG_DATA_HOME}" == */data ]] || exit 2
+    printf '%s\n' "${XDG_CACHE_HOME}" >"${FAKE_STATE_DIR}/first-cache"
+    touch "${FAKE_STATE_DIR}/initialised"
+fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -e "${FAKE_STATE_DIR}/initialised" ]]; then export FAKE_WINDOW_COMM=sh; fi
+exec "${FAKE_STATE_DIR}/fresh-ps" "$@"
+STUB
+}
+
+@test "#691: fresh box initialises before its long-lived sh first window" {
+    _prepare_fresh_window
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line 'phase=first-start'
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line 'restore-files-ok=1'
+    assert_line 'cleanup-rc=0'
+    assert_equal "$(wc -l <"${STATE}/closed")" 2
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(cat "${STATE}/first-cache")" ]
+}
