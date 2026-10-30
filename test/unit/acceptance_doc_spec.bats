@@ -229,3 +229,20 @@ _normalize_realbox_doc_output() {
             "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)"
     done
 }
+
+@test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
+    local paragraph entry path
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    for path in doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
+        entry="${paragraph#*\`"${path}"\`（}"
+        [[ "${entry}" != "${paragraph}" ]]
+        entry="${entry%%）*}"
+        [[ "${entry}" =~ \#666／PR[[:space:]](\#[0-9]+|待建立) ]]
+    done
+    [[ "${paragraph}" == *'`script/box/justfile.box`；#665／PR #673'* ]]
+    [[ "${paragraph}" != *'665-review-round'* ]]
+    run grep -F '(M3 adds enter / rm)' "${REPO_ROOT}/doc/acceptance.md"
+    assert_failure 1
+    run grep -F 'recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`script/test/justfile.test` 為唯一來源' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+}
