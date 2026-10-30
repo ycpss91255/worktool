@@ -241,7 +241,7 @@ Return ready only when codex exits successfully and its repair is committed; oth
   return published && published.pr ? '' : 'publication failed'
 }
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. After every push and before every CI wait, run this fixed body command verbatim (never author metadata): \`${autoBodyCommand(pr, 'pending')}\`. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在改善建議註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return defects ["讀取 issue #${A.issue} 失敗"], limitations [], suggestions [], and an empty answer.
@@ -290,7 +290,47 @@ const collectReview = (review) => {
   }
   return true
 }
-const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
+// Only this fixed command owns machine metadata; agents execute it verbatim.
+const autoBodyCommand = (pr, conclusion) => {
+  const input = `${WT}/.agents/state/pr-loop-body-input.json`
+  const output = `${WT}/.agents/state/pr-loop-body.md`
+  const program = `
+const fs = require('node:fs');
+const {execFileSync} = require('node:child_process');
+const data = JSON.parse(fs.readFileSync(${JSON.stringify(input)}, 'utf8'));
+const head = data.headRefOid, base = data.baseRefOid;
+if (!/^[a-f0-9]+$/.test(head) || !/^[a-f0-9]+$/.test(base)) throw Error('Invalid PR commit');
+execFileSync('git', ['fetch', 'origin', base, head], {stdio:'pipe'});
+const commits = execFileSync('git', ['log', '--reverse', '--format=%h %s', base + '..' + head], {encoding:'utf8'}).trimEnd();
+const start = '<!-- pr-loop:auto:start -->', end = '<!-- pr-loop:auto:end -->';
+const section = start + '\\nhead: ' + head + '\\n\\n## commits\\n' +
+  commits.split('\\n').filter(Boolean).map(line => '- ' + line).join('\\n') +
+  '\\n\\nCI: ' + ${JSON.stringify(conclusion)} + '\\n' + end;
+const from = data.body.indexOf(start), to = data.body.indexOf(end, from);
+if (from < 0 || to < from) throw Error('Missing machine markers');
+const body = data.body.slice(0, from) + section + data.body.slice(to + end.length);
+fs.writeFileSync(${JSON.stringify(output)}, body);
+process.stdout.write(body === data.body ? 'unchanged' : 'changed');
+`
+  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && changed=$(node -e ${sq(program)}) && if [ "$changed" = changed ]; then gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && printf '%s' "$changed"`
+}
+const updateAutoBody = (pr, conclusion) => agent(`Run this fixed command verbatim in the foreground; never write or paraphrase the body yourself: \`${autoBodyCommand(pr, conclusion)}\`. Return ok true only on exit 0 and changed true only when stdout is changed.`, {
+  label: `${RUN_ID} auto-body:#${pr}:${conclusion}`, phase: 'CI', effort: 'low', agentType: 'general-purpose',
+  schema: { type: 'object', properties: { ok: { type: 'boolean' }, changed: { type: 'boolean' } }, required: ['ok', 'changed'] },
+})
+const result = async (extra) => {
+  if (extra.pr && ['green', 'red'].includes(extra.ciState)) {
+    const updated = await updateAutoBody(extra.pr, extra.ciState)
+    if (!updated?.ok) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'machine PR body update failed'] }
+    if (updated.changed && extra.ciState === 'green') {
+      const final = await agent(`The final body is published. Only wait for its CI; never edit, commit or push. ${jobInstructions('ci-final-' + A.issue, [`timeout 1800 gh pr checks ${extra.pr} --repo ${REPO} --watch --fail-fast`])} Return green only when all checks pass, otherwise red; sha must remain ${extra.sha}.`, {
+        label: `${RUN_ID} auto-ci:#${extra.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose',
+      })
+      if (!final || final.state !== 'green' || final.sha !== extra.sha) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'final body CI did not go green on the same head'] }
+    }
+  }
+  return { issue: A.issue, ...reviewFindings, ...extra }
+}
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
@@ -568,6 +608,8 @@ sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
+const initialBody = await updateAutoBody(pr, 'pending')
+if (!initialBody?.ok) return result({ pr, sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['machine PR body update failed'] })
 let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
@@ -615,6 +657,8 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
     schema: { type: 'object', properties: { posted: { type: 'boolean' } }, required: ['posted'] }, agentType: 'general-purpose',
   })
   if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
+  const fixedBody = await updateAutoBody(pr, 'pending')
+  if (!fixedBody?.ok) return result({ pr, sha: checked.sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['machine PR body update failed'] })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha

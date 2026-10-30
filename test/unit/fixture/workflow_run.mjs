@@ -367,6 +367,12 @@ const agent = async (prompt, opts = {}) => {
   const label = opts.label || ''
   const role = label.replace(/^\S+ #[0-9]+ /, '')
   calls.push({ label, role, phase: opts.phase || null, schema: opts.schema || null, effort: opts.effort || null, prompt })
+  if (mode === 'exec-auto-body' && role.startsWith('auto-body:')) {
+    const { ok, stdout } = play(prompt)
+    return { ok, changed: stdout === 'changed' }
+  }
+  if (mode === 'exec-auto-body' && role.startsWith('auto-ci:')) return { state: 'green', sha: 'abc', detail: 'success' }
+  if (role.startsWith('auto-body:')) return { ok: true, changed: false }
   if (mode === 'exec-red-record' && role.startsWith('red-record:')) {
     const { ok, stdout } = play(prompt)
     if (ran.length) ran[ran.length - 1].stdout = stdout

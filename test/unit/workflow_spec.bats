@@ -4680,3 +4680,58 @@ Reason: 僅修正文句，沒有行為變更。'; do
         done
     done
 }
+
+_pl_auto_body() {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root/bin" "$root/src" "$root/worktree/n"
+    cat > "$root/bin/gh" <<'SH'
+#!/bin/sh
+set -eu
+case "$1 $2" in
+    "pr view") cat "$AUTO_ROOT/pr.json" ;;
+    "pr edit")
+        while [ "$1" != --body-file ]; do shift; done
+        cp "$2" "$AUTO_ROOT/body"
+        jq --rawfile body "$2" '.body=$body' "$AUTO_ROOT/pr.json" > "$AUTO_ROOT/next.json"
+        mv "$AUTO_ROOT/next.json" "$AUTO_ROOT/pr.json"
+        ;;
+    "pr checks") exit 0 ;;
+    *) exit 1 ;;
+esac
+SH
+    cat > "$root/bin/git" <<'SH'
+#!/bin/sh
+set -eu
+case "$1" in
+    fetch) exit 0 ;;
+    log) cat "$AUTO_ROOT/commits" ;;
+    *) exit 1 ;;
+esac
+SH
+    chmod +x "$root/bin/gh" "$root/bin/git"
+    AUTO_ROOT="$root" PATH="$root/bin:$PATH" run _pl_run \
+        "$(jq -cn --arg dir "$root/src" '{repoDir:$dir}')" \
+        '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
+        '{"evidence":"[{\"source\":\"body\",\"body\":\"## RED exemption\\nReason: fixture\"}]"}' exec-auto-body
+    assert_success
+}
+
+@test "pr-loop regenerates the machine head and full commit list after a push (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" head
+    mkdir -p "$root"
+    for head in aaaaaaa bbbbbbb; do
+        jq -n --arg head "$head" '{body:"[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->\nstale\n<!-- pr-loop:auto:end -->\r\nTail  \n",
+            headRefOid:$head,baseRefOid:"abcdef"}' > "$root/pr.json"
+        printf '1111111 first commit\n%s next commit\n' "$head" > "$root/commits"
+        _pl_auto_body
+        run cat "$root/body"
+        assert_success
+        assert_output --partial "head: $head"
+        assert_output --partial '- 1111111 first commit'
+        assert_output --partial "- $head next commit"
+        assert_output --partial 'CI: green'
+        run jq -e '.body | startswith("[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->") and
+            endswith("<!-- pr-loop:auto:end -->\r\nTail  \n")' "$root/pr.json"
+        assert_success
+    done
+}
