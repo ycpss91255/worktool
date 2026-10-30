@@ -237,11 +237,27 @@ _meta_skeleton() {
     done
 }
 
-@test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
-    run grep -c "ci.state !== 'green'" "${PR_LOOP}"
-    assert_output "2"
-    run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "3"
+@test "pr-loop treats CI as a gate before review and after a fix" {
+    local round replies json
+    for round in 0 1; do
+        replies="$(jq -cn --argjson round "$round" '{
+            "implement:":{status:"ready",reason:""},
+            "locate:":{pr:7,sha:"abc"},
+            "stage-check:Implement":{evidence:({status:"",localHead:"abc",remoteHead:"abc",prHead:"abc",errors:""} | tojson)},
+            "stage-check:Fix":{evidence:({status:"",localHead:"def",remoteHead:"def",prHead:"def",errors:""} | tojson)},
+            "ci:":((if $round == 1 then [{state:"green",sha:"abc",detail:"success"}] else [] end) +
+                [{state:"red",sha:"def",detail:"checks failed"}]),
+            "review:":{defects:["regression"],limitations:[],suggestions:[],answer:"fix required"}
+        }')"
+        run node "$REPO_ROOT/test/unit/fixture/workflow_run.mjs" "$PR_LOOP"             '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":681,"branch":"b","name":"n","task":"t","implementer":"claude"}' "$replies"
+        assert_success
+        json="$output"
+        run jq -e --argjson round "$round" '.error == null and .result.ciState == "red" and
+            (.result.blockingLeft | index("checks failed") != null) and
+            ([.calls[] | select(.role | startswith("review:"))] | length == $round) and
+            ([.calls[] | select(.role | startswith("ci:"))] | length == ($round + 1))' <<<"$json"
+        assert_success
+    done
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
