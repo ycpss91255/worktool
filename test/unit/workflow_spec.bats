@@ -3155,7 +3155,7 @@ _pl_retry_run() {
         "implement:": {status:"failed",reason:$reason},
         "locate:": {pr:7,sha:"abc"},
         "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
-        "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
+        "ci:": {state:"green",sha:"abc"},"review:":{defects:[],limitations:[],suggestions:[],answer:"ok"}}')"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg tag "${3:-test-run}" '{runTag:$tag,repo:"o/r",repoDir:"/work",issue:417,branch:"b",name:"n",task:"t"}')" "${replies}"
 }
