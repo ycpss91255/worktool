@@ -543,8 +543,15 @@ PR 的 labeled / unlabeled 事件會重新計算 CI。
 - 審查紀錄、回合證據、協調筆記放 PR 留言或被 gitignore 的 `.agents/state/`；
   `doc/evidence/` 只放驗收證據。
 - CI 沿用 `commit_email_range` 的 PR、push 與新 ref 範圍，透過
-  `lib/review_log.sh` 檢查每個 commit 新增的檔案，包括之後又刪除的檔案；
+  `lib/review_log.sh` 檢查適用規則的 commit 新增的檔案，包括之後又刪除的檔案；
   merge commit 以所有 parent 比較，rename 以新增與刪除看待。
+- **引入邊界（#684）**：從 checkout 的 HEAD 歷史以
+  `git log --format=%H --reverse --diff-filter=A -- lib/review_log.sh`
+  取第一個 SHA 作為規則引入點，只檢查以它為祖先的 commit（含它本身）。
+  其餘 commit 印出 SHA、引入點與跳過註記，不依 commit 日期判斷；
+  從規則引入前分岔的 PR，即使包含後來已刪除的舊審查紀錄也會跳過，
+  已推送歷史不改寫。找不到引入點、歷史不足（含 shallow clone）或無法確認
+  ancestry 時一律失敗；歷史不足時提示取得完整歷史。
 - `doc/evidence/` 下檔名含 `review`，或任意目錄檔名為
   `<issue>-review-round-<n>`（可帶副檔名）就失敗，提示改貼 PR 留言。
   比對不分大小寫；既有檔案的修改、刪除及一般驗收證據不受影響。

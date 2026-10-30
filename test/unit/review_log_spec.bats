@@ -9,13 +9,67 @@ setup() {
     git -C "$REPO" config user.name 'Test User'
     git -C "$REPO" config user.email '12345+test@users.noreply.github.com'
     git -C "$REPO" commit -q --allow-empty -m base
+    PRE_RULE="$(git -C "$REPO" rev-parse HEAD)"
+    _introduce_rule
     BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+_introduce_rule() {
+    mkdir -p "$REPO/lib"
+    cp "${LIB_DIR}/review_log.sh" "$REPO/lib/review_log.sh"
+    git -C "$REPO" add lib/review_log.sh
+    git -C "$REPO" commit -q -m 'Introduce review log check'
 }
 
 _check() {
     # shellcheck source=../../lib/review_log.sh
     source "${LIB_DIR}/review_log.sh"
     review_log_check_commits "$REPO" "$BASE..HEAD"
+}
+
+@test "review-log check fails closed when the introduction point is missing (#684)" {
+    git -C "$REPO" checkout -q -b old-topic "$PRE_RULE"
+    git -C "$REPO" commit -q --allow-empty -m 'Old topic work'
+    BASE="$PRE_RULE"
+
+    run _check
+    assert_failure 1
+    assert_output --partial 'Cannot find enforcing commit for lib/review_log.sh'
+    assert_output --partial 'fetch full history (fail closed)'
+}
+
+@test "review-log check fails closed with shallow history (#684)" {
+    local shallow="${BATS_TEST_TMPDIR}/shallow"
+    git -C "$REPO" commit -q --allow-empty -m 'Work after the rule'
+    git clone -q --depth 1 "file://$REPO" "$shallow"
+    # Check HEAD directly: even an apparently discoverable addition is unreliable.
+    # shellcheck source=../../lib/review_log.sh
+    source "${LIB_DIR}/review_log.sh"
+    run review_log_check_commits "$shallow" HEAD
+    assert_failure 1
+    assert_output --partial 'shallow history'
+    assert_output --partial 'fetch full history (fail closed)'
+}
+
+@test "review-log check skips pre-rule additions with notes in a PR 157 shaped history (#684)" {
+    local enforcing old
+    enforcing="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" branch -m main
+    git -C "$REPO" checkout -q -b old-topic "$PRE_RULE"
+    mkdir -p "$REPO/doc/evidence"
+    printf 'old notes\n' > "$REPO/doc/evidence/663-review-round-2.md"
+    git -C "$REPO" add .
+    # A future date cannot make an old-branch commit subject to the rule.
+    GIT_AUTHOR_DATE='2099-01-01T00:00:00Z' GIT_COMMITTER_DATE='2099-01-01T00:00:00Z' \
+        git -C "$REPO" commit -q -m 'Old review notes'
+    old="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q doc/evidence/663-review-round-2.md
+    git -C "$REPO" commit -q -m 'Remove old review notes'
+    git -C "$REPO" merge -q --no-ff main -m 'Sync main with the rule'
+
+    run _check
+    assert_success
+    assert_output --partial "$old skipped: does not descend from enforcing commit $enforcing"
 }
 
 @test "review-log check rejects newly committed review files even if later deleted (#675)" {
@@ -25,7 +79,9 @@ _check() {
         mkdir -p "$REPO/$(dirname "$path")"
         printf 'notes\n' > "$REPO/$path"
         git -C "$REPO" add .
-        git -C "$REPO" commit -q -m 'Add notes'
+        # Backdating cannot exempt a descendant of the enforcing commit.
+        GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' \
+            git -C "$REPO" commit -q -m 'Add notes'
         git -C "$REPO" rm -q "$path"
         git -C "$REPO" commit -q -m 'Remove notes'
         run _check
