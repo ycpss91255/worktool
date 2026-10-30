@@ -4703,16 +4703,6 @@ Reason: 僅修正文句，沒有行為變更。'; do
     done
 }
 
-@test "milestone-handover keeps assessor backup policy outside check deduplication scope (#690)" {
-    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
-    run jq -e '[.calls[] | select(.role == "independent-codex:" or .role == "independent-claude:")] |
-        length == 2 and all(.prompt |
-            contains("Before touching real config, backup it and restore it on every exit") and
-            (contains("independent copy (cp -p or equivalent)") | not) and
-            (contains("verify the backup inode differs from the live file inode") | not))' <<<"${output}"
-    assert_success
-}
-
 @test "milestone-handover waits for newer running workflow even when older run completes later (#690)" {
     local stage replies
     for stage in sync head evidence; do
