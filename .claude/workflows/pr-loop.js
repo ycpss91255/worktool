@@ -297,9 +297,29 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
   })
 }
 
-// Only transport raw GitHub data through the agent; decide the gate here.
+// Select one compact qualifying section before transporting GitHub data.
+const RED_COMMAND = String.raw`^[ \t]*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+`
+const RED_QUERY = String.raw`
+  def sections:
+    split("\n## ")[] | ltrimstr("## ") |
+    select(test("^RED(?: exemption)?[ \\t]*\\r?\\n")) | "## " + .;
+  def line($pattern): first(split("\n")[] | select(test($pattern))) | .[0:1024];
+  def records:
+    . as $record | .body | sections |
+    if startswith("## RED exemption") then
+      select($record.source == "body") |
+      line("^Reason:[ \\t]*\\S[^\\r\\n]*$") |
+      {source:$record.source, body:("## RED exemption\n" + .)}
+    else
+      match("\u0060\u0060\u0060[^\\n]*\\n(.*?)\u0060\u0060\u0060"; "gm").captures[0].string |
+      line(${JSON.stringify(RED_COMMAND)}) as $command |
+      line("^not ok [0-9]+[ \\t]+[^\\r\\n]+") as $tap |
+      {source:$record.source, body:("## RED\n\u0060\u0060\u0060text\n" + $command + "\n" + $tap + "\n\u0060\u0060\u0060")}
+    end;
+  [limit(1; ({source:"body", body:.body},
+    (.comments[] | {source:"comment", body:.body})) | records)]`
 const readRedRecord = async (pr) => {
-  const query = '{body: (if (.body | test("^## RED"; "m")) then .body else "" end), comments: [.comments[] | select(.body | test("^## RED"; "m")) | {body}]}'
+  const query = RED_QUERY
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
@@ -307,9 +327,10 @@ const readRedRecord = async (pr) => {
         schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
       })
       const data = JSON.parse(fetched.evidence)
-      if (!data || typeof data.body !== 'string' || !Array.isArray(data.comments) ||
-          data.comments.some(comment => !comment || typeof comment.body !== 'string')) throw new Error('Invalid RED evidence')
-      return data
+      if (!Array.isArray(data) || data.length > 1 || data.some(record => !record ||
+          !['body', 'comment'].includes(record.source) || typeof record.body !== 'string')) throw new Error('Invalid RED evidence')
+      return { body: data.find(record => record.source === 'body')?.body || '',
+        comments: data.filter(record => record.source === 'comment') }
     } catch {
       // A failed read is retried once; it never proves absence of RED.
     }

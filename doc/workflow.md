@@ -127,8 +127,11 @@ PR 說明或有自己 agent 前綴的 PR 留言；GREEN gate 尾段不能代替 
 不能在 GREEN 後虛構或重編 RED 證據。
 
 full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...` 在 gh 端篩選，
-只傳回含 `## RED` 標題的 PR 說明與留言 body；無關留言不增加傳輸量，
-仍保留說明與留言的來源區別以判定豁免。
+只擷取 `## RED` 或 `## RED exemption` 區段，最多傳回第一筆合格紀錄，
+不傳送完整 body；傳輸量不隨留言數或 body 長度成長。RED 必須在同一 fenced block
+具有上述指令與失敗 TAP 行；只保留第一個匹配的指令行與 TAP 行，各截至 1024 字元，
+組成一個 fenced block。豁免只從 PR 說明取出非空 `Reason:` 行，截至 1024 字元。
+回傳陣列保留說明與留言的來源區別；沒有合格紀錄時回傳空陣列。
 由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
 會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
 成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。
