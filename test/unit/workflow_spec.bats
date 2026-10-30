@@ -325,6 +325,8 @@ case " \$* " in
     *" issue view "*" --json body "*)
         [ -e "${BATS_TEST_TMPDIR}/gh.fail" ] && exit 1
         cat "${BATS_TEST_TMPDIR}/body.md" ;;
+    *" pr view "*" --json body,headRefOid,baseRefOid "*)
+        printf '%s\n' '{"body":"fixture","headRefOid":"abc","baseRefOid":"def"}' ;;
     *" pr view "*) echo abc ;;
 esac
 exit 0
