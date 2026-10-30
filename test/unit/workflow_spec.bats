@@ -4714,6 +4714,15 @@ case "$1 $2" in
         mv "$AUTO_ROOT/next.json" "$AUTO_ROOT/pr.json"
         ;;
     "pr checks") exit 0 ;;
+    "run list")
+        if [ "${*#*--created}" != "$*" ]; then
+            printf '%s\n' '[{"databaseId":2,"createdAt":"2099-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
+        else
+            printf '%s\n' '[{"databaseId":1,"createdAt":"2020-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
+        fi ;;
+    "run watch")
+        printf '%s\n' "$3" >> "$AUTO_ROOT/watched"
+        [ "${AUTO_FINAL_RED:-0}" != 1 ] ;;
     *) exit 1 ;;
 esac
 SH
@@ -4857,5 +4866,20 @@ SH
     run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$output"
     assert_success
     run jq -e '.body | contains("CI: green")' "$root/pr.json"
+    assert_success
+}
+
+@test "pr-loop rejects old green checks when the final edit CI fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_REAL_CI=1 AUTO_FINAL_RED=1 _pl_auto_body
+    json="$output"
+    run cat "$root/watched"
+    assert_success
+    assert_output '2'
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$json"
     assert_success
 }

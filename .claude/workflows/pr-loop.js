@@ -300,6 +300,8 @@ const autoBodyCommand = (pr, conclusion) => {
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
 const data = JSON.parse(fs.readFileSync(${JSON.stringify(input)}, 'utf8'));
+const previous = JSON.parse(execFileSync('gh', ['run', 'list', '--repo', ${JSON.stringify(REPO)}, '--workflow', 'ci.yml', '--commit', data.headRefOid, '--limit', '100', '--json', 'databaseId'], {encoding:'utf8'}));
+fs.writeFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-edit.json`)}, JSON.stringify({previous: previous.map(run => run.databaseId), since: new Date().toISOString()}));
 const head = data.headRefOid, base = data.baseRefOid;
 if (!/^[a-f0-9]+$/.test(head) || !/^[a-f0-9]+$/.test(base)) throw Error('Invalid PR commit');
 execFileSync('git', ['fetch', 'origin', base, head], {stdio:'pipe'});
@@ -330,12 +332,33 @@ const updateAutoBody = (pr, conclusion) => agent(`Run this fixed command verbati
   label: `${RUN_ID} auto-body:#${pr}:${conclusion}`, phase: 'CI', effort: 'low', agentType: 'general-purpose',
   schema: { type: 'object', properties: { ok: { type: 'boolean' }, changed: { type: 'boolean' } }, required: ['ok', 'changed'] },
 })
+// Require a newly created CI run rather than trusting checks left on the same SHA.
+const finalCICommand = (pr, sha) => {
+  const program = `
+const fs = require('node:fs');
+const {execFileSync} = require('node:child_process');
+const gh = argv => execFileSync('gh', [...argv, '--repo', ${JSON.stringify(REPO)}], {encoding:'utf8'}).trim();
+const edit = JSON.parse(fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-edit.json`)}, 'utf8'));
+const runs = () => JSON.parse(gh(['run', 'list', '--workflow', 'ci.yml', '--commit', ${JSON.stringify(sha)}, '--event', 'pull_request', '--created', '>=' + edit.since.slice(0, 19) + 'Z', '--limit', '100', '--json', 'databaseId,createdAt,headSha,event']));
+let selected;
+for (let attempt = 0; attempt < 60; attempt++) {
+  selected = runs().find(run => !edit.previous.includes(run.databaseId) && run.headSha === ${JSON.stringify(sha)} && run.event === 'pull_request' && run.createdAt >= edit.since.slice(0, 19) + 'Z');
+  if (selected) break;
+  execFileSync('sleep', ['5']);
+}
+if (!selected) throw Error('No CI run observed after the final body edit');
+gh(['run', 'watch', String(selected.databaseId), '--exit-status', '--interval', '10']);
+gh(['pr', 'checks', String(${pr}), '--watch', '--fail-fast']);
+process.stdout.write(JSON.stringify({state:'green', sha:${JSON.stringify(sha)}, detail:'Final body CI run ' + selected.databaseId}));
+`
+  return `cd ${sq(WT)} && timeout 1800 node -e ${sq(program)}`
+}
 const result = async (extra) => {
   if (extra.pr && ['green', 'red'].includes(extra.ciState)) {
     const updated = await updateAutoBody(extra.pr, extra.ciState)
     if (!updated?.ok) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'machine PR body update failed'] }
     if (updated.changed && extra.ciState === 'green') {
-      const final = await agent(`The final body is published. Only wait for its CI; never edit, commit or push. ${jobInstructions('ci-final-' + A.issue, [`timeout 1800 gh pr checks ${extra.pr} --repo ${REPO} --watch --fail-fast`])} Return green only when all checks pass, otherwise red; sha must remain ${extra.sha}.`, {
+      const final = await agent(`Run this fixed command verbatim; never edit, commit or push: \`${finalCICommand(extra.pr, extra.sha)}\`. Return its JSON on exit 0; any command failure is red.`, {
         label: `${RUN_ID} auto-ci:#${extra.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose',
       })
       if (!final || final.state !== 'green' || final.sha !== extra.sha) {

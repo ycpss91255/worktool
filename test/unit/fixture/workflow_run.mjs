@@ -371,6 +371,10 @@ const agent = async (prompt, opts = {}) => {
     const { ok, stdout } = play(prompt)
     return { ok, changed: stdout === 'changed' }
   }
+  if (mode === 'exec-auto-body' && role.startsWith('auto-ci:') && process.env.AUTO_REAL_CI) {
+    const { ok, stdout } = play(prompt)
+    return ok ? JSON.parse(stdout) : { state: 'red', sha: '', detail: 'command failed' }
+  }
   if (mode === 'exec-auto-body' && role.startsWith('auto-ci:')) return { state: process.env.AUTO_FINAL_RED ? 'red' : 'green', sha: 'abc', detail: 'success' }
   if (role.startsWith('auto-body:')) return { ok: true, changed: false }
   if (mode === 'exec-red-record' && role.startsWith('red-record:')) {

@@ -165,6 +165,10 @@ workflow 在推送後、等待 CI 前，以固定命令讀取
 CI 內部修正並推送後也必須先執行同一固定命令，再等待 CI；
 機械段落不由 agent 撰寫。workflow 結束前再以最終 CI 結論更新；
 若成功結論造成 edit，會再等該版說明的 CI 並要求 head 相同。
+產檔時記錄既有 CI run ID 與時間；最終等待只接受該時間起建立、
+不在既有清單、event 為 pull_request 且 head 相符的 `ci.yml` run，
+先以 `gh run watch --exit-status` 確認該 run 成功，再確認 PR checks。
+未觀察到新 run、查詢失敗或等待失敗都視為 red，不沿用同 SHA 的舊綠燈。
 最後一次 CI 失敗或 head 改變時回報阻擋，機械結論改為 red；
 機械更新失敗也阻擋，不宣告成功。
 
