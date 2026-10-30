@@ -4774,7 +4774,7 @@ SH
 @test "pr-loop records failure when CI on the final body fails (#681)" {
     local root="$BATS_TEST_TMPDIR/auto"
     mkdir -p "$root"
-    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->old<!-- pr-loop:auto:end -->",
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->\nold\n<!-- pr-loop:auto:end -->",
         headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
     printf '1111111 first commit\n' > "$root/commits"
     AUTO_FINAL_RED=1 _pl_auto_body
@@ -4809,11 +4809,25 @@ SH
 @test "pr-loop light blocks CI when machine metadata generation fails (#681)" {
     local root="$BATS_TEST_TMPDIR/auto"
     mkdir -p "$root"
-    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->broken",
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->\nbroken",
         headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
     printf '1111111 first commit\n' > "$root/commits"
     _pl_auto_body light
     run jq -e '.result.blockingLeft == ["machine PR body update failed"] and
         ([.calls[] | select(.role | startswith("ci:"))] | length == 0)' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop preserves marker examples in human text and commit subjects (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:("[codex]\nExamples: `<!-- pr-loop:auto:start -->` and `<!-- pr-loop:auto:end -->`.\n" +
+        "<!-- pr-loop:auto:start -->\nold\n<!-- pr-loop:auto:end -->\nHuman tail"),
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 mention <!-- pr-loop:auto:end -->\n' > "$root/commits"
+    _pl_auto_body
+    run jq -e '.body == ("[codex]\nExamples: `<!-- pr-loop:auto:start -->` and `<!-- pr-loop:auto:end -->`.\n" +
+        "<!-- pr-loop:auto:start -->\nhead: aaaaaaa\n\n## commits\n" +
+        "- 1111111 mention <!-- pr-loop:auto:end -->\n\nCI: green\n<!-- pr-loop:auto:end -->\nHuman tail")' "$root/pr.json"
     assert_success
 }

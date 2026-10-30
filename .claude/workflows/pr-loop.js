@@ -307,7 +307,15 @@ const start = '<!-- pr-loop:auto:start -->', end = '<!-- pr-loop:auto:end -->';
 const section = start + '\\nhead: ' + head + '\\n\\n## commits\\n' +
   commits.split('\\n').filter(Boolean).map(line => '- ' + line).join('\\n') +
   '\\n\\nCI: ' + ${JSON.stringify(conclusion)} + '\\n' + end;
-const from = data.body.indexOf(start), to = data.body.indexOf(end, from);
+const locate = marker => {
+  let offset = 0;
+  for (const line of data.body.split('\\n')) {
+    if (line.replace(/\\r$/, '') === marker) return offset;
+    offset += line.length + 1;
+  }
+  return -1;
+};
+const from = locate(start), to = locate(end);
 if ((from < 0) !== (to < 0) || (from >= 0 && to < from)) throw Error('Malformed machine markers');
 const body = from < 0 ? data.body + '\\n\\n' + section :
   data.body.slice(0, from) + section + data.body.slice(to + end.length);

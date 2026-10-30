@@ -154,7 +154,8 @@ workflow 在推送後、等待 CI 前，以固定命令讀取
 用 `git log --reverse --format=%h %s <base>..<head>` 取得完整 commit 清單。
 固定 Node 程式產生 `<!-- pr-loop:auto:start -->` 與
 `<!-- pr-loop:auto:end -->` 之間的 head SHA、短 SHA 與 subject 清單，以及
-`CI: pending`／`green`／`red`。已有標記時只替換該段，標記外文字逐 byte 保留；
+`CI: pending`／`green`／`red`。標記必須各自獨佔一行（接受 LF 或 CRLF）；人寫文字與 commit subject 內的行內範例不算標記。
+已有標記時只替換該段，標記外文字逐 byte 保留；
 沒有標記時在原文後加兩個換行與整段內容，不改動原文。
 只有單邊標記或順序錯誤時停止，避免覆蓋人寫文字。
 
