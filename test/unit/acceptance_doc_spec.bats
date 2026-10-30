@@ -162,3 +162,18 @@ CREDITS
     assert_output --partial '刪除原本不存在、驗收期間才建立的目標檔'
     assert_output --partial '無法確定目標是否不存在時拒絕備份'
 }
+
+@test "acceptance 5.2 documents automation and credits every #663 file" {
+    local paragraph section entry
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    for entry in 'realbox.sh' 'verify_realbox_spec.bats' 'doc/acceptance.md' 'test/unit/acceptance_doc_spec.bats'; do
+        [[ "${paragraph}" == *"\`${entry}\`（#663／PR #668"* ]]
+    done
+    section="$(sed -n '/^  - \[ \] 5\.2 開終端/,/^  - \[ \] 5\.3 先建/p' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ "${section}" == *'Ghostty 1.3.1'*'reload-config'* ]]
+    [[ "${section}" == *'ghostty +new-window'* ]]
+    [[ "${section}" == *'主觀項目，不影響 rc'* ]]
+    [[ "${section}" != *'輸入 PID'* ]]
+    [[ "${section}" != *"echo \$fish_pid"* ]]
+    [[ "${section}" != *'需互動 tty'* ]]
+}
