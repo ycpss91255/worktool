@@ -290,14 +290,14 @@ _assert_realbox_doc_streams() {
     assert_output --partial '[INFO] shell median'
 }
 
-@test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
+_assert_51_credits() {
     local paragraph entry path
-    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${1:-${REPO_ROOT}/doc/acceptance.md}")"
     for path in doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
         entry="${paragraph#*\`"${path}"\`（}"
         [[ "${entry}" != "${paragraph}" ]]
         entry="${entry%%）*}"
-        [[ "${entry}" =~ \#666／PR[[:space:]]\#[0-9]+ ]]
+        [[ "${entry}" =~ \#666／PR[[:space:]]\#682([^0-9]|$) ]] || return 1
     done
     [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
     [[ "${paragraph}" != *'665-review-round'* ]]
@@ -305,6 +305,19 @@ _assert_realbox_doc_streams() {
     assert_failure 1
     run grep -F "recipe 名稱與說明以根目錄 \`justfile\`、\`script/box/justfile.box\`、\`script/test/justfile.test\` 為唯一來源" "${REPO_ROOT}/doc/acceptance.md"
     assert_success
+}
+
+@test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
+    _assert_51_credits
+}
+
+@test "acceptance 5.1 credits reject a different PR or a longer PR number (#666)" {
+    local wrong doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    for wrong in 681 6820; do
+        sed "s/#666／PR #682/#666／PR #${wrong}/g" "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+        run _assert_51_credits "${doc}"
+        assert_failure
+    done
 }
 
 @test "acceptance PR 157 credits the stale rm description fix on every touched entry (#666)" {
