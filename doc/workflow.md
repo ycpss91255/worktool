@@ -109,7 +109,7 @@ CI 先確認 worktree 乾淨、分支與開啟中的 PR 相符、目標是 `base
 未傳 `pr` 且相對 `origin/<base>` 沒有新增 commit 時，以結構化查詢確認是否已有相同分支與 base 的開啟 PR；沒有 PR 就在原 worktree 進入實作，不另建分支或 worktree。保留 `.agents/state/` 的既有診斷，實作 brief 明確指出該目錄，要求先讀診斷並將測試證據留在其中。查詢失敗或回傳格式無效則停止。
 有既有 commit、工作區乾淨（codex 實作另須前次 rc 不為非零且有非空實作報告）時，判為 `resume`，接續發布：先查相同分支與 base 的開啟 PR；有就重用。沒有 PR 時必須有本機未推送的 commit，先跑 gates、推送、開 PR，再進入原迴圈；沒有未推送 commit 或查詢失敗則停止。
 CI 綠後再以腳本核對工作區乾淨、本機 HEAD、遠端分支與 PR head 相同，未通過就停止，不相信 CI agent 的完成敘述。
-接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有回報 mergeable 才能繼續，blocked 或無結果就停止。仍不跑 codex 複驗。
+接續 light 模式先看工作區；工作區乾淨且有 commit 或 PR 時跳過實作，空分支且無 PR 或工作區不乾淨時先在原 worktree 實作。在發布或 CI 前仍由獨立 Claude 子代理審查完整 diff；只有有效審查的 `defects` 為空才能繼續；有缺陷或無有效結果就停止，忽略 reviewer 的 `verdict`。仍不跑 codex 複驗。
 同步遠端只用 merge，不改寫已推送歷史；失敗就回報阻擋原因，不合併 PR。
 
 ## PR 上的 RED 紀錄（#607）
@@ -134,6 +134,7 @@ full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...
 回傳陣列保留說明與留言的來源區別；沒有合格紀錄時回傳空陣列。
 說明或留言的 body 為 null 時視為空字串，不算讀取失敗；LF 與 CRLF 紀錄均可，
 擷取出的證據統一使用 LF。
+擷取查詢與 workflow 的 JS 複驗共用唯一的 `RED_COMMAND` 指令規則，避免判定分歧。
 由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
 會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
 成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。
