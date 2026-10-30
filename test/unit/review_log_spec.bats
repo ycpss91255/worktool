@@ -51,6 +51,26 @@ _check() {
     assert_output --partial 'fetch full history (fail closed)'
 }
 
+@test "review-log check skips pre-rule additions with notes in a PR 157 shaped history (#684)" {
+    local enforcing="$BASE" old
+    git -C "$REPO" branch -m main
+    git -C "$REPO" checkout -q -b old-topic "$PRE_RULE"
+    mkdir -p "$REPO/doc/evidence"
+    printf 'old notes\n' > "$REPO/doc/evidence/663-review-round-2.md"
+    git -C "$REPO" add .
+    # A future date cannot make an old-branch commit subject to the rule.
+    GIT_AUTHOR_DATE='2099-01-01T00:00:00Z' GIT_COMMITTER_DATE='2099-01-01T00:00:00Z' \
+        git -C "$REPO" commit -q -m 'Old review notes'
+    old="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q doc/evidence/663-review-round-2.md
+    git -C "$REPO" commit -q -m 'Remove old review notes'
+    git -C "$REPO" merge -q --no-ff main -m 'Sync main with the rule'
+
+    run _check
+    assert_success
+    assert_output --partial "$old skipped: does not descend from enforcing commit $enforcing"
+}
+
 @test "review-log check rejects newly committed review files even if later deleted (#675)" {
     local path
     for path in doc/evidence/review-notes.md doc/evidence/nested/675-REVIEW.md \
@@ -58,7 +78,9 @@ _check() {
         mkdir -p "$REPO/$(dirname "$path")"
         printf 'notes\n' > "$REPO/$path"
         git -C "$REPO" add .
-        git -C "$REPO" commit -q -m 'Add notes'
+        # Backdating cannot exempt a descendant of the enforcing commit.
+        GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' \
+            git -C "$REPO" commit -q -m 'Add notes'
         git -C "$REPO" rm -q "$path"
         git -C "$REPO" commit -q -m 'Remove notes'
         run _check
