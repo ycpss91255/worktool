@@ -65,6 +65,9 @@ const latestChecks = checks => {
     return entries.filter((_, i) => times[i] === newest)
   })
 }
+const checksGreen = checks => Array.isArray(checks) &&
+  requiredChecks.every(n => checks.some(c => c?.name === n && green(c))) &&
+  checks.every(c => c?.name === 'milestone-gate-approval' || green(c))
 const CHECK_POLICY = `Shared current-head check policy for Sync, Head and Evidence: normalize checks/statuses with name, status, conclusion, url, completedAt and runCreatedAt (the workflow run's creation time; fetch it when absent). Keep only the latest entry per check name before any failure or success decision, using this exact selection rule: ${latestChecks.toString()}. Superseded runs of the same workflow do not count. Missing or ambiguous timestamps retain all candidates and fail closed unless every candidate succeeds. Require both verify-all architecture jobs, ci-passed and every other retained check to be COMPLETED/SUCCESS; exclude only milestone-gate-approval. Commit statuses are COMPLETED/SUCCESS only for state SUCCESS.`
 
 let RULES = rules(A.repoDir)
@@ -83,9 +86,7 @@ if (sync) sync.checks = latestChecks(sync.checks)
 if (!sync || sync.error || !['synced', 'unchanged'].includes(sync.state) ||
     typeof sync.repoDir !== 'string' || !sync.repoDir.startsWith('/') ||
     /[\u0000-\u001f\u007f`]/.test(sync.repoDir) || !/^[0-9a-f]{40}$/.test(sync.sha) ||
-    (!Array.isArray(sync.checks) ||
-      !requiredChecks.every(n => sync.checks.some(c => c.name === n && green(c))) ||
-      !sync.checks.every(c => c.name === 'milestone-gate-approval' || green(c)))) {
+    !checksGreen(sync.checks)) {
   return { pr: A.pr, status: 'sync-blocked', report: sync || 'Sync query failed' }
 }
 A.repoDir = sync.repoDir
@@ -100,8 +101,7 @@ if (head) head.checks = latestChecks(head.checks)
 if (!head || head.error || head.sha !== sync.sha || !/^[0-9a-f]{40}$/.test(head.sha) || !head.labels?.includes('milestone-gate') ||
     !Number.isInteger(head.milestoneIssue) || head.milestoneIssue < 1 ||
     (A.milestoneIssue !== undefined && head.milestoneIssue !== A.milestoneIssue) ||
-    !Array.isArray(head.checks) || !requiredChecks.every(n => head.checks.some(c => c.name === n && green(c))) ||
-    !head.checks.every(c => c.name === 'milestone-gate-approval' || green(c))) {
+    !checksGreen(head.checks)) {
   return { pr: A.pr, status: 'head-blocked', report: head || 'PR query failed' }
 }
 const SCRATCH = `${A.repoDir}/.agents/state/milestone-handover-${A.pr}-${head.sha}`
@@ -565,8 +565,12 @@ Read doc/workflow.md's single evidence template, milestone goals, ${SCRATCH}/fin
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|
-Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. Treat pendingHuman inconclusive rc=3 as pending, never as a failed required run. If verdict is negative (${verdict}) or any other required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. Separate defects, agent-obtainable evidence gaps and pendingHuman. Never present pendingHuman as passed. Defects: ${JSON.stringify(defects)}; agent-obtainable evidence gaps: ${JSON.stringify(insufficientEvidence)}. Evidence coverage: ${JSON.stringify(coveredEvidence)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
+Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. Treat pendingHuman inconclusive rc=3 as pending, never as a failed required run. If verdict is negative (${verdict}) or any other required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. Separate defects, agent-obtainable evidence gaps and pendingHuman. Never present pendingHuman as passed. Defects: ${JSON.stringify(defects)}; agent-obtainable evidence gaps: ${JSON.stringify(insufficientEvidence)}. Evidence coverage: ${JSON.stringify(coveredEvidence)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {sha: full current head SHA, checks: normalized current-head checks retaining timestamps, evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { sha: { type: 'string' }, checks: { type: 'array', items: { type: 'object' } }, evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['sha', 'checks', 'evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
 const evidence = decode(evidenceResult)
+if (evidence) evidence.checks = latestChecks(evidence.checks)
+if (!evidence || evidence.error || evidence.sha !== head.sha || !checksGreen(evidence.checks)) {
+  return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidence || 'Evidence query failed' }
+}
 const evidenceWrite = evidence && !evidence.error ? await persistArtifacts('Evidence', { 'evidence.md': evidence.evidenceContent, 'ready.md': evidence.readyContent }) : evidence || { error: 'Missing evidence.md / ready.md content' }
 if (evidenceWrite) return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidenceWrite }
 const preparedFiles = await verifyArtifacts('Prepared', [...evidenceFiles, 'evidence.md', 'ready.md'])

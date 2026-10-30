@@ -565,7 +565,7 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
    Claude 不代貼或重寫；再由 Codex publisher 透過自己的 hook 發布最終判定，附兩份報告連結、待開 issue 與人工待驗項目。
    原 Review 的負面判定仍阻擋；最終正面判定必須在獨立驗收之後，不能只引用早期 Review。
    任一發布或核對失敗即停止，不宣告就緒。
-9. **Evidence**：再次確認同 head checks，產生 PR 說明證據段落 `evidence.md` 與
+9. **Evidence**：再次查詢並回傳 SHA 與含時間欄位的 checks，workflow 依共用規則驗證同 head 全綠後，才產生 PR 說明證據段落 `evidence.md` 與
    `ready.md` 草稿，兩者使用發布草稿的 Claude session 身分標記 `[claude]`。
    採用上方唯一四欄目標對照範本，含 CI 連結、每個 finding 與
    第 5 節的輸出／還原／待驗項目、兩份獨立報告與最終判定連結。ready 留言必須明列全部

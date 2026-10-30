@@ -3010,7 +3010,7 @@ _handover_replies() {
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
         "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
-        "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks'
+        "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks | ."evidence:" += {sha:."head:".sha,checks:."head:".checks}'
 }
 
 @test "milestone-handover defers every PR comment until both independent reports are ready (#603)" {
@@ -4321,7 +4321,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
     args="$(jq -cn --arg d "$root" '{repo:"o/r",repoDir:$d,base:"m3/5-acceptance",pr:7}')"
     replies="$(_handover_replies | jq --arg d "$root" '
         ."sync:".repoDir=$d | ."machine:"={content:"機器證據\n\n"} |
-        ."evidence:"={evidenceContent:"[claude] 證據\n",readyContent:"[claude] 待驗收\n\n"}')"
+        ."evidence:" += {evidenceContent:"[claude] 證據\n",readyContent:"[claude] 待驗收\n\n"}')"
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" "$args" "$replies" exec-handover-files
     assert_success
@@ -4371,7 +4371,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ."sync:".repoDir=$d | ."findings:".content="ORIGINAL ledger\n" |
         ."machine:".content="ORIGINAL ledger\n" | ."independent-codex:"="ORIGINAL ledger\n" |
         ."independent-claude:"="ORIGINAL ledger\n" |
-        ."evidence:"={evidenceContent:"ORIGINAL ledger\n",readyContent:"ORIGINAL ledger\n"}')"
+        ."evidence:" += {evidenceContent:"ORIGINAL ledger\n",readyContent:"ORIGINAL ledger\n"}')"
     for row in 'Findings:findings.md:findings-failed' 'Machine:machine.md:machine-failed' \
         'Independent reports:independent-codex-report.md:independent-publish-failed' \
         'Independent reports:independent-claude-report.md:independent-publish-failed' \
@@ -4404,7 +4404,7 @@ Reason: 僅修正文句，沒有行為變更。'; do
          ("允許" + "合併") + "\ncodex node -e\n中文𠮷 ` $HOME '\''\n\n") as $data |
         ."findings:".content=$data | ."machine:".content=$data |
         ."independent-codex:"=$data | ."independent-claude:"=$data |
-        ."evidence:"={evidenceContent:$data,readyContent:$data}' > "$replies"
+        ."evidence:" += {evidenceContent:$data,readyContent:$data}' > "$replies"
     run env HANDOVER_REAL_HOOKS=1 node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" \
         "${WF_DIR}/milestone-handover.js" "$args" "@$replies" exec-handover-files
     assert_success
@@ -4669,4 +4669,18 @@ Reason: 僅修正文句，沒有行為變更。'; do
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
     run jq -e '.result.status == "prepared"' <<<"${output}"
     assert_success
+}
+
+@test "milestone-handover blocks a failing latest check in every check stage (#690)" {
+    local stage replies
+    for stage in sync head evidence; do
+        replies="$(_handover_replies | jq --arg stage "${stage}:" '
+            .[$stage].checks = ."head:".checks |
+            .[$stage].checks |= map(. + {completedAt:"2026-10-30T01:00:00Z"}) |
+            .[$stage].checks += [{name:"ci-passed",status:"COMPLETED",conclusion:"FAILURE",
+                completedAt:"2026-10-30T02:00:00Z",url:"https://example.test/latest"}]')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e --arg stage "${stage}" '.result.status == ($stage + (if $stage == "evidence" then "-failed" else "-blocked" end))' <<<"${output}"
+        assert_success
+    done
 }
