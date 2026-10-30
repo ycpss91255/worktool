@@ -134,6 +134,7 @@ full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...
 回傳陣列保留說明與留言的來源區別；沒有合格紀錄時回傳空陣列。
 說明或留言的 body 為 null 時視為空字串，不算讀取失敗；LF 與 CRLF 紀錄均可，
 擷取出的證據統一使用 LF。
+gh 端篩選與 JavaScript 複查共用同一個 RED_COMMAND 指令規則；行首只接受空格或 tab，不接受其他空白字元。
 由 workflow 程式檢查 RED 紀錄。agent 錯誤、gh 失敗、非 JSON 或資料格式錯誤
 會立即重讀一次；仍失敗時回報「無法讀取 PR RED 紀錄」，與缺少紀錄分開。
 成功讀取但沒有有效紀錄時不重試，回報「PR 缺少 RED 紀錄」。
@@ -145,6 +146,30 @@ full 模式每輪獨立審查前，以 `gh pr view --json body,comments --jq ...
 `## RED exemption`，下一行寫 `Reason: <沒有行為變更的具體理由>`。
 理由必須非空，不能只在留言宣告豁免；審查方仍須核對理由是否符合 diff。
 此檢查確認紀錄存在，不驗證輸出真偽，也不取代審查方對 TDD 的判斷。
+
+## PR 說明的機械段落
+
+workflow 在推送後、等待 CI 前，以固定命令讀取
+`gh pr view --json body,headRefOid,baseRefOid`，fetch base 與 head 物件，
+用 `git log --reverse --format=%h %s <base>..<head>` 取得完整 commit 清單。
+固定 Node 程式產生 `<!-- pr-loop:auto:start -->` 與
+`<!-- pr-loop:auto:end -->` 之間的 head SHA、短 SHA 與 subject 清單，以及
+`CI: pending`／`green`／`red`。已有標記時只替換該段，標記外文字逐 byte 保留；
+沒有標記時在原文後加兩個換行與整段內容，不改動原文。
+只有單邊標記或順序錯誤時停止，避免覆蓋人寫文字。
+
+命令將結果寫入 worktree 的 `.agents/state/pr-loop-body.md`，
+使用字面路徑的 `gh pr edit --body-file` 發布，內容相同時不 edit。
+CI 內部修正並推送後也必須先執行同一固定命令，再等待 CI；
+機械段落不由 agent 撰寫。workflow 結束前再以最終 CI 結論更新；
+若成功結論造成 edit，會再等該版說明的 CI 並要求 head 相同。
+最後一次 CI 失敗或 head 改變時回報阻擋，機械結論改為 red；
+機械更新失敗也阻擋，不宣告成功。
+
+實作、發布、CI 修正與 Fix prompt 禁止在人寫內容放 commit 清單、head SHA、
+推送狀態或「由 workflow 接手」等字句。PR 文字需要修正時使用
+`gh pr edit --body-file` 並保留機械段落，不得為此建立空的 metadata commit。
+審查仍把人寫內容與行為不符視為缺陷；機械段落由固定命令維護。
 
 ## 實作暫時性錯誤
 
@@ -171,7 +196,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 1. **Implement**:agent 在自己的 worktree(`git worktree add -b <branch> <repoDir>/../worktree/<name> origin/main`)依 TDD 做:
    先寫測試看到 RED,再實作到 GREEN;每個 TDD 切片只在 Docker 內跑該 spec（`just test <tier> <spec...> [--filter REGEX]`）；
    push 前阻塞執行 `just test lint` 與 `just test changed`。本機不跑整個 tier；全部 tier 由 CI 執行；
-   開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
+   開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、「測試證據」)。
    Locate 找到 PR 後，以腳本讀取 `git status --porcelain`、本地 HEAD、`git ls-remote` 的遠端分支 HEAD 與 PR head；工作區必須乾淨，三個 HEAD 必須相同。檢查失敗就以 `blockingLeft` 附上狀態與 HEAD 比較，不進入 CI。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
 3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
@@ -192,7 +217,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷（流程失敗時保留失敗原因）。
    `limitations` 與 `suggestions` 累積各輪有效審查的內容並去重，包含 Fix 後或流程失敗的回傳；
-   `limitations` 提供呼叫者寫入 PR 說明的「已知限制」段落，workflow 不在此機械改寫 PR 說明。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
+   `limitations` 提供呼叫者寫入 PR 說明的「已知限制」段落，workflow 只機械更新下述標記段落，不改寫人寫內容。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
 ## milestone-fanout
 

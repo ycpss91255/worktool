@@ -4761,3 +4761,24 @@ SH
     run jq -e '.body | contains("CI: red")' "$root/pr.json"
     assert_success
 }
+
+@test "pr-loop implementers and fixers reserve volatile metadata for the machine section (#681)" {
+    local implementer role json
+    for implementer in codex claude; do
+        for role in implement fix; do
+            if [[ "$role" == implement ]]; then
+                run _pl_run "{\"implementer\":\"$implementer\"}"
+            else
+                run _pl_blocked_run "$implementer"
+            fi
+            assert_success
+            json="$output"
+            run jq -e --arg role "$role:" '[.calls[] |
+                select(.role | startswith($role)) | .prompt |
+                contains("Never write commit lists, head SHAs, push status or workflow-will-take-over lines in the human-written PR body") and
+                contains("Never create empty metadata-only commits") and
+                contains("fix PR text with gh pr edit --body-file instead")] | length > 0 and all' <<<"$json"
+            assert_success
+        done
+    done
+}
