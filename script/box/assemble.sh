@@ -291,7 +291,8 @@ _assemble_exec() {
     _check_existing_box || return 1
     log_info "assembling box from ${_resolved}"
     local _rc=0
-    DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
+    # distrobox-create records SHELL's basename; init resolves fish in-box.
+    SHELL=/usr/bin/fish DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
         TMUX_TMPDIR="${BOX_HOME}/.cache/tmux" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then

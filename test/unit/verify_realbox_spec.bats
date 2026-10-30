@@ -1,0 +1,4132 @@
+#!/usr/bin/env bats
+# test/unit/verify_realbox_spec.bats - script/verify/realbox.sh, the M3
+# real-machine acceptance items 5.1 / 5.2 / 5.3 (doc/acceptance.md).
+#
+# WHAT THIS SPEC IS FOR
+#   The script replaced three shell blocks that lived inside a markdown
+#   document. The defect that motivated the move is not "the checks are
+#   wrong" - it is that a BROKEN CHECK COULD READ AS A PASS: a `distrobox
+#   list` that failed parsed as "no such box", a `grep -c` that could not
+#   open a file printed 0 like a clean file does, a `sha256sum` that died
+#   inside a command substitution compared equal to another dead one.
+#
+#   So every case below breaks ONE stage and asserts the script exits
+#   non-zero. The cases that matter most are the ones where the broken stage
+#   still prints PLAUSIBLE OUTPUT and only its exit status betrays it - the
+#   exact shape the document's blocks used to swallow. Each of those is
+#   marked `(plausible output, non-zero exit)` in its name.
+#
+# HOW
+#   test/unit/fixture/realbox_tool.sh is installed as distrobox / just / gh /
+#   jq (a fake that keeps a box list and a call log, and can be told to print
+#   a convincing answer while exiting non-zero).
+#   test/unit/fixture/realbox_shim.sh is installed as grep / cut / wc / sort /
+#   sha256sum / readlink / tee / mktemp / id / date / uname / cp / mv / rm /
+#   awk: by default it delegates to the REAL tool (recorded before PATH is
+#   touched), so only the stage a case names is broken.
+#   HOME and TMPDIR point into the test's own tmpdir, so nothing this spec
+#   runs can reach the machine's real ghostty or worktool config.
+
+load "${BATS_TEST_DIRNAME}/../helper/common"
+load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
+
+teardown() {
+    interrupt_load_stop
+}
+
+bats_require_minimum_version 1.5.0
+
+@test "realbox fixture: distrobox without arguments succeeds without a shift error" {
+    run bash -O shift_verbose "${STUBS}/distrobox"
+    assert_success
+    assert_output ""
+    assert_equal "$(cat "${STATE}/calls.log")" 'distrobox '
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "realbox: the default box name follows the shipped manifest before opt-in" {
+    local _repo="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_repo}"
+    cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${REPO_ROOT}/box" "${_repo}/"
+    sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
+    run "${_repo}/script/verify/realbox.sh" 5.1
+    assert_failure 2
+    assert_output --partial "named 'acceptance-box'"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
+@test "5.1: an interrupt during bench removes the owned box and exits 130" {
+    cp "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STATE}/just"
+    export VERIFY_TOOL="${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == bench ]]; then
+    kill -INT "${VERIFY_PID}"
+    exit 0
+fi
+exec "${VERIFY_TOOL}" "$@"
+STUB
+    run bash -c 'export VERIFY_PID=$$; exec "$@"' _ "${REALBOX}" --allow-real-box 5.1
+    assert_failure 130
+    assert_line "cleanup-rc=0"
+    [ ! -s "${STATE}/boxes" ]
+    assert_equal "$(_count_calls gh)" "0"
+}
+
+_assert_group_interrupt() {
+    local signal="$1" expected="$2" phase="$3" item="${4:-5.1}" cleanup="${5:-0}"
+    _prepare_group_interrupt "${phase}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" "${signal}" bash \
+        "${REALBOX}" --allow-real-box "${item}"
+    _check_group_interrupt "${expected}" "${cleanup}"
+}
+
+_prepare_group_interrupt() {
+    export INTERRUPT_PHASE="$1"
+    export SIGNAL_STATE="${STATE}"
+    cp "${STUBS}/just" "${STATE}/just"
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == "${INTERRUPT_PHASE}" ]]; then
+    finish() {
+        echo finished >>"${SIGNAL_STATE}/events"
+        if [[ "${INTERRUPT_PHASE}" == assemble ]]; then exit 1; fi
+        exec "${SIGNAL_STATE}/just" "$@"
+    }
+    if [[ "${INTERRUPT_PHASE}" == assemble ]]; then
+        "${SIGNAL_STATE}/just" "$@"
+    fi
+    stop_sleep() {
+        if [[ -n "${!:-}" ]] && ! kill "$!" 2>/dev/null; then
+            : # The background sleep may already have exited.
+        fi
+    }
+    trap 'stop_sleep; sleep 0.2; finish "$@"' INT TERM HUP
+    echo "$$" >"${SIGNAL_STATE}/child.pid"
+    touch "${SIGNAL_STATE}/ready"
+    sleep 3 & wait "$!"
+    finish "$@"
+fi
+exec "${SIGNAL_STATE}/just" "$@"
+STUB
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == rm ]]; then
+    echo cleanup >>"${SIGNAL_STATE}/events"
+    if [[ "${SIGNAL_REPEAT:-0}" == 1 ]]; then
+        touch "${SIGNAL_STATE}/cleanup-ready"
+        sleep 0.2
+    fi
+fi
+exec "${SIGNAL_STATE}/distrobox" "$@"
+STUB
+}
+
+_check_group_interrupt() {
+    local expected="$1" cleanup="$2"
+    assert_success
+    assert_line 'exit-signal=none'
+    assert_line "rc=${expected}"
+    assert_line "cleanup-rc=${cleanup}"
+    [[ "${cleanup}" -eq 0 ]] || return 0
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    run cat "${SIGNAL_STATE}/events"
+    assert_output $'finished\ncleanup'
+    [ ! -s "${STATE}/boxes" ]
+    local pid
+    read -r pid <"${STATE}/child.pid"
+    run kill -0 "${pid}"
+    assert_failure 1
+}
+
+_assert_unconfirmed_group_stop() {
+    export INJECT_STOP_RC="$1"
+    local repo pid
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    _prepare_group_interrupt assemble
+    cat >>"${repo}/lib/verify_run.sh" <<'INJECT'
+# Leave descendants alive after losing the monitor.
+verify_stop_group() {
+    echo "$1" >"${SIGNAL_STATE}/group"
+    builtin kill -KILL "$1"
+    return "${INJECT_STOP_RC}"
+}
+INJECT
+    cat >"${SIGNAL_STATE}/restore-probe" <<'PROBE'
+    echo restore-entered >>"${SIGNAL_STATE}/events"
+    if kill -0 "$(cat "${SIGNAL_STATE}/child.pid")" 2>/dev/null; then
+        echo restore-with-live-child
+    fi
+PROBE
+    sed -i "/^_52_step3_restore() {/r ${SIGNAL_STATE}/restore-probe" "${REALBOX}"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    refute_output --partial 'restore-ok=1'
+    assert_line --partial 'configuration restore refused'
+    assert_line 'rc=1'
+    [ -e "$(_backup_dir)/manifest" ]
+    if [[ -f "${SIGNAL_STATE}/events" ]]; then
+        run grep -F restore-entered "${SIGNAL_STATE}/events"
+        assert_failure 1
+    fi
+    read -r pid <"${SIGNAL_STATE}/group"
+    run bash -c 'source "${LIB_DIR}/verify_run.sh"; verify_group_running "$1"' _ "${pid}"
+    assert_failure 1
+}
+
+@test "5.2: failed group stop after real TERM refuses config restore and kills survivors" {
+    _assert_unconfirmed_group_stop 1
+}
+
+@test "5.2: surviving group after successful stop report refuses config restore" {
+    _assert_unconfirmed_group_stop 0
+}
+
+@test "5.1: interrupted nonzero assemble removes its listed box and exits 130" {
+    _assert_group_interrupt INT 130 assemble
+}
+
+@test "5.1: group INT during bench reports realbox cleanup and exits normally" {
+    _assert_group_interrupt INT 130 bench
+}
+
+@test "5.2: group INT during apply reports cleanup and exits normally" {
+    _assert_group_interrupt INT 130 assemble 5.2
+}
+
+@test "5.1: interrupted cleanup failure takes precedence over signal status" {
+    export FAKE_DBX_RM_REMOVES=0
+    _assert_group_interrupt INT 1 assemble 5.1 1
+    [ -s "${STATE}/boxes" ]
+}
+
+@test "5.1: group TERM during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 assemble 5.1
+}
+
+@test "5.1: group TERM during bench reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 bench 5.1
+}
+
+@test "5.1: group HUP during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 assemble 5.1
+}
+
+@test "5.1: group HUP during bench reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 bench 5.1
+}
+
+@test "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" {
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
+    interrupt_load_start
+    local attempt failures=0 trials=60 phase tool
+    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
+        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${STATE}/signal.js"
+    for ((attempt=1; attempt<=trials; attempt++)); do
+        if ((attempt % 2)); then phase=assemble; else phase=bench; fi
+        for tool in just distrobox; do
+            install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/${tool}"
+        done
+        _prepare_group_interrupt "${phase}"
+        sed -i "/^    trap /i \\    printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${STUBS}/just"
+        rm -f "${STATE}/ready" "${STATE}/events"
+        run node "${STATE}/signal.js" HUP bash "${REALBOX}" --allow-real-box 5.1
+        if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
+            "${output}" != *'cleanup-rc=0'* ||
+            "$(cat "${STATE}/events")" != $'finished\ncleanup' ]]; then
+            failures=$((failures + 1))
+            printf '# attempt=%s phase=%s status=%s output=%s events=%s\n' "${attempt}" "${phase}" "${status}" "${output}" "$(cat "${STATE}/events")" >&3
+        fi
+        if ((attempt % 10 == 0)); then
+            printf '# realbox HUP attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
+        fi
+    done
+    interrupt_load_stop
+    printf '# realbox HUP load failures=%s/%s\n' "${failures}" "${trials}" >&3
+    [ "${failures}" -eq 0 ]
+}
+
+@test "5.2: group TERM during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt TERM 143 assemble 5.2
+}
+
+@test "5.2: group HUP during assemble reports cleanup and exits normally" {
+    _assert_group_interrupt HUP 129 assemble 5.2
+}
+
+@test "5.1: real just forwards group INT without killing realbox cleanup" {
+    _prepare_group_interrupt assemble
+    printf 'set positional-arguments\nrealbox:\n    %s --allow-real-box 5.1\n' "${REALBOX}" >"${STATE}/outer.just"
+    local real_just
+    read -r real_just <"${STATE}/real/just"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT \
+        "${real_just}" --justfile "${STATE}/outer.just"
+    refute_output --partial 'by signal 2'
+    _check_group_interrupt 130 0
+}
+
+@test "5.1: a second group TERM during cleanup cannot terminate realbox" {
+    export SIGNAL_REPEAT=1
+    _assert_group_interrupt TERM 143 assemble
+}
+
+@test "5.2.2: group INT during standalone apply restores and reports cleanup" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    _assert_group_interrupt INT 130 assemble 5.2.2
+}
+
+load "${BATS_TEST_DIRNAME}/../helper/realbox_window"
+
+setup() {
+    _prepare_realbox_tools
+}
+
+@test "realbox: missing jq is unavailable before any box action" {
+    local _path="${BATS_TEST_TMPDIR}/no-jq" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh mktemp timeout grep cut sort wc tee date uname mkdir ln; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: jq not found on PATH"
+    refute_output --partial "[FAIL]"
+    assert_equal "$(_count_calls distrobox)" "0"
+    run find "${TMPDIR}" -mindepth 1 -print
+    assert_success
+    assert_output ''
+}
+
+@test "5.2: missing Ghostty refuses every step before backups or config writes" {
+    local _path="${BATS_TEST_TMPDIR}/no-ghostty" _tool _item
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just timeout grep cut sort mkdir find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    _seed_shared_state
+    printf 'set -g status off\n' >"${HOME}/.tmux.conf"
+    printf 'font-size = 14\n' >"${HOME}/.config/ghostty/config.ghostty"
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _item in 5.2 5.2.1 5.2.2 5.2.3; do
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box "${_item}"
+        assert_failure 3
+        assert_output --partial '[UNAVAILABLE] realbox.sh: ghostty not found on PATH'
+        refute_output --partial '[FAIL]'
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+    done
+}
+
+@test "5.3: missing backup tool is unavailable before decoy creation" {
+    local _path="${BATS_TEST_TMPDIR}/no-cp" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum mv rm readlink id rmdir ghostty; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: cp not found on PATH"
+    assert_equal "$(_count_calls distrobox)" '0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.2: missing apply tool stays unavailable when restore also cannot run" {
+    local _path="${BATS_TEST_TMPDIR}/no-distrobox" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk just gh jq mktemp timeout grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: distrobox not found on PATH"
+    refute_output --partial "[FAIL] item 5.2 failed"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.3: an unavailable refusal check refuses before decoy creation" {
+    local _path="${BATS_TEST_TMPDIR}/no-wc" _tool
+    mkdir -p "${_path}"
+    for _tool in bash dirname awk distrobox just gh jq mktemp timeout grep cut sort tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps ghostty; do
+        ln -s "$(command -v "${_tool}")" "${_path}/${_tool}"
+    done
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial "[UNAVAILABLE] realbox.sh: wc not found on PATH"
+    assert_equal "$(_count_calls distrobox)" '0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "stub contract: failing stream shims drain pipeline input before answering" {
+    local _tool _probe="${BATS_TEST_TMPDIR}/stream-probe.sh"
+    cat >"${_probe}" <<'EOF'
+set -o pipefail
+printf '%1048576s\n' x | "$1"
+statuses=("${PIPESTATUS[@]}")
+printf 'writer=%s reader=%s\n' "${statuses[@]}"
+EOF
+    for _tool in cut sort wc tee; do
+        run env "SHIM_${_tool^^}_RC=1" "SHIM_${_tool^^}_OUT=plausible" \
+            bash "${_probe}" "${_tool}"
+        assert_success
+        assert_line 'plausible'
+        assert_line 'writer=0 reader=1'
+    done
+}
+
+# --- helpers (pure bash: the shims may be told to break coreutils) -----------
+
+_path_without() {
+    local _tool _path="${BATS_TEST_TMPDIR}/without-$1"
+    mkdir -p "${_path}"
+    for _tool in env bash dirname realpath ghostty distrobox just gh jq mktemp timeout awk grep cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps stat touch gapplication sleep kill; do
+        [[ "${_tool}" != "$1" ]] || continue
+        ln -sf "$(type -P "${_tool}")" "${_path}/${_tool}"
+    done
+    printf '%s\n' "${_path}"
+}
+
+@test "#526: missing timestamp tools refuse full realbox chains before side effects" {
+    local tool item path
+    for tool in stat touch; do
+        path="$(_path_without "${tool}")"
+        for item in 5.2 5.3; do
+            run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+            assert_failure 3
+            assert_output --partial "[UNAVAILABLE] realbox.sh: ${tool} not found on PATH"
+            assert_equal "$(_count_calls distrobox)" '0'
+            assert_equal "$(_count_calls just)" '0'
+            assert [ ! -e "$(_backup_dir)" ]
+        done
+    done
+}
+
+@test "5.1: missing report or cleanup tools refuses before scratch or box creation" {
+    local _tool _path
+    for _tool in cat rm find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+    done
+}
+
+@test "5.2: missing backup or restore tools leaves configs and published backup untouched" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in cat find sort cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.1
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    _realbox_quiet 5.2.1
+    cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
+    for _tool in ps find cmp; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        run diff -r "${STATE}/baseline-backup" "$(_backup_dir)"
+        assert_success
+    done
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+}
+
+@test "5.3: missing nested item tools refuses before any decoy or backup side effect" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in ghostty mktemp cut sort wc tee date uname mkdir ln find cmp sha256sum cp mv rm readlink id rmdir cat ps; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.3
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+        [ ! -s "${STATE}/boxes" ]
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+    done
+}
+
+@test "5.2: missing later step tools refuses the full chain before backup creation" {
+    local _tool _path
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    for _tool in distrobox just timeout awk ps rmdir; do
+        _path="$(_path_without "${_tool}")"
+        run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2
+        assert_failure 3
+        assert_output --partial "[UNAVAILABLE] realbox.sh: ${_tool} not found on PATH"
+        [ ! -e "$(_backup_dir)" ]
+        run diff -r "${STATE}/baseline-home" "${HOME}"
+        assert_success
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls just)" '0'
+    done
+}
+
+@test "5.2.2: missing engine path resolver refuses before revalidation or apply" {
+    local _path
+    _path="$(_path_without realpath)"
+    run env PATH="${_path}" "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 3
+    assert_output --partial '[UNAVAILABLE] realbox.sh: realpath not found on PATH'
+    refute_output --partial 'revalidate=1'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    [ ! -e "$(_backup_dir)" ]
+}
+
+# Number of logged calls whose line starts with "$1 ".
+_count_calls() {
+    local _n=0 _l
+    while IFS= read -r _l; do
+        case "${_l}" in "$1 "*) _n=$((_n + 1)) ;; esac
+    done <"${STATE}/calls.log"
+    printf '%s\n' "${_n}"
+}
+
+_count_list_calls() {
+    local _n=0 _l
+    while IFS= read -r _l; do
+        case "${_l}" in "distrobox list"*) _n=$((_n + 1)) ;; esac
+    done <"${STATE}/calls.log"
+    printf '%s\n' "${_n}"
+}
+
+_seed_box() { printf '%s\n' "$1" >>"${STATE}/boxes"; }
+
+_ghostty_config() { printf '%s\n' "${HOME}/.config/ghostty/config"; }
+
+@test "#526: 5.3 refused apply preserves every pre-existing parent directory mtime" {
+    mkdir -p "${HOME}/.cache/worktool" "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+    printf 'original log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    printf 'original state\n' >"${HOME}/.config/worktool/config"
+    local dir
+    local dirs=("${HOME}" "${HOME}/.config" "${HOME}/.config/ghostty"
+        "${HOME}/.config/worktool" "${HOME}/.config/distrobox"
+        "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+
+    run "${REALBOX}" --allow-real-box 5.3
+
+    assert_success
+    assert_line 'restore-ok=1'
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
+_backup_dir() { printf '%s\n' "${TMPDIR}/worktool-m3-52-backup.$(id -u)"; }
+
+@test "#526: 5.2 apply and restore recover parent mtimes including originally absent files" {
+    local repo dir target="${HOME}/targets/ghostty" link
+    repo="$(_repo_copy)"
+    link="$(_ghostty_config)"
+    mkdir -p "${HOME}/targets" "${HOME}/.cache/worktool"
+    mv "${link}" "${target}"
+    ln -s "${target}" "${link}"
+    local dirs=("${HOME}" "${HOME}/targets" "${HOME}/.config"
+        "${HOME}/.config/ghostty" "${HOME}/.cache" "${HOME}/.cache/worktool")
+    for dir in "${dirs[@]}"; do
+        touch -d '2001-01-01 01:01:01.123456789' "${dir}"
+    done
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    printf 'new log\n' >"${HOME}/.cache/worktool/dev-init.log"
+    rm "${target}"
+    printf 'changed target\n' >"${target}"
+
+    run _restore_input 4242
+
+    assert_success
+    assert_line 'restore-ok=1'
+    assert [ ! -e "${HOME}/.cache/worktool/dev-init.log" ]
+    for dir in "${dirs[@]}"; do
+        assert_equal "$(stat -c %y "${dir}")" '2001-01-01 01:01:01.123456789 +0000'
+    done
+}
+
+@test "#526: a directory mtime mismatch at the end of restore fails restore-ok" {
+    mkdir -p "${HOME}/.cache/worktool"
+    _realbox_quiet 5.2.1
+    export REAL_TOUCH
+    REAL_TOUCH="$(type -P touch)"
+    "${REAL_TOUCH}" -d '1999-01-01 01:01:01' "${HOME}/.cache"
+    cat >"${STUBS}/touch" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${REAL_TOUCH}" "$@"
+# Simulate another writer changing a previously restored directory.
+if [[ "${*: -1}" == "${HOME}/.cache" ]]; then
+    "${REAL_TOUCH}" -d '2002-02-02 02:02:02' "${HOME}/.cache/worktool"
+fi
+STUB
+    chmod +x "${STUBS}/touch"
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+
+    assert_failure 1
+    assert_line 'restore-files-ok=0'
+    assert_line 'restore-ok=0'
+    assert_output --partial 'directory mtime mismatch:'
+    assert [ -d "$(_backup_dir)" ]
+}
+
+# Run realbox.sh for real (not under `run`), so $output stays whatever the
+# case under test put there.
+_realbox_quiet() {
+    if [[ "$1" == 5.2.2 && ! -f "${STATE}/auto-ready" ]]; then
+        _auto_window_tools
+    fi
+    "${REALBOX}" --allow-real-box "$@" >/dev/null 2>&1
+}
+
+_reset_log() {
+    : >"${STATE}/calls.log"
+    : >"${STATE}/list-calls"
+}
+
+_distrobox_conf() { printf '%s\n' "${HOME}/.config/distrobox/distrobox.conf"; }
+
+# The user lines distrobox.conf is seeded with: the host distrobox
+# configuration stands for, and what every check below asks to survive.
+DISTROBOX_USER_LINES=(
+    '# worktool acceptance: user content that must survive every write'
+    'container_manager=docker'
+    'container_always_pull=0'
+)
+
+_seed_distrobox_conf() {
+    mkdir -p "${HOME}/.config/distrobox"
+    printf '%s\n' "${DISTROBOX_USER_LINES[@]}" >"$(_distrobox_conf)"
+}
+
+# A user-owned config entry that setup must retain.
+_seed_shared_state() {
+    mkdir -p "${HOME}/.config/worktool"
+    printf 'link=.ssh\n' >"${HOME}/.config/worktool/config"
+}
+
+# --- the degraded-copy family ------------------------------------------------
+# The fakes above break the TOOLS realbox.sh drives. These break the PRODUCT:
+# a copy of the checkout is degraded and `just box setup` / `just box status`
+# are pointed at THAT copy (FAKE_JUST_BOX_SCRIPT_DIR), so the output is what
+# the degraded product really prints and 5.2 has to catch it on content alone.
+
+_repo_copy() {
+    local _dst="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${_dst}"
+    cp -a "${REPO_ROOT}/justfile" "${REPO_ROOT}/lib" "${REPO_ROOT}/script" \
+        "${REPO_ROOT}/box" "${_dst}/"
+    printf '%s\n' "${_dst}"
+}
+
+# Insert the lines on stdin into file $2 immediately before its first line
+# equal to $1, so a later definition of a shell function shadows the shipped
+# one. Pure bash; the result is copied back INTO the file so it keeps its
+# executable bit.
+_insert_before() {
+    local _anchor="$1" _file="$2" _frag _line _done=0
+    _frag="$(cat)"
+    : >"${_file}.new"
+    while IFS= read -r _line || [ -n "${_line}" ]; do
+        if [ "${_done}" -eq 0 ] && [ "${_line}" = "${_anchor}" ]; then
+            printf '%s\n' "${_frag}" >>"${_file}.new"
+            _done=1
+        fi
+        printf '%s\n' "${_line}" >>"${_file}.new"
+    done <"${_file}"
+    [ "${_done}" -eq 1 ] || return 1
+    cat "${_file}.new" >"${_file}"
+    rm -f "${_file}.new"
+}
+
+# Only the distrobox isolation write overwrites user content.
+_degrade_distrobox_overwrites() {
+    _insert_before 'setup_run() {' "$1/script/box/setup.sh" <<'FRAG'
+_apply_box_env() {
+    local _file _body
+    _file="$(enter_distrobox_conf)"
+    _body="$(enter_distrobox_conf_body "${BOX}")"
+    printf '%s\n%s\n%s\n' "${ENTER_BLOCK_BEGIN}" "${_body}" "${ENTER_BLOCK_END}" >"${_file}" || return 1
+    log_info "wrote: ${_file} (managed block: ${_body})"
+}
+FRAG
+}
+
+# --- self-registration -------------------------------------------------------
+
+
+
+# --- CLI and the realbox opt-in ----------------------------------------------
+
+@test "--help exits 0 and documents the items and the opt-in flag" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial "--allow-real-box"
+    assert_output --partial "5.1"
+    assert_output --partial "5.2.3"
+    assert_output --partial "5.3"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
+@test "-h is the same as --help and exits 0" {
+    run "${REALBOX}" -h
+    assert_success
+    assert_output --partial "Usage: realbox.sh"
+}
+
+@test "--help explains that the delivered manifest decides the box name" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial '--box NAME'
+    assert_output --partial 'Must match the box name in box/dev.ini'
+    assert_output --partial 'manifest decides the box name'
+    assert_equal "$(_count_calls just)" '0'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
+@test "an unknown option exits 2 with a message naming it, and nothing runs" {
+    run "${REALBOX}" --allow-real-box --bogus 5.1
+    assert_equal "${status}" "2"
+    assert_output --partial "realbox.sh: unknown option '--bogus' (see --help)"
+    assert_equal "$(_count_calls distrobox)" "0"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "an unknown item exits 2 with a message naming it" {
+    run "${REALBOX}" --allow-real-box 9.9
+    assert_equal "${status}" "2"
+    assert_output --partial "unknown item '9.9'"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
+@test "an invalid --box value exits 2 before anything runs" {
+    run "${REALBOX}" --allow-real-box --box 'dev;rm -rf /' 5.1
+    assert_equal "${status}" "2"
+    assert_output --partial "invalid --box"
+    assert_equal "$(_count_calls distrobox)" "0"
+}
+
+@test "a --box different from the delivered manifest exits 2 without side effects" {
+    bats_require_minimum_version 1.5.0
+    local _item
+    for _item in 5.1 5.2 5.3; do
+        run --separate-stderr "${REALBOX}" --allow-real-box --box work "${_item}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr:?}" == "realbox.sh: "*"manifest decides the box name 'dev'"* ]]
+        assert_equal "$(_count_calls just)" '0'
+        assert_equal "$(_count_calls distrobox)" '0'
+        assert_equal "$(_count_calls gh)" '0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+}
+
+@test "without --allow-real-box the realbox group refuses and touches nothing" {
+    run "${REALBOX}" 5.1
+    assert_equal "${status}" "2"
+    assert_output --partial "Pass --allow-real-box"
+    assert_equal "$(_count_calls distrobox)" "0"
+    assert_equal "$(_count_calls just)" "0"
+    assert_equal "$(_count_calls gh)" "0"
+}
+
+@test "5.1: matching --box and omission preserve assembly, bench and cleanup" {
+    local _args
+    for _args in omitted explicit; do
+        if [[ "${_args}" == explicit ]]; then
+            run "${REALBOX}" --allow-real-box --box dev 5.1
+        else
+            run "${REALBOX}" --allow-real-box 5.1
+        fi
+        assert_success
+        assert_line 'preexisting-dev=0'
+        assert_line --partial 'posted=1 comment=9001 run=m3-51-'
+        assert_line 'cleanup-rc=0'
+        [ ! -s "${STATE}/boxes" ]
+    done
+    assert_equal "$(_count_calls 'just box assemble')" '2'
+    assert_equal "$(_count_calls 'just box bench')" '2'
+    run grep -c '^distrobox rm -f dev$' "${STATE}/calls.log"
+    assert_success
+    assert_output '2'
+}
+
+# --- 5.1 real-machine bench --------------------------------------------------
+
+@test "guard: successful unparsable listings are unknown and preserve existing boxes" {
+    _seed_box dev
+    local listing
+    for listing in 'unexpected output without a table' '' \
+        $'ID | NAME | STATUS | IMAGE\nbroken row' \
+        $'ID | NAME | STATUS | IMAGE\n0000 | dev | Up | ubuntu:24.04\nbroken row'; do
+        FAKE_DBX_LIST_OUT="${listing}" \
+            run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+        assert_failure 2
+        FAKE_DBX_LIST_OUT="${listing}" FAKE_JUST_ASSEMBLE_RC=1 \
+            run "${REALBOX}" --allow-real-box 5.1
+        assert_failure
+        assert_output --partial "cannot tell whether 'dev' exists"
+        assert_equal "$(_count_calls 'just box assemble')" '0'
+        assert_equal "$(_count_calls 'distrobox rm')" '0'
+        run cat "${STATE}/boxes"
+        assert_output dev
+    done
+}
+
+@test "guard: a valid empty table means absent" {
+    FAKE_DBX_LIST_OUT=' ID | NAME | STATUS | IMAGE ' \
+        run bash -c 'source "$1/lib/guard.sh"; guard_box_exists dev' _ "${REPO_ROOT}"
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+}
+
+@test "5.1: --comment-tag prefixes the first body.md line" {
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    local _first
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    [[ "${_first}" == '[claude] M3 5.1 real-machine bench ('* ]]
+}
+
+@test "5.1: read-back requires the comment tag at the start of the body" {
+    # Exercise the actual jq verdict with this run's posted body and metrics.
+    cp "${STUBS}/gh" "${STATE}/gh"
+    ln -sf "$(cat "${STATE}/real/jq")" "${STUBS}/jq"
+    cat >"${STUBS}/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == api ]]; then
+    jq -n --rawfile body "${FAKE_STATE_DIR}/last-comment-body" \
+        --arg prefix "${READ_BACK_PREFIX:-}" \
+        '{issue_url: "https://api.github.com/repos/ycpss91255/worktool/issues/22",
+          body: ($prefix + $body)}'
+else
+    exec "${FAKE_STATE_DIR}/gh" "$@"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_success
+    assert_line --partial 'posted=1 comment=9001'
+    READ_BACK_PREFIX='unexpected text ' \
+        run "${REALBOX}" --allow-real-box --comment-tag '[claude]' 5.1
+    assert_failure 1
+    assert_line --partial 'posted=0 comment=9001'
+    assert_line 'cleanup-rc=0'
+}
+
+@test "5.1: invalid comment tags exit 2 on stderr before help or side effects" {
+    bats_require_minimum_version 1.5.0
+    local _tag
+    for _tag in '' claude '[Claude]' '[claude] extra' '[123]' '[允許合併]'; do
+        run --separate-stderr "${REALBOX}" --help --comment-tag "${_tag}"
+        assert_failure 2
+        assert_equal "${output}" ''
+        [[ "${stderr:?}" == "realbox.sh: invalid --comment-tag '${_tag}' (see --help)" ]]
+    done
+    run "${REALBOX}" --help --comment-tag
+    assert_failure 2
+    assert_output --partial 'realbox.sh: --comment-tag needs a value (see --help)'
+    assert_equal "$(_count_calls distrobox)" '0'
+    assert_equal "$(_count_calls gh)" '0'
+}
+
+@test "5.1: omitting --comment-tag preserves the original comment body" {
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local _first _rid _expected="${STATE}/expected-body"
+    IFS= read -r _first <"${STATE}/last-comment-body"
+    _rid="${_first##*, run }"
+    _rid="${_rid%)}"
+    [[ "${_rid}" == m3-51-* ]]
+    printf 'M3 5.1 real-machine bench (%s, run %s)\n\n```text\n' \
+        "$(uname -sm)" "${_rid}" >"${_expected}"
+    printf '%s\n' \
+        'enter: min=136.1 median=171.1 max=197.0 ms' \
+        'shell: min=143.8 median=176.9 max=215.5 ms' \
+        'inbox: min=14.9 median=17.5 max=25.4 ms' '```' >>"${_expected}"
+    run diff -u "${_expected}" "${STATE}/last-comment-body"
+    assert_success
+}
+
+@test "5.1 happy path prints the documented lines and exits 0" {
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line "preexisting-dev=0"
+    assert_line "enter: min=136.1 median=171.1 max=197.0 ms"
+    assert_line "shell: min=143.8 median=176.9 max=215.5 ms"
+    assert_line "inbox: min=14.9 median=17.5 max=25.4 ms"
+    assert_line "rc=0"
+    assert_line --partial "posted=1 comment=9001 run=m3-51-"
+    assert_line "cleanup-rc=0"
+}
+
+@test "5.1: distrobox list prints a plausible table but exits 1 (plausible output, non-zero exit)" {
+    _seed_box other
+    FAKE_DBX_LIST_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "cannot tell whether 'dev' exists"
+    refute_output --partial "preexisting-dev=0"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.1: awk fails, so the listing cannot be parsed - that is not 'no such box'" {
+    SHIM_AWK_RC=2 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "cannot tell whether 'dev' exists"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.1: a pre-existing dev box is refused before assemble, and never deleted" {
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "a distrobox named 'dev' already exists -- refusing"
+    refute_output --partial "preexisting-dev=0"
+    refute_output --partial "cleanup-rc"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.1: failed assemble never claims or deletes a box" {
+    FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial "just box assemble failed"
+    assert_line "cleanup-rc=0"
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+}
+
+@test "#586: assemble exit 2 still reports assemble failure from the supervisor" {
+    FAKE_JUST_ASSEMBLE_RC=2 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[FAIL] just box assemble failed'
+    refute_output --partial 'cannot create assemble temp dir'
+    refute_output --partial 'cannot record assemble success'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#558: failed assemble with an unparsable confirmation keeps evidence and refuses cleanup" {
+    FAKE_JUST_ASSEMBLE_RC=1 FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'after assemble (list status 2)'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-started -print)"
+    dir="${dir%/assemble-started}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ ! -e "${dir}/created-box" ]
+}
+
+@test "5.1: assemble returns 0 but the box is not listed" {
+    FAKE_JUST_ASSEMBLE_REGISTERS=0 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "assemble returned 0 but box 'dev' is not listed"
+}
+
+@test "5.1: busy-host bench is inconclusive, does not post and still cleans up" {
+    FAKE_JUST_BENCH_RC=3 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 3
+    assert_line '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle'
+    refute_output --partial '[FAIL]'
+    refute_output --partial 'posted='
+    assert_equal "$(_count_calls gh)" '0'
+    assert_line 'cleanup-rc=0'
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: cleanup failure takes precedence over an inconclusive bench" {
+    FAKE_JUST_BENCH_RC=3 FAKE_DBX_RM_REMOVES=0 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle'
+    assert_line 'cleanup-rc=1'
+    assert_output --partial 'survived cleanup'
+    assert_line '[FAIL] item 5.1 failed'
+    assert_equal "$(_count_calls gh)" '0'
+    [ -s "${STATE}/boxes" ]
+}
+
+@test "5.1: bench exit 1 remains a functional failure after cleanup without posting" {
+    FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line '[FAIL] just box bench exited 1'
+    assert_line '[FAIL] item 5.1 failed'
+    refute_output --partial '[INCONCLUSIVE]'
+    assert_equal "$(_count_calls gh)" '0'
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: bench prints the three metric lines but exits 1 (plausible output, non-zero exit)" {
+    FAKE_JUST_BENCH_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    # The output looks exactly like a pass; only rc= and the status differ.
+    assert_line "enter: min=136.1 median=171.1 max=197.0 ms"
+    assert_line "rc=1"
+    assert_output --partial "just box bench exited 1"
+    refute_output --partial "posted="
+}
+
+@test "5.1: tee prints the bench output but exits 1 (plausible output, non-zero exit)" {
+    SHIM_TEE_RC=1 \
+        SHIM_TEE_OUT='enter: min=1.0 median=1.0 max=1.0 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_line "rc=0"
+    assert_output --partial "the captured bench output is not trustworthy"
+    refute_output --partial "posted="
+}
+
+@test "5.1: grep cannot read the bench output (exit 2) and that is not zero matches" {
+    SHIM_GREP_RC=2 SHIM_GREP_OUT='enter: min=1.0 median=1.0 max=1.0 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "grep exited 2"
+    refute_output --partial "posted="
+}
+
+@test "5.1: only two metric lines is refused" {
+    FAKE_JUST_BENCH_OUT='enter: min=1.0 median=1.0 max=1.0 ms
+shell: min=2.0 median=2.0 max=2.0 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "got n=2 distinct=2"
+}
+
+@test "5.1: three lines of the SAME metric is refused (n=3 is not enough)" {
+    FAKE_JUST_BENCH_OUT='shell: min=1.0 median=1.0 max=1.0 ms
+shell: min=2.0 median=2.0 max=2.0 ms
+shell: min=3.0 median=3.0 max=3.0 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "got n=3 distinct=1"
+}
+
+@test "5.1: three shaped numbers that are not ordered min <= median <= max are refused" {
+    # One line per metric, every number well formed, exactly the shape the old
+    # check accepted - and min > max, so it is not a measurement of anything.
+    FAKE_JUST_BENCH_OUT='enter: min=500 median=400 max=1 ms
+shell: min=143.8 median=176.9 max=215.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "enter: min=500 median=400 max=1 is not min <= median <= max"
+    refute_output --partial "posted="
+}
+
+@test "5.1: a shell median above the --max-ms the run passed to bench is refused" {
+    # Inside its own line (min <= median <= max) and still over the 300 ms
+    # budget this very run handed to `just box bench`.
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=400.5 max=515.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "shell median 400.5 ms exceeds the --max-ms 300"
+    refute_output --partial "posted="
+}
+
+@test "5.1: a shell median exactly at the --max-ms 300 passes (#181: <= passes)" {
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=300.0 max=315.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line "rc=0"
+    assert_line --partial "posted=1 comment=9001 run=m3-51-"
+    refute_output --partial "shell median 300.0 ms"
+}
+
+@test "5.1: a shell median of 300.1 ms, just over the --max-ms 300, is refused" {
+    FAKE_JUST_BENCH_OUT='enter: min=136.1 median=171.1 max=197.0 ms
+shell: min=143.8 median=300.1 max=315.5 ms
+inbox: min=14.9 median=17.5 max=25.4 ms' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "shell median 300.1 ms exceeds the --max-ms 300"
+    refute_output --partial "posted="
+}
+
+@test "5.1: wc prints a plausible 3 but exits 1 (plausible output, non-zero exit)" {
+    SHIM_WC_RC=1 SHIM_WC_OUT='3' run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "counting the bench lines failed"
+    refute_output --partial "posted="
+}
+
+@test "5.1: cut fails inside the distinct-metric pipeline, whose last stage still prints 3" {
+    SHIM_CUT_ON='-d: -f1' SHIM_CUT_RC=1 SHIM_CUT_OUT='enter' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "counting the distinct bench metrics failed"
+    refute_output --partial "posted="
+}
+
+@test "5.1: gh issue comment prints a plausible URL but exits 1 (plausible output, non-zero exit)" {
+    FAKE_GH_COMMENT_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "gh issue comment failed"
+    refute_output --partial "posted="
+}
+
+@test "5.1: a comment URL with no numeric id is refused" {
+    FAKE_GH_COMMENT_OUT='https://github.com/ycpss91255/worktool/issues/22' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "cannot parse a comment id out of"
+}
+
+@test "5.1: gh api prints plausible JSON but exits 1 (plausible output, non-zero exit)" {
+    FAKE_GH_API_RC=1 FAKE_GH_API_OUT='{"issue_url":"x","body":"y"}' \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "re-reading comment 9001 failed"
+    refute_output --partial "posted="
+}
+
+@test "5.1: jq prints 1 but exits 1 (plausible output, non-zero exit)" {
+    FAKE_JQ_RC=1 FAKE_JQ_OUT=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "judging comment 9001 failed"
+    refute_output --partial "posted=1"
+}
+
+@test "5.1: jq answers 0, so posted=0 and the item fails" {
+    FAKE_JQ_OUT=0 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_line --partial "posted=0 comment=9001"
+    assert_output --partial "does not carry run id"
+}
+
+@test "5.1: a verdict that is neither 0 nor 1 is refused" {
+    FAKE_JQ_OUT='true' run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_output --partial "is 'true', neither 0 nor 1"
+}
+
+_create_home_before_cleanup() {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == rm ]]; then
+    for dir in "${TMPDIR}"/wt-m3-51.* "${TMPDIR}"/wt-m3-53.*; do
+        [[ -d "${dir}" ]] || continue
+        mkdir -p "${dir}/box-home"
+        printf 'owned state\n' >"${dir}/box-home/leftover"
+        if [[ "${INJECT_HOST_STATE:-0}" == 1 ]]; then
+            mkdir -p "${HOME}/dev-box"
+            printf 'unknown data\n' >"${HOME}/dev-box/notes"
+        fi
+    done
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports isolated HOME cleanup failure once and exits nonzero" {
+    _create_home_before_cleanup
+    SHIM_RM_ON='/box-home' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=1 tmux=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    [ ! -s "${STATE}/boxes" ]
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
+}
+
+@test "#574: 5.1 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+_fail_scratch_removal() {
+    cat >"${STUBS}/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 3 && "$1" == -rf && "$2" == -- ]]; then
+    case "${3##*/}" in wt-m3-51.* | wt-m3-53.*) exit 1 ;; esac
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/rm")" "$@"
+STUB
+}
+
+@test "#574: 5.1 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'cleanup-rc=1'
+    refute_line 'cleanup-rc=0'
+    assert_equal "$(grep -c '^cleanup-rc=' <<<"${output}")" '1'
+    local scratch=("${TMPDIR}"/wt-m3-51.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#574: 5.3 reports isolated HOME cleanup failure once and exits nonzero" {
+    _create_home_before_cleanup
+    SHIM_RM_ON='/box-home' SHIM_RM_RC=1 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=1 tmux=0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    [ ! -s "${STATE}/boxes" ]
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/box-home/leftover" ]
+}
+
+@test "#574: 5.3 reports host state cleanup failure once and preserves evidence" {
+    _create_home_before_cleanup
+    INJECT_HOST_STATE=1 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'host-state kept-unknown=2'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    assert_equal "$(cat "${HOME}/dev-box/notes")" 'unknown data'
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -e "${scratch[0]}/box-home" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#574: 5.3 reports scratch removal failure once and exits nonzero" {
+    _create_home_before_cleanup
+    _fail_scratch_removal
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line 'box-state after-cleanup: home=0 tmux=0'
+    assert_line 'host-state after-cleanup: new=0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(grep -c '^decoy-cleanup-rc=' <<<"${output}")" '1'
+    local scratch=("${TMPDIR}"/wt-m3-53.*)
+    assert_equal "${#scratch[@]}" '1'
+    [ -f "${scratch[0]}/host-state-baseline" ]
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: the box survives cleanup, so the item fails even though every check passed" {
+    FAKE_DBX_RM_REMOVES=0 run "${REALBOX}" --allow-real-box 5.1
+    assert_failure
+    assert_line --partial "posted=1"
+    assert_line "cleanup-rc=1"
+    assert_output --partial "survived cleanup"
+}
+
+@test "#529: locked desktop is inconclusive before any backup or box action" {
+    FAKE_LOCKED_HINT=yes run "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
+}
+
+@test "#529: undeterminable session warns and proceeds through the window flow" {
+    _fake_window_process
+    FAKE_LOGINCTL_RC=1 FAKE_LOCKED_HINT=yes run _window_input 4242
+    assert_output --partial "[WARN] item 5.2: cannot determine session lock state; proceeding"
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    run cat "${STATE}/calls.log"
+    assert_output --partial "just box assemble"
+    assert_output --partial "just box setup"
+}
+
+@test "#529: unlocked desktop preserves apply, window evidence and restore" {
+    _fake_window_process
+    FAKE_LOCKED_HINT=no run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+    refute_output --partial "[INCONCLUSIVE]"
+    refute_output --partial "cannot determine session lock state"
+}
+
+@test "#529: missing display is inconclusive without backup or config changes" {
+    run env -u WAYLAND_DISPLAY -u DISPLAY "${REALBOX}" --allow-real-box 5.2
+    assert_equal "${status}" "3"
+    assert_output --partial "[INCONCLUSIVE] item 5.2:"
+    assert_output --partial "unlocked desktop"
+    [ ! -e "$(_backup_dir)" ]
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+    run cat "${HOME}/.config/ghostty/config"
+    assert_output "font-size = 12"
+}
+
+@test "#529: stale display endpoints are inconclusive before actions" {
+    rm "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
+    local _mode
+    for _mode in absent regular x11; do
+        case "${_mode}" in
+            regular) : >"${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ;;
+        esac
+        if [[ "${_mode}" == x11 ]]; then
+            DISPLAY=:999529 run "${REALBOX}" --allow-real-box 5.2
+        else
+            run "${REALBOX}" --allow-real-box 5.2
+        fi
+        assert_equal "${status}" "3"
+        assert_output --partial "[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display"
+        [ ! -e "$(_backup_dir)" ]
+    done
+    run cat "${STATE}/calls.log"
+    refute_output --partial "just box assemble"
+    refute_output --partial "just box setup"
+}
+
+@test "#529: usable X11 fallback and absolute Wayland paths preserve the flow" {
+    _fake_window_process
+    local _x="${BASHPID}" _mode
+    mkdir -p /tmp/.X11-unix
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "/tmp/.X11-unix/X${_x}"
+    for _mode in x11 wayland; do
+        if [[ "${_mode}" == x11 ]]; then
+            WAYLAND_DISPLAY=absent DISPLAY=":${_x}.0" run _window_input 4242
+        else
+            WAYLAND_DISPLAY="${XDG_RUNTIME_DIR}/wayland-test" run _window_input 4242
+        fi
+        assert_equal "$(cat "${STATE}/window-rc")" "0"
+        assert_output --partial "window-evidence: pid=4242"
+        assert_output --partial "restore-ok=1"
+        refute_output --partial "[INCONCLUSIVE]"
+    done
+    rm "/tmp/.X11-unix/X${_x}"
+}
+
+# --- 5.2 step 1: back up -----------------------------------------------------
+
+
+_window_input() {
+    [[ -f "${STUBS}/ps" ]] || _fake_window_process
+    if [[ ! -f "${STATE}/auto-ready" ]]; then
+        _install_restore_window_tools
+        _auto_window_ipc
+    fi
+    local rc=0
+    "${REALBOX}" --allow-real-box 5.2 </dev/null || rc=$?
+    printf '%s\n' "${rc}" >"${STATE}/window-rc"
+}
+
+@test "#362: 5.2 judges automatically from window evidence without interactive input" {
+    export REALBOX
+    run _window_input yes
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence:"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#513: 5.2 documented backup and restore lines follow the actual output order" {
+    local _actual _documented _keys
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    _keys='^(backup-covers|restore-rc|restore-files-ok|restore-window-ok|restore-ok|blocks|leftover-dirs|dev-gone|backup-removed|cleanup-rc)='
+    _actual="$(printf '%s\n' "${output}" | tr -d '\r' | grep -E "${_keys}" \
+        | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+    _documented="$(sed -n '/^  - \[ \] 5\.2 開終端/,/^  - \[ \] 5\.3 先建/p' \
+        "${REPO_ROOT}/doc/acceptance.md" \
+        | sed -n '/預期看到資訊/p; /成功依序印/s/。還原判準.*//p' \
+        | grep -o "\`[^\`]*\`" | sed 's/`//g' | grep -E "${_keys}")"
+    assert_equal "${_documented}" "${_actual}"
+}
+
+@test "#362: 5.2 refuses an existing fish process as new-window evidence" {
+    _fake_window_process
+    export FAKE_WINDOW_BASELINE='4242 fish'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "3"
+    assert_output --partial "new shell timed out"
+    assert_output --partial "restore-ok=1"
+    export FAKE_WINDOW_BASELINE_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot inventory processes before setup"
+    assert_output --partial "restore-files-ok=1"
+    assert_output --partial "restore-ok=0"
+}
+
+@test "#362: 5.2 automatically reloads an already running Ghostty" {
+    export REALBOX
+    run _window_input yes
+    assert_output --partial 'ghostty-reload=1'
+    assert_output --partial 'ghostty-new-window=1'
+    refute_output --partial 'Enter the fish PID'
+}
+
+@test "#362: realbox help names the five actual backup files" {
+    run "${REALBOX}" --help
+    assert_success
+    assert_output --partial "Ghostty legacy config"
+    assert_output --partial "config.ghostty"
+    assert_output --partial "worktool state file"
+    assert_output --partial "init log"
+    assert_output --partial "distrobox.conf"
+    refute_output --partial ".tmux.conf"
+    assert_output --partial "fish mount namespace"
+}
+
+_fake_unreadable_dev_init() {
+    _fake_window_process
+    export FAKE_DEV_NS=''
+    cat >"${STUBS}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    'inspect --type container --format {{.State.Pid}} dev') printf '4343\n' ;;
+    'exec dev readlink /proc/self/ns/mnt')
+        printf '%s\n' "${FAKE_ENGINE_NS-mnt:[200]}"
+        exit "${FAKE_ENGINE_EXEC_RC:-0}" ;;
+    *) exit 2 ;;
+esac
+STUB
+}
+
+@test "#469: 5.2 accepts matching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#469: 5.2 rejects mismatching engine namespace when host dev init is unreadable" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_NS='mnt:[300]'
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#469: 5.2 rejects failed engine exec despite matching output and unreadable host dev init" {
+    _fake_unreadable_dev_init
+    export FAKE_ENGINE_EXEC_RC=1
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "cannot read dev mount namespace; check the container engine and re-run 5.2"
+    refute_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#433: 5.2 passes with a new fish in this runs dev namespace" {
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "0"
+    assert_output --partial "window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]"
+    refute_output --partial "container-marker=confirmed"
+    assert_output --partial "restore-ok=1"
+    local _mode
+    for _mode in host non-fish ps-failed namespace-failed empty malformed; do
+        unset FAKE_WINDOW_COMM FAKE_WINDOW_PS_RC FAKE_WINDOW_NS FAKE_WINDOW_NS_RC
+        case "${_mode}" in
+            host) export FAKE_WINDOW_NS='mnt:[100]' ;;
+            non-fish) export FAKE_WINDOW_COMM=sh ;;
+            ps-failed) export FAKE_WINDOW_PS_RC=1 ;;
+            namespace-failed) export FAKE_WINDOW_NS_RC=1 ;;
+            empty) export FAKE_WINDOW_NS='' ;;
+            malformed) export FAKE_WINDOW_NS='different' ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "container-marker=confirmed"
+        assert_output --partial "restore-ok=1"
+    done
+}
+
+@test "#433: 5.2 rejects a fresh fish in another container and restores" {
+    _fake_window_process
+    FAKE_WINDOW_NS='mnt:[300]' run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" "1"
+    assert_output --partial "fish mount namespace does not match dev"
+    refute_output --partial "window-evidence: pid=4242"
+    assert_output --partial "restore-ok=1"
+    assert_output --partial "dev-gone=1"
+    assert_output --partial "backup-removed=1"
+}
+
+@test "#433: 5.2 rejects an unresolvable dev namespace and restores" {
+    _fake_window_process
+    local _mode
+    for _mode in unreadable empty malformed; do
+        unset FAKE_DEV_NS_RC FAKE_DEV_NS
+        case "${_mode}" in
+            unreadable) export FAKE_DEV_NS_RC=1 ;;
+            empty) export FAKE_DEV_NS='' ;;
+            malformed) export FAKE_DEV_NS=unknown ;;
+        esac
+        run _window_input 4242
+        assert_equal "$(cat "${STATE}/window-rc")" "1"
+        refute_output --partial "window-evidence: pid=4242"
+        assert_output --partial "restore-ok=1"
+        assert_output --partial "dev-gone=1"
+        assert_output --partial "backup-removed=1"
+    done
+}
+
+@test "5.2.1 happy path records every file setup can write and publishes the manifest" {
+    _seed_distrobox_conf
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "backup-covers=5/5"
+    assert_line "ghostty=regular"
+    assert_line --partial "ghostty.sha="
+    assert_line "worktool=absent-dir"
+    # distrobox.conf is in the set: every setup maintains it, and step 3 would
+    # have nothing to restore it from.
+    assert_line "distrobox-conf=regular"
+    assert_line --partial "distrobox-conf.sha="
+    assert_line "backup=$(_backup_dir) ok=1"
+    [ -f "$(_backup_dir)/manifest" ]
+    [ -f "$(_backup_dir)/distrobox-conf.config" ]
+}
+
+@test "5.2.1: an absent distrobox directory is recorded for removal" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "backup-covers=5/5"
+    assert_line "distrobox-conf=absent-dir"
+}
+
+@test "5.2.1 refuses the whole item when a file setup can write cannot be backed up" {
+    # A directory where distrobox.conf should be: `just box setup`
+    # would still try to write there, and nothing could put it back. The
+    # refusal lands BEFORE a backup directory exists.
+    mkdir -p "$(_distrobox_conf)"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=4/5"
+    assert_output --partial "neither a regular file nor a symlink"
+    assert_output --partial "refusing to apply anything"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1 refuses when the link behind a config leads somewhere it cannot copy" {
+    # A symlinked distrobox.conf whose target is a directory: `cp -a` would
+    # copy the link, and the file behind it - the one that actually holds
+    # the user's configuration - could not be preserved at all.
+    mkdir -p "${BATS_TEST_TMPDIR}/not-a-file"
+    mkdir -p "${HOME}/.config/distrobox"
+    ln -s "${BATS_TEST_TMPDIR}/not-a-file" "$(_distrobox_conf)"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=4/5"
+    assert_output --partial "is not a regular file -- handle it by hand"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: an existing backup dir is refused with ok=0 and nothing is copied" {
+    mkdir -p "$(_backup_dir)"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup=$(_backup_dir) ok=0"
+    assert_output --partial "backup dir already exists"
+    [ ! -e "$(_backup_dir)/manifest" ]
+}
+
+@test "5.2.1: sha256sum prints a plausible hash but exits 1 (plausible output, non-zero exit)" {
+    SHIM_SHA256SUM_RC=1 \
+        SHIM_SHA256SUM_OUT='0000000000000000000000000000000000000000000000000000000000000000  x' \
+        run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_output --partial "hashing the backup failed"
+    assert_line --partial "ok=0"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: sha256sum exits 0 but prints something that is not a sha256" {
+    SHIM_SHA256SUM_RC=0 SHIM_SHA256SUM_OUT='(stdin)= deadbeef  x' \
+        run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_output --partial "hashing the backup failed"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: publishing the manifest fails, so nothing is left half-published" {
+    SHIM_MV_RC=1 run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_output --partial "publishing the manifest failed"
+    assert_line --partial "ok=0"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: readlink failing on a symlinked config is refused, not read as 'the links match'" {
+    rm -f "$(_ghostty_config)"
+    printf 'font-size = 9\n' >"${HOME}/.config/ghostty/real-config"
+    ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
+    # Scoped to the BACKUP copy's link, so the preflight (which resolves the
+    # live link) still runs and this case reaches the guard it is about.
+    SHIM_READLINK_ON='worktool-m3-52-backup' SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' \
+        run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_output --partial "cannot read the backup link"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.1: a link this run cannot resolve refuses before a backup directory exists" {
+    rm -f "$(_ghostty_config)"
+    printf 'font-size = 9\n' >"${HOME}/.config/ghostty/real-config"
+    ln -s "${HOME}/.config/ghostty/real-config" "$(_ghostty_config)"
+    SHIM_READLINK_RC=1 SHIM_READLINK_OUT='' run "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure
+    assert_line "backup-covers=4/5"
+    assert_output --partial "cannot resolve the link"
+    [ ! -e "$(_backup_dir)" ]
+}
+
+# --- 5.2 step 2: re-validate, then apply -------------------------------------
+
+@test "#487: 5.2 apply overrides saved terminal none and restores the original state bytes" {
+    _auto_window_tools
+    local _repo _state="${HOME}/.config/worktool/config"
+    _repo="$(_repo_copy)"
+    _seed_shared_state
+    printf 'terminal=none\nterminal.source=user\n\n' >>"${_state}"
+    cp "${_state}" "${STATE}/baseline-state"
+    _realbox_quiet 5.2.1
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    run grep '^command = .*script/box/enter.sh' "$(_ghostty_config)"
+    assert_success
+    run grep -F 'box setup --terminal ghostty' "${STATE}/calls.log"
+    assert_success
+    run _restore_input 4242
+    assert_success
+    assert_line 'restore-ok=1'
+    run cmp "${STATE}/baseline-state" "${_state}"
+    assert_success
+}
+
+@test "#487: 5.2 apply overrides saved auto-enter no and box with the manifest decisions" {
+    _auto_window_tools
+    local _repo _state="${HOME}/.config/worktool/config"
+    _repo="$(_repo_copy)"
+    sed -i 's/^\[dev\]$/[acceptance-box]/' "${_repo}/box/dev.ini"
+    export FAKE_BOX_NAME=acceptance-box
+    _seed_shared_state
+    printf 'auto-enter=no\nauto-enter.source=user\nbox=other-box\nbox.source=user\n\n' >>"${_state}"
+    cp "${_state}" "${STATE}/baseline-state"
+    run "${_repo}/script/verify/realbox.sh" --allow-real-box 5.2.1
+    assert_success
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${_repo}/script/verify/realbox.sh" --allow-real-box 5.2.2
+    assert_success
+    run grep '^command = .*script/box/enter.sh.*--box.*acceptance-box' "$(_ghostty_config)"
+    assert_success
+    run grep -F 'box setup --terminal ghostty --auto-enter yes --box acceptance-box' "${STATE}/calls.log"
+    assert_success
+    REALBOX="${_repo}/script/verify/realbox.sh" run _restore_input 4242
+    assert_success
+    assert_line 'restore-ok=1'
+    run cmp "${STATE}/baseline-state" "${_state}"
+    assert_success
+}
+
+@test "5.2.2 happy path re-validates the published backup and applies" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    assert_line "revalidate=1"
+    assert_line "preexisting-dev=0"
+    assert_line "setup-rc=0"
+    [ -e "$(_backup_dir)/created-box" ]
+}
+
+@test "5.2.2: no published manifest means nothing is applied" {
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_output --partial "no published manifest"
+    refute_output --partial "revalidate=1"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.2.2: a leftover manifest.partial means step 1 is half-done" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/manifest.partial"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_output --partial "still present -- step 1 is half-done"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.2.2: a live config changed since step 1 is refused" {
+    _realbox_quiet 5.2.1
+    printf 'font-size = 99\n' >"$(_ghostty_config)"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_output --partial "live config changed since step 1"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.2.2: grep cannot read the manifest (exit 2) and that is not 'zero state lines'" {
+    _realbox_quiet 5.2.1
+    SHIM_GREP_ON='^ghostty=' SHIM_GREP_RC=2 SHIM_GREP_OUT='0' \
+        run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_output --partial "cannot count the manifest state lines"
+    refute_output --partial "revalidate=1"
+}
+
+@test "#558: a matching recorded ID permits normal cleanup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-gone=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "#558: restore refuses a replacement box with a different ID and keeps evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_DBX_LIST_OUT=$'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04' \
+        run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ -s "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
+}
+
+@test "#558: restore refuses an unconfirmed interrupted attempt even when a same-name box appears" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/assemble-started"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    [ -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
+    [ -e "$(_backup_dir)/assemble-started" ]
+}
+
+@test "5.2: failed assemble leaves no ownership and restore preserves an unrelated box" {
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    FAKE_JUST_ASSEMBLE_RC=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    [ ! -e "$(_backup_dir)/created-box" ]
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    run cat "${STATE}/boxes"
+    assert_output dev
+}
+
+@test "5.2.2: a pre-existing dev box is refused after revalidate=1 and before assemble" {
+    _realbox_quiet 5.2.1
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_line "revalidate=1"
+    assert_output --partial "Step 3 deletes the box this run creates"
+    refute_output --partial "preexisting-dev=0"
+    assert_equal "$(_count_calls just)" "0"
+    [ ! -e "$(_backup_dir)/created-box" ]
+}
+
+@test "5.2.2: just box setup prints plausible output but exits 1 (plausible output, non-zero exit)" {
+    _realbox_quiet 5.2.1
+    FAKE_JUST_SETUP_RC=1 FAKE_JUST_SETUP_OUT='auto-enter: yes (default)' \
+        run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_output --partial "just box setup failed"
+    refute_output --partial "setup-rc=0"
+}
+
+# --- 5.2 step 3: restore -----------------------------------------------------
+
+@test "5.2.3 with no backup is a no-op that exits 0" {
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line "no-backup=1"
+    assert_output "no-backup=1"
+    assert_equal "${stderr:-}" "[INFO] $(_backup_dir) absent; already restored, or step 1 never ran"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.2.3: a backup dir with no published manifest is reported, not restored" {
+    mkdir -p "$(_backup_dir)"
+    run _restore_input 4242
+    assert_failure
+    assert_output --partial "incomplete-backup=1"
+    assert_equal "$(_count_calls just)" "0"
+}
+
+@test "5.2.3 happy path prints the documented restore evidence and removes the box it owned" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run _restore_input 4242
+    assert_success
+    assert_line "restore-rc=0"
+    assert_line "restore-ok=1"
+    assert_line "blocks=0"
+    assert_line "leftover-dirs=0"
+    assert_line "dev-gone=1"
+    assert_line "backup-removed=1"
+    assert_equal "$(printf '%s\n' "${output}" | tr -d '\r' \
+        | grep -E '^(dev-gone|backup-removed|cleanup-rc)=')" \
+        $'dev-gone=1\nbackup-removed=1\ncleanup-rc=0'
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "5.2.3: grep -c prints 0 but cannot read the ghostty config, so blocks is -1, never 0" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    SHIM_GREP_ON='BEGIN worktool managed block' SHIM_GREP_RC=2 SHIM_GREP_OUT='0' \
+        run _restore_input 4242
+    assert_failure
+    assert_line "blocks=-1"
+    refute_line "blocks=0"
+    assert_output --partial "blocks= is not trustworthy"
+}
+
+@test "5.2.1: managed legacy Ghostty baseline refuses without backup or file changes" {
+    source "${REPO_ROOT}/lib/enter.sh"
+    printf '%s\n' "${ENTER_BLOCK_BEGIN}" 'command = existing-box' "${ENTER_BLOCK_END}" \
+        >>"$(_ghostty_config)"
+    cp -a "${HOME}/.config" "${STATE}/baseline"
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure 1
+    assert_output 'baseline-managed-ghostty=1'
+    [[ "${stderr}" == *'restore'* ]]
+    [[ "${stderr}" == *'just box setup --terminal none'* ]]
+    [ ! -e "$(_backup_dir)" ]
+    [ ! -L "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline" "${HOME}/.config"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+}
+
+@test "5.2.1: managed modern Ghostty baseline refuses without backup or file changes" {
+    source "${REPO_ROOT}/lib/enter.sh"
+    _seed_distrobox_conf
+    _seed_shared_state
+    printf '%s\n' 'font-size = 14' "${ENTER_BLOCK_BEGIN}" \
+        'command = existing-box' "${ENTER_BLOCK_END}" \
+        >"${HOME}/.config/ghostty/config.ghostty"
+    cp -a "${HOME}/.config" "${STATE}/baseline"
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.1
+    assert_failure 1
+    assert_output 'baseline-managed-ghostty=1'
+    [[ "${stderr}" == *'restore'* ]]
+    [[ "${stderr}" == *'just box setup --terminal none'* ]]
+    [ ! -e "$(_backup_dir)" ]
+    [ ! -L "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline" "${HOME}/.config"
+    assert_success
+    assert_equal "$(_count_calls just)" '0'
+}
+
+@test "5.2.3: the owned box surviving removal fails the item" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_DBX_RM_REMOVES=0 run _restore_input 4242
+    assert_failure
+    assert_line "dev-gone=0"
+    refute_output --partial "backup-removed=1"
+}
+
+@test "5.2.3: a backup that cannot be removed is never reported as removed" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    export VERIFY_FAIL_BACKUP
+    VERIFY_FAIL_BACKUP="$(_backup_dir)"
+    cat >"${STUBS}/rm" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == "-rf -- ${VERIFY_FAIL_BACKUP}" ]]; then
+    exit 1
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/rm")" "$@"
+STUB
+    run _restore_input 4242
+    assert_failure
+    assert_line "dev-gone=1"
+    refute_output --partial "backup-removed=1"
+    assert_output --partial "removing the backup at"
+}
+
+# --- 5.2 as a whole ----------------------------------------------------------
+
+@test "5.2: missing gapplication refuses before backup or apply" {
+    rm "${STUBS}/gapplication"
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 3
+    assert_output --partial "gapplication not found"
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
+}
+
+# --- 5.2 missing-tool preflight preserves user content -----------------------
+# These run the REAL product out of a copy of the checkout, so the output is
+# what it really prints. The scenario is the maintainer's: the state file
+# contains a user-config link; bare setup still writes distrobox.conf
+# whether or not this run asked it to.
+
+@test "5.2: missing gapplication leaves the user's managed files untouched" {
+    rm "${STUBS}/gapplication"
+    local _repo
+    _repo="$(_repo_copy)"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial "gapplication not found"
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+}
+
+@test "5.2: missing gapplication refuses even a product that would destroy user content" {
+    rm "${STUBS}/gapplication"
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_distrobox_overwrites "${_repo}"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial "gapplication not found"
+    refute_line "setup-rc=0"
+    refute_output --partial "restore-files-ok="
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    [ ! -e "$(_backup_dir)" ]
+    run diff -r "${STATE}/baseline-home" "${HOME}"
+    assert_success
+}
+
+# --- 5.2 and the user's own content (GAP A) ----------------------------------
+
+@test "5.2: the apply keeps the user's own content in every managed file (GAP A)" {
+    _auto_window_tools
+    local _repo
+    _repo="$(_repo_copy)"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp "$(_distrobox_conf)" "${STATE}/baseline-distrobox.conf"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line "backup-covers=5/5"
+    assert_line "setup-rc=0"
+    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact"
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline-distrobox.conf" "$(_distrobox_conf)"
+    assert_success
+}
+
+@test "5.2: a product whose distrobox isolation path overwrites the whole distrobox.conf is caught after the apply, and the backup puts it back (GAP A)" {
+    _auto_window_tools
+    local _repo
+    _repo="$(_repo_copy)"
+    _degrade_distrobox_overwrites "${_repo}"
+    _seed_distrobox_conf
+    _seed_shared_state
+    cp "$(_distrobox_conf)" "${STATE}/baseline-distrobox.conf"
+    FAKE_JUST_BOX_SCRIPT_DIR="${_repo}/script/box" \
+        run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 1
+    assert_line "setup-rc=0"
+    assert_line "user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=LOST"
+    assert_output --partial "lost content the user had before this run"
+    assert_output --partial "the apply destroyed user content -- run 5.2.3 to restore it from the backup"
+    # Damage must be detected before restore can hide it; skip the apply window.
+    refute_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line "restore-files-ok=1"
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline-distrobox.conf" "$(_distrobox_conf)"
+    assert_success
+}
+
+@test "5.2: existing distrobox blocks survive a successful baseline restore" {
+    _seed_distrobox_conf
+    printf '# BEGIN worktool managed block\n# END worktool managed block\n' \
+        >>"$(_distrobox_conf)"
+    cp "$(_distrobox_conf)" "${STATE}/baseline"
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run _restore_input 4242
+    assert_success
+    assert_line "blocks=1"
+    assert_line "restore-ok=1"
+    assert_line "backup-removed=1"
+    run cmp "${STATE}/baseline" "$(_distrobox_conf)"
+    assert_success
+}
+
+# --- 5.3 the pre-existing-box refusal ----------------------------------------
+
+@test "#590: 5.3 fails when 5.1 cannot read the box list" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == list && -s "${FAKE_STATE_DIR}/boxes" && ! -e "${FAKE_STATE_DIR}/decoy-listed" ]]; then
+    touch "${FAKE_STATE_DIR}/decoy-listed"
+elif [[ "${1:-}" == list && -e "${FAKE_STATE_DIR}/decoy-listed" && ! -e "${FAKE_STATE_DIR}/list-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/list-failed"
+    printf 'injected box list failure\n' >&2
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line '51-rc=1'
+    assert_output --partial "cannot tell whether 'dev' exists"
+    refute_line '52-rc=1'
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#590: 5.3 fails when step 2 cannot revalidate before checking the box" {
+    cp "${STUBS}/grep" "${STATE}/grep"
+    cat >"${STUBS}/grep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *'^ghostty='* ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/manifest-read" && ! -e "${FAKE_STATE_DIR}/manifest-failed" ]]; then
+        touch "${FAKE_STATE_DIR}/manifest-failed"
+        printf 'injected manifest read failure\n' >&2
+        exit 2
+    fi
+    touch "${FAKE_STATE_DIR}/manifest-read"
+fi
+exec "${FAKE_STATE_DIR}/grep" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_line '51-rc=1'
+    assert_line '52-rc=1'
+    assert_output --partial 'injected manifest read failure'
+    assert_line 'restore-rc=0'
+    refute_line 'still-there=dev'
+    assert_line 'decoy-cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.3: documented refusal and restore lines follow the actual output order" {
+    bats_require_minimum_version 1.5.0
+    local _actual _documented _keys
+    _keys='^(backup-covers|52-rc|restore-rc|restore-files-ok|restore-ok|blocks|leftover-dirs|dev-untouched|backup-removed|cleanup-rc|still-there)='
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line "dev-untouched=1"
+    [[ "${stderr:-}" == *'[INFO] this run has no confirmed box ownership; leaving every box alone'* ]]
+    _actual="$(printf '%s\n' "${output}" | grep -E "${_keys}" \
+        | sed 's/^blocks=.*/blocks=<執行前的區塊總數>/')"
+    _documented="$(sed -n '/^  - \[ \] 5\.3 先建/,/^  PR #228/p' \
+        "${REPO_ROOT}/doc/acceptance.md" | sed -n '/預期看到資訊/p' | grep -o "\`[^\`]*\`" \
+        | sed 's/`//g' | grep -E "${_keys}")"
+    assert_equal "${_documented}" "${_actual}"
+}
+
+@test "5.3 happy path proves 5.1 and 5.2 step 2 refuse, and the box survives" {
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line "preexisting=dev"
+    assert_line --partial "a distrobox named 'dev' already exists -- refusing"
+    assert_line "51-rc=1"
+    assert_line "ghostty=regular"
+    assert_line "worktool=absent-dir"
+    assert_line "revalidate=1"
+    assert_line "52-rc=1"
+    assert_line "restore-rc=0"
+    assert_line "restore-ok=1"
+    assert_line "blocks=0"
+    assert_line "leftover-dirs=0"
+    assert_line "dev-untouched=1"
+    assert_line "backup-removed=1"
+    assert_line "still-there=dev"
+    assert_line "decoy-cleanup-rc=0"
+    # Nothing in the whole run printed the 5.1 / 5.2 "we own a box" markers.
+    refute_line "preexisting-dev=0"
+    refute_line "dev-gone=1"
+}
+
+@test "#600: 5.3 create name clash never removes the other box or reports clean cleanup" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+    printf 'name dev is already in use\n' >&2
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_output --partial 'distrobox create --name dev failed'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "#600: 5.3 cleanup preserves a same-name replacement with a different ID" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == list && -s "${FAKE_STATE_DIR}/boxes" ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/decoy-listed" ]]; then
+        export FAKE_DBX_LIST_OUT=$'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04'
+    else
+        touch "${FAKE_STATE_DIR}/decoy-listed"
+    fi
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure 1
+    assert_output --partial "box 'dev' ID differs from this run"
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    assert_line 'decoy-cleanup-rc=1'
+    refute_line 'decoy-cleanup-rc=0'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+    local scratch
+    scratch="$(find "${TMPDIR}" -maxdepth 1 -type d -name 'wt-m3-53.*')"
+    assert_equal "$(cat "${scratch}/created-box")" 0000
+}
+
+@test "#600: repeated 5.3 does not reuse ownership after a later create name clash" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/created-once" ]]; then
+        printf 'dev\n' >"${FAKE_STATE_DIR}/boxes"
+        exit 1
+    fi
+    touch "${FAKE_STATE_DIR}/created-once"
+fi
+exec "${FAKE_STATE_DIR}/distrobox" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3 5.3
+    assert_failure 1
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    assert_line 'decoy-cleanup-rc=1'
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "5.3: distrobox create prints plausible output but exits 1 (plausible output, non-zero exit)" {
+    FAKE_DBX_CREATE_RC=1 FAKE_DBX_CREATE_OUT='Creating the container dev...' \
+        run "${REALBOX}" --allow-real-box 5.3
+    assert_failure
+    assert_output --partial "distrobox create --name dev failed"
+    refute_output --partial "preexisting=dev"
+}
+
+@test "5.3: create returns 0 but the box is not listed" {
+    FAKE_DBX_CREATE_REGISTERS=0 run "${REALBOX}" --allow-real-box 5.3
+    assert_failure
+    assert_output --partial "create returned 0 but box 'dev' is not listed"
+    refute_output --partial "preexisting=dev"
+}
+
+@test "5.3: a box named dev already exists, so no decoy is created and none is deleted" {
+    _seed_box dev
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_failure
+    assert_output --partial "5.3 creates the decoy box itself"
+    assert_equal "$(_count_calls just)" "0"
+    run cat "${STATE}/boxes"
+    assert_line "dev"
+}
+
+@test "5.3: the final listing prints the dev row but exits 1, so 'still there' is not concluded" {
+    # Learn how many `distrobox list` calls a green 5.3 makes, then break the
+    # one that decides the box survived (cleanup then checks ID and absence).
+    _realbox_quiet 5.3
+    local _n
+    _n="$(_count_list_calls)"
+    [ "${_n}" -ge 2 ]
+    _reset_log
+    : >"${STATE}/boxes"
+    FAKE_DBX_LIST_FAIL_FROM="$((_n - 2))" run "${REALBOX}" --allow-real-box 5.3
+    assert_failure
+    assert_output --partial "must not be concluded from a list nobody could read"
+    refute_output --partial "still-there=dev"
+}
+
+@test "5.2: backup and restore cover both Ghostty files and distrobox config" {
+    mkdir -p "${HOME}/.config/distrobox"
+    printf 'font-size = 17\n' >"${HOME}/.config/ghostty/config.ghostty"
+    printf 'container_manager=docker\n' >"${HOME}/.config/distrobox/distrobox.conf"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "backup-covers=5/5"
+    assert_line "ghostty-modern=regular"
+    assert_line "distrobox-conf=regular"
+    printf 'changed\n' >"${HOME}/.config/ghostty/config.ghostty"
+    printf 'changed\n' >"${HOME}/.config/distrobox/distrobox.conf"
+    run _restore_input 4242
+    assert_success
+    run cat "${HOME}/.config/ghostty/config.ghostty"
+    assert_output 'font-size = 17'
+    run cat "${HOME}/.config/distrobox/distrobox.conf"
+    assert_output 'container_manager=docker'
+}
+
+@test "5.2: automatic window check verifies direct fish entry without a tmux session" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_output --partial "window-evidence: pid=4242 comm=fish"
+    refute_output --partial "echo \$fish_pid"
+    refute_output --partial "tmux display"
+    assert_line "restore-files-ok=1"
+    assert_line "restore-ok=1"
+}
+
+@test "5.2.2: acceptance uses an owned box HOME inside its backup" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    run cat "${STATE}/calls.log"
+    assert_line "just box assemble --home $(_backup_dir)/box-home"
+}
+
+@test "single source: acceptance backup paths equal every file real setup writes" {
+    local _home="${BATS_TEST_TMPDIR}/product-home" _actual _expected _name
+    local _just
+    _just="$(cat "${STATE}/real/just")"
+    mkdir -p "${_home}"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    mkdir -p "${_home}/.config/ghostty"
+    : >"${_home}/.config/ghostty/config.ghostty"
+    run env HOME="${_home}" XDG_CONFIG_HOME="${_home}/.config" \
+        PATH="/usr/local/bin:/usr/bin:/bin" "${_just}" box setup --terminal ghostty
+    assert_success
+    _actual="$(find "${_home}" -type f | sort)"
+    source "${REPO_ROOT}/script/verify/config_backup_paths.sh"
+    CFGBK_C="${_home}/.config"
+    # The window init log is additional to the files setup writes.
+    _expected="$(for _name in "${CFGBK_NAMES[@]}"; do
+        [[ "${_name}" != init-log ]] || continue
+        cfgbk_file_of "${_name}"
+    done | sort)"
+    assert_equal "${_expected}" "${_actual}"
+}
+
+# Inject measurements at the public clock/tool seam; never source bench.sh.
+_install_bench_samples() {
+    local _bin="${BATS_TEST_TMPDIR}/bench-bin" _sample
+    mkdir -p "${_bin}"
+    export BENCH_SAMPLE_DIR="${_bin}"
+    printf '0\n' >"${_bin}/clock"
+    printf '0\n' >"${_bin}/calls"
+    : >"${_bin}/samples"
+    for _sample in "$@"; do
+        awk -v n="${_sample}" 'BEGIN {printf "%.0f\n", n*1000}' >>"${_bin}/samples"
+    done
+    cat >"${_bin}/clock.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${BENCH_SAMPLE_DIR}/clock"
+EOF
+    cat >"${_bin}/distrobox" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+read -r _clock <"${BENCH_SAMPLE_DIR}/clock"
+read -r _calls <"${BENCH_SAMPLE_DIR}/calls"
+mapfile -t _samples <"${BENCH_SAMPLE_DIR}/samples"
+_us="${_samples[_calls % 3]}"
+printf '%s\n' "$((_clock + _us))" >"${BENCH_SAMPLE_DIR}/clock"
+printf '%s\n' "$((_calls + 1))" >"${BENCH_SAMPLE_DIR}/calls"
+if [[ "$*" == *bench-inbox* ]]; then printf '%s\n' "${_us}"; fi
+EOF
+    chmod +x "${_bin}/clock.sh" "${_bin}/distrobox"
+}
+
+_assert_product_bench_sample() {
+    local _line="$1" _min _median _max _kind=INFO _limit=999999
+    local _metric_re='^(enter|shell|inbox): min=([0-9]+(\.[0-9]+)?) median=([0-9]+(\.[0-9]+)?) max=([0-9]+(\.[0-9]+)?) ms$'
+    local _notice_re='^\[(INFO|ERROR)\] shell median ([0-9]+(\.[0-9]+)?) ms (within|exceeds) --max-ms ([0-9]+)$'
+    if [[ "${_line}" =~ ${_metric_re} ]]; then
+        _min="${BASH_REMATCH[2]}" _median="${BASH_REMATCH[4]}" _max="${BASH_REMATCH[6]}"
+    elif [[ "${_line}" =~ ${_notice_re} ]]; then
+        _kind="${BASH_REMATCH[1]}" _median="${BASH_REMATCH[2]}" _limit="${BASH_REMATCH[5]}"
+        _min="${_median}" _max="${_median}"
+    else
+        fail "unrecognised bench sample: ${_line}"
+        return 1
+    fi
+    _install_bench_samples "${_min}" "${_median}" "${_max}"
+    local _bin="${BENCH_SAMPLE_DIR}"
+    run env PATH="${_bin}:/usr/local/bin:/usr/bin:/bin" BENCH_CLOCK="${_bin}/clock.sh" \
+        BENCH_PSI_FILE="${_bin}/absent-psi" "${REPO_ROOT}/script/box/bench.sh" \
+        --runs 3 --warmup 0 --max-ms "${_limit}"
+    if [[ "${_kind}" == INFO ]]; then
+        assert_success || return 1
+    else
+        assert_failure 1 || return 1
+    fi
+    assert_line "${_line}"
+}
+
+@test "single source: bench guard catches a CLI that prints failure but exits zero" {
+    local _repo
+    _repo="$(_repo_copy)"
+    cat >"${_repo}/script/box/bench.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+exit 0
+EOF
+    REPO_ROOT="${_repo}" run _assert_product_bench_sample \
+        '[ERROR] shell median 301.0 ms exceeds --max-ms 300'
+    assert_failure
+}
+
+@test "single source: bench fixture and documented samples match real product formatting" {
+    local _fixture _line
+    run "${STUBS}/just" box bench
+    assert_success
+    _fixture="${output}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done <<<"${_fixture}"
+    while IFS= read -r _line; do _assert_product_bench_sample "${_line}"; done < <(
+        sed -n -e 's/^ *# bench\(-gate\)\?: //p' \
+            -e 's/^ *\(\(enter\|shell\|inbox\): min=.*\)$/\1/p' \
+            -e 's/^ *\(\[INFO\] shell median .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md"
+    )
+}
+
+@test "single source: realbox product output stubs agree with real dry-runs and status" {
+    local _just _verb _real _line _args=()
+    _just="$(cat "${STATE}/real/just")"
+    for _verb in assemble setup status; do
+        _args=()
+        [[ "${_verb}" == status ]] || _args=(--dry-run)
+        run "${_just}" box "${_verb}" "${_args[@]}"
+        assert_success
+        _real="${output}"
+        run "${STUBS}/just" box "${_verb}" "${_args[@]}"
+        assert_success
+        local _fixture="${output}"
+        while IFS= read -r _line; do
+            printf '# product stub line: %s\n' "${_line}" >&3
+            run grep -Fx "${_line}" <<<"${_real}"
+            assert_success
+        done <<<"${_fixture}"
+    done
+}
+
+@test "5.2.3: custom box HOME socket state is checked and removed" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    local _home
+    _home="$(_backup_dir)/box-home"
+    mkdir -p "${_home}/.cache/tmux/tmux-1000"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/default"
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
+    run _restore_input 4242
+    assert_success
+    assert_line "box-state before-cleanup: home=1 tmux=1"
+    assert_line "box-state after-cleanup: home=0 tmux=0"
+    [ ! -e "${_home}" ]
+}
+
+@test "5.2.3: unrelated host file and socket survive while owned HOME is removed" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    local _home="${HOME}/dev-box" _owned
+    _owned="$(_backup_dir)/box-home"
+    mkdir -p "${_home}" "${_owned}/.cache/tmux"
+    printf 'unrelated host data\n' >"${_home}/notes"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/host-socket"
+    printf 'run state\n' >"${_owned}/owned"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_owned}/.cache/tmux/default"
+    bats_require_minimum_version 1.5.0
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 1
+    assert_line "host-state before-cleanup: new=3"
+    assert_line "host-state kept-unknown=3"
+    assert_line "host-state after-cleanup: new=3"
+    [[ "${stderr}" == *"${_home}/notes"* ]]
+    [[ "${stderr}" == *"${_home}/host-socket"* ]]
+    assert_equal "$(cat "${_home}/notes")" 'unrelated host data'
+    [ -S "${_home}/host-socket" ]
+    [ ! -e "${_owned}" ]
+    [ -d "$(_backup_dir)" ]
+}
+
+@test "5.2.3: retry after failed owned HOME cleanup removes owned leftovers before deleting the backup" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    local _home _backup
+    _home="$(_backup_dir)/box-home"
+    _backup="$(_backup_dir)"
+    mkdir -p "${_home}"
+    printf 'owned state\n' >"${_home}/leftover"
+    SHIM_RM_ON="-rf -- ${_home}" SHIM_RM_RC=1 \
+        run _restore_input 4242
+    assert_failure 1
+    assert_line "box-state after-cleanup: home=1 tmux=0"
+    assert_output --partial 'fix the errors above and re-run 5.2.3'
+    refute_output --partial 'backup-removed=1'
+    [ -d "${_backup}" ]
+    [ -f "${_home}/leftover" ]
+    [ ! -s "${STATE}/boxes" ]
+
+    run _restore_input 4242
+    assert_success
+    refute_output --partial 'dev-untouched=1'
+    refute_output --partial 'host-state untouched:'
+    assert_line "host-state before-cleanup: new=0"
+    assert_line "host-state after-cleanup: new=0"
+    assert_line 'backup-removed=1'
+    [ ! -e "${_home}" ]
+    [ ! -e "${_backup}" ]
+}
+
+@test "5.2.3: host already has dev-box and its user data survives cleanup" {
+    local _home="${HOME}/dev-box"
+    mkdir -p "${_home}/.cache/tmux/tmux-1000"
+    printf 'user data\n' >"${_home}/notes"
+    chmod 600 "${_home}/notes"
+    ln -s notes "${_home}/notes-link"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/user"
+    run "${REALBOX}" --allow-real-box 5.2.1
+    assert_success
+    assert_line "host-state baseline: present=1"
+    _realbox_quiet 5.2.2
+    printf 'updated user data\n' >"${_home}/notes"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/tmux-1000/default"
+    run _restore_input 4242
+    assert_failure 1
+    assert_line "host-state kept-unknown=1"
+    assert_line "host-state before-cleanup: new=1"
+    assert_line "host-state after-cleanup: new=1"
+    assert_equal "$(cat "${_home}/notes")" "updated user data"
+    assert_equal "$(stat -c %a "${_home}/notes")" "600"
+    assert_equal "$(readlink "${_home}/notes-link")" "notes"
+    [ -S "${_home}/.cache/tmux/tmux-1000/user" ]
+    [ -S "${_home}/.cache/tmux/tmux-1000/default" ]
+}
+
+@test "5.3: decoy box state uses an isolated HOME and is removed" {
+    cp "${STUBS}/distrobox" "${STATE}/distrobox"
+    export VERIFY_DBX="${STATE}/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == create ]]; then
+    home="${HOME}/dev-box"
+    previous=""
+    for arg in "$@"; do
+        if [[ "${previous}" == --home ]]; then home="${arg}"; fi
+        previous="${arg}"
+    done
+    printf '%s\n' "${home}" >"${FAKE_STATE_DIR}/decoy-home"
+    mkdir -p "${home}/.cache/tmux"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${home}/.cache/tmux/default"
+fi
+exec "${VERIFY_DBX}" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    local _home
+    IFS= read -r _home <"${STATE}/decoy-home"
+    [ "${_home}" != "${HOME}/dev-box" ]
+    [ ! -e "${_home}" ]
+    [ ! -e "${HOME}/dev-box" ]
+    assert_line "box-state before-cleanup: home=1 tmux=1"
+    assert_line "box-state after-cleanup: home=0 tmux=0"
+}
+
+@test "5.2.3: host state added after backup is preserved when this run never created a box" {
+    _realbox_quiet 5.2.1
+    local _home="${HOME}/dev-box"
+    _seed_box dev
+    mkdir -p "${_home}/.cache/tmux"
+    printf 'user config\n' >"${_home}/.profile"
+    printf 'user history\n' >"${_home}/.history"
+    ln -s .profile "${_home}/profile-link"
+    node -e 'require("net").createServer().listen(process.argv[1], () => process.exit(0))' \
+        "${_home}/.cache/tmux/user"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    assert_output --partial "already exists -- refusing"
+    [ ! -e "$(_backup_dir)/created-box" ]
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_line 'host-state untouched: new=7'
+    refute_output --partial 'host-state after-cleanup:'
+    assert_equal "$(cat "${_home}/.profile")" 'user config'
+    assert_equal "$(cat "${_home}/.history")" 'user history'
+    assert_equal "$(readlink "${_home}/profile-link")" '.profile'
+    [ -S "${_home}/.cache/tmux/user" ]
+    assert_equal "$(cat "${STATE}/boxes")" dev
+}
+
+@test "5.1: assemble and cleanup retain the same user distrobox config while isolating state" {
+    local _config="${HOME}/custom-config" _verb
+    local _conf="${_config}/distrobox/distrobox.conf"
+    mkdir -p "${_config}/distrobox" "${_config}/worktool"
+    printf '%s\n' "${DISTROBOX_USER_LINES[@]}" \
+        '# BEGIN worktool managed block' 'unset TMUX TMUX_PANE' \
+        '# END worktool managed block' >"${_conf}"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    cp "${_conf}" "${STATE}/baseline-distrobox"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        run cmp "${STATE}/baseline-distrobox" "${STATE}/distrobox-config-${_verb}"
+        assert_success
+    done
+    run cat "${STATE}/distrobox-managers"
+    assert_line 'assemble manager=docker'
+    assert_line 'list manager=docker'
+    assert_line 'rm manager=docker'
+    refute_output --partial 'manager=podman'
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    run cmp "${STATE}/baseline-distrobox" "${_conf}"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: assemble list and rm see the same container config while isolating state" {
+    local _config="${HOME}/custom-config" _verb _file
+    mkdir -p "${_config}/containers/containers.conf.d" "${_config}/worktool"
+    printf '[storage]\ngraphroot = "/custom/store"\n' >"${_config}/containers/storage.conf"
+    printf '[engine]\nactive_service = "custom"\n' >"${_config}/containers/containers.conf"
+    printf '[engine.service_destinations.custom]\nuri = "ssh://custom/run/podman.sock"\n' \
+        >"${_config}/containers/containers.conf.d/connection.conf"
+    printf 'home=/original\nhome.source=user\n' >"${_config}/worktool/config"
+    cp "${_config}/worktool/config" "${STATE}/baseline-state"
+    run env XDG_CONFIG_HOME="${_config}" FAKE_DBX_RECORD_CONTAINER_CONFIG=1 \
+        FAKE_JUST_ASSEMBLE_WRITES_STATE=1 "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'cleanup-rc=0'
+    for _verb in assemble list rm; do
+        for _file in storage.conf containers.conf containers.conf.d/connection.conf; do
+            run cmp "${_config}/containers/${_file}" "${STATE}/container-config-${_verb}-${_file##*/}"
+            assert_success
+        done
+    done
+    run cmp "${STATE}/baseline-state" "${_config}/worktool/config"
+    assert_success
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "5.1: assemble state writes leave existing real state byte-identical" {
+    export XDG_CONFIG_HOME="${HOME}/custom-config"
+    local _state="${XDG_CONFIG_HOME}/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${XDG_CONFIG_HOME}/worktool"
+    printf '# user state\r\nhome=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+    [ "$(cat "${STATE}/assemble-config-dir")" != "${XDG_CONFIG_HOME}" ]
+}
+
+@test "5.1: assemble state writes leave absent real state absent" {
+    local _state="${HOME}/.config/worktool/config"
+    [ ! -e "${_state}" ]
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    [ -s "${STATE}/assemble-home" ]
+    [ ! -e "${_state}" ]
+    [ ! -d "${HOME}/.config/worktool" ]
+}
+
+@test "5.1: assemble failure leaves real state byte-identical" {
+    local _state="${HOME}/.config/worktool/config" _baseline="${STATE}/baseline"
+    mkdir -p "${HOME}/.config/worktool"
+    printf 'home=/original\nhome.source=user\nlink=keep\n\n' >"${_state}"
+    cp "${_state}" "${_baseline}"
+    FAKE_JUST_ASSEMBLE_WRITES_STATE=1 FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    assert_line 'cleanup-rc=0'
+    [ -s "${STATE}/assemble-home" ]
+    run cmp "${_baseline}" "${_state}"
+    assert_success
+}
+
+@test "5.3: existing managed blocks match the pre-run baseline" {
+    local _file _files=("$(_ghostty_config)" "${HOME}/.config/ghostty/config.ghostty" "$(_distrobox_conf)") _i=0
+    mkdir -p "${HOME}/.config/distrobox"
+    for _file in "${_files[@]}"; do
+        printf '# BEGIN worktool managed block\nuser baseline\n# END worktool managed block\n' >>"${_file}"
+        cp "${_file}" "${STATE}/baseline-${_i}"
+        _i=$((_i + 1))
+    done
+    run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'blocks=3'
+    assert_line 'backup-removed=1'
+    _i=0
+    for _file in "${_files[@]}"; do
+        run cmp "${STATE}/baseline-${_i}" "${_file}"
+        assert_success
+        _i=$((_i + 1))
+    done
+}
+
+@test "5.2.3: restored bytes differing from baseline fail even with zero blocks" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    # Force an actual restore copy; identical live files are now skipped.
+    printf 'changed config\n' >"$(_ghostty_config)"
+    VERIFY_RESTORE_SOURCE="$(_backup_dir)/ghostty.config"
+    export VERIFY_RESTORE_SOURCE
+    VERIFY_CP="$(cat "${STATE}/real/cp")"
+    export VERIFY_CP
+    cat >"${STUBS}/cp" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${VERIFY_CP}" "$@"
+if [[ "${3:-}" == "${VERIFY_RESTORE_SOURCE}" ]]; then
+    printf 'corrupted user content\n' >"${4}"
+fi
+STUB
+    run _restore_input 4242
+    assert_failure 1
+    assert_line 'restore-ok=0'
+    assert_line 'blocks=0'
+    assert_output --partial 'restored type, content, mode or link mismatch'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
+
+@test "#471: restore cannot complete before reload evidence" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
+    assert_output --partial 'Ghostty new shell timed out'
+    refute_line 'restore-ok=1'
+    assert_line 'restore-window-ok=0'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
+
+_restore_input() {
+    export REALBOX
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    '-e -o pid=,comm=') printf '1 init\n' ;;
+    '-p 4242 -o comm=') printf 'fish\n' ;;
+    '-p 4242 -o ppid=,args=') printf '%s\n' "${FAKE_RESTORE_PARENT:-900 /usr/bin/fish}" ;;
+    '-p 800 -o ppid=,args=') printf "900 /bin/sh -c '/repo/script/box/enter.sh' --box dev\n" ;;
+    '-p 900 -o ppid=,args=') printf '1 /usr/bin/ghostty\n' ;;
+    *) exit 1 ;;
+esac
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4242/ns/mnt ]]; then
+    exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" /proc/self/ns/mnt
+fi
+exec "$(cat "${FAKE_STATE_DIR}/real/readlink")" "$@"
+STUB
+    chmod +x "${STUBS}/ps" "${STUBS}/readlink"
+    export FAKE_AUTO_RESTORE=1 FAKE_AUTO_RESTORE_PID=4242
+    _auto_window_ipc
+    "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+}
+
+@test "#513: automated restore needs no terminal prompt" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    export ORIGINAL_REALBOX="${REALBOX}" RESTORE_STDERR="${STATE}/restore-stderr"
+    cat >"${STATE}/restore-with-stderr" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${ORIGINAL_REALBOX}" "$@" 2>"${RESTORE_STDERR}"
+STUB
+    chmod +x "${STATE}/restore-with-stderr"
+    REALBOX="${STATE}/restore-with-stderr" run _restore_input 4242
+    assert_success
+    run cat "${RESTORE_STDERR}"
+    assert_success
+    refute_output --partial 'Ctrl-D'
+}
+
+@test "5.2.3: retry after box cleanup does not reclaim the removed box" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
+    assert_line 'dev-gone=1'
+    assert_line 'restore-window-ok=0'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+    run _restore_input 4242
+    assert_success
+    assert_line 'dev-untouched=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '1'
+}
+
+@test "#471: a clean post-restore Ghostty window completes restore" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    run _restore_input 4242
+    assert_success
+    assert_output --partial 'restore-window-evidence: pid=4242 comm=fish'
+    assert_line 'restore-window-ok=1'
+    assert_line 'backup-removed=1'
+    [ ! -e "$(_backup_dir)" ]
+}
+
+@test "#471: a post-restore window still running enter.sh fails" {
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    FAKE_RESTORE_PARENT='800 /usr/bin/fish' run _restore_input 4242
+    assert_failure 1
+    assert_output --partial 'restored window still runs script/box/enter.sh'
+    assert_line 'restore-window-ok=0'
+    refute_line 'backup-removed=1'
+    [ -d "$(_backup_dir)" ]
+}
+
+_prepare_timeout_descendant() {
+    local timeout_real
+    timeout_real="$(command -v timeout)"
+    printf '#!/usr/bin/env bash\nshift 3\nexec %q -k 1 0.2 "$@"\n' "${timeout_real}" >"${STUBS}/timeout"
+    chmod +x "${STUBS}/timeout"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+bash -c 'trap "" TERM; echo "$BASHPID" >"$ORPHAN_PID"; sleep 3; touch "$ORPHAN_MARKER"' >/dev/null 2>&1 &
+wait
+STUB
+}
+
+@test "timeout cleanup: realbox kills a TERM-ignoring just descendant" {
+    _prepare_timeout_descendant
+    local pid_file="${BATS_TEST_TMPDIR}/orphan.pid" marker="${BATS_TEST_TMPDIR}/late"
+    ORPHAN_PID="${pid_file}" ORPHAN_MARKER="${marker}" run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    local pid alive=0
+    pid="$(cat "${pid_file}")"
+    if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+        alive=1
+        kill -KILL "${pid}"
+    fi
+    [ "${alive}" -eq 0 ]
+    [ ! -e "${marker}" ]
+}
+
+@test "timeout cleanup: TERM-ignoring just descendant under CPU load" {
+    [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
+    _prepare_timeout_descendant
+    interrupt_load_start
+    # Keep the supervisor free to run while the assemble shell is contended.
+    cat >"${STUBS}/bash" <<'STUB'
+#!/bin/bash
+if [[ "${1:-}" == -c && "${2:-}" == *'just box assemble'* ]]; then
+    exec taskset -c "${INTERRUPT_LOAD_CPU}" /bin/bash "$@"
+fi
+exec /bin/bash "$@"
+STUB
+    chmod +x "${STUBS}/bash"
+    local attempt failures=0 trials=30 pid ready=0
+    export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
+    for ((attempt=1; attempt<=trials; attempt++)); do
+        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}"
+        run "${REALBOX}" --allow-real-box 5.1
+        if [[ "${status}" -ne 1 || "${output}" != *'just box assemble failed'* ||
+            ! -s "${ORPHAN_PID}" || -e "${ORPHAN_MARKER}" ]]; then
+            failures=$((failures + 1))
+            printf '# attempt=%s status=%s output=%s\n' "${attempt}" "${status}" "${output}" >&3
+        fi
+        if [[ -s "${ORPHAN_PID}" ]]; then
+            ready=$((ready + 1))
+            read -r pid <"${ORPHAN_PID}"
+            if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+                failures=$((failures + 1))
+                kill -KILL "${pid}"
+            fi
+        fi
+        if ((attempt % 10 == 0)); then
+            printf '# timeout descendant attempts=%s failures=%s\n' "${attempt}" "${failures}" >&3
+        fi
+    done
+    interrupt_load_stop
+    printf '# timeout descendant load failures=%s/%s ready=%s/%s\n' "${failures}" "${trials}" "${ready}" "${trials}" >&3
+    [ "${failures}" -eq 0 ]
+}
+
+@test "#511: 5.1 assemble cache stays in scratch and absent real cache stays absent" {
+    FAKE_CACHE_WRITE_PHASE=assemble run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    local cache box_home
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+    [ ! -e "${box_home%/*}" ]
+}
+
+@test "#511: 5.1 bench preserves existing real cache bytes and mtimes" {
+    local root="${HOME}/.cache/worktool" cache box_home
+    mkdir -p "${root}/nested"
+    printf 'original dev init log\n' >"${root}/dev-init.log"
+    printf 'other cache\n' >"${root}/nested/keep"
+    touch -t 200101010101 "${root}/dev-init.log" "${root}/nested/keep" "${root}/nested" "${root}"
+    cp -a "${root}" "${STATE}/cache-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes"
+    FAKE_CACHE_WRITE_PHASE=bench FAKE_JUST_ASSEMBLE_WRITES_STATE=1 \
+        run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    run diff -r "${STATE}/cache-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/cache-mtimes-after"
+    run cmp "${STATE}/cache-mtimes" "${STATE}/cache-mtimes-after"
+    assert_success
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/assemble-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${cache}" ]
+}
+
+@test "#511: 5.2 failed assemble cache is isolated and removed with its backup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=assemble FAKE_JUST_ASSEMBLE_RC=1 \
+        run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 1
+    assert_line 'backup-removed=1'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+}
+
+@test "#511: 5.3 decoy cache stays in scratch and is removed on cleanup" {
+    local cache box_home
+    FAKE_CACHE_WRITE_PHASE=create run "${REALBOX}" --allow-real-box 5.3
+    assert_success
+    assert_line 'decoy-cleanup-rc=0'
+    read -r cache <"${STATE}/cache-path"
+    read -r box_home <"${STATE}/cache-box-home"
+    [[ "${cache}" == "${box_home%/*}/"* ]]
+    [ -s "${STATE}/cache-written" ]
+    [ ! -e "${HOME}/.cache/worktool" ]
+    [ ! -e "${cache}" ]
+}
+
+_assert_data_unchanged() {
+    local item="$1" root="${HOME}/.local/share" data
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    [ ! -e "${root}/icons/distrobox" ]
+    [ ! -e "${root}/applications" ]
+    mkdir -p "${root}/icons/distrobox" "${root}/applications"
+    printf 'original icon\n' >"${root}/icons/distrobox/ubuntu.png"
+    printf 'original entry\n' >"${root}/applications/dev.desktop"
+    touch -t 200101010101 "${root}/icons/distrobox/ubuntu.png" "${root}/applications/dev.desktop" \
+        "${root}/icons/distrobox" "${root}/applications"
+    cp -a "${root}" "${STATE}/data-baseline"
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-mtimes"
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box "${item}"
+    assert_success
+    run diff -r "${STATE}/data-baseline" "${root}"
+    assert_success
+    find "${root}" -exec stat -c '%n %y' {} + | sort >"${STATE}/data-after"
+    run cmp "${STATE}/data-mtimes" "${STATE}/data-after"
+    assert_success
+    read -r data <"${STATE}/data-path"
+    [ ! -e "${data}" ]
+}
+
+@test "#516: 5.1 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.1
+}
+
+@test "#516: 5.3 preserves absent and existing host desktop entries and icons including mtimes" {
+    _assert_data_unchanged 5.3
+}
+
+@test "#516: 5.2 apply desktop exports stay in the backup and are removed on restore" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    FAKE_DATA_EXPORT=1 run "${REALBOX}" --allow-real-box 5.2.2
+    assert_success
+    local data
+    read -r data <"${STATE}/data-path"
+    [[ "${data}" == "$(_backup_dir)/"* ]]
+    [ -s "${data}/applications/dev.desktop" ]
+    [ -s "${data}/icons/distrobox/ubuntu.png" ]
+    [ ! -e "${HOME}/.local/share/applications" ]
+    [ ! -e "${HOME}/.local/share/icons/distrobox" ]
+    run _restore_input 4242
+    assert_success
+    [ ! -e "${data}" ]
+}
+
+@test "#516: 5.2.3 restores the existing Ghostty init log byte-identical with its mtime" {
+    export XDG_CACHE_HOME="${HOME}/custom-cache"
+    local log="${XDG_CACHE_HOME}/worktool/dev-init.log"
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -t 200101010101 "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    _realbox_quiet 5.2.1
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+}
+
+@test "#526: 5.2.3 restores the mtime of an identical rewritten init log without replacing its inode" {
+    local log="${HOME}/.cache/worktool/dev-init.log" inode
+    mkdir -p "${log%/*}"
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2001-01-01 01:01:01.123456789' "${log}"
+    cp -a "${log}" "${STATE}/init-baseline"
+    inode="$(stat -c %i "${log}")"
+    _realbox_quiet 5.2.1
+    printf 'original\000init log\n' >"${log}"
+    touch -d '2002-02-02 02:02:02.987654321' "${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    run cmp "${STATE}/init-baseline" "${log}"
+    assert_success
+    assert_equal "$(stat -c %y "${log}")" "$(stat -c %y "${STATE}/init-baseline")"
+    assert_equal "$(stat -c %i "${log}")" "${inode}"
+}
+
+@test "#516: 5.2.3 removes the Ghostty init log when originally absent" {
+    local log="${HOME}/.cache/worktool/dev-init.log"
+    _realbox_quiet 5.2.1
+    mkdir -p "${log%/*}"
+    printf 'new window init\n' >"${log}"
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'restore-files-ok=1'
+    [ ! -e "${log}" ]
+}
+
+# Exercise the shipped 5.2 backup/apply/restore chain, including a write
+# through the original link target after setup replaces the config path.
+_assert_symlink_roundtrip() {
+    local link target="${HOME}/original-ghostty"
+    link="$(_ghostty_config)"
+    local baseline="${STATE}/symlink-baseline" link_text="$1" repo
+    repo="$(_repo_copy)"
+    printf 'font-size = 12\n# original target\n' >"${target}"
+    chmod 640 "${target}"
+    cp -a "${target}" "${baseline}"
+    rm "${link}"
+    ln -s "${link_text}" "${link}"
+    local link_mode
+    link_mode="$(stat -c %a "${link}")"
+
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/ghostty.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/ghostty.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ ! -L "${link}" ]
+    printf 'clobbered target\n' >"${target}"
+    chmod 600 "${target}"
+
+    run _restore_input 4242
+    assert [ -L "${link}" ]
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert_equal "$(stat -c %a "${link}")" "${link_mode}"
+    assert_equal "$(stat -c %a "${target}")" "$(stat -c %a "${baseline}")"
+    run cmp "${baseline}" "${target}"
+    assert_success
+}
+
+@test "#517: 5.2 relative symlink round-trip preserves link, target bytes and modes" {
+    _assert_symlink_roundtrip '../../original-ghostty'
+}
+
+@test "#517: 5.2 absolute symlink round-trip preserves link, target bytes and modes" {
+    _assert_symlink_roundtrip "${HOME}/original-ghostty"
+}
+
+@test "#517: 5.2 dangling symlink round-trip preserves the link without creating its target" {
+    local link="${HOME}/.config/worktool/config" link_text='../../missing-state' repo
+    repo="$(_repo_copy)"
+    mkdir -p "$(dirname "${link}")"
+    ln -s "${link_text}" "${link}"
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/worktool.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/worktool.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ -f "${link}" ]
+    assert [ ! -L "${link}" ]
+
+    run _restore_input 4242
+    assert [ -L "${link}" ]
+    assert_success
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert [ ! -e "${link}" ]
+    assert [ ! -e "${HOME}/missing-state" ]
+}
+
+@test "#523: 5.2 dangling Ghostty config passes backup, restore and block checks" {
+    local link link_text='../../missing-ghostty' repo
+    link="$(_ghostty_config)"
+    repo="$(_repo_copy)"
+    rm "${link}"
+    ln -s "${link_text}" "${link}"
+    _realbox_quiet 5.2.1
+    assert [ -L "$(_backup_dir)/ghostty.config" ]
+    assert_equal "$(readlink "$(_backup_dir)/ghostty.config")" "${link_text}"
+    FAKE_JUST_BOX_SCRIPT_DIR="${repo}/script/box" _realbox_quiet 5.2.2
+    assert [ -f "${link}" ]
+    assert [ ! -L "${link}" ]
+
+    run _restore_input 4242
+
+    assert_success
+    assert_line 'blocks=0'
+    assert_line 'restore-ok=1'
+    assert_line 'backup-removed=1'
+    assert [ -L "${link}" ]
+    assert_equal "$(readlink "${link}")" "${link_text}"
+    assert [ ! -e "${link}" ]
+    assert [ ! -e "${HOME}/missing-ghostty" ]
+}
+
+@test "#545: 5.1 removes its temporary manifest on success, failure and interruption" {
+    export FAKE_ASSEMBLE_MANIFEST=1 FAKE_MANIFEST_SOURCE="${REPO_ROOT}/box/dev.ini"
+    local rc manifest signal expected
+    : >"${TMPDIR}/unrelated"
+    for rc in 0 1; do
+        FAKE_JUST_ASSEMBLE_RC="${rc}" run "${REALBOX}" --allow-real-box 5.1
+        assert_equal "${status}" "${rc}"
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+    for signal in INT TERM HUP; do
+        case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/just"
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
+        rm -f "${STATE}/ready" "${STATE}/events" "${STATE}/child.pid"
+        _assert_group_interrupt "${signal}" "${expected}" assemble
+        read -r manifest <"${STATE}/temporary-manifest"
+        [ ! -e "${manifest}" ]
+        [ -f "${TMPDIR}/unrelated" ]
+    done
+}
+
+@test "#545: no caller session requires a confirmed unlocked graphical session before actions" {
+    unset XDG_SESSION_ID
+    local mode
+    for mode in locked absent list-failure query-failure inactive text other-user unknown; do
+        export FAKE_LOCKED_HINT=no FAKE_SESSIONS="71 ${UID} test seat0 tty1"
+        export FAKE_SESSIONS_RC=0 FAKE_SESSION_QUERY_RC=0
+        export FAKE_SESSION_ACTIVE=yes FAKE_SESSION_TYPE=wayland FAKE_SESSION_USER="${UID}"
+        case "${mode}" in
+            locked) FAKE_LOCKED_HINT=yes ;;
+            absent) FAKE_SESSIONS='' ;;
+            list-failure) FAKE_SESSIONS_RC=1 ;;
+            query-failure) FAKE_SESSION_QUERY_RC=1 ;;
+            inactive) FAKE_SESSION_ACTIVE=no ;;
+            text) FAKE_SESSION_TYPE='tty' ;;
+            other-user) FAKE_SESSION_USER=99999 ;;
+            unknown) FAKE_LOCKED_HINT=unknown ;;
+        esac
+        run "${REALBOX}" --allow-real-box 5.2
+        assert_failure 3
+        assert_output --partial '[INCONCLUSIVE] item 5.2:'
+        [ ! -e "$(_backup_dir)" ]
+        assert_equal "$(_count_calls just)" 0
+        assert_equal "$(_count_calls distrobox)" 0
+        assert_equal "$(cat "${HOME}/.config/ghostty/config")" 'font-size = 12'
+    done
+    export FAKE_LOCKED_HINT=no FAKE_SESSION_USER="${UID}"
+    _fake_window_process
+    run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    refute_output --partial '[INCONCLUSIVE]'
+}
+
+@test "#558: interrupted apply records its ID before restore can replace the box" {
+    _prepare_group_interrupt assemble
+    cp "${STUBS}/just" "${STATE}/interrupt-just"
+    cp "${STUBS}/distrobox" "${STATE}/interrupt-distrobox"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == 'box setup --auto-enter no' ]]; then
+    printf 'ID | NAME | STATUS | IMAGE\n1111 | dev | Up | ubuntu:24.04\n' \
+        >"${SIGNAL_STATE}/replacement"
+fi
+exec "${SIGNAL_STATE}/interrupt-just" "$@"
+STUB
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${SIGNAL_STATE}/replacement" ]]; then
+    FAKE_DBX_LIST_OUT="$(cat "${SIGNAL_STATE}/replacement")"
+    export FAKE_DBX_LIST_OUT
+fi
+exec "${SIGNAL_STATE}/interrupt-distrobox" "$@"
+STUB
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+        "${REALBOX}" --allow-real-box 5.2
+    assert_success
+    assert_line 'rc=1'
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" '0'
+    assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
+    [ -e "$(_backup_dir)/assemble-started" ]
+    [ -s "${STATE}/boxes" ]
+}
+
+@test "#562: no caller session skips other UID rows without querying them" {
+    unset XDG_SESSION_ID
+    local sessions="72 $((UID + 1)) other seat0 tty2
+71 ${UID} test seat0 tty1"
+    _fake_window_process
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 71'
+}
+
+@test "#562: no caller session rejects a nonnumeric UID row before actions" {
+    unset XDG_SESSION_ID
+    local sessions="71 ${UID} test seat0 tty1
+72 invalid other seat0 tty2"
+    FAKE_SESSIONS="${sessions}" run "${REALBOX}" --allow-real-box 5.2
+    assert_failure 3
+    assert_output --partial '[INCONCLUSIVE] item 5.2:'
+    [ ! -e "$(_backup_dir)" ]
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+    assert_equal "$(cat "${HOME}/.config/ghostty/config")" 'font-size = 12'
+    run cat "${STATE}/calls.log"
+    refute_output --partial 'loginctl show-session 72'
+}
+
+@test "#562: one unlocked graphical session passes among locked and text sessions" {
+    unset XDG_SESSION_ID
+    local sessions="72 ${UID} test seat0 tty2
+73 ${UID} test seat0 tty3
+71 ${UID} test seat0 tty1"
+    cp "${STUBS}/loginctl" "${STATE}/loginctl"
+    cat >"${STUBS}/loginctl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${2:-}" in
+    72 | 73)
+        printf 'loginctl %s\n' "$*" >>"${FAKE_STATE_DIR}/calls.log"
+        printf 'User=%s\nActive=yes\n' "${UID}"
+        if [[ "$2" == 72 ]]; then
+            printf 'Type=wayland\nLockedHint=yes\n'
+        else
+            printf 'Type=tty\nLockedHint=no\n'
+        fi
+        ;;
+    *) exec "${FAKE_STATE_DIR}/loginctl" "$@" ;;
+esac
+STUB
+    _fake_window_process
+    FAKE_SESSIONS="${sessions}" run _window_input 4242
+    assert_equal "$(cat "${STATE}/window-rc")" 0
+    assert_output --partial 'restore-ok=1'
+    run cat "${STATE}/calls.log"
+    assert_output --partial 'loginctl show-session 72'
+    assert_output --partial 'loginctl show-session 73'
+    assert_output --partial 'loginctl show-session 71'
+}
+
+@test "#562: acceptance 5.2 documents expanded manifest ownership and recovery" {
+    run sed -n '/  - \[ \] 5\.2 /,/  - \[ \] 5\.3 /p' "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+    assert_output --partial 'TMPDIR=<本輪 5.2 備份目錄>/assemble-tmp'
+    assert_output --partial '展開後的 manifest'
+    assert_output --partial '成功清理時隨備份目錄一起移除'
+    assert_output --partial '清理失敗時隨備份目錄保留，供 5.2.3 重試'
+}
+
+@test "#586: assemble temp directory failure reports only its own cause" {
+    _realbox_quiet 5.2.1
+    SHIM_MKDIR_ON=assemble-tmp SHIM_MKDIR_RC=1 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot create assemble temp dir at $(_backup_dir)/assemble-tmp"* ]]
+    [[ "${stderr}" != *'[FAIL] just box assemble failed'* ]]
+    refute_output --partial '[FAIL]'
+    assert_equal "$(_count_calls 'just box assemble')" 0
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(_backup_dir)/created-box" ]
+}
+
+@test "#586: success marker failure reports only its own cause after assemble succeeds" {
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/just" "$@"
+if [[ "${2:-}" == assemble ]]; then
+    mkdir -- "${TMPDIR%/assemble-tmp}/assemble-success"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial '[FAIL] cannot record assemble success at '
+    refute_output --partial '[FAIL] just box assemble failed'
+    assert_equal "$(_count_calls 'just box assemble')" 1
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#562: duplicate box names are unknown for both guard interfaces without an ID" {
+    local id helper
+    for id in 0000 1111; do
+        for helper in guard_box_id guard_box_exists; do
+            FAKE_DBX_LIST_OUT="ID | NAME | STATUS | IMAGE
+0000 | dev | Up | ubuntu:24.04
+${id} | dev | Up | ubuntu:24.04" \
+                run bash -c 'source "$1/lib/guard.sh"; "$2" dev' _ "${REPO_ROOT}" "${helper}"
+            assert_failure 2
+            assert_output ''
+        done
+    done
+}
+
+@test "#562: restore explains empty legacy ownership markers and manual recovery" {
+    _realbox_quiet 5.2.1
+    : >"$(_backup_dir)/created-box"
+    _seed_box dev
+    run _restore_input 4242
+    assert_failure 1
+    assert_output --partial "[FAIL] legacy empty created-box marker at $(_backup_dir)/created-box"
+    assert_output --partial 'ownership is unknown'
+    assert_output --partial 'inspect and remove the box manually if appropriate, then remove the marker and retry cleanup'
+    refute_output --partial 'ID differs from this run'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    [ -e "$(_backup_dir)/created-box" ]
+    [ ! -s "$(_backup_dir)/created-box" ]
+}
+
+@test "#562: successful assemble with an unknown confirmation reports uncertainty" {
+    FAKE_DBX_LIST_UNPARSABLE_FROM=3 \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    [[ "${stderr}" == *"[FAIL] cannot confirm box 'dev' after assemble (list status 2)"* ]]
+    [[ "${stderr}" != *'is not listed'* ]]
+    assert_line 'cleanup-rc=1'
+    assert_equal "$(_count_calls 'distrobox rm')" 0
+    [ -s "${STATE}/boxes" ]
+    local dir
+    dir="$(find "${TMPDIR}" -name assemble-success -print)"
+    dir="${dir%/assemble-success}"
+    [ -n "${dir}" ]
+    [ -e "${dir}/assemble-started" ]
+    [ -e "${dir}/assemble-success" ]
+    [ ! -e "${dir}/created-box" ]
+}
+
+@test "#641: 5.1 reaches a verdict after a heavy first enter and quiet recovery" {
+    export FAKE_BOX_SCRIPTS="${REPO_ROOT}/script/box"
+    export BENCH_PSI_FILE="${STATE}/cpu.pressure"
+    printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' >"${BENCH_PSI_FILE}"
+    mkdir -p "${STATE}/fallback"
+    local tool
+    for tool in just distrobox docker sleep; do
+        if [[ -e "${STUBS}/${tool}" ]]; then
+            cp "${STUBS}/${tool}" "${STATE}/fallback/${tool}"
+        fi
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_cold_tool.sh" "${STUBS}/${tool}"
+    done
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_success
+    assert_line 'rc=0'
+    assert_line --partial 'host quiet:'
+    assert_line --partial 'psi after enter run 1:'
+    refute_output --partial 'host too busy mid-run'
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+    [ -e "${STATE}/last-comment-body" ]
+}
+
+@test "#641: failed first start cleans up without bench or publication" {
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then
+    printf 'first-start-failed\n' >&2
+    exit 3
+fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_line --partial 'just box enter failed during first start'
+    refute_output --partial 'phase=bench'
+    assert_equal "$(_count_calls "just box bench")" 0
+    assert_equal "$(_count_calls gh)" 0
+    assert_line 'cleanup-rc=0'
+    [ ! -s "${STATE}/boxes" ]
+}
+
+@test "#641: INT TERM and HUP during first start stop children before cleanup" {
+    local signal expected
+    for signal in INT TERM HUP; do
+        case "${signal}" in INT) expected=130 ;; TERM) expected=143 ;; HUP) expected=129 ;; esac
+        : >"${STATE}/events"
+        rm -f "${STATE}/ready"
+        _assert_group_interrupt "${signal}" "${expected}" enter
+        # Each signal needs fresh tool fixtures rather than recursive wrappers.
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/just"
+        install -m 755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${STUBS}/distrobox"
+    done
+}
+
+
+
+
+
+@test "#663: non-tty 5.2 automatically reloads and verifies its new windows" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_line 'backup-removed=1'
+    local expected
+    expected="$(awk '/stubbed 非 tty/{section=1; next}
+        section && /```text/{block=1; next}
+        block && /```/{exit}
+        block {sub(/^      /, ""); print}' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ -n "${expected}" ]]
+    assert_output --partial "${expected}"
+    assert_equal "$(wc -l <"${STATE}/reloads")" 2
+    assert_equal "$(wc -l <"${STATE}/closed")" 2
+}
+
+@test "#663: apply waits for a transient owned sh to become fish" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/transient-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "${FAKE_STATE_DIR}/window-directory"
+    && $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+    if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
+        if [[ ! -f "${FAKE_STATE_DIR}/wrapper-seen" ]]; then
+            touch "${FAKE_STATE_DIR}/wrapper-seen" "${FAKE_STATE_DIR}/wrapper-active"
+            FAKE_WINDOW_COMM=sh exec "${FAKE_STATE_DIR}/transient-ps" "$@"
+        fi
+        rm -f "${FAKE_STATE_DIR}/wrapper-active"
+    elif [[ "$*" == '-p 4242 -o comm='
+        && -f "${FAKE_STATE_DIR}/wrapper-active" ]]; then
+        printf 'sh\n'
+        exit 0
+    fi
+fi
+exec "${FAKE_STATE_DIR}/transient-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    [ -f "${STATE}/wrapper-seen" ]
+    [ ! -f "${STATE}/wrapper-active" ]
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
+}
+
+@test "#663: standalone apply times out inconclusively and keeps restore available" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    export FAKE_NO_WINDOW=1
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    [ -f "$(_backup_dir)/manifest" ]
+    [ ! -e "${STATE}/closed" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
+
+@test "#663: cleanup escalates only its owned window when HUP is ignored" {
+    _auto_window_tools
+    cat >"${STUBS}/kill" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
+if [[ "$1" == -TERM ]]; then
+    rm -f "${FAKE_STATE_DIR}/window-directory"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-HUP -- -4240\n-TERM -- -4240'
+}
+
+@test "#663: subjective reminder is the final line after automatic restore" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_equal "${lines[-1]}" '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。'
+}
+
+@test "#663: apply matches a runtime-parented fish to its owned Ghostty exec session" {
+    _auto_window_tools
+    export FAKE_APPLY_PARENT='6000 fish'
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
+}
+
+@test "#663: Ghostty 1.3.1 supported IPC finds the in-box fish by its window directory" {
+    _auto_window_tools
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    refute_output --partial 'window-evidence: pid=5556'
+    assert_line --partial 'restore-window-evidence: pid=4344 comm=fish'
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-HUP -- -4240'
+}
+
+@test "#663: restore inventory failure still reports and cleans owned state" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    cp "${STUBS}/ps" "${STATE}/inventory-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,comm=' ]]; then
+    count=0
+    if [[ -f "${FAKE_STATE_DIR}/inventories" ]]; then
+        read -r count <"${FAKE_STATE_DIR}/inventories"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "${count}" >"${FAKE_STATE_DIR}/inventories"
+    if [[ "${count}" -eq 2 ]]; then exit 1; fi
+fi
+exec "${FAKE_STATE_DIR}/inventory-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    assert_failure 1
+    assert_line 'restore-files-ok=1'
+    assert_line 'restore-window-ok=0'
+    assert_line 'restore-ok=0'
+    assert_line 'dev-gone=1'
+    assert_line --partial 'backup kept at '
+    refute_output --partial 'bad array subscript'
+    assert_equal "${lines[-1]}" '請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。'
+    [ ! -s "${STATE}/boxes" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
+
+@test "#663: missing window tools refuse apply entries before side effects" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp -a "${HOME}" "${STATE}/baseline-home"
+    cp -a "$(_backup_dir)" "${STATE}/baseline-backup"
+    _reset_log
+    local tool item path
+    for tool in gapplication mktemp sleep kill; do
+        path="$(_path_without "${tool}")"
+        for item in 5.2 5.2.2; do
+            run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+            assert_failure 3
+            assert_output --partial "${tool} not found on PATH"
+            refute_output --partial 'revalidate=1'
+            refute_output --partial 'restore-files-ok='
+            assert_equal "$(_count_calls just)" 0
+            assert_equal "$(_count_calls distrobox)" 0
+            run diff -r "${STATE}/baseline-home" "${HOME}"
+            assert_success
+            run diff -r "${STATE}/baseline-backup" "$(_backup_dir)"
+            assert_success
+        done
+    done
+}
+
+_crowded_window_tools() {
+    _auto_window_tools
+    _control_window_clock
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/crowded-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "${FAKE_STATE_DIR}/window-directory" && ! -e "${FAKE_STATE_DIR}/search-start" ]]; then
+    printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/search-start"
+fi
+if [[ "$*" == '-e -o pid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    printf '1 init\n5556 fish\n'
+    for ((pid=10000; pid<10020; pid++)); do printf '%s worker\n' "${pid}"; done
+    exit 0
+fi
+if [[ "$*" == '-e -o pid=,ppid=,comm=' ]]; then
+    printf '1 0 init\n900 1 ghostty\n5556 900 fish\n'
+    for ((pid=10000; pid<10020; pid++)); do printf '%s 1 worker\n' "${pid}"; done
+    exit 0
+fi
+if [[ "$1" == -p && "$2" -ge 10000 ]]; then
+    sleep 0.7
+    printf '1 worker\n'
+    exit 0
+fi
+exec "${FAKE_STATE_DIR}/crowded-ps" "$@"
+STUB
+    # Observe the timeout diagnostic synchronously, before cleanup advances time.
+    cat >>"${REALBOX%/script/verify/realbox.sh}/lib/log.sh" <<'STUB'
+log_warn() {
+    if [[ "$*" == 'Ghostty new shell timed out; acceptance inconclusive' ]]; then
+        cat "${FAKE_STATE_DIR}/clock" >"${FAKE_STATE_DIR}/search-finished"
+    fi
+    _log_emit '[WARN]' "$@"
+}
+STUB
+}
+
+@test "#663: a crowded process scan ends the shell search within ten seconds" {
+    _crowded_window_tools
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    local started ended
+    read -r started <"${STATE}/search-start"
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    assert [ -f "${STATE}/search-finished" ]
+    read -r ended <"${STATE}/search-finished"
+    assert_equal "$((ended - started))" 9
+}
+
+@test "#663: a queued owned window appearing after timeout is closed by the final sweep" {
+    _auto_window_tools
+    _control_window_clock
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/late-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    if [[ ! -e "${FAKE_STATE_DIR}/queued-at" ]]; then
+        printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/queued-at"
+    fi
+    read -r queued <"${FAKE_STATE_DIR}/queued-at"
+    export FAKE_NO_WINDOW=1
+    if (( $(<"${FAKE_STATE_DIR}/clock") - queued >= 11 )); then
+        export FAKE_NO_WINDOW=0
+        printf 'late-window-visible\n' >"${FAKE_STATE_DIR}/late-visible"
+    fi
+fi
+exec "${FAKE_STATE_DIR}/late-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    assert_output --partial 'new shell timed out'
+    assert [ -f "${STATE}/late-visible" ]
+    assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
+    [ -f "$(_backup_dir)/manifest" ]
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
+
+@test "#663: failed ownership confirmation outranks a restore window timeout" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    mkdir "${STATE}/confirmation"
+    cp "${STUBS}/distrobox" "${STATE}/confirmation/distrobox"
+    cat >"${STUBS}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == list && ! -e "${FAKE_STATE_DIR}/confirmation-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/confirmation-failed"
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/confirmation/distrobox" "$@"
+STUB
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    assert_failure 1
+    assert_line --partial "cannot confirm box 'dev'"
+    assert_line 'restore-window-ok=0'
+    assert_output --partial 'new shell timed out'
+    assert_line 'cleanup-rc=1'
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#663: failed cleanup inventories preserve owned window evidence" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/cleanup-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${FAKE_CLEANUP_INVENTORY:-}" ]]; then
+    if [[ "$*" == '-p 4240 -o pgid=,sid=' ]]; then
+        touch "${FAKE_STATE_DIR}/cleanup-inventory"
+    elif [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+        if [[ "${FAKE_CLEANUP_INVENTORY}" == timeout ]]; then /bin/sleep 2; fi
+        exit 1
+    fi
+fi
+exec "${FAKE_STATE_DIR}/cleanup-ps" "$@"
+STUB
+    local mode directory
+    for mode in failure timeout; do
+        rm -f "${STATE}/cleanup-inventory" "${STATE}/closed"
+        _realbox_quiet 5.2.1
+        FAKE_CLEANUP_INVENTORY="${mode}" run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 1
+        assert_line --partial 'window-evidence: pid=4242 comm=fish'
+        directory="$(cat "${STATE}/window-directory")"
+        [ -d "${directory}" ]
+        [ -f "${directory}/before" ]
+        [ -f "$(_backup_dir)/manifest" ]
+        [ ! -e "${STATE}/closed" ]
+        # Simulate manual closure and removal of its retained evidence.
+        rm -f "${STATE}/window-directory"
+        rm -rf -- "${directory}"
+        _realbox_quiet 5.2.3
+    done
+}
+
+@test "#663: full 5.2 retains apply window evidence after cleanup inventory failure" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/cleanup-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# The fixture reuses process IDs for the restore window; keep its baseline fresh.
+if [[ "$*" == '-e -o pid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+    printf '1 init\n'
+    exit 0
+fi
+if [[ -f "${FAKE_STATE_DIR}/window-mode" && $(cat "${FAKE_STATE_DIR}/window-mode") == apply ]]; then
+    if [[ "$*" == '-p 4240 -o pgid=,sid=' ]]; then
+        cp "${FAKE_STATE_DIR}/window-directory" "${FAKE_STATE_DIR}/retained-window"
+        touch "${FAKE_STATE_DIR}/cleanup-inventory"
+    elif [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/cleanup-inventory" ]]; then
+        exit 1
+    fi
+fi
+exec "${FAKE_STATE_DIR}/cleanup-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 1
+    assert_line 'restore-window-ok=1'
+    local directory
+    directory="$(cat "${STATE}/retained-window")"
+    [ -f "${directory}/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    refute_line 'backup-removed=1'
+    assert_line 'cleanup-rc=1'
+    assert_output --partial 'keeping ownership evidence'
+}
+
+@test "#663: a final sweep inventory timeout keeps ownership evidence before the shared deadline" {
+    _auto_window_tools
+    _control_window_clock
+    _realbox_quiet 5.2.1
+    export FAKE_SNAPSHOT_TIMEOUT_REAL
+    FAKE_SNAPSHOT_TIMEOUT_REAL="$(command -v timeout)"
+    cat >"${STUBS}/timeout" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Model the fixed one-second snapshot timeout, before the shared deadline.
+if [[ "$*" == '-s KILL 1 ps -e -o pid=,ppid=,comm='
+    && -e "${FAKE_STATE_DIR}/sweep-start" ]] && (( $(<"${FAKE_STATE_DIR}/clock") >= 2 )); then
+    printf '%s\n' "$*" >"${FAKE_STATE_DIR}/snapshot-timeout"
+    exit 137
+fi
+exec "${FAKE_SNAPSHOT_TIMEOUT_REAL}" "$@"
+STUB
+    chmod +x "${STUBS}/timeout"
+    cp "${STUBS}/ps" "${STATE}/sweep-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    if [[ ! -e "${FAKE_STATE_DIR}/sweep-start" ]]; then
+        touch "${FAKE_STATE_DIR}/sweep-start"
+        exit 1
+    fi
+    printf '1 0 init\n900 1 ghostty\n'
+    exit 0
+fi
+exec "${FAKE_STATE_DIR}/sweep-ps" "$@"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    assert_output --partial 'cannot inventory owned window'
+    assert_equal "$(cat "${STATE}/clock")" 2
+    assert_equal "$(cat "${STATE}/snapshot-timeout")" '-s KILL 1 ps -e -o pid=,ppid=,comm='
+    local directory
+    directory="$(cat "${STATE}/window-directory")"
+    [ -d "${directory}" ]
+    [ -f "${directory}/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    [ ! -e "${STATE}/closed" ]
+}
+
+@test "#663: a slow sweep retry near its deadline stays inconclusive" {
+    _auto_window_tools
+    _control_window_clock
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/slow-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
+fi
+exec "${FAKE_STATE_DIR}/slow-ps" "$@"
+STUB
+    local attempt
+    for attempt in 1 2 3; do
+        printf '0\n' >"${STATE}/clock"
+        FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 3
+        assert_equal "$(cat "${STATE}/clock")" 13
+        refute_output --partial 'cannot inventory owned window'
+        rm -f "${STATE}/window-directory"
+        _realbox_quiet 5.2.3
+        _realbox_quiet 5.2.1
+    done
+}
+
+@test "#663: 5.3 refuses missing window tools before publishing any backup" {
+    _auto_window_tools
+    local path
+    path="$(_path_without gapplication)"
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.3
+    assert_failure 3
+    assert_output --partial 'gapplication not found on PATH'
+    [ ! -e "$(_backup_dir)" ]
+    assert_equal "$(_count_calls distrobox)" 0
+    assert_equal "$(_count_calls just)" 0
+}
+
+@test "#663: no-backup restore needs no window tools" {
+    _auto_window_tools
+    local path
+    path="$(_path_without gapplication)"
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+    assert_success
+    assert_line 'no-backup=1'
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls distrobox)" 0
+}
+
+@test "#663: backup without processes-before restores without window tools" {
+    _auto_window_tools
+    local tool path
+    for tool in gapplication sleep kill; do
+        _realbox_quiet 5.2.1
+        [ ! -e "$(_backup_dir)/processes-before" ]
+        printf 'changed config\n' >"$(_ghostty_config)"
+        path="$(_path_without "${tool}")"
+        run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+        assert_success
+        assert_line 'restore-files-ok=1'
+        assert_line 'restore-ok=1'
+        assert_line 'backup-removed=1'
+        refute_output --partial 'restore-window-ok='
+        run cat "$(_ghostty_config)"
+        assert_output 'font-size = 12'
+        [ ! -e "$(_backup_dir)" ]
+    done
+}
+
+@test "#663: restore with processes-before and missing gapplication restores files before rc 3" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    [ -f "$(_backup_dir)/processes-before" ]
+    printf 'changed config\n' >"$(_ghostty_config)"
+    local path
+    path="$(_path_without gapplication)"
+    _reset_log
+    run env PATH="${path}" "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure 3
+    assert_line 'restore-files-ok=1'
+    assert_line 'restore-window-ok=0'
+    assert_line 'restore-ok=0'
+    assert_output --partial 'config restored, but the window check could not run'
+    assert_output --partial 'gapplication not found on PATH'
+    refute_output --partial 'ghostty-reload=1'
+    refute_output --partial 'backup-removed=1'
+    assert_line 'dev-gone=1'
+    [ ! -s "${STATE}/boxes" ]
+    [ -f "$(_backup_dir)/manifest" ]
+    run cat "$(_ghostty_config)"
+    assert_output 'font-size = 12'
+    run find "$(_backup_dir)" -maxdepth 1 -name 'window.*'
+    assert_output ''
+}
+
+# Replace only Bash's clock in a private script copy. All deadline arithmetic
+# and ownership decisions remain shipped code; subprocesses share logical time.
+_control_window_clock() {
+    local repo clock_expression
+    export FAKE_CLOCK_DELAY="${1:-0}"
+    repo="$(_repo_copy)"
+    REALBOX="${repo}/script/verify/realbox.sh"
+    printf '0\n' >"${STATE}/clock"
+    clock_expression="\$(<\"\${FAKE_STATE_DIR}/clock\")"
+    sed -i "s|SECONDS|${clock_expression}|g" "${REALBOX}"
+    cat >"${STUBS}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FAKE_CLOCK_DELAY}" != 0 ]]; then /bin/sleep "${FAKE_CLOCK_DELAY}"; fi
+read -r now <"${FAKE_STATE_DIR}/clock"
+printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
+STUB
+    chmod +x "${STUBS}/sleep"
+}
+
+@test "#663: late sweep escalation shares the documented five-second bound" {
+    _auto_window_tools
+    local delay=0
+    if [[ "${WORKTOOL_STRESS:-}" == 1 ]]; then delay=3.2; fi
+    _control_window_clock "${delay}"
+    printf '# late sweep: logical clock; FAKE_CLOCK_DELAY=%s per retry sleep\n' "${FAKE_CLOCK_DELAY}" >&3
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/bound-ps"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${2#--working-directory=}" >"${FAKE_STATE_DIR}/window-directory"
+printf apply >"${FAKE_STATE_DIR}/window-mode"
+exit 1
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    if (( now < 2 )); then
+        printf '1 0 init\n900 1 ghostty\n'
+        exit 0
+    fi
+fi
+exec "${FAKE_STATE_DIR}/bound-ps" "$@"
+STUB
+    cat >"${STUBS}/kill" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/closed"
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    assert_equal "$(cat "${STATE}/clock")" 4
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240'
+    [ -f "$(cat "${STATE}/window-directory")/before" ]
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#663: restore reload failure does not inherit a timed-out apply request" {
+    _auto_window_tools
+    cp "${STUBS}/ps" "${STATE}/pending-ps"
+    cat >"${STUBS}/gapplication" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${FAKE_STATE_DIR}/first-reload" ]]; then
+    touch "${FAKE_STATE_DIR}/restore-reload-failed"
+    exit 1
+fi
+touch "${FAKE_STATE_DIR}/first-reload"
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -e "${FAKE_STATE_DIR}/restore-reload-failed" ]]; then
+    printf 'sweep\n' >>"${FAKE_STATE_DIR}/restore-sweeps"
+fi
+exec "${FAKE_STATE_DIR}/pending-ps" "$@"
+STUB
+    FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_failure 3
+    assert_line 'restore-window-ok=0'
+    assert_equal "$(wc -l <"${STATE}/restore-sweeps")" 1
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#663: a non-fish wrapper gone or uninspectable at the deadline is inconclusive" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/exited-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-p 4242 -o comm=' ]]; then
+    touch "${FAKE_STATE_DIR}/deadline-inspected"
+    exit "${FAKE_DEADLINE_RC:-0}"
+fi
+exec "${FAKE_STATE_DIR}/exited-ps" "$@"
+STUB
+    local probe_rc
+    for probe_rc in 0 1; do
+        rm -f "${STATE}/deadline-inspected" "${STATE}/closed"
+        FAKE_WINDOW_COMM=sh FAKE_DEADLINE_RC="${probe_rc}" \
+            run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+        assert_failure 3
+        [ -e "${STATE}/deadline-inspected" ]
+        refute_output --partial 'is not fish'
+        [ -f "$(_backup_dir)/manifest" ]
+        assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
+        _realbox_quiet 5.2.3
+        _realbox_quiet 5.2.1
+    done
+}
+
+@test "#663: a non-fish wrapper seen once keeps its deadline probe after later sweeps lose it" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/exited-ps"
+    cp "${STUBS}/readlink" "${STATE}/seen-readlink"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-p 4242 -o comm=' ]]; then
+    touch "${FAKE_STATE_DIR}/deadline-inspected"
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/exited-ps" "$@"
+STUB
+    cat >"${STUBS}/readlink" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == /proc/4242/cwd ]]; then
+    [[ ! -e "${FAKE_STATE_DIR}/wrapper-seen" ]] || exit 1
+    touch "${FAKE_STATE_DIR}/wrapper-seen"
+fi
+exec "${FAKE_STATE_DIR}/seen-readlink" "$@"
+STUB
+    chmod +x "${STUBS}/"{ps,readlink}
+    FAKE_WINDOW_COMM='sh' run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    [ -e "${STATE}/wrapper-seen" ]
+    [ -e "${STATE}/deadline-inspected" ]
+    refute_output --partial 'is not fish'
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+_prepare_fresh_window() {
+    _auto_window_tools
+    cp "${STUBS}/just" "${STATE}/just"
+    cp "${STUBS}/ps" "${STATE}/fresh-ps"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then
+    [[ "$*" == 'box enter --box dev -- true' && ! -t 0 ]] || exit 2
+    [[ "${XDG_CACHE_HOME}" == */cache && "${XDG_DATA_HOME}" == */data ]] || exit 2
+    printf '%s\n' "${XDG_CACHE_HOME}" >"${FAKE_STATE_DIR}/first-cache"
+    touch "${FAKE_STATE_DIR}/initialised"
+fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -e "${FAKE_STATE_DIR}/initialised" ]]; then export FAKE_WINDOW_COMM=sh; fi
+exec "${FAKE_STATE_DIR}/fresh-ps" "$@"
+STUB
+}
+
+@test "#691: fresh box initialises before its long-lived sh first window" {
+    _prepare_fresh_window
+    run "${REALBOX}" --allow-real-box 5.2 </dev/null
+    assert_success
+    assert_line 'phase=first-start'
+    assert_line --partial 'window-evidence: pid=4242 comm=fish'
+    assert_line 'restore-files-ok=1'
+    assert_line 'cleanup-rc=0'
+    assert_equal "$(wc -l <"${STATE}/closed")" 2
+    [ ! -s "${STATE}/boxes" ]
+    [ ! -e "$(cat "${STATE}/first-cache")" ]
+}
+
+_assert_initialisation_cleanup_order() {
+    local transcript="$1"
+    assert_line 'restore-files-ok=1'
+    assert_line 'dev-gone=1'
+    assert_line --regexp '^box-state before-cleanup: home=[01] tmux=[01]$'
+    awk '
+        /^restore-files-ok=1$/ { restored = NR }
+        /^dev-gone=1$/ { removed = NR }
+        /^box-state before-cleanup:/ { home = NR }
+        END { exit !(restored && removed > restored && home > removed) }
+    ' <<<"${transcript}"
+}
+
+@test "#691: cleanup order assertion rejects box or HOME cleanup before restore" {
+    local deletion='dev-gone=1' home='box-state before-cleanup: home=0 tmux=0'
+    local restore='restore-files-ok=1' transcript
+    for transcript in "${deletion}"$'\n'"${restore}"$'\n'"${home}" \
+        "${home}"$'\n'"${restore}"$'\n'"${deletion}"; do
+        run bash -c 'printf "%s\n" "$1"' -- "${transcript}"
+        run _assert_initialisation_cleanup_order "${transcript}"
+        assert_failure
+    done
+}
+
+@test "#691: failed initialisation returns one and restores before cleanup" {
+    _auto_window_tools
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then exit 3; fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    local item
+    for item in 5.2 5.2.2; do
+        if [[ "${item}" == 5.2.2 ]]; then _realbox_quiet 5.2.1; fi
+        run "${REALBOX}" --allow-real-box "${item}" </dev/null
+        assert_failure 1
+        assert_line --partial 'just box enter failed during first start'
+        _assert_initialisation_cleanup_order "${output}"
+        assert_line 'cleanup-rc=0'
+        refute_output --partial 'ghostty-new-window=1'
+        [ ! -s "${STATE}/boxes" ]
+        [ ! -d "$(_backup_dir)" ]
+    done
+}
