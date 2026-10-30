@@ -190,7 +190,9 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
    Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
-6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }`，`blockingLeft` 列出剩餘缺陷（流程失敗時保留失敗原因）。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
+6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷（流程失敗時保留失敗原因）。
+   `limitations` 與 `suggestions` 累積各輪有效審查的內容並去重，包含 Fix 後或流程失敗的回傳；
+   `limitations` 提供呼叫者寫入 PR 說明的「已知限制」段落，workflow 不在此機械改寫 PR 說明。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
 ## milestone-fanout
 

@@ -31,7 +31,7 @@ export const meta = {
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
 //   } })
 //
-// Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }.
+// Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft, limitations, suggestions }.
 // The workflow never merges: merge order and rebase conflicts stay with the
 // main loop (one PR at a time, merge commit, keep agent commits).
 
@@ -282,7 +282,15 @@ ${CODEX_FIX_BRIEF(pr, round, blocking)}`
 
 const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "[claude] codex 暫停中(配額),待配額恢復後補複驗。" Then return "noted".`
 
-const result = (extra) => ({ issue: A.issue, ...extra })
+const reviewFindings = { limitations: [], suggestions: [] }
+const collectReview = (review) => {
+  if (!validReview(review)) return false
+  for (const key of ['limitations', 'suggestions']) {
+    reviewFindings[key] = [...new Set([...reviewFindings[key], ...review[key]])]
+  }
+  return true
+}
+const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
@@ -490,7 +498,7 @@ TASK (issue #${A.issue}): ${A.task}
 For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
   if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
   const reviewed = await reviewLight()
-  if (!validReview(reviewed) || reviewed.defects.length > 0) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
+  if (!collectReview(reviewed) || reviewed.defects.length > 0) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
 ${RED_PUBLICATION_RULES}
@@ -537,7 +545,7 @@ if (!RESUME) {
 
 if (RESUME && MODE === 'light') {
   const reviewed = await reviewLight()
-  if (!validReview(reviewed) || reviewed.defects.length > 0) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
+  if (!collectReview(reviewed) || reviewed.defects.length > 0) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
 }
 
 let resumedPR
@@ -582,7 +590,7 @@ for (;;) {
   if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
-  if (!validReview(c)) { verdict = 'no-output'; blocking = ['review returned missing or malformed findings']; break }
+  if (!collectReview(c)) { verdict = 'no-output'; blocking = ['review returned missing or malformed findings']; break }
   blocking = c.defects
   verdict = blocking.length ? 'blocked' : 'mergeable'
   if (verdict === 'mergeable') break

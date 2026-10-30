@@ -4644,3 +4644,18 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "pr-loop returns limitations for the PR known limitations section without blocking (#680)" {
+    local verdict json
+    for verdict in blocked no-output mergeable; do
+        run _pl_run '{"maxRounds":0}' \
+            "{\"verdict\":\"${verdict}\",\"defects\":[],\"limitations\":[\"environment risk\"],\"suggestions\":[\"optional cleanup\"],\"answer\":\"review complete\"}"
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+            .result.blockingLeft == [] and .result.limitations == ["environment risk"] and
+            .result.suggestions == ["optional cleanup"] and
+            ([.calls[] | select(.role | startswith("fix:"))] | length) == 0' <<<"${json}"
+        assert_success
+    done
+}
