@@ -771,6 +771,7 @@ _52_apply_require_tools() {
 }
 
 _52_step2_apply() {
+    _52_FIRST_START_FAILED=0
     _52_apply_require_tools || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
@@ -787,7 +788,7 @@ _52_step2_apply() {
     printf 'phase=first-start\n' >&2
     XDG_DATA_HOME="${CFGBK_B}/data" XDG_CACHE_HOME="${CFGBK_B}/cache" \
         _just box enter --box "${BOX}" -- true </dev/null \
-        || { guard_fail "just box enter failed during first start"; return 1; }
+        || { _52_FIRST_START_FAILED=1; guard_fail "just box enter failed during first start"; return 1; }
     guard_timed "${TIMEOUT_SHORT}" ps -e -o pid=,comm= >"${CFGBK_B}/processes-before" \
         || { guard_fail "cannot inventory processes before setup"; return 1; }
     _just box setup --terminal ghostty --auto-enter yes --box "${MANIFEST_BOX}" \
@@ -810,7 +811,11 @@ _52_apply_only() {
     if [[ "${_rc}" -eq 0 ]]; then
         _52_confirm_window || _rc=$?
     fi
-    _cleanup_drop
+    if [[ "${_52_FIRST_START_FAILED:-0}" -eq 1 ]]; then
+        _cleanup_pop_run || _rc=1
+    else
+        _cleanup_drop
+    fi
     return "${_rc}"
 }
 

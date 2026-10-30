@@ -4256,3 +4256,26 @@ STUB
     [ ! -s "${STATE}/boxes" ]
     [ ! -e "$(cat "${STATE}/first-cache")" ]
 }
+
+@test "#691: failed initialisation returns one and restores before cleanup" {
+    _auto_window_tools
+    cp "${STUBS}/just" "${STATE}/just"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == enter ]]; then exit 3; fi
+exec "${FAKE_STATE_DIR}/just" "$@"
+STUB
+    local item
+    for item in 5.2 5.2.2; do
+        if [[ "${item}" == 5.2.2 ]]; then _realbox_quiet 5.2.1; fi
+        run "${REALBOX}" --allow-real-box "${item}" </dev/null
+        assert_failure 1
+        assert_line --partial 'just box enter failed during first start'
+        assert_line 'restore-files-ok=1'
+        assert_line 'cleanup-rc=0'
+        refute_output --partial 'ghostty-new-window=1'
+        [ ! -s "${STATE}/boxes" ]
+        [ ! -d "$(_backup_dir)" ]
+    done
+}
