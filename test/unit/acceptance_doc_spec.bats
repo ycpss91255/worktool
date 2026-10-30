@@ -253,7 +253,7 @@ _normalize_realbox_doc_stderr() {
 _assert_realbox_doc_streams() {
     local section expected actual stderr=""
     section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
-    # Capture the current block too: the first RED must expose its omitted lines.
+    # Compare complete streams after normalizing environment-dependent fields.
     expected="$(awk '/^      ````text$/ { block=1; next }
         /^      ````$/ && block { exit }
         block { sub(/^      /, ""); print }' <<<"${section}")"
@@ -262,7 +262,6 @@ _assert_realbox_doc_streams() {
     run --separate-stderr just verify realbox --allow-real-box 5.1
     if ! assert_success; then printf '%s\n' "${stderr}"; return 1; fi
     actual="${output}"$'\nrc=0'
-    printf '# stdout:\n%s\n# stderr:\n%s\n' "${actual}" "${stderr}" >&3
     assert_equal "$(printf '%s\n' "${actual}" | _normalize_realbox_doc_output)" \
         "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)" || return 1
     expected="$(awk '
@@ -276,6 +275,14 @@ _assert_realbox_doc_streams() {
 @test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
     _prepare_realbox_doc_stubs
     _assert_realbox_doc_streams
+}
+
+@test "acceptance 5.1 successful comparison emits no fd 3 dump (#666)" {
+    _prepare_realbox_doc_stubs
+    local dump="${BATS_TEST_TMPDIR}/diagnostics"
+    run _assert_realbox_doc_streams 3>"${dump}"
+    assert_success
+    [[ ! -s "${dump}" ]]
 }
 
 @test "acceptance 5.1 comparison rejects a real bench summary moved to stdout (#666)" {
