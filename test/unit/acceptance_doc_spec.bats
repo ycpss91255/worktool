@@ -199,6 +199,8 @@ _normalize_realbox_doc_output() {
     sed -E '/^\.\/script\//d;
         s/m3-51-[0-9]{8}T[0-9]{6}Z-[0-9]+/<run>/g;
         s/comment=[0-9]+/comment=<id>/g;
+        s/^(host-state baseline: present=)[0-9]+/\1<n>/;
+        s/^(box-state before-cleanup: home=)[01]( tmux=)[01]$/\1<n>\2<n>/;
         s/(min=|median=|max=)[0-9]+([.][0-9]+)?/\1<n>/g;
         s/median [0-9]+([.][0-9]+)? ms/median <n> ms/g;
         s@/[^ ]+@<path>@g'
@@ -213,6 +215,7 @@ _normalize_realbox_doc_output() {
         /^      ````$/ && block { exit }
         block { sub(/^      /, ""); print }' <<<"${section}")"
     [[ -n "${expected}" ]]
+    [[ "${expected}" == *"box-state before-cleanup: home=1 tmux=1"* ]]
     run --separate-stderr just verify realbox --allow-real-box 5.1
     assert_success
     actual="${output}"$'\nrc=0'

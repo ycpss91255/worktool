@@ -1007,7 +1007,7 @@ rc=0
   - 盒名由交付的 `box/dev.ini` manifest 決定（目前為 `[dev]`），不支援自訂 manifest。省略 `--box` 時沿用該盒名；`--box <name>` 只能指定相同名稱。若不一致（例如 `--box work`），在任何副作用前以 exit 2 拒絕，stderr 的 `realbox.sh: ...` 訊息會說明 manifest 決定盒名；不呼叫 assemble、distrobox 或 gh。5.3 的 decoy 仍使用 manifest 的盒名。
   - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。assemble、首次初始化或 bench 中斷時，腳本先停止本輪子行程群組，再自行清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理失敗優先，以 exit 1 結束。
     - assemble 完成後先以 `just box enter --box dev -- true` 完成首次啟動與初始化（沿用本輪 data／cache／config 隔離，stdin 關閉以避免失敗等待互動確認），再呼叫 bench，讓既有 quiet-wait 等待主機安靜後才量測。stderr 依序印 `phase=first-start`、產品首次初始化進度、`phase=bench` 與 bench 診斷；初始化失敗回 1、清理且不執行 bench、不發留言。ADR 0003 的 2.00 門檻、連續 5 秒、warmup 檢查、300 ms 與 exit 3 語意不變。
-    - 預期看到資訊（stub 環境的 stdout 如下；assemble 的輸出略；數字是實測值，`comment` 與 `run` 每次不同；最後一行是 `echo rc=$?`）。清理狀態行出現在 `posted=1` 之後、`cleanup-rc=0` 之前，依序回報盒 HOME／tmux 清理前後與 host 狀態清理前、保留未知項目數、清理後。
+    - 預期看到資訊（實機正常路徑的 stdout 如下；assemble 的輸出略；數字是實測值，host baseline 的項目數依環境而異，`comment` 與 `run` 每次不同；最後一行是 `echo rc=$?`）。清理狀態行出現在 `posted=1` 之後、`cleanup-rc=0` 之前，依序回報盒 HOME／tmux 清理前後與 host 狀態清理前、保留未知項目數、清理後。
       ````text
       preexisting-dev=0
       host-state baseline: present=0
@@ -1016,7 +1016,7 @@ rc=0
       inbox: min=14.9 median=17.5 max=25.4 ms
       rc=0
       posted=1 comment=<id> run=<run>
-      box-state before-cleanup: home=0 tmux=0
+      box-state before-cleanup: home=1 tmux=1
       box-state after-cleanup: home=0 tmux=0
       host-state before-cleanup: new=0
       host-state kept-unknown=0
