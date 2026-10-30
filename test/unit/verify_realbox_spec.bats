@@ -3789,20 +3789,24 @@ STUB
 
 @test "#663: a slow sweep retry near its deadline stays inconclusive" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/slow-ps"
     cat >"${STUBS}/ps" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
-    /bin/sleep 0.6
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    printf '%s\n' "$((now + 1))" >"${FAKE_STATE_DIR}/clock"
 fi
 exec "${FAKE_STATE_DIR}/slow-ps" "$@"
 STUB
     local attempt
     for attempt in 1 2 3; do
+        printf '0\n' >"${STATE}/clock"
         FAKE_NO_WINDOW=1 run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
         assert_failure 3
+        assert_equal "$(cat "${STATE}/clock")" 13
         refute_output --partial 'cannot inventory owned window'
         rm -f "${STATE}/window-directory"
         _realbox_quiet 5.2.3
