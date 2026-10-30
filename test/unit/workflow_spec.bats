@@ -237,11 +237,27 @@ _meta_skeleton() {
     done
 }
 
-@test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
-    run grep -c "ci.state !== 'green'" "${PR_LOOP}"
-    assert_output "2"
-    run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "3"
+@test "pr-loop treats CI as a gate before review and after a fix" {
+    local round replies json
+    for round in 0 1; do
+        replies="$(jq -cn --argjson round "$round" '{
+            "implement:":{status:"ready",reason:""},
+            "locate:":{pr:7,sha:"abc"},
+            "stage-check:Implement":{evidence:({status:"",localHead:"abc",remoteHead:"abc",prHead:"abc",errors:""} | tojson)},
+            "stage-check:Fix":{evidence:({status:"",localHead:"def",remoteHead:"def",prHead:"def",errors:""} | tojson)},
+            "ci:":((if $round == 1 then [{state:"green",sha:"abc",detail:"success"}] else [] end) +
+                [{state:"red",sha:"def",detail:"checks failed"}]),
+            "review:":{defects:["regression"],limitations:[],suggestions:[],answer:"fix required"}
+        }')"
+        run node "$REPO_ROOT/test/unit/fixture/workflow_run.mjs" "$PR_LOOP"             '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":681,"branch":"b","name":"n","task":"t","implementer":"claude"}' "$replies"
+        assert_success
+        json="$output"
+        run jq -e --argjson round "$round" '.error == null and .result.ciState == "red" and
+            (.result.blockingLeft | index("checks failed") != null) and
+            ([.calls[] | select(.role | startswith("review:"))] | length == $round) and
+            ([.calls[] | select(.role | startswith("ci:"))] | length == ($round + 1))' <<<"$json"
+        assert_success
+    done
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
@@ -325,6 +341,8 @@ case " \$* " in
     *" issue view "*" --json body "*)
         [ -e "${BATS_TEST_TMPDIR}/gh.fail" ] && exit 1
         cat "${BATS_TEST_TMPDIR}/body.md" ;;
+    *" pr view "*" --json body,headRefOid,baseRefOid "*)
+        printf '%s\n' '{"body":"fixture","headRefOid":"abc","baseRefOid":"def"}' ;;
     *" pr view "*) echo abc ;;
 esac
 exit 0
@@ -1993,7 +2011,7 @@ _rv_assert_fails_closed() {
     run _pl_run '{"mode":"light","codex":"off"}'
     assert_success
     run jq -cr '[.error, [.calls[].role], ([.calls[].prompt | contains("codex exec")] | any)]' <<<"${output}"
-    assert_output '[null,["prepare:b","implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","ci:#7"],false]'
+    assert_output '[null,["prepare:b","implement:#283","review:#283:light","publish:#283","locate:b","stage-check:Implement:#7","auto-body:#7:pending","ci:#7","auto-body:#7:green"],false]'
 }
 
 @test "milestone-fanout (node): forwards light mode to each child (#310)" {
@@ -4658,4 +4676,293 @@ Reason: 僅修正文句，沒有行為變更。'; do
             ([.calls[] | select(.role | startswith("fix:"))] | length) == 0' <<<"${json}"
         assert_success
     done
+}
+
+_pl_auto_gh() {
+    local root="$1"
+    cat > "$root/bin/gh" <<'SH'
+#!/bin/sh
+set -eu
+case "$1 $2" in
+    "pr view")
+        if [ "${*#*--jq}" != "$*" ]; then
+            case "${AUTO_HEAD_CHANGE:-}" in
+                before) printf '%s\n' def ;;
+                after) if [ -e "$AUTO_ROOT/watched" ]; then printf '%s\n' def; else printf '%s\n' abc; fi ;;
+                unreadable) exit 1 ;;
+                *) jq -r .headRefOid "$AUTO_ROOT/pr.json" ;;
+            esac
+        else
+            cat "$AUTO_ROOT/pr.json"
+        fi ;;
+    "pr edit")
+        while [ "$1" != --body-file ]; do shift; done
+        cp "$2" "$AUTO_ROOT/body"
+        jq --rawfile body "$2" '.body=$body' "$AUTO_ROOT/pr.json" > "$AUTO_ROOT/next.json"
+        mv "$AUTO_ROOT/next.json" "$AUTO_ROOT/pr.json"
+        ;;
+    "pr checks") exit 0 ;;
+    "run list")
+        if [ "${*#*--created}" != "$*" ]; then
+            printf '%s\n' '[{"databaseId":2,"createdAt":"2099-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
+        elif [ "${AUTO_DELAYED_OLD:-0}" = 1 ] && [ -e "$AUTO_ROOT/second-log" ]; then
+            printf '%s\n' '[{"databaseId":2}]'
+        else
+            printf '%s\n' '[{"databaseId":1,"createdAt":"2020-01-01T00:00:00Z","headSha":"abc","event":"pull_request"}]'
+        fi ;;
+    "run watch")
+        printf '%s\n' "$3" >> "$AUTO_ROOT/watched"
+        [ "${AUTO_FINAL_RED:-0}" != 1 ] ;;
+    *) exit 1 ;;
+esac
+SH
+}
+
+_pl_auto_git() {
+    local root="$1"
+    if [[ "${AUTO_REAL_GIT:-0}" != 1 ]]; then
+    cat > "$root/bin/git" <<'SH'
+#!/bin/sh
+set -eu
+case "$1" in
+    fetch) exit 0 ;;
+    log)
+        if [ -e "$AUTO_ROOT/first-log" ]; then touch "$AUTO_ROOT/second-log"; fi
+        touch "$AUTO_ROOT/first-log"
+        cat "$AUTO_ROOT/commits" ;;
+    *) exit 1 ;;
+esac
+SH
+    chmod +x "$root/bin/git"
+    fi
+}
+
+_pl_auto_job() {
+    local root="$1"
+    cat > "$root/bin/just" <<'SH'
+#!/bin/sh
+set -eu
+[ "$1" = job ]
+case "$2" in
+    start)
+        printf '%s\n' "$3" >> "$AUTO_ROOT/jobs"
+        shift 4
+        rc=0
+        "$@" > "$AUTO_ROOT/job-output" 2>/dev/null || rc=$?
+        printf '%s\n' "$rc" > "$AUTO_ROOT/job-rc" ;;
+    wait)
+        cat "$AUTO_ROOT/job-output"
+        exit "$(cat "$AUTO_ROOT/job-rc")" ;;
+    *) exit 1 ;;
+esac
+SH
+}
+
+_pl_auto_body() {
+    local root="$BATS_TEST_TMPDIR/auto" mode="${1:-full}"
+    mkdir -p "$root/bin" "$root/src" "$root/worktree/n"
+    _pl_auto_gh "$root"
+    _pl_auto_git "$root"
+    _pl_auto_job "$root"
+    # Fail immediately when a scenario deliberately exposes no fresh run.
+    if [[ "${AUTO_DELAYED_OLD:-0}" == 1 ]]; then
+        printf '#!/bin/sh\nexit 1\n' > "$root/bin/sleep"
+        chmod +x "$root/bin/sleep"
+    fi
+    chmod +x "$root/bin/gh" "$root/bin/just"
+    AUTO_ROOT="$root" PATH="$root/bin:$PATH" run _pl_run \
+        "$(jq -cn --arg dir "$root/src" --arg mode "$mode" '{repoDir:$dir,mode:$mode}')" \
+        '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
+        '{"evidence":"[{\"source\":\"body\",\"body\":\"## RED exemption\\nReason: fixture\"}]"}' exec-auto-body
+    assert_success
+}
+
+@test "pr-loop regenerates the machine head and full commit list after a push (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" head base subject
+    mkdir -p "$root/worktree/n"
+    git init -q --bare "$root/remote.git"
+    git init -q "$root/worktree/n"
+    git -C "$root/worktree/n" config user.name Fixture
+    git -C "$root/worktree/n" config user.email '1+fixture@users.noreply.github.com'
+    git -C "$root/worktree/n" remote add origin "$root/remote.git"
+    printf 'base\n' > "$root/worktree/n/file"
+    git -C "$root/worktree/n" add file
+    git -C "$root/worktree/n" commit -qm base
+    base="$(git -C "$root/worktree/n" rev-parse HEAD)"
+    for subject in first second; do
+        printf '%s\n' "$subject" >> "$root/worktree/n/file"
+        git -C "$root/worktree/n" commit -qam "$subject commit"
+        git -C "$root/worktree/n" push -q origin HEAD:refs/heads/b
+        head="$(git -C "$root/worktree/n" rev-parse HEAD)"
+        if [[ "$subject" == first ]]; then
+            jq -n --arg head "$head" --arg base "$base" '{body:
+                "[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->\nstale\n<!-- pr-loop:auto:end -->\r\nTail  \n",
+                headRefOid:$head,baseRefOid:$base}' > "$root/pr.json"
+        else
+            jq --arg head "$head" '.headRefOid=$head' "$root/pr.json" > "$root/next.json"
+            mv "$root/next.json" "$root/pr.json"
+        fi
+        AUTO_REAL_GIT=1 _pl_auto_body
+        run cat "$root/body"
+        assert_success
+        assert_output --partial "head: $head"
+        assert_output --partial 'first commit'
+        assert_output --partial "- ${head:0:7} $subject commit"
+        assert_output --partial 'CI: green'
+        run jq -e '.body | startswith("[codex]\r\nHuman  \r\n<!-- pr-loop:auto:start -->") and
+            endswith("<!-- pr-loop:auto:end -->\r\nTail  \n")' "$root/pr.json"
+        assert_success
+    done
+}
+
+@test "pr-loop appends a missing machine section without changing existing bytes (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\r\nHuman text  \nwithout trailing newline",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    _pl_auto_body
+    run jq -e '.body | startswith("[codex]\r\nHuman text  \nwithout trailing newline\n\n<!-- pr-loop:auto:start -->") and
+        endswith("CI: green\n<!-- pr-loop:auto:end -->")' "$root/pr.json"
+    assert_success
+}
+
+@test "pr-loop records failure when CI on the final body fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->\nold\n<!-- pr-loop:auto:end -->",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_FINAL_RED=1 _pl_auto_body
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$output"
+    assert_success
+    run jq -e '.body | contains("CI: red")' "$root/pr.json"
+    assert_success
+}
+
+@test "pr-loop implementers and fixers reserve volatile metadata for the machine section (#681)" {
+    local implementer role json
+    for implementer in codex claude; do
+        for role in implement fix; do
+            if [[ "$role" == implement ]]; then
+                run _pl_run "{\"implementer\":\"$implementer\"}"
+            else
+                run _pl_blocked_run "$implementer"
+            fi
+            assert_success
+            json="$output"
+            run jq -e --arg role "$role:" '[.calls[] |
+                select(.role | startswith($role)) | .prompt |
+                contains("Never write commit lists, head SHAs, push status or workflow-will-take-over lines in the human-written PR body") and
+                contains("Never create empty metadata-only commits") and
+                contains("fix PR text with gh pr edit --body-file instead")] | length > 0 and all' <<<"$json"
+            assert_success
+        done
+    done
+}
+
+@test "pr-loop light blocks CI when machine metadata generation fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex]\n<!-- pr-loop:auto:start -->\nbroken",
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    _pl_auto_body light
+    run jq -e '.result.blockingLeft == ["machine PR body update failed"] and
+        ([.calls[] | select(.role | startswith("ci:"))] | length == 0)' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop preserves marker examples in human text and commit subjects (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:("[codex]\nExamples: `<!-- pr-loop:auto:start -->` and `<!-- pr-loop:auto:end -->`.\n" +
+        "<!-- pr-loop:auto:start -->\nold\n<!-- pr-loop:auto:end -->\nHuman tail"),
+        headRefOid:"aaaaaaa",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 mention <!-- pr-loop:auto:end -->\n' > "$root/commits"
+    _pl_auto_body
+    run jq -e '.body == ("[codex]\nExamples: `<!-- pr-loop:auto:start -->` and `<!-- pr-loop:auto:end -->`.\n" +
+        "<!-- pr-loop:auto:start -->\nhead: aaaaaaa\n\n## commits\n" +
+        "- 1111111 mention <!-- pr-loop:auto:end -->\n\nCI: green\n<!-- pr-loop:auto:end -->\nHuman tail")' "$root/pr.json"
+    assert_success
+}
+
+@test "pr-loop publishes a fresh machine body through registered Bash hooks (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto"
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    HANDOVER_REAL_HOOKS=1 _pl_auto_body
+    run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$output"
+    assert_success
+    run jq -e '.body | contains("CI: green")' "$root/pr.json"
+    assert_success
+}
+
+@test "pr-loop rejects old green checks when the final edit CI fails (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_REAL_CI=1 AUTO_FINAL_RED=1 _pl_auto_body
+    json="$output"
+    run cat "$root/watched"
+    assert_success
+    assert_output '2'
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop verifies the actual remote head before and after final CI (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" change expected
+    mkdir -p "$root"
+    printf '1111111 first commit\n' > "$root/commits"
+    for change in stable before after unreadable; do
+        rm -f "$root/body" "$root/watched"
+        jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+        AUTO_REAL_CI=1 AUTO_HEAD_CHANGE="$change" _pl_auto_body
+        expected=red
+        [[ "$change" != stable ]] || expected=green
+        run jq -e --arg expected "$expected" '.result.ciState == $expected' <<<"$output"
+        assert_success
+    done
+}
+
+@test "pr-loop preserves existing RED recheck whitespace acceptance (#681)" {
+    local evidence
+    evidence="$(jq -cn --arg body $'## RED\n```text\n\vjust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```' \
+        '{evidence:([{source:"body",body:$body}] | tojson)}')"
+    run _pl_run '{}' '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' "$evidence" canned
+    assert_success
+    run jq -e '.result.codexVerdict == "mergeable"' <<<"$output"
+    assert_success
+}
+
+@test "pr-loop collects final body CI through bounded jobs and registered hooks (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    HANDOVER_REAL_HOOKS=1 AUTO_REAL_CI=1 _pl_auto_body
+    json="$output"
+    run cat "$root/jobs"
+    assert_success
+    assert_output --partial 'ci-final-'
+    run jq -e '.result.ciState == "green" and .result.blockingLeft == []' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop excludes CI runs appearing during final body generation (#681)" {
+    local root="$BATS_TEST_TMPDIR/auto" json
+    mkdir -p "$root"
+    jq -n '{body:"[codex] Human text",headRefOid:"abc",baseRefOid:"abcdef"}' > "$root/pr.json"
+    printf '1111111 first commit\n' > "$root/commits"
+    AUTO_REAL_CI=1 AUTO_DELAYED_OLD=1 _pl_auto_body
+    json="$output"
+    run jq -e '.result.ciState == "red" and
+        (.result.blockingLeft | index("final body CI did not go green on the same head") != null)' <<<"$json"
+    assert_success
+    [[ ! -e "$root/watched" ]]
 }

@@ -120,8 +120,9 @@ const LOCAL_TEST_RULES = A.gates
   ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run lint and only the touched specs. Leave system-real specs (including test/system/real_engine_spec.bats) to CI. Never run just test changed or a whole tier locally; CI runs every tier.`
   : `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and ${CHANGED_GATE}. Never run a whole tier locally; CI runs every tier.`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with ${BASE} by merging.`
+const PR_BODY_RULES = 'Never write commit lists, head SHAs, push status or workflow-will-take-over lines in the human-written PR body (including equivalent prose such as 尚未推送 or 由 workflow 接手). The workflow alone owns the machine section between <!-- pr-loop:auto:start --> and <!-- pr-loop:auto:end -->. Never create empty metadata-only commits; fix PR text with gh pr edit --body-file instead, preserving the machine section.'
 const COMMON_GUARDRAILS = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Review notes, round evidence and coordination notes go to PR comments or the gitignored .agents/state/. Never commit these notes into the repo. doc/evidence/ is only for acceptance evidence. Never merge a PR. End the final paragraph of every commit message with Refs: #${A.issue}. For multiple issues, use one Refs: #<issue> line per issue.`
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: ${PR_BODY_RULES} one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Review notes, round evidence and coordination notes go to PR comments or the gitignored .agents/state/. Never commit these notes into the repo. doc/evidence/ is only for acceptance evidence. Never merge a PR. End the final paragraph of every commit message with Refs: #${A.issue}. For multiple issues, use one Refs: #<issue> line per issue.`
 const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
@@ -136,7 +137,7 @@ const RED_PUBLICATION_RULES = `Copy the actual ## RED section (exact just test c
 
 const IMPLEMENT_TASK = `${A.pr ? `Reuse PR #${A.pr}; push updates to it instead of opening another PR. The PR creation instructions below apply only when no PR exists.\n` : ''}TASK (issue #${A.issue}): ${A.task}
 ${RED_PUBLICATION_RULES}
-When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## commit" (list), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
+When all gates are green: git push -u origin ${A.branch}; open the PR: gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>; the zh-TW body has: "Closes #${A.issue}"${PARENT ? `, "Part of ${PARENT}"` : ''}, "## 這個 PR 只做一件事" (one line), "## 測試證據" (gate tails verbatim in text code blocks), ${CODEX ? '"codex:複驗結果見審查留言"' : '"codex:暫停中(配額),待配額恢復後補複驗"'}`
 
 const SETUP = `cd ${REPO_DIR} && if [ ! -e ${sq(WT)} ]; then git fetch origin && git worktree add -b ${A.branch} ${WT} origin/${BASE}; fi && cd ${sq(WT)}`
 const IMPLEMENT = `${RULES}
@@ -210,9 +211,9 @@ const gateStage = (stage) => agent(`${jobInstructions(`pr-loop-${A.issue}-${stag
 })
 const publishCodex = (stage, pr, evidence) => agent(`${GUARDRAILS}
 In ${WT}, gates already passed in the separate job stage. Verify a clean worktree, branch ${A.branch}, and every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Push with git push -u origin ${A.branch}; ${pr ? `reuse PR #${pr}` : `locate an existing PR first, or create one with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>`}.
-Do not edit the existing PR description when reusing a PR. Draft a PR body only when creating a new PR.
+Only correct human-written PR text with gh pr edit --body-file when needed; preserve the machine section. Draft a PR body only when creating a new PR.
 ${RED_PUBLICATION_RULES}
-Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
+Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## 測試證據 (verbatim compact gate results), codex:複驗結果見審查留言. Never merge. Return the PR number and head SHA.`, {
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
 const completeCodex = async (stage, pr = A.pr) => {
@@ -241,7 +242,7 @@ Return ready only when codex exits successfully and its repair is committed; oth
   return published && published.pr ? '' : 'publication failed'
 }
 
-const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
+const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. After every push and before every CI wait, run this fixed body command verbatim (never author metadata; command failure is red and must stop before waiting): \`${autoBodyCommand(pr, 'pending')}\`. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在改善建議註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return defects ["讀取 issue #${A.issue} 失敗"], limitations [], suggestions [], and an empty answer.
@@ -261,14 +262,14 @@ ${SKILL_LOAD.claude}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Do not edit the existing PR description or post an adoption comment; the workflow publishes that comment after verifying the pushed head. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
+Run the gates (${GATES}) blocking in the foreground; commit ONE independent commit (English, "fix(...): ... (codex round ${round})"); push. Only correct human-written PR text with gh pr edit --body-file when needed; preserve the machine section. Do not post an adoption comment; the workflow publishes that comment after verifying the pushed head. A fix round is complete only after its commits are pushed and remote HEAD equals local HEAD; verify with git ls-remote before reporting. Do NOT merge. Return the pushed commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX_BRIEF = (pr, round, blocking) => `${CODEX_RULES}
 ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Do not edit the existing PR description. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. Return the commit SHA and a summary for the workflow publication comment starting with "[claude] 採納第 ${round} 輪:".`
+Only correct human-written PR text with gh pr edit --body-file when needed; preserve the machine section. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. Return the commit SHA and a summary for the workflow publication comment starting with "[claude] 採納第 ${round} 輪:".`
 
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
@@ -290,7 +291,91 @@ const collectReview = (review) => {
   }
   return true
 }
-const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
+// Only this fixed command owns machine metadata; agents execute it verbatim.
+const autoBodyCommand = (pr, conclusion) => {
+  const input = `${WT}/.agents/state/pr-loop-body-input.json`
+  const output = `${WT}/.agents/state/pr-loop-body.md`
+  const status = `${WT}/.agents/state/pr-loop-body-status`
+  const program = `
+const fs = require('node:fs');
+const {execFileSync} = require('node:child_process');
+const data = JSON.parse(fs.readFileSync(${JSON.stringify(input)}, 'utf8'));
+const head = data.headRefOid, base = data.baseRefOid;
+if (!/^[a-f0-9]+$/.test(head) || !/^[a-f0-9]+$/.test(base)) throw Error('Invalid PR commit');
+execFileSync('git', ['fetch', 'origin', base, head], {stdio:'pipe'});
+const commits = execFileSync('git', ['log', '--reverse', '--format=%h %s', base + '..' + head], {encoding:'utf8'}).trimEnd();
+const start = '<!-- pr-loop:auto:start -->', end = '<!-- pr-loop:auto:end -->';
+const section = start + '\\nhead: ' + head + '\\n\\n## commits\\n' +
+  commits.split('\\n').filter(Boolean).map(line => '- ' + line).join('\\n') +
+  '\\n\\nCI: ' + ${JSON.stringify(conclusion)} + '\\n' + end;
+const locate = marker => {
+  let offset = 0;
+  for (const line of data.body.split('\\n')) {
+    if (line.replace(/\\r$/, '') === marker) return offset;
+    offset += line.length + 1;
+  }
+  return -1;
+};
+const from = locate(start), to = locate(end);
+if ((from < 0) !== (to < 0) || (from >= 0 && to < from)) throw Error('Malformed machine markers');
+const body = from < 0 ? data.body + '\\n\\n' + section :
+  data.body.slice(0, from) + section + data.body.slice(to + end.length);
+fs.writeFileSync(${JSON.stringify(output)}, body);
+fs.writeFileSync(${JSON.stringify(status)}, body === data.body ? 'unchanged' : 'changed');
+process.stdout.write(body === data.body ? 'unchanged' : 'changed');
+`
+  return `cd ${sq(WT)} && mkdir -p .agents/state && gh pr view ${pr} --repo ${REPO} --json body,headRefOid,baseRefOid > ${sq(input)} && node -e ${sq(program)}\`. Then in a separate Bash call run \`cd ${sq(WT)} && if [ "$(cat ${sq(status)})" = changed ]; then gh run list --repo ${REPO} --workflow ci.yml --limit 100 --json databaseId > ${sq(`${WT}/.agents/state/pr-loop-ci-previous.json`)} && date -u +%Y-%m-%dT%H:%M:%SZ > ${sq(`${WT}/.agents/state/pr-loop-ci-since`)} && gh pr edit ${pr} --repo ${REPO} --body-file ${sq(output)} >&2 || exit 1; fi && cat ${sq(status)}`
+}
+const updateAutoBody = (pr, conclusion) => agent(`Run this fixed command verbatim in the foreground; never write or paraphrase the body yourself: \`${autoBodyCommand(pr, conclusion)}\`. Return ok true only on exit 0 and changed true only when stdout is changed.`, {
+  label: `${RUN_ID} auto-body:#${pr}:${conclusion}`, phase: 'CI', effort: 'low', agentType: 'general-purpose',
+  schema: { type: 'object', properties: { ok: { type: 'boolean' }, changed: { type: 'boolean' } }, required: ['ok', 'changed'] },
+})
+// Require a newly created CI run rather than trusting checks left on the same SHA.
+const finalCICommand = (pr, sha) => {
+  const program = `
+const fs = require('node:fs');
+const {execFileSync} = require('node:child_process');
+const gh = argv => execFileSync('gh', [...argv, '--repo', ${JSON.stringify(REPO)}], {encoding:'utf8'}).trim();
+const edit = {
+  previous: JSON.parse(fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-previous.json`)}, 'utf8')).map(run => run.databaseId),
+  since: fs.readFileSync(${JSON.stringify(`${WT}/.agents/state/pr-loop-ci-since`)}, 'utf8').trim()
+};
+const checkHead = () => {
+  if (gh(['pr', 'view', String(${pr}), '--json', 'headRefOid', '--jq', '.headRefOid']) !== ${JSON.stringify(sha)}) throw Error('PR head changed');
+};
+checkHead();
+const runs = () => JSON.parse(gh(['run', 'list', '--workflow', 'ci.yml', '--commit', ${JSON.stringify(sha)}, '--event', 'pull_request', '--created', '>=' + edit.since.slice(0, 19) + 'Z', '--limit', '100', '--json', 'databaseId,createdAt,headSha,event']));
+let selected;
+for (let attempt = 0; attempt < 60; attempt++) {
+  selected = runs().find(run => !edit.previous.includes(run.databaseId) && run.headSha === ${JSON.stringify(sha)} && run.event === 'pull_request' && run.createdAt >= edit.since.slice(0, 19) + 'Z');
+  if (selected) break;
+  execFileSync('sleep', ['5']);
+}
+if (!selected) throw Error('No CI run observed after the final body edit');
+gh(['run', 'watch', String(selected.databaseId), '--exit-status', '--interval', '10']);
+gh(['pr', 'checks', String(${pr}), '--watch', '--fail-fast']);
+checkHead();
+process.stdout.write(JSON.stringify({state:'green', sha:${JSON.stringify(sha)}, detail:'Final body CI run ' + selected.databaseId}));
+`
+  return `timeout 1800 node -e ${sq(program)}`
+}
+const result = async (extra) => {
+  if (extra.pr && ['green', 'red'].includes(extra.ciState)) {
+    const updated = await updateAutoBody(extra.pr, extra.ciState)
+    if (!updated?.ok) return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red', blockingLeft: [...extra.blockingLeft, 'machine PR body update failed'] }
+    if (updated.changed && extra.ciState === 'green') {
+      const final = await agent(`Only collect final body CI; never edit, commit or push. ${jobInstructions('ci-final-' + A.issue, [finalCICommand(extra.pr, extra.sha)])} Return the command JSON from the successful job log; any command failure is red.`, {
+        label: `${RUN_ID} auto-ci:#${extra.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose',
+      })
+      if (!final || final.state !== 'green' || final.sha !== extra.sha) {
+        const failed = await updateAutoBody(extra.pr, 'red')
+        return { issue: A.issue, ...reviewFindings, ...extra, ciState: 'red',
+          blockingLeft: [...extra.blockingLeft, 'final body CI did not go green on the same head', ...(!failed?.ok ? ['machine PR body update failed'] : [])] }
+      }
+    }
+  }
+  return { issue: A.issue, ...reviewFindings, ...extra }
+}
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
@@ -502,13 +587,15 @@ For behaviour changes use TDD; mechanical edits without new behaviour need no ne
   phase('Publish')
   await agent(`${GUARDRAILS}
 ${RED_PUBLICATION_RULES}
-In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; push updates instead of creating another PR. Ignore the creation command below for this existing PR.` : ''} Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
+In ${WT}, run ${GATES} blocking in the foreground. ${A.pr ? `Reuse PR #${A.pr}; push updates instead of creating another PR. Ignore the creation command below for this existing PR.` : ''} Only when green, push with git push -u origin ${A.branch} and open one PR with gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>. Body: Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## 測試證據 with verbatim gate tails, and light:兩個不同 Claude 子代理已完成修改與 diff 審查,不跑 codex 複驗. Start the body with [claude]. No attribution footer. Never merge.`, { label: `${RUN_ID} publish:#${A.issue}`, phase: 'Publish', agentType: 'general-purpose' })
   phase('Locate')
   const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
   const checked = await checkStage(loc.pr, 'Implement')
   if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
+  const body = await updateAutoBody(loc.pr, 'pending')
+  if (!body?.ok) return result({ pr: loc.pr, sha: checked.sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['machine PR body update failed'] })
   const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
@@ -555,7 +642,7 @@ if (RESUME && !A.pr) {
 Resume the committed work in ${WT} on ${A.branch}; skip implementation. Require a clean worktree and inspect git log. Locate an existing open PR by branch and base ${BASE} first; reuse it rather than opening a duplicate. If none exists, require unpublished commits (compare origin/${A.branch}..HEAD, or origin/${BASE}..HEAD when the remote branch is absent). No unpublished commits or any lookup failure is blocking; return pr 0, sha "" without pushing.
 Before publishing, run ${GATES} blocking in the foreground. Check every unpublished commit for noreply author/committer, Refs: #${A.issue}, and no attribution trailers. Only when green, git push -u origin ${A.branch}; then gh pr create --repo ${REPO} --base ${BASE} --head ${A.branch} --title "<zh-TW title ending with (#${A.issue})>" --body-file <file>.
 ${RED_PUBLICATION_RULES}
-Body starts with [claude] and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,獨立 Claude diff 審查已完成,不跑 codex 複驗' : CODEX ? 'codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
+Body starts with [claude] and includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## 測試證據 with verbatim gate tails, and ${MODE === 'light' ? 'light:接續既有修改,獨立 Claude diff 審查已完成,不跑 codex 複驗' : CODEX ? 'codex:複驗結果見審查留言' : 'codex:暫停中(配額),待配額恢復後補複驗'}. Return the PR number and head SHA using structured gh output. Do not merge.`, { label: `${RUN_ID} publish:#${A.issue}:resume`, phase: 'Publish', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
 }
 phase('Locate')
 const loc = RESUME ? (A.pr ? { pr: A.pr, sha: '' } : resumedPR) : await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
@@ -568,6 +655,8 @@ sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
+const initialBody = await updateAutoBody(pr, 'pending')
+if (!initialBody?.ok) return result({ pr, sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: ['machine PR body update failed'] })
 let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
 if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 sha = ci.sha || sha
@@ -615,6 +704,8 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
     schema: { type: 'object', properties: { posted: { type: 'boolean' } }, required: ['posted'] }, agentType: 'general-purpose',
   })
   if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
+  const fixedBody = await updateAutoBody(pr, 'pending')
+  if (!fixedBody?.ok) return result({ pr, sha: checked.sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['machine PR body update failed'] })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
   sha = ci.sha || sha
