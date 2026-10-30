@@ -2,6 +2,8 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+bats_require_minimum_version 1.5.0
+
 @test "acceptance PR 157 scope credits interrupt, pairing and verbatim fixes (#659)" {
     local paragraph entry path credit
     paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
@@ -66,7 +68,7 @@ CREDITS
     reason="$(sed -n 's/.*reason = " \(.*\)"/\1/p' <<<"${policy}")"
     expected="$(sed -n "s/.*\$0 == \"\([^\"]*\)\" reason.*/\1/p" <<<"${policy}" |
         while IFS= read -r name; do printf '%s | %s\n' "${name}" "${reason}"; done | sort)"
-    [[ -n "${expected}" ]]
+    [[ -n "${expected}" ]] || return 1
     section="$(sed -n '/^  - \[ \] 2\.1 裸/,/^  - \[ \] 2\.2 /p' "${REPO_ROOT}/doc/acceptance.md")"
     documented="$(sed -n "s/^      | \`\([^\`]*\)\` | \`\([^\`]*\)\` |$/\1 | \2/p" <<<"${section}" | sort)"
     assert_equal "${documented}" "${expected}"
@@ -161,6 +163,199 @@ CREDITS
     assert_output --partial "空的 \`.tsha\`"
     assert_output --partial '刪除原本不存在、驗收期間才建立的目標檔'
     assert_output --partial '無法確定目標是否不存在時拒絕備份'
+}
+
+_prepare_realbox_doc_stubs() {
+    export FAKE_STATE_DIR="${BATS_TEST_TMPDIR}/state"
+    export HOME="${BATS_TEST_TMPDIR}/home" TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+    export FAKE_WORKTOOL_LIB_DIR="${REPO_ROOT}/lib"
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
+    local bin="${BATS_TEST_TMPDIR}/bin" tool
+    mkdir -p "${FAKE_STATE_DIR}" "${HOME}" "${TMPDIR}" "${bin}"
+    touch "${FAKE_STATE_DIR}/boxes" "${FAKE_STATE_DIR}/calls.log" "${FAKE_STATE_DIR}/list-calls"
+    for tool in distrobox gh jq; do
+        install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${bin}/${tool}"
+    done
+    export DOC_REAL_JUST
+    DOC_REAL_JUST="$(command -v just)"
+    export DOC_TOOL="${FAKE_STATE_DIR}/just"
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${DOC_TOOL}"
+    cat >"${bin}/just" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == verify ]]; then exec "${DOC_REAL_JUST}" "$@"; fi
+if [[ "${2:-}" == bench ]]; then
+    exec bash "${DOC_BENCH}" "${@:3}"
+fi
+exec bash "${DOC_TOOL}" "$@"
+STUB
+    chmod +x "${bin}/just"
+    export PATH="${bin}:${PATH}"
+    _prepare_doc_bench_commands "${bin}"
+}
+
+# Stub only external commands; setup, enter, bench and log_info remain real.
+_prepare_doc_bench_commands() {
+    local bin="$1"
+    export DOC_BENCH="${REPO_ROOT}/script/box/bench.sh"
+    mkdir -p "${FAKE_STATE_DIR}/external"
+    export DOC_DISTROBOX="${FAKE_STATE_DIR}/external/distrobox"
+    install -m 0755 "${BATS_TEST_DIRNAME}/fixture/realbox_tool.sh" "${DOC_DISTROBOX}"
+    export BENCH_PSI_FILE="${FAKE_STATE_DIR}/psi"
+    export BENCH_BOX_PSI_FILE="${BENCH_PSI_FILE}"
+    export BENCH_CLOCK="${bin}/bench-clock"
+    printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' >"${BENCH_PSI_FILE}"
+    printf '1000000\n' >"${FAKE_STATE_DIR}/clock"
+    cat >"${bin}/bench-clock" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${FAKE_STATE_DIR}/clock"
+STUB
+    cat >"${bin}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+STUB
+    cat >"${bin}/distrobox" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == enter ]]; then
+    read -r now <"${FAKE_STATE_DIR}/clock"
+    printf '%s\n' "$((now + 10000))" >"${FAKE_STATE_DIR}/clock"
+    if [[ "$*" == *bench-inbox* ]]; then printf '1000\n'; fi
+    exit 0
+fi
+exec bash "${DOC_DISTROBOX}" "$@"
+STUB
+    chmod +x "${bin}/bench-clock" "${bin}/sleep" "${bin}/distrobox"
+}
+
+_normalize_realbox_doc_output() {
+    sed -E '/^\.\/script\//d;
+        s/m3-51-[0-9]{8}T[0-9]{6}Z-[0-9]+/<run>/g;
+        s/comment=[0-9]+/comment=<id>/g;
+        s/^(host-state baseline: present=)[0-9]+/\1<n>/;
+        s/^(box-state before-cleanup: home=)[01]( tmux=)[01]$/\1<n>\2<n>/;
+        s/(min=|median=|max=)[0-9]+([.][0-9]+)?/\1<n>/g;
+        s/median [0-9]+([.][0-9]+)? ms/median <n> ms/g;
+        s@/[^ ]+@<path>@g'
+}
+
+_normalize_realbox_doc_stderr() {
+    # Only omit the optional setup/PSI/progress diagnostics named in section 5.1.
+    # Apply this to stderr alone so a diagnostic moved to stdout still fails.
+    sed -E '/^\[INFO\] (auto-enter:|terminal:|box:|ghostty config:|distrobox:|wrote:|Ghostty config changed:)/d;
+        /^\[INFO\] (box psi wait |psi (before|after) |host (quiet|stayed quiet):)/d;
+        /^\[INFO\] (enter|shell|inbox): [0-9]+ warmup \+ [0-9]+ run\(s\) of /d' |
+        _normalize_realbox_doc_output
+}
+
+_assert_realbox_doc_streams() {
+    local section expected actual output="" stderr=""
+    section="$(sed -n '/^  - \[ \] 5\.1 進盒/,/^  - \[ \] 5\.2 /p' "$1")"
+    # Compare complete streams after normalizing environment-dependent fields.
+    expected="$(awk '/^      ````text$/ { block=1; next }
+        /^      ````$/ && block { exit }
+        block { sub(/^      /, ""); print }' <<<"${section}")"
+    [[ -n "${expected}" ]] || return 1
+    [[ "${expected}" == *"box-state before-cleanup: home=1 tmux=1"* ]] || return 1
+    run --separate-stderr just verify realbox --allow-real-box 5.1
+    if ! assert_success; then printf '%s\n' "${stderr}"; return 1; fi
+    actual="${output}"$'\nrc=0'
+    assert_equal "$(printf '%s\n' "${actual}" | _normalize_realbox_doc_output)" \
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_output)" || return 1
+    expected="$(awk '
+        /^      ````text stderr$/ { block=1; next }
+        /^      ````$/ && block { exit }
+        block { sub(/^      /, ""); print }' <<<"${section}")"
+    assert_equal "$(printf '%s\n' "${stderr}" | _normalize_realbox_doc_stderr)" \
+        "$(printf '%s\n' "${expected}" | _normalize_realbox_doc_stderr)"
+}
+
+@test "acceptance 5.1 normal block matches both output streams bidirectionally (#666)" {
+    _prepare_realbox_doc_stubs
+    _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md"
+}
+
+@test "acceptance 5.1 comparison rejects stub cleanup state in the real host block (#666)" {
+    _prepare_realbox_doc_stubs
+    local doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed 's/box-state before-cleanup: home=1 tmux=1/box-state before-cleanup: home=0 tmux=0/' \
+        "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+    run _assert_realbox_doc_streams "${doc}"
+    assert_failure
+}
+
+@test "acceptance 5.1 successful comparison emits no fd 3 dump (#666)" {
+    _prepare_realbox_doc_stubs
+    local dump="${BATS_TEST_TMPDIR}/diagnostics"
+    run _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md" 3>"${dump}"
+    assert_success
+    [[ ! -s "${dump}" ]]
+}
+
+@test "acceptance 5.1 comparison rejects a real bench summary moved to stdout (#666)" {
+    _prepare_realbox_doc_stubs
+    local mutant="${BATS_TEST_TMPDIR}/mutant"
+    mkdir -p "${mutant}"
+    cp -a "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${mutant}/"
+    export DOC_BENCH="${mutant}/script/box/bench.sh"
+    sed -i 's/log_info "shell median \(.*within --max-ms.*\)"/echo "[INFO] shell median \1"/' "${DOC_BENCH}"
+    run _assert_realbox_doc_streams "${REPO_ROOT}/doc/acceptance.md"
+    assert_failure
+    assert_output --partial '-- values do not equal --'
+    assert_output --partial '[INFO] shell median'
+}
+
+_assert_51_credits() {
+    local paragraph entry path
+    paragraph="$(sed -n '/^本 PR(#157)/p' "$1")"
+    for path in doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
+        entry="${paragraph#*\`"${path}"\`（}"
+        [[ "${entry}" != "${paragraph}" ]] || return 1
+        entry="${entry%%）*}"
+        [[ "${entry}" =~ \#666／PR[[:space:]]\#682([^0-9]|$) ]] || return 1
+    done
+    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]] || return 1
+    [[ "${paragraph}" != *'665-review-round'* ]] || return 1
+    run grep -F '(M3 adds enter / rm)' "${REPO_ROOT}/doc/acceptance.md"
+    assert_failure 1 || return 1
+    run grep -F "recipe 名稱與說明以根目錄 \`justfile\`、\`script/box/justfile.box\`、\`script/test/justfile.test\` 為唯一來源" "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+}
+
+@test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
+    _assert_51_credits "${REPO_ROOT}/doc/acceptance.md"
+}
+
+@test "acceptance 5.1 credits reject missing box interface credit (#666)" {
+    local doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed "s@\`script/box/justfile.box\`；#665／PR #673@\`script/box/justfile.box\`；missing@" \
+        "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+    run _assert_51_credits "${doc}"
+    assert_failure
+}
+
+@test "acceptance 5.1 credits reject a different PR or a longer PR number (#666)" {
+    local wrong doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    for wrong in 681 6820; do
+        sed "s/#666／PR #682/#666／PR #${wrong}/g" "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+        run _assert_51_credits "${doc}"
+        assert_failure
+    done
+}
+
+@test "acceptance PR 157 credits the stale rm description fix on every touched entry (#666)" {
+    local paragraph entry path
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    for path in justfile doc/structure.md doc/design.md doc/acceptance.md \
+        test/unit/justfile_spec.bats; do
+        entry="${paragraph#*\`"${path}"\`（}"
+        [[ "${entry}" != "${paragraph}" ]]
+        entry="${entry%%）*}"
+        [[ "${entry}" == *'#665／PR #673'* ]]
+    done
+    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
 }
 
 @test "acceptance 5.2 documents automation and credits every #663 file" {
