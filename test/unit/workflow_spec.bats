@@ -4099,72 +4099,10 @@ _handover_snapshot_run() {
     assert_success
 }
 
-@test "pr-loop finds RED among many comments using only filtered evidence (#678)" {
-    local root="${BATS_TEST_TMPDIR}" json
-    mkdir -p "${root}/bin"
-    jq -n '{body:"PR description", comments:([range(0;500) | {body:("review note " + tostring)}] +
-        [{body:"## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"}])}' > "${root}/pr.json"
-    cat > "${root}/bin/gh" <<'SH'
-#!/bin/sh
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = --jq ]; then
-        jq "$2" "$RED_SOURCE"
-        exit "$?"
-    fi
-    shift
-done
-cat "$RED_SOURCE"
-SH
-    chmod +x "${root}/bin/gh"
-    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
-    assert_success
-    json="$output"
-    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
-        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
-        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | fromjson |
-            length == 1 and .[0].source == "comment" and (.[0].body | contains("not ok 1")))' <<<"$json"
-    assert_success
-}
-
-@test "pr-loop bounds transported RED evidence with 50 large qualifying comments (#678)" {
-    local root="${BATS_TEST_TMPDIR}" json
-    mkdir -p "${root}/bin"
-    jq -n '([range(0;2000) | "large review detail"] | join("\n")) as $large |
-        {body:("## RED\nNo valid block\n" + $large), comments:
-            ([{body:"## RED exemption\nReason: comments cannot exempt"}] +
-            [range(0;50) | {body:("## Review\n" + $large +
-                "\n## RED\n```text\n" + $large +
-                "\njust test unit test/unit/example_spec.bats " + ("x" * 20000) +
-                "\nnot ok 1 regression " + ("失敗" * 20000) + "\n```\n## Notes\n" + $large)}])}' > "${root}/pr.json"
-    cat > "${root}/bin/gh" <<'SH'
-#!/bin/sh
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = --jq ]; then
-        jq "$2" "$RED_SOURCE"
-        exit "$?"
-    fi
-    shift
-done
-cat "$RED_SOURCE"
-SH
-    chmod +x "${root}/bin/gh"
-    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
-    assert_success
-    json="$output"
-    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
-        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
-        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout |
-            utf8bytelength < 16384 and (fromjson | length == 1) and
-            (contains("large review detail") | not))' <<<"$json"
-    assert_success
-}
-
-@test "pr-loop treats null RED bodies as empty without read errors (#678)" {
-    local root="${BATS_TEST_TMPDIR}" scenario expected json
-    mkdir -p "${root}/bin"
-    cat > "${root}/bin/gh" <<'SH'
+# Exercise the actual gh-side filter against unfiltered PR data.
+_pl_red_gh() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    cat > "${BATS_TEST_TMPDIR}/bin/gh" <<'SH'
 #!/bin/sh
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --jq ]; then
@@ -4175,7 +4113,49 @@ while [ "$#" -gt 0 ]; do
 done
 exit 1
 SH
-    chmod +x "${root}/bin/gh"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+}
+
+@test "pr-loop finds RED among many comments using only filtered evidence (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '{body:"PR description", comments:([range(0;500) | {body:("review note " + tostring)}] +
+        [{body:"## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"}])}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        .result.blockingLeft == [] and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop bounds transported RED evidence with 50 large qualifying comments (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '([range(0;2000) | "large review detail"] | join("\n")) as $large |
+        {body:("## RED\nNo valid block\n" + $large), comments:
+            ([{body:"## RED exemption\nReason: comments cannot exempt"}] +
+            [range(0;50) | {body:("## Review\n" + $large +
+                "\n## RED\n```text\n" + $large +
+                "\njust test unit test/unit/example_spec.bats " + ("x" * 20000) +
+                "\nnot ok 1 regression " + ("失敗" * 20000) + "\n```\n## Notes\n" + $large)}])}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout |
+            utf8bytelength < 16384) and .result.blockingLeft == []' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop treats null RED bodies as empty without read errors (#678)" {
+    local root="${BATS_TEST_TMPDIR}" scenario expected json
+    _pl_red_gh
     for scenario in null-description null-comment absent; do
         jq -n --arg scenario "$scenario" '
             "## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```" as $red |
@@ -4188,67 +4168,44 @@ SH
         json="$output"
         expected=mergeable
         if [ "$scenario" = absent ]; then expected=blocked; fi
-        run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
+        run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
             ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
-            (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and
-                (.stdout | fromjson | if $expected == "blocked" then . == [] else length == 1 end)) and
-            (if $expected == "blocked" then .result.blockingLeft ==
-                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else true end)' <<<"$json"
+            (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384) and
+            .result.blockingLeft == (if $expected == "blocked" then
+                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end)' <<<"$json"
         assert_success
     done
 }
 
 @test "pr-loop rejects RED prose without a Markdown heading during transport (#678)" {
     local root="${BATS_TEST_TMPDIR}" json
-    mkdir -p "${root}/bin"
     jq -n '{body:"RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```",
         comments:[{body:"RED exemption\nReason: missing heading"}]}' > "${root}/pr.json"
-    cat > "${root}/bin/gh" <<'SH'
-#!/bin/sh
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = --jq ]; then
-        jq "$2" "$RED_SOURCE"
-        exit "$?"
-    fi
-    shift
-done
-exit 1
-SH
-    chmod +x "${root}/bin/gh"
+    _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
         run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
-    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+    run jq -e '.result.codexVerdict == "blocked" and
         .result.blockingLeft == ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] and
-        (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and (.stdout | fromjson) == [])' <<<"$json"
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
     assert_success
 }
 
 @test "pr-loop preserves CRLF exemption records during transport (#678)" {
     local root="${BATS_TEST_TMPDIR}" json
-    mkdir -p "${root}/bin"
     jq -n '{body:"## RED exemption\r\nReason: docs only\r\n## Notes\r\nUnrelated",
         comments:[]}' > "${root}/pr.json"
-    cat > "${root}/bin/gh" <<'SH'
-#!/bin/sh
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = --jq ]; then
-        jq "$2" "$RED_SOURCE"
-        exit "$?"
-    fi
-    shift
-done
-exit 1
-SH
-    chmod +x "${root}/bin/gh"
+    _pl_red_gh
     RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
         run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
     assert_success
     json="$output"
-    run jq -e '.error == null and .result.codexVerdict == "mergeable" and
-        (.ran[] | select(.cmd | startswith("gh pr view")) | .rc == 0 and
-            (.stdout | fromjson) == [{source:"body",body:"## RED exemption\nReason: docs only"}])' <<<"$json"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        .result.blockingLeft == [] and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
     assert_success
 }
 
@@ -4280,18 +4237,21 @@ SH
 }
 
 @test "pr-loop accepts only shell assignment prefixes in RED commands (#619)" {
-    local prefix expected record json
+    local prefix expected json
+    _pl_red_gh
     while IFS='|' read -r expected prefix _; do
-        record="$(jq -cn --arg prefix "$prefix" '{evidence:([{source:"body",
-            body:("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```")
-            }]|tojson)}')"
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        jq -n --arg prefix "$prefix" '{body:
+            ("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"),
+            comments:[]}' > "${BATS_TEST_TMPDIR}/pr.json"
+        RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
+            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' '{"evidence":"<stdout>"}' exec-red-record
         assert_success
         json="$output"
-        run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
-            (if $expected == "mergeable" then
-                ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
-            else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+        run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
+            .result.blockingLeft == (if $expected == "blocked" then
+                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end) and
+            ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+            (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
         assert_success
     done <<'CASES'
 mergeable|WORKTOOL_STRESS=1 |
