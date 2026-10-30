@@ -4659,3 +4659,24 @@ Reason: 僅修正文句，沒有行為變更。'; do
         assert_success
     done
 }
+
+@test "pr-loop applies the same RED command rule during transport and recheck (#681)" {
+    local command record expected mode json
+    _pl_red_gh
+    for command in $'\vjust test unit test/unit/example_spec.bats' 'MODE=fast just test unit test/unit/example_spec.bats'; do
+        expected=mergeable
+        [[ "$command" != $'\v'* ]] || expected=blocked
+        record="$(jq -cn --arg command "$command" '{body:("## RED\n```text\n" + $command + "\nnot ok 1 regression\n```"),comments:[]}')"
+        printf '%s\n' "$record" > "$BATS_TEST_TMPDIR/pr.json"
+        for mode in exec-red-record canned; do
+            local evidence
+            evidence="$(jq -c '[{source:"body",body:.body}] | {evidence:tojson}' <<<"$record")"
+            [[ "$mode" != exec-red-record ]] || evidence='{"evidence":"<stdout>"}'
+            RED_SOURCE="$BATS_TEST_TMPDIR/pr.json" PATH="$BATS_TEST_TMPDIR/bin:$PATH"                 run _pl_run '{}' '{"defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' "$evidence" "$mode"
+            assert_success
+            json="$output"
+            run jq -e --arg expected "$expected" '.result.codexVerdict == $expected' <<<"$json"
+            assert_success
+        done
+    done
+}
