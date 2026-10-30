@@ -59,7 +59,9 @@ const latestChecks = checks => {
   }
   return [...groups.values()].flatMap(entries => {
     if (entries.length === 1) return entries
-    const times = entries.map(c => Date.parse(c?.completedAt || c?.runCreatedAt || c?.createdAt))
+    const created = entries.map(c => Date.parse(c?.runCreatedAt))
+    const times = created.every(t => Number.isFinite(t)) ? created :
+      entries.map(c => Date.parse(c?.completedAt || c?.runCreatedAt || c?.createdAt))
     if (times.some(t => !Number.isFinite(t))) return entries
     const newest = Math.max(...times)
     return entries.filter((_, i) => times[i] === newest)
