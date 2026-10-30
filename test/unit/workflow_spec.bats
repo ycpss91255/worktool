@@ -262,7 +262,7 @@ _meta_skeleton() {
     for mode in '{}' '{"mode":"full"}'; do
         for implementer in codex claude; do
             run _pl_run "$(jq -cn --argjson mode "${mode}" --arg i "${implementer}" '$mode + {implementer:$i}')" \
-                '{"verdict":"no-output","blocking":[],"nonBlocking":[],"answer":""}'
+                '{"verdict":"no-output","defects":[],"limitations":[],"answer":"","suggestions":[]}'
             assert_success
             run jq -cr '[.error, (.result.codexVerdict != "mergeable"), (.result.blockingLeft | length > 0), ([.calls[] | select(.role | test("^(fix:|codex-fix:)"))] | length), .result.rounds]' <<<"${output}"
             assert_output '[null,true,true,0,0]'
@@ -351,7 +351,7 @@ _pl_scope_rc() { jq -r '[.ran[] | select(.cmd | contains("> scope-r1.md")) | .rc
 _pl_run() {
     local extra="${1:-}"
     [[ -n "${extra}" ]] || extra='{}'
-    local replies='{"implement:": {"status":"ready"}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": "可合併"}}'
+    local replies='{"implement:": {"status":"ready"}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     if [[ $# -ge 2 ]]; then
         replies="$(jq -c --argjson review "$2" '.["review:"] = $review' <<<"${replies}")"
     fi
@@ -360,7 +360,7 @@ _pl_run() {
     fi
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "${extra}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
-        "${replies}"
+        "${replies}" "${4:-}"
 }
 
 _pl_job_results() {
@@ -422,7 +422,7 @@ SH
 
 _pl_blocked_run() {
     local implementer="$1"
-    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict": "blocked", "blocking": ["broken"], "nonBlocking": [], "answer": "不可合併"}}'
+    local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "stage-check:Fix": {"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}, "locate:": {"pr": 7, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""}, "review:": {"verdict":"blocked","defects":["broken"],"limitations":[],"answer":"不可合併","suggestions":[]}}'
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg implementer "${implementer}" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t",maxRounds:1,implementer:$implementer}')" \
         "${replies}"
@@ -532,7 +532,7 @@ _pl_blocked_run() {
 @test "workflows: custom gates are the only pre-push gate in every role (#385)" {
     local template mode implementer args json
     local gate='just test unit test/unit/workflow_spec.bats'
-    local replies='{"implement:":{"status":"ready"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc"},"review:#385:light":{"verdict":"mergeable"},"review:":{"verdict":"blocked","blocking":["broken"]}}'
+    local replies='{"implement:":{"status":"ready"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc"},"review:#385:light":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"},"review:":{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"ok"}}'
     for template in "${PR_LOOP}" "${FANOUT}"; do
         for mode in full light; do
             for implementer in codex claude; do
@@ -746,7 +746,7 @@ _pl_launch_checks() {
 
 @test "milestone-fanout (node): neither implementer path forwards sessionUrl or produces attribution instructions" {
     local implementer replies
-    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     for implementer in codex claude; do
         run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
             "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"implementer\":\"${implementer}\",\"sessionUrl\":\"legacy\",\"items\":[{\"issue\":269,\"branch\":\"b\",\"name\":\"n\",\"task\":\"t\"}]}" "${replies}"
@@ -831,7 +831,7 @@ JS
 
 @test "milestone-fanout (node): forwards configured gates and leaves omitted gates unset" {
     local replies
-    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:": {"status":"ready","reason":""}, "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${FANOUT}" \
         "{\"runTag\":\"test-run\",\"repo\":\"o/r\",\"repoDir\":\"${REPO_ROOT}\",\"items\":[{\"issue\":300,\"branch\":\"with-gates\",\"name\":\"with\",\"task\":\"t\",\"gates\":\"just test lint\"},{\"issue\":301,\"branch\":\"without-gates\",\"name\":\"without\",\"task\":\"t\"}]}" "${replies}"
     assert_success
@@ -1584,7 +1584,7 @@ _codex_rel_answer() {
     local dir="${BATS_TEST_TMPDIR}/repo dir/\$(touch ${BATS_TEST_TMPDIR}/pwned);x'q" span
     local scratch="${dir}/../worktree/.scratch/n1" wt="${dir}/../worktree/n1"
     local replies='{"implement:": {"status":"ready","reason":""}, "stage-check:Implement": {"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}, "locate:": {"pr": 9, "sha": "abc"}, "ci:": {"state": "green", "sha": "abc", "detail": ""},
-        "review:": {"verdict": "mergeable", "blocking": [], "nonBlocking": [], "answer": ""}}'
+        "review:": {"verdict":"mergeable","defects":[],"limitations":[],"answer":"","suggestions":[]}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${dir}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:7,branch:"b",name:"n1",task:"t",implementer:"claude"}')" "${replies}"
     assert_success
@@ -2034,7 +2034,7 @@ _pl_stage_run() {
     # The first review creates the requested Fix result, before the check runs.
     local replies
     replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:": {"status":"ready","reason":""}, "locate:":{pr:7,sha:$sha},"ci:":{state:"green",sha:$sha,detail:""},
-        "review:":{verdict:"blocked",blocking:["broken"],nonBlocking:[],answer:"blocked"},
+        "review:":{verdict:"blocked",defects:["broken"],limitations:[],suggestions:[],answer:"blocked"},
         "stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
     # Simulate a Fix after Implement has passed its check.
     PL_ACTION="${action}" PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
@@ -2102,7 +2102,7 @@ _pl_stage_run() {
         _pl_stage_setup
         local root="${BATS_TEST_TMPDIR}" replies json
         replies="$(jq -cn --arg sha "${PL_BEFORE}" '{"implement:":{status:"ready",reason:""},"locate:":{pr:7,sha:$sha},
-            "review:":{verdict:"mergeable",blocking:[],nonBlocking:[],answer:"ok"},
+            "review:":{verdict:"mergeable",defects:[],limitations:[],suggestions:[],answer:"ok"},
             "ci:":{state:"green",sha:$sha,detail:""},"stage-check:":{evidence:"<stdout>"},"push-check:":{status:"pushed"}}')"
         PL_STAGE=Implement PL_ACTION=dirty PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
             "$(jq -cn --arg d "${root}/src" --arg impl "${impl}" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:331,branch:"b",name:"n",task:"t"} + (if $impl == "light" then {mode:"light"} else {implementer:$impl} end)')" \
@@ -2708,7 +2708,7 @@ _pl_resume_codex_complete() {
 
 _pl_resume_run() {
     local extra="$1" template="${2:-${PR_LOOP}}" root="${BATS_TEST_TMPDIR}" replies
-    replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","blocking":[],"nonBlocking":[],"answer":"可合併"}}'
+    replies='{"implement:":{"status":"ready","reason":""},"publish:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"prepare:":{"state":"<stdout>"},"locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"answer":"可合併","suggestions":[]}}'
     if [[ $# -ge 3 ]]; then
         replies="$(jq -c --argjson review "$3" '.["review:"] = $review' <<<"${replies}")"
     fi
@@ -2820,7 +2820,7 @@ _pl_resume_run() {
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'feat: pending' -m 'Refs: #386' --allow-empty
     local review json extra
     for extra in '{"mode":"light"}' '{"mode":"light","pr":7}'; do
-        for review in '{"verdict":"mergeable"}' '{"verdict":"blocked","blocking":["required fix"]}' null; do
+        for review in '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"verdict":"blocked","defects":["required fix"],"limitations":[],"suggestions":[],"answer":"ok"}' null; do
             run _pl_resume_run "${extra}" "${PR_LOOP}" "${review}"
             assert_success
             json="${output}"
@@ -2873,7 +2873,7 @@ _pl_resume_run() {
     _pl_resume_setup
     _pl_resume_codex_complete
     local root="${BATS_TEST_TMPDIR}"
-    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable"}}'
+    local replies='{"prepare:":{"state":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"unpushed\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:386,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume
@@ -2902,7 +2902,7 @@ _pl_resume_run() {
     _pl_stage_setup
     git -C "${BATS_TEST_TMPDIR}/worktree/n" commit -qm 'fix: pending' -m 'Refs: #396' --allow-empty
     local root="${BATS_TEST_TMPDIR}" replies json
-    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
@@ -2922,7 +2922,7 @@ _pl_resume_run() {
 @test "pr-loop resume: unpushed CI repair blocks without publication or review (#396)" {
     _pl_stage_setup
     local root="${BATS_TEST_TMPDIR}" replies json
-    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable"}}'
+    replies='{"prepare:":{"state":"resume"},"push-check:":{"status":"pushed"},"stage-check:":{"evidence":"<stdout>"},"ci:":{"state":"green"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     PL_ACTION=unpushed PATH="${root}/bin:${PATH}" run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:396,branch:"b",name:"n",task:"t",pr:7}')" \
         "${replies}" exec-resume-push
@@ -3008,7 +3008,7 @@ _handover_replies() {
         "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
         "independent-cleanup:":{restored:true,childrenStopped:true},"independent-claude-cleanup:":{restored:true,childrenStopped:true},
         "independent-codex:":"No defects; config restored.","independent-claude:":"No defects; config restored.",
-        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[]}},
+        "independent-assess:":{codex:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]},claude:{defects:[],insufficientEvidence:[],pendingHuman:[],passingEvidence:[]}},
         "independent-publish:":{sha:("a" * 40),line:("交出判定：可交出 head=" + ("a" * 40)),reports:["https://github.com/o/r/pull/7#issuecomment-2","https://github.com/o/r/pull/7#issuecomment-3"],reviewUrl:"https://github.com/o/r/pull/7#issuecomment-1",url:"https://github.com/o/r/pull/7#issuecomment-4"},
         "machine:":{content:"machine: output\n"},"evidence:":{evidenceContent:"evidence: output\n",readyContent:"ready: output\n"}} | ."sync:".checks=."head:".checks'
 }
@@ -3155,7 +3155,7 @@ _pl_retry_run() {
         "implement:": {status:"failed",reason:$reason},
         "locate:": {pr:7,sha:"abc"},
         "stage-check:": {evidence:"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
-        "ci:": {state:"green",sha:"abc"},"review:":{verdict:"mergeable"}}')"
+        "ci:": {state:"green",sha:"abc"},"review:":{defects:[],limitations:[],suggestions:[],answer:"ok"}}')"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --arg tag "${3:-test-run}" '{runTag:$tag,repo:"o/r",repoDir:"/work",issue:417,branch:"b",name:"n",task:"t"}')" "${replies}"
 }
@@ -3599,7 +3599,7 @@ _pl_retry_run() {
 
 @test "pr-loop delegates local gates to a low effort job stage before publication (#550)" {
     local replies
-    replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"implement:":{"status":"ready"},"gates:":{"state":"green","detail":"success"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.error == null and .result.ciState == "green" and
@@ -3611,7 +3611,7 @@ _pl_retry_run() {
 
 @test "pr-loop sends only the failed gate summary to codex and reruns gates after repair (#550)" {
     local replies
-    replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable"}}'
+    replies='{"implement:":{"status":"ready"},"gates:":[{"state":"red","detail":"not ok 1 gate failed"},{"state":"green","detail":"success"}],"gate-fix:":{"status":"ready"},"publish:":{"pr":7,"sha":"abc"},"locate:":{"pr":7,"sha":"abc"},"stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},"ci:":{"state":"green","sha":"abc"},"review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
     run node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "$PR_LOOP" '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":550,"branch":"b","name":"n","task":"t"}' "$replies"
     assert_success
     run jq -e '.result.ciState == "green" and
@@ -4099,33 +4099,159 @@ _handover_snapshot_run() {
     assert_success
 }
 
-@test "pr-loop blocks missing RED records before codex review (#607)" {
+# Exercise the actual gh-side filter against unfiltered PR data.
+_pl_red_gh() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    cat > "${BATS_TEST_TMPDIR}/bin/gh" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$RED_SOURCE"
+        exit "$?"
+    fi
+    shift
+done
+exit 1
+SH
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+}
+
+@test "pr-loop finds RED among many comments using only filtered evidence (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '{body:"PR description", comments:([range(0;500) | {body:("review note " + tostring)}] +
+        [{body:"## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"}])}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        .result.blockingLeft == [] and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop bounds transported RED evidence with 50 large qualifying comments (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '([range(0;2000) | "large review detail"] | join("\n")) as $large |
+        {body:("## RED\nNo valid block\n" + $large), comments:
+            ([{body:"## RED exemption\nReason: comments cannot exempt"}] +
+            [range(0;50) | {body:("## Review\n" + $large +
+                "\n## RED\n```text\n" + $large +
+                "\njust test unit test/unit/example_spec.bats " + ("x" * 20000) +
+                "\nnot ok 1 regression " + ("失敗" * 20000) + "\n```\n## Notes\n" + $large)}])}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout |
+            utf8bytelength < 16384) and .result.blockingLeft == []' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop treats null RED bodies as empty without read errors (#678)" {
+    local root="${BATS_TEST_TMPDIR}" scenario expected json
+    _pl_red_gh
+    for scenario in null-description null-comment absent; do
+        jq -n --arg scenario "$scenario" '
+            "## RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```" as $red |
+            if $scenario == "null-description" then {body:null,comments:[{body:$red}]}
+            elif $scenario == "null-comment" then {body:"",comments:[{body:null},{body:$red}]}
+            else {body:null,comments:[{body:null}]} end' > "${root}/pr.json"
+        RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+            run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
+        assert_success
+        json="$output"
+        expected=mergeable
+        if [ "$scenario" = absent ]; then expected=blocked; fi
+        run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
+            ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+            (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384) and
+            .result.blockingLeft == (if $expected == "blocked" then
+                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end)' <<<"$json"
+        assert_success
+    done
+}
+
+@test "pr-loop rejects RED prose without a Markdown heading during transport (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '{body:"RED\n```text\njust test unit test/unit/example_spec.bats\nnot ok 1 regression\n```",
+        comments:[{body:"RED exemption\nReason: missing heading"}]}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop preserves CRLF exemption records during transport (#678)" {
+    local root="${BATS_TEST_TMPDIR}" json
+    jq -n '{body:"## RED exemption\r\nReason: docs only\r\n## Notes\r\nUnrelated",
+        comments:[]}' > "${root}/pr.json"
+    _pl_red_gh
+    RED_SOURCE="${root}/pr.json" PATH="${root}/bin:${PATH}" \
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
+    assert_success
+    json="$output"
+    run jq -e '.result.codexVerdict == "mergeable" and
+        .result.blockingLeft == [] and
+        ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+        (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
+    assert_success
+}
+
+@test "pr-loop retries unreadable RED evidence once and reports a read failure (#678)" {
     local record json
-    for record in null '{"evidence":"invalid"}' '{"evidence":"{\"body\":\"GREEN only\",\"comments\":[]}"}'; do
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+    for record in null '{"evidence":"summary at /tmp/evidence.json"}' '{"evidence":""}' \
+        '{"evidence":"{\"body\":\"\",\"comments\":[{}]}"}'; do
+        run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' "$record"
         assert_success
         json="$output"
         run jq -e '.error == null and .result.codexVerdict == "blocked" and
-            (.result.blockingLeft | join(" ") | contains("RED")) and
-            ([.calls[].role | startswith("red-record:")] | any) and
+            .result.blockingLeft == ["無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑"] and
+            ([.calls[] | select(.role | startswith("red-record:"))] | length == 2) and
             ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
         assert_success
     done
 }
 
+@test "pr-loop reports genuine RED absence without retrying the read (#678)" {
+    run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' \
+        '{"evidence":"[]"}'
+    assert_success
+    local json="$output"
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and
+        .result.blockingLeft == ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] and
+        ([.calls[] | select(.role | startswith("red-record:"))] | length == 1) and
+        ([.calls[] | select(.phase == "Codex")] | length == 0)' <<<"$json"
+    assert_success
+}
+
 @test "pr-loop accepts only shell assignment prefixes in RED commands (#619)" {
-    local prefix expected record json
+    local prefix expected json
+    _pl_red_gh
     while IFS='|' read -r expected prefix _; do
-        record="$(jq -cn --arg prefix "$prefix" '{evidence:({
-            body:("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"),
-            comments:[]}|tojson)}')"
-        run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+        jq -n --arg prefix "$prefix" '{body:
+            ("## RED\n```text\n" + $prefix + "just test unit test/unit/example_spec.bats\nnot ok 1 regression\n```"),
+            comments:[]}' > "${BATS_TEST_TMPDIR}/pr.json"
+        RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
+            run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
         assert_success
         json="$output"
-        run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
-            (if $expected == "mergeable" then
-                ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
-            else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+        run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
+            .result.blockingLeft == (if $expected == "blocked" then
+                ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end) and
+            ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+            (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
         assert_success
     done <<'CASES'
 mergeable|WORKTOOL_STRESS=1 |
@@ -4146,21 +4272,25 @@ CASES
 }
 
 @test "pr-loop accepts reasoned no-behaviour exemptions only in PR descriptions (#607)" {
-    local body comments record json expected
+    local body comments json expected
+    _pl_red_gh
     for body in '## RED exemption' '## RED exemption
 Reason:   ' '## RED exemption
 Reason: 僅修正文句，沒有行為變更。'; do
         for comments in '[]' '[{"body":"## RED exemption\nReason: docs only"}]'; do
-            record="$(jq -cn --arg body "$body" --argjson comments "$comments" '{evidence:({body:$body,comments:$comments}|tojson)}')"
-            run _pl_run '{}' '{"verdict":"mergeable","blocking":[]}' "$record"
+            jq -n --arg body "$body" --argjson comments "$comments" \
+                '{body:$body,comments:$comments}' > "${BATS_TEST_TMPDIR}/pr.json"
+            RED_SOURCE="${BATS_TEST_TMPDIR}/pr.json" PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" \
+                run _pl_run '{}' '{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}' '{"evidence":"<stdout>"}' exec-red-record
             assert_success
             json="$output"
             expected=blocked
             if [[ "$body" == *'Reason: 僅'* ]]; then expected=mergeable; fi
-            run jq -e --arg expected "$expected" '.error == null and .result.codexVerdict == $expected and
-                (if $expected == "mergeable" then
-                    ([.calls[].role] | index("red-record:#7") < index("review:#7:r1"))
-                else ([.calls[] | select(.phase == "Codex")] | length == 0) end)' <<<"$json"
+            run jq -e --arg expected "$expected" '.result.codexVerdict == $expected and
+                .result.blockingLeft == (if $expected == "blocked" then
+                    ["PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑"] else [] end) and
+                ([.ran[] | select(.cmd | startswith("gh pr view"))] | length == 1) and
+                (.ran[] | select(.cmd | startswith("gh pr view")) | .stdout | utf8bytelength < 16384)' <<<"$json"
             assert_success
         done
     done
@@ -4362,4 +4492,170 @@ Reason: 僅修正文句，沒有行為變更。'; do
         ([.ran[].cmd | contains("gh api --paginate") or contains("gh pr comment") or
             contains("api.github.com") or contains("codex node -e")]|any|not)' <<<"$json"
     assert_success
+}
+
+@test "doc/workflow.md explains independent report classification and coverage (#669)" {
+    run sed -n '/^8\. \*\*獨立報告彙整與發布/,/^9\. /p' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '任一報告有程式、文件或測試缺陷（defects）就阻擋'
+    assert_output --partial '同一 frozen head 的 passingEvidence 補足，就不阻擋'
+    assert_output --partial 'coveredEvidence 記錄項目、缺證據的報告（missingFrom）、補足的報告（coveredBy）'
+    assert_output --partial '兩份報告都沒有該 head 的通過證據時仍阻擋'
+    assert_output --partial '主觀感受、人類 gate、維護者自己的主機'
+    assert_output --partial '桌面鎖定或沒有圖形 session 而回未判定 rc=3'
+    assert_output --partial 'pendingHuman，不阻擋，但不能寫成已通過'
+    assert_output --partial '任一報告無法分類或分類格式不符都失敗收場'
+    assert_output --partial '判定留言與 ready 草稿都要分開列出 defects、agent 能取得的證據缺口與 pendingHuman'
+}
+
+@test "milestone-handover credits same-head evidence from the other report (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".codex.insufficientEvidence=["5.1"] |
+        ."independent-assess:".claude.passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and
+        .result.coveredEvidence == [{item:"5.1",missingFrom:"codex",coveredBy:"claude",head:("a" * 40),evidence:"command rc=0; expected output"}] and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") |
+            .prompt | contains("coveredBy") and contains("5.1")] | all)' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover rejects a report's own passing evidence for its gap (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].insufficientEvidence=["5.1"] |
+            ."independent-assess:"[$reviewer].passingEvidence=[{item:"5.1",head:("a" * 40),evidence:"command rc=0; expected output"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.issues == ["5.1"] and .result.coveredEvidence == [] and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover blocks uncovered gaps and rejects malformed coverage (#669)" {
+    local replies coverage
+    for coverage in '[]' '[{"item":"5.1","head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence":"rc=0"}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '
+            ."independent-assess:".codex.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.insufficientEvidence=["5.1"] |
+            ."independent-assess:".claude.passingEvidence=$coverage |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and .result.insufficientEvidence == ["5.1"] and
+            .result.coveredEvidence == [] and .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40))' <<<"${output}"
+        assert_success
+    done
+    for coverage in 'null' '{}' '[{"item":"5.1","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","evidence":""}]'; do
+        replies="$(_handover_replies | jq --argjson coverage "${coverage}" '."independent-assess:".claude.passingEvidence=$coverage')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover lists maintainer reservations separately without claiming passes (#669)" {
+    local replies
+    replies="$(_handover_replies | jq '."independent-assess:".claude.pendingHuman=["subjective feel", "human gate", "maintainer host", "locked desktop rc=3", "no graphical session rc=3"]')"
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+    run jq -e '.result.status == "prepared" and .result.issues == [] and (.result.pendingHuman | length == 5) and
+        .result.verdict == ("交出判定：可交出 head=" + ("a" * 40)) and
+        ([.calls[] | select(.role == "independent-publish:" or .role == "evidence:") | .prompt |
+            contains("Separate defects, agent-obtainable evidence gaps and pendingHuman") and
+            contains("Never present pendingHuman as passed") and contains("locked desktop rc=3") and
+            contains("no graphical session rc=3")] | all) and
+        (.calls[] | select(.role == "independent-assess:") | .prompt |
+            contains("subjective feel, human gates") and
+            contains("locked desktop or no graphical session") and contains("rc=3"))' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover blocks every defect even with passing evidence (#669)" {
+    local reviewer replies
+    for reviewer in codex claude; do
+        replies="$(_handover_replies | jq --arg reviewer "${reviewer}" '
+            ."independent-assess:"[$reviewer].defects=["documented output mismatch", "wrong comment", "test defect"] |
+            ."independent-assess:".claude.passingEvidence=[{item:"documented output mismatch",head:("a" * 40),evidence:"rc=0"}] |
+            ."independent-publish:".line=("交出判定：不可交出 head=" + ("a" * 40))')"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "prepared" and (.result.defects | length == 3) and
+            .result.issues == .result.defects and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            (.calls[] | select(.role == "independent-assess:") | .prompt |
+                contains("Code, documentation and test defects") and contains("documentation versus actual output mismatches") and
+                contains("wrong comments") and contains("Any defect in either report blocks"))' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover never treats unclassifiable reports as empty success (#669)" {
+    local mutation replies
+    for mutation in '."independent-assess:"="unclassifiable"' \
+        '."independent-assess:".error="cannot classify"' \
+        '."independent-assess:".codex.error="cannot classify codex"' \
+        'del(."independent-assess:".claude.defects)' \
+        '."independent-assess:".claude.pendingHuman=[""]'; do
+        replies="$(_handover_replies | jq "${mutation}")"
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "${replies}"
+        run jq -e '.result.status == "independent-failed" and
+            .result.verdict == ("交出判定：不可交出 head=" + ("a" * 40)) and
+            ([.calls[].role] | index("independent-publish:") == null)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "pr-loop keeps review notes out of commits for Implement and Fix (#675)" {
+    local implementer role json
+    for implementer in codex claude; do
+        for role in implement fix; do
+            if [[ "$role" == implement ]]; then
+                run _pl_run "{\"implementer\":\"$implementer\"}"
+            else
+                run _pl_blocked_run "$implementer"
+            fi
+            assert_success
+            json="$output"
+            run jq -e --arg role "$role:" '[.calls[] |
+                select(.role | startswith($role)) | .prompt |
+                contains("Review notes, round evidence and coordination notes") and
+                contains("PR comments or the gitignored .agents/state/") and
+                contains("Never commit these notes into the repo") and
+                contains("doc/evidence/ is only for acceptance evidence")] |
+                length > 0 and all' <<<"$json"
+            assert_success
+        done
+    done
+}
+
+@test "pr-loop fixes defects despite a mergeable reviewer verdict in the same run (#680)" {
+    local implementer json
+    for implementer in codex claude; do
+        run _pl_run "{\"implementer\":\"${implementer}\",\"maxRounds\":1}" \
+            '{"verdict":"mergeable","defects":["wrong exit code"],"limitations":[],"suggestions":[],"answer":"可合併"}'
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.codexVerdict == "blocked" and
+            .result.rounds == 1 and (.result.blockingLeft | index("wrong exit code") != null) and
+            ([.calls[] | select(.role | startswith("fix:"))] | length) == 1 and
+            (.calls[] | select(.role | startswith("fix:")) | .prompt | contains("wrong exit code"))' <<<"${json}"
+        assert_success
+    done
+}
+
+@test "pr-loop returns limitations for the PR known limitations section without blocking (#680)" {
+    local verdict json
+    for verdict in blocked no-output mergeable; do
+        run _pl_run '{"maxRounds":0}' \
+            "{\"verdict\":\"${verdict}\",\"defects\":[],\"limitations\":[\"environment risk\"],\"suggestions\":[\"optional cleanup\"],\"answer\":\"review complete\"}"
+        assert_success
+        json="${output}"
+        run jq -e '.error == null and .result.codexVerdict == "mergeable" and
+            .result.blockingLeft == [] and .result.limitations == ["environment risk"] and
+            .result.suggestions == ["optional cleanup"] and
+            ([.calls[] | select(.role | startswith("fix:"))] | length) == 0' <<<"${json}"
+        assert_success
+    done
 }

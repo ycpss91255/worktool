@@ -31,7 +31,7 @@ export const meta = {
 //     parent: "#5",                    // optional: "Part of" reference in the PR body
 //   } })
 //
-// Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft }.
+// Result: { issue, pr, sha, ciState, codexVerdict, rounds, blockingLeft, limitations, suggestions }.
 // The workflow never merges: merge order and rebase conflicts stay with the
 // main loop (one PR at a time, merge commit, keep agent commits).
 
@@ -107,7 +107,12 @@ const CODEX_MAX_CONTINUES = 25
 
 const LOCATE_SCHEMA = { type: 'object', properties: { pr: { type: 'integer' }, sha: { type: 'string' } }, required: ['pr', 'sha'] }
 const CI_SCHEMA = { type: 'object', properties: { state: { type: 'string', enum: ['green', 'red'] }, sha: { type: 'string' }, detail: { type: 'string' } }, required: ['state', 'sha', 'detail'] }
-const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, blocking: { type: 'array', items: { type: 'string' } }, nonBlocking: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['verdict', 'blocking', 'nonBlocking', 'answer'] }
+const CODEX_SCHEMA = { type: 'object', properties: { verdict: { type: 'string', enum: ['mergeable', 'blocked', 'no-output'] }, defects: { type: 'array', items: { type: 'string' } }, limitations: { type: 'array', items: { type: 'string' } }, suggestions: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' } }, required: ['defects', 'limitations', 'suggestions', 'answer'] }
+
+const REVIEW_CLASSIFICATION = `Classify findings as defects, limitations, or suggestions. Defects always block: documentation, output, or PR-body mismatches with behaviour (including stale PR bodies); incorrect explanations or comments; wrong exit codes; fail-open paths; tests that only check implementation details and miss the protected behaviour; unmet issue expectations. Environmental or performance risks are limitations, recorded for the PR body's 已知限制 section without blocking. Optional improvements are suggestions. Never downgrade a defect to a limitation or suggestion. Return all three arrays and the verbatim answer; the workflow derives mergeability from defects, ignoring any reviewer verdict.`
+const validReview = (review) => review && ['defects', 'limitations', 'suggestions'].every(key =>
+  Array.isArray(review[key]) && review[key].every(item => typeof item === 'string' && item.trim())) &&
+  typeof review.answer === 'string' && review.answer.trim()
 
 const LOCAL_TEST_RULES = A.gates
   ? `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run ${GATES}. Never run a whole tier locally; CI runs every tier.`
@@ -116,7 +121,7 @@ const LOCAL_TEST_RULES = A.gates
   : `In the TDD loop run only the slice's spec with just test <tier> <spec> [--filter]; before pushing run just test lint and ${CHANGED_GATE}. Never run a whole tier locally; CI runs every tier.`
 const PUSH_HISTORY_RULES = `Never rewrite pushed commits: no rebase, amend, reset, or force push of pushed history. The only exception is the commit-email remedy from #234: rewrite pushed commits only to fix a non-noreply author, then push with --force-with-lease. Only add new commits; sync with ${BASE} by merging.`
 const COMMON_GUARDRAILS = `
-Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Never merge a PR. End the final paragraph of every commit message with Refs: #${A.issue}. For multiple issues, use one Refs: #<issue> line per issue.`
+Repo: ${REPO_DIR} (branch main is protected: ci-passed required, merge only via PR). Work ONLY inside ${WT}; never touch another checkout or worktree. Rules: one issue = one PR, one thing; TDD (tests FIRST, show RED then GREEN in your report); tests run ONLY in Docker via the just interface (${GATES}) - never bats on the host, never install anything on the host. ${LOCAL_TEST_RULES} ${PUSH_HISTORY_RULES} Commits/code/comments English; issue/PR/docs zh-TW; NO emoji; no new "# shellcheck disable"; functions < 50 lines; every user action goes through just (thin forwarder recipe; the SCRIPT owns --help/validation, parses the whole command line before serving help, "unknown option '<x>' (see --help)" exit 2 - copy script/box/assemble.sh + script/box/justfile.box). All gh calls pass --repo ${REPO}. Gates run BLOCKING in the foreground (no Monitor/background). Review notes, round evidence and coordination notes go to PR comments or the gitignored .agents/state/. Never commit these notes into the repo. doc/evidence/ is only for acceptance evidence. Never merge a PR. End the final paragraph of every commit message with Refs: #${A.issue}. For multiple issues, use one Refs: #<issue> line per issue.`
 const SKILL_LOAD = {
   claude: 'Before planning or editing, use the Skill tool to load the tdd skill first and follow it.',
   codex: 'Before planning or editing, read .agents/skills/tdd/SKILL.md first and follow it.',
@@ -239,16 +244,17 @@ Return ready only when codex exits successfully and its repair is committed; oth
 const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
 
 const CODEX_STEP = (pr, round, prior) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
-1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在非阻擋項註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return verdict "no-output", blocking ["讀取 issue #${A.issue} 失敗"], and an empty answer.
-2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的寫法、延伸情境、假設性繞過與措辭一律列為非阻擋項。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。阻擋項列在「## 阻擋項」標題下、非阻擋項列在「## 非阻擋項」標題下,每項引用 diff 位置。最後一行只能是「可合併」或「不可合併:<原因>」。"
+1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在改善建議註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return defects ["讀取 issue #${A.issue} 失敗"], limitations [], suggestions [], and an empty answer.
+2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的環境或效能風險列為限制，其他改善列為建議。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} ${REVIEW_CLASSIFICATION} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。缺陷列在「## 缺陷」、限制列在「## 已知限制」、建議列在「## 改善建議」標題下，每項引用 diff 位置。"
 3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | WORKTOOL_AGENT_ROLE=pr-loop timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
 4. Post ONE PR comment through a body file: "[codex] 第 ${round} 輪複驗" + the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | WORKTOOL_AGENT_ROLE=pr-loop codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
-5. Return: verdict = "mergeable" if the LAST line of the answer is exactly 可合併, "blocked" if it starts with 不可合併, otherwise "blocked" too (unparseable is not a pass); blocking = the items under 「## 阻擋項」 (one string each, short); nonBlocking = items under 「## 非阻擋項」; answer = the verbatim answer.`
+5. Return defects = items under 「## 缺陷」, limitations = items under 「## 已知限制」, suggestions = items under 「## 改善建議」 (one string each); answer = the verbatim answer. Empty or unparseable output must return an empty answer, never a successful review.`
 
 const CLAUDE_REVIEW = (pr, round, prior) => `${GUARDRAILS}
 Review PR #${pr} (${REPO}, issue #${A.issue}), round ${round} directly as Claude against base ${BASE} (git diff origin/${BASE}...HEAD). Verify the PR baseRefName is ${BASE}; lookup failure or mismatch is blocking. This is read-only: inspect the PR description, issue scope, complete diff, RED/GREEN evidence, and gate evidence. Only concrete in-scope failures may be blocking. Check one-issue scope, correctness, robustness, shell quoting, tests, and documentation. ${prior ? `Re-check every item from the prior verdict:\n${prior}` : ''}
 ${TDD_REVIEW_RULES}
-Return the structured verdict without editing files, pushing, commenting, or merging.`
+${REVIEW_CLASSIFICATION}
+Return the structured findings without editing files, pushing, commenting, or merging.`
 
 const FIX = (pr, round, blocking) => `${RULES}
 ${SKILL_LOAD.claude}
@@ -276,7 +282,15 @@ ${CODEX_FIX_BRIEF(pr, round, blocking)}`
 
 const NOCODEX = (pr) => `Post ONE comment on PR #${pr} (${REPO}) with exactly: "[claude] codex 暫停中(配額),待配額恢復後補複驗。" Then return "noted".`
 
-const result = (extra) => ({ issue: A.issue, ...extra })
+const reviewFindings = { limitations: [], suggestions: [] }
+const collectReview = (review) => {
+  if (!validReview(review)) return false
+  for (const key of ['limitations', 'suggestions']) {
+    reviewFindings[key] = [...new Set([...reviewFindings[key], ...review[key]])]
+  }
+  return true
+}
+const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
@@ -297,26 +311,61 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
   })
 }
 
-// Only transport raw GitHub data through the agent; decide the gate here.
+// Select one compact qualifying section before transporting GitHub data.
+const RED_COMMAND = String.raw`^[ \t]*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+`
+const RED_QUERY = String.raw`
+  def sections:
+    ("\n" + .) | split("\n## ")[1:][] |
+    select(test("^RED(?: exemption)?[ \\t]*\\r?\\n")) | "## " + .;
+  def line($pattern): first(split("\n")[] | rtrimstr("\r") | select(test($pattern))) | .[0:1024];
+  def records:
+    . as $record | (.body // "") | sections |
+    if startswith("## RED exemption") then
+      select($record.source == "body") |
+      line("^Reason:[ \\t]*\\S[^\\r\\n]*$") |
+      {source:$record.source, body:("## RED exemption\n" + .)}
+    else
+      match("\u0060\u0060\u0060[^\\n]*\\n(.*?)\u0060\u0060\u0060"; "gm").captures[0].string |
+      line(${JSON.stringify(RED_COMMAND)}) as $command |
+      line("^not ok [0-9]+[ \\t]+[^\\r\\n]+") as $tap |
+      {source:$record.source, body:("## RED\n\u0060\u0060\u0060text\n" + $command + "\n" + $tap + "\n\u0060\u0060\u0060")}
+    end;
+  [limit(1; ({source:"body", body:.body},
+    (.comments[] | {source:"comment", body:.body})) | records)]`
+const readRedRecord = async (pr) => {
+  const query = RED_QUERY
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
+        label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
+        schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+      })
+      const data = JSON.parse(fetched.evidence)
+      if (!Array.isArray(data) || data.length > 1 || data.some(record => !record ||
+          !['body', 'comment'].includes(record.source) || typeof record.body !== 'string')) throw new Error('Invalid RED evidence')
+      return { body: data.find(record => record.source === 'body')?.body || '',
+        comments: data.filter(record => record.source === 'comment') }
+    } catch {
+      // A failed read is retried once; it never proves absence of RED.
+    }
+  }
+  return null
+}
+
 const checkRedRecord = async (pr) => {
-  try {
-    const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json body,comments\` blocking in the foreground. Return stdout verbatim as evidence. On command failure return an empty evidence string; never infer a RED record.`, {
-      label: `${RUN_ID} red-record:#${pr}`, phase: 'Locate', effort: 'low', agentType: 'general-purpose',
-      schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
-    })
-    const data = JSON.parse(fetched.evidence)
-    if (typeof data.body !== 'string' || !Array.isArray(data.comments)) return false
-    const exemption = data.body.match(/^## RED exemption[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
-    if (exemption && /^Reason:[ \t]*\S[^\r\n]*$/m.test(exemption[1])) return true
-    return [data.body, ...data.comments.map(comment => comment.body)].some(body => {
-      if (typeof body !== 'string') return false
-      const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
-      if (!section) return false
-      return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
-        /^\s*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
-        /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
-    })
-  } catch { return false }
+  const data = await readRedRecord(pr)
+  if (!data) return 'unreadable'
+  const exemption = data.body.match(/^## RED exemption[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+  if (exemption && /^Reason:[ \t]*\S[^\r\n]*$/m.test(exemption[1])) return 'present'
+  const present = [data.body, ...data.comments.map(comment => comment.body)].some(body => {
+    if (typeof body !== 'string') return false
+    const section = body.match(/^## RED[^\n]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)
+    if (!section) return false
+    return [...section[1].matchAll(/```[^\n]*\n([\s\S]*?)```/g)].some(([, output]) =>
+      /^\s*(?:\$ )?(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^'\r\n]*'|"[^"\r\n]*")[ \t]+)*just test (?:unit|matrix|integration|system|system-real|acceptance) [^\r\n]+/m.test(output) &&
+      /^not ok [0-9]+[ \t]+[^\r\n]+/m.test(output))
+  })
+  return present ? 'present' : 'missing'
 }
 
 // Read fresh remote state rather than trusting an implementer's completion prose.
@@ -433,7 +482,7 @@ const reviewLight = async () => {
   return agent(`${GUARDRAILS}
 ${SKILL_LOAD.claude}
 ${TDD_REVIEW_RULES}
-You are a separate Claude reviewer, not the editor. Review only the complete diff in ${WT}: git diff origin/${BASE}...HEAD and any uncommitted diff. Do not run codex or a full-context review. Apply all required fixes in this worktree with TDD for behaviour changes; append independent commits without rewriting pushed history. Run ${GATES} blocking in the foreground after fixes. Do not push or open a PR. Return verdict mergeable only when every required fix is applied and gates pass; otherwise return blocked with concrete blocking items.`, { label: `${RUN_ID} review:#${A.issue}:light`, phase: 'Review', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
+You are a separate Claude reviewer, not the editor. Review only the complete diff in ${WT}: git diff origin/${BASE}...HEAD and any uncommitted diff. Do not run codex or a full-context review. Apply all required fixes in this worktree with TDD for behaviour changes; append independent commits without rewriting pushed history. Run ${GATES} blocking in the foreground after fixes. Do not push or open a PR. ${REVIEW_CLASSIFICATION} Return remaining required fixes or failed gates in defects.`, { label: `${RUN_ID} review:#${A.issue}:light`, phase: 'Review', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
 }
 
 // Light finishes editing and independent diff review before publishing.
@@ -449,7 +498,7 @@ TASK (issue #${A.issue}): ${A.task}
 For behaviour changes use TDD; mechanical edits without new behaviour need no new tests. Commit each completed slice with noreply author and committer and no attribution. Do not push or open a PR yet. Leave the worktree for independent review. Report commits and RED/GREEN evidence. Return status ready only after every slice is committed; otherwise failed. Always include reason: on failure name the step and explain why it failed; on success use an empty string.`, { label: `${RUN_ID} implement:#${A.issue}`, phase: 'Implement', schema: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'failed'] }, reason: { type: 'string' } }, required: ['status', 'reason'] }, agentType: 'general-purpose' })
   if (!edited || edited.status !== 'ready') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [`light editing did not complete: ${(edited && edited.reason) || 'editor returned no failure reason'}`] })
   const reviewed = await reviewLight()
-  if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
+  if (!collectReview(reviewed) || reviewed.defects.length > 0) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
   phase('Publish')
   await agent(`${GUARDRAILS}
 ${RED_PUBLICATION_RULES}
@@ -496,7 +545,7 @@ if (!RESUME) {
 
 if (RESUME && MODE === 'light') {
   const reviewed = await reviewLight()
-  if (!reviewed || reviewed.verdict !== 'mergeable') return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.blocking && reviewed.blocking.length) ? reviewed.blocking : ['light diff review did not pass'] })
+  if (!collectReview(reviewed) || reviewed.defects.length > 0) return result({ pr: A.pr || 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: (reviewed && reviewed.defects && reviewed.defects.length) ? reviewed.defects : ['light diff review did not pass'] })
 }
 
 let resumedPR
@@ -537,14 +586,14 @@ if (!CODEX) {
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
 for (;;) {
-  if (!await checkRedRecord(pr)) return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['PR 缺少 RED 紀錄或讀取失敗；請補上實際指令與失敗 TAP 輸出後重跑'] })
+  const redRecord = await checkRedRecord(pr)
+  if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
-  if (!c) { verdict = 'no-output'; blocking = ['codex agent returned nothing']; break }
-  verdict = c.verdict
-  blocking = c.blocking || []
+  if (!collectReview(c)) { verdict = 'no-output'; blocking = ['review returned missing or malformed findings']; break }
+  blocking = c.defects
+  verdict = blocking.length ? 'blocked' : 'mergeable'
   if (verdict === 'mergeable') break
-  if (verdict === 'no-output') { blocking = blocking.length ? blocking : ['codex returned no output; re-run when the quota is back']; break }
   if (fixes >= MAX) break
   fixes += 1
   prior = c.answer
