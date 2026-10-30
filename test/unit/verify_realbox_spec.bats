@@ -3630,6 +3630,7 @@ STUB
 
 @test "#663: a queued owned window appearing after timeout is closed by the final sweep" {
     _auto_window_tools
+    _control_window_clock
     _realbox_quiet 5.2.1
     cp "${STUBS}/ps" "${STATE}/late-ps"
     cat >"${STUBS}/ps" <<'STUB'
@@ -3637,11 +3638,11 @@ STUB
 set -euo pipefail
 if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory" ]]; then
     if [[ ! -e "${FAKE_STATE_DIR}/queued-at" ]]; then
-        printf '%s\n' "${EPOCHSECONDS}" >"${FAKE_STATE_DIR}/queued-at"
+        printf '%s\n' "$(<"${FAKE_STATE_DIR}/clock")" >"${FAKE_STATE_DIR}/queued-at"
     fi
     read -r queued <"${FAKE_STATE_DIR}/queued-at"
     export FAKE_NO_WINDOW=1
-    if (( EPOCHSECONDS - queued >= 11 )); then
+    if (( $(<"${FAKE_STATE_DIR}/clock") - queued >= 11 )); then
         export FAKE_NO_WINDOW=0
         printf 'late-window-visible\n' >"${FAKE_STATE_DIR}/late-visible"
     fi
