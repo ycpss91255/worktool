@@ -312,20 +312,28 @@ _assert_51_credits() {
     paragraph="$(sed -n '/^本 PR(#157)/p' "$1")"
     for path in doc/acceptance.md test/unit/acceptance_doc_spec.bats; do
         entry="${paragraph#*\`"${path}"\`（}"
-        [[ "${entry}" != "${paragraph}" ]]
+        [[ "${entry}" != "${paragraph}" ]] || return 1
         entry="${entry%%）*}"
         [[ "${entry}" =~ \#666／PR[[:space:]]\#682([^0-9]|$) ]] || return 1
     done
-    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
-    [[ "${paragraph}" != *'665-review-round'* ]]
+    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]] || return 1
+    [[ "${paragraph}" != *'665-review-round'* ]] || return 1
     run grep -F '(M3 adds enter / rm)' "${REPO_ROOT}/doc/acceptance.md"
-    assert_failure 1
+    assert_failure 1 || return 1
     run grep -F "recipe 名稱與說明以根目錄 \`justfile\`、\`script/box/justfile.box\`、\`script/test/justfile.test\` 為唯一來源" "${REPO_ROOT}/doc/acceptance.md"
     assert_success
 }
 
 @test "acceptance PR 157 credits the 5.1 output correction and preserves the box interface (#666)" {
     _assert_51_credits "${REPO_ROOT}/doc/acceptance.md"
+}
+
+@test "acceptance 5.1 credits reject missing box interface credit (#666)" {
+    local doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed 's@`script/box/justfile.box`；#665／PR #673@`script/box/justfile.box`；missing@' \
+        "${REPO_ROOT}/doc/acceptance.md" >"${doc}"
+    run _assert_51_credits "${doc}"
+    assert_failure
 }
 
 @test "acceptance 5.1 credits reject a different PR or a longer PR number (#666)" {
