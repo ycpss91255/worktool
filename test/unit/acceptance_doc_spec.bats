@@ -243,3 +243,16 @@ _normalize_realbox_doc_output() {
     run grep -F "recipe 名稱與說明以根目錄 \`justfile\`、\`script/box/justfile.box\`、\`script/test/justfile.test\` 為唯一來源" "${REPO_ROOT}/doc/acceptance.md"
     assert_success
 }
+
+@test "acceptance PR 157 credits the stale rm description fix on every touched entry (#666)" {
+    local paragraph entry path
+    paragraph="$(sed -n '/^本 PR(#157)/p' "${REPO_ROOT}/doc/acceptance.md")"
+    for path in justfile doc/structure.md doc/design.md doc/acceptance.md \
+        test/unit/justfile_spec.bats; do
+        entry="${paragraph#*\`"${path}"\`（}"
+        [[ "${entry}" != "${paragraph}" ]]
+        entry="${entry%%）*}"
+        [[ "${entry}" == *'#665／PR #673'* ]]
+    done
+    [[ "${paragraph}" == *"\`script/box/justfile.box\`；#665／PR #673"* ]]
+}
