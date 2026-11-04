@@ -7,7 +7,7 @@ distrobox「dev 盒」裡,使用者直接活在盒子內(終端自動進盒);hos
 
 這是 `init_ubuntu`(ycpss91255/initialization)的重設計繼任者,為新的大版本。
 
-狀態:M2(盒子清單格式 + 最小 assemble)。設計與 milestone 計畫見
+狀態:M3(終端自動進盒 + 效能達標)。設計與 milestone 計畫見
 [`doc/design.md`](doc/design.md);清單格式、assemble 流程與從 clone 到 assemble
 的完整驗證步驟見 [`doc/manifest.md`](doc/manifest.md);終端自動進盒的設定
 (`just box setup` / `status` / `enter`)見 [`doc/enter.md`](doc/enter.md);目錄結構見
@@ -39,9 +39,10 @@ fish(設定留 M5)。
 
 ### 流程
 
-clone -> `just test`(六道 gate,全部在 Docker)-> `just box assemble` -> 進盒
+clone -> `just test`(七道 gate,全部在 Docker)-> `just box assemble` -> 進盒
 (ghostty profile,使用者可選、預設開)-> 日常使用;CI 以 amd64 / arm64 matrix 跑
 同一套 `just test <tier>`,`ci-passed` 彙總。
+裸 `just test` 依序跑 lint、unit、matrix、integration、system、acceptance、system-real。
 
 [![流程圖](doc/diagram/flow.drawio.svg)](https://app.diagrams.net/?url=https://raw.githubusercontent.com/ycpss91255/worktool/main/doc/diagram/flow.drawio.svg)
 
@@ -64,26 +65,33 @@ M1-M17 依序、不可跨越,每個 milestone 之間有人類審核 gate;M1、M2
 
 `just` 是 worktool 的使用者通用介面,命令模型比照 `ycpss91255-docker/base`
 (ADR-00000005/10/11):零特例、每個動作都住在一個以動作命名的 namespace
-(`just <namespace> <recipe> [選項]`),裸指令跑最大範圍、子 recipe 與選項只收窄,
+(`just <namespace> <recipe> [選項]`),
+只有裸 `just test` 跑全部測試,其他 namespace 的裸指令只列清單;子 recipe 與選項只收窄,
 justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完整對照表見
 [`doc/design.md`](doc/design.md)「決策」)。
 
-裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明。
+裸 `just` 列出六個 namespaces(`test`、`box`、`verify`、`agent`、`worktree`、`job`)與各自的一行說明。
 
 | 指令 | 說明 |
 |------|------|
-| `just test` | 跑 CI 會跑的**全部**:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
+| `just test` | 跑 CI 會跑的**全部**:lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
 | `just test build` | 建置測試映像(選用;gate 會按需自動建) |
 | `just test lint` | ShellCheck gate(Docker 內) |
-| `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
+| `just test unit` / `matrix` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
 | `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`、`enter`) |
 | `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`);`--home` 是盒子自己的 HOME,預設 `~/<盒名>-box`(dev 盒 = `~/dev-box`),distrobox 建立容器後不可改 |
+| `just box bench [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json] [--shell CMD] [--max-wait N]` | 量測 enter、shell、inbox 延遲,各列 min / median / max;預設記錄 10 次、暖身 2 次;`--max-ms` 限制 shell median,`--json` 輸出 JSON,`--max-wait` 限制等待 host 安靜的秒數(預設 60;設定 `CI` 時 120) |
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--box <名稱>] [--distrobox <路徑>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty **執行檔** / `dev`;終端跑 `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`,得到盒內 fish,不自動開 tmux、不碰 `~/.tmux.conf`),每個決策印 `[INFO] <key>: <value> (default\|user)`(`terminal` 用預設時還會印偵測依據),寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊(wrapper 與 distrobox 都是**已 quote 的絕對路徑**,桌面啟動的終端才找得到;解析不到就拒絕整次執行,或用 `--distrobox` 指定);`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box status` | 印出目前生效的進盒決策、來源(`default` / `user`)、受管區塊是否存在,以及受管 command 裡的 wrapper 與 distrobox 是否可執行;repo 搬走或 wrapper 不可執行時提示重跑 `just box setup` |
 | `just box enter [--box <名稱>] [--distrobox <路徑>] [--timeout <秒>] [-- <指令>...]` | 進盒;盒子**第一次啟動**(distrobox-init 裝套件,可能要數分鐘)時先說明、給 `docker logs -f <盒>` 與 host log 路徑,之後每 10 秒印「階段 + 經過時間 + 最新一行輸出」,逾時(預設 15 分鐘)或失敗時印原因、log 最後 20 行與復原方式並 exit 1(不停、不刪盒);Ghostty 受管 command 與手動進盒共用此 wrapper(見 [`doc/enter.md`](doc/enter.md)) |
 | `just box help`(或 `h`) | 依序印 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh`、`enter.sh` 的 usage |
+| `just verify` | 只列清單,不執行驗收;exit 0 不代表驗收通過 |
+| `just verify all [--list] [--help]` | 依序執行全部非實機驗收群組(ui、gate、setup、diagram、evidence),遇錯即停 |
+| `just verify <群組> [ITEM...] [--list] [--help]` | 群組為 ui、gate、setup、diagram、evidence;省略 ITEM 跑該群組全部項目,指定 ITEM 只跑該項;各群組選項見 `just verify help` |
+| `just verify realbox [ITEM...] --allow-real-box` | 實機驗收,須明確 opt-in;不包含在 `just verify all` |
+| `just verify help`(或 `h`) | 印出各驗收腳本的 usage |
 
 打錯 recipe 名(`just test bogus`)得到 `just` 自己的錯誤、exit 1;給了腳本不認得的
 選項(`just box assemble --bogus`)得到腳本自己的 `unknown option ... (see --help)`、

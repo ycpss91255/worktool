@@ -32,14 +32,14 @@
 
 測試（每一條都是可查的檔名與案例名）：
 
-- `test/unit/justfile_spec.bats` 的「root justfile is five mod? lines (test, box, agent, worktree, job) and one default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
+- `test/unit/justfile_spec.bats` 的「root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
 - `test/unit/justfile_spec.bats` 的「no justfile prints usage or a valid: list of its own」：justfile 不自己印 usage 或選項清單，這些只能來自腳本。
 - `test/unit/justfile_spec.bats` 的「just test <verb> forwards exactly --<verb> for every tier verb and build」：每個 `just test` 動詞原樣轉發到 `test.sh`（以替身腳本記錄收到的參數）。
 - `test/unit/justfile_spec.bats` 的「just box assemble --dry-run prints distrobox assemble create --file box/dev.ini via the real script」：經 `just` 呼叫交付的 `assemble.sh`，看到的是使用者會看到的輸出。
 - `test/unit/justfile_spec.bats` 的「just box assemble --bogus is refused by assemble.sh itself (exit 2), not by the justfile」：經 `just` 給錯選項，拒絕與訊息來自腳本本身。
 - `test/unit/justfile_spec.bats` 的「just box setup --dry-run logs the decisions via the real script and writes nothing」：經 `just` 呼叫交付的 `setup.sh`。
 - `test/unit/justfile_spec.bats` 的「just box status via the real script reports the defaults under a throwaway HOME」：經 `just` 呼叫交付的 `status.sh`。
-- `test/unit/justfile_spec.bats` 的「ci.yml drives every gate as just test <tier>, job names unchanged」：`ci.yml` 裡以 `just` 執行的步驟恰好是 `just test ${{ matrix.tier }}` 與 `just test system-real` 兩個。它只檢查 `run: just` 開頭的步驟，不證明 CI 沒有其他不經 `just` 的步驟（見待補）。
+- `test/unit/justfile_spec.bats` 的「ci.yml drives every gate as just test <tier>, job names unchanged」：`ci.yml` 裡以 `just` 執行的步驟恰好是 `just test ${{ matrix.tier }}`、`just test system-real`、`just test verify-env` 與驗收容器中的 `worktool-verify:local -c 'just verify all'` 四個。它檢查 `run: just` 與 `worktool-verify:local -c` 開頭的行，不證明 CI 沒有其他不經 `just` 的步驟（見待補）。
 - `test/unit/hook/test_must_use_docker_spec.bats` 的「blocks a bare 'bats' run on the host and points at just test」：host 上直接跑 bats 會被擋。
 - `test/unit/hook/test_must_use_docker_spec.bats` 的「blocks a direct test.sh host step instead of just test」：host 上直接呼叫 `test.sh` 會被擋。
 - `test/acceptance/m2_selfcheck_spec.bats` 的「selfcheck catches a wrapper that skips validation」：交付的 self-check 會抓到跳過參數驗證的包裝腳本，驗的是黑箱的判定結果。它直接呼叫 `script/test/selfcheck.sh`，不經 `just test selfcheck`（見待補）。

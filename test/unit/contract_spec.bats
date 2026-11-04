@@ -226,3 +226,104 @@ _checks_per_promise() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+@test "#724: structure directory tree includes the M3 helpers, evidence and unit fixtures" {
+    local tree section name path
+    tree="$(sed -n '/^## 目錄結構/,/^```$/p' "${REPO_ROOT}/doc/structure.md")"
+    section="$(sed -n '/^├── lib\//,/^├── box\//p' <<<"${tree}")"
+    for name in config_backup.sh distrobox_manager.sh guard.sh verify_run.sh realbox_interrupt.sh; do
+        [[ "${section}" == *"── ${name} "* ]]
+    done
+    section="$(sed -n '/^│   └── helper\//,/^├── dockerfile\//p' <<<"${tree}")"
+    for name in diagnostics.bash interrupt_load.bash realbox_window.bash; do
+        [[ "${section}" == *"── ${name} "* ]]
+    done
+    section="$(sed -n '/^├── doc\//,/^├── .agents\//p' <<<"${tree}")"
+    [[ "${section}" == *'── evidence/ '* ]]
+    section="$(sed -n '/^│   │   └── fixture\//,/^│   ├── matrix\//p' <<<"${tree}")"
+    while IFS= read -r path; do
+        name="${path##*/}"
+        [[ "${section}" == *"── ${name} "* ]]
+    done < <(find "${REPO_ROOT}/test/unit/fixture" -type f | sort)
+}
+
+@test "#724: structure describes guard as fail-closed status primitives" {
+    run grep -F '── guard.sh ' "${REPO_ROOT}/doc/structure.md"
+    assert_success
+    assert_output --partial '失敗封閉的狀態原語'
+    assert_output --partial '區分不存在與無法判定'
+    refute_output --partial '驗收前置檢查與拒絕條件'
+}
+
+_check_evidence_tree() {
+    local root="$1" files
+    files=$(cd "${root}/doc/evidence" && find . -type f | sed 's|^./||' | sort)
+    jq -ner --arg files "$files" --rawfile structure "${root}/doc/structure.md" '
+        ($structure | split("\n") | map(select(contains("── evidence/"))) | .[0]) as $description |
+        ($structure | split("── evidence/")[1] | split("\n│   ├── ")[0] |
+            split("\n")[1:] | map(capture("^(?<indent>(?:│   |    )*)[├└]── (?<name>[^ ]+)"))) as $entries |
+        (reduce $entries[] as $entry ({dirs: [], files: []};
+            (($entry.indent | length) / 4 - 2) as $depth |
+            .dirs = .dirs[:$depth] |
+            if ($entry.name | endswith("/")) then .dirs += [$entry.name | rtrimstr("/")]
+            else .files += [(.dirs + [$entry.name]) | join("/")] end) | .files | sort) as $documented |
+        if $documented == ($files | split("\n") | sort) then $description
+        else error("evidence tree: documented files differ from directory contents") end'
+}
+
+@test "#724: evidence tree description distinguishes existing contents from new review policy" {
+    run _check_evidence_tree "${REPO_ROOT}"
+    assert_success
+    assert_output --partial '驗收檢查程式、fixture 與證據'
+    assert_output --partial '既有 review 紀錄'
+    assert_output --partial '新增審查紀錄改放 PR 留言或 .agents/state/'
+}
+
+@test "#724: evidence tree check rejects removed or undocumented contents" {
+    local copy="${BATS_TEST_TMPDIR}/copy" path
+    mkdir -p "${copy}/doc"
+    cp "${REPO_ROOT}/doc/structure.md" "${copy}/doc/"
+    cp -R "${REPO_ROOT}/doc/evidence" "${copy}/doc/"
+    run _check_evidence_tree "${copy}"
+    assert_success
+    while IFS= read -r path; do
+        rm "${copy}/doc/evidence/${path}"
+        run _check_evidence_tree "${copy}"
+        assert_failure
+        cp "${REPO_ROOT}/doc/evidence/${path}" "${copy}/doc/evidence/${path}"
+    done < <(cd "${REPO_ROOT}/doc/evidence" && find . -type f | sed 's|^./||' | sort)
+    for path in unexpected.txt negative/unexpected.json; do
+        touch "${copy}/doc/evidence/${path}"
+        run _check_evidence_tree "${copy}"
+        assert_failure
+        rm "${copy}/doc/evidence/${path}"
+    done
+}
+
+@test "#728: user config symlinks are delivered and cite preservation checks" {
+    run _section 3
+    assert_success
+    assert_output --partial "以 symlink 從 host HOME 帶進盒子 HOME"
+    assert_output --partial "test/integration/assemble_spec.bats"
+    refute_output --partial "尚未實作"
+    refute_output --partial "#199 落地時"
+    run cat "${REPO_ROOT}/doc/adr/0004-invariant-user-content.md"
+    assert_success
+    assert_output --partial "test/unit/link_spec.bats"
+    refute_output --partial "待補，由 #199 實作"
+}
+
+@test "#728: verify exit 3 is unavailable or inconclusive with verification references" {
+    run bash -c 'grep -A1 "^- \*\*永不靜默失敗" "$1"' _ "${CONTRACT}"
+    assert_success
+    assert_output --regexp "just verify.*\`3\`.*UNAVAILABLE.*未判定"
+    assert_output --partial "test/unit/verify_all_spec.bats"
+    assert_output --partial "test/unit/verify_gate_spec.bats"
+}
+
+@test "#728: latency index note cites the settled ADR 0003 decision" {
+    run _section 6
+    assert_success
+    assert_output --regexp '進盒 < 300 ms.*已.*ADR 0003'
+    refute_output --partial "待 #181 定案"
+}

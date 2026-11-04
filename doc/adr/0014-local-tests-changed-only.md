@@ -18,7 +18,7 @@
 3. GitHub CI 執行全部 tier，作為 branch protection 所需 `ci-passed` 的完整驗證。
 4. 所有測試仍只經 `just test ...` 在 Docker 內執行；本決策只改變本機選取範圍，不建立另一套測試入口。
 5. 本決策取代 #274 要求本機執行完整 unit tier 的部分。
-6. `just test changed` 的自動選取執行 lint、改到或映射到的 unit spec 與 matrix spec；依 #378，改到 `script/`、`lib/`、`box/`、`justfile*`、`doc/adr/` 時加跑 `script/test/test.sh` 的整份共用守門清單，亦可透過 `just test guards` 明確執行；依 #376，無法判定影響、缺少映射 spec、測試基礎設施變更或無法讀取 diff 時，列出檔名（若可取得）與原因，提示交由 CI 驗證，不在本機跑整層；同次改動已選出的 spec 仍執行。integration、system、system-real、acceptance 與 Ghostty／system-real runner 映像一律提示並交由 CI 驗證，開發者仍可明確執行個別重 tier 指令。
+6. `just test changed` 的自動選取執行 lint、改到或映射到的 unit spec 與 matrix spec；依 #378，改到 `script/`、`lib/`、`box/`、`justfile*`、`doc/adr/` 時加跑 `script/test/test.sh` 的整份共用守門清單，其中 config mutation 僅保留便宜的 drift guards，亦可透過 `just test guards` 明確執行；config mutation 案例則在其輸入變更時執行：由共用表格推導的 `lib/config.sh`、owner 模組與 case spec，以及 mutation spec 本身與共用 helper；CI 仍執行全部案例。依 #376，無法判定影響、缺少映射 spec、測試基礎設施變更或無法讀取 diff 時，列出檔名（若可取得）與原因，提示交由 CI 驗證，不在本機跑整層；同次改動已選出的 spec 仍執行。integration、system、system-real、acceptance 與 Ghostty／system-real runner 映像一律提示並交由 CI 驗證，開發者仍可明確執行個別重 tier 指令。
 
 ## 影響
 

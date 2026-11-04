@@ -198,7 +198,7 @@ _block_count() {
 # must be: `run cat` / `$(...)` drop trailing newlines and cannot see the
 # framing. Only the replace-only half can see a writer that normalises the
 # final newline (an appended key always ends the file with one); the
-# mutation spec (config_mutation_spec) proves each half fails on the
+# mutation spec (config_mutation_spec.bats) proves each half fails on the
 # mutant it is meant to see.
 
 # EOF framings, one `<name>|<tail>` per line (printf %b strings).

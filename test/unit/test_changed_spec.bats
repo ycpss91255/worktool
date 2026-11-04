@@ -230,6 +230,23 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
 }
 
+@test "test.sh --changed maps a changed verify script to its spec" {
+    mkdir -p "${TEMP_REPO}/script/verify"
+    printf '# verify gate script\n' >"${TEMP_REPO}/script/verify/gate.sh"
+    printf '@test "verify gate" { true; }\n' \
+        >"${TEMP_REPO}/test/unit/verify_gate_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/verify/gate.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
+        _ "${TEMP_REPO}"
+
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' \
+        --ci-lint '--ci-unit test/unit/verify_gate_spec.bats')"
+    refute_output --partial "沒有對應 spec"
+}
+
 @test "test.sh --changed maps a source file to specs across tiers" {
     mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration"
     printf '# setup script\n' >"${TEMP_REPO}/script/box/setup.sh"
@@ -276,6 +293,25 @@ _dispatched() {
                 missing=1
             fi
         done < <(_changed_path_map)
+        exit "$missing"
+    ' _ "${REPO_ROOT}"
+
+    assert_success
+}
+
+@test "changed path map covers every tracked verify file and library" {
+    run bash -c '
+        source "$1/script/test/test.sh"
+        paths=$(git -c "safe.directory=$1" -C "$1" ls-files "script/verify/*" "lib/*.sh") \
+            || exit 1
+        [[ -n "$paths" ]] || exit 1
+        missing=0
+        while IFS= read -r path; do
+            if [[ -z "$(_mapped_specs "$path")" ]]; then
+                printf "missing changed path mapping: %s\n" "$path"
+                missing=1
+            fi
+        done <<<"$paths"
         exit "$missing"
     ' _ "${REPO_ROOT}"
 
@@ -486,23 +522,71 @@ _document_change() {
     done
 }
 
-@test "test.sh --changed adds all guards when only bench changes" {
-    mkdir -p "${TEMP_REPO}/script/box"
-    printf '# bench\n' >"${TEMP_REPO}/script/box/bench.sh"
+_mutation_fixture() {
+    mkdir -p "${TEMP_REPO}/test/helper"
+    cp "${REPO_ROOT}/test/helper/config_mutation_rows.bash" "${TEMP_REPO}/test/helper/"
+    if [[ -f "${REPO_ROOT}/test/helper/config_mutation_mutants.bash" ]]; then
+        cp "${REPO_ROOT}/test/helper/config_mutation_mutants.bash" "${TEMP_REPO}/test/helper/"
+    fi
     local _spec
-    for _spec in config_owner config_mutation config_validate config_graph; do
+    for _spec in config_owner config_mutation_drift config_mutation config_validate config_graph; do
         printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/${_spec}_spec.bats"
     done
+}
+
+_mutation_change() {
+    local _path="$1"
+    _mutation_fixture
+    mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
+    printf '# baseline\n' >"${TEMP_REPO}/${_path}"
     _commit_baseline
-    printf '# changed\n' >>"${TEMP_REPO}/script/box/bench.sh"
-
+    printf '# changed\n' >>"${TEMP_REPO}/${_path}"
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
-
     assert_success
-    for _spec in config_owner config_mutation config_validate config_graph; do
+}
+
+@test "test.sh --changed adds cheap drift guards for a script outside mutation tables" {
+    _mutation_change script/box/other.sh
+    local _spec
+    for _spec in config_owner config_mutation_drift config_validate config_graph; do
         [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
             || fail "missing guard: ${_spec}"
     done
+    [[ "$(_dispatched)" != *'test/unit/config_mutation_spec.bats'* ]] \
+        || fail 'unrelated script selected expensive mutants'
+}
+
+@test "test.sh --changed selects mutation cases for config library input" {
+    _mutation_change lib/config.sh
+    [[ "$(_dispatched)" == *'test/unit/config_mutation_spec.bats'* ]] \
+        || fail 'config library did not select mutants'
+}
+
+@test "test.sh --changed selects mutation cases for a changed case spec" {
+    _mutation_change test/unit/setup_spec.bats
+    [[ "$(_dispatched)" == *'test/unit/setup_spec.bats'* ]] || fail 'missing changed spec'
+    [[ "$(_dispatched)" == *'test/unit/config_mutation_spec.bats'* ]] \
+        || fail 'case spec did not select mutants'
+}
+
+@test "test.sh --changed adds all drift guards and mutation cases when only bench changes" {
+    _mutation_change script/box/bench.sh
+    local _spec
+    for _spec in config_owner config_mutation_drift config_mutation config_validate config_graph; do
+        [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
+            || fail "missing guard or owner mutants: ${_spec}"
+    done
+}
+
+@test "test.sh --changed selects both mutation specs and retains fallback for rows helper" {
+    _mutation_fixture
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/test/helper/config_mutation_rows.bash"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_output --partial '測試基礎設施變更'
+    [[ "$(_dispatched)" == *'test/unit/config_mutation_drift_spec.bats'* ]] || fail 'missing drift'
+    [[ "$(_dispatched)" == *'test/unit/config_mutation_spec.bats'* ]] || fail 'missing mutants'
 }
 
 @test "just test guards forwards the shared guard selection and validates before help" {

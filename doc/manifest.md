@@ -1,7 +1,7 @@
 # 盒子清單格式與 assemble 流程
 
 本文件說明 worktool 的「盒子清單」(box manifest)格式,以及如何從清單
-assemble 出共用的 dev 盒。狀態:M2(盒子清單格式 + 最小 assemble)。整體設計與
+assemble 出共用的 dev 盒。狀態:M3(終端自動進盒 + 效能達標)。整體設計與
 治理見 [`design.md`](design.md);目錄結構與測試 gate 見
 [`structure.md`](structure.md)。
 
@@ -34,7 +34,8 @@ init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | ba
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
 放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 —— `just box setup` 預設把
-終端指到 `'<distrobox>' enter dev`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
+終端指到 `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`
+受管 wrapper,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
 使用者進盒後自己開的工具。M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、
 plugin)留在 M5。
 
@@ -353,30 +354,41 @@ inbox: min=<ms> median=<ms> max=<ms> ms
 - **安靜判準**:CPU pressure(PSI)的 `some avg10 <= 2.00`(含 2.00),**連續 5 秒**
   成立(每秒讀一次,t .. t+5 都成立)。PSI 優先讀 bench.sh **自己所在 cgroup v2** 的
   `cpu.pressure`(`/proc/self/cgroup` 的 `0::<路徑>` 對到 `/sys/fs/cgroup<路徑>/cpu.pressure`),
-  讀不到才讀 `/proc/pressure/cpu`。loadavg(`/proc/loadavg`)**只記錄、不判定**。
+  讀不到才讀 `/proc/pressure/cpu`。另以 engine `inspect --format '{{.State.Pid}}' <box>`
+  取得盒子主 PID,解析 `/proc/<pid>/cgroup` 的 `0::<路徑>`,相對於讀取者的
+  cgroup namespace 對應 `/sys/fs/cgroup<路徑>/cpu.pressure`;以兩個來源的**較大值**判定。
+  loadavg(`/proc/loadavg`)**只記錄、不判定**。
 - **最多等待**:`--max-wait` 秒,預設 60;有設 `CI` 環境變數時預設 120
   (`script/test/test.sh` 以 `-e CI` 把它傳進 system-real 的 DinD runner)。逾時 →
   exit 3,STDERR 印
   `[ERROR] host too busy to measure (inconclusive): <PSI 路徑> some avg10=<值> for <n>s; loadavg=<值>; re-run when idle`,
   STDOUT 什麼都不印,distrobox 一次都沒被呼叫。
 - **量測途中**:每一次執行(暖身也算、失敗的那一次也算)的**前後**都讀取並**記錄** PSI
-  (每個邊界在 STDERR 印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
+  (每個邊界在 STDERR 為每個可讀來源各印一行 `[INFO] psi <before|after> <指標> run <k>: <PSI 路徑> some avg10=<值>`,
   STDOUT 不變);任何一次超標(精確比較、不截斷小數:`2.001` 算超標),
   **整批作廢** → exit 3,STDERR 印
   `[ERROR] host too busy mid-run (inconclusive): <PSI 路徑> some avg10=<值> <before|after> <指標> run <k>; loadavg=<值>; batch void, re-run when idle`,
   不印任何指標行、不判 `--max-ms`;同一次執行本身失敗時也是 exit 3、不是 1。讀不到
   數值時 `<值>` 印 `?`。**不刪慢樣本**、不重試到通過(會放過真實退化)。
-- **cgroup 的盲點**:cgroup 的 PSI 只計入該 cgroup 內的任務;量測開始前 cgroup 裡
-  幾乎沒有可執行的任務,所以即使整台主機很忙,前置等待在 cgroup 上也常常很快通過。
-  擋下忙碌主機的是量測途中的前後檢查:bench 自己的任務一開始排隊等 CPU,壓力就超標、
-  整批作廢(見 ADR 0003「影響」的實跑數字)。
+- **cgroup 的盲點**:盒內行程跑在盒子的 cgroup,並非 bench 自身的 cgroup;只檢查
+  bench 的 PSI 會漏掉盒內任務的 CPU 排隊。#491 補上盒子來源,前置等待與執行前後
+  都比較兩者,理由見 ADR 0003。不刪樣本、不加重試。
+- **冷啟動查找**:開始時盒子尚未啟動而解析不到來源,每次執行前(含暖身)重新解析,
+  直到成功;從成功的該次起,每個 PSI 邊界都納入盒子來源並記錄路徑與數值。
+  這不重試量測,前置等待規則不變。
+- **盒子 PSI 讀不到**:整批仍無法解析 PID 或 cgroup、壓力檔讀不到或沒有合法數值時,
+  警告 `box cgroup PSI unreadable (<路徑或 unresolved>) - box cgroup check skipped`,
+  仍保留 bench 自身來源的判定;已解析的壓力檔在量測途中讀不到也逐次警告。
+  結尾以 `box cgroup PSI not checked at: before enter run 1; after enter run 1`
+  格式列出所有缺少盒子讀值的執行前後邊界(含暖身),不宣稱盒子全程安靜。
 - **證據**:安靜後印 `[INFO] host quiet: <PSI 路徑> some avg10=<值> <= 2.00 for 5s; loadavg=<值>`,
-  量完印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
-- **沒有 PSI**:兩個來源都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
+  量完為每個全程可讀的來源各印 `[INFO] host stayed quiet: <PSI 路徑> some avg10 peak=<整批最高值> over every run; loadavg=<值>`。
+- **沒有 PSI**:bench 的兩個候選來源與盒子 PSI 都讀不到(核心沒開 PSI,或檔案裡沒有可解析的 `some avg10`)時,
   印 `[WARN] no CPU pressure (PSI) readable (...) - quiet-host check skipped, measuring anyway; loadavg=<值>`
   並**照常量測、照常判定**——說出來、不假裝檢查過,也不無止境地等下去。
 - **測試專用**:環境變數 `BENCH_PSI_FILE` 取代上述查找,直接讀指定檔案(`--help` 標為
-  tests only);單元測試以假 PSI 檔與假 `sleep` 驅動等待。
+  tests only);`BENCH_BOX_PSI_FILE` 則取代盒子 PSI 查找。單元測試以假 PSI 檔與假
+  `sleep` 驅動等待。
 
 CI 與實機同一套規則、同一個入口:CI 上的 3 一樣讓 job 失敗,不因 runner 忙而跳過 gate;
 300 ms 門檻不變。
@@ -410,7 +422,7 @@ shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 
 這支工具**只量測、只在 `--max-ms` 明確給定時才判定**;本工具是 issue #22 從中拆出來
 的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
-維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
+維持 docker + 預設 runc)。「進盒 ≤ 300 ms」的達標**由系統層 real-engine 組強制**
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
 的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
 --max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
@@ -485,7 +497,8 @@ issue #129),不再延後到 M5。
     `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
     是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
     `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
-    `'<distrobox 絕對路徑>' enter dev`(後面不接 tmux,issue #179)、`--box work`
+    `'<repo>/script/box/enter.sh' --distrobox '<distrobox 絕對路徑>' --box 'dev'`
+    (後面不接 tmux,issue #179)、`--box work`
     換成該盒名。另有兩個對照案例證明斷言不是
     恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
     `+validate-config` 以 `unknown field` 拒絕。
@@ -587,7 +600,7 @@ issue #129),不再延後到 M5。
     fzf --version` 印出版本,容器狀態為 `running`;M3(issue #160)再加兩個案例:
     `distrobox enter dev -- tmux -V` 印出 `tmux <版本>`、`distrobox enter dev --
     fish --version` 印出 `fish, version <版本>`,兩個版本都印進 TAP log 當證據
-    (終端 profile 跑 `'<distrobox>' enter dev` 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
+    (終端 profile 經 `script/box/enter.sh` wrapper 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
     盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
     exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
     fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
@@ -763,9 +776,9 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 
 | 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
 |------|--------------|------|------|------|------|
-| 自動化全綠(lint + unit + integration + system + system-real + acceptance) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
+| 自動化全綠(lint + unit + matrix + integration + system + acceptance + system-real) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:六個 matrix gate 與 `test-system-real` 皆 `success`,無非豁免 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
 | 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | main(#146 合併後;審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
-| 真實可用盒(`script/box/assemble.sh` 真的 assemble 盒子 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(M2 時 8 案例;M3 加 bench gate 兩案例與 tmux / fish 兩案例後為 12):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
+| 真實可用盒(`script/box/assemble.sh` 真的 assemble 盒子 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(案例數以該 spec 的宣告為準):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -794,9 +807,10 @@ cd worktool
 
 ### 2. 自動測試(全部在 Docker 內,不需 distrobox)
 
-入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明(`test`
-那一行就列了全部子 recipe);裸 `just test` **不是列表**,而是直接跑全部;腳本層的
-usage 用 `just test help`。第一次可先建測試映像,再依序跑六道 gate;每一步下一行的
+入口是 `just`:裸 `just` 列出六個 namespace(`test`、`box`、`verify`、`agent`、
+`worktree`、`job`)與各自的一行說明;`just --list test` 列出 test 的子 recipe。
+裸 `just test` **不是列表**,而是直接跑全部;腳本層的 usage 用 `just test help`。
+第一次可先建測試映像,再依序跑七道 gate;每一步下一行的
 `# 底層:` 標出 recipe 實際轉發到的腳本(沒有 `just` 時可直接執行那一行):
 
 ```bash
@@ -806,6 +820,8 @@ just test lint          # ShellCheck(*.sh + *.bats)
 # 底層:./script/test/test.sh --lint
 just test unit          # 單元 bats(test/unit/)
 # 底層:./script/test/test.sh --unit
+just test matrix        # 完整乘積矩陣 bats(test/matrix/)
+# 底層:./script/test/test.sh --matrix
 just test integration   # 整合 bats(test/integration/;兩組:預設組 + ghostty 組,後者在 ubuntu:26.04 的 ghostty 映像內,不需顯示器)
 # 底層:./script/test/test.sh --integration
 just test system        # 系統 bats,shim 組(test/system/;真實 distrobox + 假容器管理器)
@@ -816,7 +832,7 @@ just test system-real   # 系統 bats,real-engine 組(docker-in-docker,--privile
 # 底層:./script/test/test.sh --system-real
 ```
 
-一次跑完:裸 `just test`(底層 `./script/test/test.sh` 不帶旗標;依序 lint、unit、
+一次跑完:裸 `just test`(底層 `./script/test/test.sh` 不帶旗標;依序 lint、unit、matrix、
 integration、system、acceptance、system-real,遇到第一個失敗即停,和 CI 跑的一模一樣)。
 子 recipe 只收窄:`just test <tier>` 只跑那一層。打錯 recipe 名(例如 `just test bogus`)
 得到的是 `just` 自己的錯誤「Justfile does not contain recipe `bogus`」、exit 1,什麼都
@@ -835,6 +851,7 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
   - `just test unit`:所有測項 `ok`(涵蓋缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
     單或雙引號內純空白 image / 引號不成對的 image / image 出現在區段之前 / 多區段
     等案例),結尾 `[ci] unit bats OK`。
+  - `just test matrix`:所有測項 `ok`(完整乘積矩陣),結尾 `[ci] matrix bats OK`。
   - `just test integration`:所有測項 `ok`(含「無效 manifest(缺 image、引號不成對)
     絕不呼叫 distrobox」負向測試),結尾 `[ci] integration bats OK`。
   - `just test system`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成
@@ -845,7 +862,7 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
     repo 印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
     `[ci] acceptance bats OK`。
   - `just test system-real`:先看到 `[system-real] dockerd ready after Ns` 與
-    `[system-real] engine 29.8.0 ...`,接著 `1..12` 且 12 項全 `ok`(assemble、第一次 enter
+    `[system-real] engine 29.8.0 ...`,接著 `1..N` 且 N 等於該 spec 宣告的案例數、全部 `ok`(assemble、第一次 enter
     完成初始化後 `rg --version`、`fzf --version`、`tmux -V`、`fish --version`、以 fish
     量的進盒延遲 gate 與其負向案例、冪等、`distrobox rm`),結尾
     `[ci] system-real bats OK`、`[system-real] cleanup: containers left in the nested
@@ -853,6 +870,11 @@ integration、system、acceptance、system-real,遇到第一個失敗即停,和 
 - 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
   、根本沒跑到任何案例、或該層任一必要 spec 缺檔/零案例(每層先印
   `[ci]   required specs OK (N case(s) declared by M file(s))` 才開始跑),同樣視為失敗。
+  唯一的 skip 豁免是 unit 層在 `WORKTOOL_STRESS` 不為 `1` 時,以下三個 CPU repro
+  案例以理由 `set WORKTOOL_STRESS=1 to run CPU repro` 跳過:
+  - `verify_run: HUP under CPU load always finishes before cleanup`
+  - `5.1: group HUP under CPU load finishes before cleanup during assemble and bench`
+  - `timeout cleanup: TERM-ignoring just descendant under CPU load`
 
 ### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 

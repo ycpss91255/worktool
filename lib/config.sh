@@ -25,7 +25,8 @@
 #                                      profiles; not the state file)
 #
 # Contract. Each `@prop` line is one promise with a stable ID. What is
-# checked (test/unit/config_mutation_spec.bats), and nothing more:
+# checked by config_mutation_drift_spec.bats (table drift) and
+# config_mutation_spec.bats (mutant cases) under test/unit/:
 #   - exactly one table row per @prop line, every ID once in each (a drift
 #     guard fails otherwise);
 #   - each row's mutant makes the spec cases the row names fail;

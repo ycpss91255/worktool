@@ -3,7 +3,7 @@
 # round 8), for the ownership specs.
 #
 # Loaded by test/unit/config_owner_spec.bats and
-# test/unit/config_mutation_spec.bats after helper/common (REPO_ROOT).
+# test/unit/config_mutation_drift_spec.bats after helper/common (REPO_ROOT).
 #
 #   graph_modules <tree> <file>   every file <file> reaches by `source` / `.`
 #                                 lines, itself included, repo-relative, one
@@ -31,6 +31,8 @@ _graph_target() {
     local _a="${1#\"}"
     _a="${_a%\"}"
     case "${_a}" in
+        '${REPO_ROOT}/test/helper/'*) printf 'test/helper/%s\n' "${_a#*test/helper/}" ;;
+        '${SCRIPT_DIR}/config_backup_paths.sh') printf 'script/verify/config_backup_paths.sh\n' ;;
         '${SCRIPT_DIR}/../../lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;
         '${'*'LIB_DIR}/'*) printf 'lib/%s\n' "${_a#*\}/}" ;;
         '${'*'}/lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;

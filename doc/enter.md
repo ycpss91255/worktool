@@ -29,6 +29,14 @@ profile** 的邊界最乾淨(不影響 ssh、cron、非互動 shell、scp);host 
 
 ## 決策:終端不自動開 tmux;盒內的 tmux 用盒子自己的 server(issue #179)
 
+建盒時，`just box assemble` 僅在呼叫 distrobox assemble 的環境中固定
+`SHELL=/usr/bin/fish`（#472）。distrobox 1.8 create 記錄其 basename `fish`，
+init 安裝 manifest 的 fish 套件後，在盒內解析執行檔並設定使用者登入 shell。
+因此 host 的 `SHELL=/bin/bash` 不會改變盒內預設：Ghostty 受管命令與
+`just box enter` 都由 distrobox 進入盒內 fish；不要求 host 安裝 fish。
+這項設定在建盒時生效，既有 bash 盒須由使用者移除後重新 assemble。
+enter 的明確命令、首次初始化進度與逾時，以及 tmux 環境隔離維持原流程。
+
 M3 實機驗收(PR #157)出現**假成功**:受管命令原本是
 `'<distrobox>' enter dev -- tmux new -A -s main`,而 `distrobox-create` 固定把
 host 的 `/tmp` 掛進盒內(`--volume /tmp:/tmp`),tmux 的預設 socket
@@ -272,6 +280,11 @@ round 1 拿掉的「裸名字 fallback」同一類問題:**已知壞掉的半套
 
 ### 範例 log
 
+以下 log 均為節錄，省略部分診斷行：例如 distrobox.conf 的
+`wrote:`／`unchanged:`、`ghostty config:`，以及設定變更後的 Ghostty reload 提示。
+實際執行時仍會依設定與檔案狀態印出這些行；reload 提示只在 Ghostty 設定變更時出現。
+除另有說明外，以下 Ghostty 範例均沿用 `config.ghostty` 已存在的前提。
+
 預設（`config.ghostty` 已存在；PATH 上有 `/usr/bin/ghostty`,distrobox 在 `~/.local/bin`):
 
 ```text
@@ -310,7 +323,7 @@ $ just box setup --box work
 [INFO] box: work (user)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 沒有支援的終端(`terminal: none`):
@@ -346,7 +359,7 @@ $ echo $?
 $ just box setup --distrobox /opt/distrobox/bin/distrobox
 ...
 [INFO] distrobox: /opt/distrobox/bin/distrobox (--distrobox; absolute path written into the managed command)
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box 'dev')
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box 'dev')
 ```
 
 還原 host shell(印出還原了什麼;`--auto-enter no` 不寫受管 command,所以不需要
@@ -359,10 +372,10 @@ $ just box setup --auto-enter no
 [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
 [INFO] box: work (user)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] removed: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] removed: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
-沒東西可還原時也會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config (no managed block)`。
+沒東西可還原時也會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config.ghostty (no managed block)`。
 
 `--dry-run` 只印不寫:
 
@@ -375,7 +388,7 @@ $ just box setup --dry-run --box work
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] dry-run: would write /home/me/.config/worktool/config
 [INFO] dry-run: would write /home/me/.config/distrobox/distrobox.conf (managed block: for _worktool_a in "$@"; do ... 'work') unset TMUX TMUX_PANE; ...)
-[INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] dry-run: would write /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 查目前生效的決策(印到 stdout,沒有 log 標籤,可直接 grep):
@@ -386,7 +399,7 @@ config: /home/me/.config/worktool/config
 auto-enter: yes (default)
 terminal: ghostty (default)
 box: work (user)
-ghostty: /home/me/.config/ghostty/config (managed block: present)
+ghostty: /home/me/.config/ghostty/config.ghostty (managed block: present)
 distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
 wrapper: /home/me/worktool/script/box/enter.sh (recorded in a managed block: runnable)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
@@ -639,6 +652,6 @@ host tmux server 的部分在 system-real):
   payload。enter 與 shell 在 host 計時,包含 wrapper 與首次啟動檢查;inbox
   仍只計盒內 shell 啟動。setup 準備不計時、不更動使用者設定。CI system-real
   以 `fish -c exit` 的 shell median 與 300 ms 門檻判定,指標與 gate 不變。
-- 驗收:進盒延遲量測與達標(< 300ms;#22 / #150)與效能驗收測試(#23)是
+- 驗收:進盒延遲量測與達標(≤ 300ms;#22 / #150)與效能驗收測試(#23)是
   M3 的其他 issue;實機「開新終端主觀順暢」留在 [`acceptance.md`](acceptance.md)
   的人類清單。

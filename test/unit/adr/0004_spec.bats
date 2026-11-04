@@ -76,6 +76,15 @@ _contract_promise_1() {
     assert_output --regexp "test/[a-z]+/assemble_spec\.bats"
 }
 
+@test "#728: ADR 0004 describes home_record as an in-place config_set update and cites config_write_atomic" {
+    run cat "${ADR_0004}"
+    assert_success
+    refute_output --partial "把新的一對附加在檔尾"
+    assert_output --partial "config_set"
+    assert_output --partial "config_write_atomic"
+    refute_output --partial "\`_write_atomic\`"
+}
+
 @test "doc/contract.md invariant index entry 1 links this ADR (issue #202 backfill)" {
     assert [ -f "${REPO_ROOT}/doc/adr/0004-invariant-user-content.md" ]
     assert [ -f "${REPO_ROOT}/doc/contract.md" ]
@@ -86,7 +95,7 @@ _contract_promise_1() {
     refute_output --partial "待寫"
 }
 
-@test "ADR 0004 states the state-file key ownership exception and lists the dropped user lines as 待補" {
+@test "ADR 0004 states the state-file key ownership exception and cites the delivered user-line preservation" {
     run sed -n '/^## 性質/,/^## /p' "${ADR_0004}"
     assert_success
     assert_output --partial "狀態鍵"
@@ -95,16 +104,18 @@ _contract_promise_1() {
     run _adr4_guard_section
     assert_success
     refute_output --partial "沒有刻意改動受管區塊以外既有內容的路徑"
-    refute_output --partial "保留它不管的行"
-    assert_output --regexp "狀態檔裡使用者自己加的行.*待補"
+    assert_output --partial "config_set"
+    assert_output --partial "#199 r4: every setup run x every EOF framing, appending two keys, keeps every foreign byte"
+    refute_line --regexp "狀態檔裡使用者自己加的行.*待補"
 }
 
-@test "doc/contract.md invariant-1 promise carries the state-key exception and the known state-file gap" {
+@test "doc/contract.md invariant-1 promise carries the state-key exception and verified state-file preservation" {
     run _contract_promise_1
     assert_success
     [ "${#lines[@]}" -eq 2 ]
     assert_line --index 0 --partial "\`~/.config/worktool/config\`"
     assert_line --index 0 --partial "狀態鍵"
     assert_line --index 0 --partial "](adr/0004-invariant-user-content.md)"
-    assert_line --index 1 --regexp "^  - 驗證：.*狀態檔裡使用者自己加的行.*待驗"
+    assert_line --index 1 --partial "使用者自己加的註解與鍵原樣保留"
+    refute_output --partial "會刪掉它們"
 }

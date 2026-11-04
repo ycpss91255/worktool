@@ -68,11 +68,11 @@ install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/000
 2. bootstrap 順序:host 裝 docker+distrobox(+ `just`,見「決策」)-> host
    install script(驅動/GUI)-> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
-4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
+4. 效能目標:進盒 prompt 感知延遲 ≤ 300 ms;工具呼叫額外負擔 < 約 50-100ms。
    300 ms 這條線由系統層 real-engine gate **強制**(`just test system-real`,
    issue #23):`test/system/real_engine_spec.bats` 對 DinD 內建出的真實 dev 盒跑
-   `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
-   --warmup 2 --max-ms 300`),shell 中位數(由 setup 寫出的受管 command 經
+   `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
+   --max-ms 300`,shell 中位數(由 setup 寫出的受管 command 經
    enter.sh wrapper、distrobox enter + shell 啟動,即使用者拿到提示字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
    一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
    pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
@@ -146,7 +146,9 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    難擴充的原因;重複 recipe 名在 `just` 是硬錯誤,`mod?` 是唯一免衝突的機制,
    ADR-00000010)。
 2. **namespace 以動作命名**:`test`(所有 CI 檢查,**含 lint**)、`box`(盒子
-   生命週期)。**不用** `ci` / `cd` 這類描述機制、不描述動作的名字(base
+   生命週期)、`verify`(驗收檢查)、`agent`(啟動 agent)、`worktree`(清理已合併的
+   linked worktree)、`job`(啟動、查詢與收取背景工作結果)。**不用** `ci` / `cd`
+   這類描述機制、不描述動作的名字(base
    ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
    同儕,而是 `just test lint`。
 3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
@@ -160,19 +162,29 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    「Justfile does not contain recipe `bogus`」(exit 1、什麼都不跑);
    `just box assemble --bogus` 得到的是 `assemble.sh` 自己的
    `assemble.sh: unknown option '--bogus' (see --help)`(exit 2、什麼都不跑)。
-5. **每個 module 都有自己的 `default` 與 `help`(alias `h`)**,並以
-   `set working-directory := '../..'` 讓 recipe 一律在 repo 根目錄執行(module 檔住在
-   `script/<ns>/`,`just` 預設以 module 檔所在目錄為 cwd)。namespace 層級的說明是
-   `just <ns>` 或 `just <ns> help`;recipe 層級的 `--help` 由 recipe 原樣轉發給腳本
-   (base ADR-00000011 §6:`just <ns> --help` 這種帶橫線的名字不會被 `just` 當成
-   recipe,所以 namespace 說明走 `help` recipe)。recipe 上方那一行英文註解就是
+5. **每個 module 都有自己的 `default`**;`test`、`box`、`verify` 另有
+   `help`(alias `h`),`job` 有 `help`,而 `agent`、`worktree` 由裸指令列出動詞,
+   各動詞的 `--help` 轉發給腳本。module 以 `set working-directory` 讓 recipe
+   一律在 repo 根目錄執行:`script/<ns>/` 與 `.agents/script/` 用 `'../..'`,
+   `.agents/script/worktree/` 用 `'../../..'`(`just` 預設以 module 檔所在目錄為 cwd)。
+   每個 namespace 的完整 recipe 清單一律由 `just --list <ns>` 顯示,
+   root `mod?` 註解即指向它。`box`、`verify`、`agent`、`worktree`、`job` 的裸
+   `just <ns>` 也列出動詞;`test` 例外,裸 `just test` 會跑 CI 的全部步驟。
+   `just <ns> help`(`test`、`box`、`verify`、`job` 有)顯示腳本選項。
+   recipe 層級的 `--help` 由 recipe 原樣轉發給腳本
+   (base ADR-00000011 §6:帶橫線的 `just <ns> --help` 不會被 `just` 當成 recipe,
+   所以有 `help` recipe 的 namespace(`test`、`box`、`verify`、`job`)以它提供腳本選項說明)。recipe 上方那一行英文註解就是
    `just --list` 顯示的說明,保持一行。
 
 **root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
 
 ```just
-mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
-mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+mod? test 'script/test/justfile.test'                     # Self-tests in Docker; just --list test lists its recipes.
+mod? box  'script/box/justfile.box'                       # Dev box lifecycle; just --list box lists its recipes.
+mod? verify 'script/verify/justfile.verify'               # Acceptance checks of doc/acceptance.md; just --list verify lists its recipes.
+mod? agent 'script/agent/justfile.agent'                  # Agent launch without GitHub authentication; just --list agent lists its recipes.
+mod? worktree '.agents/script/worktree/justfile.worktree' # Cleanup merged linked worktrees (dry-run by default); just --list worktree lists its recipes.
+mod? job '.agents/script/justfile.job'                    # Detached agent jobs and compact results; just --list job lists its recipes.
 
 # Default: list the namespaces.
 default:
@@ -189,6 +201,8 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 | `just test` | `./script/test/test.sh`(CI 跑的全部:lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個失敗即停) |
 | `just test build [args]` | `./script/test/test.sh --build "$@"` |
 | `just test lint [args]` | `./script/test/test.sh --lint "$@"` |
+| `just test changed [args]` | `./script/test/test.sh --changed "$@"`(args:`--base <ref>`,預設 `origin/main`) |
+| `just test guards [args]` | `./script/test/test.sh --guards "$@"` |
 | `just test unit [args]` | `./script/test/test.sh --unit "$@"` |
 | `just test matrix [args]` | `./script/test/test.sh --matrix "$@"` |
 | `just test integration [args]` | `./script/test/test.sh --integration "$@"` |
@@ -197,16 +211,24 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 | `just test acceptance [args]` | `./script/test/test.sh --acceptance "$@"` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh "$@"`(交付自檢;`--root X` 原樣傳入) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
+| `just test script-layout [args]` | `@./script/test/check-script-layout.sh "$@"`(args:`--root <repo>`、`--help`;開頭的 `@` 讓 `just` 執行時不回顯這一行) |
+| `just test verify-env [args]` | `./script/test/verify-env.sh "$@"`(args:`--help`) |
 
 **namespace `box`**(`script/box/justfile.box`,`set working-directory := '../..'`):
 
 | 指令 | 轉發到 |
 |------|--------|
 | `just box` | 列出 box 的動詞:`@just --justfile '{{source_file()}}' --list` |
-| `just box assemble [args]` | `./script/box/assemble.sh "$@"`(args:`--dry-run`、`--file <manifest>`、`--help`) |
-| `just box help` / `just box h` | `./script/box/assemble.sh --help`(M2 只有 assemble 一個動詞) |
+| `just box assemble [args]` | `./script/box/assemble.sh "$@"`(args:`--file <manifest>`、`--home <path>`、`--dry-run`、`-h` / `--help`) |
+| `just box bench [args]` | `./script/box/bench.sh "$@"`(args:`--box NAME`、`--runs N`、`--warmup N`、`--max-ms N`、`--json`、`--shell CMD`、`--max-wait N`、`-h` / `--help`) |
+| `just box setup [args]` | `./script/box/setup.sh "$@"`(args:`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <name>`、`--distrobox <path>`、`--dry-run`、`-h` / `--help`) |
+| `just box status [args]` | `./script/box/status.sh "$@"`(args:`-h` / `--help`) |
+| `just box enter [args]` | `./script/box/enter.sh "$@"`(args:`--box <name>`、`--distrobox <path>`、`--timeout <seconds>`、`-- <command>...`、`-h` / `--help`) |
+| `just box help` / `just box h` | 依序執行 `assemble.sh`、`bench.sh`、`setup.sh`、`status.sh`、`enter.sh` 的 `--help` |
 
-**腳本佈局**(module 檔與它轉發的腳本住在同一個 `script/<ns>/`;`script/ci/` 不再
+**M2 腳本搬移示意**(以下只列當時的 `test`、`box`,不是目前完整的 namespace 或腳本清單;
+完整指令表見 [`structure.md`](structure.md)。module 檔與它轉發的腳本住在同一個
+`script/<ns>/`;agent 維運介面另住 `.agents/script/`。`script/ci/` 不再
 存在,`script/selfcheck.sh` 與 `script/assemble.sh` 搬進 namespace 目錄):
 
 ```text
@@ -244,10 +266,11 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
 **規則(往後每個 milestone)**:
 
 1. 一個新的使用者動作 = **對的 namespace 裡的一個 recipe**(或一個新的 `mod?`
-   namespace,附自己的 `justfile.<ns>` 與 `script/<ns>/`)+ **一個 justfile spec
+   namespace,使用者介面的 module 檔為 `script/<ns>/justfile.<ns>`,agent 維運介面則住在
+   `.agents/script/`,兩者的 module 檔皆與轉發的腳本放在一起)+ **一個 justfile spec
    案例**(`test/unit/justfile_spec.bats`:recipe 存在、`*args` 原樣抵達腳本、壞參數
    由腳本而非 justfile 拒絕)+ **腳本自己擁有 `--help`**(usage、選項驗證、錯誤
-   訊息)。三者缺一不可。例如 M3 的 `enter` / `rm` 就是 `box` namespace 的兩個
+   訊息)。三者缺一不可。例如 M3 的 `setup`、`status`、`enter` 就是 `box` namespace 的
    recipe 加各自的腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
@@ -273,10 +296,13 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
   一個含 1-2 個工具的盒 + 冒煙測試(含 CI 內 docker-in-docker 的真實引擎冒煙,
   2026-09-16 由 M5 提前;見「測試策略」)。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
-- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。盒內先裝 tmux、fish
-  (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 跑的是
+- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(≤ 300ms)。盒內先裝 tmux、fish
+  (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 原本直接跑
   `<distrobox 絕對路徑> enter dev`(issue #175:桌面啟動的終端繼承 systemd user
-  manager 的 PATH,裸名字找不到),直接得到盒內 fish;不自動開 tmux(issue #179:
+  manager 的 PATH,裸名字找不到);現行受管命令為
+  `'<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`,其中 `<repo>` 是 repo
+  的絕對路徑,`<D>` 是 setup 解析出的 distrobox 絕對路徑,兩個路徑都已 quote
+  (見 [`enter.md`](enter.md));經 wrapper 進入盒內 fish;不自動開 tmux(issue #179:
   distrobox 與 host 共用 /tmp,舊的 `-- tmux new -A -s main` 會附著到 host 的 tmux
   server)。盒內自己開的 tmux 由 `box/dev.ini` 設的 `TMUX_TMPDIR` 得到盒子自己的
   server;只裝套件,設定留 M5。

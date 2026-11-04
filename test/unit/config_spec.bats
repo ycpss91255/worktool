@@ -33,10 +33,13 @@
 #
 # Every file comparison is byte-exact (cmp against an expected file):
 # `run cat` / `$(...)` drop trailing newlines and could not see the
-# framing this contract promises to keep. test/unit/config_mutation_spec
-# proves these cases fail on broken copies of lib/config.sh.
+# framing this contract promises to keep. test/unit/config_mutation_spec.bats
+# proves these cases fail on broken copies of lib/config.sh; shared rows live
+# in test/helper/config_mutation_rows.bash.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
+
+bats_require_minimum_version 1.5.0
 
 setup() {
     HOME="${BATS_TEST_TMPDIR}/home"
@@ -297,28 +300,14 @@ _framings() {
 
 # --- concurrency ---------------------------------------------------------------
 
-# Two writers of different keys, many rounds. A barrier makes each round
-# deterministic: both writers are forked first and wait for the same go
-# file, so they reach config_set together. With the read-modify-rename
-# serialised every write lands; without it one writer's rename erases the
-# other's key.
-_race() {
-    local _i _go
-    for _i in $(seq 1 30); do
-        _go="${BATS_TEST_TMPDIR}/go.${_i}"
-        (until [[ -e "${_go}" ]]; do sleep 0.01; done; config_set "$1" "v${_i}") &
-        (until [[ -e "${_go}" ]]; do sleep 0.01; done; config_set "$2" "v${_i}") &
-        : >"${_go}"
-        wait
-        [[ "$(config_get "$1")" == "v${_i}" && "$(config_get "$2")" == "v${_i}" ]] \
-            || { echo "lost a write in round ${_i}"; return 1; }
-    done
-}
-
 @test "two concurrent config_set calls both land (flock)" {
     _bytes "${CONFIG}" '# shared\n'
-    run _race home box
+    # Bound the entire process group, including flock, waits and cleanup.
+    run timeout --kill-after=1 10 bash \
+        "${BATS_TEST_DIRNAME}/fixture/config_race.sh" "${REPO_ROOT}" "${BATS_TEST_TMPDIR}"
     assert_success
+    _bytes "${EXPECTED}" '# shared\nhome=first\nbox=second\n'
+    _assert_bytes
 }
 
 @test "without flock(1) config_set refuses (exit 1, a clear error) and writes nothing" {

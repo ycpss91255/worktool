@@ -39,6 +39,8 @@
 # the state file (lib/config.sh) after a successful run. The same resolved
 # HOME supplies TMUX_TMPDIR=<box HOME>/.cache/tmux to the create environment;
 # the manifest forwards it into the container with --env (#361).
+# The create environment also sets SHELL=/usr/bin/fish so distrobox records
+# fish as the box user's shell (#472).
 # An EXISTING box whose
 # HOME differs is refused - exit 1, nothing changed, the remove-and-recreate
 # commands printed - because only a new box can take a new HOME; worktool
@@ -291,7 +293,8 @@ _assemble_exec() {
     _check_existing_box || return 1
     log_info "assembling box from ${_resolved}"
     local _rc=0
-    DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
+    # distrobox-create records SHELL's basename; init resolves fish in-box.
+    SHELL=/usr/bin/fish DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
         TMUX_TMPDIR="${BOX_HOME}/.cache/tmux" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then
