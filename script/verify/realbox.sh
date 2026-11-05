@@ -925,7 +925,13 @@ _52_find_window() {
         if [[ "${mode}" == apply ]]; then
             apply_root="$(_52_apply_window_root)" || {
                 rc=$?
-                [[ "${rc}" -ne 2 ]] || { _52_ownership_unknown; return 3; }
+                if [[ "${rc}" -eq 2 ]]; then
+                    if (( SECONDS >= _52_DEADLINE )) && [[ -n "${nonfish}" ]]; then
+                        break
+                    fi
+                    _52_ownership_unknown
+                    return 3
+                fi
                 (( SECONDS < _52_DEADLINE )) || break
                 sleep 0.1 || return 3
                 continue
@@ -1010,6 +1016,32 @@ _52_current_root() {
     _52_window_root "$1" || return 2
 }
 
+# Return 0 for empty, 1 for live members, 2 for undetermined. Validate the
+# entire listing even after a member is found; malformed evidence is unknown.
+_52_session_members() {
+    local root="$1" rows pid pgid sid extra found=0
+    if (( SECONDS < _52_DEADLINE )) &&
+        rows="$(timeout -s KILL 1 ps -e -o pid=,pgid=,sid=)" &&
+        (( SECONDS < _52_DEADLINE )); then
+        while read -r pid pgid sid extra; do
+            if (( SECONDS >= _52_DEADLINE )) ||
+                [[ ! "${pid}" =~ ^[1-9][0-9]*$ || ! "${pgid}" =~ ^[0-9]+$ ||
+                   ! "${sid}" =~ ^[0-9]+$ || -n "${extra}" ]]; then
+                guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
+                return 2
+            fi
+            if [[ "${pgid}" == "${root}" || "${sid}" == "${root}" ]]; then
+                found=1
+            fi
+        done <<<"${rows}"
+        if (( SECONDS < _52_DEADLINE )); then
+            return "${found}"
+        fi
+    fi
+    guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
+    return 2
+}
+
 _52_stop_window() {
     local root="$1" signal deadline current rc
     local _52_DEADLINE=${_52_DEADLINE:-$((SECONDS + 4))}
@@ -1017,7 +1049,13 @@ _52_stop_window() {
         (( SECONDS < _52_DEADLINE )) || break
         rc=0
         current="$(_52_current_root "${root}")" || rc=$?
-        [[ "${rc}" -ne 1 ]] || return 0
+        if [[ "${rc}" -eq 1 ]]; then
+            rc=0
+            _52_session_members "${root}" || rc=$?
+            [[ "${rc}" -ne 0 ]] || return 0
+            [[ "${rc}" -eq 1 ]] || return 1
+            current="${root}" rc=0
+        fi
         [[ "${rc}" -eq 0 ]] || {
             guard_fail "cannot inventory owned window; keeping ownership evidence"
             return 1
@@ -1029,7 +1067,13 @@ _52_stop_window() {
         while (( SECONDS < deadline && SECONDS < _52_DEADLINE )); do
             rc=0
             current="$(_52_current_root "${root}")" || rc=$?
-            [[ "${rc}" -ne 1 ]] || return 0
+            if [[ "${rc}" -eq 1 ]]; then
+                rc=0
+                _52_session_members "${root}" || rc=$?
+                [[ "${rc}" -ne 0 ]] || return 0
+                [[ "${rc}" -eq 1 ]] || return 1
+                current="${root}" rc=0
+            fi
             [[ "${rc}" -eq 0 ]] || {
                 guard_fail "cannot inventory owned window; keeping ownership evidence"
                 return 1
@@ -1038,7 +1082,7 @@ _52_stop_window() {
             sleep 0.1 || return 1
         done
     done
-    guard_fail "owned Ghostty window did not close; keeping ownership evidence"
+    guard_fail "owned window session ${root} still has live members; keeping ownership evidence"
     return 1
 }
 
@@ -1077,8 +1121,8 @@ _52_sweep_window() {
 
 _52_close_window() {
     [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
-    # Start retries only while a full second remains, so a retry sweep is
-    # never cut off by the deadline mid-snapshot.
+    # Stop starting retries one second before the shared deadline. A sweep
+    # interrupted by that deadline, even mid-snapshot, returns 1 and keeps evidence.
     local _52_DEADLINE=$((SECONDS + 4)) rc scanned=0 retry_until=$((SECONDS + 3))
     while (( SECONDS < retry_until )); do
         rc=0

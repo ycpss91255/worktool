@@ -195,6 +195,21 @@ _auto_window_processes() {
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+    '-e -o pid=,pgid=,sid=')
+        case "${FAKE_SESSION_CHECK:-empty}" in
+            failure) exit 1 ;;
+            timeout) exit 137 ;;
+            empty-output) exit 0 ;;
+            malformed) printf 'bad row\n' ;;
+            late-malformed) printf '4241 4240 4240\nbad row\n' ;;
+            group) printf '4241 4240 4241\n' ;;
+            session) printf '4241 4241 4240\n' ;;
+            deadline)
+                read -r now <"${FAKE_STATE_DIR}/clock"
+                printf '%s\n' "$((now + 4))" >"${FAKE_STATE_DIR}/clock"
+                printf '1 1 1\n' ;;
+            *) printf '1 1 1\n' ;;
+        esac ;;
     '-e -o pid=,ppid=,comm=') exec bash "${FAKE_STATE_DIR}/auto-snapshot" ;;
     '-e -o pid=,comm=')
         printf '%s\n' "${FAKE_WINDOW_BASELINE:-1 init}"
