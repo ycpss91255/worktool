@@ -32,6 +32,10 @@
 # and `type -P <tool>`. One dispatcher is not followed as a whole:
 # _cleanup_run runs one arm per token, so a `_cleanup_push <token>` follows
 # that arm only (otherwise every item would reach every item's cleanup).
+# An item that runs another item of the same script as a child process
+# (`bash "${SCRIPT_DIR}/<script>" ... <id>`, as 5.4 runs 5.1) also requires
+# that item's tools, so the child id's entry points join the closure
+# (issue #782).
 
 # The `<id>\t<entry word>` lines of script $2 in tree $1.
 _verify_item_entries() {
@@ -66,6 +70,21 @@ _verify_body_tools() {
     done < <(grep -oE 'for [a-z_]+ in [a-z0-9_ .-]+; do' <<<"${_body}")
 }
 
+# The item ids body $1 runs as a child of script $2 (its basename), from
+# `bash "${SCRIPT_DIR}/<script>" <args> <id>...` up to the first redirect,
+# pipe or list operator.
+_verify_child_items() {
+    local _call _word
+    local -a _words
+    while IFS= read -r _call; do
+        [[ -n "${_call}" ]] || continue
+        read -r -a _words <<<"${_call}"
+        for _word in "${_words[@]}"; do
+            if [[ "${_word}" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then printf '%s\n' "${_word}"; fi
+        done
+    done < <(grep -oE -- "bash \"\\\$\\{SCRIPT_DIR\\}/${2//./\\.}\"[^;|&>]*" <<<"$1")
+}
+
 # The cleanup functions body $1 registers: realbox.sh's _cleanup_run
 # (body $2) dispatches by token, so `_cleanup_push <token>` reaches only the
 # function of that token's arm, never every arm of the dispatcher.
@@ -79,8 +98,8 @@ _verify_cleanup_arms() {
 }
 
 verify_item_tools() {
-    local _tree="$1" _s _m _mods _name _body _id _entry _entries _fn _t _out=""
-    local -A _defs=() _seen=()
+    local _tree="$1" _s _m _mods _name _body _id _entry _entries _fn _t _cid _out=""
+    local -A _defs=() _seen=() _starts=()
     local -a _queue=()
     shift
     (( $# > 0 )) || {
@@ -98,6 +117,14 @@ verify_item_tools() {
             _defs[${_name}]="${_body}"
         done < <(while IFS= read -r _m; do _graph_functions "${_tree}" "${_m}"; done <<<"${_mods}")
         _entries="$(_verify_item_entries "${_tree}" "${_s}")"
+        # The defined entry functions of every id, for child runs.
+        _starts=()
+        while IFS=$'\t' read -r _id _entry; do
+            [[ -n "${_id}" ]] || continue
+            for _fn in "${_entry}" "_preconditions_${_entry}"; do
+                if [[ -n "${_defs[${_fn}]+x}" ]]; then _starts[${_id}]+="${_fn} "; fi
+            done
+        done <<<"${_entries}"
         while IFS=$'\t' read -r _id _entry; do
             [[ -n "${_id}" ]] || continue
             _seen=()
@@ -113,6 +140,9 @@ verify_item_tools() {
                 while IFS= read -r _t; do
                     if [[ -n "${_t}" ]]; then _out+="${_t}"$'\t'"${_id}"$'\n'; fi
                 done < <(_verify_body_tools "${_defs[${_fn}]}")
+                while IFS= read -r _cid; do
+                    for _name in ${_starts[${_cid}]:-}; do _queue+=("${_name}"); done
+                done < <(_verify_child_items "${_defs[${_fn}]}" "${_s##*/}")
                 while IFS= read -r _name; do
                     if [[ "${_name}" != _cleanup_run && -n "${_defs[${_name}]+x}" &&
                           -z "${_seen[${_name}]:-}" ]]; then

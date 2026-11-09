@@ -341,9 +341,17 @@ _54_cell() {
     _54_finish_cell "${phase}" "${signal}" "${dir}" "${child_rc}" "${expected}" "${rc}" "${missed}"
 }
 
+# Every cell runs a whole 5.1 as a child, so 5.4 also requires 5.1's tools:
+# one missing there is unavailable (exit 3) before any cell starts, not a
+# failed cell (issue #782).
+_54_require_tools() {
+    _51_require_tools || return $?
+    guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm mkfifo
+}
+
 item_54() {
     _54_KEEP_EVIDENCE=0
-    guard_require setsid env bash distrobox just gh grep cmp mktemp mkdir rm mkfifo || return $?
+    _54_require_tools || return $?
     _54_W="$(mktemp -d "${TMPDIR:-/tmp}/wt-m3-54.XXXXXXXX")" || return 1
     _cleanup_push 54
     mkfifo "${_54_W}/poll" || return 1

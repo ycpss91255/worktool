@@ -1730,7 +1730,7 @@ _require_first_item_tools() {
         5.2.2) _52_apply_require_tools ;;
         5.2.3) _52_restore_require_tools ;;
         5.3) _53_require_tools ;;
-        5.4) return 0 ;;
+        5.4) _54_require_tools ;;
     esac
 }
 
