@@ -35,9 +35,10 @@ everything" (the default pr-loop gate runs the same set). NEVER tell an agent
 to run "the matrix specs that exercise this lib" when the change did not edit
 them -- on 2026-10-01 that wording made two codex jobs run the 81-case approval
 matrix locally for 40-50 minutes each and saturated the host. #326 added
-`enforce_local_test_scope.sh` against it; that hook still blocks every direct
-non-unit `just test` launch, even a touched spec, which is stricter than
-ADR-0014 decision 2 (#800 tracks the fix). A 30-minute audit cron stops any such run. On a
+`enforce_local_test_scope.sh` against it; since #800 it enforces exactly
+ADR-0014 decision 2: an explicit spec of any tier except system-real runs,
+while a whole tier, the real-engine group and a bare every-tier run are
+blocked. A 30-minute audit cron stops any such run. On a
 red CI job, check `gh pr checks <n> -R ycpss91255/worktool` first to see
 WHICH job (and runner leg) failed. Relates to
 [[feedback-autonomous-test-gap-remediation]] and [[project-ci-lint-covers-bats]].

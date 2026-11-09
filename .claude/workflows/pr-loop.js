@@ -32,6 +32,10 @@ export const meta = {
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }.
+// ciState (#810) describes CI of the returned sha only: "green" or "red" when the last CI stage judged
+// exactly that head; "none" before any CI and for any head no CI stage judged, e.g. a Fix pushed
+// before its check or adoption comment failed, a head that moved after CI on resume, a codex Fix
+// gate or publication abort, or a Fix check without valid evidence.
 // reviewer names who reviewed last ('claude' | 'codex' | 'none'); reviewVerdict is that review's
 // outcome ('mergeable' | 'blocked' | 'no-output', or 'none' before any review); reviews counts them.
 // codexVerdict (#769, #793, #804):
@@ -312,6 +316,11 @@ const collectReview = (review) => {
   return true
 }
 const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
+// ciState describes CI of the returned head only (#810): the last CI stage's
+// state when it judged exactly that head, otherwise none.
+let lastCi = { sha: '', state: 'none' }
+const noteCi = (ci, head) => { lastCi = { sha: (ci && ci.sha) || head, state: ci && ci.state === 'green' ? 'green' : 'red' }; return lastCi }
+const ciAt = (head) => head && head === lastCi.sha ? lastCi.state : 'none'
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
 const pushAhead = async (pr, stage) => {
@@ -570,7 +579,8 @@ In ${WT}, gates already passed in the separate job stage. Gate evidence, copied 
   if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
   const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
-  return result({ pr: loc.pr, sha: (ci && ci.sha) || loc.sha, ciState: ci && ci.state === 'green' ? 'green' : 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: ci && ci.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
+  const judged = noteCi(ci, checked.sha)
+  return result({ pr: loc.pr, sha: judged.sha, ciState: ciAt(judged.sha), codexVerdict: 'skipped', rounds: 0, blockingLeft: judged.state === 'green' ? [] : [(ci && ci.detail) || 'CI did not go green'] })
 }
 
 const implementFull = async () => {
@@ -632,29 +642,29 @@ log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
 let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
-if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
-sha = ci.sha || sha
+sha = noteCi(ci, sha).sha
+if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 if (RESUME) {
   const checked = await checkStage(pr, 'Resume', '', false)
-  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
+  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
   sha = checked.sha
 }
 
-if (MODE === 'light') return result({ pr, sha, ciState: 'green', codexVerdict: 'skipped', rounds: 0, blockingLeft: [] })
+if (MODE === 'light') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'skipped', rounds: 0, blockingLeft: [] })
 
 if (!CODEX) {
   await agent(NOCODEX(pr), { label: `${RUN_ID} nocodex:#${pr}`, phase: 'Codex', agentType: 'general-purpose' })
-  return result({ pr, sha, ciState: 'green', codexVerdict: 'off', rounds: 0, blockingLeft: [] })
+  return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'off', rounds: 0, blockingLeft: [] })
 }
 
 let fixes = 0, verdict = 'blocked', blocking = [], prior = '', seen = null
 for (;;) {
   const redRecord = await checkRedRecord(pr)
-  if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
+  if (redRecord !== 'present') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
   if (!reviewByClaude) {
     seen = await snapshotComments(pr, fixes + 1)
-    if (!seen) return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`無法讀取 PR #${pr} 既有留言，不能確認第 ${fixes + 1} 輪 [codex] 留言屬於本次審查`] })
+    if (!seen) return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`無法讀取 PR #${pr} 既有留言，不能確認第 ${fixes + 1} 輪 [codex] 留言屬於本次審查`] })
   }
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior, sha), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   noteReview(reviewByClaude ? 'claude' : 'codex', c)
@@ -671,10 +681,10 @@ for (;;) {
   await agent(fixBrief, { label: `${RUN_ID} fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
   if (IMPLEMENTER === 'codex') {
     const failure = await completeCodex(`Fix-${fixes}`, pr)
-    if (failure) return result({ pr, sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [failure] })
+    if (failure) return result({ pr, sha, ciState: 'none', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [failure] })
   }
   const checked = await checkStage(pr, 'Fix', sha)
-  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
+  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
   const adoption = await agent(`${GUARDRAILS}
 Post ONE comment starting with "[claude] 採納第 ${fixes} 輪:" on PR #${pr}, listing the resolution and commit for each finding below. Inspect the committed diff in ${WT}; require PR head ${checked.sha} before posting. Compare the PR description with that diff first. ${PR_TEXT_RULES(pr)} End the comment with one line "PR 說明更新:<updated section headings, or 無>".
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
@@ -682,17 +692,17 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
     label: `${RUN_ID} adoption:#${pr}:r${fixes}`, phase: 'Fix',
     schema: { type: 'object', properties: { posted: { type: 'boolean' } }, required: ['posted'] }, agentType: 'general-purpose',
   })
-  if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
+  if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
-  if (!ci || ci.state !== 'green') return result({ pr, sha: (ci && ci.sha) || sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
-  sha = ci.sha || sha
+  sha = noteCi(ci, checked.sha).sha
+  if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
 }
 // Only a confirmed codex comment may report codexVerdict mergeable; a Claude review never fills it.
-if (reviewFindings.reviewer !== 'codex') return result({ pr, sha, ciState: 'green', codexVerdict: 'not-run', rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
+if (reviewFindings.reviewer !== 'codex') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'not-run', rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
 if (verdict === 'mergeable' && !(await confirmCodexComment(pr, fixes + 1, sha, seen))) {
-  return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到本次審查發布、「## 缺陷」段只有「無」的「[codex] 第 ${fixes + 1} 輪複驗 head ${sha}」留言`] })
+  return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到本次審查發布、「## 缺陷」段只有「無」的「[codex] 第 ${fixes + 1} 輪複驗 head ${sha}」留言`] })
 }
-return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
+return result({ pr, sha, ciState: ciAt(sha), codexVerdict: verdict, rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
 
 // args 範例（可直接貼進 Workflow 的 args）
 // {
