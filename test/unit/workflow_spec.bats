@@ -5019,6 +5019,15 @@ _pl_769_defect_run() {
     run grep -F '"not-run" when a Claude review ends the loop' "${PR_LOOP}"
     assert_success
     run grep -F '"blocked" on any flow abort' "${PR_LOOP}"
+    assert_failure
+    # The header must say which aborts are "blocked" and which are not (#793).
+    run grep -F 'After review, a RED record, Fix, adoption comment, post-Fix CI or [codex] comment abort is "blocked",' "${PR_LOOP}"
+    assert_success
+    run grep -F 'Before review it is "blocked" on a preparation, implementation, resume-gate or' "${PR_LOOP}"
+    assert_success
+    run grep -F '"skipped" on red CI, a failed light review and the end of light mode' "${PR_LOOP}"
+    assert_success
+    run grep -F '"none" when no PR is found after' "${PR_LOOP}"
     assert_success
 }
 
