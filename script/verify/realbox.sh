@@ -1088,8 +1088,10 @@ _52_stop_window() {
         (( SECONDS < _52_DEADLINE )) || break
         guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
         sent="${signal}"
+        # Check at least once per signal before the shared deadline, even when
+        # a one-second clock tick ends this signal's own wait at once.
         deadline=$((SECONDS + 1))
-        while (( SECONDS < deadline && SECONDS < _52_DEADLINE )); do
+        while (( SECONDS < _52_DEADLINE )); do
             rc=0
             current="$(_52_current_root "${root}")" || rc=$?
             if [[ "${rc}" -eq 1 ]]; then
@@ -1105,6 +1107,7 @@ _52_stop_window() {
             }
             [[ "${current}" == "${root}" ]] || return 1
             seen="${sent}"
+            (( SECONDS < deadline )) || break
             sleep 0.1 || return 1
         done
     done
@@ -1114,9 +1117,10 @@ _52_stop_window() {
         guard_fail "cleanup deadline reached before owned window session ${root} was checked; keeping ownership evidence"
         return 1
     fi
-    # Only a deadline ends the loop before a check follows -KILL: either the
-    # escalation did not finish, or the deadline passed while or right after
-    # KILL was sent. The session was neither emptied nor proven to resist it.
+    # Every signal sent before the shared deadline is followed by a check, so
+    # only that deadline leaves -KILL unchecked: either the escalation did not
+    # finish, or the deadline passed while or right after KILL was sent. The
+    # session was neither emptied nor proven to resist it.
     if [[ "${seen}" != KILL ]]; then
         guard_fail "cleanup deadline reached before owned window session ${root} was confirmed empty; keeping ownership evidence"
         return 1

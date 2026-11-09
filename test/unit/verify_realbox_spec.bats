@@ -4587,6 +4587,51 @@ _792_stop_window_deadline_after_kill() {
     assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-KILL -- -4240'
 }
 
+# Give _52_stop_window alone its own logical clock, starting at 0, with the
+# shared cleanup deadline far away. Each retry sleep advances that clock by
+# one second; right after the KILL wait sets its own one-second deadline the
+# clock ticks once more, so that per-signal wait expires before it checks.
+_798_stop_window_kill_wait_tick() {
+    local count
+    printf '0\n' >"${STATE}/stop-clock"
+    count="$(awk '
+        /^_52_stop_window\(\) \{/ {in_fn=1}
+        in_fn {n += gsub(/FAKE_STATE_DIR\}\/clock/, "FAKE_STATE_DIR}/stop-clock")}
+        {print > out}
+        in_fn && index($0, "local _52_DEADLINE=") {
+            print "    _52_DEADLINE=100" > out
+            shared++
+        }
+        in_fn && index($0, "deadline=$((") && !index($0, "_52_DEADLINE") {
+            print "        [[ \"${signal}\" != KILL ]] || printf '\''%s\\n'\'' \"$(( $(<\"${FAKE_STATE_DIR}/stop-clock\") + 1 ))\" >\"${FAKE_STATE_DIR}/stop-clock\"" > out
+            ticks++
+        }
+        in_fn && index($0, "sleep 0.1 || return 1") {
+            print "            printf '\''%s\\n'\'' \"$(( $(<\"${FAKE_STATE_DIR}/stop-clock\") + 1 ))\" >\"${FAKE_STATE_DIR}/stop-clock\"" > out
+            sleeps++
+        }
+        in_fn && /^\}/ {in_fn=0}
+        END {print n ":" shared ":" ticks ":" sleeps}
+    ' out="${REALBOX}.new" "${REALBOX}")"
+    assert_equal "${count}" 6:1:1:1
+    cat "${REALBOX}.new" >"${REALBOX}"
+    rm "${REALBOX}.new"
+}
+
+@test "#798: a KILL wait expiring before the shared deadline still checks members once" {
+    _712_gone_before_cleanup_tools
+    _798_stop_window_kill_wait_tick
+    FAKE_SESSION_CHECK=group run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [[ "${stderr}" != *'cleanup deadline reached'* ]]
+    [[ "${stderr}" == *'owned window session 4240 still has live members; keeping ownership evidence'* ]]
+    local directory
+    directory="$(cat "${STATE}/closed-directory")"
+    [ -f "${directory}/before" ]
+    _assert_52_kept_evidence_stderr "${directory}"
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-KILL -- -4240'
+}
+
 @test "#712: I confirmed root absent from first cleanup snapshot with failed session probe keeps evidence" {
     _712_gone_before_cleanup_tools
     FAKE_SESSION_CHECK=failure run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
