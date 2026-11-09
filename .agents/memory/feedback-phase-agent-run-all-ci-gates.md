@@ -8,12 +8,15 @@ metadata:
   modified: 2026-10-01T09:46:44.541Z
 ---
 
-Local test runs cover only what the change touches: `just test lint` plus the
-specs the change adds or edits (`just test <tier> <spec...> [--filter REGEX]`,
-#298); since 2026-11-09 (#756, ADR-0014 decision 2) `just test changed` is no
-longer run before pushing (it stays an optional command). Every full tier (unit,
-matrix, integration, system, acceptance, system-real) runs in GitHub CI, where
-`ci-passed` is required. Never run a whole tier locally per TDD slice.
+The pre-push local gate is defined once, in ADR-0014 decision 2; this note
+only points at it. In short: `just test lint` plus the specs the change adds or
+edits, in whichever tier they live (`just test <tier> <spec...> [--filter
+REGEX]`, #298), leaving `test/system-real/` and
+`test/system/real_engine_spec.bats` to CI. Since 2026-11-09 (#756) `just test
+changed` is not run before pushing (it stays an optional command a caller may
+request explicitly). Every full tier (unit, matrix, integration, system,
+acceptance, system-real) runs in GitHub CI, where `ci-passed` is required.
+Never run a whole tier locally, per TDD slice or before pushing.
 
 **Why:** maintainer decision 2026-10-01 ("local 針對修改的地方做 test 就好,
 其他都丟到 ci 上面做測試"). Two codex jobs each running the full unit tier
@@ -24,13 +27,17 @@ no env-var mode switch). The old rule (run all six gates locally) came from
 init_ubuntu, where a skipped tier hid a break; CI's required `ci-passed`
 covers that now.
 
-**How to apply:** implementation prompts say "run ONLY the unit specs you add
-or change (`just test unit <spec> [--filter]`) and `just test lint`; never run
-matrix / integration / system / acceptance, a whole unit tier, or `just test
-changed`; CI runs everything". NEVER tell an agent to run "the matrix specs that
-exercise this lib" -- on 2026-10-01 that wording made two codex jobs run the
-81-case approval matrix locally for 40-50 minutes each and saturated the host
-(#326 adds a hook that blocks it). A 30-minute audit cron stops any such run. On a
+**How to apply:** implementation prompts say "in the TDD loop run only the
+slice's spec; before pushing run `just test lint` and the specs you add or
+change, in whatever tier (`just test <tier> <spec> [--filter]`), except
+system-real; never a whole tier and never `just test changed`; CI runs
+everything" (the default pr-loop gate runs the same set). NEVER tell an agent
+to run "the matrix specs that exercise this lib" when the change did not edit
+them -- on 2026-10-01 that wording made two codex jobs run the 81-case approval
+matrix locally for 40-50 minutes each and saturated the host. #326 added
+`enforce_local_test_scope.sh` against it; that hook still blocks every direct
+non-unit `just test` launch, even a touched spec, which is stricter than
+ADR-0014 decision 2 (#800 tracks the fix). A 30-minute audit cron stops any such run. On a
 red CI job, check `gh pr checks <n> -R ycpss91255/worktool` first to see
 WHICH job (and runner leg) failed. Relates to
 [[feedback-autonomous-test-gap-remediation]] and [[project-ci-lint-covers-bats]].

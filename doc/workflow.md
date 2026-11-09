@@ -164,7 +164,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
 仍遵守一個 issue 一個 PR、noreply author 與 committer、無署名、不改寫已推送 commit。
 修改失敗的結構化結果須帶 `reason`（失敗步驟與原因），workflow 會把它附在 `blockingLeft`；未提供原因時明確標示。發布並 Locate 後，同樣執行下述 Implement 完成檢查。
 
-回傳沿用 full 的欄位，`codexVerdict: "skipped"`、`rounds: 0`；diff 審查以 `reviewer: "claude"`、`reviewVerdict` 與 `reviews` 回報；以 `ciState` 與 `blockingLeft` 判斷是否完成。
+回傳沿用 full 的欄位，`rounds: 0`。新開的 light run 在準備階段之後的每個停止點都回 `codexVerdict: "skipped"`；接續（resume）時，light 審查未通過、CI 紅與正常結束回 `skipped`，resume gate 或 PR head 檢查失敗回 `blocked`，找不到 PR 回 `none`；兩者的準備階段失敗都回 `blocked`。diff 審查以 `reviewer: "claude"`、`reviewVerdict` 與 `reviews` 回報；以 `ciState` 與 `blockingLeft` 判斷是否完成。
 例如上述呼叫只需把 `mode` 改為 `"light"`，並以 `gates` 指定此次修改的 lint 與 spec 指令。
 
 ## full 迴圈內容
@@ -175,7 +175,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
    Locate 找到 PR 後，以腳本讀取 `git status --porcelain`、本地 HEAD、`git ls-remote` 的遠端分支 HEAD 與 PR head；工作區必須乾淨，三個 HEAD 必須相同。檢查失敗就以 `blockingLeft` 附上狀態與 HEAD 比較，不進入 CI。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
-3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red` 結束,不進 codex。
+3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red`、`codexVerdict: "skipped"` 結束,不進 codex。
 4. **Codex**:agent 把 **PR 描述 + 對應 issue + 完整 diff** 餵給 `codex exec`,逐項確認
    (一件事 / TDD 證據 / 自足 / 正確性與健壯性 / 文件一致 / 新問題),把 codex 原文以 `[codex]`
    貼到 PR,加一行 `[claude] double-check`(上下文是否完整、每項是否引用 diff 位置)與可重現指令。
@@ -186,16 +186,18 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    文件、輸出或 PR 說明與行為不符（含過時的 PR 說明）、錯誤的說明或註解、錯誤退出碼、fail-open 路徑、
    只驗實作細節而驗不到保護行為的測試，以及未達成的 issue 預期，一律是缺陷，不得降級為限制或建議。
    環境或效能風險列為限制，其他可選改善列為建議；兩者不阻擋。此分類規則也適用 Claude 審查與 light diff 審查。
-   workflow 只在有效審查的 `defects` 為空時判定 `mergeable`，忽略 reviewer 的 `verdict`；無輸出、分類欄位缺漏或格式錯誤回報 `no-output`，停止且不修正。
+   workflow 只在有效審查的 `defects` 為空時判定 `mergeable`，忽略 reviewer 的 `verdict`；無輸出、分類欄位缺漏或格式錯誤時 `reviewVerdict` 是 `no-output`（codex 審查時 `codexVerdict` 也是 `no-output`，Claude 審查時是 `not-run`），停止且不修正。
 5. **Fix**:`defects` 非空時（即使 reviewer 寫 `mergeable`），直接在同一次 workflow 進入既有 Fix 迴圈，不必重開或手動設定 `implement.rc`；agent 在同一 worktree 針對每個缺陷先補失敗測試再修,獨立 commit,
    push,PR 留言 `[claude] 採納第 N 輪:`;回到 CI -> Codex;最多 `maxRounds` 輪。
-   Fix 輪的 commit 讓人寫的 PR 說明與實際行為不一致時，同一輪以 `gh pr edit --body-file` 更新受影響的段落，`<!-- pr-loop:auto:start -->` 到 `<!-- pr-loop:auto:end -->` 之間的機械段落原樣保留（#755）；採納留言最後一行 `PR 說明更新:` 列出改了哪些段落（沒有則寫「無」）。codex 實作的 Fix 輪由 codex 在摘要列出過時段落，採納留言 stage 確認 head 後更新。
+   Fix 輪的 commit 讓人寫的 PR 說明與實際行為不一致時，同一輪以 `gh pr edit --body-file` 更新受影響的段落，`<!-- pr-loop:auto:start -->` 到 `<!-- pr-loop:auto:end -->` 之間的機械段落原樣保留（#755）；採納留言最後一行 `PR 說明更新:` 列出改了哪些段落（沒有則寫「無」）。codex 實作的 Fix 輪不由 codex 改 PR 或留言，codex 的摘要也不交給其他 stage；發布 stage 與採納留言 stage 確認 head 後自行比對 PR 說明與 diff、更新過時段落，採納留言由採納 stage 依 diff 撰寫（#804）。
    Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
-6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷（流程失敗時保留失敗原因）。
-   `reviewer` 是最後一次審查的審查者（`claude`、`codex`，沒有審查時為 `none`），`reviewVerdict` 是該次審查的結論，`reviews` 是審查次數，與只計 Fix 輪數的 `rounds` 分開（#755）。
-   預設 `implementer: "codex"` 由 Claude 審查：審查迴圈正常結束時（審查通過、`maxRounds` 用完仍有缺陷，或審查回傳缺漏或格式錯誤的結果；最後一種的 `reviewVerdict` 是 `no-output`，`blockingLeft` 寫明原因，#784）`codexVerdict` 是 `not-run`，審查結論看 `reviewVerdict` 與 `blockingLeft`；RED 紀錄、Fix、採納留言或 Fix 後 CI 任一流程中止時回 `blocked`，與審查者無關（#769）。呼叫者依 `reviewer` 判斷是否仍需 codex 確認。
-   codex 審查時，`[codex] 第 N 輪複驗` 留言的第一行帶上審查的 head（`[codex] 第 N 輪複驗 head <sha>`）；workflow 回報 `codexVerdict: "mergeable"` 前，以 `gh pr view --json headRefOid,comments` 確認 PR head 仍是該 sha 且留言存在，讀取失敗或找不到就回 `blocked`。
+6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷；流程中止時列出失敗原因，Fix 檢查失敗與 Fix 後 CI 紅另附該輪缺陷。
+   `reviewer` 是最後一次審查的審查者（`claude`、`codex`，沒有審查時為 `none`），`reviewVerdict` 是該次審查的結論（`mergeable`、`blocked`、`no-output`，沒有審查時為 `none`），`reviews` 是審查次數，與只計 Fix 輪數的 `rounds` 分開（#755）。
+   預設 `implementer: "codex"` 由 Claude 審查：審查迴圈正常結束時（審查通過、`maxRounds` 用完仍有缺陷，或審查回傳缺漏或格式錯誤的結果；最後一種的 `reviewVerdict` 是 `no-output`，`blockingLeft` 寫明原因，#784）`codexVerdict` 是 `not-run`，審查結論看 `reviewVerdict` 與 `blockingLeft`；RED 紀錄（每次審查前檢查，第一輪時還沒有任何審查）、Fix、採納留言或 Fix 後 CI 任一流程中止時回 `blocked`，與審查者無關（#769）。呼叫者依 `reviewer` 判斷是否仍需 codex 確認。
+   `implementer: "claude"` 由 codex 審查：審查通過且下述留言確認成功回 `mergeable`；`maxRounds` 用完仍有缺陷回 `blocked`；審查回傳缺漏或格式錯誤回 `no-output`；RED 紀錄、留言快照、Fix、採納留言、Fix 後 CI 中止或留言確認失敗回 `blocked`（#804）。
+   兩種審查者之外：準備、實作、resume gate 或 PR head 檢查失敗回 `blocked`，審查前 CI 紅回 `skipped`，full 模式實作後或接續後找不到 PR 回 `none`，`codex: "off"` 回 `off`。
+   codex 審查時，`[codex] 第 N 輪複驗` 留言的第一行帶上審查的 head（`[codex] 第 N 輪複驗 head <sha>`），沒有缺陷時「## 缺陷」段只寫「無」、不用清單項目。每次 codex 審查前，workflow 先以 `gh pr view --json comments` 記下 PR 既有留言的 id，讀取失敗就回 `blocked`、不進入審查（#797）。回報 `codexVerdict: "mergeable"` 前，以 `gh pr view --json headRefOid,comments` 確認 PR head 仍是該 sha，且至少有一則 id 不在快照內、第一行（去掉結尾 `\r`）與上述格式完全相同的留言；每則這樣的留言都要恰有一個「## 缺陷」段且段內沒有清單項目。舊 run 留下的同 head 留言、只有前綴相同的 head、列出缺陷或缺少「## 缺陷」段的留言都不算；讀取失敗或找不到就回 `blocked`。
    `limitations` 與 `suggestions` 累積各輪有效審查的內容並去重，包含 Fix 後或流程失敗的回傳；
    `limitations` 提供呼叫者寫入 PR 說明的「已知限制」段落，workflow 不在此機械改寫 PR 說明。**不 merge PR**:PR 合併順序與衝突由主迴圈處理。
 
