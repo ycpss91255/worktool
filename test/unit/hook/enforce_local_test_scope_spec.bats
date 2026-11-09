@@ -4,12 +4,42 @@ load "${BATS_TEST_DIRNAME}/../../helper/hook"
 
 _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
 
-@test "heavy test tiers are reserved for CI even with a spec" {
-    _check 'just test matrix test/matrix/example_spec.bats'
-    assert_failure 2
-    assert_output --partial 'ci-passed'
-    assert_output --partial 'lint'
-    assert_output --partial 'unit spec'
+@test "#800: a touched spec of any tier except system-real runs locally" {
+    local tier
+    for tier in unit matrix integration system acceptance; do
+        _check "just test ${tier} test/${tier}/example_spec.bats --filter example"
+        assert_success
+        _check "bash -c 'script/test/test.sh --${tier} test/${tier}/example_spec.bats'"
+        assert_success
+    done
+}
+
+@test "#800: whole tiers and system-real stay with CI, citing ADR 0014 decision 2" {
+    local cmd
+    for cmd in 'just test matrix' 'just test acceptance --filter example' \
+        'just test system-real' 'just test system-real test/system-real/example_spec.bats' \
+        'just test system test/system/real_engine_spec.bats' \
+        'script/test/test.sh --system test/system/real_engine_spec.bats' \
+        'script/test/test.sh --unit test/unit/log_spec.bats --matrix'; do
+        _check "${cmd}"
+        assert_failure 2
+        assert_output --partial 'ci-passed'
+        assert_output --partial 'ADR 0014 decision 2'
+        refute_output --partial 'changed unit specs'
+    done
+}
+
+@test "#800: internal container gates follow the same scope rule" {
+    local cmd
+    for cmd in 'script/test/test.sh --ci-unit' 'script/test/test.sh --ci-matrix' \
+        'script/test/test.sh --ci-system-real' 'script/test/test.sh --ci-integration-ghostty'; do
+        _check "${cmd}"
+        assert_failure 2
+    done
+    _check 'script/test/test.sh --ci-unit test/unit/log_spec.bats'
+    assert_success
+    _check 'script/test/test.sh --ci-lint'
+    assert_success
 }
 
 @test "bare tests and whole unit tiers are blocked through shell wrappers" {

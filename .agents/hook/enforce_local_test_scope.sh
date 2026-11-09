@@ -8,8 +8,10 @@ source "${_HOOK_HERE}/lib/hook_bootstrap.sh"
 source "${_HOOK_HERE}/lib/subcommand.sh"
 hook_bootstrap "enforce-local-test-scope"
 
+# ADR 0014 decision 2: lint plus the touched specs of any tier run locally;
+# a whole tier, the real-engine group and every-tier runs are left to CI.
 _heavy_test() {
-    local _launch="$1" _word _lead _direct=''
+    local _launch="$1" _word _lead
     local -a _encoded=() _words=()
     _lead="$(hook_timeout_lead "${_launch}")"
     _launch="$(_hook_strip_wrappers "${_launch#"${_lead}"}")"
@@ -21,54 +23,44 @@ _heavy_test() {
     case "${_words[0]:-}" in
         just|*/just)
             [[ "${_words[1]:-}" == test ]] || return 1
-            _words=("${_words[@]:2}") ;;
-        script/test/test.sh|*/script/test/test.sh) _direct=1; _words=("${_words[@]:1}") ;;
+            _words=("${_words[@]:2}")
+            # A just test recipe forwards to the test.sh flag of its name.
+            if [[ "${#_words[@]}" -gt 0 && "${_words[0]}" != -* ]]; then
+                _words[0]="--${_words[0]}"
+            fi ;;
+        script/test/test.sh|*/script/test/test.sh) _words=("${_words[@]:1}") ;;
         *) return 1 ;;
     esac
-    for _word in "${_words[@]}"; do
-        [[ "${_word}" == --help || "${_word}" == -h ]] && return 1
-    done
-    [[ "${#_words[@]}" -gt 0 ]] || return 0
-    if [[ -z "${_direct}" ]]; then
-        _blocked_tier "${_words[0]}" "${_words[@]:1}"
-        return $?
-    fi
-    local _filter=''
-    for _word in "${_words[@]}"; do
-        if [[ -n "${_filter}" ]]; then _filter=''; continue; fi
-        [[ "${_word}" == --filter ]] && { _filter=1; continue; }
-        case "${_word}" in
-            --matrix|--integration|--system|--system-real|--acceptance) return 0 ;;
-            --unit) _has_spec "${_words[@]}" || return 0 ;;
-        esac
-    done
-    return 1
+    _out_of_scope "${_words[@]}"
 }
 
-_blocked_tier() {
-    local _tier="$1"
-    shift
-    case "${_tier}" in
-        matrix|integration|system|system-real|acceptance) return 0 ;;
-        unit) _has_spec "$@" || return 0 ;;
-    esac
-    return 1
-}
-
-_has_spec() {
-    local _arg _filter=''
+# _out_of_scope <test.sh argv> - 0 when the run leaves the local scope.
+_out_of_scope() {
+    local _arg _value='' _tiers=0 _specs=0
     for _arg in "$@"; do
-        if [[ -n "${_filter}" ]]; then
-            _filter=''
-            continue
-        fi
+        if [[ -n "${_value}" ]]; then _value=''; continue; fi
         case "${_arg}" in
-            --filter) _filter=1 ;;
-            --filter=*|-*) ;;
-            */*.bats) return 0 ;;
+            --filter|--base) _value=1 ;;
+            --help|-h|--changed) return 1 ;;
         esac
     done
-    return 1
+    [[ "$#" -gt 0 ]] || return 0
+    for _arg in "$@"; do
+        if [[ -n "${_value}" ]]; then _value=''; continue; fi
+        case "${_arg}" in
+            --filter|--base) _value=1 ;;
+            --build|--lint|--guards|--ci-lint) ;;
+            --system-real|--ci-system-real|--ci-integration-ghostty) return 0 ;;
+            --unit|--matrix|--integration|--system|--acceptance) _tiers=$((_tiers + 1)) ;;
+            --ci-unit|--ci-matrix|--ci-integration|--ci-system|--ci-acceptance) _tiers=$((_tiers + 1)) ;;
+            test/system-real/*|*/test/system-real/*|*/real_engine_spec.bats|real_engine_spec.bats) return 0 ;;
+            */*.bats) _specs=$((_specs + 1)) ;;
+        esac
+    done
+    if [[ "${_tiers}" -eq 0 ]] || [[ "${_tiers}" -eq 1 && "${_specs}" -gt 0 ]]; then
+        return 1
+    fi
+    return 0
 }
 
 main() {
@@ -76,8 +68,8 @@ main() {
     local _launch
     while IFS= read -r _launch; do
         if _heavy_test "${_launch}"; then
-            hook_block 'This tier is verified by CI (ci-passed).' \
-                'Locally run only lint and changed unit specs: just test lint; just test unit <spec...> [--filter REGEX].'
+            hook_block 'A whole tier, the real-engine group and every-tier runs are verified by CI (ci-passed).' \
+                'ADR 0014 decision 2: locally run just test lint plus the specs you touched, in any tier except system-real: just test <tier> <spec...> [--filter REGEX].'
         fi
     done < <(hook_subcommands_raw "$(hook_command)")
     hook_allow
