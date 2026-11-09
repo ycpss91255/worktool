@@ -4917,7 +4917,7 @@ _pl_755_fix_run() {
 }
 
 # Evidence the codex-comment stage returns: the PR head and, when found, one clean round comment.
-_pl_755_comment() { jq -cn --arg head "$1" --argjson found "$2" '{evidence: ({head:$head, verdicts:(if $found then [{sections:1, items:0}] else [] end)} | tojson)}'; }
+_pl_755_comment() { jq -cn --arg head "$1" --argjson found "$2" '{evidence: ({head:$head, verdicts:(if $found then [{sections:1, clean:true}] else [] end)} | tojson)}'; }
 
 # Full run with one review reply and a codex-comment reply.
 _pl_755_review_run() {
@@ -5033,6 +5033,27 @@ _pl_797_run() {
             .result.codexVerdict == "blocked" and (.result.blockingLeft | length > 0)' <<<"${output}"
         assert_success
     done
+}
+
+@test "#807: a defect section holding anything but 無 never yields codex mergeable" {
+    local paragraph=$'[codex] 第 1 輪複驗 head abc\n\n## 缺陷\n\n`lib/x.sh:12` 在空輸入時回 0，屬 fail-open。\n\n## 已知限制\n\n無'
+    local trailing=$'[codex] 第 1 輪複驗 head abc\n\n## 缺陷\n\n無\n另外 `lib/y.sh` 少了錯誤處理。'
+    local body
+    for body in "${paragraph}" "${trailing}"; do
+        run _pl_797_run '[]' "$(jq -cn --arg b "${body}" '[{id:"C2",body:$b}]')"
+        assert_success
+        run jq -e '.error == null and .result.reviewVerdict == "mergeable" and
+            .result.codexVerdict == "blocked" and (.result.blockingLeft | length > 0)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "#807: the workflow's own [claude] lines after a last 無 defect section still yield codex mergeable" {
+    local last=$'[codex] 第 1 輪複驗 head abc\n\n## 已知限制\n\n- slow runner\n\n## 缺陷\n\n  無  \r\n\n[claude] double-check: full context; every item cites a diff location\n可重現:`gh pr diff 7 --repo o/r | codex exec`'
+    run _pl_797_run '[]' "$(jq -cn --arg b "${last}" '[{id:"C2",body:$b}]')"
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "mergeable" and .result.blockingLeft == []' <<<"${output}"
+    assert_success
 }
 
 @test "#797: an unreadable comment snapshot blocks before the codex review" {

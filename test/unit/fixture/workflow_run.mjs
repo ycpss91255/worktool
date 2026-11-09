@@ -50,7 +50,7 @@ const replies = {
     'publish:Fix': { pr: 7, sha: 'def' },
     'adoption:': { posted: true },
     'comment-snapshot:': { evidence: '[]' },
-    'codex-comment:': { evidence: JSON.stringify({ head: 'abc', verdicts: [{ sections: 1, items: 0 }] }) },
+    'codex-comment:': { evidence: JSON.stringify({ head: 'abc', verdicts: [{ sections: 1, clean: true }] }) },
   } : {}),
   ...JSON.parse(repliesJson.startsWith('@') ? readFileSync(repliesJson.slice(1), 'utf8') : repliesJson),
 }
