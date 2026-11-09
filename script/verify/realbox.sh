@@ -918,13 +918,24 @@ _52_apply_window_root() {
     return 1
 }
 
+# The pause between new-shell search sweeps; a failed pause ends the search
+# inconclusively, and every inconclusive end says why on stderr.
+_52_search_pause() {
+    if sleep 0.1; then return 0; fi
+    log_warn "window search retry pause failed; Ghostty new shell not confirmed; acceptance inconclusive"
+    return 3
+}
+
 _52_find_window() {
     # Reserve one second of the ten-second search budget for the final bounded probe.
     local mode="$1" _52_DEADLINE=$((SECONDS + 9)) _52_ROWS apply_root rc nonfish=''
     local -A _52_PARENTS=() _52_COMMS=()
     while (( SECONDS < _52_DEADLINE )); do
         if ! _52_process_snapshot; then
-            (( SECONDS < _52_DEADLINE )) && return 3
+            if (( SECONDS < _52_DEADLINE )); then
+                log_warn "process snapshot failed before the window deadline; window ownership undetermined; acceptance inconclusive"
+                return 3
+            fi
             break
         fi
         # A wrapper seen by an earlier sweep stays the deadline candidate.
@@ -940,7 +951,7 @@ _52_find_window() {
                     return 3
                 fi
                 (( SECONDS < _52_DEADLINE )) || break
-                sleep 0.1 || return 3
+                _52_search_pause || return 3
                 continue
             }
             _52_WINDOW_ROOT="${apply_root}"
@@ -948,7 +959,7 @@ _52_find_window() {
         rc=0
         _52_scan_shells "${mode}" "${apply_root}" || rc=$?
         [[ "${rc}" -eq 2 ]] || return "${rc}"
-        sleep 0.1 || return 3
+        _52_search_pause || return 3
     done
     if [[ -n "${nonfish}" ]]; then
         _52_final_nonfish "${nonfish}"
@@ -1005,7 +1016,10 @@ _52_scan_shells() {
 # nonempty comm probe can establish that the last candidate is still non-fish.
 _52_final_nonfish() {
     local comm
-    comm="$(timeout -s KILL 1 ps -p "$1" -o comm=)" || return 3
+    if ! comm="$(timeout -s KILL 1 ps -p "$1" -o comm=)"; then
+        log_warn "Ghostty new shell not confirmed at deadline; acceptance inconclusive"
+        return 3
+    fi
     case "${comm}" in
         bash|sh|zsh|dash|ksh)
             guard_fail "PID $1 is not fish"

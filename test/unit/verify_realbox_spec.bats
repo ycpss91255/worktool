@@ -3538,6 +3538,70 @@ STUB
     assert_output ''
 }
 
+@test "#786: a failed new-shell snapshot before the deadline says why it is inconclusive" {
+    local message='[WARN] process snapshot failed before the window deadline; window ownership undetermined; acceptance inconclusive'
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ps" "${STATE}/search-ps"
+    cat >"${STUBS}/ps" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fail only the new-shell search's first snapshot; cleanup sees the window.
+if [[ "$*" == '-e -o pid=,ppid=,comm=' && -f "${FAKE_STATE_DIR}/window-directory"
+    && ! -e "${FAKE_STATE_DIR}/search-snapshot-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/search-snapshot-failed"
+    exit 1
+fi
+exec "${FAKE_STATE_DIR}/search-ps" "$@"
+STUB
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    [ -f "${STATE}/search-snapshot-failed" ]
+    [[ "${stderr}" == *"${message}"* ]]
+    [[ "${stderr}" != *'new shell timed out'* ]]
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#786: a failed pause between new-shell sweeps says why it is inconclusive" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    local real_sleep
+    real_sleep="$(command -v sleep)"
+    cat >"${STUBS}/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fail only the first pause after the window request.
+if [[ -f "${FAKE_STATE_DIR}/window-directory" && ! -e "${FAKE_STATE_DIR}/pause-failed" ]]; then
+    touch "${FAKE_STATE_DIR}/pause-failed"
+    exit 1
+fi
+exec "${FAKE_REAL_SLEEP}" "$@"
+STUB
+    chmod +x "${STUBS}/sleep"
+    FAKE_NO_WINDOW=1 FAKE_REAL_SLEEP="${real_sleep}" \
+        run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    [ -f "${STATE}/pause-failed" ]
+    [[ "${stderr}" == *'[WARN] window search retry pause failed; Ghostty new shell not confirmed; acceptance inconclusive'* ]]
+    [[ "${stderr}" != *'new shell timed out'* ]]
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#786: doc/acceptance.md 5.2 lists every inconclusive new-shell search diagnostic" {
+    local message
+    for message in \
+        'Ghostty new shell timed out; acceptance inconclusive' \
+        'window ownership undetermined; acceptance inconclusive' \
+        'Ghostty new shell not confirmed at deadline; acceptance inconclusive' \
+        'process snapshot failed before the window deadline; window ownership undetermined; acceptance inconclusive' \
+        'window search retry pause failed; Ghostty new shell not confirmed; acceptance inconclusive'; do
+        run grep -cF -- "\`[WARN] ${message}\`" "${REPO_ROOT}/doc/acceptance.md"
+        assert_output 1
+        run grep -F -- "log_warn \"${message}\"" "${REPO_ROOT}/script/verify/realbox.sh"
+        assert_success
+    done
+}
+
 @test "#663: cleanup escalates only its owned window when HUP is ignored" {
     _auto_window_tools
     cat >"${STUBS}/kill" <<'STUB'
@@ -4525,6 +4589,8 @@ STUB
     [ -e "${STATE}/wrapper-seen" ]
     [ -e "${STATE}/deadline-inspected" ]
     refute_output --partial 'is not fish'
+    # A failed final probe is inconclusive and says so (#786).
+    assert_output --partial '[WARN] Ghostty new shell not confirmed at deadline; acceptance inconclusive'
     [ -f "$(_backup_dir)/manifest" ]
 }
 
