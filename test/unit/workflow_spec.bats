@@ -5022,6 +5022,22 @@ _pl_769_defect_run() {
     assert_success
 }
 
+@test "pr-loop reports not-run when a Claude review returns malformed findings (#784)" {
+    run _pl_769_defect_run '{"maxRounds":1}' '{"review:":{"verdict":"mergeable"}}'
+    assert_success
+    run jq -e '.error == null and .result.reviewer == "claude" and .result.reviews == 1 and
+        .result.reviewVerdict == "no-output" and .result.codexVerdict == "not-run" and
+        .result.rounds == 0 and .result.blockingLeft == ["review returned missing or malformed findings"]' <<<"${output}"
+    assert_success
+}
+
+@test "doc/workflow.md lists a malformed Claude review among the not-run ends (#784)" {
+    run grep -F '審查迴圈正常結束時' "${REPO_ROOT}/doc/workflow.md"
+    assert_success
+    assert_output --partial '審查回傳缺漏或格式錯誤的結果'
+    assert_output --partial "\`reviewVerdict\` 是 \`no-output\`"
+}
+
 @test "milestone-fanout logs the reviewer and review verdict of each child (#755)" {
     run _fanout_batches '{}'
     assert_success
