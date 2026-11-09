@@ -36,7 +36,7 @@ export const meta = {
 // outcome ('mergeable' | 'blocked' | 'no-output', or 'none' before any review); reviews counts them.
 // codexVerdict (#769, #793, #804):
 //   "mergeable" - a codex review found no defects and its [codex] round comment is confirmed at the PR
-//                 head, posted by this review with an empty "## 缺陷" section (#755, #797).
+//                 head, posted by this review with a "## 缺陷" section of only 無 (#755, #797, #807).
 //   "blocked"   - a preparation, implementation, resume-gate or PR head check failure; a missing or
 //                 unreadable RED record or comment snapshot, checked before every review including the
 //                 first; a Fix, adoption comment or post-Fix CI abort, whoever reviewed; a codex review
@@ -346,14 +346,17 @@ const snapshotComments = async (pr, round) => {
 
 // A codex mergeable needs its round comment on the reviewed head (#755),
 // posted after the snapshot `seen`, whose first line is exactly the round
-// header and whose only "## 缺陷" section lists no items (#797).
+// header and whose only "## 缺陷" section holds nothing but 無 before the
+// workflow's own [claude] lines (#797, #807).
 const confirmCodexComment = async (pr, round, head, seen) => {
   const header = `[codex] 第 ${round} 輪複驗 head ${head}`
   const query = String.raw`${JSON.stringify(seen)} as $seen | {head: .headRefOid, verdicts: [.comments[] |
     select((.id | IN($seen[])) | not) | (.body // "") |
     select((split("\n")[0] | rtrimstr("\r")) == ${JSON.stringify(header)}) |
     [("\n" + .) | split("\n## ")[1:][] | select(test("^缺陷[ \\t]*(\\r?\\n|$)"))] |
-    {sections: length, items: ([.[] | split("\n")[1:][] | select(test("^[ \\t]*([-*+]|[0-9]+[.)])[ \\t]"))] | length)}]}`
+    {sections: length, clean: (length == 1 and (.[0] | split("\n")[1:] | map(rtrimstr("\r") | gsub("^[ \\t]+|[ \\t]+$"; "")) |
+      (first(range(length) as $k | select(.[$k] | startswith("[claude] ")) | $k) // length) as $cut |
+      .[:$cut] | map(select(. != ""))) == ["無"])}]}`
   const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json headRefOid,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence; on command failure return an empty evidence string. Never infer the result.`, {
     label: `${RUN_ID} codex-comment:#${pr}:r${round}`, phase: 'Codex', effort: 'low', agentType: 'general-purpose',
     schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
@@ -361,7 +364,7 @@ const confirmCodexComment = async (pr, round, head, seen) => {
   try {
     const data = JSON.parse(fetched.evidence)
     return data.head === head && Array.isArray(data.verdicts) && data.verdicts.length > 0 &&
-      data.verdicts.every(v => v.sections === 1 && v.items === 0)
+      data.verdicts.every(v => v.sections === 1 && v.clean === true)
   } catch { return false }
 }
 
@@ -687,7 +690,7 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
 // Only a confirmed codex comment may report codexVerdict mergeable; a Claude review never fills it.
 if (reviewFindings.reviewer !== 'codex') return result({ pr, sha, ciState: 'green', codexVerdict: 'not-run', rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
 if (verdict === 'mergeable' && !(await confirmCodexComment(pr, fixes + 1, sha, seen))) {
-  return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到本次審查發布、「## 缺陷」段沒有項目的「[codex] 第 ${fixes + 1} 輪複驗 head ${sha}」留言`] })
+  return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到本次審查發布、「## 缺陷」段只有「無」的「[codex] 第 ${fixes + 1} 輪複驗 head ${sha}」留言`] })
 }
 return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
 
