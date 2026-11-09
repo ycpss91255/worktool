@@ -4910,8 +4910,8 @@ _pl_755_fix_run() {
     assert_success
 }
 
-# Evidence the codex-comment stage returns: the PR head and whether the round comment exists there.
-_pl_755_comment() { jq -cn --arg head "$1" --argjson found "$2" '{evidence: ({head:$head, found:$found} | tojson)}'; }
+# Evidence the codex-comment stage returns: the PR head and, when found, one clean round comment.
+_pl_755_comment() { jq -cn --arg head "$1" --argjson found "$2" '{evidence: ({head:$head, verdicts:(if $found then [{sections:1, items:0}] else [] end)} | tojson)}'; }
 
 # Full run with one review reply and a codex-comment reply.
 _pl_755_review_run() {
@@ -4919,7 +4919,8 @@ _pl_755_review_run() {
     replies='{"implement:":{"status":"ready","reason":""},
         "stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
         "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},
-        "review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
+        "review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"},
+        "comment-snapshot:":{"evidence":"[]"}}'
     replies="$(jq -c --argjson comment "$2" '. + {"codex-comment:": $comment}' <<<"${replies}")"
     node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
         "$(jq -cn --argjson extra "$1" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
@@ -4956,6 +4957,85 @@ _pl_755_review_run() {
             .result.codexVerdict != "mergeable" and (.result.blockingLeft | length > 0)' <<<"${output}"
         assert_success
     done
+}
+
+# Fake gh for the codex comment filters: the snapshot (--json comments) reads
+# PL_COMMENTS_BEFORE, the confirmation (--json headRefOid,comments) reads
+# PL_COMMENTS_AFTER; PL_SNAPSHOT_FAIL=1 fails the snapshot.
+_pl_797_gh() {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    cat > "${BATS_TEST_TMPDIR}/bin/gh" <<'SH'
+#!/bin/sh
+src="$PL_COMMENTS_BEFORE"
+case " $* " in *" headRefOid,comments "*) src="$PL_COMMENTS_AFTER" ;; *) [ -z "$PL_SNAPSHOT_FAIL" ] || exit 1 ;; esac
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then
+        jq "$2" "$src"
+        exit "$?"
+    fi
+    shift
+done
+exit 1
+SH
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+}
+
+# Run a codex-reviewed pr-loop whose review reports no defects; $1 = comments
+# before the review, $2 = comments after it (JSON arrays of {id, body}).
+_pl_797_run() {
+    local root="${BATS_TEST_TMPDIR}" replies
+    jq -n --argjson c "$1" '{headRefOid:"abc", comments:$c}' > "${root}/before.json"
+    jq -n --argjson c "$2" '{headRefOid:"abc", comments:$c}' > "${root}/after.json"
+    _pl_797_gh
+    replies='{"implement:":{"status":"ready","reason":""},
+        "stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
+        "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},
+        "review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"},
+        "comment-snapshot:":{"evidence":"<stdout>"},"codex-comment:":{"evidence":"<stdout>"}}'
+    PL_COMMENTS_BEFORE="${root}/before.json" PL_COMMENTS_AFTER="${root}/after.json" PATH="${root}/bin:${PATH}" \
+        node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        '{"runTag":"test-run","repo":"o/r","repoDir":"/work","issue":283,"branch":"b","name":"n","task":"t","implementer":"claude"}' \
+        "${replies}" exec-codex-comment
+}
+
+@test "#797: codex mergeable needs a round comment posted after this review began with an empty defect section" {
+    local clean=$'[codex] 第 1 輪複驗 head abc\r\n\n## 缺陷\n\n無\n\n## 已知限制\n\n- slow runner'
+    run _pl_797_run '[{"id":"C1","body":"note"}]' "$(jq -cn --arg b "${clean}" '[{id:"C1",body:"note"},{id:"C2",body:$b}]')"
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "mergeable" and .result.blockingLeft == [] and
+        ([.calls[].role] | index("comment-snapshot:#7:r1") as $s | $s != null and $s < index("review:#7:r1"))' <<<"${output}"
+    assert_success
+}
+
+@test "#797: a stale, prefix-only, defect-listing or sectionless round comment never yields codex mergeable" {
+    local stale=$'[codex] 第 1 輪複驗 head abc\n\n## 缺陷\n\n- broken' before after
+    local listed=$'[codex] 第 1 輪複驗 head abc\n\n## 缺陷\n\n1. broken\n\n## 改善建議\n\n無'
+    local prefix=$'[codex] 第 1 輪複驗 head abcdef\n\n## 缺陷\n\n無'
+    local bare=$'[codex] 第 1 輪複驗 head abc\n\n全部通過'
+    local cases=(
+        "$(jq -cn --arg b "${stale}" '[{id:"C1",body:$b}]')|$(jq -cn --arg b "${stale}" '[{id:"C1",body:$b}]')"
+        "[]|$(jq -cn --arg b "${listed}" '[{id:"C2",body:$b}]')"
+        "[]|$(jq -cn --arg b "${prefix}" '[{id:"C2",body:$b}]')"
+        "[]|$(jq -cn --arg b "${bare}" '[{id:"C2",body:$b}]')"
+    )
+    local c
+    for c in "${cases[@]}"; do
+        before="${c%%|*}" after="${c#*|}"
+        run _pl_797_run "${before}" "${after}"
+        assert_success
+        run jq -e '.error == null and .result.reviewVerdict == "mergeable" and
+            .result.codexVerdict == "blocked" and (.result.blockingLeft | length > 0)' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "#797: an unreadable comment snapshot blocks before the codex review" {
+    local clean=$'[codex] 第 1 輪複驗 head abc\n\n## 缺陷\n\n無'
+    PL_SNAPSHOT_FAIL=1 run _pl_797_run '[]' "$(jq -cn --arg b "${clean}" '[{id:"C2",body:$b}]')"
+    assert_success
+    run jq -e '.error == null and .result.codexVerdict == "blocked" and (.result.blockingLeft | length > 0) and
+        ([.calls[].role | startswith("review:")] | any | not)' <<<"${output}"
+    assert_success
 }
 
 @test "pr-loop counts reviews separately from fix rounds (#755)" {
