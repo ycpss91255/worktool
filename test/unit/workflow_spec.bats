@@ -3798,11 +3798,11 @@ SH
     chmod +x "${root}/bin/just"
 }
 
-@test "pr-loop Codex fix summary can be published by the workflow identity (#561)" {
+@test "pr-loop adoption comment of a codex fix round can be published by the workflow identity (#561, #804)" {
     run _pl_blocked_run codex
     assert_success
     local body="${BATS_TEST_TMPDIR}/adoption.md" input
-    jq -er '.calls[] | select(.role == "fix:#7:r1") | .prompt |
+    jq -er '.calls[] | select(.role == "adoption:#7:r1") | .prompt |
         [scan("\\[[a-z]+\\] 採納第 [0-9]+ 輪:")] | last' <<<"$output" > "$body"
     printf 'Resolved finding in commit abc.\n' >> "$body"
     input="$(jq -cn --arg cwd "$REPO_ROOT" --arg cmd "gh pr comment 7 --repo ycpss91255/worktool --body-file $body" \
@@ -4768,12 +4768,18 @@ _pl_pr_text_rule() {
     assert_success
 }
 
-@test "pr-loop codex fix brief reports stale PR sections instead of banning updates (#755)" {
+@test "pr-loop codex fix brief leaves stale PR sections to the workflow's diff comparison (#755, #804)" {
     run _pl_blocked_run codex
     assert_success
+    local json="${output}"
     run jq -e '.calls[] | select(.role == "fix:#7:r1") | .prompt | split("brief:\n")[1] |
         (contains("Do not edit the existing PR description") | not) and
-        contains("name every human-written PR description section")' <<<"${output}"
+        (contains("name every human-written PR description section") | not) and
+        contains("compares the PR description with the pushed diff, updates stale human-written sections")' <<<"${json}"
+    assert_success
+    # The stage that does update stale sections is the one after publication.
+    run jq -e '.calls[] | select(.role == "adoption:#7:r1") | .prompt |
+        contains("Compare the PR description with that diff first")' <<<"${json}"
     assert_success
 }
 
@@ -5089,26 +5095,53 @@ _pl_769_defect_run() {
     done
 }
 
-@test "doc/workflow.md and the pr-loop header state when a Claude review yields not-run or blocked (#769)" {
-    run grep -F "一律是 \`not-run\`" "${REPO_ROOT}/doc/workflow.md"
-    assert_failure
-    run grep -F '審查迴圈正常結束時' "${REPO_ROOT}/doc/workflow.md"
-    assert_success
-    assert_output --partial "\`codexVerdict\` 是 \`not-run\`"
-    assert_output --partial "流程中止時回 \`blocked\`，與審查者無關"
-    run grep -F '"not-run" when a Claude review ends the loop' "${PR_LOOP}"
-    assert_success
-    run grep -F '"blocked" on any flow abort' "${PR_LOOP}"
-    assert_failure
-    # The header must say which aborts are "blocked" and which are not (#793).
-    run grep -F 'After review, a RED record, Fix, adoption comment, post-Fix CI or [codex] comment abort is "blocked",' "${PR_LOOP}"
-    assert_success
-    run grep -F 'Before review it is "blocked" on a preparation, implementation, resume-gate or' "${PR_LOOP}"
-    assert_success
-    run grep -F '"skipped" on red CI, a failed light review and the end of light mode' "${PR_LOOP}"
-    assert_success
-    run grep -F '"none" when no PR is found after' "${PR_LOOP}"
-    assert_success
+# Run pr-loop with canned replies; $1 = extra args, $2 = reply overrides.
+_pl_804_run() {
+    local replies='{"implement:":{"status":"ready","reason":""},
+        "stage-check:":{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},
+        "locate:":{"pr":7,"sha":"abc"},"ci:":{"state":"green","sha":"abc","detail":""},
+        "review:":{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}}'
+    replies="$(jq -c --argjson o "$2" '. + $o' <<<"${replies}")"
+    node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" \
+        "$(jq -cn --argjson extra "$1" '{runTag:"test-run",repo:"o/r",repoDir:"/work",issue:283,branch:"b",name:"n",task:"t"} + $extra')" \
+        "${replies}"
+}
+
+# Each condition the pr-loop header and doc/workflow.md name for a codexVerdict,
+# run through the workflow instead of matching their wording (#804).
+@test "#804: every documented codexVerdict condition yields that verdict" {
+    local defect='{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"x"}'
+    local head_fail='{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"boom\"}"}'
+    local -a cases=(
+        'round-1 RED record missing, Claude review|{}|{"red-record:":{"evidence":"[]"}}|.codexVerdict == "blocked" and .reviewer == "none" and .reviews == 0'
+        'round-1 RED record missing, codex review|{"implementer":"claude"}|{"red-record:":{"evidence":"[]"}}|.codexVerdict == "blocked" and .reviewer == "none" and .reviews == 0'
+        'comment snapshot unreadable|{"implementer":"claude"}|{"comment-snapshot:":null}|.codexVerdict == "blocked" and .reviewer == "none" and .reviews == 0'
+        "codex defects left after maxRounds|{\"implementer\":\"claude\",\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"blocked\" and .reviewer == \"codex\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
+        'codex malformed findings|{"implementer":"claude"}|{"review:":{"verdict":"mergeable"}}|.codexVerdict == "no-output" and .reviewer == "codex" and .reviewVerdict == "no-output" and .blockingLeft == ["review returned missing or malformed findings"]'
+        "Claude defects left after maxRounds|{\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"not-run\" and .reviewer == \"claude\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
+        'red CI before review|{}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red" and .reviewer == "none"'
+        'no PR after implementation|{}|{"locate:":null}|.codexVerdict == "none" and .pr == 0'
+        'codex off|{"implementer":"claude","codex":"off"}|{}|.codexVerdict == "off" and .reviewer == "none"'
+        'preparation failure|{"mode":"light"}|{"prepare:":{"state":"missing-job"}}|.codexVerdict == "blocked"'
+        'fresh light red CI|{"mode":"light"}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red"'
+        'fresh light end|{"mode":"light"}|{}|.codexVerdict == "skipped" and .ciState == "green" and .reviewer == "claude"'
+        'light resume failed review|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"},"review:":{"verdict":"mergeable"}}|.codexVerdict == "skipped" and .reviewVerdict == "no-output"'
+        "light resume PR head check failure|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":${head_fail}}|.codexVerdict == \"blocked\" and .reviewer == \"claude\""
+        'light resume gate failure|{"mode":"light"}|{"prepare:":{"state":"resume"},"gates:":{"state":"red","detail":"red"}}|.codexVerdict == "blocked" and .pr == 0'
+        'light resume without a PR|{"mode":"light"}|{"prepare:":{"state":"resume"}}|.codexVerdict == "none" and .pr == 0'
+        'light resume end|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"}}|.codexVerdict == "skipped" and .ciState == "green"'
+    )
+    local c name args over expr
+    for c in "${cases[@]}"; do
+        IFS='|' read -r name args over expr <<<"${c}"
+        run _pl_804_run "${args}" "${over}"
+        assert_success
+        run jq -e ".error == null and (.result | ${expr})" <<<"${output}"
+        if [[ "${status}" -ne 0 ]]; then
+            printf 'case failed: %s\n' "${name}" >&2
+        fi
+        assert_success
+    done
 }
 
 @test "pr-loop reports not-run when a Claude review returns malformed findings (#784)" {

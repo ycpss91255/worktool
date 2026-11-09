@@ -32,14 +32,24 @@ export const meta = {
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }.
-// reviewer names who reviewed ('claude' | 'codex' | 'none'); codexVerdict is "mergeable" only after a
-// [codex] round comment is confirmed at the PR head (#755), posted by this review with an empty
-// "## 缺陷" section (#797); "not-run" when a Claude review ends the loop.
-// After review, a RED record, Fix, adoption comment, post-Fix CI or [codex] comment abort is "blocked",
-// whoever reviewed (#769). Before review it is "blocked" on a preparation, implementation, resume-gate or
-// PR head check failure; "skipped" on red CI, a failed light review and the end of light mode (a fresh
-// light run reports "skipped" at every stop after preparation); "none" when no PR is found after
-// implementation or resume; "off" when codex is off (#793).
+// reviewer names who reviewed last ('claude' | 'codex' | 'none'); reviewVerdict is that review's
+// outcome ('mergeable' | 'blocked' | 'no-output', or 'none' before any review); reviews counts them.
+// codexVerdict (#769, #793, #804):
+//   "mergeable" - a codex review found no defects and its [codex] round comment is confirmed at the PR
+//                 head, posted by this review with an empty "## 缺陷" section (#755, #797).
+//   "blocked"   - a preparation, implementation, resume-gate or PR head check failure; a missing or
+//                 unreadable RED record or comment snapshot, checked before every review including the
+//                 first; a Fix, adoption comment or post-Fix CI abort, whoever reviewed; a codex review
+//                 with defects left when maxRounds is spent; or an unconfirmed [codex] round comment.
+//   "no-output" - a codex review returned missing or malformed findings.
+//   "not-run"   - a Claude review ends the loop: it passed, defects are left when maxRounds is spent,
+//                 or its findings were missing or malformed (reviewVerdict "no-output").
+//   "skipped"   - red CI before any review, a failed light review and the end of light mode; a fresh
+//                 light run reports "skipped" at every stop after preparation.
+//   "none"      - no PR is found after full implementation or a resume.
+//   "off"       - codex is off.
+// blockingLeft lists the defects left, or the failure reason when the flow aborts; a failed Fix
+// stage check and red post-Fix CI also append that round's defects.
 // The workflow never merges: merge order and rebase conflicts stay with the
 // main loop (one PR at a time, merge commit, keep agent commits).
 
@@ -273,7 +283,7 @@ ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Do not edit the PR yourself; in your summary name every human-written PR description section your commits made stale, so the workflow updates it. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. Return the commit SHA and a summary for the workflow publication comment starting with "[claude] 採納第 ${round} 輪:".`
+Do not edit the PR or post comments yourself: after publishing your commits, the workflow compares the PR description with the pushed diff, updates stale human-written sections and writes the adoption comment from that diff, not from your summary. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. End with the commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
