@@ -546,3 +546,29 @@ EOF
     assert_failure
     assert_output --partial 'no item entry point found in script/verify/x.sh'
 }
+
+@test "the tool derivation follows a child run of another item of the same script (#782)" {
+    load "${BATS_TEST_DIRNAME}/../helper/graph"
+    load "${BATS_TEST_DIRNAME}/../helper/verify_tools"
+    local tree="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${tree}/script/verify"
+    cat >"${tree}/script/verify/x.sh" <<'EOF'
+_dispatch() {
+    case "$1" in
+        9.1) _item_9_1 ;;
+        9.2) _item_9_2 ;;
+        9.3) _item_9_3 ;;
+    esac
+}
+_item_9_1() { guard_require zstd; }
+_item_9_2() {
+    guard_require xz || return $?
+    setsid bash "${SCRIPT_DIR}/x.sh" --allow "${REPO}" \
+        --box "${BOX}" 9.1 >>"${capture}" 2>&1 &
+}
+_item_9_3() { bash "${SCRIPT_DIR}/other.sh" 9.1 >/dev/null; guard_require lz4; }
+EOF
+    run verify_item_tools "${tree}" script/verify/x.sh
+    assert_success
+    assert_output "$(printf '%s\t%s\n' lz4 9.3 xz 9.2 zstd 9.1 zstd 9.2)"
+}
