@@ -23,6 +23,8 @@
 // and review remain canned so the checks can inspect real test repositories.
 // `exec-job-results` executes generated start/wait calls against fake jobs,
 // then reads the failed run and hands off to a canned repair on a failure marker.
+// `exec-codex-comment` plays only the pr-loop comment-snapshot and
+// codex-comment agents, so their gh-side filters run on fixture PR data.
 // `exec-hooks` also runs both publication body hooks before each shell
 // step, using the unchanged tool cwd rather than following shell `cd`.
 // A top-level reply field equal to "<stdout>" becomes the trimmed stdout of
@@ -47,7 +49,8 @@ const replies = {
     'publish:Implement': { pr: 7, sha: 'abc' },
     'publish:Fix': { pr: 7, sha: 'def' },
     'adoption:': { posted: true },
-    'codex-comment:': { evidence: JSON.stringify({ head: 'abc', found: true }) },
+    'comment-snapshot:': { evidence: '[]' },
+    'codex-comment:': { evidence: JSON.stringify({ head: 'abc', verdicts: [{ sections: 1, items: 0 }] }) },
   } : {}),
   ...JSON.parse(repliesJson.startsWith('@') ? readFileSync(repliesJson.slice(1), 'utf8') : repliesJson),
 }
@@ -371,6 +374,10 @@ const agent = async (prompt, opts = {}) => {
   if (mode === 'exec-red-record' && role.startsWith('red-record:')) {
     const { ok, stdout } = play(prompt)
     if (ran.length) ran[ran.length - 1].stdout = stdout
+    return ok ? withStdout(reply(role), stdout) : null
+  }
+  if (mode === 'exec-codex-comment' && /^(comment-snapshot|codex-comment):/.test(role)) {
+    const { ok, stdout } = play(prompt)
     return ok ? withStdout(reply(role), stdout) : null
   }
   if (mode === 'exec-job-results' && /^(ci|gates):/.test(role)) return playJobResults(role, prompt)
