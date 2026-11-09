@@ -1052,7 +1052,7 @@ _52_session_members() {
 }
 
 _52_stop_window() {
-    local root="$1" signal deadline current rc checked=0
+    local root="$1" signal deadline current rc checked=0 sent=''
     local _52_DEADLINE=${_52_DEADLINE:-$((SECONDS + 4))}
     for signal in HUP TERM KILL; do
         (( SECONDS < _52_DEADLINE )) || break
@@ -1073,6 +1073,7 @@ _52_stop_window() {
         checked=1
         (( SECONDS < _52_DEADLINE )) || break
         guard_timed 1 kill "-${signal}" -- "-${root}" || return 1
+        sent="${signal}"
         deadline=$((SECONDS + 1))
         while (( SECONDS < deadline && SECONDS < _52_DEADLINE )); do
             rc=0
@@ -1096,6 +1097,12 @@ _52_stop_window() {
     # says nothing about its members: report the deadline, not live members.
     if [[ "${checked}" -eq 0 ]]; then
         guard_fail "cleanup deadline reached before owned window session ${root} was checked; keeping ownership evidence"
+        return 1
+    fi
+    # Only a deadline breaks the loop before KILL is sent: the escalation did
+    # not finish, so the session was neither emptied nor proven to resist it.
+    if [[ "${sent}" != KILL ]]; then
+        guard_fail "cleanup deadline reached before owned window session ${root} was confirmed empty; keeping ownership evidence"
         return 1
     fi
     guard_fail "owned window session ${root} still has live members; keeping ownership evidence"

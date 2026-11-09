@@ -4431,6 +4431,57 @@ _773_stop_window_past_deadline() {
     [ ! -f "${STATE}/closed" ]
 }
 
+# Give _52_stop_window alone its own logical clock, starting at 0, and move
+# it past the shared cleanup deadline right after the shipped line matching
+# $1: the deadline crosses after a member check, before the escalation is
+# complete.
+_785_stop_window_deadline_after() {
+    local count
+    printf '0\n' >"${STATE}/stop-clock"
+    count="$(awk -v mark="$1" '
+        /^_52_stop_window\(\) \{/ {in_fn=1}
+        in_fn {n += gsub(/FAKE_STATE_DIR\}\/clock/, "FAKE_STATE_DIR}/stop-clock")}
+        {print > out}
+        in_fn && index($0, mark) {
+            print "        printf '\''1000\\n'\'' >\"${FAKE_STATE_DIR}/stop-clock\"" > out
+            hits++
+        }
+        in_fn && /^\}/ {in_fn=0}
+        END {print n ":" hits}
+    ' out="${REALBOX}.new" "${REALBOX}")"
+    assert_equal "${count}" 6:1
+    cat "${REALBOX}.new" >"${REALBOX}"
+    rm "${REALBOX}.new"
+}
+
+@test "#785: a deadline after the member check but before any signal reports the deadline" {
+    _712_gone_before_cleanup_tools
+    _785_stop_window_deadline_after 'checked=1'
+    FAKE_SESSION_CHECK=group run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [[ "${stderr}" != *'still has live members'* ]]
+    [[ "${stderr}" == *'cleanup deadline reached before owned window session 4240 was confirmed empty; keeping ownership evidence'* ]]
+    local directory
+    directory="$(cat "${STATE}/closed-directory")"
+    [ -f "${directory}/before" ]
+    _assert_52_kept_evidence_stderr "${directory}"
+    [ ! -f "${STATE}/closed" ]
+}
+
+@test "#785: a deadline during the HUP wait, before TERM, reports the deadline" {
+    _712_gone_before_cleanup_tools
+    _785_stop_window_deadline_after 'guard_timed 1 kill'
+    FAKE_SESSION_CHECK=group run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [[ "${stderr}" != *'still has live members'* ]]
+    [[ "${stderr}" == *'cleanup deadline reached before owned window session 4240 was confirmed empty; keeping ownership evidence'* ]]
+    local directory
+    directory="$(cat "${STATE}/closed-directory")"
+    [ -f "${directory}/before" ]
+    _assert_52_kept_evidence_stderr "${directory}"
+    assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
+}
+
 @test "#712: I confirmed root absent from first cleanup snapshot with failed session probe keeps evidence" {
     _712_gone_before_cleanup_tools
     FAKE_SESSION_CHECK=failure run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
