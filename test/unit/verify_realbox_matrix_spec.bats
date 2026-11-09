@@ -513,6 +513,29 @@ STUB
     done
 }
 
+@test "#782: a tool only the inner 5.1 needs is unavailable before any cell starts" {
+    local tool absent
+    for tool in jq find; do
+        _copy_matrix_repo
+        absent="${tool}_absent_782"
+        # Only the copy's 5.1 tool check names the missing tool, as if it
+        # were absent from PATH; 5.4's own checks and the child share it.
+        sed -i "/^_51_require_tools() {/,/^}/ s/ ${tool} / ${absent} /" "${REALBOX}"
+        run grep -c -- "${absent}" "${REALBOX}"
+        assert_output 1
+        run "${REALBOX}" --allow-real-box 5.4
+        assert_failure 3
+        assert_line "[UNAVAILABLE] realbox.sh: ${absent} not found on PATH"
+        refute_output --partial '[FAIL]'
+        refute_output --partial 'interrupt '
+        [ ! -e "${MATRIX_STATE}/calls.log" ]
+        [ ! -s "${MATRIX_STATE}/boxes" ]
+        run find "${TMPDIR}" -mindepth 1 -print
+        assert_success
+        assert_output ''
+    done
+}
+
 @test "5.4: an unavailable capture fails before waiting for an interrupt event" {
     # Inject a filesystem failure at the external mkdir seam.
     cat >"${MATRIX_STATE}/bin/mkdir" <<'STUB'
