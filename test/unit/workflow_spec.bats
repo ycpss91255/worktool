@@ -241,7 +241,7 @@ _meta_skeleton() {
     run grep -c "ci.state !== 'green'" "${PR_LOOP}"
     assert_output "2"
     run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "3"
+    assert_output "2"
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
@@ -376,8 +376,14 @@ SH
     printf '#!/bin/sh\nprintf "failed run log\\n"\n' > "${root}/bin/gh"
     chmod +x "${root}/bin/just" "${root}/bin/gh"
     args="$(jq -cn --arg d "${root}/src" '{runTag:"test-run",repo:"o/r",repoDir:$d,issue:566,branch:"b",name:"n",task:"t",pr:7,codex:"off",implementer:"claude"}')"
+    # The post-CI resume check reads the head CI judged: repaired after a repair, else abc.
+    local head="${PL_RESUME_HEAD:-repaired}" replies
+    replies="$(jq -cn --arg head "${head}" '{"prepare:":{state:"resume"},
+        "stage-check:Resume":[{evidence:({status:"",localHead:"abc",remoteHead:"abc",prHead:"abc",errors:""} | tojson)},
+            {evidence:({status:"",localHead:$head,remoteHead:$head,prHead:$head,errors:""} | tojson)}],
+        "ci:#7repair":{state:"green",sha:"repaired",detail:"repair completed"},"ci:":{state:"green",sha:"abc",detail:"checks passed"}}')"
     PATH="${root}/bin:${PATH}" node "${REPO_ROOT}/test/unit/fixture/workflow_run.mjs" "${PR_LOOP}" "${args}" \
-        '{"prepare:":{"state":"resume"},"stage-check:Resume":[{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"},{"evidence":"{\"status\":\"\",\"localHead\":\"repaired\",\"remoteHead\":\"repaired\",\"prHead\":\"repaired\",\"errors\":\"\"}"}],"ci:#7repair":{"state":"green","sha":"repaired","detail":"repair completed"},"ci:":{"state":"green","sha":"abc","detail":"checks passed"}}' exec-job-results
+        "${replies}" exec-job-results
 }
 
 @test "pr-loop CI check job rc 1 reads the failed log and enters repair (#566)" {
@@ -407,13 +413,13 @@ SH
     run jq -e '.result.ciState == "red" and (.ran | length == 1)' <<<"${output}"
     assert_success
 
-    export PL_JOB_START_RC=0
+    export PL_JOB_START_RC=0 PL_RESUME_HEAD=abc
     run _pl_job_results
     assert_success
-    run jq -e '.result.ciState == "green" and (.ran | length == 2)' <<<"${output}"
+    run jq -e '.result.ciState == "green" and .result.sha == "abc" and (.ran | length == 2)' <<<"${output}"
     assert_success
 
-    export PL_JOB_KIND=local PL_JOB_WAIT_RC=1
+    export PL_JOB_KIND=local PL_JOB_WAIT_RC=1 PL_RESUME_HEAD=repaired
     run _pl_job_results
     assert_success
     run jq -e '.result.ciState == "red" and (.ran | length == 2) and .ran[1].rc == 1' <<<"${output}"
@@ -718,7 +724,7 @@ _pl_launch_checks() {
 }
 
 @test "pr-loop returns the issue #158 result contract: pr, sha, ciState, codexVerdict, rounds" {
-    run grep -c "ciState: 'green', codexVerdict: verdict, rounds: fixes" "${PR_LOOP}"
+    run grep -c "ciState: ciAt(sha), codexVerdict: verdict, rounds: fixes" "${PR_LOOP}"
     assert_output "1"
     run grep -cE "return result\(\{ pr, sha" "${PR_LOOP}"
     assert [ "${output}" -ge 2 ]
@@ -5163,6 +5169,44 @@ _pl_804_run() {
         fi
         assert_success
     done
+}
+
+# ciState describes CI on the reported head only: a head no CI stage judged is
+# never green (#810).
+@test "#810: ciState reports CI of the returned head, never green for an unchecked head" {
+    local ok='{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}'
+    local defect='{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"x"}'
+    local abc='{"evidence":"{\"status\":\"\",\"localHead\":\"abc\",\"remoteHead\":\"abc\",\"prHead\":\"abc\",\"errors\":\"\"}"}'
+    local def='{"evidence":"{\"status\":\"\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}'
+    local dirty_def='{"evidence":"{\"status\":\"?? x\",\"localHead\":\"def\",\"remoteHead\":\"def\",\"prHead\":\"def\",\"errors\":\"\"}"}'
+    local fix='{"implementer":"claude","maxRounds":1}'
+    # runner|name|args|reply overrides|expected result. _pl_769_defect_run reviews with
+    # a defect and checks Implement head abc and Fix head def.
+    local -a cases=(
+        "_pl_769_defect_run|Fix check fails on a pushed head|${fix}|{\"stage-check:Fix\":${dirty_def}}|.sha == \"def\" and .ciState == \"none\""
+        "_pl_769_defect_run|Fix check fails on the CI head|${fix}|{\"stage-check:Fix\":${abc}}|.sha == \"abc\" and .ciState == \"green\""
+        "_pl_769_defect_run|Fix check without evidence|${fix}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.ciState == \"none\""
+        "_pl_769_defect_run|adoption comment fails|${fix}|{\"adoption:\":{\"posted\":false}}|.sha == \"def\" and .ciState == \"none\""
+        "_pl_769_defect_run|codex Fix gates fail|{\"maxRounds\":1}|{\"gates:\":[{\"state\":\"green\",\"detail\":\"ok\"},{\"state\":\"red\",\"detail\":\"red\"}]}|.codexVerdict == \"blocked\" and .ciState == \"none\""
+        "_pl_769_defect_run|post-Fix CI green without a sha|${fix}|{\"review:\":[${defect},${ok}],\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"green\",\"sha\":\"\",\"detail\":\"\"}]}|.sha == \"def\" and .ciState == \"green\""
+        "_pl_769_defect_run|post-Fix CI red without a sha|${fix}|{\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"red\",\"sha\":\"\",\"detail\":\"red\"}]}|.sha == \"def\" and .ciState == \"red\""
+        "_pl_804_run|light resume head moved after CI|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},${def}]}|.sha == \"def\" and .ciState == \"none\""
+        "_pl_804_run|full resume head moved after CI|{\"pr\":7,\"codex\":\"off\",\"implementer\":\"claude\"}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},${def}]}|.sha == \"def\" and .ciState == \"none\""
+        "_pl_804_run|light CI without a sha reports the checked head|{\"mode\":\"light\"}|{\"locate:\":{\"pr\":7,\"sha\":\"old\"},\"ci:\":{\"state\":\"green\",\"sha\":\"\",\"detail\":\"\"}}|.sha == \"abc\" and .ciState == \"green\""
+    )
+    local c runner name args over expr got failed=0
+    for c in "${cases[@]}"; do
+        IFS='|' read -r runner name args over expr <<<"${c}"
+        run "${runner}" "${args}" "${over}"
+        assert_success
+        got="${output}"
+        run jq -e ".error == null and (.result | ${expr})" <<<"${got}"
+        if [[ "${status}" -ne 0 ]]; then
+            printf 'case failed: %s: %s\n' "${name}" "$(jq -c '[.error, (.result | {sha, ciState, codexVerdict})]' <<<"${got}")" >&2
+            failed=1
+        fi
+    done
+    assert_equal "${failed}" 0
 }
 
 @test "pr-loop reports not-run when a Claude review returns malformed findings (#784)" {
