@@ -32,13 +32,24 @@ export const meta = {
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }.
-// reviewer names who reviewed ('claude' | 'codex' | 'none'); codexVerdict is "mergeable" only after a
-// [codex] round comment is confirmed at the PR head (#755); "not-run" when a Claude review ends the loop.
-// After review, a RED record, Fix, adoption comment, post-Fix CI or [codex] comment abort is "blocked",
-// whoever reviewed (#769). Before review it is "blocked" on a preparation, implementation, resume-gate or
-// PR head check failure; "skipped" on red CI, a failed light review and the end of light mode (a fresh
-// light run reports "skipped" at every stop after preparation); "none" when no PR is found after
-// implementation or resume; "off" when codex is off (#793).
+// reviewer names who reviewed last ('claude' | 'codex' | 'none'); reviewVerdict is that review's
+// outcome ('mergeable' | 'blocked' | 'no-output', or 'none' before any review); reviews counts them.
+// codexVerdict (#769, #793, #804):
+//   "mergeable" - a codex review found no defects and its [codex] round comment is confirmed at the PR
+//                 head, posted by this review with an empty "## 缺陷" section (#755, #797).
+//   "blocked"   - a preparation, implementation, resume-gate or PR head check failure; a missing or
+//                 unreadable RED record or comment snapshot, checked before every review including the
+//                 first; a Fix, adoption comment or post-Fix CI abort, whoever reviewed; a codex review
+//                 with defects left when maxRounds is spent; or an unconfirmed [codex] round comment.
+//   "no-output" - a codex review returned missing or malformed findings.
+//   "not-run"   - a Claude review ends the loop: it passed, defects are left when maxRounds is spent,
+//                 or its findings were missing or malformed (reviewVerdict "no-output").
+//   "skipped"   - red CI before any review, a failed light review and the end of light mode; a fresh
+//                 light run reports "skipped" at every stop after preparation.
+//   "none"      - no PR is found after full implementation or a resume.
+//   "off"       - codex is off.
+// blockingLeft lists the defects left, or the failure reason when the flow aborts; a failed Fix
+// stage check and red post-Fix CI also append that round's defects.
 // The workflow never merges: merge order and rebase conflicts stay with the
 // main loop (one PR at a time, merge commit, keep agent commits).
 
@@ -249,8 +260,8 @@ const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Befo
 
 const CODEX_STEP = (pr, round, prior, head) => `Run ONE codex re-verification of PR #${pr} (${REPO}, issue #${A.issue}), round ${round}, against base ${BASE} (diff equivalent to git diff origin/${BASE}...HEAD). First run gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName and verify it is ${BASE}; lookup failure or mismatch is blocking. Rules: never write a [codex] line yourself - only paste codex's actual output; zh-TW; no emoji; gh with --repo ${REPO}. Work dir: mkdir -p ${SCRATCH} && cd ${SCRATCH}.
 1. Context: \`gh pr view ${pr} --repo ${REPO} --json title,body --jq '"# " + .title + "\\n\\n" + .body' > ctx-r${round}.md\`; \`gh issue view ${A.issue} --repo ${REPO} --json title,body --jq '"# issue #${A.issue} " + .title + "\\n\\n" + .body' >> ctx-r${round}.md\`; \`gh pr diff ${pr} --repo ${REPO} > pr.diff\`; the issue's scope section, cut by the shell (never retyped), as ONE command whose exit status you check: \`gh issue view ${A.issue} --repo ${REPO} --json body --jq .body > issue-r${round}.md && tr -d '\\r' < issue-r${round}.md | awk '/^## 範圍/{f=1;print;next} f&&/^## /{exit} f' > scope-r${round}.md && { [ -s scope-r${round}.md ] || printf '%s\\n' 'issue 未定範圍:issue 本文沒有「## 範圍」段,依一般標準判定,並在改善建議註記「issue 未定範圍」。' > scope-r${round}.md; }\`. If it exits non-zero (gh failed: network, auth, API), retry once after 60 s; still non-zero -> never write the 未定範圍 note yourself and do not run codex: post a [claude] comment "讀取 issue #${A.issue} 失敗,本輪未完成" and return defects ["讀取 issue #${A.issue} 失敗"], limitations [], suggestions [], and an empty answer.
-2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的環境或效能風險列為限制，其他改善列為建議。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} ${REVIEW_CLASSIFICATION} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。缺陷列在「## 缺陷」、限制列在「## 已知限制」、建議列在「## 改善建議」標題下，每項引用 diff 位置。"
-3. \`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | WORKTOOL_AGENT_ROLE=pr-loop timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
+2. Prompt file: write the text below to draft-r${round}.txt with the line @@SCOPE@@ kept as is, then paste scope-r${round}.md into it verbatim: \`awk -v f=scope-r${round}.md '$0 == "@@SCOPE@@" { while ((getline l < f) > 0) print l; next } 1' draft-r${round}.txt > prompt-r${round}.txt\` (zh-TW): "你是 codex。stdin 前半是 PR 描述與對應 issue,後半是完整 diff(以 '=== DIFF ===' 分隔)。本 issue 的「## 範圍」段(擋 / 不擋 / 已知限制)逐字如下:\n@@SCOPE@@\n若上方是範圍段,只有落在上述範圍內的具體問題才可列為阻擋項(須指出 diff 位置與具體失敗情境);範圍外的環境或效能風險列為限制，其他改善列為建議。${prior ? `這是第 ${round} 輪:你上一輪的判定逐字如下,請逐項確認是否已修正:\n${prior}\n` : ''}${TDD_REVIEW_RULES} ${REVIEW_CLASSIFICATION} 請靜態逐項確認:(1) 只做一件事且對應 issue 的驗收標準;(2) TDD 證據(RED/GREEN);(3) 自足(不引用不存在的檔案/旗標/recipe);(4) 正確性與健壯性(邊界、錯誤處理、shell 引號、測試能否抓到回歸);(5) 文件與實作一致;(6) 新引入的問題。缺陷列在「## 缺陷」、限制列在「## 已知限制」、建議列在「## 改善建議」標題下，每項引用 diff 位置，每項是一個清單項目;沒有缺陷時「## 缺陷」下只寫「無」,不用清單項目。"
+3.\`{ cat ctx-r${round}.md; printf '\\n=== DIFF ===\\n'; cat pr.diff; } | WORKTOOL_AGENT_ROLE=pr-loop timeout 420 codex exec --skip-git-repo-check "$(cat prompt-r${round}.txt)" > out-r${round}.txt 2>&1\` as ONE foreground Bash call with the Bash tool timeout at its maximum (600000 ms). ${LAUNCH_FORBIDDEN} Then extract the answer (lines after the line that is exactly "codex", minus trailing "tokens used" lines, local working-directory paths rewritten repo-relative) in the foreground: \`cd ${sq(SCRATCH)} && awk '/^codex$/{f=1;next} f' out-r${round}.txt | sed '/^tokens used/,$d' | ${RELPATHS} > answer-r${round}.md\`; answer = the content of answer-r${round}.md. Empty output or an auth/quota error -> retry once after 60 s; still empty -> post a [claude] comment "codex 無輸出(配額/認證),本輪未完成" and return verdict "no-output" with an empty answer.
 4. Post ONE PR comment through a body file: first line exactly "[codex] 第 ${round} 輪複驗 head ${head}", then the verbatim answer copied by the shell (\`cat answer-r${round}.md\`; never the raw out-r${round}.txt, never retyped), blank line, "[claude] double-check: <did the prompt have full context; does every item cite a diff location>", and "可重現:\`gh pr diff ${pr} --repo ${REPO} | WORKTOOL_AGENT_ROLE=pr-loop codex exec --skip-git-repo-check \\"$(cat prompt-r${round}.txt)\\"\`".
 5. Return defects = items under 「## 缺陷」, limitations = items under 「## 已知限制」, suggestions = items under 「## 改善建議」 (one string each); answer = the verbatim answer. Empty or unparseable output must return an empty answer, never a successful review.`
 
@@ -272,7 +283,7 @@ ${SKILL_LOAD.codex}
 ${TDD_IMPLEMENT_RULES}
 Fix review round ${round} findings on PR #${pr} (${REPO}) in the existing worktree ${WT} (branch ${A.branch}; run \`git status\` first, then merge the remote branch if it moved). Blocking items to address (each one, TDD: add the failing test FIRST, show RED, then fix, GREEN):
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
-Do not edit the PR yourself; in your summary name every human-written PR description section your commits made stale, so the workflow updates it. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. Return the commit SHA and a summary for the workflow publication comment starting with "[claude] 採納第 ${round} 輪:".`
+Do not edit the PR or post comments yourself: after publishing your commits, the workflow compares the PR description with the pushed diff, updates stale human-written sections and writes the adoption comment from that diff, not from your summary. Run only slice specs and just test lint; commit each complete fix with Refs: #${A.issue}. Do not push or open a PR; the workflow owns long gates and publication. End with the commit SHA and a one-line-per-item summary.`
 
 const CODEX_FIX = (pr, round, blocking) => `Your job is to run codex as the implementer for a fix round, wait for it, and verify its result. Do not fix the task yourself.
 
@@ -320,16 +331,37 @@ Return status pushed only if the script succeeds; otherwise failed.`, {
   })
 }
 
-// A codex mergeable needs its posted round comment on the reviewed head (#755).
-const confirmCodexComment = async (pr, round, head) => {
-  const query = `{head: .headRefOid, found: ([.comments[] | select(.body | startswith(${JSON.stringify(`[codex] 第 ${round} 輪複驗 head ${head}`)}))] | length > 0)}`
+// Record the PR comment ids before a codex review, so only a comment that
+// review posted can confirm it (#797). Any read failure returns null.
+const snapshotComments = async (pr, round) => {
+  const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json comments --jq ${sq('[.comments[].id]')}\` blocking in the foreground. Return stdout verbatim as evidence; on command failure return an empty evidence string. Never infer the result.`, {
+    label: `${RUN_ID} comment-snapshot:#${pr}:r${round}`, phase: 'Codex', effort: 'low', agentType: 'general-purpose',
+    schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
+  })
+  try {
+    const ids = JSON.parse(fetched.evidence)
+    return Array.isArray(ids) && ids.every(id => typeof id === 'string') ? ids : null
+  } catch { return null }
+}
+
+// A codex mergeable needs its round comment on the reviewed head (#755),
+// posted after the snapshot `seen`, whose first line is exactly the round
+// header and whose only "## 缺陷" section lists no items (#797).
+const confirmCodexComment = async (pr, round, head, seen) => {
+  const header = `[codex] 第 ${round} 輪複驗 head ${head}`
+  const query = String.raw`${JSON.stringify(seen)} as $seen | {head: .headRefOid, verdicts: [.comments[] |
+    select((.id | IN($seen[])) | not) | (.body // "") |
+    select((split("\n")[0] | rtrimstr("\r")) == ${JSON.stringify(header)}) |
+    [("\n" + .) | split("\n## ")[1:][] | select(test("^缺陷[ \\t]*(\\r?\\n|$)"))] |
+    {sections: length, items: ([.[] | split("\n")[1:][] | select(test("^[ \\t]*([-*+]|[0-9]+[.)])[ \\t]"))] | length)}]}`
   const fetched = await agent(`Run \`gh pr view ${pr} --repo ${REPO} --json headRefOid,comments --jq ${sq(query)}\` blocking in the foreground. Return stdout verbatim as evidence; on command failure return an empty evidence string. Never infer the result.`, {
     label: `${RUN_ID} codex-comment:#${pr}:r${round}`, phase: 'Codex', effort: 'low', agentType: 'general-purpose',
     schema: { type: 'object', properties: { evidence: { type: 'string' } }, required: ['evidence'] },
   })
   try {
     const data = JSON.parse(fetched.evidence)
-    return data.head === head && data.found === true
+    return data.head === head && Array.isArray(data.verdicts) && data.verdicts.length > 0 &&
+      data.verdicts.every(v => v.sections === 1 && v.items === 0)
   } catch { return false }
 }
 
@@ -612,11 +644,15 @@ if (!CODEX) {
   return result({ pr, sha, ciState: 'green', codexVerdict: 'off', rounds: 0, blockingLeft: [] })
 }
 
-let fixes = 0, verdict = 'blocked', blocking = [], prior = ''
+let fixes = 0, verdict = 'blocked', blocking = [], prior = '', seen = null
 for (;;) {
   const redRecord = await checkRedRecord(pr)
   if (redRecord !== 'present') return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [redRecord === 'unreadable' ? '無法讀取 PR RED 紀錄；重試一次仍失敗，請排除讀取錯誤後重跑' : 'PR 缺少 RED 紀錄；請補上實際指令與失敗 TAP 輸出後重跑'] })
   const reviewByClaude = IMPLEMENTER === 'codex'
+  if (!reviewByClaude) {
+    seen = await snapshotComments(pr, fixes + 1)
+    if (!seen) return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`無法讀取 PR #${pr} 既有留言，不能確認第 ${fixes + 1} 輪 [codex] 留言屬於本次審查`] })
+  }
   const c = await agent(reviewByClaude ? CLAUDE_REVIEW(pr, fixes + 1, prior) : CODEX_STEP(pr, fixes + 1, prior, sha), { label: `${RUN_ID} review:#${pr}:r${fixes + 1}`, phase: 'Codex', schema: CODEX_SCHEMA, agentType: 'general-purpose' })
   noteReview(reviewByClaude ? 'claude' : 'codex', c)
   if (!collectReview(c)) { verdict = 'no-output'; blocking = ['review returned missing or malformed findings']; break }
@@ -650,8 +686,8 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
 }
 // Only a confirmed codex comment may report codexVerdict mergeable; a Claude review never fills it.
 if (reviewFindings.reviewer !== 'codex') return result({ pr, sha, ciState: 'green', codexVerdict: 'not-run', rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
-if (verdict === 'mergeable' && !(await confirmCodexComment(pr, fixes + 1, sha))) {
-  return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到「[codex] 第 ${fixes + 1} 輪複驗」留言`] })
+if (verdict === 'mergeable' && !(await confirmCodexComment(pr, fixes + 1, sha, seen))) {
+  return result({ pr, sha, ciState: 'green', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [`PR #${pr} 在 head ${sha} 找不到本次審查發布、「## 缺陷」段沒有項目的「[codex] 第 ${fixes + 1} 輪複驗 head ${sha}」留言`] })
 }
 return result({ pr, sha, ciState: 'green', codexVerdict: verdict, rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
 
