@@ -33,8 +33,12 @@ export const meta = {
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }.
 // reviewer names who reviewed ('claude' | 'codex' | 'none'); codexVerdict is "mergeable" only after a
-// [codex] round comment is confirmed at the PR head (#755); "not-run" when a Claude review ends the loop,
-// and "blocked" on any flow abort (RED record, Fix, adoption comment, CI), whoever reviewed (#769).
+// [codex] round comment is confirmed at the PR head (#755); "not-run" when a Claude review ends the loop.
+// After review, a RED record, Fix, adoption comment, post-Fix CI or [codex] comment abort is "blocked",
+// whoever reviewed (#769). Before review it is "blocked" on a preparation, implementation, resume-gate or
+// PR head check failure; "skipped" on red CI, a failed light review and the end of light mode (a fresh
+// light run reports "skipped" at every stop after preparation); "none" when no PR is found after
+// implementation or resume; "off" when codex is off (#793).
 // The workflow never merges: merge order and rebase conflicts stay with the
 // main loop (one PR at a time, merge commit, keep agent commits).
 
