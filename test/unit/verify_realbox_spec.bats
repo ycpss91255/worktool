@@ -4546,6 +4546,47 @@ _785_stop_window_deadline_after() {
     assert_equal "$(cat "${STATE}/closed")" '-HUP -- -4240'
 }
 
+# Give _52_stop_window alone its own logical clock, starting at 0. Each retry
+# sleep inside it advances that clock by one second, so the HUP and TERM
+# waits end on their own; sending -KILL moves it past the shared cleanup
+# deadline before the KILL wait checks the session once.
+_792_stop_window_deadline_after_kill() {
+    local count
+    printf '0\n' >"${STATE}/stop-clock"
+    count="$(awk '
+        /^_52_stop_window\(\) \{/ {in_fn=1}
+        in_fn {n += gsub(/FAKE_STATE_DIR\}\/clock/, "FAKE_STATE_DIR}/stop-clock")}
+        {print > out}
+        in_fn && index($0, "guard_timed 1 kill") {
+            print "        [[ \"${signal}\" != KILL ]] || printf '\''1000\\n'\'' >\"${FAKE_STATE_DIR}/stop-clock\"" > out
+            kills++
+        }
+        in_fn && index($0, "sleep 0.1 || return 1") {
+            print "            printf '\''%s\\n'\'' \"$(( $(<\"${FAKE_STATE_DIR}/stop-clock\") + 1 ))\" >\"${FAKE_STATE_DIR}/stop-clock\"" > out
+            sleeps++
+        }
+        in_fn && /^\}/ {in_fn=0}
+        END {print n ":" kills ":" sleeps}
+    ' out="${REALBOX}.new" "${REALBOX}")"
+    assert_equal "${count}" 6:1:1
+    cat "${REALBOX}.new" >"${REALBOX}"
+    rm "${REALBOX}.new"
+}
+
+@test "#792: a deadline right after KILL, before any post-KILL check, reports the deadline" {
+    _712_gone_before_cleanup_tools
+    _792_stop_window_deadline_after_kill
+    FAKE_SESSION_CHECK=group run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [[ "${stderr}" != *'still has live members'* ]]
+    [[ "${stderr}" == *'cleanup deadline reached before owned window session 4240 was confirmed empty; keeping ownership evidence'* ]]
+    local directory
+    directory="$(cat "${STATE}/closed-directory")"
+    [ -f "${directory}/before" ]
+    _assert_52_kept_evidence_stderr "${directory}"
+    assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-KILL -- -4240'
+}
+
 @test "#712: I confirmed root absent from first cleanup snapshot with failed session probe keeps evidence" {
     _712_gone_before_cleanup_tools
     FAKE_SESSION_CHECK=failure run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
