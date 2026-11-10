@@ -87,7 +87,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
 }
 
-@test "a bats tier passes the configured parallel job count to bats" {
+@test "a bats tier passes the job count to bats and lets the cases of one file run in parallel" {
     _make_repo_copy
     local _bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${_bin}"
@@ -106,9 +106,52 @@ EOF
     export WORKTOOL_TEST_JOBS=3
     PATH="${_bin}:${PATH}" _run_copy_gate --ci-integration
     assert_success
-    run grep -F -- "--formatter tap --jobs 3 --no-parallelize-within-files -r" \
+    run grep -F -- "--formatter tap --jobs 3 -r" "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_success
+    run grep -F -- "--no-parallelize-within-files" "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_failure
+}
+
+@test "a report directory adds a junit report per tier and keeps the TAP stream" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/bats" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${BATS_TEST_TMPDIR}/bats.calls"
+if [[ "$1" == "--count" ]]; then
+    printf '1\n'
+else
+    printf '1..4\n'
+    printf 'ok 1 one\nok 2 two\nok 3 three\nok 4 four\n'
+fi
+EOF
+    chmod +x "${_bin}/bats"
+
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report PATH="${_bin}:${PATH}" \
+        _run_copy_gate --ci-acceptance
+    assert_success
+    assert_line 'ok 4 four'
+    run grep -F -- "--formatter tap --report-formatter junit --output ${COPY}/.agents/state/test-report/acceptance " \
         "${BATS_TEST_TMPDIR}/bats.calls"
     assert_success
+    assert [ -d "${COPY}/.agents/state/test-report/acceptance" ]
+}
+
+@test "a spec never inherits the outer gate's report directory" {
+    local _spec="${BATS_TEST_TMPDIR}/probe/unit/probe_spec.bats"
+    mkdir -p "${_spec%/*}"
+    ln -s "${TEST_DIR}/helper" "${BATS_TEST_TMPDIR}/probe/helper"
+    cat >"${_spec}" <<'EOF'
+#!/usr/bin/env bats
+load "${BATS_TEST_DIRNAME}/../helper/common"
+@test "probe" {
+    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" ]]
+}
+EOF
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report run bats --formatter tap "${_spec}"
+    assert_success
+    assert_line 'ok 1 probe'
 }
 
 @test "an invalid parallel job count is an argument error before bats runs" {
@@ -120,6 +163,20 @@ EOF
     WORKTOOL_TEST_JOBS=0 PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
     assert_failure 2
     assert_output "test.sh: invalid WORKTOOL_TEST_JOBS '0' (see --help)"
+    assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
+}
+
+@test "a report directory outside the checkout is an argument error before bats runs" {
+    local _bin="${BATS_TEST_TMPDIR}/bin" _dir
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\ntouch "%s/bats-ran"\n' "${BATS_TEST_TMPDIR}" >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    for _dir in /tmp/report ../report a/../../b 'a b' ./report; do
+        WORKTOOL_TEST_REPORT_DIR="${_dir}" PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+        assert_failure 2
+        assert_output "test.sh: invalid WORKTOOL_TEST_REPORT_DIR '${_dir}' (a repo-relative path) (see --help)"
+    done
     assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
 }
 

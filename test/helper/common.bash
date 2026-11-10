@@ -21,6 +21,12 @@ export REPO_ROOT
 export LIB_DIR="${REPO_ROOT}/lib"
 export TEST_DIR="${REPO_ROOT}/test"
 
+# CI sets WORKTOOL_TEST_REPORT_DIR for the gate that runs this spec (junit
+# report, issue #827). A spec that runs test.sh or bats again must start
+# from a clean environment, as it does locally; one that needs a report
+# directory sets it on its own call.
+unset WORKTOOL_TEST_REPORT_DIR
+
 # --- Load bats-* extensions --------------------------------------------------
 # The test image bakes these at /usr/lib/bats/{bats-support,bats-assert}.
 # Each ships a load.bash that wires up the helper functions when sourced.

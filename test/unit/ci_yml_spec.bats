@@ -365,8 +365,30 @@ _leg_names() {
     assert_line "commit-refs"
     assert_line "review-log"
     assert_line "verify-all"
+    assert_line "shard-weights"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 11
+    assert_equal "${#lines[@]}" 12
+}
+
+@test "bats gates upload a junit report and a main push stores the merged shard weights (#827)" {
+    run _job_block gate
+    assert_success
+    assert_line '          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report'
+    assert_line "          name: test-report-\${{ matrix.tier }}-\${{ matrix.runner }}"
+    assert_line '          path: .agents/state/test-report'
+    assert_line '          if-no-files-found: error'
+    assert_line "        if: always() && matrix.tier != 'lint'"
+    run _job_block shard-weights
+    assert_success
+    assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
+    assert_line --regexp "$(_flow_has '    ' needs gate)"
+    assert_line '          pattern: test-report-*'
+    assert_line --partial "shard_weights_merge \"\${RUNNER_TEMP}/reports\" unit matrix > .agents/state/shard-weights.tsv || exit 1"
+    assert_line '        uses: actions/cache/save@v4'
+    assert_line "          key: shard-weights-\${{ github.run_id }}-\${{ github.run_attempt }}"
+    run _job_block ci-passed
+    assert_success
+    assert_line "          WEIGHTS_REQUIRED: \${{ github.event_name == 'push' }}"
 }
 
 # ADR 0012 cites the next two case names verbatim as guards; keep them.
@@ -538,6 +560,12 @@ _leg_names() {
     run _job_block gate
     assert_line "        if: matrix.tier == 'integration'"
     assert_line "          GHOSTTY_IMAGE_PREBUILT: \${{ matrix.tier == 'integration' && '1' || '' }}"
+}
+
+@test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {
+    run _job_block gate
+    assert_success
+    assert_line '          WORKTOOL_TEST_JOBS: "8"'
 }
 
 # --- --privileged stays with test-system-real --------------------------------

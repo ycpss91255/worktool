@@ -297,28 +297,77 @@ _framings() {
 
 # --- concurrency ---------------------------------------------------------------
 
-# Two writers of different keys, many rounds. A barrier makes each round
-# deterministic: both writers are forked first and wait for the same go
-# file, so they reach config_set together. With the read-modify-rename
-# serialised every write lands; without it one writer's rename erases the
-# other's key.
-_race() {
-    local _i _go
-    for _i in $(seq 1 30); do
-        _go="${BATS_TEST_TMPDIR}/go.${_i}"
-        (until [[ -e "${_go}" ]]; do sleep 0.01; done; config_set "$1" "v${_i}") &
-        (until [[ -e "${_go}" ]]; do sleep 0.01; done; config_set "$2" "v${_i}") &
-        : >"${_go}"
-        wait
-        [[ "$(config_get "$1")" == "v${_i}" && "$(config_get "$2")" == "v${_i}" ]] \
-            || { echo "lost a write in round ${_i}"; return 1; }
+# Wait until any of the files $@ exists. The bound only stops a broken
+# race from hanging the suite; no outcome depends on how long a step takes.
+_await() {
+    local _i _f
+    for _i in $(seq 1 3000); do
+        for _f in "$@"; do
+            [[ ! -e "${_f}" ]] || return 0
+        done
+        sleep 0.01
     done
+    echo "race step never happened: $*"
+    return 1
+}
+
+# Two writers of different keys, forced to interleave (issue #814): no
+# outcome depends on the scheduler. Writer A pauses inside config_set right
+# after it has read the file, until writer B has either finished its own
+# write or is shown to be held off by A's lock (a non-blocking flock on the
+# lock directory fails). Serialised, B is held off, A lands, then B reads
+# A's result and both keys land; unserialised, B's write completes during
+# A's pause and A's rename of its stale render erases B's key, every time.
+# Writer A's _config_render (installed under that name by _race_paused):
+# render as usual, then hold the write until writer B has moved.
+_render_then_pause() {
+    _config_render_real "$@" || return 1
+    : >"${RACE_SIG}/a-read"
+    _await "${RACE_SIG}/b-done" "${RACE_SIG}/b-blocked" >&2
+}
+
+_race_paused() {
+    local _sig="${BATS_TEST_TMPDIR}/race" _dir _a=0 _b=0
+    RACE_SIG="${_sig}"
+    _dir="$(dirname -- "${CONFIG}")"
+    mkdir -p "${_sig}" "${_dir}"
+    (
+        eval "$(declare -f _config_render | sed '1s/^_config_render /_config_render_real /')"
+        eval "$(declare -f _render_then_pause | sed '1s/^_render_then_pause /_config_render /')"
+        config_set "$1" a
+    ) &
+    local _pa=$!
+    (
+        _await "${_sig}/a-read" || exit 1
+        if flock -n "${_dir}" true; then
+            config_set "$2" b || exit 1
+            : >"${_sig}/b-done"
+        else
+            : >"${_sig}/b-blocked"
+            config_set "$2" b
+        fi
+    ) &
+    local _pb=$!
+    wait "${_pa}" || _a=$?
+    wait "${_pb}" || _b=$?
+    [[ "${_a}" -eq 0 && "${_b}" -eq 0 ]] \
+        || { echo "a writer failed (A=${_a}, B=${_b})"; return 1; }
+    [[ "$(config_get "$1")" == a && "$(config_get "$2")" == b ]] \
+        || { echo "lost a write"; return 1; }
 }
 
 @test "two concurrent config_set calls both land (flock)" {
     _bytes "${CONFIG}" '# shared\n'
-    run _race home box
+    run _race_paused home box
     assert_success
+}
+
+@test "the paused race loses a write when config_set is not locked" {
+    _bytes "${CONFIG}" '# shared\n'
+    _config_locked() { shift; "$@"; }
+    run _race_paused home box
+    assert_failure
+    assert_output --partial 'lost a write'
 }
 
 @test "without flock(1) config_set refuses (exit 1, a clear error) and writes nothing" {
