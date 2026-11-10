@@ -517,6 +517,21 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
 
+### nightly 完整序列執行(#836)
+
+`.github/workflows/nightly.yml` 每天 03:00(台北,cron `0 19 * * *`)與手動
+(`workflow_dispatch`)在 main 上、兩種架構各一個 job,序列執行裸 `just test`(七個 tier
+依序、遇第一個失敗即停)與驗收 2.3 的檢查(`just test integration`、`just test system-real`),
+不分片、不沿用 PR 的結果。以標籤 `nightly-failure` 辨識未解決的失敗(標籤不存在就建立):
+
+- 排程觸發時若有 open 的 `nightly-failure` issue,不跑測試,記下是哪個 issue 造成略過並以
+  成功結束(不開新 issue、不留言);列不出 issue 時照跑。
+- 手動觸發一律照跑,用來驗證修正。
+- 跑完:失敗且沒有 open issue 時開恰好一個新的 `nightly-failure` issue 附 run 連結;有 open
+  issue 時把這次的 run 連結(綠或紅)留在該 issue;關閉由修正 PR 或人處理。
+- 規則在 `lib/nightly.sh`,`test/unit/nightly_spec.bats` 覆蓋每個分支,
+  `test/unit/nightly_yml_spec.bats` 釘住 workflow 接線。
+
 ### unit 分片與聯集 verdict(#831,ADR-0016)
 
 - **分片**:`unit-shard` job 以 `runner × shard` 展開,每條 leg 跑
