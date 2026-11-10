@@ -38,14 +38,29 @@ _job() {
     assert_line '      issues: write'
 }
 
-@test "the full serial run is bare just test plus the 2.3 checks, on both runners, only when decided" {
+@test "the full serial run is bare just test (which holds the 2.3 checks), on both runners, only when decided" {
     run _job full-serial
     assert_success
     assert_line "    if: needs.decide.outputs.run == 'true'"
     assert_line '        runner: [ubuntu-latest, ubuntu-24.04-arm]'
     assert_line '        run: just test'
-    assert_line '          just test integration'
-    assert_line '          just test system-real'
+}
+
+@test "no nightly job runs a tier twice: a bare just test counts as every HOST_STEPS tier (#888)" {
+    local _steps _jobs _j _tiers
+    _steps="$(bash -c 'source "$1" && printf "%s\n" "${HOST_STEPS[@]}"' _ "${REPO_ROOT}/script/test/test.sh")"
+    assert [ -n "${_steps}" ]
+    _jobs="$(awk '/^jobs:$/ { on = 1; next } on && /^  [a-z-]+:$/ { sub(/:$/, ""); print $1 }' "${YML}")"
+    assert [ -n "${_jobs}" ]
+    for _j in ${_jobs}; do
+        _tiers="$(_job "${_j}" | sed -nE 's/^ *(run: )?just test( ([a-z-]+))?$/\3/p' \
+            | while IFS= read -r _t; do
+                if [[ -z "${_t}" ]]; then printf '%s\n' "${_steps}"; else printf '%s\n' "${_t}"; fi
+            done)"
+        run bash -c 'LC_ALL=C sort <<<"$1" | uniq -d' _ "${_tiers}"
+        assert_success
+        assert_output ''
+    done
 }
 
 @test "report opens one issue on a failure with nothing open, otherwise comments on the open one" {
