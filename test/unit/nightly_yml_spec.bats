@@ -68,6 +68,9 @@ _job() {
     assert_line '      sha:'
     run _job full-serial
     assert_line "          ref: \${{ inputs.sha || github.sha }}"
+    # The isolation job (#835) tests the same commit.
+    run _job isolation
+    assert_line "          ref: \${{ inputs.sha || github.sha }}"
 }
 
 @test "decide refuses a malformed sha before anything runs" {
