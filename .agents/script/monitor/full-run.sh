@@ -11,6 +11,8 @@
 # success), and only `completed` + `success` is green.
 #
 # Usage: full-run.sh --repo OWNER/REPO --sha SHA [--dispatch] [--wait SECONDS]
+#                    [--exclude-run ID]
+#   --exclude-run  ignore that run id (a run asking about its own sha, #851)
 #   --dispatch  when no run of the sha exists or the newest one did not
 #               succeed, start one (`gh workflow run nightly.yml --ref main
 #               -f sha=SHA`) and report pending
@@ -19,8 +21,9 @@
 #               seconds
 # Stdout: one line `full-run: <sha> <status> <conclusion> run=<id>`, or
 #         `full-run: <sha> none` when no run of the sha exists.
-# Exit: 0 green, 1 not green (failed, none, or the query failed),
-#       2 bad arguments, 3 pending (queued / in progress, or just started).
+# Exit: 0 green, 1 not green (failed, none, or a query failed),
+#       2 bad arguments (including a sha that is no commit of the repo,
+#       #865), 3 pending (queued / in progress, or just started).
 
 set -euo pipefail
 
@@ -28,6 +31,7 @@ REPO=""
 SHA=""
 DISPATCH=0
 WAIT=0
+EXCLUDE=""
 POLL="${WORKTOOL_FULL_RUN_POLL:-30}"
 
 _usage() {
@@ -50,6 +54,9 @@ while [[ $# -gt 0 ]]; do
         --repo) [[ $# -ge 2 ]] || _arg_error "--repo requires OWNER/REPO"; REPO="$2"; shift ;;
         --sha) [[ $# -ge 2 ]] || _arg_error "--sha requires a commit"; SHA="$2"; shift ;;
         --dispatch) DISPATCH=1 ;;
+        --exclude-run)
+            [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || _arg_error "--exclude-run requires a run id"
+            EXCLUDE="$2"; shift ;;
         --wait)
             [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || _arg_error "--wait requires a number of seconds"
             WAIT="$2"; shift ;;
@@ -62,6 +69,19 @@ done
 [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || _arg_error "--sha must be a full 40-hex commit"
 [[ "${POLL}" =~ ^[1-9][0-9]*$ ]] || _arg_error "WORKTOOL_FULL_RUN_POLL must be a positive integer"
 
+# The sha must be a commit of the repo (#865): GitHub answering "no such
+# commit" (HTTP 404 / 422) is a bad argument (2), before any run is listed
+# or dispatched; a check that fails for any other reason is not green (1).
+_commit_err=""
+if ! _commit_err="$(gh api "repos/${REPO}/commits/${SHA}" --jq .sha 2>&1 >/dev/null)"; then
+    if [[ "${_commit_err}" == *"(HTTP 404)"* || "${_commit_err}" == *"(HTTP 422)"* ]]; then
+        _arg_error "${SHA} is not a commit of ${REPO}"
+    fi
+    printf 'full-run: %s query-failed\n' "${SHA}"
+    printf 'full-run.sh: could not check that %s is a commit of %s: %s\n' "${SHA}" "${REPO}" "${_commit_err}" >&2
+    exit 1
+fi
+
 TITLE="full-serial ${SHA}"
 
 # Print the newest run titled TITLE as `status<TAB>conclusion<TAB>id`, or
@@ -72,7 +92,7 @@ _newest() {
         --json displayTitle,status,conclusion,databaseId,createdAt \
         --jq '.[] | [.displayTitle, .status, .conclusion, (.databaseId | tostring), .createdAt] | @tsv')" \
         || return 1
-    awk -F '\t' -v t="${TITLE}" '$1 == t' <<<"${_rows}" \
+    awk -F '\t' -v t="${TITLE}" -v x="${EXCLUDE}" '$1 == t && $4 != x' <<<"${_rows}" \
         | LC_ALL=C sort -t "$(printf '\t')" -k5,5 \
         | tail -n 1 \
         | awk -F '\t' '{ print $2 "\t" ($3 == "" ? "none" : $3) "\t" $4 }'

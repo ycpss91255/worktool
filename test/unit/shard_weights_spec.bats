@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # Unit spec for lib/shard_weights.sh (issue #827): merge the junit reports
-# of the bats gates into one spec -> milliseconds table, the shard weights.
+# of the bats gates into one spec -> milliseconds table, the shard weights,
+# plus each spec's longest single case as a longest/ row (#868).
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
@@ -36,13 +37,15 @@ _report() {
     } >"${REPORTS}/${_art}/${_tier}/report.xml"
 }
 
-@test "merged weights sum the case times per spec and keep the slower runner" {
+@test "merged weights sum the case times per spec and keep the slower runner; the longest case of each spec is a longest/ row (#868)" {
     _report test-report-unit-amd unit 'b_spec.bats:0.5,1.25' 'hook/a_spec.bats:2'
     _report test-report-unit-arm unit 'b_spec.bats:1,1' 'hook/a_spec.bats:1.5'
     _report test-report-matrix-amd matrix 'm_spec.bats:10.001'
     run shard_weights_merge "${REPORTS}" unit matrix
     assert_success
-    assert_output "$(printf 'matrix/m_spec.bats\t10001\nunit/b_spec.bats\t2000\nunit/hook/a_spec.bats\t2000')"
+    assert_output "$(printf '%s\n' $'longest/matrix/m_spec.bats\t10001' $'longest/unit/b_spec.bats\t1250' \
+        $'longest/unit/hook/a_spec.bats\t2000' $'matrix/m_spec.bats\t10001' $'unit/b_spec.bats\t2000' \
+        $'unit/hook/a_spec.bats\t2000')"
 }
 
 @test "a listed tier without a report, or a report without timed cases, writes no weights" {
@@ -68,5 +71,7 @@ _report() {
     printf '.\n' >"${REPORTS}/test-report-unit-2-amd/unit/base"
     run shard_weights_merge "${REPORTS}" unit
     assert_success
-    assert_output "$(printf 'unit/b_spec.bats\t3000\nunit/hook/c_spec.bats\t1000\nunit/log_spec.bats\t2000')"
+    assert_output "$(printf '%s\n' $'longest/unit/b_spec.bats\t3000' $'longest/unit/hook/c_spec.bats\t1000' \
+        $'longest/unit/log_spec.bats\t2000' $'unit/b_spec.bats\t3000' $'unit/hook/c_spec.bats\t1000' \
+        $'unit/log_spec.bats\t2000')"
 }

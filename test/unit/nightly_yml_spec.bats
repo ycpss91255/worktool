@@ -86,11 +86,39 @@ _job() {
 
 @test "two requested shas never replace each other in the concurrency queue" {
     run cat "${YML}"
-    assert_line "  group: nightly-\${{ inputs.sha || 'main' }}"
+    assert_line "  group: nightly-\${{ inputs.sha || github.sha }}"
 }
 
 @test "the full serial run takes Ubuntu packages from the same mirror as ci.yml (#843)" {
     run _job full-serial
     assert_line '    env:'
     assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+}
+
+# --- main push runs the full check (issue #851) -------------------------------
+
+@test "every push to main runs the full check on that sha" {
+    run cat "${YML}"
+    assert_line '  push:'
+    assert_line '    branches: [main]'
+}
+
+@test "a scheduled run asks full-run.sh whether main's HEAD already has a green full run, excluding itself" {
+    run _job decide
+    assert_line --partial "./.agents/script/monitor/full-run.sh --repo \"\${REPO}\" --sha \"\${GITHUB_SHA}\" --exclude-run \"\${GITHUB_RUN_ID}\""
+    assert_line --partial "nightly_decide \"\${EVENT}\" \"\${rc}\" \"\${open}\" \"\${head_rc}\""
+    assert_line '      actions: read'
+}
+
+# --- the complete check runs in full-check mode (issue #870) ------------------
+
+@test "the bare just test of the full serial run sets WORKTOOL_FULL_CHECK=1; no pull_request run (ci.yml) sets it" {
+    run _job full-serial
+    assert_success
+    assert_line '      - name: Bare just test (seven tiers in order, serial)'
+    assert_line "          WORKTOOL_FULL_CHECK: '1'"
+    run awk '/- name: Bare just test/ { on = 1; next } on && /- name:/ { exit } on' "${YML}"
+    assert_line "          WORKTOOL_FULL_CHECK: '1'"
+    run grep -c 'WORKTOOL_FULL_CHECK' "${REPO_ROOT}/.github/workflows/ci.yml"
+    assert_output 0
 }

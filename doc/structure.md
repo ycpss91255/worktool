@@ -509,7 +509,8 @@ PR 的 edited / labeled / unlabeled 事件也會觸發 CI,但只改 PR 說明、
 每個 bats gate 以 `WORKTOOL_TEST_REPORT_DIR` 產生 junit 報告並上傳成
 `test-report-<tier>-<runner>` artifact(gate 失敗也上傳;綠燈卻沒有報告則該 job 失敗)。
 main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 matrix 的報告合併成
-「spec → 毫秒」的分片權重(同一 spec 取較慢的架構),存進 actions cache
+「spec → 毫秒」的分片權重(同一 spec 取較慢的架構;另以 `longest/` 列記每個 spec 最長的單一
+案例,#868),存進 actions cache
 (key `shard-weights-<run_id>-<attempt>`,PR 以前綴讀最新一份);main push 的 `ci-passed`
 要求它 `success`,PR 上預期 skipped(#827)。權重只用來排序與平衡工作量,不決定跑什麼。
 映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
@@ -519,6 +520,13 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
 
 ### nightly 完整序列執行(#836)
+
+**main push 的完整檢查(#851、ADR-0020)**:每個合併進 main 的 sha 都觸發 `nightly.yml`
+(`push: branches: [main]`),在那個 sha 上跑 `full-serial` 與 `isolation`(不限時間),
+疊在 ci.yml 的分片 tier 之上;run 標題同為 `full-serial <sha>`,交接與 release 的
+`full-run.sh` 直接沿用。concurrency 依 sha 分組,連續合併時每個 sha 都跑完。失敗時與排程相同,
+開或留言 `nightly-failure` issue(有 open 的就不另開)。排程只補空缺:main HEAD 已有綠燈
+(`skip-green`)或正在跑(`skip-running`)的完整執行時略過並記錄原因。
 
 `.github/workflows/nightly.yml` 每天 03:00(台北,cron `0 19 * * *`)與手動
 (`workflow_dispatch`)在 main 上、兩種架構各一個 job,序列執行裸 `just test`(七個 tier
@@ -537,15 +545,16 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   各自排隊、不互相取代;這類 run 不開也不留言 `nightly-failure` issue,由呼叫者自己讀結果。
   `.agents/script/monitor/full-run.sh --repo <repo> --sha <sha> [--dispatch] [--wait N]`
   以該 sha 最新一次 run 判定(較新的失敗蓋過較舊的成功):0 綠燈、1 非綠燈(失敗、沒有
-  run、查詢失敗)、3 仍在執行;milestone 交接(`milestone-handover` 的 Full run 階段)與
-  release 打 tag 都要求退出碼 0。
+  run、查詢失敗)、2 參數錯誤(含 sha 不是該 repo 的 commit,#865)、3 仍在執行;milestone
+  交接(`milestone-handover` 的 Full run 階段)與 release 打 tag 都要求退出碼 0。
 
 ### unit 分片與聯集 verdict(#831,ADR-0016)
 
 - **分片**:`unit-shard` job 以 `runner × shard` 展開,每條 leg 跑
   `just test unit --shard I/N`(N 目前為 4)。`test.sh` 把 `test/unit/` 下所有 `*.bats`
-  依權重以 `lib/test_shard.sh` 的 `test_shard_assign` 分配(由重到輕,交給目前負載
-  最小的分片),只跑自己分到的,檢查自己分到的必要 spec,TAP 計畫必須等於自己各檔
+  依權重以 `lib/test_shard.sh` 的 `test_shard_assign` 分配(每片估為 `max(負載 / jobs,
+  片內最長單一案例)`,由重到輕交給加入後估計值最小的分片,#868;`test_shard_rows` 組出
+  每檔的權重與最長案例),只跑自己分到的,檢查自己分到的必要 spec,TAP 計畫必須等於自己各檔
   `bats --count` 的總和;紀錄(分片、權重檔 sha256、各檔案例數、計畫)、TAP 與 junit
   報告上傳成 `test-report-unit-<i>-<runner>`。
 - **權重**:build-image 每個架構只讀一次 `shard-weights-` cache(#827),隨映像

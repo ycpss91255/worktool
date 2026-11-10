@@ -25,7 +25,14 @@ name: Nightly
 # result itself.
 run-name: full-serial ${{ inputs.sha || github.sha }}
 
+# Main push (issue #851): every sha merged into main runs this full check
+# (full-serial + isolation, no time limit) on top of ci.yml's tiers; a
+# failure opens or comments on the nightly-failure issue like a scheduled
+# run. The cron then only fills the gap: it skips while main's HEAD already
+# has a green (or still running) full run, logging why.
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: '0 19 * * *'  # 03:00 Asia/Taipei
   workflow_dispatch:
@@ -39,7 +46,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-${{ inputs.sha || 'main' }}
+  group: nightly-${{ inputs.sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -50,6 +57,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: read
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
@@ -76,7 +84,12 @@ jobs:
           if [ "${rc}" -eq 0 ]; then
             open="$(gh issue list -R "${REPO}" --label "${NIGHTLY_LABEL}" --state open --json number --jq '.[].number')" || rc=$?
           fi
-          decision="$(nightly_decide "${EVENT}" "${rc}" "${open}")" || exit 1
+          head_rc=''
+          if [ "${EVENT}" = schedule ]; then
+            head_rc=0
+            ./.agents/script/monitor/full-run.sh --repo "${REPO}" --sha "${GITHUB_SHA}" --exclude-run "${GITHUB_RUN_ID}" || head_rc=$?
+          fi
+          decision="$(nightly_decide "${EVENT}" "${rc}" "${open}" "${head_rc}")" || exit 1
           echo "decision: ${decision}"
           if [ "${decision}" = run ]; then
             echo "run=true" >> "${GITHUB_OUTPUT}"
@@ -108,7 +121,12 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # Full-check mode (issue #870): every nightly run (main push, cron,
+      # dispatch) is a complete check; PR runs (ci.yml) never
+      # set it.
       - name: Bare just test (seven tiers in order, serial)
+        env:
+          WORKTOOL_FULL_CHECK: '1'
         run: just test
 
       - name: Acceptance 2.3 checks again (integration, system-real)
