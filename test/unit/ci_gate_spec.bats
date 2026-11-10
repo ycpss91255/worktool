@@ -138,7 +138,7 @@ EOF
     assert [ -d "${COPY}/.agents/state/test-report/acceptance" ]
 }
 
-@test "a spec never inherits the outer gate's report directory" {
+@test "a spec never inherits the outer gate's report directory or shard weights" {
     local _spec="${BATS_TEST_TMPDIR}/probe/unit/probe_spec.bats"
     mkdir -p "${_spec%/*}"
     ln -s "${TEST_DIR}/helper" "${BATS_TEST_TMPDIR}/probe/helper"
@@ -146,12 +146,47 @@ EOF
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
 @test "probe" {
-    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" ]]
+    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" && -z "${WORKTOOL_SHARD_WEIGHTS:-}" ]]
 }
 EOF
-    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report run bats --formatter tap "${_spec}"
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report \
+        WORKTOOL_SHARD_WEIGHTS=.agents/state/shard-weights.tsv run bats --formatter tap "${_spec}"
     assert_success
     assert_line 'ok 1 probe'
+}
+
+@test "every shard of a tier leaves a record the union verdict accepts (#831)" {
+    mkdir -p "${COPY}/test"
+    cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${COPY}/"
+    cp -R "${REPO_ROOT}/test/helper" "${COPY}/test/"
+    mkdir -p "${COPY}/test/unit/hook"
+    _write_one_case_spec "${COPY}/test/unit/log_spec.bats" "log one"
+    _write_one_case_spec "${COPY}/test/unit/b_spec.bats" "b one"
+    printf '#!/usr/bin/env bats\n@test "c one" { true; }\n@test "c two" { true; }\n' \
+        >"${COPY}/test/unit/hook/c_spec.bats"
+    local _i _root="${BATS_TEST_TMPDIR}/artifacts"
+    for _i in 1 2; do
+        WORKTOOL_TEST_REPORT_DIR=out "${COPY}/script/test/test.sh" --ci-unit --shard "${_i}/2" \
+            >"${BATS_TEST_TMPDIR}/shard${_i}.log" 2>&1 \
+            || fail "shard ${_i}/2 failed: $(cat "${BATS_TEST_TMPDIR}/shard${_i}.log")"
+        mkdir -p "${_root}/test-report-unit-${_i}-r"
+        cp -R "${COPY}/out/unit" "${_root}/test-report-unit-${_i}-r/"
+        rm -rf "${COPY}/out"
+    done
+    # The heaviest spec (two cases) goes first, alone, to shard 1.
+    run cat "${_root}/test-report-unit-1-r/unit/shard.tsv"
+    assert_output "$(printf 'shard\t1/2\nweights\tnone\nspec\thook/c_spec.bats\t2\nplan\t2')"
+    run cat "${_root}/test-report-unit-1-r/unit/base"
+    assert_output 'hook'
+    # Readable by anyone: CI uploads the record as another user.
+    run stat -c %a "${_root}/test-report-unit-1-r/unit/shard.tap"
+    assert_output --regexp '^6[0-7]4$'
+    printf '%s\n' b_spec.bats hook/c_spec.bats log_spec.bats >"${BATS_TEST_TMPDIR}/list"
+    printf '%s\n' log_spec.bats >"${BATS_TEST_TMPDIR}/required"
+    run bash -c 'source "$1/lib/test_shard.sh" && test_shard_verdict "$2" unit 2 "$3" "$4" r' _ \
+        "${COPY}" "${_root}" "${BATS_TEST_TMPDIR}/list" "${BATS_TEST_TMPDIR}/required"
+    assert_success
+    assert_output 'unit (r): 2 shard(s), 3 spec(s), 4 case(s): the union is the whole tier'
 }
 
 @test "an invalid parallel job count is an argument error before bats runs" {
