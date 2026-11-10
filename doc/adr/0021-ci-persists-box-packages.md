@@ -12,7 +12,7 @@
 
 1. CI 以 actions/cache 保存 box 首次啟動下載的 `.deb`：`test-system-real` 每次還原最新一份（前綴 `apt-box-<runner>-`），只有 main push 修剪（每個套件與架構留最新版本）並以保留集合的 digest 為 key 寫回，集合不變就不重存。
 2. 套件經 `Dir::Cache::Archives` 指到 box 透過 `/run/host` 看得到的 runner 目錄（`apt-mirror.sh --archives`）；distrobox-init 照樣執行 `apt-get update` 與完整 `apt-get install`，受測路徑不變。apt 以索引的版本與 hash 核對每個快取檔，過期的檔只會多一次下載，不會裝錯。
-3. 索引與 pool 不一致（2026-11-10 的 `perl 5.40.1-7ubuntu0.4`）：不採用 snapshot.ubuntu.com。它的 http 一律 301 轉到 https，而 `ubuntu:26.04` 基底沒有 `ca-certificates`，要先裝套件才讀得到，會改動受測的首次安裝；`Acquire::Retries` 或重跑 `apt-get update` 對持續數小時的不一致也無效。快取讓已在目錄裡的版本不再下載，不一致只在「索引已指向新版、pool 還沒有」的那個套件上才會失敗，且失敗照樣是紅燈（不靜默）。
+3. 索引與 pool 不一致（2026-11-10 的 `perl 5.40.1-7ubuntu0.4`）：不採用 snapshot.ubuntu.com。它的 http 一律 301 轉到 https，而 `ubuntu:26.04` 基底沒有 `ca-certificates`，要先裝套件才讀得到，會改動受測的首次安裝；`Acquire::Retries` 或重跑 `apt-get update` 對持續數小時的不一致也無效。快取讓已在目錄裡的版本不再下載，不一致只在「索引已指向新版、pool 還沒有」的那個套件上才會失敗，且失敗照樣是紅燈（不靜默）。沒有快取的映像建置遇到這種不一致時，改由 ADR-0022 的來源切換（鏡像缺檔就依序向原本的上游取）處理。
 
 ## 影響與限制
 
