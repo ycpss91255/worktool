@@ -41,6 +41,13 @@
 #     ci-passed.
 #   - pushes remain main-only; PR bases include main and milestone
 #     acceptance branches such as m3/5-acceptance (issue #389).
+#   - code path vs meta path (issue #688): one routing expression, verbatim
+#     in run-name, concurrency and the route job; the code tiers run only
+#     on the code path; on the meta path prior-run (lib/ci_prior_run.sh)
+#     must prove the latest code run of the head sha passed every leg the
+#     lib expects, and those legs are exactly the ones ci.yml runs; only
+#     pull_request runs cancel in progress; ci-passed re-reads the live PR
+#     body and its aggregator shell is executed for both paths.
 #
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
@@ -66,6 +73,10 @@ setup() {
         test-system=system test-acceptance=acceptance)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
+    # The one routing expression (issue #688): true = code path (every
+    # tier runs), false = meta path (PR body / title / label edit). It is
+    # repeated verbatim in run-name, concurrency and the route job.
+    CODE_EXPR="(github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null))"
 }
 
 @test "CI reference docs describe verify-all conditional gating and indirect privileged execution" {
@@ -237,11 +248,115 @@ _trigger_branches() {
     assert_equal "${_matches}" 1
 }
 
+# --- code path vs meta path (issue #688) -------------------------------------
+
+@test "run-name, concurrency and the route job share one routing expression" {
+    run grep -cF "${CODE_EXPR}" "${CI_YML}"
+    assert_output 3
+    run grep -F "${CODE_EXPR}" "${CI_YML}"
+    assert_line "run-name: \${{ ${CODE_EXPR} && 'CI code run' || 'CI meta run' }}"
+    assert_line "  group: ci-\${{ github.ref }}-\${{ ${CODE_EXPR} && 'code' || 'meta' }}"
+    assert_line "          CODE_PATH: \${{ ${CODE_EXPR} && 'true' || 'false' }}"
+    run _job_block route
+    assert_line --partial "CODE_PATH: \${{ ${CODE_EXPR}"
+    assert_line "      code: \${{ steps.path.outputs.code }}"
+    assert_line --partial "echo \"code=\${CODE_PATH}\" >> \"\${GITHUB_OUTPUT}\""
+}
+
+@test "only pull_request runs cancel in progress, so a main push is never cancelled" {
+    run sed -n '/^concurrency:$/,/^jobs:$/p' "${CI_YML}"
+    assert_line "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
+    refute_line '  cancel-in-progress: true'
+}
+
+@test "the code tiers run only on the code path" {
+    local _job
+    for _job in build-image test-system-real; do
+        run _job_block "${_job}"
+        assert_line '    needs: route'
+        assert_line "    if: needs.route.outputs.code == 'true'"
+    done
+    run _job_block gate
+    assert_line '    needs: build-image'
+    run _job_block verify-all
+    assert_line '    needs: [route, build-image]'
+}
+
+@test "the meta path requires a green code run of the same head sha (fail closed)" {
+    run _job_block prior-run
+    assert_success
+    assert_line '    name: prior-run'
+    assert_line '    needs: route'
+    assert_line "    if: needs.route.outputs.code == 'false'"
+    assert_line '      actions: read'
+    assert_line '      pull-requests: read'
+    assert_line '          persist-credentials: false'
+    assert_line --regexp '^ +source lib/ci_prior_run\.sh$'
+    assert_line "          PR_HEAD: \${{ github.event.pull_request.head.sha }}"
+    assert_line "          RUN_ID: \${{ github.run_id }}"
+    assert_output --partial "actions/workflows/ci.yml/runs?head_sha=\${PR_HEAD}&event=pull_request"
+    assert_output --partial '.display_title'
+    assert_output --partial '.pull_requests[].number'
+    assert_line --partial "id=\"\$(ci_prior_run_select \"\${RUN_ID}\" \"\${PR_NUMBER}\" < \"\${runs}\")\" || exit 1"
+    assert_output --partial "actions/runs/\${id}/jobs?filter=latest"
+    assert_line --regexp '^ +ci_prior_run_evaluate "\$\{verify\}" < "\$\{jobs\}"$'
+    # verify-all is required from the LIVE labels, not the event payload.
+    assert_output --partial "repos/\${REPO}/pulls/\${PR_NUMBER}"
+    assert_output --partial 'milestone-gate'
+    refute_output --partial 'github.event.pull_request.labels'
+}
+
+@test "the code run names its run exactly as ci_prior_run_select looks for it" {
+    run bash -c 'source "$1" && printf "%s\n%s\n" "${CI_PRIOR_RUN_CODE_TITLE}" "${CI_PRIOR_RUN_META_TITLE}"' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_equal "${lines[0]}" 'CI code run'
+    assert_equal "${lines[1]}" 'CI meta run'
+}
+
+# Print the check name of every leg of job $1, expanded over its matrix.
+_leg_names() {
+    local _template _runner _gate _expanded
+    _template="$(_job_block "$1" | sed -nE 's/^    name: (.*)$/\1/p')"
+    while IFS= read -r _runner; do
+        if [[ "$1" == gate ]]; then
+            while IFS= read -r _gate; do
+                _expanded="${_template//\$\{\{ matrix.gate \}\}/${_gate}}"
+                printf '%s\n' "${_expanded//\$\{\{ matrix.runner \}\}/${_runner}}"
+            done < <(_flow_items gate '        ' gate)
+        else
+            printf '%s\n' "${_template//\$\{\{ matrix.runner \}\}/${_runner}}"
+        fi
+    done < <(_flow_items "$1" '        ' runner)
+}
+
+@test "the legs ci_prior_run_evaluate expects are exactly the legs ci.yml runs" {
+    local _expected
+    _expected="$(for _job in build-image gate test-system-real; do _leg_names "${_job}"; done | sort)"
+    run bash -c 'source "$1" && ci_prior_run_expected_jobs false | sort' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_output "${_expected}"
+    _expected="$(for _job in build-image gate test-system-real verify-all; do _leg_names "${_job}"; done | sort)"
+    run bash -c 'source "$1" && ci_prior_run_expected_jobs true | sort' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_output "${_expected}"
+}
+
+@test "ci-passed re-checks the live PR body before aggregating" {
+    run _job_block ci-passed
+    assert_line '      pull-requests: read'
+    assert_line '          persist-credentials: false'
+    assert_line "        if: github.event_name == 'pull_request'"
+    assert_output --partial "gh api \"repos/\${REPO}/pulls/\${PR_NUMBER}\" --jq '.body // \"\"'"
+    assert_line --regexp '^ +commit_attribution_check_pr_body pull_request "\$\{body\}"$'
+}
+
 # --- every leg-carrying job runs on both runners -----------------------------
 
 @test "ci.yml declares exactly the expected jobs" {
     run _job_ids
     assert_success
+    assert_line "route"
+    assert_line "prior-run"
     assert_line "build-image"
     assert_line "gate"
     assert_line "test-system-real"
@@ -251,7 +366,7 @@ _trigger_branches() {
     assert_line "review-log"
     assert_line "verify-all"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 9
+    assert_equal "${#lines[@]}" 11
 }
 
 # ADR 0012 cites the next two case names verbatim as guards; keep them.
@@ -408,7 +523,7 @@ _trigger_branches() {
 
 @test "--privileged is named by the test-system-real job only" {
     local _job
-    for _job in build-image gate verify-all commit-email commit-attribution commit-refs review-log ci-passed; do
+    for _job in route prior-run build-image gate verify-all commit-email commit-attribution commit-refs review-log ci-passed; do
         run _job_block "${_job}"
         refute_output --partial '--privileged'
     done
@@ -501,8 +616,8 @@ _trigger_branches() {
 @test "milestone-gate PRs require native acceptance with read-only evidence access" {
     run _job_block verify-all
     assert_success
-    assert_line "    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
-    assert_line '    needs: build-image'
+    assert_line "    if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
+    assert_line '    needs: [route, build-image]'
     assert_line --partial 'uses: actions/checkout@'
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
@@ -517,16 +632,59 @@ _trigger_branches() {
 }
 
 # Execute the checked-in aggregator shell with resolved Actions inputs.
+# Only the "Verify every leg succeeded" step (the last step of the job);
+# a code-path run by default. $1 = VERIFY_REQUIRED, $2 = VERIFY_RESULT,
+# the rest are VAR=value overrides.
 _run_aggregator() {
-    local _script
+    local _script _required="$1" _result="$2"
+    shift 2
     _script="$(_job_block ci-passed | awk '
-        /^        run: \|$/ { script = 1; next }
+        /^      - name: / { script = 0; step = ($0 == "      - name: Verify every leg succeeded") }
+        step && /^        run: \|$/ { script = 1; next }
         script { print substr($0, 11) }
     ')"
-    env BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
+    [[ -n "${_script}" ]] || return 99
+    env ROUTE_RESULT=success CODE_PATH=true PRIOR_RESULT=skipped \
+        BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
         EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success REVIEW_LOG_RESULT=success \
-        "VERIFY_REQUIRED=$1" "VERIFY_RESULT=$2" "${3:-GATE_RESULT=success}" \
+        "VERIFY_REQUIRED=${_required}" "VERIFY_RESULT=${_result}" "$@" \
         bash -eo pipefail -c "${_script}"
+}
+
+@test "on the meta path ci-passed needs the prior-run proof instead of the skipped code tiers" {
+    local _result _gate
+    # Meta path: code tiers skipped, a green prior code run stands in.
+    run _run_aggregator true skipped CODE_PATH=false PRIOR_RESULT=success \
+        BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped
+    assert_success
+    for _result in failure skipped cancelled ''; do
+        run _run_aggregator false skipped CODE_PATH=false "PRIOR_RESULT=${_result}" \
+            BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped
+        assert_failure
+    done
+    # Policy jobs are never waived on the meta path.
+    for _gate in EMAIL ATTRIBUTION REFS REVIEW_LOG; do
+        run _run_aggregator false skipped CODE_PATH=false PRIOR_RESULT=success \
+            BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped "${_gate}_RESULT=failure"
+        assert_failure
+    done
+    # Code path: a green prior-run never replaces a skipped code tier.
+    for _gate in BUILD GATE SYSTEM_REAL; do
+        run _run_aggregator false skipped PRIOR_RESULT=success "${_gate}_RESULT=skipped"
+        assert_failure
+    done
+    # The route job itself, and an unknown path, fail closed.
+    for _result in failure skipped cancelled; do
+        run _run_aggregator false skipped "ROUTE_RESULT=${_result}"
+        assert_failure
+    done
+    for _result in '' maybe TRUE; do
+        run _run_aggregator false skipped "CODE_PATH=${_result}" PRIOR_RESULT=success
+        assert_failure
+    done
+    run _job_block ci-passed
+    assert_line "          CODE_PATH: \${{ needs.route.outputs.code }}"
+    assert_line "          PRIOR_RESULT: \${{ needs.prior-run.result }}"
 }
 
 @test "ci-passed requires verify success only for milestone-gate PRs and never waives other gates" {
@@ -543,7 +701,7 @@ _run_aggregator() {
             fi
         done
     done
-    for _gate in BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
+    for _gate in ROUTE BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
         run _run_aggregator false skipped "${_gate}_RESULT=failure"
         assert_failure
     done

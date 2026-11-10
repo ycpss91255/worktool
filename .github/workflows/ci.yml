@@ -35,11 +35,34 @@ name: CI
 # Milestone PRs additionally require every verify-all leg to succeed;
 # other PRs and main pushes do not require that conditional job.
 #
+# Code path vs meta path (issue #688). A PR body, title or label edit
+# fires edited / labeled / unlabeled, but leaves the head sha (what the
+# tiers test) unchanged. One routing expression, repeated verbatim in
+# run-name, concurrency and the route job, picks the path:
+#   - code path: push, opened, synchronize, reopened, adding the
+#     milestone-gate label (verify-all becomes required) and an edit that
+#     changes the base branch (the merge result changes). Every tier runs.
+#   - meta path: any other edited / labeled / unlabeled event. The code
+#     tiers are skipped; the policy jobs (PR body included) still run, and
+#     prior-run requires that the latest code run of the same head sha and
+#     PR finished with every test leg green (plus verify-all when the PR is
+#     labelled milestone-gate NOW), via lib/ci_prior_run.sh. No such run,
+#     one still running, or any non-green leg fails ci-passed: a skipped
+#     tier never reads as green (fail closed).
+# The two paths use separate concurrency groups, so a body edit never
+# cancels a running code run; only pull_request runs cancel in progress, so
+# a push to main is never cancelled. Branch protection still keys on the
+# single ci-passed check; the newest ci-passed check run of the head sha
+# decides, so a meta run that fails because the code run is unfinished is
+# superseded by that code run's ci-passed, created after it.
+#
 # The test-system-real gate uses --privileged: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
 # box. Everything it creates lives in that nested daemon and is destroyed
 # with the runner container (docker run --rm).
 # verify-all also invokes that gate through the acceptance entry.
+
+run-name: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }}
 
 on:
   push:
@@ -52,14 +75,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'code' || 'meta' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Code path or meta path (see the header); every other job keys on it.
+  route:
+    name: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.path.outputs.code }}
+    steps:
+      - name: Pick the code or meta path
+        id: path
+        env:
+          EVENT: ${{ github.event_name }}/${{ github.event.action }}
+          CODE_PATH: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false' }}
+        run: |
+          echo "event ${EVENT}: code path=${CODE_PATH}"
+          echo "code=${CODE_PATH}" >> "${GITHUB_OUTPUT}"
+
   # One test image per arch. The artifact name carries the runner so the two
   # legs never overwrite each other and each gate below loads its own arch.
   build-image:
     name: Build test image (${{ matrix.runner }})
+    needs: route
+    if: needs.route.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -150,6 +192,8 @@ jobs:
   # bounds every step, and the job is capped too.
   test-system-real:
     name: test-system-real (${{ matrix.runner }})
+    needs: route
+    if: needs.route.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -172,10 +216,10 @@ jobs:
   # the verify image adds host tools and the shared image's pinned distrobox.
   verify-all:
     name: verify-all (${{ matrix.runner }})
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
+    if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
-    needs: build-image
+    needs: [route, build-image]
     permissions:
       contents: read
       pull-requests: read
@@ -344,21 +388,94 @@ jobs:
           mapfile -t revs <<< "${range}"
           review_log_check_commits . "${revs[@]}"
 
+  # Meta path only: the code tiers were skipped, so require the latest code
+  # run of this head sha and PR to have passed every test leg (issue #688).
+  # verify-all is required from the PR's labels NOW (live, not the event
+  # payload), so removing milestone-gate stops requiring it and a label
+  # still present keeps requiring it. The rule lives in lib/ci_prior_run.sh.
+  prior-run:
+    name: prior-run
+    needs: route
+    if: needs.route.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Require a green code run of this head sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          source lib/ci_prior_run.sh
+          labels="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.labels[].name')" || exit 1
+          verify=false
+          if grep -Fqx milestone-gate <<< "${labels}"; then
+            verify=true
+          fi
+          runs="${RUNNER_TEMP}/runs"
+          gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
+            --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv' \
+            > "${runs}" || exit 1
+          id="$(ci_prior_run_select "${RUN_ID}" "${PR_NUMBER}" < "${runs}")" || exit 1
+          echo "latest code run of ${PR_HEAD}: ${id} (verify-all required: ${verify})"
+          jobs="${RUNNER_TEMP}/jobs"
+          gh api --paginate "repos/${REPO}/actions/runs/${id}/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' > "${jobs}" || exit 1
+          ci_prior_run_evaluate "${verify}" < "${jobs}"
+
   # Single required status: green only if every build-image leg AND every
   # matrix gate leg AND every real-engine leg AND all commit policy jobs
   # succeeded, plus verify-all on milestone-gate PRs. `needs` on a matrix
   # job covers all of its legs, and its `result` is `success` only when
   # every leg is. `if: always()` makes it run even when a leg failed or was
   # skipped, so that state is reported as a failure rather than as "no
-  # check".
+  # check". It is never skipped: a skipped check run would read as passing.
+  # On the meta path prior-run stands in for the skipped code tiers; on
+  # both paths the PR body is re-read live first, so an edit made while a
+  # code run was running cannot ride on that run's earlier body check.
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs, review-log, verify-all]
+    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all]
     if: always()
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Re-check the live pull request body
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          source lib/commit_attribution.sh
+          body="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')" || exit 1
+          commit_attribution_check_pr_body pull_request "${body}"
+
       - name: Verify every leg succeeded
         env:
+          ROUTE_RESULT: ${{ needs.route.result }}
+          CODE_PATH: ${{ needs.route.outputs.code }}
+          PRIOR_RESULT: ${{ needs.prior-run.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
           GATE_RESULT: ${{ needs.gate.result }}
           SYSTEM_REAL_RESULT: ${{ needs.test-system-real.result }}
@@ -369,21 +486,31 @@ jobs:
           VERIFY_REQUIRED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}
           VERIFY_RESULT: ${{ needs.verify-all.result }}
         run: |
-          echo "build-image (both runners): ${BUILD_RESULT}"
-          echo "gate (6 gates x both runners): ${GATE_RESULT}"
-          echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
+          echo "route: ${ROUTE_RESULT} (code path: ${CODE_PATH})"
+          [ "${ROUTE_RESULT}" = "success" ] || exit 1
+          if [ "${CODE_PATH}" = "true" ]; then
+            echo "build-image (both runners): ${BUILD_RESULT}"
+            echo "gate (6 gates x both runners): ${GATE_RESULT}"
+            echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
+            [ "${BUILD_RESULT}" = "success" ] || exit 1
+            [ "${GATE_RESULT}" = "success" ] || exit 1
+            [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
+            echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
+            if [ "${VERIFY_REQUIRED}" = "true" ]; then
+              [ "${VERIFY_RESULT}" = "success" ] || exit 1
+            fi
+          elif [ "${CODE_PATH}" = "false" ]; then
+            echo "prior-run (latest code run of this head sha, every leg green): ${PRIOR_RESULT}"
+            [ "${PRIOR_RESULT}" = "success" ] || exit 1
+          else
+            echo "unknown path '${CODE_PATH}'"
+            exit 1
+          fi
           echo "commit-email (noreply author and committer): ${EMAIL_RESULT}"
           echo "commit-attribution (commit messages and PR body): ${ATTRIBUTION_RESULT}"
           echo "commit-refs (issue footers): ${REFS_RESULT}"
           echo "review-log (no committed review notes): ${REVIEW_LOG_RESULT}"
-          [ "${BUILD_RESULT}" = "success" ] || exit 1
-          [ "${GATE_RESULT}" = "success" ] || exit 1
-          [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
           [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
           [ "${REFS_RESULT}" = "success" ] || exit 1
           [ "${REVIEW_LOG_RESULT}" = "success" ] || exit 1
-          echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
-          if [ "${VERIFY_REQUIRED}" = "true" ]; then
-            [ "${VERIFY_RESULT}" = "success" ] || exit 1
-          fi
