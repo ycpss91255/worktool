@@ -5,6 +5,8 @@
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
+bats_require_minimum_version 1.5.0
+
 setup() {
     # shellcheck source=../../lib/shard_weights.sh
     source "${LIB_DIR}/shard_weights.sh"
@@ -41,4 +43,20 @@ _report() {
     run shard_weights_merge "${REPORTS}" unit matrix
     assert_success
     assert_output "$(printf 'matrix/m_spec.bats\t10001\nunit/b_spec.bats\t2000\nunit/hook/a_spec.bats\t2000')"
+}
+
+@test "a listed tier without a report, or a report without timed cases, writes no weights" {
+    _report test-report-unit-amd unit 'b_spec.bats:1'
+    run --separate-stderr shard_weights_merge "${REPORTS}" unit matrix
+    assert_failure 1
+    assert_output ''
+    assert_equal "${stderr:-}" "[ERROR] no junit report for tier matrix under ${REPORTS}"
+
+    mkdir -p "${REPORTS}/test-report-matrix-amd/matrix"
+    printf '<testsuites>\n<testsuite name="m_spec.bats">\n</testsuite>\n</testsuites>\n' \
+        >"${REPORTS}/test-report-matrix-amd/matrix/report.xml"
+    run --separate-stderr shard_weights_merge "${REPORTS}" unit matrix
+    assert_failure 1
+    assert_output ''
+    assert_equal "${stderr:-}" "[ERROR] junit report without readable timed cases: ${REPORTS}/test-report-matrix-amd/matrix/report.xml"
 }
