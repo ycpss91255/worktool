@@ -271,6 +271,15 @@ _ensure_image() {
         || _die "docker build failed"
 }
 
+# Create .agents/state as the HOST user before a container mounts the repo
+# (issue #853): a container runs as root, and if it is the one that creates
+# the directory, a later host step (lint's path snapshot below) can no
+# longer write there. Subdirectories a container creates stay its own.
+_host_state_dir() {
+    mkdir -p "${REPO_ROOT}/.agents/state" \
+        || _die "cannot create ${REPO_ROOT}/.agents/state on the host"
+}
+
 # Run THIS script inside the test container with the source bind-mounted.
 # $1 = in-container flag (e.g. --ci-unit).
 _run_in_container() {
@@ -282,8 +291,8 @@ _run_in_container() {
     _info "running ${_flag} in ${TEST_IMAGE}"
     local _layout_paths="" _rc=0
     local _layout_env=()
+    _host_state_dir
     if [[ "${_flag}" == --ci-lint ]]; then
-        mkdir -p "${REPO_ROOT}/.agents/state"
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
         if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
             rm -f "${_layout_paths}"
@@ -326,6 +335,7 @@ _run_ghostty_in_container() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_ghostty_image
     _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
+    _host_state_dir
     docker run --rm \
         -v "${REPO_ROOT}:/source" \
         -w /source \
@@ -361,6 +371,7 @@ _run_system_real_in_runner() {
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
+    _host_state_dir
     docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR \
         -v "${REPO_ROOT}:/source" \
         -w /source \
