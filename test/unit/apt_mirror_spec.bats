@@ -5,7 +5,9 @@
 # WHAT THIS PROVES
 #   CI's Ubuntu package source is one knob: given a mirror, the script points
 #   EVERY `URIs:` line of an Ubuntu deb822 sources file (the archive pockets
-#   and the security pocket alike) at that one mirror and turns on apt's
+#   and the security pocket alike) at one apt mirror list - that mirror
+#   first, the file's own sources after it in a strict order, so a file the
+#   mirror cannot serve comes from the next one (#885) - and turns on apt's
 #   retries; given no mirror it changes nothing, so a local build or run is
 #   byte-for-byte what it was. A sources file it cannot rewrite is a failure,
 #   never a silent fall back to the default mirror, and a mirror that is not
@@ -26,6 +28,7 @@ setup() {
     ROOT="${BATS_TEST_TMPDIR}/root"
     SOURCES="${ROOT}/etc/apt/sources.list.d/ubuntu.sources"
     CONF="${ROOT}/etc/apt/apt.conf.d/80worktool-ci"
+    LIST="${ROOT}/etc/apt/worktool-mirrors.list"
     mkdir -p "${ROOT}/etc/apt/sources.list.d" "${ROOT}/etc/apt/apt.conf.d"
     # The ubuntu:26.04 file: archive pockets and security on two hosts.
     cat >"${SOURCES}" <<'EOF'
@@ -44,17 +47,36 @@ EOF
     cp "${SOURCES}" "${BATS_TEST_TMPDIR}/orig.sources"
 }
 
-@test "a mirror replaces every URIs line, archive and security alike, and keeps the rest" {
+@test "a mirror points every URIs line at one mirror list: the mirror first, then the file's own sources in order, and keeps the rest (#885)" {
     run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
     assert_success
-    run grep -c "^URIs: ${MIRROR}\$" "${SOURCES}"
+    run grep -c "^URIs: mirror+file:/etc/apt/worktool-mirrors.list\$" "${SOURCES}"
     assert_output 2
-    run grep -E '^URIs:' "${SOURCES}"
-    refute_line 'URIs: http://archive.ubuntu.com/ubuntu/'
-    refute_line 'URIs: http://security.ubuntu.com/ubuntu/'
+    run grep -cE '^URIs:' "${SOURCES}"
+    assert_output 2
+    # Strict order (apt spreads downloads over a list without priorities):
+    # a file the mirror cannot serve (the index/pool skew of 2026-11-10, a
+    # 404) is fetched from the next source; all failing is still a failure.
+    run cat "${LIST}"
+    assert_output "$(printf '%s\tpriority:1\n%s\tpriority:2\n%s\tpriority:3' \
+        "${MIRROR}" http://archive.ubuntu.com/ubuntu/ http://security.ubuntu.com/ubuntu/)"
     # Only the URIs lines changed.
     run diff <(grep -v '^URIs:' "${BATS_TEST_TMPDIR}/orig.sources") <(grep -v '^URIs:' "${SOURCES}")
     assert_success
+}
+
+@test "the fallback list names each source once: an arm root falls back to ports only (#885)" {
+    sed -i 's|^URIs:.*|URIs: http://ports.ubuntu.com/ubuntu-ports/|' "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    run cat "${LIST}"
+    assert_output "$(printf '%s\tpriority:1\n%s\tpriority:2' "${MIRROR}" http://ports.ubuntu.com/ubuntu-ports/)"
+}
+
+@test "the log names the mirror and every fallback source in order (#885)" {
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    assert_output --partial "apt-mirror.sh: apt sources -> ${MIRROR}, then on a failed fetch http://archive.ubuntu.com/ubuntu/ http://security.ubuntu.com/ubuntu/"
 }
 
 @test "a mirror turns on apt retries" {
@@ -94,6 +116,7 @@ EOF
     run cmp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
     assert_success
     assert [ ! -e "${CONF}" ]
+    assert [ ! -e "${LIST}" ]
 }
 
 @test "a missing sources file fails instead of silently keeping the default mirror" {

@@ -141,3 +141,35 @@ _job() {
     run grep -c 'actions/cache/save' "${YML}"
     assert_output 0
 }
+
+# --- isolation reuses ci.yml's image caches (issue #885) ----------------------
+
+@test "isolation builds the ghostty and system-real images from ci.yml's buildx cache, read-only, and hands them to its stages (#885)" {
+    local _img _df
+    run _job isolation
+    assert_success
+    assert_line '        uses: docker/setup-buildx-action@v3'
+    for _img in ghostty system-real; do
+        _df="dockerfile/Dockerfile.${_img}"
+        assert_line "          file: ${_df}"
+        assert_line "          tags: worktool-${_img}:local"
+        assert_line "          cache-from: type=gha,scope=${_img}-\${{ matrix.runner }}"
+        # Same scope and build arg as ci.yml (its main push is the writer).
+        run grep -cF "          cache-from: type=gha,scope=${_img}-\${{ matrix.runner }}" "${REPO_ROOT}/.github/workflows/ci.yml"
+        assert_output 1
+        run _job isolation
+    done
+    assert_line "          build-args: APT_MIRROR=\${{ env.WORKTOOL_APT_MIRROR }}"
+    assert_line '          load: true'
+    run awk '/- name: Tier isolation/ { on = 1; next } on && /- name:/ { exit } on' "${YML}"
+    assert_line "          GHOSTTY_IMAGE_PREBUILT: '1'"
+    assert_line "          SYSTEM_REAL_IMAGE_PREBUILT: '1'"
+    assert_line '        run: just test isolation'
+    # Nightly never writes the image cache, and full-serial keeps building
+    # its images the way a user's bare `just test` does.
+    run grep -c 'cache-to' "${YML}"
+    assert_output 0
+    run _job full-serial
+    refute_line --partial 'PREBUILT'
+    refute_line --partial 'docker/build-push-action'
+}
