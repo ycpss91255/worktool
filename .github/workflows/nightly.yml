@@ -2,9 +2,10 @@ name: Nightly
 
 # Nightly full serial run (issue #836, maintainer decision recorded on
 # #824). On main, on both architectures: bare `just test` (the seven tiers
-# in order, stop at the first failure, exactly what a user types) and then
-# acceptance 2.3's checks again (integration and system-real), all serial
-# in one job per runner, no sharding, no reuse of PR results.
+# in order, stop at the first failure, exactly what a user types; it holds
+# acceptance 2.3's checks, integration and system-real, so they are not run
+# a second time, issue #888), serial in one job per runner, no sharding, no
+# reuse of PR results.
 #
 # Duplicate rule (#836): an open issue labelled `nightly-failure` means
 # the last failure is not resolved yet, so a SCHEDULED run does not run
@@ -138,12 +139,6 @@ jobs:
           WORKTOOL_FULL_CHECK: '1'
           WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test
-
-      - name: Acceptance 2.3 checks again (integration, system-real)
-        run: |
-          set -euo pipefail
-          just test integration
-          just test system-real
 
   # Tier isolation guard (issue #835, ADR-0018): the same stages in a
   # seeded random order, failing on anything a stage leaves behind on the

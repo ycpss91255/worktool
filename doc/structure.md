@@ -530,7 +530,7 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 
 `.github/workflows/nightly.yml` 每天 03:00(台北,cron `0 19 * * *`)與手動
 (`workflow_dispatch`)在 main 上、兩種架構各一個 job,序列執行裸 `just test`(七個 tier
-依序、遇第一個失敗即停)與驗收 2.3 的檢查(`just test integration`、`just test system-real`),
+依序、遇第一個失敗即停;驗收 2.3 的檢查 integration 與 system-real 就在其中,不另跑第二次,#888),
 不分片、不沿用 PR 的結果。以標籤 `nightly-failure` 辨識未解決的失敗(標籤不存在就建立):
 
 - 排程觸發時若有 open 的 `nightly-failure` issue,不跑測試,記下是哪個 issue 造成略過並以
