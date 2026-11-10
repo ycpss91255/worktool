@@ -544,8 +544,8 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   各自排隊、不互相取代;這類 run 不開也不留言 `nightly-failure` issue,由呼叫者自己讀結果。
   `.agents/script/monitor/full-run.sh --repo <repo> --sha <sha> [--dispatch] [--wait N]`
   以該 sha 最新一次 run 判定(較新的失敗蓋過較舊的成功):0 綠燈、1 非綠燈(失敗、沒有
-  run、查詢失敗)、3 仍在執行;milestone 交接(`milestone-handover` 的 Full run 階段)與
-  release 打 tag 都要求退出碼 0。
+  run、查詢失敗)、2 參數錯誤(含 sha 不是該 repo 的 commit,#865)、3 仍在執行;milestone
+  交接(`milestone-handover` 的 Full run 階段)與 release 打 tag 都要求退出碼 0。
 
 ### unit 分片與聯集 verdict(#831,ADR-0016)
 

@@ -21,8 +21,9 @@
 #               seconds
 # Stdout: one line `full-run: <sha> <status> <conclusion> run=<id>`, or
 #         `full-run: <sha> none` when no run of the sha exists.
-# Exit: 0 green, 1 not green (failed, none, or the query failed),
-#       2 bad arguments, 3 pending (queued / in progress, or just started).
+# Exit: 0 green, 1 not green (failed, none, or a query failed),
+#       2 bad arguments (including a sha that is no commit of the repo,
+#       #865), 3 pending (queued / in progress, or just started).
 
 set -euo pipefail
 
@@ -67,6 +68,19 @@ done
 [[ "${REPO}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || _arg_error "--repo must be OWNER/REPO"
 [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || _arg_error "--sha must be a full 40-hex commit"
 [[ "${POLL}" =~ ^[1-9][0-9]*$ ]] || _arg_error "WORKTOOL_FULL_RUN_POLL must be a positive integer"
+
+# The sha must be a commit of the repo (#865): GitHub answering "no such
+# commit" (HTTP 404 / 422) is a bad argument (2), before any run is listed
+# or dispatched; a check that fails for any other reason is not green (1).
+_commit_err=""
+if ! _commit_err="$(gh api "repos/${REPO}/commits/${SHA}" --jq .sha 2>&1 >/dev/null)"; then
+    if [[ "${_commit_err}" == *"(HTTP 404)"* || "${_commit_err}" == *"(HTTP 422)"* ]]; then
+        _arg_error "${SHA} is not a commit of ${REPO}"
+    fi
+    printf 'full-run: %s query-failed\n' "${SHA}"
+    printf 'full-run.sh: could not check that %s is a commit of %s: %s\n' "${SHA}" "${REPO}" "${_commit_err}" >&2
+    exit 1
+fi
 
 TITLE="full-serial ${SHA}"
 
