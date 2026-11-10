@@ -139,6 +139,7 @@ jobs:
       - name: Run gate (${{ matrix.gate }} = just test ${{ matrix.tier }})
         env:
           TEST_IMAGE_PREBUILT: "1"
+          WORKTOOL_TEST_JOBS: "8"
         run: just test ${{ matrix.tier }}
 
   # Real-engine system group: docker-in-docker, on both runners. Builds its
