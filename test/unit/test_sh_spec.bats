@@ -256,6 +256,14 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
+@test "prebuilt system-real and ghostty images are used as loaded, never rebuilt" {
+    SYSTEM_REAL_IMAGE_PREBUILT=1 GHOSTTY_IMAGE_PREBUILT=1 run "${TEST_SH}" --integration --system-real
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-integration --ci-integration-ghostty system-real-entry.sh)"
+    run cat "${FAKE_DOCKER_CALLS}"
+    refute_line --regexp '^docker build '
+}
+
 @test "test.sh --system-real passes CI through to the DinD runner (-e CI)" {
     CI=true run "${TEST_SH}" --system-real
     assert_success

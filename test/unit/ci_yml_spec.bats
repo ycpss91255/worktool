@@ -594,6 +594,27 @@ _leg_names() {
     assert_output "${_n}"
 }
 
+@test "system-real and ghostty images come from a buildx gha cache that only a main push writes (#829)" {
+    local _job _image
+    for _job in test-system-real:system-real gate:ghostty; do
+        _image="${_job#*:}"
+        run _job_block "${_job%%:*}"
+        assert_success
+        assert_line '        uses: docker/setup-buildx-action@v3'
+        assert_line '        uses: docker/build-push-action@v6'
+        assert_line "          file: dockerfile/Dockerfile.${_image}"
+        assert_line "          tags: worktool-${_image}:local"
+        assert_line '          load: true'
+        assert_line "          cache-from: type=gha,scope=${_image}-\${{ matrix.runner }}"
+        assert_line "          cache-to: \${{ github.event_name == 'push' && format('type=gha,mode=max,scope=${_image}-{0}', matrix.runner) || '' }}"
+    done
+    run _job_block test-system-real
+    assert_line '          SYSTEM_REAL_IMAGE_PREBUILT: "1"'
+    run _job_block gate
+    assert_line "        if: matrix.tier == 'integration'"
+    assert_line "          GHOSTTY_IMAGE_PREBUILT: \${{ matrix.tier == 'integration' && '1' || '' }}"
+}
+
 @test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {
     run _job_block gate
     assert_success

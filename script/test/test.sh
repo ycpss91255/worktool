@@ -300,10 +300,14 @@ _run_in_container() {
     return "${_rc}"
 }
 
-# Build the ubuntu image that carries a real ghostty (always built here:
-# like the DinD runner it is not part of the prebuilt test-image artifact
-# and its Dockerfile is self-contained).
+# Build the ubuntu image that carries a real ghostty (not part of the
+# prebuilt test-image artifact; its Dockerfile is self-contained), unless
+# CI already loaded it from its buildx cache (GHOSTTY_IMAGE_PREBUILT=1).
 _ensure_ghostty_image() {
+    if [[ "${GHOSTTY_IMAGE_PREBUILT:-}" == "1" ]]; then
+        _info "using prebuilt ghostty image ${GHOSTTY_IMAGE}"
+        return 0
+    fi
     _info "building ghostty image ${GHOSTTY_IMAGE}"
     docker build -t "${GHOSTTY_IMAGE}" -f "${GHOSTTY_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the ghostty image failed"
@@ -324,9 +328,14 @@ _run_ghostty_in_container() {
         ./script/test/test.sh --ci-integration-ghostty
 }
 
-# Build the docker-in-docker runner image (always built here: it is not part
-# of the prebuilt test-image artifact and its Dockerfile is self-contained).
+# Build the docker-in-docker runner image (not part of the prebuilt
+# test-image artifact; its Dockerfile is self-contained), unless CI already
+# loaded it from its buildx cache (SYSTEM_REAL_IMAGE_PREBUILT=1).
 _ensure_system_real_image() {
+    if [[ "${SYSTEM_REAL_IMAGE_PREBUILT:-}" == "1" ]]; then
+        _info "using prebuilt system-real runner image ${SYSTEM_REAL_IMAGE}"
+        return 0
+    fi
     _info "building system-real runner image ${SYSTEM_REAL_IMAGE}"
     docker build -t "${SYSTEM_REAL_IMAGE}" -f "${SYSTEM_REAL_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the system-real runner failed"
@@ -675,9 +684,13 @@ Environment:
                          report.xml; the TAP output is unchanged (default:
                          none)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+  SYSTEM_REAL_IMAGE_PREBUILT=1
+                         skip the DinD runner build (CI loads a cached one)
   WORKTOOL_SHARD_WEIGHTS repo-relative "<tier>/<spec><TAB><ms>" weights for
                          --shard (default: none, @test counts)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
+  GHOSTTY_IMAGE_PREBUILT=1
+                         skip the ghostty image build (CI loads a cached one)
 EOF
 }
 
