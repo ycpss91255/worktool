@@ -890,3 +890,32 @@ _run_aggregator() {
     run _run_aggregator false skipped REVIEW_LOG_RESULT=skipped
     assert_failure
 }
+
+# --- the box's downloaded packages persist between runs (issue #847) ---------
+
+@test "test-system-real restores the box's packages, mounts them for the gate, and only a main push prunes and saves them (#847)" {
+    run _job_block test-system-real
+    assert_success
+    assert_line '      - name: Restore box packages'
+    assert_line '        uses: actions/cache/restore@v4'
+    assert_line "          key: apt-box-\${{ matrix.runner }}-none"
+    assert_line "          restore-keys: apt-box-\${{ matrix.runner }}-"
+    assert_line "          WORKTOOL_APT_CACHE_DIR: \${{ runner.temp }}/apt-box"
+    assert_line '      - name: Prune and key box packages'
+    assert_line "        if: github.event_name == 'push' && !cancelled()"
+    assert_line --partial "apt_cache_prune \"\${RUNNER_TEMP}/apt-box\""
+    assert_line '        uses: actions/cache/save@v4'
+    assert_line "          key: apt-box-\${{ matrix.runner }}-\${{ steps.debs.outputs.key }}"
+    # Restore and save name the same path, or the save is a new cache version.
+    run grep -c "          path: \${{ runner.temp }}/apt-box/\*\.deb\$" <<<"$(_job_block test-system-real)"
+    assert_output 2
+    # Order: restore -> gate -> prune/key -> save.
+    local _r _g _p _s
+    _r="$(_job_block test-system-real | grep -n 'name: Restore box packages' | cut -d: -f1)"
+    _g="$(_job_block test-system-real | grep -n 'run: just test system-real' | cut -d: -f1)"
+    _p="$(_job_block test-system-real | grep -n 'name: Prune and key box packages' | cut -d: -f1)"
+    _s="$(_job_block test-system-real | grep -n 'uses: actions/cache/save@v4' | cut -d: -f1)"
+    assert [ "${_r}" -lt "${_g}" ]
+    assert [ "${_g}" -lt "${_p}" ]
+    assert [ "${_p}" -lt "${_s}" ]
+}
