@@ -500,7 +500,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 依賴分兩組(repo 本身不需要驗收工具):
 
 - repo 使用依賴:`docker`(可 `--privileged`)、`just`;clone 需要 `git`。
-- 驗收工具:`gh`(已登入,2.2 / 5.1 / 5.3 / 5.4 / 6.1-6.3 用)、`jq`(5.1 / 5.3 / 5.4 / 6.1 / 6.3 用)、`timeout` / `mktemp` / `sort` / `wc` / `cut` / `sha256sum` / `stat` 等 coreutils 指令、`awk` / `grep` / `sed`,以及 `find`(findutils;3.1 / 3.4 / 3.5 / 3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`diff`(diffutils;3.4 用)、`cmp`(diffutils;3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`flock`(util-linux;3.5 用)、`setsid`(util-linux;5.4 用)、`ps`(procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`kill`(PATH 上的外部執行檔,不是 shell 內建,procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`gapplication`(glib;5.2 / 5.2.2 / 5.2.3 / 5.3 用)(各工具括號內的項目由 `test/unit/acceptance_doc_spec.bats` 從腳本的前置檢查推導比對；5.4 每格以子行程執行完整的 5.1，所以也列入 5.1 需要的工具，缺任何一項都在啟動第一格前回退出碼 3);3 需要 host 的 PATH 上有 `distrobox` 與 `ghostty`(setup 解析這兩個絕對路徑寫進決策 log 與受管 command,少一個就沒得驗);5(實機)另需真的建得起盒、開得起 ghostty 視窗。1-2、4、6 不需 distrobox / ghostty。少任何一項時,對應的 `just verify ...` 會印 `[UNAVAILABLE] <腳本>: <工具> not found on PATH` 並回非 0(退出碼 3),絕不會靜默跳過而讀成通過。
+- 驗收工具:`gh`(已登入,2.1-2.3 / 5.1 / 5.3 / 5.4 / 6.1-6.3 用)、`jq`(5.1 / 5.3 / 5.4 / 6.1 / 6.3 用)、`timeout` / `mktemp` / `sort` / `wc` / `cut` / `sha256sum` / `stat` 等 coreutils 指令、`awk` / `grep` / `sed`,以及 `find`(findutils;3.1 / 3.4 / 3.5 / 3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`diff`(diffutils;3.4 用)、`cmp`(diffutils;3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`flock`(util-linux;3.5 用)、`setsid`(util-linux;5.4 用)、`ps`(procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`kill`(PATH 上的外部執行檔,不是 shell 內建,procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`gapplication`(glib;5.2 / 5.2.2 / 5.2.3 / 5.3 用)(各工具括號內的項目由 `test/unit/acceptance_doc_spec.bats` 從腳本的前置檢查推導比對；5.4 每格以子行程執行完整的 5.1，所以也列入 5.1 需要的工具，缺任何一項都在啟動第一格前回退出碼 3);3 需要 host 的 PATH 上有 `distrobox` 與 `ghostty`(setup 解析這兩個絕對路徑寫進決策 log 與受管 command,少一個就沒得驗);5(實機)另需真的建得起盒、開得起 ghostty 視窗。1-2、4、6 不需 distrobox / ghostty。少任何一項時,對應的 `just verify ...` 會印 `[UNAVAILABLE] <腳本>: <工具> not found on PATH` 並回非 0(退出碼 3),絕不會靜默跳過而讀成通過。
 
 每個「驗收方式」區塊都是**一行 `just verify <動作> [ITEM]` 加上 `echo rc=$?`**,以 **bash** 執行(fish 使用者先打 `bash`);**請原樣貼上,不要改寫**,改寫過的區塊不算數。文件本身已經不帶任何 shell 邏輯 —— 判準全部搬進 repo 的 `script/verify/`(`ui.sh` / `gate.sh` / `setup.sh` / `diagram.sh` / `realbox.sh` / `evidence.sh`),由 `just verify` namespace 轉發。每支腳本自己建立並清理臨時目錄 / 暫存檔,自己守住每條管線與每個計數(先判外部指令自己的結束碼再用它的輸出、每個計數都與它的退化情況分得開),跑不動的環境一律明講並回非 0,不會靜默跳過;`test/unit/verify_*_spec.bats` 再以「印得出像樣輸出、結束碼卻非 0」的 stub 證明它們咬得動。**裸 `just verify` 只列出動作、什麼都不驗**(它自己會印一行 `NOTE: this only lists the verify groups - nothing has been verified. ...` 並回 0,那個 rc=0 不代表通過;#182);**一次跑完全部非實機驗收的是 `just verify all`**(依序 ui、gate、setup、diagram、evidence,遇第一個失敗即停,每組一行摘要加一行總判決,任一組失敗就回非 0;5 是實機,需 `--allow-real-box`,不在內)。`just verify <動作> --help` 是該腳本自己的說明,`just verify <動作> --list` 列出它涵蓋的項目。
 
@@ -695,6 +695,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
       ```bash
       just verify gate 2.1; echo rc=$?
       ```
+    - CI 模式（#833，#824 第 1 項）：milestone-gate PR 的 `verify-all` job 在同一個 run 的 gate job 之後執行，並以 `WORKTOOL_VERIFY_GATE_RUN`／`_SHA`／`_REPO` 指名該 run；此時 2.1 不再重跑 `just test`，改判讀該 run 中每個架構、裸 `just test` 每個階段（`script/test/test.sh` 的 `HOST_STEPS`）的 gate job：每個都必須恰好一個、`completed`、`success`、屬於該 run 且 head sha 相同；缺少、重複、執行中、skipped、cancelled、失敗或 sha 不符一律失敗（fail closed）。stdout 逐行列出沿用的 job：`reused: <job 名稱> success run=<run> job=<id>`。三個變數只設一部分時回 3（UNAVAILABLE），不會退回本機模式。本機 `just verify gate 2.1`／`just verify all` 三者都不設，照常完整執行 `just test`。
   - [ ] 2.2 TDD 證據:固定十個 sub-issue PR(#152-#156、#165-#169)的描述都有一個非空的 RED 程式碼區塊,且其後另有一個非空的 GREEN 程式碼區塊(只證明「有貼輸出且順序正確」,不判讀內容語意;`red=` / `green=` 是該區塊開頭的行號)
     - 預期看到資訊(10 行,每行 order=ok;行號依 PR 內容而異)
       輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
@@ -766,6 +767,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
       ```bash
       just verify gate 2.3; echo rc=$?
       ```
+    - CI 模式（#833）：同 2.1 的條件下，2.3 不再重跑 integration 與 system-real，改判讀同一個 run 中每個架構的 `test-integration (<runner>)` 與 `test-system-real (<runner>)` job（判準與 2.1 相同，fail closed），再下載這些 job 的 log、去掉時間戳記後，以本機模式相同的區塊檢查（案例集合、判準值、順序、`^not ok`）逐一判讀；stdout 先列 `reused:` 行，再依架構印出各 tier 的區塊。本機模式不變。
   - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;沒有 `pipefail` 的 pipeline 會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
     - 預期看到資訊(前四行 = 檢查程式咬住順序顛倒與空的 RED 區塊;後兩行 = 同一條 pipeline 有無 `pipefail` 的差別)
       輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。

@@ -177,7 +177,10 @@ jobs:
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
-    needs: build-image
+    # Items 2.1 and 2.3 judge the gate jobs of THIS run (#833), so they
+    # must be done first; a red gate leaves verify-all skipped, which
+    # ci-passed reads as a failure on a milestone-gate PR.
+    needs: [build-image, gate, test-system-real]
     permissions:
       contents: read
       pull-requests: read
@@ -215,11 +218,16 @@ jobs:
         env:
           TEST_IMAGE_PREBUILT: "1"
           GH_TOKEN: ${{ github.token }}
+          # 2.1 / 2.3 read this run's gate jobs instead of re-running the
+          # tiers (#833); `just verify all` run locally sets none of them.
+          WORKTOOL_VERIFY_GATE_RUN: ${{ github.run_id }}
+          WORKTOOL_VERIFY_GATE_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKTOOL_VERIFY_GATE_REPO: ${{ github.repository }}
         # Docker gates mount the checkout through the runner's daemon, so
         # its absolute path must be identical inside and outside this container.
         run: |
           set -euo pipefail
-          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI \
+          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI -e WORKTOOL_VERIFY_GATE_RUN -e WORKTOOL_VERIFY_GATE_SHA -e WORKTOOL_VERIFY_GATE_REPO \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${PWD}:${PWD}" -w "${PWD}" \
             worktool-verify:local -c 'just verify all'
