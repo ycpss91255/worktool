@@ -80,6 +80,10 @@ WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
 # Repo-relative shard weights ("<tier>/<spec><TAB><ms>", issue #831) for
 # --shard; empty or an empty file = every spec weighs its @test count.
 WORKTOOL_SHARD_WEIGHTS="${WORKTOOL_SHARD_WEIGHTS:-}"
+# Host dir CI persists the box's downloaded packages in (issue #847);
+# mounted into the DinD runner at APT_ARCHIVES_IN_RUNNER.
+WORKTOOL_APT_CACHE_DIR="${WORKTOOL_APT_CACHE_DIR:-}"
+APT_ARCHIVES_IN_RUNNER=/var/cache/worktool-apt
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -366,13 +370,22 @@ _ensure_system_real_image() {
 # quiet-host wait is 120 s instead of 60 s on CI (issue #181).
 # `-e WORKTOOL_APT_MIRROR` likewise (issue #843): CI's Ubuntu mirror for the
 # box's first launch, applied by the entry inside the runner.
+# WORKTOOL_APT_CACHE_DIR (issue #847): the host dir CI keeps the box's
+# downloaded packages in, mounted at APT_ARCHIVES_IN_RUNNER and named to
+# the entry as WORKTOOL_APT_ARCHIVES; unset, neither is passed.
 _run_system_real_in_runner() {
+    local -a _apt_cache=()
     command -v docker >/dev/null 2>&1 \
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
     _host_state_dir
-    docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR \
+    if [[ -n "${WORKTOOL_APT_CACHE_DIR}" ]]; then
+        mkdir -p "${WORKTOOL_APT_CACHE_DIR}" || _die "cannot create ${WORKTOOL_APT_CACHE_DIR}"
+        _apt_cache=(-e "WORKTOOL_APT_ARCHIVES=${APT_ARCHIVES_IN_RUNNER}"
+            -v "${WORKTOOL_APT_CACHE_DIR}:${APT_ARCHIVES_IN_RUNNER}")
+    fi
+    docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR "${_apt_cache[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -692,6 +705,8 @@ Environment:
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
   GHOSTTY_IMAGE_PREBUILT=1
                          skip the ghostty image build (CI loads a cached one)
+  WORKTOOL_APT_CACHE_DIR host dir (absolute) the real-engine box keeps its
+                         downloaded packages in (CI persists it; default none)
   WORKTOOL_APT_MIRROR    Ubuntu mirror the real-engine box installs from
                          (passed into the DinD runner; default: the box
                          image's own sources)
@@ -1186,6 +1201,8 @@ main() {
     _changed=0 _base="origin/main" _base_set=0
     [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
         || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+    [[ -z "${WORKTOOL_APT_CACHE_DIR}" || "${WORKTOOL_APT_CACHE_DIR}" =~ ^/[A-Za-z0-9._/-]*$ ]] \
+        || _usage_error "invalid WORKTOOL_APT_CACHE_DIR '${WORKTOOL_APT_CACHE_DIR}' (a plain absolute path)"
     if [[ -n "${WORKTOOL_TEST_REPORT_DIR}" ]]; then
         [[ "${WORKTOOL_TEST_REPORT_DIR}" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ \
             && "/${WORKTOOL_TEST_REPORT_DIR}/" != */../* \

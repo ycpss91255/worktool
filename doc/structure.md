@@ -582,7 +582,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   `commit-refs`、`review-log`)照跑;新增的 `prior-run` job 以 `lib/ci_prior_run.sh`
   找出同一 head sha、同一 PR **最新一次** code run,要求它已完成且兩個架構的每一條
   測試 leg 都 `success`,PR **目前**貼著 `milestone-gate` 時再加兩條 `verify-all`。
-  找不到、仍在跑、缺 leg 或任何 leg 不是 success 一律失敗;不採信該 run 的整體結論
+  仍在跑時先等它完成(`ci_prior_run_await`,最多 380 次 × 30 秒,#872;立即失敗會留下
+  code run 之後的綠燈蓋不掉的紅燈)再判定;找不到、等到上限仍未完成、缺 leg 或任何 leg
+  不是 success 一律失敗;不採信該 run 的整體結論
   或它的 `ci-passed`,meta run 不能互相背書。`ci-passed` 在 code 路徑要求測試 leg、
   在 meta 路徑要求 `prior-run`,兩條路徑都要求 policy job,並在彙總前以 API 重讀一次
   PR 說明做署名檢查。`ci-passed` 永不 skip(skip 的 check run 會被當成通過)。

@@ -104,8 +104,8 @@ EOF
     # kept under the test tmpdir rather than /var/log.
     export FAKE_LOG
     export WORKTOOL_DOCKERD_LOG="${BATS_TEST_TMPDIR}/dockerd.log"
-    # The box image mirror is opt-in per case (issue #843).
-    unset WORKTOOL_APT_MIRROR
+    # The box image mirror and package dir are opt-in per case (#843, #847).
+    unset WORKTOOL_APT_MIRROR WORKTOOL_APT_ARCHIVES
 }
 
 teardown() {
@@ -275,6 +275,24 @@ _with_entry() {
     assert_line --index 0 "FROM ubuntu:26.04"
     assert_line --index 1 "RUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh 'http://azure.archive.ubuntu.com/ubuntu/'"
     assert_equal "${#lines[@]}" 2
+}
+
+@test "WORKTOOL_APT_ARCHIVES points the box's apt at that runner dir through /run/host, mirror or not; a bad path is refused before dockerd (#847)" {
+    local _dir="${BATS_TEST_TMPDIR}/apt-box"
+    WORKTOOL_APT_ARCHIVES="${_dir}" _with_entry _prepare_box_image
+    assert_success
+    assert [ -d "${_dir}/partial" ]
+    run cat "${FAKE_LOG}.dockerfile"
+    assert_line --index 0 "FROM ubuntu:26.04"
+    assert_line --index 1 "RUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh --archives '/run/host${_dir}/' ''"
+    WORKTOOL_APT_ARCHIVES="${_dir}/" WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ _with_entry _prepare_box_image
+    assert_success
+    run cat "${FAKE_LOG}.dockerfile"
+    assert_line --index 1 "RUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh --archives '/run/host${_dir}/' 'http://azure.archive.ubuntu.com/ubuntu/'"
+    WORKTOOL_APT_ARCHIVES="relative/'x" run timeout "${OUTER_TIMEOUT}" bash "${ENTRY}"
+    assert_failure 1
+    assert_output --partial "[system-real] ERROR: WORKTOOL_APT_ARCHIVES is not a plain absolute path"
+    refute_output --partial "starting nested dockerd"
 }
 
 @test "_prepare_box_image fails the run when the box image build fails" {
