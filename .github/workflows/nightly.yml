@@ -75,6 +75,11 @@ jobs:
     if: needs.decide.outputs.run == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
+    # Same Ubuntu package source as ci.yml (issue #843): the amd64 leg
+    # takes the box's and the images' packages from the runner-local
+    # mirror; the arm leg keeps the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
