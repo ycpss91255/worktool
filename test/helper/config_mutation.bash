@@ -615,7 +615,50 @@ _run_case() {
     CASE_OUT="$(bats --filter "${1#*@}" "$2/test/${1%%@*}" 2>&1)" || CASE_RC=$?
 }
 
-# The row of mutant $1.
+# Every `<spec>@<regex>` the table names, deduplicated and sorted.
+_table_refs() {
+    { _rows | cut -d'|' -f6; _owner_rows | cut -d'|' -f3; } | tr ';' '\n' | grep -vx -- '-' | sort -u
+}
+
+# The cheap control case of spec file $1 (test/-relative): a case of that
+# spec the copy tree must run (issue #860). Every spec file the table names
+# needs one; a missing one fails the control.
+_control_cheap() {
+    case "$1" in
+        unit/config_spec.bats) printf '%s\n' "$1@config_set creates a missing file" ;;
+        unit/config_owner_spec.bats) printf '%s\n' "$1@owner: every status row" ;;
+        unit/config_validate_spec.bats) printf '%s\n' "$1@bare key = empty value: every judged key.*: home.source via home_config_check$" ;;
+        unit/setup_spec.bats) printf '%s\n' "$1@r3: setup keeps the state file.s mode" ;;
+        integration/assemble_spec.bats) printf '%s\n' "$1@r3: assemble keeps the state file.s mode" ;;
+        *) printf 'no cheap control case for %s (add one to _control_cheap)\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# The control mode: pr when WORKTOOL_FULL_CHECK is unset or empty, full when
+# it is 1; any other value returns 1 (fail closed).
+_control_mode() {
+    case "${WORKTOOL_FULL_CHECK:-}" in
+        '') printf 'pr\n' ;;
+        1) printf 'full\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# The control's cases for mode $1: full = the whole table (_table_refs), pr =
+# one cheap case per spec file the table names.
+_control_refs() {
+    local _s
+    case "$1" in
+        full) _table_refs ;;
+        pr)
+            while IFS= read -r _s; do
+                _control_cheap "${_s}" || return 1
+            done < <(_table_refs | cut -d@ -f1 | sort -u)
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 # The row of mutant $1, from the property table.
 _row() { _rows | awk -F'|' -v m="$1" '$3 == m'; }
 
