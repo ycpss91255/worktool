@@ -18,3 +18,27 @@ setup() {
     assert_output 'skip 17'
     [[ "${stderr:-}" == *'#17'* ]] || fail "the skip does not name the open issue: ${stderr:-}"
 }
+
+@test "the nightly decision and report cover every branch" {
+    local _case _args _want
+    while IFS='|' read -r _case _want; do
+        read -r -a _args <<<"${_case}"
+        run --separate-stderr "${_args[@]}"
+        assert_success
+        assert_output "${_want}"
+    done <<'CASES'
+nightly_decide schedule 0|run
+nightly_decide schedule 1 17|run
+nightly_decide workflow_dispatch 0 17|run
+nightly_decide workflow_dispatch 1|run
+nightly_report failure 0|open
+nightly_report cancelled 0|open
+nightly_report failure 0 17|comment 17
+nightly_report success 0 17|comment 17
+nightly_report success 0|none
+nightly_report failure 2|open
+nightly_report success 2|none
+CASES
+    run --separate-stderr nightly_decide schedule 1
+    [[ "${stderr:-}" == *'running anyway'* ]] || fail "a failed listing must say it runs anyway: ${stderr:-}"
+}
