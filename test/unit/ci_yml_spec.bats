@@ -301,7 +301,10 @@ _trigger_branches() {
     assert_output --partial "actions/workflows/ci.yml/runs?head_sha=\${PR_HEAD}&event=pull_request"
     assert_output --partial '.display_title'
     assert_output --partial '.pull_requests[].number'
-    assert_line --partial "id=\"\$(ci_prior_run_select \"\${RUN_ID}\" \"\${PR_NUMBER}\" < \"\${runs}\")\" || exit 1"
+    # #872: a code run still going is waited for (380 x 30 s, past
+    # verify-all's 180 min), then judged; the job's own bound is above it.
+    assert_line --partial "id=\"\$(ci_prior_run_await 380 30 \"\${RUN_ID}\" \"\${PR_NUMBER}\" -- _runs)\" || exit 1"
+    assert_line '    timeout-minutes: 200'
     assert_output --partial "actions/runs/\${id}/jobs?filter=latest"
     assert_line --regexp '^ +ci_prior_run_evaluate "\$\{verify\}" < "\$\{jobs\}"$'
     # verify-all is required from the LIVE labels, not the event payload.
