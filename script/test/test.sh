@@ -311,7 +311,10 @@ _ensure_ghostty_image() {
         return 0
     fi
     _info "building ghostty image ${GHOSTTY_IMAGE}"
-    docker build -t "${GHOSTTY_IMAGE}" -f "${GHOSTTY_DOCKERFILE}" "${REPO_ROOT}" \
+    # APT_MIRROR (issue #843): the Ubuntu mirror CI names; empty = the
+    # image's own sources. Same knob as the CI image builds.
+    docker build --build-arg "APT_MIRROR=${WORKTOOL_APT_MIRROR:-}" \
+        -t "${GHOSTTY_IMAGE}" -f "${GHOSTTY_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the ghostty image failed"
 }
 
@@ -339,7 +342,8 @@ _ensure_system_real_image() {
         return 0
     fi
     _info "building system-real runner image ${SYSTEM_REAL_IMAGE}"
-    docker build -t "${SYSTEM_REAL_IMAGE}" -f "${SYSTEM_REAL_DOCKERFILE}" "${REPO_ROOT}" \
+    docker build --build-arg "APT_MIRROR=${WORKTOOL_APT_MIRROR:-}" \
+        -t "${SYSTEM_REAL_IMAGE}" -f "${SYSTEM_REAL_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the system-real runner failed"
 }
 

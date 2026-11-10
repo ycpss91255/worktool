@@ -58,3 +58,9 @@ _job() {
     # The report job itself stays red when the suite was red.
     assert_line "          [ \"\${RESULT}\" = success ]"
 }
+
+@test "the full serial run takes Ubuntu packages from the same mirror as ci.yml (#843)" {
+    run _job full-serial
+    assert_line '    env:'
+    assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+}
