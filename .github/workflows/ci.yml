@@ -237,6 +237,7 @@ jobs:
           tags: worktool-ghostty:local
           load: true
           cache-from: type=gha,scope=ghostty-${{ matrix.runner }}
+          no-cache: true
           build-args: |
             APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
             http_proxy=${{ steps.seed.outputs.url }}
@@ -474,6 +475,7 @@ jobs:
           tags: worktool-system-real:local
           load: true
           cache-from: type=gha,scope=system-real-${{ matrix.runner }}
+          no-cache: true
           build-args: |
             APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
             http_proxy=${{ steps.seed.outputs.url }}
