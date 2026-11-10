@@ -251,8 +251,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    recipe 加各自的腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
-   (lint、test-matrix、test-integration、test-system、test-acceptance、
-   test-system-real、ci-passed),另加 milestone 驗收 job `verify-all`。unit tier 以
+   (lint-system-acceptance、test-matrix、test-integration、test-system-real、
+   ci-passed;lint、system、acceptance 每個架構共用一條 leg,各自仍以
+   `just test <tier>` 依序執行,#841),另加 milestone 驗收 job `verify-all`。unit tier 以
    `just test unit --shard I/N` 分片(check 名稱 `test-unit I/N (<runner>)`),由
    `test-unit-verdict` 對所有分片的聯集套用整層規則(#831,ADR-0016)。matrix 以 `just test <tier>` 執行(tier 為 lint /
    unit / matrix / integration / system / acceptance),real job 以 `just test system-real`

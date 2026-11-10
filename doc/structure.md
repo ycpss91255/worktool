@@ -486,7 +486,8 @@ exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,�
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-跑 lint、test-matrix、test-integration、test-system、test-acceptance(共用測試
+跑 lint-system-acceptance(lint、system、acceptance 每個架構共用一條 leg,依序各自以
+`just test <tier>` 執行、第一個失敗即失敗,#841)、test-matrix、test-integration(共用測試
 映像的 matrix)、unit tier 的分片 job(`test-unit I/N (<runner>)`)與其聯集 verdict
 `test-unit-verdict`,以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`,上限 40 分鐘)。貼有 `milestone-gate` 標籤的 PR
@@ -803,10 +804,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
-tier:`lint` -> `just test lint`、`test-unit I/N` -> `just test unit --shard I/N`、`test-matrix` -> `just test matrix`、
-`test-integration` -> `just test integration`、`test-system` -> `just test system`、
-`test-acceptance` -> `just test acceptance`;`test-system-real` ->
-`just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
+tier:`lint-system-acceptance` -> `just test lint`、`just test system`、`just test acceptance`、`test-unit I/N` -> `just test unit --shard I/N`、`test-matrix` -> `just test matrix`、
+`test-integration` -> `just test integration`;`test-system-real` ->
+`just test system-real`);check 名稱為 `<gate> (<runner>)`,
 branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
 

@@ -115,23 +115,22 @@ _green_jobs() {
 
 # --- evaluating its legs -----------------------------------------------------
 
-@test "expected legs are both runners of build-image, five gates, four unit shards and test-system-real, plus the unit verdict" {
+@test "expected legs are both runners of build-image, three gate legs, four unit shards and test-system-real, plus the unit verdict" {
     run ci_prior_run_expected_jobs false
     assert_success
-    assert_equal "${#lines[@]}" 23
+    assert_equal "${#lines[@]}" 19
+    assert_line 'lint-system-acceptance (ubuntu-latest)'
     assert_line 'test-unit 1/4 (ubuntu-latest)'
     assert_line 'test-unit 4/4 (ubuntu-24.04-arm)'
     assert_line 'test-unit-verdict'
     refute_line 'test-unit (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-24.04-arm)'
-    assert_line 'lint (ubuntu-24.04-arm)'
-    assert_line 'test-acceptance (ubuntu-latest)'
     assert_line 'test-system-real (ubuntu-24.04-arm)'
     refute_line --partial 'verify-all'
     run ci_prior_run_expected_jobs true
     assert_success
-    assert_equal "${#lines[@]}" 25
+    assert_equal "${#lines[@]}" 21
     assert_line 'verify-all (ubuntu-latest)'
     assert_line 'verify-all (ubuntu-24.04-arm)'
 }
@@ -157,15 +156,15 @@ _green_jobs() {
     local _conclusion
     for _conclusion in failure skipped cancelled neutral ''; do
         run ci_prior_run_evaluate false < <(
-            _green_jobs false 'lint (ubuntu-latest)'
-            printf 'lint (ubuntu-latest)\tcompleted\t%s\n' "${_conclusion}"
+            _green_jobs false 'lint-system-acceptance (ubuntu-latest)'
+            printf 'lint-system-acceptance (ubuntu-latest)\tcompleted\t%s\n' "${_conclusion}"
         )
         assert_failure
-        assert_output --partial 'lint (ubuntu-latest)'
+        assert_output --partial 'lint-system-acceptance (ubuntu-latest)'
     done
     run ci_prior_run_evaluate false < <(
-        _green_jobs false 'lint (ubuntu-latest)'
-        printf 'lint (ubuntu-latest)\tin_progress\t\n'
+        _green_jobs false 'lint-system-acceptance (ubuntu-latest)'
+        printf 'lint-system-acceptance (ubuntu-latest)\tin_progress\t\n'
     )
     assert_failure
 }
@@ -173,10 +172,10 @@ _green_jobs() {
 @test "evaluate fails when a leg appears twice and one copy is not success" {
     run ci_prior_run_evaluate false < <(
         _green_jobs false
-        printf 'test-system (ubuntu-latest)\tcompleted\tfailure\n'
+        printf 'test-matrix (ubuntu-latest)\tcompleted\tfailure\n'
     )
     assert_failure
-    assert_output --partial 'test-system (ubuntu-latest)'
+    assert_output --partial 'test-matrix (ubuntu-latest)'
 }
 
 @test "evaluate requires both verify-all legs only when verify is required" {

@@ -68,12 +68,13 @@ setup() {
     CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
     LEG_JOBS=(build-image gate unit-shard test-system-real verify-all)
-    GATES=(lint test-matrix test-integration test-system test-acceptance)
+    GATES=(lint-system-acceptance test-matrix test-integration)
     # The unit tier runs as UNIT_SHARDS weighted shards (issue #831).
     UNIT_SHARDS=4
     # gate=tier: the `just test <tier>` each gate runs (the include map).
-    TIERS=(lint=lint test-matrix=matrix test-integration=integration
-        test-system=system test-acceptance=acceptance)
+    # lint, system and acceptance share one leg per runner (issue #841).
+    TIERS=("lint-system-acceptance=lint system acceptance" test-matrix=matrix
+        test-integration=integration)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
     # The one routing expression (issue #688): true = code path (every
@@ -389,10 +390,15 @@ _leg_names() {
     run _job_block gate
     assert_success
     assert_line '          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report'
-    assert_line "          name: test-report-\${{ matrix.tier }}-\${{ matrix.runner }}"
+    assert_line "          name: test-report-\${{ matrix.gate }}-\${{ matrix.runner }}"
     assert_line '          path: .agents/state/test-report'
     assert_line '          if-no-files-found: error'
-    assert_line "        if: always() && matrix.tier != 'lint'"
+    assert_line "        if: always()"
+    # Every tier of a leg runs as its own `just test <tier>`, in order, and
+    # the leg fails at the first failing tier (issue #841).
+    assert_line "          TIERS: \${{ matrix.tier }}"
+    assert_line "        run: for tier in \${TIERS}; do just test \"\${tier}\" || exit 1; done"
+
     run _job_block shard-weights
     assert_success
     assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
@@ -483,7 +489,7 @@ _leg_names() {
     done
 }
 
-@test "gate runs every one of the five gates on the runner dimension" {
+@test "gate runs every one of the three gate legs on the runner dimension" {
     local _gate
     run _job_block gate
     assert_success
@@ -494,7 +500,7 @@ _leg_names() {
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
 }
 
-@test "the gate dimension is EXACTLY the five gates (a sixth turns red)" {
+@test "the gate dimension is EXACTLY the three gate legs (a fourth turns red)" {
     # The flow list, as a sorted set: nothing extra, nothing missing.
     run _flow_items gate '        ' gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -505,7 +511,7 @@ _leg_names() {
     assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
 }
 
-@test "gate's matrix include maps EXACTLY the five gates to a tier and adds no runner" {
+@test "gate's matrix include maps EXACTLY the three gate legs to their tiers and adds no runner" {
     # One `- gate: <name>` include entry per gate, no more, no less.
     run _include_values gate gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -519,7 +525,7 @@ _leg_names() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "the include is EXACTLY five entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+@test "the include is EXACTLY three entries, each EXACTLY one gate plus its tiers (an extra entry, key or tier turns red)" {
     local _pair _entries=()
     for _pair in "${TIERS[@]}"; do
         _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")
