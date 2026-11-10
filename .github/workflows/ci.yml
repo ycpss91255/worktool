@@ -20,7 +20,7 @@ name: CI
 # grammar a user types (`just test lint`, `just test unit`, ..., `just test
 # system-real`; all of them at once: bare `just test`). Each recipe is a
 # thin forwarder to script/test/test.sh (`--lint`, `--unit`, ...). The
-# gate NAMES stay lint / test-unit / test-matrix / test-integration / test-system /
+# gate NAMES stay lint / test-matrix / test-integration / test-system /
 # test-acceptance / test-system-real, so a check reads "<gate> (<runner>)",
 # e.g. "lint (ubuntu-24.04-arm)"; the matrix maps each name to its tier
 # instead of reusing the name as the tier. Branch protection keys on the
@@ -117,11 +117,33 @@ jobs:
       - name: Save image
         run: docker save worktool-test:local -o /tmp/worktool-test.tar
 
+      # Shard weights (issue #831): read the newest main-push weights once
+      # per arch, here, and ship them with the image so every unit shard of
+      # this arch splits the tier from the same file. A miss ships an empty
+      # file: every spec then weighs its @test count.
+      - name: Restore shard weights
+        uses: actions/cache/restore@v4
+        with:
+          path: .agents/state/shard-weights.tsv
+          key: shard-weights-none
+          restore-keys: shard-weights-
+
+      - name: Stage shard weights
+        run: |
+          if [ -f .agents/state/shard-weights.tsv ]; then
+            cp .agents/state/shard-weights.tsv /tmp/shard-weights.tsv
+          else
+            : > /tmp/shard-weights.tsv
+          fi
+          wc -l /tmp/shard-weights.tsv
+
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: worktool-test-image-${{ matrix.runner }}
-          path: /tmp/worktool-test.tar
+          path: |
+            /tmp/worktool-test.tar
+            /tmp/shard-weights.tsv
           retention-days: 1
 
   # 6 gates x 2 runners. `needs: build-image` waits for BOTH build legs;
@@ -144,7 +166,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
-        gate: [lint, test-unit, test-matrix, test-integration, test-system, test-acceptance]
+        gate: [lint, test-matrix, test-integration, test-system, test-acceptance]
         # gate = job name (unchanged; ci-passed and the per-leg check names
         #        key on it)
         # tier = the `just test <tier>` that job runs; `include` attaches it
@@ -152,8 +174,6 @@ jobs:
         include:
           - gate: lint
             tier: lint
-          - gate: test-unit
-            tier: unit
           - gate: test-matrix
             tier: matrix
           - gate: test-integration
@@ -195,6 +215,99 @@ jobs:
           path: .agents/state/test-report
           if-no-files-found: error
           retention-days: 7
+
+  # The unit tier as UNIT_SHARDS weighted shards per runner (issue #831):
+  # `just test unit --shard I/N` assigns every test/unit spec by the
+  # weights build-image shipped (lib/test_shard.sh), runs its own share,
+  # checks its own required specs and an exact plan, and uploads its
+  # record, TAP and junit report. No shard stands for the tier: only
+  # test-unit-verdict, over all shards of both runners, does. The shard
+  # count is declared here (shard, shards) and in test-unit-verdict's
+  # UNIT_SHARDS; ci_yml_spec keeps them equal.
+  unit-shard:
+    name: test-unit ${{ matrix.shard }}/${{ matrix.shards }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    needs: build-image
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        shard: [1, 2, 3, 4]
+        shards: [4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download test image (${{ matrix.runner }})
+        uses: actions/download-artifact@v4
+        with:
+          name: worktool-test-image-${{ matrix.runner }}
+          path: /tmp
+
+      - name: Load test image
+        run: docker load -i /tmp/worktool-test.tar
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Stage shard weights
+        run: |
+          mkdir -p .agents/state
+          cp /tmp/shard-weights.tsv .agents/state/shard-weights.tsv
+
+      - name: Run gate (test-unit = just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }})
+        env:
+          TEST_IMAGE_PREBUILT: "1"
+          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report
+          WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv
+        run: just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }}
+
+      - name: Upload shard record and junit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-unit-${{ matrix.shard }}-${{ matrix.runner }}
+          path: .agents/state/test-report
+          if-no-files-found: error
+          retention-days: 7
+
+  # The union verdict of the unit shards (issue #831), fail closed: for
+  # each runner exactly UNIT_SHARDS records labelled i/N with one weights
+  # hash, pairwise disjoint specs whose union is exactly the test/unit list
+  # of THIS checkout, every required spec present with cases, and every
+  # shard's plan equal to its specs' case counts with that many ok lines
+  # and no failure or skip (lib/test_shard.sh). It is a leg: ci-passed and
+  # the meta path's prior-run require it.
+  test-unit-verdict:
+    name: test-unit-verdict
+    needs: [route, unit-shard]
+    if: needs.route.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      UNIT_SHARDS: 4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download shard records
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-report-unit-*
+          path: ${{ runner.temp }}/shards
+
+      - name: Apply the whole-tier rules to the union of the shards
+        run: |
+          set -uo pipefail
+          source lib/test_shard.sh
+          list="${RUNNER_TEMP}/unit-specs"
+          required="${RUNNER_TEMP}/unit-required"
+          (cd test/unit && find . -type f -name '*.bats' | sed 's|^\./||' | LC_ALL=C sort) > "${list}" || exit 1
+          bash -c 'source script/test/test.sh && _required_specs unit' | sed 's|^unit/||' > "${required}" || exit 1
+          test_shard_verdict "${RUNNER_TEMP}/shards" unit "${UNIT_SHARDS}" "${list}" "${required}" ubuntu-latest ubuntu-24.04-arm
 
   # Real-engine system group: docker-in-docker, on both runners. Builds its
   # own runner image (dockerfile/Dockerfile.system-real, independent of the
@@ -455,7 +568,7 @@ jobs:
   # one by prefix. The weights only balance work, never decide what runs.
   shard-weights:
     name: shard-weights
-    needs: [route, gate]
+    needs: [route, gate, unit-shard]
     if: github.event_name == 'push' && needs.route.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -498,7 +611,7 @@ jobs:
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all, shard-weights]
+    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all, shard-weights, unit-shard, test-unit-verdict]
     if: always()
     permissions:
       contents: read
@@ -528,6 +641,8 @@ jobs:
           PRIOR_RESULT: ${{ needs.prior-run.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
           GATE_RESULT: ${{ needs.gate.result }}
+          UNIT_SHARD_RESULT: ${{ needs.unit-shard.result }}
+          UNIT_VERDICT_RESULT: ${{ needs.test-unit-verdict.result }}
           SYSTEM_REAL_RESULT: ${{ needs.test-system-real.result }}
           EMAIL_RESULT: ${{ needs.commit-email.result }}
           ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
@@ -542,10 +657,14 @@ jobs:
           [ "${ROUTE_RESULT}" = "success" ] || exit 1
           if [ "${CODE_PATH}" = "true" ]; then
             echo "build-image (both runners): ${BUILD_RESULT}"
-            echo "gate (6 gates x both runners): ${GATE_RESULT}"
+            echo "gate (5 gates x both runners): ${GATE_RESULT}"
             echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
             [ "${BUILD_RESULT}" = "success" ] || exit 1
             [ "${GATE_RESULT}" = "success" ] || exit 1
+            echo "unit-shard (unit tier shards x both runners): ${UNIT_SHARD_RESULT}"
+            echo "test-unit-verdict (union of the unit shards): ${UNIT_VERDICT_RESULT}"
+            [ "${UNIT_SHARD_RESULT}" = "success" ] || exit 1
+            [ "${UNIT_VERDICT_RESULT}" = "success" ] || exit 1
             [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
             echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
             if [ "${VERIFY_REQUIRED}" = "true" ]; then

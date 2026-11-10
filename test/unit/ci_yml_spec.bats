@@ -418,7 +418,7 @@ _leg_names() {
     run _job_block unit-shard
     assert_success
     assert_line "    name: test-unit \${{ matrix.shard }}/\${{ matrix.shards }} (\${{ matrix.runner }})"
-    assert_line --regexp "$(_flow_has '    ' needs build-image)"
+    assert_line '    needs: build-image'
     assert_line "          name: ${ARTIFACT}"
     assert_line "        run: just test unit --shard \${{ matrix.shard }}/\${{ matrix.shards }}"
     assert_line '          WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv'
@@ -563,7 +563,7 @@ _leg_names() {
     local _line
     run grep -E '^ +name: worktool-test-image' "${CI_YML}"
     assert_success
-    assert_equal "${#lines[@]}" 3
+    assert_equal "${#lines[@]}" 4
     for _line in "${lines[@]}"; do
         assert_equal "${_line}" "          name: ${ARTIFACT}"
     done
@@ -721,6 +721,7 @@ _run_aggregator() {
     [[ -n "${_script}" ]] || return 99
     env ROUTE_RESULT=success CODE_PATH=true PRIOR_RESULT=skipped \
         BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
+        UNIT_SHARD_RESULT=success UNIT_VERDICT_RESULT=success \
         EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success REVIEW_LOG_RESULT=success \
         "VERIFY_REQUIRED=${_required}" "VERIFY_RESULT=${_result}" "$@" \
         bash -eo pipefail -c "${_script}"
@@ -744,7 +745,7 @@ _run_aggregator() {
         assert_failure
     done
     # Code path: a green prior-run never replaces a skipped code tier.
-    for _gate in BUILD GATE SYSTEM_REAL; do
+    for _gate in BUILD GATE SYSTEM_REAL UNIT_SHARD UNIT_VERDICT; do
         run _run_aggregator false skipped PRIOR_RESULT=success "${_gate}_RESULT=skipped"
         assert_failure
     done
@@ -776,7 +777,7 @@ _run_aggregator() {
             fi
         done
     done
-    for _gate in ROUTE BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
+    for _gate in ROUTE BUILD GATE UNIT_SHARD UNIT_VERDICT SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
         run _run_aggregator false skipped "${_gate}_RESULT=failure"
         assert_failure
     done

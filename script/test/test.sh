@@ -546,7 +546,8 @@ _run_shard() {
     local _tier="$1" _i="${_shard%/*}" _n="${_shard#*/}" _rel _count _weights='' _hash=none
     local _dir="${REPO_ROOT}/test/${_tier}" _row _total=0 _required
     local -a _all=() _mine=() _abs=()
-    # shellcheck source=../../lib/test_shard.sh
+    # shellcheck source-path=SCRIPTDIR/../../lib
+    # shellcheck source=test_shard.sh
     source "${REPO_ROOT}/lib/test_shard.sh"
     mapfile -t _all < <(cd "${_dir}" && find . -type f -name '*.bats' | sed 's|^\./||' | LC_ALL=C sort)
     [[ "${#_all[@]}" -gt 0 ]] || _die "no ${_tier} specs found under ${_dir}"

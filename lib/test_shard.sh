@@ -192,8 +192,10 @@ test_shard_verdict() {
         return 1
     fi
     _scratch="$(mktemp -d)" || return 1
-    cp -- "${_list}" "${_scratch}/list" && cp -- "${_required}" "${_scratch}/required" \
-        || { rm -rf -- "${_scratch}"; return 1; }
+    if ! cp -- "${_list}" "${_scratch}/list" || ! cp -- "${_required}" "${_scratch}/required"; then
+        rm -rf -- "${_scratch}"
+        return 1
+    fi
     for _runner in "$@"; do
         _test_shard_verdict_runner "${_root}" "${_tier}" "${_n}" "${_scratch}" "${_runner}" || _bad=1
     done
