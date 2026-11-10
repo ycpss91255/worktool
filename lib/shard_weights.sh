@@ -8,7 +8,11 @@
 #          WORKTOOL_TEST_REPORT_DIR) and print one line per spec,
 #          "<tier>/<spec><TAB><milliseconds>", sorted by spec: the case
 #          times of the spec summed within a report, the largest sum over
-#          the reports kept (the slower runner decides). A listed tier
+#          the reports kept (the slower runner decides). Each spec also
+#          gets a "longest/<tier>/<spec><TAB><milliseconds>" line: its
+#          longest single case, the largest over the reports (#868; the
+#          prefix keeps a reader that only knows "<tier>/" rows from
+#          mistaking it for a weight). All lines sorted. A listed tier
 #          without any report, or a report without a single timed case,
 #          returns 1 with the reason on stderr: a partial table is never
 #          written as the weights.
@@ -35,11 +39,11 @@ _shard_weights_report() {
         /<testcase / {
             t = attr($0, "time")
             if (suite == "" || t !~ /^[0-9]+(\.[0-9]+)?$/) { bad = 1; exit 1 }
-            ms[suite] += t * 1000; cases++
+            ms[suite] += t * 1000; if (t * 1000 > top[suite]) top[suite] = t * 1000; cases++
         }
         END {
             if (bad || cases == 0) exit 1
-            for (i = 1; i <= n; i++) printf "%s\t%d\n", order[i], ms[order[i]] + 0.5
+            for (i = 1; i <= n; i++) printf "%s\t%d\t%d\n", order[i], ms[order[i]] + 0.5, top[order[i]] + 0.5
         }
     ' "$1"
 }
@@ -73,13 +77,14 @@ shard_weights_merge() {
                         } else if (base != "") {
                             $1 = base "/" $1
                         }
-                        print tier "/" $1, $2
+                        print tier "/" $1, $2, $3
                     }' || { log_error "junit suite outside test/${_tier}: ${_report}"; exit 1; }
             done
             [[ "${_found}" -eq 1 ]] \
                 || { log_error "no junit report for tier ${_tier} under ${_root}"; exit 1; }
         done
     )" || return 1
-    awk -F '\t' '{ if (!($1 in max) || $2 > max[$1]) max[$1] = $2 }
-        END { for (s in max) printf "%s\t%d\n", s, max[s] }' <<<"${_rows}" | LC_ALL=C sort
+    awk -F '\t' '{ if (!($1 in max) || $2 > max[$1]) max[$1] = $2
+            if (!($1 in top) || $3 > top[$1]) top[$1] = $3 }
+        END { for (s in max) printf "%s\t%d\nlongest/%s\t%d\n", s, max[s], s, top[s] }' <<<"${_rows}" | LC_ALL=C sort
 }
