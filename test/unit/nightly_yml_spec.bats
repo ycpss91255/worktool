@@ -122,3 +122,22 @@ _job() {
     run grep -c 'WORKTOOL_FULL_CHECK' "${REPO_ROOT}/.github/workflows/ci.yml"
     assert_output 0
 }
+
+# --- the box's persisted packages (issue #878, after #847) --------------------
+
+@test "full-serial's bare just test and isolation read the box packages ci.yml's main push saves, and nightly never saves them" {
+    local _job
+    for _job in full-serial isolation; do
+        run _job "${_job}"
+        assert_success
+        assert_line '      - name: Restore box packages'
+        assert_line '        uses: actions/cache/restore@v4'
+        assert_line "          path: \${{ runner.temp }}/apt-box/*.deb"
+        assert_line "          restore-keys: apt-box-\${{ matrix.runner }}-"
+        assert_line "          WORKTOOL_APT_CACHE_DIR: \${{ runner.temp }}/apt-box"
+    done
+    run awk '/- name: Bare just test/ { on = 1; next } on && /- name:/ { exit } on' "${YML}"
+    assert_line "          WORKTOOL_APT_CACHE_DIR: \${{ runner.temp }}/apt-box"
+    run grep -c 'actions/cache/save' "${YML}"
+    assert_output 0
+}

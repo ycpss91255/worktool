@@ -102,13 +102,68 @@ EOF
     assert_line "module names the config API but has no owner row: lib/audit.sh"
 }
 
+# The control runs in one of two modes (issue #860), chosen by
+# WORKTOOL_FULL_CHECK (_control_mode):
+#   pr    (unset or empty: PR runs and local runs) - one cheap case per spec
+#         file the table names (_control_cheap): proves the copy tree runs
+#         every spec the mutants are judged by, so a broken copy cannot read
+#         every mutant as caught. The table's cases themselves pass on the
+#         same tree in their own tiers in the same CI run.
+#   full  (1: the complete check after a merge into main) - every case the
+#         table names, and the number of cases that ran must equal the
+#         number the table's filters select.
+# Any other value fails the control (fail closed).
 @test "control: every case of the table passes on the unmutated copy" {
-    local _c
+    local _mode _refs _c _oks _want _ran=0 _total=0
+    _mode="$(_control_mode)" || fail "invalid WORKTOOL_FULL_CHECK '${WORKTOOL_FULL_CHECK:-}' (unset or 1)"
+    # Listed in this shell first: a failed listing fails the case instead of
+    # ending the loop early in a process substitution.
+    _refs="$(_control_refs "${_mode}")" || fail "control (${_mode}): cannot list its cases"
+    [[ -n "${_refs}" ]] || fail "control (${_mode}): no case listed"
     while IFS= read -r _c; do
         _run_case "${_c}" "${CLEAN}"
         [[ "${CASE_RC}" -eq 0 ]] || fail "control ${_c} failed: ${CASE_OUT}"
-        grep -qE '^ok [0-9]+ ' <<<"${CASE_OUT}" || fail "control ${_c} ran no case: ${CASE_OUT}"
-    done < <({ _rows | cut -d'|' -f6; _owner_rows | cut -d'|' -f3; } | tr ';' '\n' | grep -vx -- '-' | sort -u)
+        _oks="$(grep -cE '^ok [0-9]+ ' <<<"${CASE_OUT}")" || fail "control ${_c} ran no case: ${CASE_OUT}"
+        _want="$(bats --count --filter "${_c#*@}" "${CLEAN}/test/${_c%%@*}")" \
+            || fail "control ${_c}: bats cannot count it"
+        [[ "${_oks}" -eq "${_want}" ]] || fail "control ${_c}: ${_oks} case(s) ran, ${_want} selected"
+        _ran=$(( _ran + _oks ))
+        _total=$(( _total + _want ))
+    done <<<"${_refs}"
+    [[ "${_ran}" -gt 0 && "${_ran}" -eq "${_total}" ]] \
+        || fail "control (${_mode}): ${_ran} case(s) ran, ${_total} selected"
+    echo "# control (${_mode}): ${_ran} case(s) ran" >&3
+}
+
+@test "control selection: full is the whole table, pr runs one selecting case per spec file, other modes fail" {
+    local _full _specs _c _n
+    _full="$(_table_refs)"
+    [[ -n "${_full}" ]] || fail "the table names no case"
+    run _control_refs full
+    assert_success
+    assert_output "${_full}"
+    # pr: every spec file the table names, exactly once, each with a filter
+    # that selects at least one case of that spec.
+    _specs="$(cut -d@ -f1 <<<"${_full}" | sort -u)"
+    run _control_refs pr
+    assert_success
+    assert_equal "$(cut -d@ -f1 <<<"${output}" | sort)" "${_specs}"
+    while IFS= read -r _c; do
+        _n="$(bats --count --filter "${_c#*@}" "${REPO_ROOT}/test/${_c%%@*}")"
+        [[ "${_n}" -ge 1 ]] || fail "pr control ${_c} selects no case"
+    done <<<"${output}"
+    run _control_refs other
+    assert_failure
+    # The mode: unset or empty is pr, 1 is full, anything else fails.
+    WORKTOOL_FULL_CHECK='' run _control_mode
+    assert_output pr
+    WORKTOOL_FULL_CHECK=1 run _control_mode
+    assert_output full
+    WORKTOOL_FULL_CHECK=yes run _control_mode
+    assert_failure
+    unset WORKTOOL_FULL_CHECK
+    run _control_mode
+    assert_output pr
 }
 
 @test "purity: the check rejects round 5's grep mutant and round 7's eof mutant" {

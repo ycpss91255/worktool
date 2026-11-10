@@ -73,7 +73,7 @@ _green_jobs() {
     assert_output 800
 }
 
-@test "select never lets an older green run stand in for a newer unfinished code run: pending (3, #872)" {
+@test "select never lets an older green run stand in for a newer unfinished code run: pending (3, #872), logged as info (#877)" {
     run ci_prior_run_select 900 7 < <(
         _run 820 42 in_progress 'CI code run' 7
         _run 800 40 completed 'CI code run' 7
@@ -81,6 +81,9 @@ _green_jobs() {
     assert_failure 3
     assert_output --partial '820'
     assert_output --partial 'in_progress'
+    # Pending is an expected wait, not an error (#877).
+    assert_output --partial '[INFO]'
+    refute_output --partial '[ERROR]'
 }
 
 # Fetch fixture for await: the Nth call prints ${BATS_TEST_TMPDIR}/runs.N
