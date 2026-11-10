@@ -23,6 +23,15 @@
 #          longest column this is plain LPT by weight. Deterministic:
 #          depends only on the rows and jobs. Returns 1 on a bad N or jobs,
 #          or a malformed row.
+#   test_shard_rows <tier> <tier_dir> <weights_file or "">  (specs on stdin)
+#       stdin: tier-relative specs, one per line.
+#       -> prints the "<weight><TAB><spec><TAB><longest>" row
+#          test_shard_assign reads, per spec: weight and longest from the
+#          weights file's "<tier>/<spec>" and "longest/<tier>/<spec>" rows
+#          (shard_weights_merge); a spec without a weight weighs its @test
+#          count x 1000, without a longest row 0. A spec that sets
+#          BATS_NO_PARALLELIZE_WITHIN_FILE runs case by case, so its
+#          longest is its whole weight (#868).
 #   test_shard_verdict <root> <tier> <N> <list_file> <required_file> <runner>...
 #       <root>/test-report-<tier>-<i>-<runner>/<tier>/shard.tsv and
 #       shard.tap are the records test.sh --shard writes (see test.sh).
@@ -47,6 +56,33 @@
 _TEST_SHARD_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./log.sh
 source "${_TEST_SHARD_LIB_DIR}/log.sh"
+
+test_shard_rows() {
+    local _tier="$1" _dir="$2" _file="$3" _rel _w _l _n _key
+    local -A _weight=() _longest=()
+    if [[ -n "${_file}" ]]; then
+        while IFS=$'\t' read -r _key _w; do
+            [[ "${_w}" =~ ^[0-9]+$ ]] || continue
+            case "${_key}" in
+                "${_tier}/"*) _weight["${_key#"${_tier}/"}"]="${_w}" ;;
+                "longest/${_tier}/"*) _longest["${_key#"longest/${_tier}/"}"]="${_w}" ;;
+            esac
+        done <"${_file}"
+    fi
+    while IFS= read -r _rel; do
+        if [[ -n "${_weight[${_rel}]+set}" ]]; then
+            _w="${_weight[${_rel}]}"
+        else
+            _n="$(grep -c '^@test ' "${_dir}/${_rel}")" || _n=0
+            _w="$((_n * 1000))"
+        fi
+        _l="${_longest[${_rel}]:-0}"
+        if grep -qE '^[[:space:]]*export BATS_NO_PARALLELIZE_WITHIN_FILE=true' "${_dir}/${_rel}"; then
+            _l="${_w}"
+        fi
+        printf '%s\t%s\t%s\n' "${_w}" "${_rel}" "${_l}"
+    done
+}
 
 test_shard_assign() {
     local _n="${1:-}" _j="${2:-1}" _rows
