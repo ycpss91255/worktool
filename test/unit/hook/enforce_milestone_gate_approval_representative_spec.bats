@@ -48,7 +48,6 @@ setup() {
         "matrix: every comment-writing operation x body source x tag - untagged blocks, tagged passes"
         "matrix: tag x GraphQL comment / review mutation x body source - every cell blocks (these mutations block outright)"
         "matrix: hook_http_is_write - method x data flag x option spelling x curl -G x tool, full product"
-        "matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)"
         "matrix: every REST endpoint path x host is recognised as an API endpoint"
         "matrix: tool x GraphQL body - a query reads, a mutation or an unreadable body is a write"
         "matrix: hook_api_endpoint_urls counts every host x path spelling of an API write URL"
@@ -60,6 +59,11 @@ setup() {
         run grep -Fqx -- "@test \"${_name}\" {" "${MATRIX_SPEC}"
         assert_success
     done
+    # Generated per class (issue #859): the registration guard above stands
+    # for them, and the product's cases are counted by name.
+    run bats --count --filter '^matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked .full product.: ' "${MATRIX_SPEC}"
+    assert_success
+    assert_output 4
 }
 
 @test "a merge without -R or a selector still resolves the PR under errexit" {

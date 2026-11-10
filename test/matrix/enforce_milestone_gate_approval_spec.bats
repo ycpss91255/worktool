@@ -1179,34 +1179,58 @@ _want_rw() {
     _report
 }
 
-@test "matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)" {
+# One path per endpoint class through the whole hook; every path of a
+# class (both hosts, every spelling) is proven the same endpoint by the
+# hook_api_endpoint_urls matrix below.
+_REST_REPS=("merge pulls/7/merge" "comment issues/7/comments" "reply pulls/7/comments/9/replies" "review pulls/7/reviews/5/events")
+_REST_CASE='matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)'
+
+# _rest_class_product <class> - the tool x method x data flag product for
+# the representative path of endpoint class <class> (one of _REST_REPS).
+_rest_class_product() {
     # A missing table must not collapse the data dimension to "none".
-    local _tt
+    local _tt _rep='' _r
     for _tt in "${_TOOLS[@]}"; do
         [[ "$(_data_flags "${_tt}" | wc -l)" -gt 1 ]] || fail "empty data-flag dimension for ${_tt}"
     done
-    # One path per endpoint class through the whole hook; every path of a
-    # class (both hosts, every spelling) is proven the same endpoint by the
-    # hook_api_endpoint_urls matrix below. curl / wget / httpie take the
-    # separate spelling here (every spelling runs through hook_http_is_write
-    # above); gh api, judged inside the hook, takes every spelling.
+    for _r in "${_REST_REPS[@]}"; do
+        [[ "${_r%% *}" == "$1" ]] && _rep="${_r}"
+    done
+    [[ -n "${_rep}" ]] || fail "no REST endpoint class $1"
+    # curl / wget / httpie take the separate spelling here (every spelling
+    # runs through hook_http_is_write above); gh api, judged inside the
+    # hook, takes every spelling.
     _labels milestone-gate
-    local _t _m _sp _d _cl _u _all _MISS=''
-    local -a _reps=("merge pulls/7/merge" "comment issues/7/comments" "reply pulls/7/comments/9/replies" "review pulls/7/reviews/5/events")
+    local _t _m _sp _d _u _all _MISS=''
+    _u="https://api.github.com/repos/o/r/${_rep#* }"
     for _t in "${_TOOLS[@]}"; do
         _all=''
         [[ "${_t}" == gh-api ]] && _all=all
         for _m in "${_METHODS[@]}"; do
             while IFS='|' read -r _sp _d; do
-                for _cl in "${_reps[@]}"; do
-                    _u="https://api.github.com/repos/o/r/${_cl#* }"
-                    _expect "$(_want_rw "${_m}" "${_d}")" "tool=${_t} method=${_m} spelling=${_sp} data=${_d} endpoint=${_cl%% *}" \
-                        "$(_http_cmd "${_t}" "${_m}" "${_d}" "${_u}")"
-                done
+                _expect "$(_want_rw "${_m}" "${_d}")" "tool=${_t} method=${_m} spelling=${_sp} data=${_d} endpoint=${_rep%% *}" \
+                    "$(_http_cmd "${_t}" "${_m}" "${_d}" "${_u}")"
             done < <(_data_flags "${_t}" "${_all}")
         done
     done
     _report
+}
+
+# One case per endpoint class (issue #859), so the classes run in parallel;
+# together they are the whole product.
+for _gen_r in "${_REST_REPS[@]}"; do
+    bats_test_function --description "${_REST_CASE}: ${_gen_r%% *}" -- _rest_class_product "${_gen_r%% *}"
+done
+unset _gen_r
+
+@test "the REST endpoint class product has exactly one generated case per class" {
+    local _r _n _case="${_REST_CASE//[()]/.}"
+    for _r in "${_REST_REPS[@]}"; do
+        _n="$(bats --count --filter "^${_case}: ${_r%% *}\$" "${BATS_TEST_FILENAME}")"
+        [[ "${_n}" -eq 1 ]] || fail "class ${_r%% *}: ${_n} generated case(s), want 1"
+    done
+    _n="$(bats --count --filter "^${_case}: " "${BATS_TEST_FILENAME}")"
+    assert_equal "${_n}" "${#_REST_REPS[@]}"
 }
 
 @test "httpie --raw BODY (separate value) is a write even with GET / HEAD" {

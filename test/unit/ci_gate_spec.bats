@@ -16,8 +16,10 @@
 #   the copy's own test.sh in its container-side mode (--ci-unit /
 #   --ci-integration / ...), exactly as the CI job does. The real tree is
 #   never touched. Negative cases die before bats runs, so they need no
-#   daemon; the positive cases nest a bats run of a FAST tier of the copy
-#   (integration / system shim / acceptance).
+#   daemon. The positive cases run the gate on a STUB tree instead (the real
+#   script/ lib/ test/helper/ and one-case stub specs, _make_stub_tree):
+#   they prove the gate's logic, not that the real tier passes, which that
+#   tier's own gate proves in the same CI run (issue #857).
 #
 #   RECURSION GUARD: the copy's test/unit/ci_gate_spec.bats is replaced by a
 #   one-case stub of the same name. A nested unit-tier run of the copy
@@ -85,6 +87,55 @@ _write_header_only_spec() {
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
+}
+
+# Write a spec at $1 with one case named $2 that FAILS if it ever runs: an
+# excluded group's spec (ghostty, real engine) in a stub tree, so a gate
+# that wrongly includes it is red.
+_write_failing_spec() {
+    {
+        printf '#!/usr/bin/env bats\n'
+        printf '@test "%s" {\n    false\n}\n' "$2"
+    } >"$1"
+}
+
+# Write a spec at $1 with two passing cases named "$2 one" / "$2 two" (an
+# additional, non-required spec in a stub tree).
+_write_two_case_spec() {
+    {
+        printf '#!/usr/bin/env bats\n'
+        printf '@test "%s one" {\n    true\n}\n' "$2"
+        printf '@test "%s two" {\n    true\n}\n' "$2"
+    } >"$1"
+}
+
+# Stub tree at $COPY: the real script/ lib/ test/helper/ (the gate under
+# test) and, for each tier $@, a one-case stub for every required spec
+# test.sh declares (derived, never listed here). Nothing else: the gate's
+# rules are proven on these few cases, not by re-running a real tier.
+_make_stub_tree() {
+    local _tier _rel _seen
+    mkdir -p "${COPY}/test"
+    cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${COPY}/"
+    cp -R "${REPO_ROOT}/test/helper" "${COPY}/test/"
+    for _tier in "$@"; do
+        _seen=0
+        while IFS= read -r _rel; do
+            [[ -n "${_rel}" ]] || continue
+            _seen=1
+            mkdir -p "$(dirname -- "${COPY}/test/${_rel}")"
+            _write_one_case_spec "${COPY}/test/${_rel}" "stub ${_rel}"
+        done < <(_declared "${_tier}")
+        [[ "${_seen}" -eq 1 ]] || fail "no required specs declared for ${_tier}"
+    done
+}
+
+# Stub tree for the integration default group: its required stubs plus the
+# ghostty spec as a failing stub (the other group's; it must never run here).
+_make_integration_stub_tree() {
+    _make_stub_tree integration
+    _write_failing_spec "${COPY}/test/integration/ghostty_config_spec.bats" \
+        "a real ghostty is on PATH (stub: fails if the default group runs it)"
 }
 
 @test "a bats tier passes the job count to bats and lets the cases of one file run in parallel" {
@@ -407,21 +458,23 @@ EOF
 }
 
 @test "integration (default group): the ghostty spec is NOT run by it (no ghostty needed here)" {
-    _make_repo_copy
+    _make_integration_stub_tree
     local _n
     _n="$(_integration_default_count)"
     # The default group must not depend on the other group's spec at all:
-    # deleting it leaves the group green, and its cases were never in the
-    # plan (this very gate runs in the alpine test image, which has no
-    # ghostty - if the spec ran here it would fail).
-    rm "${COPY}/test/integration/ghostty_config_spec.bats"
-
+    # present (a stub that fails if run) it is never in the plan, and
+    # deleting it leaves the group green.
     _run_copy_gate --ci-integration
     assert_success
     assert_line "1..${_n}"
     # Neither the file nor any of its cases were part of the run.
     refute_output --partial "ghostty_config_spec.bats"
     refute_output --partial "a real ghostty is on PATH"
+
+    rm "${COPY}/test/integration/ghostty_config_spec.bats"
+    _run_copy_gate --ci-integration
+    assert_success
+    assert_line "1..${_n}"
 }
 
 @test "system-real: deleting real_engine_spec fails the group" {
@@ -503,7 +556,8 @@ EOF
 # --- positive: a normal tree passes, every case of the tier in the plan -----
 
 @test "integration: a normal tree passes and the plan covers every case" {
-    _make_repo_copy
+    _make_integration_stub_tree
+    _write_two_case_spec "${COPY}/test/integration/more_spec.bats" "more"
     local _n
     _n="$(_integration_default_count)"
 
@@ -516,11 +570,17 @@ EOF
 }
 
 @test "system (shim): a normal tree passes and the plan covers every shim case" {
-    _make_repo_copy
-    local _n
+    _make_stub_tree system
+    _write_two_case_spec "${COPY}/test/system/more_spec.bats" "more"
+    # The real-engine spec is the other group's: a stub that fails if run.
+    _write_failing_spec "${COPY}/test/system/real_engine_spec.bats" \
+        "real engine (stub: fails if the shim group runs it)"
+    local _f _n=0
     # Every shim spec: all of test/system/*.bats but the real-engine one.
-    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats" \
-        "${COPY}/test/system/real_enter_env_spec.bats")"
+    for _f in "${COPY}"/test/system/*.bats; do
+        [[ "${_f}" == */real_engine_spec.bats ]] && continue
+        _n=$(( _n + $(bats --count "${_f}") ))
+    done
 
     _run_copy_gate --ci-system
     assert_success
@@ -529,7 +589,8 @@ EOF
 }
 
 @test "acceptance: a normal tree passes and the plan covers every case" {
-    _make_repo_copy
+    _make_stub_tree acceptance
+    _write_two_case_spec "${COPY}/test/acceptance/more_spec.bats" "more"
     local _n
     _n="$(bats --count -r "${COPY}/test/acceptance")"
 
@@ -542,7 +603,7 @@ EOF
 # --- additional specs still run on top of the required ones ------------------
 
 @test "integration: an additional non-required spec still runs and counts in the plan" {
-    _make_repo_copy
+    _make_integration_stub_tree
     local _n
     _n="$(_integration_default_count)"
     _write_one_case_spec "${COPY}/test/integration/extra_spec.bats" \
@@ -556,7 +617,7 @@ EOF
 }
 
 @test "integration: a skipped case in an additional spec still fails the tier" {
-    _make_repo_copy
+    _make_integration_stub_tree
     {
         printf '#!/usr/bin/env bats\n'
         printf '@test "extra: skipped" {\n    skip "not green"\n}\n'
