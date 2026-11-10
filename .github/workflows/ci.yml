@@ -20,10 +20,11 @@ name: CI
 # grammar a user types (`just test lint`, `just test unit`, ..., `just test
 # system-real`; all of them at once: bare `just test`). Each recipe is a
 # thin forwarder to script/test/test.sh (`--lint`, `--unit`, ...). The
-# gate NAMES stay lint / test-matrix / test-integration / test-system /
-# test-acceptance / test-system-real, so a check reads "<gate> (<runner>)",
-# e.g. "lint (ubuntu-24.04-arm)"; the matrix maps each name to its tier
-# instead of reusing the name as the tier. Branch protection keys on the
+# gate NAMES: lint-system-acceptance (lint, system and acceptance on one
+# leg, issue #841) / test-matrix / test-integration / test-unit I/N (the
+# unit shards, issue #831) / test-system-real, so a check reads
+# "<gate> (<runner>)", e.g. "test-matrix (ubuntu-24.04-arm)"; the matrix
+# maps each name to its tier(s) instead of reusing the name as the tier. Branch protection keys on the
 # single `ci-passed` aggregator, not on the per-leg names.
 #
 # Every test leg is REQUIRED: the `ci-passed` aggregator fails unless every
@@ -146,7 +147,7 @@ jobs:
             /tmp/shard-weights.tsv
           retention-days: 1
 
-  # 6 gates x 2 runners. `needs: build-image` waits for BOTH build legs;
+  # 3 gate legs x 2 runners. `needs: build-image` waits for BOTH build legs;
   # each gate leg then downloads the artifact of its own runner.
   #
   # test-integration is the one gate that also builds an image of its own:
@@ -166,22 +167,18 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
-        gate: [lint, test-matrix, test-integration, test-system, test-acceptance]
+        gate: [lint-system-acceptance, test-matrix, test-integration]
         # gate = job name (unchanged; ci-passed and the per-leg check names
         #        key on it)
         # tier = the `just test <tier>` that job runs; `include` attaches it
         #        to every runner leg of the matching gate
         include:
-          - gate: lint
-            tier: lint
+          - gate: lint-system-acceptance
+            tier: lint system acceptance
           - gate: test-matrix
             tier: matrix
           - gate: test-integration
             tier: integration
-          - gate: test-system
-            tier: system
-          - gate: test-acceptance
-            tier: acceptance
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -222,22 +219,27 @@ jobs:
       # 4-vCPU arm runner, unit 616 s / 503 s / 517 s and matrix 193 s /
       # 172 s / 183 s at 4 / 8 / 16 jobs, so 8 is the knee. Local runs keep
       # test.sh's default of 4.
+      # A leg may carry several short tiers (issue #841: lint, system and
+      # acceptance share one leg per runner to stay under the 20 concurrent
+      # jobs); each still runs as its own `just test <tier>`, in order, and
+      # the first failing tier fails the leg.
       - name: Run gate (${{ matrix.gate }} = just test ${{ matrix.tier }})
         env:
           TEST_IMAGE_PREBUILT: "1"
           GHOSTTY_IMAGE_PREBUILT: ${{ matrix.tier == 'integration' && '1' || '' }}
           WORKTOOL_TEST_JOBS: "8"
           WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report
-        run: just test ${{ matrix.tier }}
+          TIERS: ${{ matrix.tier }}
+        run: for tier in ${TIERS}; do just test "${tier}" || exit 1; done
 
       # Per-case durations (junit, issue #827): the shard weights' source.
       # Uploaded even when the gate failed; a green bats gate without a
       # report fails here instead of silently leaving the weights stale.
-      - name: Upload junit report (${{ matrix.tier }})
-        if: always() && matrix.tier != 'lint'
+      - name: Upload junit report (${{ matrix.gate }})
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-report-${{ matrix.tier }}-${{ matrix.runner }}
+          name: test-report-${{ matrix.gate }}-${{ matrix.runner }}
           path: .agents/state/test-report
           if-no-files-found: error
           retention-days: 7
@@ -706,7 +708,7 @@ jobs:
           [ "${ROUTE_RESULT}" = "success" ] || exit 1
           if [ "${CODE_PATH}" = "true" ]; then
             echo "build-image (both runners): ${BUILD_RESULT}"
-            echo "gate (5 gates x both runners): ${GATE_RESULT}"
+            echo "gate (3 gate legs x both runners): ${GATE_RESULT}"
             echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
             [ "${BUILD_RESULT}" = "success" ] || exit 1
             [ "${GATE_RESULT}" = "success" ] || exit 1

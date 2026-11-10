@@ -156,15 +156,15 @@ _green_jobs() {
     local _conclusion
     for _conclusion in failure skipped cancelled neutral ''; do
         run ci_prior_run_evaluate false < <(
-            _green_jobs false 'lint (ubuntu-latest)'
-            printf 'lint (ubuntu-latest)\tcompleted\t%s\n' "${_conclusion}"
+            _green_jobs false 'lint-system-acceptance (ubuntu-latest)'
+            printf 'lint-system-acceptance (ubuntu-latest)\tcompleted\t%s\n' "${_conclusion}"
         )
         assert_failure
-        assert_output --partial 'lint (ubuntu-latest)'
+        assert_output --partial 'lint-system-acceptance (ubuntu-latest)'
     done
     run ci_prior_run_evaluate false < <(
-        _green_jobs false 'lint (ubuntu-latest)'
-        printf 'lint (ubuntu-latest)\tin_progress\t\n'
+        _green_jobs false 'lint-system-acceptance (ubuntu-latest)'
+        printf 'lint-system-acceptance (ubuntu-latest)\tin_progress\t\n'
     )
     assert_failure
 }
@@ -172,10 +172,10 @@ _green_jobs() {
 @test "evaluate fails when a leg appears twice and one copy is not success" {
     run ci_prior_run_evaluate false < <(
         _green_jobs false
-        printf 'test-system (ubuntu-latest)\tcompleted\tfailure\n'
+        printf 'test-matrix (ubuntu-latest)\tcompleted\tfailure\n'
     )
     assert_failure
-    assert_output --partial 'test-system (ubuntu-latest)'
+    assert_output --partial 'test-matrix (ubuntu-latest)'
 }
 
 @test "evaluate requires both verify-all legs only when verify is required" {
