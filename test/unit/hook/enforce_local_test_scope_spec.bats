@@ -29,6 +29,40 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     done
 }
 
+# A spec argument the shell expands (glob, brace, parameter or command
+# substitution) can select a whole tier the hook never sees; only literal
+# spec paths count as touched specs (#818, ADR 0014 decision 2).
+@test "#818: spec arguments the shell expands are blocked in every launcher" {
+    local cmd wrapped
+    for cmd in 'just test matrix test/matrix/*.bats' \
+        'just test unit test/unit/*_spec.bats' \
+        'just test unit test/unit/hook/enforce_?ocal_test_scope_spec.bats' \
+        'just test unit test/unit/[a-z]*_spec.bats --filter example' \
+        'just test matrix test/matrix/{approval,enforce_local_test_scope}_spec.bats' \
+        'just test matrix test/matrix/enforce_local_test_scope_spec.bats test/matrix/*.bats' \
+        "just test unit \$SPECS" "just test unit \"\${SPECS}\"" \
+        "just test unit \$(ls test/unit/*_spec.bats)" "just test unit \`ls test/unit\`" \
+        'script/test/test.sh --matrix test/matrix/*.bats' \
+        'script/test/test.sh --ci-unit test/unit/*_spec.bats'; do
+        for wrapped in "${cmd}" "bash -c $(printf '%q' "${cmd}")" "eval $(printf '%q' "${cmd}")"; do
+            _check "${wrapped}"
+            assert_failure 2
+            assert_output --partial 'ADR 0014 decision 2'
+        done
+    done
+}
+
+@test "#818: literal specs and --filter regexes still run locally" {
+    local cmd
+    for cmd in "just test unit test/unit/log_spec.bats --filter 'a.*b[0-9]?'" \
+        "just test unit test/unit/log_spec.bats --filter '^#(810|804): '" \
+        "just test matrix 'test/matrix/enforce_local_test_scope_spec.bats'" \
+        'just test acceptance test/acceptance/example_spec.bats'; do
+        _check "${cmd}"
+        assert_success
+    done
+}
+
 @test "#800: internal container gates follow the same scope rule" {
     local cmd
     for cmd in 'script/test/test.sh --ci-unit' 'script/test/test.sh --ci-matrix' \
