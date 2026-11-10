@@ -74,6 +74,48 @@ ROWS
         "3	f_spec.bats")"
 }
 
+@test "with jobs, a shard costs max(load / jobs, its longest case): a long single case gets a shard to itself (#868)" {
+    # Plain LPT (no jobs) stacks b_spec onto the shard of long_spec, whose
+    # 2000 ms case alone sets that shard's wall time.
+    run test_shard_assign 2 <<'ROWS'
+2000	a_spec.bats	500
+2000	b_spec.bats	500
+2000	c_spec.bats	500
+2000	long_spec.bats	2000
+ROWS
+    assert_success
+    assert_output "$(printf '%s\n' "1	a_spec.bats" "2	b_spec.bats" "1	c_spec.bats" "2	long_spec.bats")"
+    run test_shard_assign 2 4 <<'ROWS'
+2000	a_spec.bats	500
+2000	b_spec.bats	500
+2000	c_spec.bats	500
+2000	long_spec.bats	2000
+ROWS
+    assert_success
+    assert_output "$(printf '%s\n' "1	long_spec.bats" "2	a_spec.bats" "2	b_spec.bats" "2	c_spec.bats")"
+    run test_shard_assign 2 0 </dev/null
+    assert_failure 1
+}
+
+@test "assignment rows: weight and longest case from the weights, a serial spec's longest is its weight, unknown specs by case count (#868)" {
+    local _tier="${BATS_TEST_TMPDIR}/tier" _w="${BATS_TEST_TMPDIR}/weights.tsv"
+    mkdir -p "${_tier}/hook"
+    printf '@test "a" { :; }\n@test "b" { :; }\n' >"${_tier}/a_spec.bats"
+    printf 'export BATS_NO_PARALLELIZE_WITHIN_FILE=true\n@test "s" { :; }\n' >"${_tier}/serial_spec.bats"
+    printf '@test "n1" { :; }\n@test "n2" { :; }\n@test "n3" { :; }\n' >"${_tier}/hook/new_spec.bats"
+    printf '%s\n' $'longest/unit/a_spec.bats\t700' $'matrix/a_spec.bats\t9' $'unit/a_spec.bats\t900' \
+        $'unit/serial_spec.bats\t400' $'longest/unit/serial_spec.bats\t50' >"${_w}"
+    run test_shard_rows unit "${_tier}" "${_w}" <<<"$(printf '%s\n' a_spec.bats hook/new_spec.bats serial_spec.bats)"
+    assert_success
+    assert_output "$(printf '%s\n' $'900\ta_spec.bats\t700' $'3000\thook/new_spec.bats\t0' $'400\tserial_spec.bats\t400')"
+    # Weights written before #868 (no longest rows): longest 0; no weights file at all: case counts.
+    printf '%s\n' $'unit/a_spec.bats\t900' >"${_w}"
+    run test_shard_rows unit "${_tier}" "${_w}" <<<"a_spec.bats"
+    assert_output $'900\ta_spec.bats\t0'
+    run test_shard_rows unit "${_tier}" '' <<<"$(printf '%s\n' a_spec.bats serial_spec.bats)"
+    assert_output "$(printf '%s\n' $'2000\ta_spec.bats\t0' $'1000\tserial_spec.bats\t1000')"
+}
+
 @test "the verdict passes when the shards' union is the whole tier on every runner" {
     _good_union
     run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
