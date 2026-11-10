@@ -74,6 +74,29 @@ ROWS
         "3	f_spec.bats")"
 }
 
+@test "with jobs, a shard costs max(load / jobs, its longest case): a long single case gets a shard to itself (#868)" {
+    # Plain LPT (no jobs) stacks b_spec onto the shard of long_spec, whose
+    # 2000 ms case alone sets that shard's wall time.
+    run test_shard_assign 2 <<'ROWS'
+2000	a_spec.bats	500
+2000	b_spec.bats	500
+2000	c_spec.bats	500
+2000	long_spec.bats	2000
+ROWS
+    assert_success
+    assert_output "$(printf '%s\n' "1	a_spec.bats" "2	b_spec.bats" "1	c_spec.bats" "2	long_spec.bats")"
+    run test_shard_assign 2 4 <<'ROWS'
+2000	a_spec.bats	500
+2000	b_spec.bats	500
+2000	c_spec.bats	500
+2000	long_spec.bats	2000
+ROWS
+    assert_success
+    assert_output "$(printf '%s\n' "1	long_spec.bats" "2	a_spec.bats" "2	b_spec.bats" "2	c_spec.bats")"
+    run test_shard_assign 2 0 </dev/null
+    assert_failure 1
+}
+
 @test "the verdict passes when the shards' union is the whole tier on every runner" {
     _good_union
     run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
