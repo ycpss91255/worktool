@@ -36,6 +36,10 @@ RUN apk add --no-cache git && \
 # component carries ghostty 1.3.0 for both amd64 and arm64.
 FROM ubuntu:${UBUNTU_TAG}
 ENV DEBIAN_FRONTEND=noninteractive
+# APT_MIRROR (issue #843): CI's Ubuntu mirror for this build (the amd64
+# legs name the runner-local one); empty = the image's own sources, so a
+# local build is unchanged. script/test/apt-mirror.sh applies it.
+ARG APT_MIRROR=
 # bash            - bats and the worktool shell scripts need it
 # ghostty         - the whole point: the real terminal that reads the
 #                   managed block `just box setup` writes
@@ -46,7 +50,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # supported release and its ghostty gets security updates within the
 # 1.3.0 series (the spec asserts the major.minor it sees, not a build).
 # hadolint ignore=DL3008
-RUN apt-get update && \
+RUN --mount=type=bind,source=script/test/apt-mirror.sh,target=/tmp/apt-mirror.sh \
+    bash /tmp/apt-mirror.sh "${APT_MIRROR}" && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \

@@ -271,6 +271,16 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged -e CI .* \./script/test/system-real-entry\.sh$'
 }
 
+# issue #843: CI picks the box's apt mirror (WORKTOOL_APT_MIRROR); the
+# entry inside the runner applies it, so it must reach the runner. `-e`
+# without a value passes it only when the host has it set.
+@test "test.sh --system-real passes WORKTOOL_APT_MIRROR through to the DinD runner" {
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR .* \./script/test/system-real-entry\.sh$'
+}
+
 @test "test.sh --build builds the test image and runs no gate" {
     unset TEST_IMAGE_PREBUILT
     run "${TEST_SH}" --build

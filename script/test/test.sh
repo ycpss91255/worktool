@@ -348,12 +348,14 @@ _ensure_system_real_image() {
 # anonymous /var/lib/docker volume). The host daemon never sees the box.
 # `-e CI` passes the host's CI through (only when it is set): bench.sh's
 # quiet-host wait is 120 s instead of 60 s on CI (issue #181).
+# `-e WORKTOOL_APT_MIRROR` likewise (issue #843): CI's Ubuntu mirror for the
+# box's first launch, applied by the entry inside the runner.
 _run_system_real_in_runner() {
     command -v docker >/dev/null 2>&1 \
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged -e CI \
+    docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -691,6 +693,9 @@ Environment:
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
   GHOSTTY_IMAGE_PREBUILT=1
                          skip the ghostty image build (CI loads a cached one)
+  WORKTOOL_APT_MIRROR    Ubuntu mirror the real-engine box installs from
+                         (passed into the DinD runner; default: the box
+                         image's own sources)
 EOF
 }
 

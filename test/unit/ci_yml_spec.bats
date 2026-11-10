@@ -615,6 +615,23 @@ _leg_names() {
     assert_line "          GHOSTTY_IMAGE_PREBUILT: \${{ matrix.tier == 'integration' && '1' || '' }}"
 }
 
+# issue #843: on 2026-11-10 the amd64 runners got ~130 kB/s from
+# archive.ubuntu.com (arm: 21 MB/s from ports.ubuntu.com), so the box's
+# first launch hit its 900 s budget. The amd64 legs take every Ubuntu
+# package from the Azure mirror GitHub's own ubuntu runners use; the arm
+# legs are untouched (empty = no change).
+@test "the amd64 legs take Ubuntu packages from the runner-local mirror, the arm legs keep the default (#843)" {
+    local _job
+    for _job in gate test-system-real; do
+        run _job_block "${_job}"
+        assert_success
+        # Job level, so the image build and the gate step read one value.
+        assert_line '    env:'
+        assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+        assert_line "          build-args: APT_MIRROR=\${{ env.WORKTOOL_APT_MIRROR }}"
+    done
+}
+
 @test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {
     run _job_block gate
     assert_success
