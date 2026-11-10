@@ -503,6 +503,12 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    最新仍在執行或缺少必要 check 時依共用規則等待；失敗或逾時即回報並停止。
+   **Full run**（#837、ADR-0019）：交出前同一個 head 必須有綠燈的完整序列執行。
+   前景執行 `./.agents/script/monitor/full-run.sh --repo <repo> --sha <head> --dispatch --wait 540`
+   （沒有該 sha 的 run 或最新一次失敗時以 `workflow_dispatch` 對該 sha 啟動 Nightly），
+   仍 pending（退出碼 3）就以 `--wait 540` 再查，累計最多 10800 秒；只有退出碼 0
+   且輸出為 `full-run: <head> completed success run=<id>` 才繼續，失敗、查不到、逾時或
+   sha 不符一律回 `full-run-not-green` 並停止，不進入 Scratch。
 3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
    初始化失敗即停止，不進入 Findings。
    所有 scratch 報告都視為 workflow 產物：Findings、Machine、Evidence agent 只回傳內容字串，

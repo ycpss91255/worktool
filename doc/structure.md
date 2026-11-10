@@ -529,6 +529,13 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   issue 時把這次的 run 連結(綠或紅)留在該 issue;關閉由修正 PR 或人處理。
 - 規則在 `lib/nightly.sh`,`test/unit/nightly_spec.bats` 覆蓋每個分支,
   `test/unit/nightly_yml_spec.bats` 釘住 workflow 接線。
+- 指定 commit 的完整序列執行(#837、ADR-0019):手動執行可給 `sha`(完整 40 碼;格式不符時
+  decide 直接失敗),測試就跑在那個 commit 上,run 標題為 `full-serial <sha>`,同一個 sha
+  各自排隊、不互相取代;這類 run 不開也不留言 `nightly-failure` issue,由呼叫者自己讀結果。
+  `.agents/script/monitor/full-run.sh --repo <repo> --sha <sha> [--dispatch] [--wait N]`
+  以該 sha 最新一次 run 判定(較新的失敗蓋過較舊的成功):0 綠燈、1 非綠燈(失敗、沒有
+  run、查詢失敗)、3 仍在執行;milestone 交接(`milestone-handover` 的 Full run 階段)與
+  release 打 tag 都要求退出碼 0。
 
 ### code 路徑與 meta 路徑(#688)
 

@@ -17,16 +17,29 @@ name: Nightly
 # (green or red); closing stays with the fixing PR or a person. The rules
 # live in lib/nightly.sh (test/unit/nightly_spec.bats).
 
+# Exact-commit run (issue #837): a manual run may name a commit (`sha`);
+# the suite then runs on exactly that commit and the run is titled
+# `full-serial <sha>`, which is what .agents/script/monitor/full-run.sh
+# looks for before a milestone hand-over or a release tag. Such a run never
+# opens or comments on the nightly-failure issue: its caller reads the
+# result itself.
+run-name: full-serial ${{ inputs.sha || github.sha }}
+
 on:
   schedule:
     - cron: '0 19 * * *'  # 03:00 Asia/Taipei
   workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full 40-hex commit to run on (empty = the dispatched ref)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: nightly
+  group: nightly-${{ inputs.sha || 'main' }}
   cancel-in-progress: false
 
 jobs:
@@ -51,9 +64,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
+          SHA_INPUT: ${{ inputs.sha }}
         run: |
           set -uo pipefail
           source lib/nightly.sh
+          nightly_check_sha "${SHA_INPUT}" || exit 1
           rc=0
           gh label create "${NIGHTLY_LABEL}" -R "${REPO}" --color B60205 \
             --description 'Nightly full serial run failed and is not resolved yet' --force || rc=$?
@@ -82,6 +97,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
 
       - name: Install just
         uses: extractions/setup-just@v2
@@ -98,7 +115,7 @@ jobs:
   report:
     name: report
     needs: [decide, full-serial]
-    if: always() && needs.decide.outputs.run == 'true'
+    if: always() && needs.decide.outputs.run == 'true' && inputs.sha == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -73,3 +73,15 @@ nightly_report() {
         printf 'open\n'
     fi
 }
+
+# nightly_check_sha <input> - the workflow_dispatch `sha` input (issue
+# #837): empty (run the dispatched ref) or a full 40-hex commit. Anything
+# else prints why on stderr and returns 2, so a typo never runs (and
+# reports) a different commit than the one asked for.
+nightly_check_sha() {
+    if [[ -z "$1" || "$1" =~ ^[0-9a-f]{40}$ ]]; then
+        return 0
+    fi
+    log_error "nightly: sha input must be a full 40-hex commit, got '$1'"
+    return 2
+}
