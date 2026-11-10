@@ -95,6 +95,13 @@ jobs:
           just test integration
           just test system-real
 
+      # Tier isolation guard (issue #835, ADR-0018): the same stages in a
+      # seeded random order, failing on anything a stage leaves behind on
+      # the runner. The seed is in the log; `just test isolation --seed N`
+      # reproduces the order.
+      - name: Tier isolation (random order, residue check)
+        run: just test isolation
+
   report:
     name: report
     needs: [decide, full-serial]

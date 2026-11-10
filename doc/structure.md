@@ -327,6 +327,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just test system-real [args]` | `./script/test/test.sh --system-real [args]` |
 | `just test acceptance [spec...] [--filter REGEX]` | `./script/test/test.sh --acceptance [spec...] [--filter REGEX]` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh [args]`(`--root X` 直接透傳) |
+| `just test isolation [args]` | `./script/test/isolation.sh [args]`(tier 隔離守門,`--seed N` 重現順序;見 ADR-0018) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--home <路徑>`、`--help`) |

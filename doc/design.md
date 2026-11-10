@@ -196,6 +196,7 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 | `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
 | `just test acceptance [args]` | `./script/test/test.sh --acceptance "$@"` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh "$@"`(交付自檢;`--root X` 原樣傳入) |
+| `just test isolation [args]` | `./script/test/isolation.sh "$@"`(tier 隔離守門:裸 `just test` 的階段與 spec 以 seed 隨機順序執行,每階段後檢查殘留;`--seed N` 重現;nightly 執行,ADR-0018) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 
 **namespace `box`**(`script/box/justfile.box`,`set working-directory := '../..'`):
