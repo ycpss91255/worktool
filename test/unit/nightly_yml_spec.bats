@@ -109,3 +109,16 @@ _job() {
     assert_line --partial "nightly_decide \"\${EVENT}\" \"\${rc}\" \"\${open}\" \"\${head_rc}\""
     assert_line '      actions: read'
 }
+
+# --- the complete check runs in full-check mode (issue #870) ------------------
+
+@test "the bare just test of the full serial run sets WORKTOOL_FULL_CHECK=1; no pull_request run (ci.yml) sets it" {
+    run _job full-serial
+    assert_success
+    assert_line '      - name: Bare just test (seven tiers in order, serial)'
+    assert_line "          WORKTOOL_FULL_CHECK: '1'"
+    run awk '/- name: Bare just test/ { on = 1; next } on && /- name:/ { exit } on' "${YML}"
+    assert_line "          WORKTOOL_FULL_CHECK: '1'"
+    run grep -c 'WORKTOOL_FULL_CHECK' "${REPO_ROOT}/.github/workflows/ci.yml"
+    assert_output 0
+}
