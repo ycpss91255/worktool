@@ -486,8 +486,10 @@ exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,�
 ## CI
 
 `.github/workflows/ci.yml` 在 push 與對 `main` 的 pull request 時,於 Docker 內
-跑 lint、test-unit、test-matrix、test-integration、test-system、test-acceptance(共用測試
-映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
+跑 lint-system-acceptance(lint、system、acceptance 每個架構共用一條 leg,依序各自以
+`just test <tier>` 執行、第一個失敗即失敗,#841)、test-matrix、test-integration(共用測試
+映像的 matrix)、unit tier 的分片 job(`test-unit I/N (<runner>)`)與其聯集 verdict
+`test-unit-verdict`,以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`,上限 40 分鐘)。貼有 `milestone-gate` 標籤的 PR
 另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
 不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
@@ -529,6 +531,28 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   issue 時把這次的 run 連結(綠或紅)留在該 issue;關閉由修正 PR 或人處理。
 - 規則在 `lib/nightly.sh`,`test/unit/nightly_spec.bats` 覆蓋每個分支,
   `test/unit/nightly_yml_spec.bats` 釘住 workflow 接線。
+
+### unit 分片與聯集 verdict(#831,ADR-0016)
+
+- **分片**:`unit-shard` job 以 `runner × shard` 展開,每條 leg 跑
+  `just test unit --shard I/N`(N 目前為 4)。`test.sh` 把 `test/unit/` 下所有 `*.bats`
+  依權重以 `lib/test_shard.sh` 的 `test_shard_assign` 分配(由重到輕,交給目前負載
+  最小的分片),只跑自己分到的,檢查自己分到的必要 spec,TAP 計畫必須等於自己各檔
+  `bats --count` 的總和;紀錄(分片、權重檔 sha256、各檔案例數、計畫)、TAP 與 junit
+  報告上傳成 `test-report-unit-<i>-<runner>`。
+- **權重**:build-image 每個架構只讀一次 `shard-weights-` cache(#827),隨映像
+  artifact 傳給同架構的所有分片;沒有 cache 時每檔以 `@test` 行數乘 1000 毫秒計。
+  權重只影響平衡,不影響跑什麼。
+- **聯集 verdict**:`test-unit-verdict` 以 `test_shard_verdict` 對每個架構檢查:恰好
+  N 份紀錄且各自標 `i/N`、權重 hash 一致、檔案兩兩不重疊且聯集等於 verdict 自己
+  checkout 的 `test/unit` 清單、每個必要 spec 都在聯集中且有案例、每份計畫等於其
+  案例數且 TAP 恰有那麼多 `ok`、沒有 `not ok` 與 `# skip`。任何一項不成立(含缺
+  一份分片)都失敗。分片 leg 與 verdict 都是 `ci-passed` 與 `prior-run` 要求的 leg。
+- **本機**:`just test unit --shard I/N` 可單獨跑一片;它只代表那一片,整層仍是
+  `just test unit`。
+- **流程圖**:`doc/diagram/flow.drawio.svg` 的 CI 區塊畫的是「每個架構跑同一組
+  `just test <tier>`、全部 success 才綠」;分片只改 unit 在 CI 的執行方式,這兩點不變,
+  圖面不需改動。
 
 ### code 路徑與 meta 路徑(#688)
 
@@ -795,10 +819,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   不取 PR head」。
 
 每個 job 跑的就是使用者打的同一套 `just test <tier>`(matrix 把 job 名稱對應到
-tier:`lint` -> `just test lint`、`test-unit` -> `just test unit`、`test-matrix` -> `just test matrix`、
-`test-integration` -> `just test integration`、`test-system` -> `just test system`、
-`test-acceptance` -> `just test acceptance`;`test-system-real` ->
-`just test system-real`);gate 名稱本身不變(check 名稱只多了 runner 後綴),
+tier:`lint-system-acceptance` -> `just test lint`、`just test system`、`just test acceptance`、`test-unit I/N` -> `just test unit --shard I/N`、`test-matrix` -> `just test matrix`、
+`test-integration` -> `just test integration`;`test-system-real` ->
+`just test system-real`);check 名稱為 `<gate> (<runner>)`,
 branch protection 只要求 `ci-passed`。本機不帶參數的 `just test` = 這七個 gate
 依序跑完,與 CI 在本機架構上的那一組 leg 等價。
 
