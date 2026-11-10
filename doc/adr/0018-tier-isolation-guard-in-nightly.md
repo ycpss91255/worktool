@@ -12,7 +12,7 @@ tier 與 spec 一向以固定順序執行；一個 tier 依賴前一個 tier 留
 
 1. `just test isolation`（`script/test/isolation.sh`）以 seed 隨機排列裸 `just test` 的階段（讀 `script/test/test.sh` 的 `HOST_STEPS`），並隨機排列 unit、matrix、system、acceptance 的 spec 檔；印出 seed，`--seed N` 以同一個 LCG 重現完全相同的順序。
 2. 每個階段前後各取一次 host 快照：docker 容器與 volume、checkout 內的檔案（`git status --ignored`，排除 `.agents/state/`）、`$HOME` 與呼叫者在 `${TMPDIR:-/tmp}` 下的直接項目。多出任何一項即失敗，列出殘留與階段；階段本身失敗即停。
-3. 放在 nightly 的 `full-serial` job（#836），不放 PR：快照本身很便宜（本機一次約 0.17 秒），但隨機順序要把七個階段在同一台機器上序列跑完，耗時等於一次完整的裸 `just test`（數十分鐘），放在 PR 會違反 5 分鐘目標；PR 的每個 gate leg 跑在全新 runner 上，殘留不會跨 leg 傳遞，所以 PR 上的殘留檢查價值低，不另加。
+3. 放在 nightly 自己的 `isolation` job（與 `full-serial` 並行、同樣兩個架構，report 兩者都成功才算綠；#836），不放 PR：快照本身很便宜（本機一次約 0.17 秒），但隨機順序要把七個階段在同一台機器上序列跑完，耗時等於一次完整的裸 `just test`（數十分鐘），放在 PR 會違反 5 分鐘目標；PR 的每個 gate leg 跑在全新 runner 上，殘留不會跨 leg 傳遞，所以 PR 上的殘留檢查價值低，不另加。
 
 ## 影響與限制
 

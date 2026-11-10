@@ -19,8 +19,8 @@
 # a narrowed run (test.sh skips its required-spec and plan checks): this
 # guard is about order and residue, the normal gates keep those checks.
 # The residue check assumes nothing else on the host creates containers or
-# files meanwhile, which holds on a CI runner; it runs in the nightly full
-# serial run (ADR-0018), not on PRs.
+# files meanwhile, which holds on a CI runner; it runs as the nightly
+# `isolation` job beside the full serial run (ADR-0018), not on PRs.
 #
 # Usage: isolation.sh [--seed N] [--help]
 # Exit: 0 clean, 1 a stage failed or left residue, 2 bad arguments.

@@ -194,3 +194,18 @@ _iso() {
     run grep -F 'run: just test isolation' "${REPO_ROOT}/.github/workflows/nightly.yml"
     assert_success
 }
+
+@test "nightly runs isolation as its own job beside full-serial, and the report fails unless both succeed" {
+    local _yml="${REPO_ROOT}/.github/workflows/nightly.yml"
+    run awk '/^  isolation:$/,/^  report:$/' "${_yml}"
+    assert_line '    needs: decide'
+    assert_line "    if: needs.decide.outputs.run == 'true'"
+    assert_line '        runner: [ubuntu-latest, ubuntu-24.04-arm]'
+    assert_line '        run: just test isolation'
+    assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+    run awk '/^  full-serial:$/,/^  isolation:$/' "${_yml}"
+    refute_line '        run: just test isolation'
+    run awk '/^  report:$/,0' "${_yml}"
+    assert_line '    needs: [decide, full-serial, isolation]'
+    assert_line "          RESULT: \${{ (needs.full-serial.result == 'success' && needs.isolation.result == 'success') && 'success' || 'failure' }}"
+}
