@@ -10,7 +10,8 @@
 #     when there is none or when that newest code run is not completed (an
 #     older green run never stands in for a newer one);
 #   - ci_prior_run_evaluate passes only when every expected leg (both
-#     runners x build-image, the six gates, test-system-real, plus
+#     runners x build-image, the five gates, the unit shards,
+#     test-system-real, plus the unit verdict, plus
 #     verify-all when required) is present with conclusion success; a
 #     missing, skipped, cancelled, failed or duplicated-non-success leg,
 #     empty input or a bad verify flag fails, naming the leg;
@@ -114,10 +115,14 @@ _green_jobs() {
 
 # --- evaluating its legs -----------------------------------------------------
 
-@test "expected legs are both runners of build-image, six gates and test-system-real" {
+@test "expected legs are both runners of build-image, five gates, four unit shards and test-system-real, plus the unit verdict" {
     run ci_prior_run_expected_jobs false
     assert_success
-    assert_equal "${#lines[@]}" 16
+    assert_equal "${#lines[@]}" 23
+    assert_line 'test-unit 1/4 (ubuntu-latest)'
+    assert_line 'test-unit 4/4 (ubuntu-24.04-arm)'
+    assert_line 'test-unit-verdict'
+    refute_line 'test-unit (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-24.04-arm)'
     assert_line 'lint (ubuntu-24.04-arm)'
@@ -126,7 +131,7 @@ _green_jobs() {
     refute_line --partial 'verify-all'
     run ci_prior_run_expected_jobs true
     assert_success
-    assert_equal "${#lines[@]}" 18
+    assert_equal "${#lines[@]}" 25
     assert_line 'verify-all (ubuntu-latest)'
     assert_line 'verify-all (ubuntu-24.04-arm)'
 }
@@ -142,9 +147,9 @@ _green_jobs() {
 }
 
 @test "evaluate fails and names a missing leg" {
-    run ci_prior_run_evaluate false < <(_green_jobs false 'test-unit (ubuntu-24.04-arm)')
+    run ci_prior_run_evaluate false < <(_green_jobs false 'test-unit 2/4 (ubuntu-24.04-arm)')
     assert_failure
-    assert_output --partial 'test-unit (ubuntu-24.04-arm)'
+    assert_output --partial 'test-unit 2/4 (ubuntu-24.04-arm)'
     assert_output --partial 'missing'
 }
 

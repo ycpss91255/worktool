@@ -5,19 +5,20 @@
 # WHAT THIS PROVES
 #   The workflow has a runner dimension on every leg-carrying job:
 #
-#   - build-image, gate (lint / test-unit / test-integration / test-system /
-#     test-acceptance) and test-system-real each `runs-on` the matrix runner
+#   - build-image, gate (lint / test-matrix / test-integration / test-system /
+#     test-acceptance), unit-shard (the unit tier's weighted shards, issue
+#     #831) and test-system-real each `runs-on` the matrix runner
 #     and their `runner:` dimension is EXACTLY the set {ubuntu-latest
 #     (amd64), ubuntu-24.04-arm (arm64)} - no job hardcodes one
 #     architecture, and a third runner (in the flow list or smuggled in
 #     through `include:`) turns this spec red (issue #164);
-#   - the `gate:` dimension is EXACTLY the set {lint, test-unit,
+#   - the `gate:` dimension is EXACTLY the set {lint, test-matrix,
 #     test-integration, test-system, test-acceptance}, and the `include:`
 #     that maps each gate to its `just test` tier names exactly those five
 #     - a sixth gate anywhere turns this spec red (issue #164);
 #   - the matrix `include:` is EXACTLY five entries and each entry is
 #     EXACTLY one `gate` plus one `tier`, the entry set being {lint=lint,
-#     test-unit=unit, test-integration=integration, test-system=system,
+#     test-matrix=matrix, test-integration=integration, test-system=system,
 #     test-acceptance=acceptance}: a swapped or wrong tier, an entry
 #     without a tier or with two, an extra key inside an entry, or an
 #     extra entry that names no gate at all (`- experimental: true`) turns
@@ -66,10 +67,12 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 setup() {
     CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
-    LEG_JOBS=(build-image gate test-system-real verify-all)
-    GATES=(lint test-unit test-matrix test-integration test-system test-acceptance)
+    LEG_JOBS=(build-image gate unit-shard test-system-real verify-all)
+    GATES=(lint test-matrix test-integration test-system test-acceptance)
+    # The unit tier runs as UNIT_SHARDS weighted shards (issue #831).
+    UNIT_SHARDS=4
     # gate=tier: the `just test <tier>` each gate runs (the include map).
-    TIERS=(lint=lint test-unit=unit test-matrix=matrix test-integration=integration
+    TIERS=(lint=lint test-matrix=matrix test-integration=integration
         test-system=system test-acceptance=acceptance)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
@@ -323,6 +326,14 @@ _leg_names() {
                 _expanded="${_template//\$\{\{ matrix.gate \}\}/${_gate}}"
                 printf '%s\n' "${_expanded//\$\{\{ matrix.runner \}\}/${_runner}}"
             done < <(_flow_items gate '        ' gate)
+        elif [[ "$1" == unit-shard ]]; then
+            local _shard _shards
+            _shards="$(_flow_items unit-shard '        ' shards)"
+            while IFS= read -r _shard; do
+                _expanded="${_template//\$\{\{ matrix.shard \}\}/${_shard}}"
+                _expanded="${_expanded//\$\{\{ matrix.shards \}\}/${_shards}}"
+                printf '%s\n' "${_expanded//\$\{\{ matrix.runner \}\}/${_runner}}"
+            done < <(_flow_items unit-shard '        ' shard)
         else
             printf '%s\n' "${_template//\$\{\{ matrix.runner \}\}/${_runner}}"
         fi
@@ -331,11 +342,13 @@ _leg_names() {
 
 @test "the legs ci_prior_run_evaluate expects are exactly the legs ci.yml runs" {
     local _expected
-    _expected="$(for _job in build-image gate test-system-real; do _leg_names "${_job}"; done | sort)"
+    _expected="$({ for _job in build-image gate unit-shard test-system-real; do _leg_names "${_job}"; done
+        echo test-unit-verdict; } | sort)"
     run bash -c 'source "$1" && ci_prior_run_expected_jobs false | sort' _ "${LIB_DIR}/ci_prior_run.sh"
     assert_success
     assert_output "${_expected}"
-    _expected="$(for _job in build-image gate test-system-real verify-all; do _leg_names "${_job}"; done | sort)"
+    _expected="$({ for _job in build-image gate unit-shard test-system-real verify-all; do _leg_names "${_job}"; done
+        echo test-unit-verdict; } | sort)"
     run bash -c 'source "$1" && ci_prior_run_expected_jobs true | sort' _ "${LIB_DIR}/ci_prior_run.sh"
     assert_success
     assert_output "${_expected}"
@@ -366,8 +379,10 @@ _leg_names() {
     assert_line "review-log"
     assert_line "verify-all"
     assert_line "shard-weights"
+    assert_line "unit-shard"
+    assert_line "test-unit-verdict"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 12
+    assert_equal "${#lines[@]}" 14
 }
 
 @test "bats gates upload a junit report and a main push stores the merged shard weights (#827)" {
@@ -382,6 +397,7 @@ _leg_names() {
     assert_success
     assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
     assert_line --regexp "$(_flow_has '    ' needs gate)"
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
     assert_line '          pattern: test-report-*'
     assert_line --partial "shard_weights_merge \"\${RUNNER_TEMP}/reports\" unit matrix > .agents/state/shard-weights.tsv || exit 1"
     assert_line '        uses: actions/cache/save@v4'
@@ -389,6 +405,43 @@ _leg_names() {
     run _job_block ci-passed
     assert_success
     assert_line "          WEIGHTS_REQUIRED: \${{ github.event_name == 'push' }}"
+}
+
+@test "the unit tier runs as weighted shards and a union verdict applies the whole-tier rules (#831)" {
+    local _i _items=()
+    for ((_i = 1; _i <= UNIT_SHARDS; _i++)); do _items+=("${_i}"); done
+    # One shard count: the shard dimension, the shards value and the verdict.
+    run _flow_items unit-shard '        ' shard
+    assert_output "$(_sorted_set "${_items[@]}")"
+    run _flow_items unit-shard '        ' shards
+    assert_output "${UNIT_SHARDS}"
+    run _job_block unit-shard
+    assert_success
+    assert_line "    name: test-unit \${{ matrix.shard }}/\${{ matrix.shards }} (\${{ matrix.runner }})"
+    assert_line --regexp "$(_flow_has '    ' needs build-image)"
+    assert_line "          name: ${ARTIFACT}"
+    assert_line "        run: just test unit --shard \${{ matrix.shard }}/\${{ matrix.shards }}"
+    assert_line '          WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv'
+    assert_line '          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report'
+    assert_line "          name: test-report-unit-\${{ matrix.shard }}-\${{ matrix.runner }}"
+    assert_line '          if-no-files-found: error'
+    # The weights are read once per arch, in build-image, and travel with
+    # the image artifact, so every shard of an arch uses the same file.
+    run _job_block build-image
+    assert_success
+    assert_line '        uses: actions/cache/restore@v4'
+    assert_line '          restore-keys: shard-weights-'
+    assert_line '            /tmp/shard-weights.tsv'
+    run _job_block test-unit-verdict
+    assert_success
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
+    assert_line "      UNIT_SHARDS: ${UNIT_SHARDS}"
+    assert_line '          pattern: test-report-unit-*'
+    assert_line --partial "test_shard_verdict \"\${RUNNER_TEMP}/shards\" unit \"\${UNIT_SHARDS}\" \"\${list}\" \"\${required}\" ubuntu-latest ubuntu-24.04-arm"
+    # Both are legs: ci-passed requires them on the code path.
+    run _job_block ci-passed
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
+    assert_line --regexp "$(_flow_has '    ' needs test-unit-verdict)"
 }
 
 # ADR 0012 cites the next two case names verbatim as guards; keep them.
@@ -430,7 +483,7 @@ _leg_names() {
     done
 }
 
-@test "gate runs every one of the six gates on the runner dimension" {
+@test "gate runs every one of the five gates on the runner dimension" {
     local _gate
     run _job_block gate
     assert_success
@@ -441,7 +494,7 @@ _leg_names() {
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
 }
 
-@test "the gate dimension is EXACTLY the six gates (a seventh turns red)" {
+@test "the gate dimension is EXACTLY the five gates (a sixth turns red)" {
     # The flow list, as a sorted set: nothing extra, nothing missing.
     run _flow_items gate '        ' gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -452,7 +505,7 @@ _leg_names() {
     assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
 }
 
-@test "gate's matrix include maps EXACTLY the six gates to a tier and adds no runner" {
+@test "gate's matrix include maps EXACTLY the five gates to a tier and adds no runner" {
     # One `- gate: <name>` include entry per gate, no more, no less.
     run _include_values gate gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -466,7 +519,7 @@ _leg_names() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "the include is EXACTLY six entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+@test "the include is EXACTLY five entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
     local _pair _entries=()
     for _pair in "${TIERS[@]}"; do
         _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")

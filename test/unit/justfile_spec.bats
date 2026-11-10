@@ -545,7 +545,7 @@ _listed_names() {
     # Matrix: job name (gate, keyed on by branch protection / ci-passed) ->
     # tier. The names are the pre-existing ones.
     local _pair _gate _tier
-    for _pair in 'lint=lint' 'test-unit=unit' 'test-matrix=matrix' 'test-integration=integration' \
+    for _pair in 'lint=lint' 'test-matrix=matrix' 'test-integration=integration' \
         'test-system=system' 'test-acceptance=acceptance'; do
         _gate="${_pair%%=*}"
         _tier="${_pair#*=}"
@@ -557,6 +557,8 @@ _listed_names() {
     assert_success
     assert_line --regexp '^ +run: just test \$\{\{ matrix\.tier \}\}$'
     assert_line --regexp '^ +run: just test system-real$'
+    # The unit tier runs as weighted shards of the same recipe (#831).
+    assert_line --regexp '^ +run: just test unit --shard \$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.shards \}\}$'
     # Milestone acceptance drives just verify inside the real-tool container.
     assert_line --regexp "^ +worktool-verify:local -c 'just verify all'$"
     assert_line --regexp '^ +run: just test verify-env$'
