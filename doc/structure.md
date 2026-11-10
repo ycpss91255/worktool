@@ -488,6 +488,10 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
 不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
 `just test system-real`,因此 `verify-all` 也間接使用 `--privileged`。
+`test-system-real` 的 DinD runner 映像與 integration ghostty 群組的映像由 buildx 以 GitHub
+Actions cache(`type=gha`,每個映像、每個架構一個 scope)建置後載入,`test.sh` 以
+`SYSTEM_REAL_IMAGE_PREBUILT=1`／`GHOSTTY_IMAGE_PREBUILT=1` 沿用而不重建;只有 main push 寫
+cache,PR 讀 main 的層,cache 沒命中就完整建置(#829)。本機不設這兩個變數,照常建置。
 PR 的 edited / labeled / unlabeled 事件也會觸發 CI,但只改 PR 說明、標題或標籤
 不會重跑測試 tier(#688)。
 
