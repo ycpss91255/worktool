@@ -148,3 +148,13 @@ EOF
     run grep -c '^set -euo pipefail$' "${SCRIPT}"
     assert_output 1
 }
+
+@test "--exclude-run ignores the named run, so a run can ask about its own sha (#851)" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    _run "full-serial ${SHA}" in_progress "" 13 2026-11-10T03:00:00Z
+    _fr --exclude-run 13
+    assert_success
+    assert_output "full-run: ${SHA} completed success run=11"
+    _fr --exclude-run abc
+    assert_failure 2
+}
