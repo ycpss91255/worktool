@@ -519,6 +519,12 @@ _leg_names() {
     assert_output "${_n}"
 }
 
+@test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {
+    run _job_block gate
+    assert_success
+    assert_line '          WORKTOOL_TEST_JOBS: "8"'
+}
+
 # --- --privileged stays with test-system-real --------------------------------
 
 @test "--privileged is named by the test-system-real job only" {
