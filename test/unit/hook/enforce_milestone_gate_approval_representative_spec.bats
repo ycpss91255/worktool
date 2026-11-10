@@ -24,9 +24,15 @@ setup() {
     assert_success
 }
 
+# One cell of the GraphQL product (a [claude]-tagged addComment from -f,
+# which a REST comment would let through): the full product runs in the
+# matrix tier.
 @test "unit representative: GraphQL behavior crosses the hook interface" {
-    run bats --filter '^matrix: tag x GraphQL comment / review mutation x body source - every cell blocks \(these mutations block outright\)$' "${MATRIX_SPEC}"
+    GATE_MATRIX_MUTATION=addComment GATE_MATRIX_TAG=claude GATE_MATRIX_SOURCE=f run bats \
+        --filter '^matrix: tag x GraphQL comment / review mutation x body source - every cell blocks \(these mutations block outright\)$' \
+        "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok 1 matrix: tag x GraphQL '
 }
 
 @test "unit representative: direct HTTP behavior crosses the hook interface" {
@@ -54,11 +60,6 @@ setup() {
         run grep -Fqx -- "@test \"${_name}\" {" "${MATRIX_SPEC}"
         assert_success
     done
-}
-
-@test "approval rejection preserves exit two after evaluation and cleanup" {
-    run bats --filter '^merge of a milestone-gate PR without an approval is blocked and says what is missing$' "${MATRIX_SPEC}"
-    assert_success
 }
 
 @test "a merge without -R or a selector still resolves the PR under errexit" {

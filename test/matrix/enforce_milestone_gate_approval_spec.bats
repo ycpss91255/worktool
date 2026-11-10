@@ -1027,17 +1027,23 @@ _body_cmd() {
     done
 }
 
+# GATE_MATRIX_MUTATION / GATE_MATRIX_TAG / GATE_MATRIX_SOURCE, when set,
+# narrow the product to the matching cells (the unit representative runs
+# one cell, issue #858); narrowed to no cell at all, the case fails.
 @test "matrix: tag x GraphQL comment / review mutation x body source - every cell blocks (these mutations block outright)" {
-    local _m _src _lab _bod _want _q _f="${BATS_TEST_TMPDIR}/q.graphql" _j="${BATS_TEST_TMPDIR}/q.json" _c _MISS=''
+    local _m _src _lab _bod _want _q _f="${BATS_TEST_TMPDIR}/q.graphql" _j="${BATS_TEST_TMPDIR}/q.json" _c _MISS='' _cells=0
     for _m in addComment updateIssueComment addPullRequestReview addPullRequestReviewComment \
         addPullRequestReviewThread addPullRequestReviewThreadReply submitPullRequestReview \
         updatePullRequestReview updatePullRequestReviewComment; do
+        [[ -z "${GATE_MATRIX_MUTATION:-}" || "${_m}" == "${GATE_MATRIX_MUTATION}" ]] || continue
         while IFS='|' read -r _lab _bod _want; do
+            [[ -z "${GATE_MATRIX_TAG:-}" || "${_lab}" == "${GATE_MATRIX_TAG}" ]] || continue
             _bod="$(printf '%b' "${_bod}")"
             _q="mutation{${_m}(input:{body:$(jq -n --arg b "${_bod}" '$b')}){clientMutationId}}"
             printf '%s' "${_q}" >"${_f}"
             jq -n --arg q "${_q}" '{query: $q}' >"${_j}"
             for _src in f F-at input raw-field; do
+                [[ -z "${GATE_MATRIX_SOURCE:-}" || "${_src}" == "${GATE_MATRIX_SOURCE}" ]] || continue
                 case "${_src}" in
                     f) _c="gh api graphql -f $(_q "query=${_q}")" ;;
                     F-at) _c="gh api graphql -F query=@${_f}" ;;
@@ -1045,9 +1051,11 @@ _body_cmd() {
                     raw-field) _c="gh api graphql --raw-field $(_q "query=${_q}")" ;;
                 esac
                 _expect 2 "mutation=${_m} tag=${_lab} source=${_src}" "${_c}"
+                _cells=$(( _cells + 1 ))
             done
         done < <(_tags)
     done
+    [[ "${_cells}" -gt 0 ]] || fail "no GraphQL cell ran (GATE_MATRIX_* narrowed the product to nothing)"
     _report
 }
 
