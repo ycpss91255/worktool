@@ -193,6 +193,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷；流程中止時列出失敗原因，Fix 檢查失敗與 Fix 後 CI 紅另附該輪缺陷。
+   `ciState` 只描述回傳的 `sha`：最後一次 CI stage 判定的正是該 head 時，回該次的 `green` 或 `red`；還沒跑 CI，或該 head 沒有經過 CI 判定時回 `none`，例如 Fix 已推送但 Fix 檢查或採納留言失敗、接續時 CI 之後 PR head 又變動、codex Fix 的 gate 或發布中止，以及 Fix 檢查沒有有效證據（#810）。
    `reviewer` 是最後一次審查的審查者（`claude`、`codex`，沒有審查時為 `none`），`reviewVerdict` 是該次審查的結論（`mergeable`、`blocked`、`no-output`，沒有審查時為 `none`），`reviews` 是審查次數，與只計 Fix 輪數的 `rounds` 分開（#755）。
    預設 `implementer: "codex"` 由 Claude 審查：審查迴圈正常結束時（審查通過、`maxRounds` 用完仍有缺陷，或審查回傳缺漏或格式錯誤的結果；最後一種的 `reviewVerdict` 是 `no-output`，`blockingLeft` 寫明原因，#784）`codexVerdict` 是 `not-run`，審查結論看 `reviewVerdict` 與 `blockingLeft`；RED 紀錄（每次審查前檢查，第一輪時還沒有任何審查）、Fix、採納留言或 Fix 後 CI 任一流程中止時回 `blocked`，與審查者無關（#769）。呼叫者依 `reviewer` 判斷是否仍需 codex 確認。
    `implementer: "claude"` 由 codex 審查：審查通過且下述留言確認成功回 `mergeable`；`maxRounds` 用完仍有缺陷回 `blocked`；審查回傳缺漏或格式錯誤回 `no-output`；RED 紀錄、留言快照、Fix、採納留言、Fix 後 CI 中止或留言確認失敗回 `blocked`（#804）。
