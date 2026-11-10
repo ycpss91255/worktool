@@ -90,6 +90,11 @@ jobs:
     if: needs.decide.outputs.run == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
+    # Same Ubuntu package source as ci.yml (issue #843): the amd64 leg
+    # takes the box's and the images' packages from the runner-local
+    # mirror; the arm leg keeps the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -112,9 +117,38 @@ jobs:
           just test integration
           just test system-real
 
+  # Tier isolation guard (issue #835, ADR-0018): the same stages in a
+  # seeded random order, failing on anything a stage leaves behind on the
+  # runner. Its own job next to full-serial (not after it), so the full
+  # serial run - the one a hand-over waits for - is not made longer; the
+  # report reads both. The seed is in the log; `just test isolation --seed
+  # N` reproduces the order.
+  isolation:
+    name: isolation (${{ matrix.runner }})
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    # Same Ubuntu package source as ci.yml (issue #843).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Tier isolation (random order, residue check)
+        run: just test isolation
+
   report:
     name: report
-    needs: [decide, full-serial]
+    needs: [decide, full-serial, isolation]
     if: always() && needs.decide.outputs.run == 'true' && inputs.sha == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -131,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          RESULT: ${{ needs.full-serial.result }}
+          RESULT: ${{ (needs.full-serial.result == 'success' && needs.isolation.result == 'success') && 'success' || 'failure' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
           EVENT: ${{ github.event_name }}

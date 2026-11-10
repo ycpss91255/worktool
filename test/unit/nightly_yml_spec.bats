@@ -85,3 +85,9 @@ _job() {
     run cat "${YML}"
     assert_line "  group: nightly-\${{ inputs.sha || 'main' }}"
 }
+
+@test "the full serial run takes Ubuntu packages from the same mirror as ci.yml (#843)" {
+    run _job full-serial
+    assert_line '    env:'
+    assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+}

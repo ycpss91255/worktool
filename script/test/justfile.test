@@ -3,7 +3,7 @@
 # `mod?`d by the root justfile as `test`: `just test` (bare = everything CI
 # runs) and `just test <recipe> [args]` narrow to one step. Base model
 # (ycpss91255-docker/base ADR-00000005/10/11): every recipe is a thin
-# forwarder to ./script/test/test.sh (or selfcheck.sh) with the arguments
+# forwarder to ./script/test/test.sh (or selfcheck.sh / isolation.sh) with the arguments
 # passed VERBATIM - `set positional-arguments` + "$@" keeps argv boundaries
 # (a path with spaces stays one argument). Nothing is validated here and no
 # usage text lives here: `just test help` is `test.sh --help`, and an
@@ -71,6 +71,10 @@ acceptance *args:
 # Host-direct delivery self-check (dry-run contract + invalid-manifest rejections); --root X checks another checkout.
 selfcheck *args:
     ./script/test/selfcheck.sh "$@"
+
+# Tier isolation guard: the bare just test stages and their specs in a seeded random order, failing on residue (--seed N reproduces).
+isolation *args:
+    ./script/test/isolation.sh "$@"
 
 alias h := help
 
