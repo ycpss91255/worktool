@@ -86,6 +86,8 @@ case "${1:-}" in
     info) exit 0 ;;
     ps)   [[ -n "${FAKE_DEV:-}" ]] && printf 'dev\n'; exit 0 ;;
     rm)   exit 0 ;;
+    # The box image build (issue #843): the Dockerfile arrives on stdin.
+    build) cat >"${FAKE_LOG}.dockerfile"; [[ -z "${FAKE_BUILD_FAIL:-}" ]]; exit ;;
     *)    exit 1 ;;
 esac
 EOF
@@ -102,6 +104,8 @@ EOF
     # kept under the test tmpdir rather than /var/log.
     export FAKE_LOG
     export WORKTOOL_DOCKERD_LOG="${BATS_TEST_TMPDIR}/dockerd.log"
+    # The box image mirror is opt-in per case (issue #843).
+    unset WORKTOOL_APT_MIRROR
 }
 
 teardown() {
@@ -247,6 +251,56 @@ _with_entry() {
     assert_failure 1
     assert_output --partial "[system-real] ERROR: dockerd exited before becoming ready"
     assert [ "$(( SECONDS - _t0 ))" -lt 10 ]
+}
+
+# --- box image apt mirror (issue #843) ---------------------------------------
+
+@test "_prepare_box_image builds nothing and touches no engine when WORKTOOL_APT_MIRROR is unset" {
+    _with_entry _prepare_box_image
+    assert_success
+    assert_output ""
+    run cat "${FAKE_LOG}"
+    assert_output ""
+}
+
+@test "_prepare_box_image rebuilds the manifest's image in place with only its apt sources pointed at the mirror" {
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ _with_entry _prepare_box_image
+    assert_success
+    assert_output --partial "box image ubuntu:26.04: every apt source -> http://azure.archive.ubuntu.com/ubuntu/"
+    run cat "${FAKE_LOG}"
+    # Same tag as box/dev.ini's image=, so assemble uses it unchanged;
+    # the build context is the directory holding apt-mirror.sh.
+    assert_output --regexp "^docker build -t ubuntu:26\.04 -f - .*/script/test\$"
+    run cat "${FAKE_LOG}.dockerfile"
+    assert_line --index 0 "FROM ubuntu:26.04"
+    assert_line --index 1 "RUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh 'http://azure.archive.ubuntu.com/ubuntu/'"
+    assert_equal "${#lines[@]}" 2
+}
+
+@test "_prepare_box_image fails the run when the box image build fails" {
+    FAKE_BUILD_FAIL=1 WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ _with_entry _prepare_box_image
+    assert_failure 1
+    assert_output --partial "[system-real] ERROR: could not build the box image ubuntu:26.04 with apt mirror http://azure.archive.ubuntu.com/ubuntu/"
+}
+
+@test "entry refuses an invalid WORKTOOL_APT_MIRROR at start, before any preflight or dockerd" {
+    WORKTOOL_APT_MIRROR="http://x/'y" run timeout "${OUTER_TIMEOUT}" bash "${ENTRY}"
+    assert_failure 1
+    assert_output --partial "[system-real] ERROR: WORKTOOL_APT_MIRROR is not a plain http(s) mirror URL"
+    refute_output --partial "starting nested dockerd"
+    refute_output --partial "must run as root"
+}
+
+@test "main prepares the box image after dockerd is ready and before the gate runs" {
+    run bash -c "source '${ENTRY}'; declare -f main"
+    assert_success
+    local _wait _prep _gate
+    _wait="$(printf '%s\n' "${output}" | grep -n '_wait_dockerd' | cut -d: -f1)"
+    _prep="$(printf '%s\n' "${output}" | grep -n '_prepare_box_image' | cut -d: -f1)"
+    _gate="$(printf '%s\n' "${output}" | grep -n -- '--ci-system-real' | cut -d: -f1)"
+    assert [ -n "${_prep}" ]
+    assert [ "${_wait}" -lt "${_prep}" ]
+    assert [ "${_prep}" -lt "${_gate}" ]
 }
 
 # --- _cleanup ------------------------------------------------------------------
