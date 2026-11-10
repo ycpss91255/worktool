@@ -178,10 +178,14 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # 8 bats jobs (files and the cases of one file, #689): measured on the
+      # 4-vCPU arm runner, unit 616 s / 503 s / 517 s and matrix 193 s /
+      # 172 s / 183 s at 4 / 8 / 16 jobs, so 8 is the knee. Local runs keep
+      # test.sh's default of 4.
       - name: Run gate (${{ matrix.gate }} = just test ${{ matrix.tier }})
         env:
           TEST_IMAGE_PREBUILT: "1"
-          WORKTOOL_TEST_JOBS: "16"
+          WORKTOOL_TEST_JOBS: "8"
         run: just test ${{ matrix.tier }}
 
   # Real-engine system group: docker-in-docker, on both runners. Builds its
