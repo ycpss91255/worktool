@@ -111,6 +111,32 @@ EOF
     assert_success
 }
 
+@test "a report directory adds a junit report per tier and keeps the TAP stream" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/bats" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${BATS_TEST_TMPDIR}/bats.calls"
+if [[ "$1" == "--count" ]]; then
+    printf '1\n'
+else
+    printf '1..4\n'
+    printf 'ok 1 one\nok 2 two\nok 3 three\nok 4 four\n'
+fi
+EOF
+    chmod +x "${_bin}/bats"
+
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report PATH="${_bin}:${PATH}" \
+        _run_copy_gate --ci-acceptance
+    assert_success
+    assert_line 'ok 4 four'
+    run grep -F -- "--formatter tap --report-formatter junit --output ${COPY}/.agents/state/test-report/acceptance " \
+        "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_success
+    assert [ -d "${COPY}/.agents/state/test-report/acceptance" ]
+}
+
 @test "an invalid parallel job count is an argument error before bats runs" {
     local _bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${_bin}"
