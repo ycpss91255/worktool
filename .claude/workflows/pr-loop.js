@@ -32,10 +32,13 @@ export const meta = {
 //   } })
 //
 // Result: { issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }.
-// ciState (#810) describes CI of the returned sha only: "green" or "red" when the last CI stage judged
-// exactly that head; "none" before any CI and for any head no CI stage judged, e.g. a Fix pushed
-// before its check or adoption comment failed, a head that moved after CI on resume, a codex Fix
-// gate or publication abort, or a Fix check without valid evidence.
+// ciState (#810, #815) describes CI of the returned sha only: "green" or "red" when the last CI
+// stage judged exactly that head; "none" before any CI and for any head no CI stage judged, e.g. a
+// Fix pushed before its check or adoption comment failed, or a head that moved after CI on resume.
+// sha is "" with "none" when a stage that may push ran and no PR head was read afterwards: a codex
+// Fix publication abort, a Fix check without valid evidence, or a CI stage that returned nothing.
+// A codex Fix gate abort (repairs only commit locally) and a resume check without valid evidence
+// (nothing pushes between CI and that check) return the CI-judged head with that CI's state.
 // reviewer names who reviewed last ('claude' | 'codex' | 'none'); reviewVerdict is that review's
 // outcome ('mergeable' | 'blocked' | 'no-output', or 'none' before any review); reviews counts them.
 // codexVerdict (#769, #793, #804):
@@ -234,13 +237,17 @@ ${RED_PUBLICATION_RULES}
 Gate evidence, copied verbatim:\n${evidence}\nPR body starts with [claude], includes Closes #${A.issue}${PARENT ? `, Part of ${PARENT}` : ''}, ## 這個 PR 只做一件事, ## commit, ## 測試證據 (verbatim compact gate results), codex:本 PR 開啟後由 workflow 跑複驗,結果附於留言. Never merge. Return the PR number and head SHA.`, {
   label: `${RUN_ID} publish:${stage}`, phase: 'Publish', effort: 'low', schema: LOCATE_SCHEMA, agentType: 'general-purpose',
 })
+// Returns { failure, published }: failure is '' on success, else the reason;
+// published marks a publication-stage failure, which may already have pushed,
+// so the branch head is unknown afterwards (#815).
 const completeCodex = async (stage, pr = A.pr) => {
+  const failed = (failure) => ({ failure, published: false })
   let green = false, evidence = ''
   for (let repair = 0; repair <= MAX; repair += 1) {
     const gates = await gateStage(`${stage}${repair ? `-repair${repair}` : ''}`)
     if (gates && gates.state === 'green') { green = true; evidence = gates.detail; break }
     const summary = (gates && gates.detail) || 'gate stage returned no result'
-    if (repair === MAX || !gates) return summary
+    if (repair === MAX || !gates) return failed(summary)
     const fixed = await agent(`${CODEX_RULES}
 ${CODEX_FOREGROUND_RUN(`${SCRATCH}/gate-fix-${stage}-${repair}`)}
 brief:
@@ -253,11 +260,11 @@ Return ready only when codex exits successfully and its repair is committed; oth
       label: `${RUN_ID} gate-fix:${stage}:${repair}`, phase: 'Fix',
       schema: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }, agentType: 'general-purpose',
     })
-    if (!fixed || fixed.status !== 'ready') return summary
+    if (!fixed || fixed.status !== 'ready') return failed(summary)
   }
-  if (!green) return 'gate repairs exhausted'
+  if (!green) return failed('gate repairs exhausted')
   const published = await publishCodex(stage, pr, evidence)
-  return published && published.pr ? '' : 'publication failed'
+  return published && published.pr ? failed('') : { failure: 'publication failed', published: true }
 }
 
 const CI = (pr) => `Watch CI for PR #${pr} of ${REPO} against base ${BASE}. Before watching a resumed PR, verify its headRefName equals ${A.branch}, its state is OPEN and baseRefName equals ${BASE}; lookup failure or mismatch is red. In ${WT}, require a clean working tree on ${A.branch}; fetch origin, and if local HEAD is ahead of the remote branch, run local gates through jobs (${jobInstructions(`ci-local-${A.issue}`, GATE_COMMANDS)}), verify noreply author/committer and Refs: #${A.issue} on every unpublished commit, then push without rewriting history. If remote is ahead, sync by merging and run the same gates through fresh jobs before pushing; divergence or any failed guard must be resolved safely or return red. Never watch a stale head. First run \`gh pr view ${pr} --repo ${REPO} --json baseRefName --jq .baseRefName\`; on lookup failure or base mismatch, return state "red" with the failure reason and do not judge CI green. Then collect CI through the same job interface: ${jobInstructions(`ci-${A.issue}`, [`timeout 1800 gh pr checks ${pr} --repo ${REPO} --watch --fail-fast`], true)} Use a fresh job name on each retry. If every check passes, return state "green". Do not add workflow infrastructure (job modules or hooks) to the PR branch; missing infrastructure must return red and be repaired on the base by synchronizing main. If a check fails: read it (\`gh run view <run-id> --repo ${REPO} --log-failed\`), fix it in the existing worktree ${WT} (branch ${A.branch}) with TDD. ${CI_LOCAL_TEST_RULES} Run required local gates with ${jobInstructions(`ci-repair-${A.issue}`, GATE_COMMANDS)}. Continue and these rules (${RULES}), commit (independent commit, English), push, watch again (max 2 rounds); then return state "green" or "red". Always return sha = current head of the branch (\`git -C ${WT} rev-parse HEAD\`) and detail = the check list or the failure reason. Never merge.`
@@ -317,9 +324,15 @@ const collectReview = (review) => {
 }
 const result = (extra) => ({ issue: A.issue, ...reviewFindings, ...extra })
 // ciState describes CI of the returned head only (#810): the last CI stage's
-// state when it judged exactly that head, otherwise none.
+// state when it judged exactly that head, otherwise none. Every return pairs
+// sha with ciAt(sha) (sha "" is always none). A head a pushing stage may have moved without a
+// successful PR head re-read is unknown: sha "" with none (#815). A CI stage
+// that returns nothing judged no head and may have pushed a repair.
 let lastCi = { sha: '', state: 'none' }
-const noteCi = (ci, head) => { lastCi = { sha: (ci && ci.sha) || head, state: ci && ci.state === 'green' ? 'green' : 'red' }; return lastCi }
+const noteCi = (ci, head) => {
+  lastCi = ci ? { sha: ci.sha || head, state: ci.state === 'green' ? 'green' : 'red' } : { sha: '', state: 'none' }
+  return lastCi
+}
 const ciAt = (head) => head && head === lastCi.sha ? lastCi.state : 'none'
 
 // Publish only a clean fast-forward; recheck all guards after the gates.
@@ -576,7 +589,7 @@ In ${WT}, gates already passed in the separate job stage. Gate evidence, copied 
   const loc = await agent(LOCATE, { label: `${RUN_ID} locate:${A.branch}`, phase: 'Locate', schema: LOCATE_SCHEMA, agentType: 'general-purpose' })
   if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: ['no PR was opened for the branch'] })
   const checked = await checkStage(loc.pr, 'Implement')
-  if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: 'none', codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
+  if (!checked.ok) return result({ pr: loc.pr, sha: checked.sha || loc.sha, ciState: ciAt(checked.sha || loc.sha), codexVerdict: 'skipped', rounds: 0, blockingLeft: [checked.detail] })
   phase('CI')
   const ci = await agent(CI(loc.pr), { label: `${RUN_ID} ci:#${loc.pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   const judged = noteCi(ci, checked.sha)
@@ -597,7 +610,7 @@ const implementFull = async () => {
     } catch (error) { edited = { status: 'failed', reason: String(error.message || error) } }
     if (edited && edited.status === 'ready') {
       if (IMPLEMENTER !== 'codex') return ''
-      return completeCodex('Implement')
+      return (await completeCodex('Implement')).failure
     }
     const reason = (edited && edited.reason) || 'implementer returned no failure reason'
     if (retry === 3 || !/at capacity|rate[ -]?limit|(?:HTTP(?:\/\d(?:\.\d)?)?|status:?)\s*5\d\d/i.test(reason)) return reason
@@ -636,17 +649,19 @@ if (!loc || !loc.pr) return result({ pr: 0, sha: '', ciState: 'none', codexVerdi
 const pr = loc.pr
 let sha = loc.sha
 const implemented = await checkStage(pr, RESUME && A.pr ? 'Resume' : 'Implement')
-if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: 'none', codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
+if (!implemented.ok) return result({ pr, sha: implemented.sha || sha, ciState: ciAt(implemented.sha || sha), codexVerdict: 'blocked', rounds: 0, blockingLeft: [implemented.detail] })
 sha = implemented.sha
 log(`#${A.issue}: PR #${pr} at ${sha.slice(0, 7)}`)
 
 phase('CI')
 let ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
 sha = noteCi(ci, sha).sha
-if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: 'red', codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
+if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'skipped', rounds: 0, blockingLeft: [(ci && ci.detail) || 'CI did not go green'] })
 if (RESUME) {
+  // No stage pushes between CI and this check, so without a PR head read the
+  // CI-judged head is still the latest known head.
   const checked = await checkStage(pr, 'Resume', '', false)
-  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
+  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: ciAt(checked.sha || sha), codexVerdict: 'blocked', rounds: 0, blockingLeft: [checked.detail] })
   sha = checked.sha
 }
 
@@ -680,11 +695,15 @@ for (;;) {
     : FIX(pr, fixes, blocking.length ? blocking : ['see the codex answer above'])
   await agent(fixBrief, { label: `${RUN_ID} fix:#${pr}:r${fixes}`, phase: 'Fix', agentType: 'general-purpose' })
   if (IMPLEMENTER === 'codex') {
-    const failure = await completeCodex(`Fix-${fixes}`, pr)
-    if (failure) return result({ pr, sha, ciState: 'none', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [failure] })
+    // Gate repairs only commit locally, so the PR stays at the CI-judged head;
+    // a failed publication may already have pushed.
+    const codexFix = await completeCodex(`Fix-${fixes}`, pr)
+    const head = codexFix.published ? '' : sha
+    if (codexFix.failure) return result({ pr, sha: head, ciState: ciAt(head), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [codexFix.failure] })
   }
+  // The Fix stage has pushed: only the PR head this check read is known.
   const checked = await checkStage(pr, 'Fix', sha)
-  if (!checked.ok) return result({ pr, sha: checked.sha || sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
+  if (!checked.ok) return result({ pr, sha: checked.sha || '', ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [checked.detail].concat(blocking) })
   const adoption = await agent(`${GUARDRAILS}
 Post ONE comment starting with "[claude] 採納第 ${fixes} 輪:" on PR #${pr}, listing the resolution and commit for each finding below. Inspect the committed diff in ${WT}; require PR head ${checked.sha} before posting. Compare the PR description with that diff first. ${PR_TEXT_RULES(pr)} End the comment with one line "PR 說明更新:<updated section headings, or 無>".
 ${blocking.map((b, i) => `${i + 1}. ${b}`).join('\n')}
@@ -695,7 +714,7 @@ Use gh pr comment ${pr} --repo ${REPO} --body-file <literal path>. Then read the
   if (!adoption || adoption.posted !== true) return result({ pr, sha: checked.sha, ciState: ciAt(checked.sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: ['adoption comment publication failed'] })
   ci = await agent(CI(pr), { label: `${RUN_ID} ci:#${pr}:r${fixes}`, phase: 'CI', effort: 'low', schema: CI_SCHEMA, agentType: 'general-purpose' })
   sha = noteCi(ci, checked.sha).sha
-  if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: 'red', codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
+  if (!ci || ci.state !== 'green') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'blocked', rounds: fixes, blockingLeft: [(ci && ci.detail) || 'CI red after fix round'].concat(blocking) })
 }
 // Only a confirmed codex comment may report codexVerdict mergeable; a Claude review never fills it.
 if (reviewFindings.reviewer !== 'codex') return result({ pr, sha, ciState: ciAt(sha), codexVerdict: 'not-run', rounds: fixes, blockingLeft: verdict === 'mergeable' ? [] : blocking })
