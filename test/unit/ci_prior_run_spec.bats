@@ -73,14 +73,62 @@ _green_jobs() {
     assert_output 800
 }
 
-@test "select never lets an older green run stand in for a newer unfinished code run" {
+@test "select never lets an older green run stand in for a newer unfinished code run: pending (3, #872)" {
     run ci_prior_run_select 900 7 < <(
         _run 820 42 in_progress 'CI code run' 7
         _run 800 40 completed 'CI code run' 7
     )
-    assert_failure
+    assert_failure 3
     assert_output --partial '820'
     assert_output --partial 'in_progress'
+}
+
+# Fetch fixture for await: the Nth call prints ${BATS_TEST_TMPDIR}/runs.N
+# (the last one again once they run out); `sleep` only counts.
+_fetch() {
+    local _n
+    _n=$(( $(cat "${BATS_TEST_TMPDIR}/calls" 2>/dev/null || printf 0) + 1 ))
+    printf '%s\n' "${_n}" >"${BATS_TEST_TMPDIR}/calls"
+    while [[ "${_n}" -gt 1 && ! -f "${BATS_TEST_TMPDIR}/runs.${_n}" ]]; do _n=$((_n - 1)); done
+    cat "${BATS_TEST_TMPDIR}/runs.${_n}"
+}
+sleep() { printf '%s\n' "$1" >>"${BATS_TEST_TMPDIR}/slept"; }
+
+@test "await: a code run still going when the meta run starts is waited for and then judged; a finished one is judged at once; one that outlasts the bound fails (#872)" {
+    # Meta run during the code run: pending twice, then completed.
+    _run 820 42 in_progress 'CI code run' 7 >"${BATS_TEST_TMPDIR}/runs.1"
+    _run 820 42 queued 'CI code run' 7 >"${BATS_TEST_TMPDIR}/runs.2"
+    _run 820 42 completed 'CI code run' 7 >"${BATS_TEST_TMPDIR}/runs.3"
+    run ci_prior_run_await 5 30 900 7 -- _fetch
+    assert_success
+    assert_line 820
+    run cat "${BATS_TEST_TMPDIR}/slept"
+    assert_output "$(printf '30\n30')"
+    # Meta run after the code run: judged on the first fetch, no wait.
+    rm -f "${BATS_TEST_TMPDIR}"/runs.* "${BATS_TEST_TMPDIR}/calls" "${BATS_TEST_TMPDIR}/slept"
+    _run 820 42 completed 'CI code run' 7 >"${BATS_TEST_TMPDIR}/runs.1"
+    run ci_prior_run_await 5 30 900 7 -- _fetch
+    assert_success
+    assert_line 820
+    assert [ ! -e "${BATS_TEST_TMPDIR}/slept" ]
+    # Still going after the last poll: fail closed (1), after max_polls waits.
+    rm -f "${BATS_TEST_TMPDIR}"/runs.* "${BATS_TEST_TMPDIR}/calls"
+    _run 820 42 in_progress 'CI code run' 7 >"${BATS_TEST_TMPDIR}/runs.1"
+    run ci_prior_run_await 2 30 900 7 -- _fetch
+    assert_failure 1
+    assert_output --partial 'still not completed'
+    run cat "${BATS_TEST_TMPDIR}/calls"
+    assert_output 3
+    # No code run, a failed fetch or bad arguments: 1 at once.
+    rm -f "${BATS_TEST_TMPDIR}"/runs.* "${BATS_TEST_TMPDIR}/calls" "${BATS_TEST_TMPDIR}/slept"
+    _run 801 41 completed 'CI meta run' 7 >"${BATS_TEST_TMPDIR}/runs.1"
+    run ci_prior_run_await 5 30 900 7 -- _fetch
+    assert_failure 1
+    run ci_prior_run_await 5 30 900 7 -- false
+    assert_failure 1
+    run ci_prior_run_await x 30 900 7 -- _fetch
+    assert_failure 1
+    assert [ ! -e "${BATS_TEST_TMPDIR}/slept" ]
 }
 
 @test "select fails when the PR has no code run for the head sha" {

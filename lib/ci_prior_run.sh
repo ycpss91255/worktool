@@ -20,9 +20,19 @@
 #       numbers, space separated>` line per ci.yml run of the head sha.
 #       -> prints the id of the newest (highest run number) code run of
 #          that PR other than the current run and returns 0 when it is
-#          completed; returns 1 (reason on stderr) when there is none, when
-#          it is not completed, or on any malformed input. Runs of any
+#          completed; returns 3 (pending, reason on stderr) when it is not
+#          completed yet (#872), 1 when there is none or on any malformed
+#          input. Runs of any
 #          other name (meta runs, runs from before #688) never count.
+#   ci_prior_run_await <max_polls> <poll_seconds> <current_run_id> <pr_number> -- <fetch...>
+#       runs <fetch...> (it prints the run records ci_prior_run_select
+#       reads) and selects; while the latest code run is pending (3) it
+#       sleeps <poll_seconds> and fetches again, at most <max_polls> times
+#       (#872: a body edit while the code run is still going must judge
+#       that run, not fail before it ends). -> the selected id and 0; 1
+#       when there is no code run, a fetch fails, the arguments are bad or
+#       it is still pending after the last wait. The library itself never
+#       calls the GitHub API: the caller passes the fetch.
 #   ci_prior_run_expected_jobs <verify_required: true|false>
 #       -> prints the check name of every leg that must be green, one per
 #          line: both runners of build-image, the three gate legs, the unit
@@ -106,8 +116,8 @@ ci_prior_run_select() {
         return 1
     fi
     if [[ "${_best_status}" != completed ]]; then
-        log_error "ci_prior_run_select: the latest code run ${_best} is ${_best_status}, not completed; its own ci-passed decides (fail closed)."
-        return 1
+        log_error "ci_prior_run_select: the latest code run ${_best} is ${_best_status}, not completed yet (pending)."
+        return 3
     fi
     printf '%s\n' "${_best}"
 }
@@ -171,4 +181,32 @@ ci_prior_run_evaluate() {
         return 1
     fi
     log_info "prior code run: all ${_n} required legs are green."
+}
+
+ci_prior_run_await() {
+    local _polls="${1:-}" _secs="${2:-}" _current="${3:-}" _pr="${4:-}" _records _id _rc _i
+    if (($# < 6)) || [[ "${5}" != -- ]] || [[ ! "${_polls}" =~ ^[0-9]+$ ]] || ! _ci_prior_run_is_number "${_secs}"; then
+        log_error 'ci_prior_run_await: expected <max_polls> <poll_seconds> <current_run_id> <pr_number> -- <fetch...> (fail closed).'
+        return 1
+    fi
+    shift 5
+    for ((_i = 0; ; _i++)); do
+        if ! _records="$("$@")"; then
+            log_error 'ci_prior_run_await: fetching the runs of the head sha failed (fail closed).'
+            return 1
+        fi
+        _rc=0
+        _id="$(ci_prior_run_select "${_current}" "${_pr}" <<<"${_records}")" || _rc=$?
+        if ((_rc == 0)); then
+            printf '%s\n' "${_id}"
+            return 0
+        fi
+        ((_rc == 3)) || return 1
+        if ((_i >= _polls)); then
+            log_error "ci_prior_run_await: the latest code run is still not completed after ${_polls} waits of ${_secs}s (fail closed)."
+            return 1
+        fi
+        log_info "ci_prior_run_await: waiting ${_secs}s for the latest code run to finish (${_i}/${_polls})."
+        sleep "${_secs}"
+    done
 }
