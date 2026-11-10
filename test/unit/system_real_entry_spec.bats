@@ -1,4 +1,7 @@
 #!/usr/bin/env bats
+# Cases of this file race wall-clock bounds (timeouts, elapsed-seconds
+# checks), so they stay serial within the file under `bats --jobs` (#689).
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 # test/unit/system_real_entry_spec.bats - script/test/system-real-entry.sh:
 # every engine call in the dockerd wait loop and the cleanup trap is bounded
 # (M2 review, codex non-blocking finding: a hung daemon could wedge a local

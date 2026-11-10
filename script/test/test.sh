@@ -466,6 +466,9 @@ _run_bats_tier() {
 
     local _tap
     _tap="$(mktemp)" || _die "mktemp failed"
+    # --jobs spans files AND the cases of one file (issue #689): a spec
+    # whose cases share file-level state or race a wall-clock bound opts
+    # out itself with BATS_NO_PARALLELIZE_WITHIN_FILE=true at file level.
     local _bats_args=(--formatter tap)
     if [[ -n "${WORKTOOL_TEST_REPORT_DIR}" ]]; then
         local _report="${REPO_ROOT}/${WORKTOOL_TEST_REPORT_DIR}/${_tier}"
@@ -473,8 +476,7 @@ _run_bats_tier() {
         mkdir -p -- "${_report}" || _die "cannot create report directory ${_report}"
         _bats_args+=(--report-formatter junit --output "${_report}")
     fi
-    _bats_args+=(--jobs "${WORKTOOL_TEST_JOBS}"
-        --no-parallelize-within-files -r)
+    _bats_args+=(--jobs "${WORKTOOL_TEST_JOBS}" -r)
     [[ -z "${_filter}" ]] || _bats_args+=(-f "${_filter}")
     if ! bats "${_bats_args[@]}" "${_paths[@]}" | tee "${_tap}"; then
         _die_bats_failed "${_tier}" "${_tap}"
@@ -551,7 +553,8 @@ _usage_environment() {
 Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
-  WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
+  WORKTOOL_TEST_JOBS     bats cases to run in parallel, across and within
+                         files (default 4)
   WORKTOOL_TEST_REPORT_DIR
                          repo-relative directory: each bats tier also writes
                          a junit report (per-case times) to <dir>/<tier>/

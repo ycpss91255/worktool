@@ -87,7 +87,7 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
 }
 
-@test "a bats tier passes the configured parallel job count to bats" {
+@test "a bats tier passes the job count to bats and lets the cases of one file run in parallel" {
     _make_repo_copy
     local _bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${_bin}"
@@ -106,9 +106,10 @@ EOF
     export WORKTOOL_TEST_JOBS=3
     PATH="${_bin}:${PATH}" _run_copy_gate --ci-integration
     assert_success
-    run grep -F -- "--formatter tap --jobs 3 --no-parallelize-within-files -r" \
-        "${BATS_TEST_TMPDIR}/bats.calls"
+    run grep -F -- "--formatter tap --jobs 3 -r" "${BATS_TEST_TMPDIR}/bats.calls"
     assert_success
+    run grep -F -- "--no-parallelize-within-files" "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_failure
 }
 
 @test "a report directory adds a junit report per tier and keeps the TAP stream" {
