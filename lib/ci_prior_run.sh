@@ -173,3 +173,31 @@ ci_prior_run_evaluate() {
     fi
     log_info "prior code run: all ${_n} required legs are green."
 }
+
+ci_prior_run_await() {
+    local _polls="${1:-}" _secs="${2:-}" _current="${3:-}" _pr="${4:-}" _records _id _rc _i
+    if (($# < 6)) || [[ "${5}" != -- ]] || [[ ! "${_polls}" =~ ^[0-9]+$ ]] || ! _ci_prior_run_is_number "${_secs}"; then
+        log_error 'ci_prior_run_await: expected <max_polls> <poll_seconds> <current_run_id> <pr_number> -- <fetch...> (fail closed).'
+        return 1
+    fi
+    shift 5
+    for ((_i = 0; ; _i++)); do
+        if ! _records="$("$@")"; then
+            log_error 'ci_prior_run_await: fetching the runs of the head sha failed (fail closed).'
+            return 1
+        fi
+        _rc=0
+        _id="$(ci_prior_run_select "${_current}" "${_pr}" <<<"${_records}")" || _rc=$?
+        if ((_rc == 0)); then
+            printf '%s\n' "${_id}"
+            return 0
+        fi
+        ((_rc == 3)) || return 1
+        if ((_i >= _polls)); then
+            log_error "ci_prior_run_await: the latest code run is still not completed after ${_polls} waits of ${_secs}s (fail closed)."
+            return 1
+        fi
+        log_info "ci_prior_run_await: waiting ${_secs}s for the latest code run to finish (${_i}/${_polls})."
+        sleep "${_secs}"
+    done
+}
