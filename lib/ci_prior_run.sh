@@ -20,7 +20,7 @@
 #       numbers, space separated>` line per ci.yml run of the head sha.
 #       -> prints the id of the newest (highest run number) code run of
 #          that PR other than the current run and returns 0 when it is
-#          completed; returns 3 (pending, reason on stderr) when it is not
+#          completed; returns 3 (pending, an info line on stderr) when it is not
 #          completed yet (#872), 1 when there is none or on any malformed
 #          input. Runs of any
 #          other name (meta runs, runs from before #688) never count.
@@ -116,7 +116,7 @@ ci_prior_run_select() {
         return 1
     fi
     if [[ "${_best_status}" != completed ]]; then
-        log_error "ci_prior_run_select: the latest code run ${_best} is ${_best_status}, not completed yet (pending)."
+        log_info "ci_prior_run_select: the latest code run ${_best} is ${_best_status}, not completed yet (pending)."
         return 3
     fi
     printf '%s\n' "${_best}"
