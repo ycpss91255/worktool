@@ -138,7 +138,7 @@ EOF
     assert [ -d "${COPY}/.agents/state/test-report/acceptance" ]
 }
 
-@test "a spec never inherits the outer gate's report directory" {
+@test "a spec never inherits the outer gate's report directory or shard weights" {
     local _spec="${BATS_TEST_TMPDIR}/probe/unit/probe_spec.bats"
     mkdir -p "${_spec%/*}"
     ln -s "${TEST_DIR}/helper" "${BATS_TEST_TMPDIR}/probe/helper"
@@ -146,10 +146,11 @@ EOF
 #!/usr/bin/env bats
 load "${BATS_TEST_DIRNAME}/../helper/common"
 @test "probe" {
-    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" ]]
+    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" && -z "${WORKTOOL_SHARD_WEIGHTS:-}" ]]
 }
 EOF
-    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report run bats --formatter tap "${_spec}"
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report \
+        WORKTOOL_SHARD_WEIGHTS=.agents/state/shard-weights.tsv run bats --formatter tap "${_spec}"
     assert_success
     assert_line 'ok 1 probe'
 }
