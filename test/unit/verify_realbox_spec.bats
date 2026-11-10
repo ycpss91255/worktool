@@ -4395,7 +4395,7 @@ STUB
 @test "#712: an undetermined session probe after leader exit keeps evidence" {
     _712_session_tools
     local mode directory
-    for mode in failure timeout empty-output malformed late-malformed deadline; do
+    for mode in failure timeout empty-output malformed late-malformed; do
         FAKE_SESSION_CHECK="${mode}" run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
         assert_failure 1
         [[ "${stderr}" == *'cannot determine owned window session 4240'* ]]
@@ -4406,6 +4406,19 @@ STUB
         _realbox_quiet 5.2.3
         _realbox_quiet 5.2.1
     done
+}
+
+# A session listing that ps returned is decided as listed even when the
+# deadline passed while ps ran (#816): it is not an undetermined probe. The
+# sweep's remaining rows are then left unchecked by that deadline, so the
+# window is still kept (an interrupted scan, rc=1).
+@test "#816: a session listing completed past the deadline is not reported as undetermined" {
+    _712_session_tools
+    FAKE_SESSION_CHECK=deadline run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [[ "${stderr}" != *'cannot determine owned window session 4240'* ]]
+    [[ "${stderr}" != *'still has live members'* ]]
+    _assert_52_kept_evidence_stderr "$(cat "${STATE}/closed-directory")"
 }
 
 @test "#712: a member-free session after leader exit removes its directory" {
@@ -4630,6 +4643,120 @@ _798_stop_window_kill_wait_tick() {
     [ -f "${directory}/before" ]
     _assert_52_kept_evidence_stderr "${directory}"
     assert_equal "$(cat "${STATE}/closed")" $'-HUP -- -4240\n-TERM -- -4240\n-KILL -- -4240'
+}
+
+# Move the shared logical clock past every deadline while the Nth call of
+# stub $1 with exactly the arguments $2 runs, counted only once the file $4
+# exists under the stub state (empty: from the start). The call itself still
+# returns the stub's normal output: the observation completes, and only a
+# later clock read sees the deadline (#816).
+_816_clock_jump_during() {
+    local stub="$1" args="$2" nth="$3" gate="${4:-}"
+    cp "${STUBS}/${stub}" "${STATE}/r816-${stub}"
+    printf '0\n' >"${STATE}/r816-${stub}-calls"
+    printf '%s\n' "${args}" >"${STATE}/r816-${stub}-args"
+    printf '%s\n' "${nth}" >"${STATE}/r816-${stub}-nth"
+    printf '%s\n' "${gate}" >"${STATE}/r816-${stub}-gate"
+    cat >"${STUBS}/${stub}" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+state="\${FAKE_STATE_DIR}"
+gate="\$(<"\${state}/r816-${stub}-gate")"
+if [[ "\$*" == "\$(<"\${state}/r816-${stub}-args")" ]] && [[ -z "\${gate}" || -f "\${state}/\${gate}" ]]; then
+    calls=\$(( \$(<"\${state}/r816-${stub}-calls") + 1 ))
+    printf '%s\n' "\${calls}" >"\${state}/r816-${stub}-calls"
+    if [[ "\${calls}" -eq "\$(<"\${state}/r816-${stub}-nth")" ]]; then
+        printf '1000\n' >"\${state}/clock"
+        touch "\${state}/r816-jumped"
+    fi
+fi
+exec "\${state}/r816-${stub}" "\$@"
+STUB
+    chmod +x "${STUBS}/${stub}"
+}
+
+# Insert one shared-clock jump right after the shipped line matching $2 in
+# function $1, and require exactly one such line.
+_816_clock_jump_after() {
+    local hits
+    hits="$(awk -v fn="$1" -v mark="$2" '
+        $0 == fn "() {" {in_fn=1}
+        {print > out}
+        in_fn && index($0, mark) {
+            print "    printf '\''1000\\n'\'' >\"${FAKE_STATE_DIR}/clock\"; touch \"${FAKE_STATE_DIR}/r816-jumped\"" > out
+            hits++
+        }
+        in_fn && /^\}/ {in_fn=0}
+        END {print hits + 0}
+    ' out="${REALBOX}.new" "${REALBOX}")"
+    assert_equal "${hits}" 1
+    cat "${REALBOX}.new" >"${REALBOX}"
+    rm "${REALBOX}.new"
+}
+
+@test "#816: a session confirmed empty is not overridden by a later deadline read in close" {
+    _712_gone_before_cleanup_tools
+    _816_clock_jump_after _52_close_window '_52_stop_window '
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_success
+    [ -f "${STATE}/r816-jumped" ]
+    [[ "${stderr}" != *'cannot safely close owned window'* ]]
+    [ ! -d "$(cat "${STATE}/closed-directory")" ]
+    [ ! -f "${STATE}/closed" ]
+}
+
+@test "#816: a complete session listing decides membership although the deadline passed while it ran" {
+    _712_gone_before_cleanup_tools
+    _816_clock_jump_during ps '-e -o pid=,pgid=,sid=' 1
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_success
+    [ -f "${STATE}/r816-jumped" ]
+    [[ "${stderr}" != *'cannot determine owned window session'* ]]
+    [ ! -d "$(cat "${STATE}/closed-directory")" ]
+}
+
+@test "#816: a sweep that finished its scan is not overridden by a later deadline read" {
+    _712_gone_before_cleanup_tools
+    _816_clock_jump_after _52_sweep_window 'done <<<'
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [ -f "${STATE}/r816-jumped" ]
+    # The complete scan found no window; the session check after it is what
+    # the deadline stopped, and the message says so.
+    [[ "${stderr}" == *'cleanup deadline reached before owned window session 4240 was checked; keeping ownership evidence'* ]]
+    _assert_52_kept_evidence_stderr "$(cat "${STATE}/closed-directory")"
+}
+
+@test "#816: a complete cleanup snapshot is not reported as an inventory failure when the deadline passes" {
+    _712_gone_before_cleanup_tools
+    # Snapshot 1 is the sweep; snapshot 2 is the stop loop's root check.
+    _816_clock_jump_during ps '-e -o pid=,ppid=,comm=' 2 window-confirmed
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [ -f "${STATE}/r816-jumped" ]
+    [[ "${stderr}" != *'cannot inventory owned window'* ]]
+    [[ "${stderr}" == *'cleanup deadline reached before owned window session 4240 was checked; keeping ownership evidence'* ]]
+    _assert_52_kept_evidence_stderr "$(cat "${STATE}/closed-directory")"
+}
+
+@test "#816: a complete sweep snapshot ends at the deadline without claiming an inventory failure" {
+    _712_gone_before_cleanup_tools
+    _816_clock_jump_during ps '-e -o pid=,ppid=,comm=' 1 window-confirmed
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 1
+    [ -f "${STATE}/r816-jumped" ]
+    [[ "${stderr}" != *'cannot inventory owned window'* ]]
+    _assert_52_kept_evidence_stderr "$(cat "${STATE}/closed-directory")"
+}
+
+@test "#816: an ownership cwd read that completes after the search deadline still decides ownership" {
+    _712_session_tools
+    _816_clock_jump_during readlink '/proc/4240/cwd' 1
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    assert_failure 3
+    [ -f "${STATE}/r816-jumped" ]
+    [[ "${stderr}" != *'window ownership undetermined'* ]]
+    [[ "${stderr}" == *'[WARN] Ghostty new shell timed out; acceptance inconclusive'* ]]
 }
 
 @test "#712: I confirmed root absent from first cleanup snapshot with failed session probe keeps evidence" {
