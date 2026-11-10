@@ -503,7 +503,7 @@ CASES
         dockerfile/Dockerfile.system-real; do
         run grep -E '^FROM bats/bats:' "${REPO_ROOT}/${_dockerfile}"
         assert_success
-        assert_output 'FROM bats/bats:${BATS_TAG} AS bats-src'
+        assert_output "FROM bats/bats:\${BATS_TAG} AS bats-src"
         run grep -E '^ARG BATS_TAG=' "${REPO_ROOT}/${_dockerfile}"
         assert_success
         assert_output --regexp '^ARG BATS_TAG=[0-9]+\.[0-9]+\.[0-9]+$'
