@@ -173,3 +173,103 @@ _broken() {
     assert_failure 1
     assert_equal "${stderr:-}" '[ERROR] test_shard_verdict: empty tier or required list (fail closed).'
 }
+
+# Fetch fixture for test_shard_records_await (#890): the Nth call prints
+# ${BATS_TEST_TMPDIR}/listing.N (the last one again once they run out), the
+# "<id>\t<name>\t<created_at>" rows a run's artifact listing gives; `sleep`
+# only counts.
+_listing() {
+    local _n
+    _n=$(($(cat "${BATS_TEST_TMPDIR}/calls" 2>/dev/null || printf 0) + 1))
+    printf '%s\n' "${_n}" >"${BATS_TEST_TMPDIR}/calls"
+    while [[ "${_n}" -gt 1 && ! -f "${BATS_TEST_TMPDIR}/listing.${_n}" ]]; do _n=$((_n - 1)); done
+    cat "${BATS_TEST_TMPDIR}/listing.${_n}"
+}
+sleep() { printf '%s\n' "$1" >>"${BATS_TEST_TMPDIR}/slept"; }
+
+# The listing of run 42826334664 at the verdict's start: shard 4 of
+# ubuntu-latest finalized 8 s earlier but is not listed yet; the image and
+# other gates' artifacts are listed too.
+_listing_without_4_latest() {
+    printf '%s\t%s\t%s\n' \
+        13769836167 worktool-test-image-ubuntu-latest 2026-11-10T13:38:36Z \
+        13768289029 test-report-unit-1-ubuntu-latest 2026-11-10T13:42:31Z \
+        13768593500 test-report-unit-2-ubuntu-latest 2026-11-10T13:41:44Z \
+        13769297932 test-report-unit-3-ubuntu-latest 2026-11-10T13:42:43Z \
+        13769127749 test-report-unit-1-ubuntu-24.04-arm 2026-11-10T13:41:31Z \
+        13768413458 test-report-unit-2-ubuntu-24.04-arm 2026-11-10T13:40:22Z \
+        13770275042 test-report-unit-3-ubuntu-24.04-arm 2026-11-10T13:41:23Z \
+        13769786745 test-report-unit-4-ubuntu-24.04-arm 2026-11-10T13:42:25Z \
+        13768428747 test-report-test-matrix-ubuntu-latest 2026-11-10T13:42:09Z
+}
+
+@test "records await: a shard record not listed yet is waited for, then every record is named by id (#890)" {
+    _listing_without_4_latest >"${BATS_TEST_TMPDIR}/listing.1"
+    { _listing_without_4_latest
+      printf '%s\t%s\t%s\n' 13769058252 test-report-unit-4-ubuntu-latest 2026-11-10T13:44:25Z
+    } >"${BATS_TEST_TMPDIR}/listing.2"
+    run --separate-stderr test_shard_records_await 6 10 unit 4 ubuntu-latest ubuntu-24.04-arm -- _listing
+    assert_success
+    assert_output "$(printf '%s\t%s\n' \
+        13768289029 test-report-unit-1-ubuntu-latest \
+        13768593500 test-report-unit-2-ubuntu-latest \
+        13769297932 test-report-unit-3-ubuntu-latest \
+        13769058252 test-report-unit-4-ubuntu-latest \
+        13769127749 test-report-unit-1-ubuntu-24.04-arm \
+        13768413458 test-report-unit-2-ubuntu-24.04-arm \
+        13770275042 test-report-unit-3-ubuntu-24.04-arm \
+        13769786745 test-report-unit-4-ubuntu-24.04-arm)"
+    run cat "${BATS_TEST_TMPDIR}/slept"
+    assert_output 10
+    # Everything listed at once: no wait.
+    rm -f "${BATS_TEST_TMPDIR}"/listing.* "${BATS_TEST_TMPDIR}/calls" "${BATS_TEST_TMPDIR}/slept"
+    { _listing_without_4_latest
+      printf '%s\t%s\t%s\n' 13769058252 test-report-unit-4-ubuntu-latest 2026-11-10T13:44:25Z
+    } >"${BATS_TEST_TMPDIR}/listing.1"
+    run --separate-stderr test_shard_records_await 6 10 unit 4 ubuntu-latest ubuntu-24.04-arm -- _listing
+    assert_success
+    assert [ ! -e "${BATS_TEST_TMPDIR}/slept" ]
+}
+
+@test "records await: a re-run's record of the same name counts by its newest upload (#890)" {
+    printf '%s\t%s\t%s\n' \
+        900 test-report-unit-1-ubuntu-latest 2026-11-10T13:42:31Z \
+        800 test-report-unit-1-ubuntu-latest 2026-11-10T14:10:00Z \
+        901 test-report-unit-2-ubuntu-latest 2026-11-10T13:41:44Z >"${BATS_TEST_TMPDIR}/listing.1"
+    run --separate-stderr test_shard_records_await 0 10 unit 2 ubuntu-latest -- _listing
+    assert_success
+    assert_output "$(printf '%s\t%s\n' 800 test-report-unit-1-ubuntu-latest 901 test-report-unit-2-ubuntu-latest)"
+}
+
+@test "records await: a shard that never recorded still fails closed after the bounded wait (#890)" {
+    _listing_without_4_latest >"${BATS_TEST_TMPDIR}/listing.1"
+    run --separate-stderr test_shard_records_await 3 10 unit 4 ubuntu-latest ubuntu-24.04-arm -- _listing
+    assert_failure 1
+    # The records that are there are still named, so the verdict can report
+    # the whole picture; the missing one is named on stderr.
+    assert_line "$(printf '%s\t%s' 13769786745 test-report-unit-4-ubuntu-24.04-arm)"
+    refute_output --partial test-report-unit-4-ubuntu-latest
+    [[ "${stderr}" == *"test-report-unit-4-ubuntu-latest not listed after 3 waits of 10s (fail closed)"* ]] \
+        || fail "stderr: ${stderr}"
+    run cat "${BATS_TEST_TMPDIR}/calls"
+    assert_output 4
+    # The verdict over what was downloaded fails on that shard.
+    _record 1/4 ubuntu-latest a_spec.bats:1
+    run --separate-stderr test_shard_verdict "${ROOT}" unit 4 "${LIST}" "${REQUIRED}" ubuntu-latest
+    assert_failure 1
+}
+
+@test "records await: a failed listing or bad arguments fail closed at once (#890)" {
+    run --separate-stderr test_shard_records_await 3 10 unit 4 ubuntu-latest -- false
+    assert_failure 1
+    [[ "${stderr}" == *'listing the artifacts failed (fail closed)'* ]] || fail "stderr: ${stderr}"
+    run --separate-stderr test_shard_records_await x 10 unit 4 ubuntu-latest -- _listing
+    assert_failure 1
+    run --separate-stderr test_shard_records_await 3 10 unit 0 ubuntu-latest -- _listing
+    assert_failure 1
+    run --separate-stderr test_shard_records_await 3 10 unit 4 -- _listing
+    assert_failure 1
+    run --separate-stderr test_shard_records_await 3 10 unit 4 ubuntu-latest _listing
+    assert_failure 1
+    assert [ ! -e "${BATS_TEST_TMPDIR}/slept" ]
+}

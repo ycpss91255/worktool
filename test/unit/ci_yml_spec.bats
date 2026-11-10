@@ -445,7 +445,14 @@ _leg_names() {
     assert_success
     assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
     assert_line "      UNIT_SHARDS: ${UNIT_SHARDS}"
-    assert_line '          pattern: test-report-unit-*'
+    # By name, waited for, not by pattern (#890): a pattern download takes
+    # only what the listing holds at that moment.
+    refute_line --partial 'pattern: test-report-unit-'
+    refute_line --partial 'uses: actions/download-artifact'
+    assert_line '      actions: read'
+    assert_line --partial "test_shard_records_await 12 10 unit \"\${UNIT_SHARDS}\" ubuntu-latest ubuntu-24.04-arm -- listing"
+    assert_line --partial "repos/\${REPO}/actions/artifacts/\${id}/zip"
+    assert_line --partial "unzip -q -d \"\${RUNNER_TEMP}/shards/\${name}\""
     assert_line --partial "test_shard_verdict \"\${RUNNER_TEMP}/shards\" unit \"\${UNIT_SHARDS}\" \"\${list}\" \"\${required}\" ubuntu-latest ubuntu-24.04-arm"
     # Both are legs: ci-passed requires them on the code path.
     run _job_block ci-passed
