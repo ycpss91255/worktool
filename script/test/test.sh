@@ -148,6 +148,7 @@ _required_specs() {
                 unit/enter_spec.bats \
                 unit/workflow_spec.bats \
                 unit/approval_spec.bats \
+                unit/ci_prior_run_spec.bats \
                 unit/commit_attribution_spec.bats \
                 unit/commit_email_spec.bats \
                 unit/attribution_spec.bats \
@@ -729,6 +730,8 @@ lib/approval.sh|test/unit/hook/approval_check_spec.bats
 lib/attribution.sh|test/unit/attribution_spec.bats
 lib/commit_attribution.sh|test/unit/commit_attribution_spec.bats
 lib/commit_email.sh|test/unit/commit_email_spec.bats
+lib/ci_prior_run.sh|test/unit/ci_prior_run_spec.bats
+lib/ci_prior_run.sh|test/unit/ci_yml_spec.bats
 script/box/assemble.sh|test/unit/assemble_spec.bats
 script/box/assemble.sh|test/integration/assemble_spec.bats
 script/box/assemble.sh|test/system/real_assemble_spec.bats

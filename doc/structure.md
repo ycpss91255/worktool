@@ -15,6 +15,7 @@ worktool/
 │   ├── approval.sh      milestone-gate 核准判斷(純函式,不呼叫 GitHub API):approval_evaluate / approval_is_human_approval(#187)
 │   ├── attribution.sh   署名行判斷(純函式、一份樣式表):attribution_find / attribution_patterns;agent hook enforce_no_attribution 與 CI 檢查(#271)共用(#270)
 │   ├── commit_attribution.sh  commit 訊息與 PR 說明署名檢查:事件範圍、違規 SHA 與行、修正提示(#271)
+│   ├── ci_prior_run.sh  CI meta 路徑的前次 code run 判斷(純函式,不呼叫 GitHub API):ci_prior_run_select / ci_prior_run_evaluate / ci_prior_run_expected_jobs(#688)
 │   ├── commit_email.sh  commit email 判斷(純函式):author 必須是 GitHub noreply,committer 為 noreply 或 noreply@github.com(commit_email_evaluate / commit_email_range,#234)
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
@@ -47,7 +48,8 @@ worktool/
 │   │   ├── system_real_entry_spec.bats  DinD runner 入口:docker 卡死時等待/清理仍在期限內結束
 │   │   ├── justfile_spec.bats    just 文法:根 justfile 只有命名空間、每個 recipe 原封轉發 argv、錯誤來自 just 或腳本本身
 │   │   ├── diagram_spec.bats     README 三張 draw.io 圖的單一事實來源守門:存在、是 SVG、無 foreignObject、內嵌 mxfile、README 引用
-│   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部
+│   │   ├── ci_yml_spec.bats      ci.yml 兩架構矩陣:每個 job 跑兩種 runner、artifact 依 runner 命名、ci-passed 依賴全部;code／meta 路徑分流、concurrency、prior-run 接線(#688)
+│   │   ├── ci_prior_run_spec.bats  lib/ci_prior_run.sh:挑最新 code run、未完成或缺 leg 一律失敗、verify-all 依目前標籤要求(#688)
 │   │   ├── approval_spec.bats    lib/approval.sh:未貼標籤、有標籤無核准、非 OWNER、agent 標記開頭、正確核准(#187)
 │   │   ├── attribution_spec.bats  lib/attribution.sh:三種署名行在任何位置、大小寫都抓到並原樣列出,只提到 claude 的一般文字不算(#270)
 │   │   ├── commit_attribution_spec.bats  lib/commit_attribution.sh:三種署名、正常訊息、merge commit、範圍外舊 commit 與 PR 說明(#271)
@@ -140,7 +142,7 @@ worktool/
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
 ├── justfile             使用者介面入口:五個 `mod?`(test / box / agent / worktree / job)+ `default`(= just --list)
 └── .github/workflows/
-    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs + review-log；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總
+    ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs + review-log；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總；只改 PR 說明／標題／標籤時走 meta 路徑,跳過測試 tier、改要求同一 head sha 最新 code run 全綠(#688)
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
 ```
 
@@ -465,7 +467,7 @@ just test selfcheck
 系統組)都在 `test.sh` 的 `_required_specs` 明列**必要 spec**(unit:`log_spec`、
 `manifest_spec`、`assemble_spec`、`ci_gate_spec`、`system_real_entry_spec`、
 `test_sh_spec`、`selfcheck_spec`、`justfile_spec`、`diagram_spec`、`ci_yml_spec`、`bench_spec`、
-`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`adr_spec`、`adr/` 底下每份 ADR spec（含 `0011_spec.bats` 的 host 依賴最小語意斷言）、`contract_spec`、`hook/` 與 `script/` 底下每一支
+`setup_spec`、`status_spec`、`workflow_spec`、`approval_spec`、`attribution_spec`、`commit_attribution_spec`、`ci_prior_run_spec`、`commit_email_spec`、`milestone_gate_yml_spec`、`agent_config_spec`、`adr_spec`、`adr/` 底下每份 ADR spec（含 `0011_spec.bats` 的 host 依賴最小語意斷言）、`contract_spec`、`hook/` 與 `script/` 底下每一支
 agent spec;matrix:`enforce_milestone_gate_approval_spec`、`enforce_no_attribution_spec`;integration:`smoke_spec`、`assemble_spec`、`setup_spec`;system shim:
 `real_assemble_spec`;system-real:`real_engine_spec`;
 acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定義一個案例**
@@ -490,7 +492,8 @@ exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,�
 另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
 不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
 `just test system-real`,因此 `verify-all` 也間接使用 `--privileged`。
-PR 的 labeled / unlabeled 事件會重新計算 CI。
+PR 的 edited / labeled / unlabeled 事件也會觸發 CI,但只改 PR 說明、標題或標籤
+不會重跑測試 tier(#688)。
 
 `ci-passed` 要求映像建置、每個 matrix gate、`test-system-real`、`commit-email`、
 `commit-attribution`、`commit-refs`、`review-log` 都 `success`;這些必要 gate 被 skip、取消或缺席
@@ -501,6 +504,32 @@ PR 的 labeled / unlabeled 事件會重新計算 CI。
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
 的每一條 leg 都綠;#149,`test/unit/ci_yml_spec.bats` 斷言此矩陣)。sub-issue PR
 全綠且 codex「可合併」後自主合併;milestone 驗收 PR 全綠後交由人類審核合併。
+
+### code 路徑與 meta 路徑(#688)
+
+- **分流**:`ci.yml` 以同一個運算式(`run-name`、`concurrency`、`route` job 三處逐字相同)
+  判定路徑。push、`opened`／`synchronize`／`reopened`、加上 `milestone-gate` 標籤
+  (`verify-all` 變成必要)、改 base 的 `edited` 走 **code 路徑**,所有 tier 照跑,
+  run 名稱為 `CI code run`;其餘 edited／labeled／unlabeled 走 **meta 路徑**
+  (`CI meta run`),跳過 build-image、gate、`test-system-real`、`verify-all`。
+- **meta 路徑不放水**:policy job(`commit-email`、`commit-attribution` 含 PR 說明、
+  `commit-refs`、`review-log`)照跑;新增的 `prior-run` job 以 `lib/ci_prior_run.sh`
+  找出同一 head sha、同一 PR **最新一次** code run,要求它已完成且兩個架構的每一條
+  測試 leg 都 `success`,PR **目前**貼著 `milestone-gate` 時再加兩條 `verify-all`。
+  找不到、仍在跑、缺 leg 或任何 leg 不是 success 一律失敗;不採信該 run 的整體結論
+  或它的 `ci-passed`,meta run 不能互相背書。`ci-passed` 在 code 路徑要求測試 leg、
+  在 meta 路徑要求 `prior-run`,兩條路徑都要求 policy job,並在彙總前以 API 重讀一次
+  PR 說明做署名檢查。`ci-passed` 永不 skip(skip 的 check run 會被當成通過)。
+- **concurrency**:兩條路徑各自一個 group,改說明不會取消正在跑的 code run;
+  `cancel-in-progress` 只對 `pull_request` 生效,main push 不會被取消。
+- **required check 不變**:branch protection 仍只要求 `ci-passed`(與
+  `milestone-gate-approval`),以 head sha 上最新的 `ci-passed` check run 為準。
+  code run 還在跑時改說明,meta run 的 `ci-passed` 會先失敗,code run 結束時
+  建立的 `ci-passed` 較晚,接手成為結果。本 issue 原本設想拆出獨立 workflow 並新增
+  required check,因不改 branch protection 而改採此做法(見 #688 留言)。
+- `test/unit/ci_prior_run_spec.bats` 測判斷規則,`test/unit/ci_yml_spec.bats`
+  釘住分流、concurrency 與 `prior-run`／`ci-passed` 接線,並核對 lib 預期的 leg
+  名稱與 `ci.yml` 矩陣一致。
 
 ### commit email 必須是 GitHub noreply(`commit-email`,#234)
 

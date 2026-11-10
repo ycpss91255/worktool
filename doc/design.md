@@ -257,6 +257,9 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    執行。`verify-all` 只在貼有 `milestone-gate` 標籤的 PR 以 `just verify all` 執行
    非實機驗收(不傳 `--allow-real-box`,第 5 節留給實機驗收),兩種架構全部成功才通過
    `ci-passed`。普通 PR 與 main push 不要求 `verify-all`,其餘必要 gate 仍須全部成功。
+   只改 PR 說明、標題或標籤的事件走 meta 路徑:跳過測試 tier,改要求同一 head sha
+   最新一次 code run 的每一條 leg 都綠,缺一律失敗,`ci-passed` 仍是唯一的 CI
+   required check(#688,細節見 `doc/structure.md`「code 路徑與 meta 路徑」)。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
 
