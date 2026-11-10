@@ -86,11 +86,26 @@ _job() {
 
 @test "two requested shas never replace each other in the concurrency queue" {
     run cat "${YML}"
-    assert_line "  group: nightly-\${{ inputs.sha || 'main' }}"
+    assert_line "  group: nightly-\${{ inputs.sha || github.sha }}"
 }
 
 @test "the full serial run takes Ubuntu packages from the same mirror as ci.yml (#843)" {
     run _job full-serial
     assert_line '    env:'
     assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+}
+
+# --- main push runs the full check (issue #851) -------------------------------
+
+@test "every push to main runs the full check on that sha" {
+    run cat "${YML}"
+    assert_line '  push:'
+    assert_line '    branches: [main]'
+}
+
+@test "a scheduled run asks full-run.sh whether main's HEAD already has a green full run, excluding itself" {
+    run _job decide
+    assert_line --partial "./.agents/script/monitor/full-run.sh --repo \"\${REPO}\" --sha \"\${GITHUB_SHA}\" --exclude-run \"\${GITHUB_RUN_ID}\""
+    assert_line --partial "nightly_decide \"\${EVENT}\" \"\${rc}\" \"\${open}\" \"\${head_rc}\""
+    assert_line '      actions: read'
 }
