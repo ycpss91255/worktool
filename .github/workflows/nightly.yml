@@ -121,7 +121,12 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # Full-check mode (issue #870): every nightly run (main push, cron,
+      # dispatch) is a complete check; PR runs (ci.yml) never
+      # set it.
       - name: Bare just test (seven tiers in order, serial)
+        env:
+          WORKTOOL_FULL_CHECK: '1'
         run: just test
 
       - name: Acceptance 2.3 checks again (integration, system-real)

@@ -546,34 +546,12 @@ _verify_shard_tap() {
         || { _err "cannot save the shard TAP to ${_shard_out}"; return 1; }
 }
 
-# Print "<weight><TAB><spec>" for every spec of tier $1 (tier-relative paths
-# on stdin): the weights file's milliseconds when it lists the spec, else
-# the spec's @test count x 1000 (cheap and deterministic).
-_shard_weight_rows() {
-    local _tier="$1" _file="$2" _rel _w _n
-    local -A _known=()
-    if [[ -n "${_file}" ]]; then
-        while IFS=$'\t' read -r _rel _w; do
-            [[ "${_rel}" == "${_tier}/"* && "${_w}" =~ ^[0-9]+$ ]] || continue
-            _known["${_rel#"${_tier}/"}"]="${_w}"
-        done <"${_file}"
-    fi
-    while IFS= read -r _rel; do
-        if [[ -n "${_known[${_rel}]+set}" ]]; then
-            printf '%s\t%s\n' "${_known[${_rel}]}" "${_rel}"
-        else
-            _n="$(grep -c '^@test ' "${REPO_ROOT}/test/${_tier}/${_rel}")" || _n=0
-            printf '%s\t%s\n' "$((_n * 1000))" "${_rel}"
-        fi
-    done
-}
-
 # Run shard ${_shard} (I/N) of tier $1: every test/<tier>/**/*.bats is
-# assigned by weight (lib/test_shard.sh); this shard runs its own specs,
-# heaviest first, checks its own required specs before bats and an exact
-# plan after it, and (with a report directory) leaves the record the CI
-# union verdict reads: shard, weights hash, spec + case count rows, plan,
-# the TAP, and the junit base directory.
+# assigned by weight and longest case (lib/test_shard.sh, #868); this shard
+# runs its own specs, heaviest first, checks its own required specs before
+# bats and an exact plan after it, and (with a report directory) leaves the
+# record the CI union verdict reads: shard, weights hash, spec + case count
+# rows, plan, the TAP, and the junit base directory.
 _run_shard() {
     local _tier="$1" _i="${_shard%/*}" _n="${_shard#*/}" _rel _count _weights='' _hash=none
     local _dir="${REPO_ROOT}/test/${_tier}" _row _total=0 _required
@@ -594,8 +572,8 @@ _run_shard() {
         fi
     fi
     local _assigned
-    _assigned="$(printf '%s\n' "${_all[@]}" | _shard_weight_rows "${_tier}" "${_weights}" \
-        | test_shard_assign "${_n}")" || _die "shard assignment failed"
+    _assigned="$(printf '%s\n' "${_all[@]}" | test_shard_rows "${_tier}" "${_dir}" "${_weights}" \
+        | test_shard_assign "${_n}" "${WORKTOOL_TEST_JOBS}")" || _die "shard assignment failed"
     while IFS=$'\t' read -r _row _rel; do
         [[ "${_row}" == "${_i}" ]] && _mine+=("${_rel}")
     done <<<"${_assigned}"
@@ -705,8 +683,9 @@ Environment:
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   SYSTEM_REAL_IMAGE_PREBUILT=1
                          skip the DinD runner build (CI loads a cached one)
-  WORKTOOL_SHARD_WEIGHTS repo-relative "<tier>/<spec><TAB><ms>" weights for
-                         --shard (default: none, @test counts)
+  WORKTOOL_SHARD_WEIGHTS repo-relative "<tier>/<spec><TAB><ms>" weights (and
+                         "longest/" rows) for --shard (default: none, @test
+                         counts)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
   GHOSTTY_IMAGE_PREBUILT=1
                          skip the ghostty image build (CI loads a cached one)
