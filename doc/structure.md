@@ -513,6 +513,12 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 案例,#868),存進 actions cache
 (key `shard-weights-<run_id>-<attempt>`,PR 以前綴讀最新一份);main push 的 `ci-passed`
 要求它 `success`,PR 上預期 skipped(#827)。權重只用來排序與平衡工作量,不決定跑什麼。
+兩個 Ubuntu 映像(ghostty、system-real)的建置都經 runner 上的本機套件代理
+(`script/test/apt-seed.sh`、`script/test/apt-seed-proxy.mjs`,以預先定義的 `http_proxy` build arg
+接上,不進層快取 key、不寫進映像):代理從最新的 `apt-image-<runner>-` cache 供應 pool 的 `.deb`,
+其餘(索引、miss)直通原本的來源。main push 另跑 `image-seed` job,以 `no-cache` 重建兩個映像、
+記下冷建置需要的全部 `.deb`,以集合的 digest 為 key 寫回;main push 的 `ci-passed` 要求它
+`success`,PR 上預期 skipped(#892、ADR-0023)。
 映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
