@@ -582,12 +582,16 @@ jobs:
   # verify-all is required from the PR's labels NOW (live, not the event
   # payload), so removing milestone-gate stops requiring it and a label
   # still present keeps requiring it. The rule lives in lib/ci_prior_run.sh.
+  # A code run of the head sha still going when the meta run starts (a body
+  # edit mid-run, #872) is waited for, up to 380 x 30 s (past verify-all's
+  # 180 min), then judged: failing at once would leave a red ci-passed that
+  # the code run's later green does not replace.
   prior-run:
     name: prior-run
     needs: route
     if: needs.route.outputs.code == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 200
     permissions:
       contents: read
       actions: read
@@ -613,11 +617,11 @@ jobs:
           if grep -Fqx milestone-gate <<< "${labels}"; then
             verify=true
           fi
-          runs="${RUNNER_TEMP}/runs"
-          gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
-            --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv' \
-            > "${runs}" || exit 1
-          id="$(ci_prior_run_select "${RUN_ID}" "${PR_NUMBER}" < "${runs}")" || exit 1
+          _runs() {
+            gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv'
+          }
+          id="$(ci_prior_run_await 380 30 "${RUN_ID}" "${PR_NUMBER}" -- _runs)" || exit 1
           echo "latest code run of ${PR_HEAD}: ${id} (verify-all required: ${verify})"
           jobs="${RUNNER_TEMP}/jobs"
           gh api --paginate "repos/${REPO}/actions/runs/${id}/jobs?filter=latest&per_page=100" \

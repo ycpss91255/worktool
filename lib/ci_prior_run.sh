@@ -24,6 +24,15 @@
 #          completed yet (#872), 1 when there is none or on any malformed
 #          input. Runs of any
 #          other name (meta runs, runs from before #688) never count.
+#   ci_prior_run_await <max_polls> <poll_seconds> <current_run_id> <pr_number> -- <fetch...>
+#       runs <fetch...> (it prints the run records ci_prior_run_select
+#       reads) and selects; while the latest code run is pending (3) it
+#       sleeps <poll_seconds> and fetches again, at most <max_polls> times
+#       (#872: a body edit while the code run is still going must judge
+#       that run, not fail before it ends). -> the selected id and 0; 1
+#       when there is no code run, a fetch fails, the arguments are bad or
+#       it is still pending after the last wait. The library itself never
+#       calls the GitHub API: the caller passes the fetch.
 #   ci_prior_run_expected_jobs <verify_required: true|false>
 #       -> prints the check name of every leg that must be green, one per
 #          line: both runners of build-image, the three gate legs, the unit
