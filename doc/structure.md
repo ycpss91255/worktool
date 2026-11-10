@@ -476,7 +476,11 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 綠燈;非必要的額外 spec 照常一起跑。各 bats tier 預設以
 `WORKTOOL_TEST_JOBS=4` 並行,跨 spec 也在同一 spec 內並行(#689);案例會與牆鐘期限賽跑、或共用檔案層狀態的 spec 在檔案層級寫 `export BATS_NO_PARALLELIZE_WITHIN_FILE=true`,維持該檔內序列執行。CI 的 bats gate 設 `WORKTOOL_TEST_JOBS=8`(4 vCPU runner 上實測的拐點:arm 的 unit 在 4／8／16 jobs 為 616／503／517 秒)。可在 `just` 前設定正整數
 覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
-exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
+exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,不得含 `..`)時,
+共用測試映像內的每個 bats tier 另以 `--report-formatter junit` 把每個案例的耗時寫到
+`<dir>/<tier>/report.xml`(#827);TAP 的計畫、`ok`／`not ok`、`skip` 判定不變,只是 bats
+會在每個案例行尾加上 `# in N ms` 的計時註記;無效值同樣在啟動前以 exit 2 拒絕。
+`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 刪檔/空檔負向案例證明這條規則。
 
 ## CI
@@ -495,6 +499,12 @@ PR 的 edited / labeled / unlabeled 事件也會觸發 CI,但只改 PR 說明、
 `commit-attribution`、`commit-refs`、`review-log` 都 `success`;這些必要 gate 被 skip、取消或缺席
 一律視為失敗。只有 `milestone-gate` PR 額外要求 `verify-all` 全部成功;
 普通 PR 與 main push 的 `verify-all` 預期 skipped,不列為必要 gate。
+每個 bats gate 以 `WORKTOOL_TEST_REPORT_DIR` 產生 junit 報告並上傳成
+`test-report-<tier>-<runner>` artifact(gate 失敗也上傳;綠燈卻沒有報告則該 job 失敗)。
+main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 matrix 的報告合併成
+「spec → 毫秒」的分片權重(同一 spec 取較慢的架構),存進 actions cache
+(key `shard-weights-<run_id>-<attempt>`,PR 以前綴讀最新一份);main push 的 `ci-passed`
+要求它 `success`,PR 上預期 skipped(#827)。權重只用來排序與平衡工作量,不決定跑什麼。
 映像建置、各測試 gate 與 `verify-all` 都以 `runner` matrix 維度同時跑在 `ubuntu-latest`(amd64)與
 `ubuntu-24.04-arm`(arm64,GitHub 託管)兩種 runner 上(check 名稱為
 `<gate> (<runner>)`,測試映像 artifact 依 runner 分開命名,`ci-passed` 要求兩個架構
