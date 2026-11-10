@@ -512,7 +512,9 @@ _verify_shard_tap() {
         _err "${_tier} shard ${_shard}: ${_oks} ok line(s) for a plan of ${_shard_plan}"
         return 1
     fi
-    [[ -z "${_shard_out}" ]] || cp -- "${_tap}" "${_shard_out}/shard.tap" \
+    # Written, not copied: the mktemp stream is 0600 and owned by the
+    # container's root, so a copy would be unreadable to the CI upload.
+    [[ -z "${_shard_out}" ]] || cat -- "${_tap}" >"${_shard_out}/shard.tap" \
         || { _err "cannot save the shard TAP to ${_shard_out}"; return 1; }
 }
 

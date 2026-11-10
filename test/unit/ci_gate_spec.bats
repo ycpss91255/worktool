@@ -178,6 +178,9 @@ EOF
     assert_output "$(printf 'shard\t1/2\nweights\tnone\nspec\thook/c_spec.bats\t2\nplan\t2')"
     run cat "${_root}/test-report-unit-1-r/unit/base"
     assert_output 'hook'
+    # Readable by anyone: CI uploads the record as another user.
+    run stat -c %a "${_root}/test-report-unit-1-r/unit/shard.tap"
+    assert_output --regexp '^6[0-7]4$'
     printf '%s\n' b_spec.bats hook/c_spec.bats log_spec.bats >"${BATS_TEST_TMPDIR}/list"
     printf '%s\n' log_spec.bats >"${BATS_TEST_TMPDIR}/required"
     run bash -c 'source "$1/lib/test_shard.sh" && test_shard_verdict "$2" unit 2 "$3" "$4" r' _ \
