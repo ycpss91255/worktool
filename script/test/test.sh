@@ -73,6 +73,10 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
+# Repo-relative directory for per-case junit reports (issue #827); empty =
+# no report. Each bats tier writes <dir>/<tier>/report.xml next to the TAP
+# stream, which stays exactly what it was (the gate still reads only TAP).
+WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -282,7 +286,7 @@ _run_in_container() {
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS "${_layout_env[@]}" \
+    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -462,7 +466,14 @@ _run_bats_tier() {
 
     local _tap
     _tap="$(mktemp)" || _die "mktemp failed"
-    local _bats_args=(--formatter tap --jobs "${WORKTOOL_TEST_JOBS}"
+    local _bats_args=(--formatter tap)
+    if [[ -n "${WORKTOOL_TEST_REPORT_DIR}" ]]; then
+        local _report="${REPO_ROOT}/${WORKTOOL_TEST_REPORT_DIR}/${_tier}"
+        rm -rf -- "${_report}"
+        mkdir -p -- "${_report}" || _die "cannot create report directory ${_report}"
+        _bats_args+=(--report-formatter junit --output "${_report}")
+    fi
+    _bats_args+=(--jobs "${WORKTOOL_TEST_JOBS}"
         --no-parallelize-within-files -r)
     [[ -z "${_filter}" ]] || _bats_args+=(-f "${_filter}")
     if ! bats "${_bats_args[@]}" "${_paths[@]}" | tee "${_tap}"; then
@@ -541,6 +552,11 @@ Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
   WORKTOOL_TEST_JOBS     bats files to run in parallel (default 4)
+  WORKTOOL_TEST_REPORT_DIR
+                         repo-relative directory: each bats tier also writes
+                         a junit report (per-case times) to <dir>/<tier>/
+                         report.xml; the TAP output is unchanged (default:
+                         none)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
 EOF
@@ -1019,6 +1035,12 @@ main() {
     _changed=0 _base="origin/main" _base_set=0
     [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
         || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
+    if [[ -n "${WORKTOOL_TEST_REPORT_DIR}" ]]; then
+        [[ "${WORKTOOL_TEST_REPORT_DIR}" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ \
+            && "/${WORKTOOL_TEST_REPORT_DIR}/" != */../* \
+            && "/${WORKTOOL_TEST_REPORT_DIR}/" != */./* ]] \
+            || _usage_error "invalid WORKTOOL_TEST_REPORT_DIR '${WORKTOOL_TEST_REPORT_DIR}' (a repo-relative path)"
+    fi
     _parse_test_args "$@"
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
