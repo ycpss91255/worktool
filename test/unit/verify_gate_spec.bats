@@ -123,8 +123,9 @@ _make_repo_copy() {
     if [[ -f "${REPO_ROOT}/lib/verify_ci_gate.sh" ]]; then
         cp "${REPO_ROOT}/lib/verify_ci_gate.sh" "${COPY}/lib/"
     fi
-    mkdir -p "${COPY}/script/test"
+    mkdir -p "${COPY}/script/test" "${COPY}/.github/workflows"
     cp "${REPO_ROOT}/script/test/test.sh" "${COPY}/script/test/test.sh"
+    cp "${REPO_ROOT}/.github/workflows/ci.yml" "${COPY}/.github/workflows/ci.yml"
 }
 
 # _stub <name> - body on stdin. The body runs with $REAL set to the real
@@ -1360,4 +1361,38 @@ _run_ci_item() {
     _run_ci_item 2.3
     assert_failure 1
     assert_output --partial 'not ok 99 something broke'
+}
+
+@test "CI mode 2.1: after main's job renames the old per-tier names no longer count (#833, audit F8)" {
+    _write_tier_blocks
+    # main's shape: lint, system and acceptance on one leg, unit as shards
+    # with a union verdict.
+    sed -i -e 's/^        gate: \[.*\]$/        gate: [lint-system-acceptance, test-matrix, test-integration]/' \
+        "${COPY}/.github/workflows/ci.yml"
+    awk '
+        /^          - gate: lint$/ { print "          - gate: lint-system-acceptance"; getline; print "            tier: lint system acceptance"; next }
+        /^          - gate: test-(unit|system|acceptance)$/ { getline; next }
+        { print }
+        /^jobs:$/ { print "  test-unit-verdict:"; print "    name: test-unit-verdict" }
+    ' "${COPY}/.github/workflows/ci.yml" >"${COPY}/ci.new"
+    mv "${COPY}/ci.new" "${COPY}/.github/workflows/ci.yml"
+    # The old names, all green, are not evidence any more.
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.1
+    assert_failure 1
+    assert_output --partial 'job "lint-system-acceptance (ubuntu-latest)" appears 0 times'
+    assert_output --partial 'job "test-unit-verdict" appears 0 times'
+    # The new names, green, are.
+    {
+        grep -vE '^(lint|test-unit|test-system|test-acceptance) \(' "${BATS_TEST_TMPDIR}/jobs.tsv"
+        printf 'test-unit-verdict\t%s\t%s\tcompleted\tsuccess\t900\n' "${CI_SHA}" "${CI_RUN}"
+        printf 'lint-system-acceptance (ubuntu-latest)\t%s\t%s\tcompleted\tsuccess\t901\n' "${CI_SHA}" "${CI_RUN}"
+        printf 'lint-system-acceptance (ubuntu-24.04-arm)\t%s\t%s\tcompleted\tsuccess\t902\n' "${CI_SHA}" "${CI_RUN}"
+    } >"${BATS_TEST_TMPDIR}/new.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/new.tsv"
+    _run_ci_item 2.1
+    assert_success
+    assert_line "reused: test-unit-verdict success run=${CI_RUN} job=900"
 }
