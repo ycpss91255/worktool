@@ -60,3 +60,13 @@ _report() {
     assert_output ''
     assert_equal "${stderr:-}" "[ERROR] junit report without readable timed cases: ${REPORTS}/test-report-matrix-amd/matrix/report.xml"
 }
+
+@test "shard reports name specs relative to their first spec's directory; merged names are tier-relative" {
+    _report test-report-unit-1-amd unit 'c_spec.bats:1' '/source/test/unit/log_spec.bats:2'
+    printf 'hook\n' >"${REPORTS}/test-report-unit-1-amd/unit/base"
+    _report test-report-unit-2-amd unit 'b_spec.bats:3'
+    printf '.\n' >"${REPORTS}/test-report-unit-2-amd/unit/base"
+    run shard_weights_merge "${REPORTS}" unit
+    assert_success
+    assert_output "$(printf 'unit/b_spec.bats\t3000\nunit/hook/c_spec.bats\t1000\nunit/log_spec.bats\t2000')"
+}

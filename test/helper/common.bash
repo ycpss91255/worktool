@@ -26,6 +26,8 @@ export TEST_DIR="${REPO_ROOT}/test"
 # from a clean environment, as it does locally; one that needs a report
 # directory sets it on its own call.
 unset WORKTOOL_TEST_REPORT_DIR
+# Likewise the shard weights a unit shard passes in (issue #831).
+unset WORKTOOL_SHARD_WEIGHTS
 
 # --- Load bats-* extensions --------------------------------------------------
 # The test image bakes these at /usr/lib/bats/{bats-support,bats-assert}.
