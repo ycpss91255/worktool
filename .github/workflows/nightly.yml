@@ -121,12 +121,22 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # The box's downloaded packages (issue #878): read the newest set
+      # ci.yml's main push saves (#847); nightly never writes it.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
       # Full-check mode (issue #870): every nightly run (main push, cron,
       # dispatch) is a complete check; PR runs (ci.yml) never
       # set it.
       - name: Bare just test (seven tiers in order, serial)
         env:
           WORKTOOL_FULL_CHECK: '1'
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test
 
       - name: Acceptance 2.3 checks again (integration, system-real)
@@ -163,7 +173,18 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # The box's downloaded packages (issue #878): read the newest set
+      # ci.yml's main push saves (#847); nightly never writes it.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
       - name: Tier isolation (random order, residue check)
+        env:
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test isolation
 
   report:
