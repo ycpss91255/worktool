@@ -304,6 +304,30 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     refute_output --partial 'test.sh --help exits 0'
 }
 
+@test "test.sh --shard I/N forwards to the unit or matrix container and refuses anything else" {
+    run "${TEST_SH}" --unit --shard 2/4
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit --shard 2/4$'
+    local _args _msg _argv
+    while IFS='|' read -r _args _msg; do
+        read -r -a _argv <<<"${_args}"
+        run "${TEST_SH}" "${_argv[@]}"
+        assert_failure 2
+        assert_output "test.sh: ${_msg} (see --help)"
+    done <<'CASES'
+--unit --shard 0/4|invalid shard '0/4' (expected I/N with 1 <= I <= N)
+--unit --shard 5/4|invalid shard '5/4' (expected I/N with 1 <= I <= N)
+--unit --shard 1of4|invalid shard '1of4' (expected I/N with 1 <= I <= N)
+--unit --shard|option '--shard' requires a value
+--integration --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --matrix --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --shard 1/2 test/unit/log_spec.bats|option '--shard' takes no spec path or --filter
+--unit --shard 1/2 --filter x|option '--shard' takes no spec path or --filter
+CASES
+}
+
 @test "test.sh rejects a spec path from another tier" {
     run "${TEST_SH}" --unit test/integration/smoke_spec.bats
     assert_failure 2
