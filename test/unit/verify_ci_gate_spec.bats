@@ -61,13 +61,111 @@ _job() {
     assert_failure 2
 }
 
-@test "job names: lint is lint, every other step is test-<step>, each with its runner" {
-    run verify_ci_gate_job_name lint ubuntu-latest
-    assert_output 'lint (ubuntu-latest)'
-    run verify_ci_gate_job_name unit ubuntu-24.04-arm
-    assert_output 'test-unit (ubuntu-24.04-arm)'
-    run verify_ci_gate_job_name system-real ubuntu-latest
-    assert_output 'test-system-real (ubuntu-latest)'
+# Two shapes of ci.yml: this branch's (one gate leg per tier) and main's
+# after #831 / #841 (lint, system and acceptance on one leg; unit as shards
+# whose union verdict stands for the tier). The job names are read from the
+# workflow, never kept as a second list (#833, audit F8).
+_ci_m3() {
+    cat <<'EOF'
+jobs:
+  gate:
+    name: ${{ matrix.gate }} (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        gate: [lint, test-unit, test-integration]
+        include:
+          - gate: lint
+            tier: lint
+          - gate: test-unit
+            tier: unit
+          - gate: test-integration
+            tier: integration
+    steps:
+      - run: just test
+  test-system-real:
+    name: test-system-real (${{ matrix.runner }})
+EOF
+}
+
+_ci_main() {
+    cat <<'EOF'
+jobs:
+  gate:
+    name: ${{ matrix.gate }} (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        gate: [lint-system-acceptance, test-integration]
+        include:
+          - gate: lint-system-acceptance
+            tier: lint system acceptance
+          - gate: test-integration
+            tier: integration
+    steps:
+      - run: just test
+  unit-shard:
+    name: test-unit ${{ matrix.shard }}/${{ matrix.shards }} (${{ matrix.runner }})
+  test-unit-verdict:
+    name: test-unit-verdict
+  test-system-real:
+    name: test-system-real (${{ matrix.runner }})
+EOF
+}
+
+@test "job names come from ci.yml: one gate leg per tier on this branch" {
+    _ci_m3 >"${BATS_TEST_TMPDIR}/ci.yml"
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" lint
+    assert_success
+    assert_output "$(printf '%s\n' 'lint (ubuntu-latest)' 'lint (ubuntu-24.04-arm)')"
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" unit
+    assert_output "$(printf '%s\n' 'test-unit (ubuntu-latest)' 'test-unit (ubuntu-24.04-arm)')"
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" system-real
+    assert_output "$(printf '%s\n' 'test-system-real (ubuntu-latest)' 'test-system-real (ubuntu-24.04-arm)')"
+}
+
+@test "job names come from ci.yml: main's merged leg and the unit union verdict" {
+    _ci_main >"${BATS_TEST_TMPDIR}/ci.yml"
+    local _t
+    for _t in lint system acceptance; do
+        run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" "${_t}"
+        assert_success
+        assert_output "$(printf '%s\n' 'lint-system-acceptance (ubuntu-latest)' 'lint-system-acceptance (ubuntu-24.04-arm)')"
+    done
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" unit
+    assert_success
+    assert_output 'test-unit-verdict'
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" integration
+    assert_output "$(printf '%s\n' 'test-integration (ubuntu-latest)' 'test-integration (ubuntu-24.04-arm)')"
+}
+
+@test "a tier no job of ci.yml runs fails closed and names the tier" {
+    _ci_main >"${BATS_TEST_TMPDIR}/ci.yml"
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/ci.yml" matrix
+    assert_failure 1
+    assert_output --partial "no job of ${BATS_TEST_TMPDIR}/ci.yml runs tier matrix"
+    run verify_ci_gate_tier_jobs "${BATS_TEST_TMPDIR}/missing.yml" lint
+    assert_failure 1
+}
+
+@test "every bare just test stage maps to jobs of the real ci.yml, each a job ci.yml really names" {
+    local _steps _step _name _names _templates _t _ok
+    _steps="$(bash -c 'source "$1" && printf "%s\n" "${HOST_STEPS[@]}"' _ "${REPO_ROOT}/script/test/test.sh")"
+    _templates="$(sed -nE 's/^    name: (.*)$/\1/p' "${REPO_ROOT}/.github/workflows/ci.yml")"
+    while IFS= read -r _step; do
+        _names="$(verify_ci_gate_tier_jobs "${REPO_ROOT}/.github/workflows/ci.yml" "${_step}")" \
+            || fail "stage ${_step} maps to no job of ci.yml"
+        while IFS= read -r _name; do
+            _ok=0
+            while IFS= read -r _t; do
+                # A template matches when its expressions can stand for the
+                # parts of the name: gate, runner, shard.
+                _re="$(printf '%s' "${_t}" | sed -E 's/[][().*+?^$|\\]/\\&/g; s/\\\$\{\{[^}]*\}\}/.+/g')"
+                [[ "${_name}" =~ ^${_re}$ ]] && _ok=1
+            done <<<"${_templates}"
+            [[ "${_ok}" == 1 ]] || fail "job name '${_name}' (stage ${_step}) is not a name ci.yml declares"
+        done <<<"${_names}"
+    done <<<"${_steps}"
 }
 
 @test "evaluate: every job completed, success, same sha and run passes and lists what it reused" {
@@ -135,10 +233,12 @@ _job() {
     assert_failure 1
 }
 
-@test "the runners judged are exactly ci.yml's gate matrix runners" {
-    run sed -nE '/^  gate:$/,/^  [a-z-]+:$/ s/^        runner: \[(.*)\]$/\1/p' "${REPO_ROOT}/.github/workflows/ci.yml"
+@test "the runners judged are read from ci.yml's gate matrix" {
+    run verify_ci_gate_runners "${REPO_ROOT}/.github/workflows/ci.yml"
     assert_success
-    assert_output "$(verify_ci_gate_runners | paste -sd, - | sed 's/,/, /g')"
+    assert_output "$(sed -nE '/^  gate:$/,/^  [a-z-]+:$/ s/^        runner: \[(.*)\]$/\1/p' "${REPO_ROOT}/.github/workflows/ci.yml" | sed 's/, /\n/g')"
+    run verify_ci_gate_runners "${BATS_TEST_TMPDIR}/missing.yml"
+    assert_failure 1
 }
 
 @test "lib/verify_ci_gate.sh sets no shell options (it is sourced)" {
