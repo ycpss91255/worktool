@@ -394,10 +394,45 @@ jobs:
           build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=system-real-{0}', matrix.runner) || '' }}
 
+      # The box's downloaded packages (issue #847): the first launch runs
+      # distrobox-init's full apt install, with apt keeping its .deb files in
+      # this dir (test.sh WORKTOOL_APT_CACHE_DIR -> apt-mirror.sh --archives),
+      # so only packages it does not already hold are fetched. Every run
+      # reads the newest entry; only a main push prunes (newest version per
+      # package, lib/apt_cache.sh) and saves, keyed by the kept set, so an
+      # unchanged set is not stored again.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
         env:
           SYSTEM_REAL_IMAGE_PREBUILT: "1"
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test system-real
+
+      - name: Prune and key box packages
+        id: debs
+        if: github.event_name == 'push' && !cancelled()
+        run: |
+          set -euo pipefail
+          source lib/apt_cache.sh
+          apt_cache_prune "${RUNNER_TEMP}/apt-box"
+          kc="$(apt_cache_key "${RUNNER_TEMP}/apt-box")"
+          read -r key count <<< "${kc}"
+          echo "box packages: ${count} (key ${key})"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save box packages
+        if: steps.debs.outcome == 'success' && steps.debs.outputs.count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-${{ steps.debs.outputs.key }}
 
   # Milestone acceptance runs the checkout's real entry, not verify stubs.
   # `all` excludes section 5 (realbox); it drives Docker gates itself.

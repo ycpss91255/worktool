@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # test/unit/apt_mirror_spec.bats - script/test/apt-mirror.sh (issue #843)
 #
 # WHAT THIS PROVES

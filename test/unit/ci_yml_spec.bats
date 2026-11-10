@@ -903,7 +903,7 @@ _run_aggregator() {
     assert_line "          WORKTOOL_APT_CACHE_DIR: \${{ runner.temp }}/apt-box"
     assert_line '      - name: Prune and key box packages'
     assert_line "        if: github.event_name == 'push' && !cancelled()"
-    assert_line --partial 'apt_cache_prune "${RUNNER_TEMP}/apt-box"'
+    assert_line --partial "apt_cache_prune \"\${RUNNER_TEMP}/apt-box\""
     assert_line '        uses: actions/cache/save@v4'
     assert_line "          key: apt-box-\${{ matrix.runner }}-\${{ steps.debs.outputs.key }}"
     # Restore and save name the same path, or the save is a new cache version.
