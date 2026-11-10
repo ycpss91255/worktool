@@ -598,6 +598,9 @@ _leg_names() {
     run _job_block gate
     assert_success
     assert_line '          WORKTOOL_TEST_JOBS: "8"'
+    run _job_block unit-shard
+    assert_success
+    assert_line '          WORKTOOL_TEST_JOBS: "8"'
 }
 
 # --- --privileged stays with test-system-real --------------------------------

@@ -264,6 +264,7 @@ jobs:
       - name: Run gate (test-unit = just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }})
         env:
           TEST_IMAGE_PREBUILT: "1"
+          WORKTOOL_TEST_JOBS: "8"
           WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report
           WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv
         run: just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }}
