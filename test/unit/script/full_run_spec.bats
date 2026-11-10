@@ -13,7 +13,9 @@
 #
 # HOW
 #   A fake gh on PATH serves `gh run list` from a TSV fixture (the shape the
-#   script asks for with --jq) and records `gh workflow run`. No network.
+#   script asks for with --jq), answers the commit check (`gh api
+#   repos/<repo>/commits/<sha>`, #865) and records `gh workflow run`. No
+#   network.
 
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 
@@ -32,6 +34,13 @@ setup() {
 printf '%s\n' "$*" >>"${GH_CALLS}"
 [[ -z "${FAKE_GH_FAIL:-}" ]] || exit 1
 case "$1 $2" in
+    "api repos/"*/commits/*)
+        if [[ -n "${FAKE_GH_NO_COMMIT:-}" ]]; then
+            printf 'gh: No commit found for SHA: %s (HTTP %s)\n' "${2##*/}" "${FAKE_GH_NO_COMMIT}" >&2
+            exit 1
+        fi
+        [[ -z "${FAKE_GH_API_DOWN:-}" ]] || { printf 'error connecting to api.github.com\n' >&2; exit 1; }
+        printf '%s\n' "${2##*/}" ;;
     "run list") cat -- "${RUNS}" ;;
     "workflow run") [[ -z "${FAKE_FLIP:-}" ]] || cp -- "${FAKE_FLIP}" "${RUNS}" ;;
     *) exit 99 ;;
@@ -147,4 +156,35 @@ EOF
 @test "full-run.sh runs under set -euo pipefail" {
     run grep -c '^set -euo pipefail$' "${SCRIPT}"
     assert_output 1
+}
+
+@test "--exclude-run ignores the named run, so a run can ask about its own sha (#851)" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    _run "full-serial ${SHA}" in_progress "" 13 2026-11-10T03:00:00Z
+    _fr --exclude-run 13
+    assert_success
+    assert_output "full-run: ${SHA} completed success run=11"
+    _fr --exclude-run abc
+    assert_failure 2
+}
+
+@test "the sha must be a commit of the repo: none exits 2 before any run is listed or dispatched, a failed check is not green (1) (#865)" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    _fr
+    assert_success
+    run grep -x "api repos/owner/repo/commits/${SHA} --jq .sha" "${GH_CALLS}"
+    assert_success
+    for code in 422 404; do
+        : >"${GH_CALLS}"
+        FAKE_GH_NO_COMMIT="${code}" _fr --dispatch
+        assert_failure 2
+        assert_output --partial "full-run.sh: ${SHA} is not a commit of owner/repo (see --help)"
+        run grep -c -e '^run list' -e '^workflow run' "${GH_CALLS}"
+        assert_output 0
+    done
+    : >"${GH_CALLS}"
+    FAKE_GH_API_DOWN=1 _fr --dispatch
+    assert_failure 1
+    run grep -c '^workflow run' "${GH_CALLS}"
+    assert_output 0
 }
