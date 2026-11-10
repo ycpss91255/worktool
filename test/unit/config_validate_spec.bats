@@ -16,6 +16,8 @@
 #     give byte-identical stdout and stderr files (cmp) and the same status;
 #     bare, empty and blank are refused (link: warned about and skipped), a
 #     valid value is accepted (link: linked).
+# The judged-key matrix is one generated case per key (issue #859), so the
+# keys run in parallel; together they are the whole matrix.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 load "${BATS_TEST_DIRNAME}/../helper/graph"
@@ -108,31 +110,54 @@ _assert_same() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted" {
-    local _k _r _v _c _s _form _p
+# The judged-key matrix for key $1 (a row of _keys): every judge of its
+# reader, every form, the same assertions for every key.
+_judge_key() {
+    local _k _r _v _c _s _form _p _row
+    _row="$(_keys | awk -F'|' -v k="$1" '$1 == k')"
+    [[ -n "${_row}" ]] || fail "no judged key $1"
+    IFS='|' read -r _k _r _v _c <<<"${_row}"
     # Derived here, in this shell, so an empty or failed derivation fails
     # the case rather than running no judge.
-    for _r in enter_config_check home_config_check; do _judges "${_r}" >/dev/null; done
+    _judges "${_r}" >/dev/null
     mkdir -p "$(dirname -- "${CONFIG}")"
-    while IFS='|' read -r _k _r _v _c; do
-        while IFS= read -r _s; do
-            _p="${BATS_TEST_TMPDIR}/v.${_k}.${_s##*/}"
-            for _form in bare empty ws valid; do
-                rm -rf "${BOX}"
-                { _line "${_k}" "${_form}" "${_v}"; [[ -z "${_c}" ]] || printf '%s\n' "${_c}"; } >"${CONFIG}"
-                _judge "${_p}.${_form}" "$(_command "${_s}")"
-            done
-            _assert_same "${_p}" "${_k} via ${_s}"
-            [[ "$(cat "${_p}.empty.rc")" == 1 ]] \
-                && grep -qF "[ERROR] ${CONFIG}: invalid value '' for ${_k}" "${_p}.empty.err" \
-                || fail "${_k} via ${_s}: empty not refused: $(cat "${_p}.empty.err")"
-            [[ "$(cat "${_p}.ws.rc")" == 1 ]] \
-                && grep -qF "[ERROR] ${CONFIG}: invalid value '  ' for ${_k}" "${_p}.ws.err" \
-                || fail "${_k} via ${_s}: whitespace not refused: $(cat "${_p}.ws.err")"
-            [[ "$(cat "${_p}.valid.rc")" == 0 ]] \
-                || fail "${_k} via ${_s}: valid value refused: $(cat "${_p}.valid.err")"
-        done < <(_judges "${_r}")
+    while IFS= read -r _s; do
+        _p="${BATS_TEST_TMPDIR}/v.${_k}.${_s##*/}"
+        for _form in bare empty ws valid; do
+            rm -rf "${BOX}"
+            { _line "${_k}" "${_form}" "${_v}"; [[ -z "${_c}" ]] || printf '%s\n' "${_c}"; } >"${CONFIG}"
+            _judge "${_p}.${_form}" "$(_command "${_s}")"
+        done
+        _assert_same "${_p}" "${_k} via ${_s}"
+        if [[ "$(cat "${_p}.empty.rc")" != 1 ]] \
+            || ! grep -qF "[ERROR] ${CONFIG}: invalid value '' for ${_k}" "${_p}.empty.err"; then
+            fail "${_k} via ${_s}: empty not refused: $(cat "${_p}.empty.err")"
+        fi
+        if [[ "$(cat "${_p}.ws.rc")" != 1 ]] \
+            || ! grep -qF "[ERROR] ${CONFIG}: invalid value '  ' for ${_k}" "${_p}.ws.err"; then
+            fail "${_k} via ${_s}: whitespace not refused: $(cat "${_p}.ws.err")"
+        fi
+        [[ "$(cat "${_p}.valid.rc")" == 0 ]] \
+            || fail "${_k} via ${_s}: valid value refused: $(cat "${_p}.valid.err")"
+    done < <(_judges "${_r}")
+}
+
+# One case per judged key, named "...: <key> via <reader>" (config_mutation
+# selects the enter_config_check keys by that suffix).
+_KEY_CASE='bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted'
+while IFS='|' read -r _gen_k _gen_r _; do
+    bats_test_function --description "${_KEY_CASE}: ${_gen_k} via ${_gen_r}" -- _judge_key "${_gen_k}"
+done < <(_keys)
+unset _gen_k _gen_r
+
+@test "the judged-key matrix has exactly one generated case per judged key" {
+    local _k _r _ _n
+    while IFS='|' read -r _k _r _; do
+        _n="$(bats --count --filter "^${_KEY_CASE//./\\.}: ${_k//./\\.} via ${_r}\$" "${BATS_TEST_FILENAME}")"
+        [[ "${_n}" -eq 1 ]] || fail "key ${_k}: ${_n} generated case(s), want 1"
     done < <(_keys)
+    _n="$(bats --count --filter "^${_KEY_CASE//./\\.}: " "${BATS_TEST_FILENAME}")"
+    assert_equal "${_n}" "$(_keys | wc -l)"
 }
 
 @test "bare key = empty value: link, every judge (bare, empty and blank warned about and skipped; a path linked)" {
