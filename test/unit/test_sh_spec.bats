@@ -491,3 +491,133 @@ CASES
         rm -f "${FAKE_DOCKER_SNAPSHOT}".*
     done
 }
+
+# issue #861: the bats version every runner image ships is pinned and the
+# same. bats before 1.14 prints `1..0` and exits 0 when --filter selects no
+# case, so an unpinned `latest` can turn a filtered run vacuous.
+@test "every bats runner image pins the same bats release, never latest" {
+    local _dockerfile _tags=''
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^FROM bats/bats:' "${REPO_ROOT}/${_dockerfile}"
+        assert_success
+        assert_output "FROM bats/bats:\${BATS_TAG} AS bats-src"
+        run grep -E '^ARG BATS_TAG=' "${REPO_ROOT}/${_dockerfile}"
+        assert_success
+        assert_output --regexp '^ARG BATS_TAG=[0-9]+\.[0-9]+\.[0-9]+$'
+        _tags+="${output}"$'\n'
+    done
+    assert_equal "$(sort -u <<<"${_tags%$'\n'}" | wc -l)" 1
+}
+
+# Prints file:line of every `run bats ... --filter ...` call (an env prefix,
+# `run` flags and `\` continuation lines allowed) that is followed by
+# assert_success but not by an `assert_line --regexp '^ok ...'` before the
+# next `run` or the end of its @test: such a case reads green when the
+# filter selects nothing. A `bats --count` call is skipped: it prints a
+# number its case asserts. The last line is `scanned <n>`: how many
+# filtered calls it saw.
+_unproved_filters() {
+    awk '
+        BEGIN {
+            q = "\047"
+            env = "[A-Za-z_][A-Za-z_0-9]*=(\"[^\"]*\"|" q "[^" q "]*" q "|[^[:space:]]*)[[:space:]]+"
+            runcmd = "^[[:space:]]*(" env ")*run[[:space:]]"
+            runbats = "^[[:space:]]*(" env ")*run([[:space:]]+-[^[:space:]]+)*[[:space:]]+bats([[:space:]]|$)"
+        }
+        function flush() {
+            if (pending && success && !ok) print where
+            pending = 0; success = 0; ok = 0
+        }
+        FNR == 1 { flush(); cont = 0 }
+        cont {
+            if ($0 ~ /--filter/) filtered = 1
+            if ($0 ~ /--count/) counted = 1
+            if ($0 ~ /\\$/) next
+            cont = 0
+            if (filtered && !counted) { pending = 1; scanned++ }
+            next
+        }
+        /^@test / || /^}/ { flush(); next }
+        $0 ~ runbats {
+            flush()
+            where = FILENAME ":" FNR
+            filtered = ($0 ~ /--filter/)
+            counted = ($0 ~ /--count/)
+            if ($0 ~ /\\$/) { cont = 1; next }
+            if (filtered && !counted) { pending = 1; scanned++ }
+            next
+        }
+        $0 ~ runcmd { flush(); next }
+        /^[[:space:]]*assert_success([[:space:]]|$)/ { success = 1; next }
+        /^[[:space:]]*assert_line --regexp .\^ok / { ok = 1; next }
+        END { flush(); print "scanned " scanned + 0 }
+    ' "$@"
+}
+
+@test "the filtered-run scanner flags a filter that may select nothing and passes a proved one" {
+    local _f="${BATS_TEST_TMPDIR}/x_spec.bats"
+    # Each fixture line starts with `|` so this file itself does not hold
+    # the fixture calls (the sweep below scans it too).
+    sed 's/^|//' >"${_f}" <<'SPEC'
+|@test "vacuous" {
+|    run bats --filter '^a$' x.bats
+|    assert_success
+|}
+|
+|@test "vacuous across lines, quoted env prefix" {
+|    A="b c" run bats \
+|        --filter '^a$' \
+|        x.bats
+|    assert_success
+|}
+|
+|@test "proved" {
+|    run -0 bats --filter '^a$' x.bats
+|    assert_success
+|    assert_line --regexp '^ok [0-9]+ a$'
+|}
+|
+|@test "a failure is not vacuous" {
+|    run bats --filter '^a$' x.bats
+|    assert_failure
+|}
+|
+|@test "no filter" {
+|    run bats x.bats
+|    assert_success
+|}
+|
+|@test "a count is no filtered run" {
+|    run bats --count --filter '^a$' x.bats
+|    assert_success
+|    assert_output 1
+|}
+|
+|@test "a later run ends the filtered call" {
+|    run bats --filter '^a$' x.bats
+|    run true
+|    assert_success
+|}
+SPEC
+    run _unproved_filters "${_f}"
+    assert_success
+    assert_output "$(printf '%s\n' "${_f}:2" "${_f}:7" 'scanned 5')"
+}
+
+# issue #861: every spec that runs bats with --filter directly and expects
+# success also proves at least one case ran (`^ok `). Filters run through
+# test.sh are judged by its gate (zero cases fail there).
+@test "every filtered bats run that expects success proves a case ran" {
+    local -a _specs
+    mapfile -t _specs < <(find "${REPO_ROOT}/test" -path "${REPO_ROOT}/test/fixture" -prune -o -name '*.bats' -print)
+    (( ${#_specs[@]} > 0 )) || fail "no spec found"
+    run _unproved_filters "${_specs[@]}"
+    assert_success
+    [[ "${lines[-1]}" =~ ^scanned\ ([0-9]+)$ ]] || fail "scanner: ${output}"
+    (( BASH_REMATCH[1] >= 5 )) || fail "only ${BASH_REMATCH[1]} filtered bats run(s) found"
+    # Everything above the count line is an unproved filtered run.
+    assert_equal "$(printf '%s\n' "${lines[@]:0:${#lines[@]}-1}")" ''
+}

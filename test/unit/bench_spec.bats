@@ -102,9 +102,9 @@ export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 # `run -127` below (bats-core >= 1.5.0) needs this guard or bats-core warns
-# BW02 instead. Both bats sources this repo uses are already well above
-# 1.5.0 (dockerfile/Dockerfile.test: bats/bats:latest; Dockerfile.system-real:
-# BATS_TAG=1.14.0), so this only documents the requirement.
+# BW02 instead. Every bats image this repo builds pins BATS_TAG=1.14.0
+# (dockerfile/Dockerfile.test, Dockerfile.ghostty, Dockerfile.system-real),
+# well above 1.5.0, so this only documents the requirement.
 bats_require_minimum_version 1.5.0
 
 setup() {
