@@ -61,6 +61,16 @@
 #                                   runs distrobox-init's full apt install,
 #                                   only from that mirror. Unset or empty:
 #                                   nothing changes. Validated first.
+#   WORKTOOL_APT_ARCHIVES           CI only (issue #847): a plain absolute
+#                                   directory of this runner container that
+#                                   CI persists between runs. When set, the
+#                                   box image is rebuilt the same way with
+#                                   its apt keeping downloaded packages in
+#                                   /run/host<dir> (distrobox shares the
+#                                   runner's / there), so the first launch
+#                                   runs the same full install and only
+#                                   fetches what the dir does not hold.
+#                                   Validated first.
 #
 # Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
 # unhandled failure stops the script at once. A non-zero status the script
@@ -82,6 +92,7 @@ BOX_NAME="dev"
 BOX_MANIFEST="${SCRIPT_DIR}/../../box/dev.ini"
 APT_MIRROR_SH="${SCRIPT_DIR}/apt-mirror.sh"
 APT_MIRROR="${WORKTOOL_APT_MIRROR:-}"
+APT_ARCHIVES="${WORKTOOL_APT_ARCHIVES:-}"
 # Pull of the base image + one RUN that edits two files.
 BOX_IMAGE_BUILD_TIMEOUT=600
 
@@ -144,11 +155,15 @@ _check_timeouts() {
 }
 
 # WORKTOOL_APT_MIRROR ends up in a Dockerfile line: refuse anything that is
-# not a plain http(s) URL (apt-mirror.sh owns the rule), before dockerd.
+# not a plain http(s) URL (apt-mirror.sh owns the rule), before dockerd;
+# WORKTOOL_APT_ARCHIVES likewise must be a plain absolute path (#847).
 _check_apt_mirror() {
-    [[ -n "${APT_MIRROR}" ]] || return 0
-    bash "${APT_MIRROR_SH}" --check "${APT_MIRROR}" 2>/dev/null \
-        || _die "WORKTOOL_APT_MIRROR is not a plain http(s) mirror URL: '${APT_MIRROR}'"
+    if [[ -n "${APT_MIRROR}" ]]; then
+        bash "${APT_MIRROR_SH}" --check "${APT_MIRROR}" 2>/dev/null \
+            || _die "WORKTOOL_APT_MIRROR is not a plain http(s) mirror URL: '${APT_MIRROR}'"
+    fi
+    [[ -z "${APT_ARCHIVES}" || "${APT_ARCHIVES}" =~ ^/[A-Za-z0-9._/-]*$ ]] \
+        || _die "WORKTOOL_APT_ARCHIVES is not a plain absolute path: '${APT_ARCHIVES}'"
 }
 
 # CAP_SYS_ADMIN is bit 21 of the effective capability mask; a nested dockerd
@@ -325,13 +340,20 @@ _box_image() {
 # assemble asks for and distrobox-init's first-launch install all stay;
 # only where apt downloads from changes. Unset: no engine call at all.
 _prepare_box_image() {
-    [[ -n "${APT_MIRROR}" ]] || return 0
-    local _image
+    [[ -n "${APT_MIRROR}" || -n "${APT_ARCHIVES}" ]] || return 0
+    local _image _archives=''
     _image="$(_box_image)"
     [[ -n "${_image}" ]] || _die "no image= in ${BOX_MANIFEST}"
-    _info "box image ${_image}: every apt source -> ${APT_MIRROR} (WORKTOOL_APT_MIRROR; the first launch still installs everything)"
-    printf 'FROM %s\nRUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh '"'"'%s'"'"'\n' \
-        "${_image}" "${APT_MIRROR}" \
+    if [[ -n "${APT_MIRROR}" ]]; then
+        _info "box image ${_image}: every apt source -> ${APT_MIRROR} (WORKTOOL_APT_MIRROR; the first launch still installs everything)"
+    fi
+    if [[ -n "${APT_ARCHIVES}" ]]; then
+        mkdir -p "${APT_ARCHIVES%/}/partial" || _die "cannot create ${APT_ARCHIVES%/}/partial"
+        _archives="--archives '/run/host${APT_ARCHIVES%/}/' "
+        _info "box image ${_image}: apt keeps downloaded packages in /run/host${APT_ARCHIVES%/}/ (WORKTOOL_APT_ARCHIVES; the first launch still installs everything)"
+    fi
+    printf 'FROM %s\nRUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh %s'"'"'%s'"'"'\n' \
+        "${_image}" "${_archives}" "${APT_MIRROR}" \
         | _bounded "${BOX_IMAGE_BUILD_TIMEOUT}" docker build -t "${_image}" -f - "${SCRIPT_DIR}" >&2 \
         || _die "could not build the box image ${_image} with apt mirror ${APT_MIRROR}"
 }

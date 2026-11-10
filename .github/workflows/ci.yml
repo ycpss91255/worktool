@@ -394,10 +394,45 @@ jobs:
           build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=system-real-{0}', matrix.runner) || '' }}
 
+      # The box's downloaded packages (issue #847): the first launch runs
+      # distrobox-init's full apt install, with apt keeping its .deb files in
+      # this dir (test.sh WORKTOOL_APT_CACHE_DIR -> apt-mirror.sh --archives),
+      # so only packages it does not already hold are fetched. Every run
+      # reads the newest entry; only a main push prunes (newest version per
+      # package, lib/apt_cache.sh) and saves, keyed by the kept set, so an
+      # unchanged set is not stored again.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
         env:
           SYSTEM_REAL_IMAGE_PREBUILT: "1"
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test system-real
+
+      - name: Prune and key box packages
+        id: debs
+        if: github.event_name == 'push' && !cancelled()
+        run: |
+          set -euo pipefail
+          source lib/apt_cache.sh
+          apt_cache_prune "${RUNNER_TEMP}/apt-box"
+          kc="$(apt_cache_key "${RUNNER_TEMP}/apt-box")"
+          read -r key count <<< "${kc}"
+          echo "box packages: ${count} (key ${key})"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save box packages
+        if: steps.debs.outcome == 'success' && steps.debs.outputs.count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-${{ steps.debs.outputs.key }}
 
   # Milestone acceptance runs the checkout's real entry, not verify stubs.
   # `all` excludes section 5 (realbox); it drives Docker gates itself.
@@ -582,12 +617,16 @@ jobs:
   # verify-all is required from the PR's labels NOW (live, not the event
   # payload), so removing milestone-gate stops requiring it and a label
   # still present keeps requiring it. The rule lives in lib/ci_prior_run.sh.
+  # A code run of the head sha still going when the meta run starts (a body
+  # edit mid-run, #872) is waited for, up to 380 x 30 s (past verify-all's
+  # 180 min), then judged: failing at once would leave a red ci-passed that
+  # the code run's later green does not replace.
   prior-run:
     name: prior-run
     needs: route
     if: needs.route.outputs.code == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 200
     permissions:
       contents: read
       actions: read
@@ -613,11 +652,11 @@ jobs:
           if grep -Fqx milestone-gate <<< "${labels}"; then
             verify=true
           fi
-          runs="${RUNNER_TEMP}/runs"
-          gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
-            --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv' \
-            > "${runs}" || exit 1
-          id="$(ci_prior_run_select "${RUN_ID}" "${PR_NUMBER}" < "${runs}")" || exit 1
+          _runs() {
+            gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv'
+          }
+          id="$(ci_prior_run_await 380 30 "${RUN_ID}" "${PR_NUMBER}" -- _runs)" || exit 1
           echo "latest code run of ${PR_HEAD}: ${id} (verify-all required: ${verify})"
           jobs="${RUNNER_TEMP}/jobs"
           gh api --paginate "repos/${REPO}/actions/runs/${id}/jobs?filter=latest&per_page=100" \

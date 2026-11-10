@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
 # test/unit/apt_mirror_spec.bats - script/test/apt-mirror.sh (issue #843)
 #
 # WHAT THIS PROVES
@@ -61,6 +62,28 @@ EOF
     assert_success
     run cat "${CONF}"
     assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
+}
+
+@test "--archives DIR keeps apt's downloaded packages in DIR, with or without a mirror; a DIR that is not a plain absolute path is refused (#847)" {
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /run/host/var/cache/worktool-apt "${MIRROR}"
+    assert_success
+    run cat "${CONF}"
+    assert_line 'Dir::Cache::Archives "/run/host/var/cache/worktool-apt/";'
+    assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
+    rm -f "${CONF}"
+    cp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /var/cache/x/
+    assert_success
+    run cat "${CONF}"
+    assert_output 'Dir::Cache::Archives "/var/cache/x/";'
+    run diff "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    assert_success
+    rm -f "${CONF}"
+    for bad in relative/dir '/a b' '/a"b' "/a'b" '/a;b' ''; do
+        run bash "${SCRIPT}" --root "${ROOT}" --archives "${bad}" "${MIRROR}"
+        assert_failure 2
+    done
+    assert [ ! -e "${CONF}" ]
 }
 
 @test "no mirror (or an empty one) changes nothing" {
@@ -129,4 +152,31 @@ EOF
         assert [ -n "${_first_update}" ]
         assert [ "${_mirror_line}" -le "${_first_update}" ]
     done
+}
+
+# --- the persisted box package dir (issue #847, lib/apt_cache.sh) -------------
+
+@test "apt_cache_prune keeps the newest version of each package and arch; apt_cache_key names the kept set (#847)" {
+    local _d="${BATS_TEST_TMPDIR}/debs"
+    mkdir -p "${_d}/partial"
+    touch "${_d}/perl-base_5.40.1-7ubuntu0.3_amd64.deb" "${_d}/perl-base_5.40.1-7ubuntu0.10_amd64.deb" \
+        "${_d}/perl-base_5.40.1-7ubuntu0.3_arm64.deb" "${_d}/tzdata_2026a-1_all.deb" \
+        "${_d}/libc6_2.42-0ubuntu3_amd64.deb" "${_d}/libc6_1%3a2.41-1_amd64.deb" "${_d}/lock"
+    # shellcheck source=../../lib/apt_cache.sh
+    source "${LIB_DIR}/apt_cache.sh"
+    run apt_cache_prune "${_d}"
+    assert_success
+    run bash -c 'cd "$1" && ls' _ "${_d}"
+    assert_output "$(printf '%s\n' 'libc6_1%3a2.41-1_amd64.deb' lock partial \
+        perl-base_5.40.1-7ubuntu0.10_amd64.deb perl-base_5.40.1-7ubuntu0.3_arm64.deb tzdata_2026a-1_all.deb)"
+    run apt_cache_key "${_d}"
+    assert_success
+    assert_output --regexp '^[0-9a-f]{16} 4$'
+    local _key="${output}"
+    touch "${_d}/fish_4.0-1_amd64.deb"
+    run apt_cache_key "${_d}"
+    assert_output --regexp '^[0-9a-f]{16} 5$'
+    refute_output "${_key}"
+    run apt_cache_prune "${BATS_TEST_TMPDIR}/missing"
+    assert_failure 1
 }

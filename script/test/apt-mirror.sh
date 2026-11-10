@@ -19,7 +19,14 @@
 # nothing is changed, so a local build is exactly what it was. A sources
 # file that cannot be rewritten is a failure, never a silent fall back.
 #
-# Usage: apt-mirror.sh [--root DIR] [MIRROR]
+# --archives DIR (issue #847) keeps apt's downloaded packages in DIR
+# (`Dir::Cache::Archives`) instead of /var/cache/apt/archives, with or
+# without a mirror: CI points the box at a directory it persists between
+# runs, so the box's first launch still runs every apt-get it runs, and
+# only packages apt does not already hold (same version, same hash) are
+# downloaded. DIR must be a plain absolute path.
+#
+# Usage: apt-mirror.sh [--root DIR] [--archives DIR] [MIRROR]
 #        apt-mirror.sh --check MIRROR
 # Exit: 0 done (or nothing to do), 1 the sources file cannot be rewritten,
 #       2 bad arguments or a MIRROR that is not a plain http(s) URL.
@@ -30,6 +37,7 @@
 set -euo pipefail
 
 ROOT=""
+ARCHIVES=""
 CHECK=0
 MIRROR=""
 HAVE_MIRROR=0
@@ -37,10 +45,11 @@ RETRIES=5
 
 _usage() {
     cat <<'EOF'
-Usage: apt-mirror.sh [--root DIR] [MIRROR]
+Usage: apt-mirror.sh [--root DIR] [--archives DIR] [MIRROR]
        apt-mirror.sh --check MIRROR
 Point every URIs line of <root>/etc/apt/sources.list.d/ubuntu.sources at
 MIRROR and turn on apt retries; no MIRROR (or an empty one) changes nothing.
+--archives DIR keeps the packages apt downloads in DIR (a plain absolute path).
 --check only validates MIRROR (a plain http(s) URL).
 EOF
 }
@@ -53,6 +62,13 @@ while [[ $# -gt 0 ]]; do
                 exit 2
             fi
             ROOT="$2"; shift ;;
+        --archives)
+            # Lands in an apt.conf string and a Dockerfile line.
+            if [[ $# -lt 2 || ! "$2" =~ ^/[A-Za-z0-9._/-]*$ ]]; then
+                printf 'apt-mirror.sh: --archives requires a plain absolute path (see --help)\n' >&2
+                exit 2
+            fi
+            ARCHIVES="${2%/}/"; shift ;;
         --check) CHECK=1 ;;
         -h|--help) _usage; exit 0 ;;
         -*) printf "apt-mirror.sh: unknown option '%s' (see --help)\n" "$1" >&2; exit 2 ;;
@@ -80,31 +96,37 @@ if [[ "${CHECK}" == 1 ]]; then
     exit 0
 fi
 
-[[ -n "${MIRROR}" ]] || exit 0
-
-if ! _valid_mirror "${MIRROR}"; then
-    printf "apt-mirror.sh: not a plain http(s) mirror URL: '%s'\n" "${MIRROR}" >&2
-    exit 2
-fi
+[[ -n "${MIRROR}" || -n "${ARCHIVES}" ]] || exit 0
 
 SOURCES="${ROOT}/etc/apt/sources.list.d/ubuntu.sources"
 CONF="${ROOT}/etc/apt/apt.conf.d/80worktool-ci"
+_conf=""
 
-if [[ ! -f "${SOURCES}" ]]; then
-    printf 'apt-mirror.sh: %s not found (not an Ubuntu deb822 root?)\n' "${SOURCES}" >&2
-    exit 1
+if [[ -n "${MIRROR}" ]]; then
+    if ! _valid_mirror "${MIRROR}"; then
+        printf "apt-mirror.sh: not a plain http(s) mirror URL: '%s'\n" "${MIRROR}" >&2
+        exit 2
+    fi
+    if [[ ! -f "${SOURCES}" ]]; then
+        printf 'apt-mirror.sh: %s not found (not an Ubuntu deb822 root?)\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    if ! grep -q '^URIs:' "${SOURCES}"; then
+        printf 'apt-mirror.sh: %s has no URIs line to rewrite\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    sed -i "s|^URIs:.*|URIs: ${MIRROR}|" "${SOURCES}"
+    # Every URIs line must now name the mirror and nothing else.
+    if ! awk -v want="URIs: ${MIRROR}" '/^URIs:/ && $0 != want { bad = 1 } END { exit bad }' "${SOURCES}"; then
+        printf 'apt-mirror.sh: %s still names another source after the rewrite\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    _conf+="$(printf 'Acquire::Retries "%s";' "${RETRIES}")"$'\n'
+    printf 'apt-mirror.sh: apt sources -> %s (retries %s)\n' "${MIRROR}" "${RETRIES}" >&2
 fi
-if ! grep -q '^URIs:' "${SOURCES}"; then
-    printf 'apt-mirror.sh: %s has no URIs line to rewrite\n' "${SOURCES}" >&2
-    exit 1
-fi
-
-sed -i "s|^URIs:.*|URIs: ${MIRROR}|" "${SOURCES}"
-# Every URIs line must now name the mirror and nothing else.
-if ! awk -v want="URIs: ${MIRROR}" '/^URIs:/ && $0 != want { bad = 1 } END { exit bad }' "${SOURCES}"; then
-    printf 'apt-mirror.sh: %s still names another source after the rewrite\n' "${SOURCES}" >&2
-    exit 1
+if [[ -n "${ARCHIVES}" ]]; then
+    _conf+="$(printf 'Dir::Cache::Archives "%s";' "${ARCHIVES}")"$'\n'
+    printf 'apt-mirror.sh: downloaded packages -> %s\n' "${ARCHIVES}" >&2
 fi
 mkdir -p "$(dirname -- "${CONF}")"
-printf 'Acquire::Retries "%s";\n' "${RETRIES}" >"${CONF}"
-printf 'apt-mirror.sh: apt sources -> %s (retries %s)\n' "${MIRROR}" "${RETRIES}" >&2
+printf '%s' "${_conf}" >"${CONF}"
