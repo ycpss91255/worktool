@@ -10,14 +10,19 @@
 # closed.
 #
 # Public API:
-#   test_shard_assign <N>                  (rows on stdin)
-#       stdin: "<weight><TAB><spec>" per spec of the tier (weight = a
-#       non-negative integer, e.g. milliseconds).
+#   test_shard_assign <N> [<jobs>]         (rows on stdin)
+#       stdin: "<weight><TAB><spec>[<TAB><longest>]" per spec of the tier
+#       (weight = a non-negative integer, e.g. milliseconds; longest = its
+#       longest single case, default 0). jobs = the cases bats runs at
+#       once (default 1).
 #       -> prints "<shard><TAB><spec>" per spec, in assignment order:
-#          heaviest first (ties by spec path, C collation), each to the
-#          shard with the smallest load so far (ties to the lowest index).
-#          Deterministic: depends only on the rows. Returns 1 on a bad N or
-#          a malformed row.
+#          by max(weight, jobs x longest) descending (ties by spec path, C
+#          collation), each to the shard whose estimated wall time
+#          max(load / jobs, longest case in it) is smallest with it (ties:
+#          smaller load, then the lowest index; #868). With jobs 1 and no
+#          longest column this is plain LPT by weight. Deterministic:
+#          depends only on the rows and jobs. Returns 1 on a bad N or jobs,
+#          or a malformed row.
 #   test_shard_verdict <root> <tier> <N> <list_file> <required_file> <runner>...
 #       <root>/test-report-<tier>-<i>-<runner>/<tier>/shard.tsv and
 #       shard.tap are the records test.sh --shard writes (see test.sh).
@@ -44,23 +49,41 @@ _TEST_SHARD_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${_TEST_SHARD_LIB_DIR}/log.sh"
 
 test_shard_assign() {
-    local _n="${1:-}" _rows
+    local _n="${1:-}" _j="${2:-1}" _rows
     if [[ ! "${_n}" =~ ^[1-9][0-9]*$ ]]; then
         log_error "test_shard_assign: shard count must be a positive integer, got '${_n}'."
         return 1
     fi
+    if [[ ! "${_j}" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "test_shard_assign: jobs must be a positive integer, got '${_j}'."
+        return 1
+    fi
     _rows="$(cat)" || return 1
-    if [[ -n "${_rows}" ]] && grep -vqE $'^[0-9]+\t[^\t]+$' <<<"${_rows}"; then
-        log_error "test_shard_assign: malformed weight row (expected <weight><TAB><spec>)."
+    if [[ -n "${_rows}" ]] && grep -vqE $'^[0-9]+\t[^\t]+(\t[0-9]+)?$' <<<"${_rows}"; then
+        log_error "test_shard_assign: malformed weight row (expected <weight><TAB><spec>[<TAB><longest case>])."
         return 1
     fi
     [[ -n "${_rows}" ]] || return 0
-    LC_ALL=C sort -t $'\t' -k1,1nr -k2,2 <<<"${_rows}" | awk -F '\t' -v n="${_n}" '
-        BEGIN { for (i = 1; i <= n; i++) load[i] = 0 }
+    # key = max(weight, jobs x longest case): a spec whose one case outlasts
+    # its share of the slots is placed first. A shard's estimated wall time
+    # is max(load / jobs, its longest case); each spec goes to the shard
+    # whose estimate stays smallest with it (ties: smaller load, then the
+    # lowest index). With jobs 1 and no longest case this is plain LPT.
+    awk -F '\t' -v OFS='\t' -v j="${_j}" '
+        { l = ($3 == "" ? 0 : $3); k = (j * l > $1 ? j * l : $1); print k, $2, $1, l }' <<<"${_rows}" \
+        | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2 \
+        | awk -F '\t' -v n="${_n}" -v j="${_j}" '
+        BEGIN { for (i = 1; i <= n; i++) { load[i] = 0; top[i] = 0 } }
         {
-            best = 1
-            for (i = 2; i <= n; i++) if (load[i] < load[best]) best = i
-            load[best] += $1
+            best = 0
+            for (i = 1; i <= n; i++) {
+                e = (load[i] + $3) / j
+                m = (top[i] > $4 ? top[i] : $4)
+                if (m > e) e = m
+                if (best == 0 || e < be || (e == be && load[i] < load[best])) { best = i; be = e }
+            }
+            load[best] += $3
+            if ($4 > top[best]) top[best] = $4
             printf "%d\t%s\n", best, $2
         }'
 }
