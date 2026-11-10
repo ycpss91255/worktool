@@ -474,7 +474,11 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 綠燈;非必要的額外 spec 照常一起跑。各 bats tier 預設以
 `WORKTOOL_TEST_JOBS=4` 跨 spec 並行、同一 spec 內序列執行;可在 `just` 前設定正整數
 覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
-exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
+exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,不得含 `..`)時,
+共用測試映像內的每個 bats tier 另以 `--report-formatter junit` 把每個案例的耗時寫到
+`<dir>/<tier>/report.xml`(#827);TAP 的計畫、`ok`／`not ok`、`skip` 判定不變,只是 bats
+會在每個案例行尾加上 `# in N ms` 的計時註記;無效值同樣在啟動前以 exit 2 拒絕。
+`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 刪檔/空檔負向案例證明這條規則。
 
 ## CI

@@ -149,6 +149,20 @@ EOF
     assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
 }
 
+@test "a report directory outside the checkout is an argument error before bats runs" {
+    local _bin="${BATS_TEST_TMPDIR}/bin" _dir
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\ntouch "%s/bats-ran"\n' "${BATS_TEST_TMPDIR}" >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    for _dir in /tmp/report ../report a/../../b 'a b' ./report; do
+        WORKTOOL_TEST_REPORT_DIR="${_dir}" PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+        assert_failure 2
+        assert_output "test.sh: invalid WORKTOOL_TEST_REPORT_DIR '${_dir}' (a repo-relative path) (see --help)"
+    done
+    assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
+}
+
 @test "a partial run skips required-spec and plan-minimum checks and warns" {
     _make_repo_copy
     rm "${COPY}/test/integration/assemble_spec.bats"
