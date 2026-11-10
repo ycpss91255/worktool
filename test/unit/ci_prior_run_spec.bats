@@ -73,12 +73,12 @@ _green_jobs() {
     assert_output 800
 }
 
-@test "select never lets an older green run stand in for a newer unfinished code run" {
+@test "select never lets an older green run stand in for a newer unfinished code run: pending (3, #872)" {
     run ci_prior_run_select 900 7 < <(
         _run 820 42 in_progress 'CI code run' 7
         _run 800 40 completed 'CI code run' 7
     )
-    assert_failure
+    assert_failure 3
     assert_output --partial '820'
     assert_output --partial 'in_progress'
 }
