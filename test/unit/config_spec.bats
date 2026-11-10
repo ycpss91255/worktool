@@ -321,6 +321,14 @@ _race() {
     assert_success
 }
 
+@test "the paused race loses a write when config_set is not locked" {
+    _bytes "${CONFIG}" '# shared\n'
+    _config_locked() { shift; "$@"; }
+    run _race_paused home box
+    assert_failure
+    assert_output --partial 'lost a write'
+}
+
 @test "without flock(1) config_set refuses (exit 1, a clear error) and writes nothing" {
     _config_have_flock() { return 1; }
     ! _config_have_flock || fail "the flock seam was not overridden"
