@@ -300,7 +300,7 @@ _run_in_container() {
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS "${_layout_env[@]}" \
+    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -707,6 +707,9 @@ Environment:
                          skip the DinD runner build (CI loads a cached one)
   WORKTOOL_SHARD_WEIGHTS repo-relative "<tier>/<spec><TAB><ms>" weights for
                          --shard (default: none, @test counts)
+  WORKTOOL_FULL_CHECK=1  the complete check after a merge into main: specs
+                         that keep a cheap PR mode run in full (passed into
+                         the test container; default: unset, the PR mode)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
   GHOSTTY_IMAGE_PREBUILT=1
                          skip the ghostty image build (CI loads a cached one)
