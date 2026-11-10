@@ -1,4 +1,7 @@
 #!/usr/bin/env bats
+# Cases of this file race wall-clock bounds (timeouts, elapsed-seconds
+# checks), so they stay serial within the file under `bats --jobs` (#689).
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 load "${BATS_TEST_DIRNAME}/../../helper/common"
 setup() {
     JOB_ROOT="$(mktemp -d)"
