@@ -25,8 +25,9 @@
 #          other name (meta runs, runs from before #688) never count.
 #   ci_prior_run_expected_jobs <verify_required: true|false>
 #       -> prints the check name of every leg that must be green, one per
-#          line: both runners of build-image, the six gates and
-#          test-system-real, plus verify-all when required.
+#          line: both runners of build-image, the three gate legs, the unit
+#          shards and test-system-real, plus verify-all when required, and
+#          the single test-unit-verdict.
 #   ci_prior_run_evaluate <verify_required: true|false>  (job records on stdin)
 #       stdin: one `<name>\t<status>\t<conclusion>` line per job of the run.
 #       -> 0 when every expected leg is present and every record of it is
@@ -47,7 +48,10 @@ CI_PRIOR_RUN_CODE_TITLE='CI code run'
 CI_PRIOR_RUN_META_TITLE='CI meta run'
 
 _CI_PRIOR_RUN_RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
-_CI_PRIOR_RUN_GATES=(lint test-unit test-matrix test-integration test-system test-acceptance)
+_CI_PRIOR_RUN_GATES=(lint-system-acceptance test-matrix test-integration)
+# The unit tier runs as weighted shards plus one union verdict (issue #831);
+# ci_yml_spec keeps this count equal to ci.yml's shard dimension.
+_CI_PRIOR_RUN_UNIT_SHARDS=4
 
 # Split the tab-separated line $1 into the array _ci_prior_run_fields,
 # keeping empty fields (a plain `read` with IFS=tab would merge them).
@@ -122,11 +126,15 @@ ci_prior_run_expected_jobs() {
         for _gate in "${_CI_PRIOR_RUN_GATES[@]}"; do
             printf '%s (%s)\n' "${_gate}" "${_runner}"
         done
+        for ((_gate = 1; _gate <= _CI_PRIOR_RUN_UNIT_SHARDS; _gate++)); do
+            printf 'test-unit %d/%d (%s)\n' "${_gate}" "${_CI_PRIOR_RUN_UNIT_SHARDS}" "${_runner}"
+        done
         printf 'test-system-real (%s)\n' "${_runner}"
         if [[ "${_verify}" == true ]]; then
             printf 'verify-all (%s)\n' "${_runner}"
         fi
     done
+    printf 'test-unit-verdict\n'
 }
 
 ci_prior_run_evaluate() {

@@ -45,7 +45,7 @@ _shard_weights_report() {
 }
 
 shard_weights_merge() {
-    local _root="$1" _tier _report _rows _found _suites
+    local _root="$1" _tier _report _rows _found _suites _base
     shift
     [[ $# -gt 0 ]] || { log_error "shard_weights_merge: no tier given"; return 1; }
     _rows="$(
@@ -56,7 +56,25 @@ shard_weights_merge() {
                 _found=1
                 _suites="$(_shard_weights_report "${_report}")" \
                     || { log_error "junit report without readable timed cases: ${_report}"; exit 1; }
-                printf '%s\n' "${_suites}" | sed "s|^|${_tier}/|"
+                # A shard run (test.sh --shard) names suites relative to the
+                # directory of its first spec (recorded in base), or by their
+                # absolute path outside it; make every name tier-relative.
+                _base=''
+                if [[ -f "${_report%/*}/base" ]]; then
+                    _base="$(<"${_report%/*}/base")"
+                    [[ "${_base}" != . ]] || _base=''
+                fi
+                printf '%s\n' "${_suites}" | awk -F '\t' -v OFS='\t' -v tier="${_tier}" -v base="${_base}" '
+                    {
+                        if (substr($1, 1, 1) == "/") {
+                            i = index($1, "/test/" tier "/")
+                            if (i == 0) { bad = 1; exit 1 }
+                            $1 = substr($1, i + length("/test/" tier "/"))
+                        } else if (base != "") {
+                            $1 = base "/" $1
+                        }
+                        print tier "/" $1, $2
+                    }' || { log_error "junit suite outside test/${_tier}: ${_report}"; exit 1; }
             done
             [[ "${_found}" -eq 1 ]] \
                 || { log_error "no junit report for tier ${_tier} under ${_root}"; exit 1; }

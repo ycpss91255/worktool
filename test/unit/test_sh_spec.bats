@@ -273,11 +273,29 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
+@test "prebuilt system-real and ghostty images are used as loaded, never rebuilt" {
+    SYSTEM_REAL_IMAGE_PREBUILT=1 GHOSTTY_IMAGE_PREBUILT=1 run "${TEST_SH}" --integration --system-real
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-integration --ci-integration-ghostty system-real-entry.sh)"
+    run cat "${FAKE_DOCKER_CALLS}"
+    refute_line --regexp '^docker build '
+}
+
 @test "test.sh --system-real passes CI through to the DinD runner (-e CI)" {
     CI=true run "${TEST_SH}" --system-real
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp '^docker run --rm --privileged -e CI .* \./script/test/system-real-entry\.sh$'
+}
+
+# issue #843: CI picks the box's apt mirror (WORKTOOL_APT_MIRROR); the
+# entry inside the runner applies it, so it must reach the runner. `-e`
+# without a value passes it only when the host has it set.
+@test "test.sh --system-real passes WORKTOOL_APT_MIRROR through to the DinD runner" {
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR .* \./script/test/system-real-entry\.sh$'
 }
 
 @test "test.sh --build builds the test image and runs no gate" {
@@ -295,7 +313,7 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -v .*:/source -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 @test "test.sh --unit forwards one spec path to the container gate" {
@@ -319,6 +337,30 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line '1..1'
     assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
     refute_output --partial 'test.sh --help exits 0'
+}
+
+@test "test.sh --shard I/N forwards to the unit or matrix container and refuses anything else" {
+    run "${TEST_SH}" --unit --shard 2/4
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit --shard 2/4$'
+    local _args _msg _argv
+    while IFS='|' read -r _args _msg; do
+        read -r -a _argv <<<"${_args}"
+        run "${TEST_SH}" "${_argv[@]}"
+        assert_failure 2
+        assert_output "test.sh: ${_msg} (see --help)"
+    done <<'CASES'
+--unit --shard 0/4|invalid shard '0/4' (expected I/N with 1 <= I <= N)
+--unit --shard 5/4|invalid shard '5/4' (expected I/N with 1 <= I <= N)
+--unit --shard 1of4|invalid shard '1of4' (expected I/N with 1 <= I <= N)
+--unit --shard|option '--shard' requires a value
+--integration --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --matrix --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --shard 1/2 test/unit/log_spec.bats|option '--shard' takes no spec path or --filter
+--unit --shard 1/2 --filter x|option '--shard' takes no spec path or --filter
+CASES
 }
 
 @test "test.sh rejects a spec path from another tier" {

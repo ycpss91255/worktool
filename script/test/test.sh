@@ -77,6 +77,9 @@ WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 # no report. Each bats tier writes <dir>/<tier>/report.xml next to the TAP
 # stream, which stays exactly what it was (the gate still reads only TAP).
 WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
+# Repo-relative shard weights ("<tier>/<spec><TAB><ms>", issue #831) for
+# --shard; empty or an empty file = every spec weighs its @test count.
+WORKTOOL_SHARD_WEIGHTS="${WORKTOOL_SHARD_WEIGHTS:-}"
 
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
@@ -143,6 +146,8 @@ _required_specs() {
                 unit/link_spec.bats \
                 unit/config_spec.bats \
                 unit/config_mutation_spec.bats \
+                unit/config_mutation_part2_spec.bats \
+                unit/config_mutation_part3_spec.bats \
                 unit/config_owner_spec.bats \
                 unit/config_validate_spec.bats \
                 unit/enter_spec.bats \
@@ -286,7 +291,7 @@ _run_in_container() {
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR "${_layout_env[@]}" \
+    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -297,10 +302,14 @@ _run_in_container() {
     return "${_rc}"
 }
 
-# Build the ubuntu image that carries a real ghostty (always built here:
-# like the DinD runner it is not part of the prebuilt test-image artifact
-# and its Dockerfile is self-contained).
+# Build the ubuntu image that carries a real ghostty (not part of the
+# prebuilt test-image artifact; its Dockerfile is self-contained), unless
+# CI already loaded it from its buildx cache (GHOSTTY_IMAGE_PREBUILT=1).
 _ensure_ghostty_image() {
+    if [[ "${GHOSTTY_IMAGE_PREBUILT:-}" == "1" ]]; then
+        _info "using prebuilt ghostty image ${GHOSTTY_IMAGE}"
+        return 0
+    fi
     _info "building ghostty image ${GHOSTTY_IMAGE}"
     docker build -t "${GHOSTTY_IMAGE}" -f "${GHOSTTY_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the ghostty image failed"
@@ -321,9 +330,14 @@ _run_ghostty_in_container() {
         ./script/test/test.sh --ci-integration-ghostty
 }
 
-# Build the docker-in-docker runner image (always built here: it is not part
-# of the prebuilt test-image artifact and its Dockerfile is self-contained).
+# Build the docker-in-docker runner image (not part of the prebuilt
+# test-image artifact; its Dockerfile is self-contained), unless CI already
+# loaded it from its buildx cache (SYSTEM_REAL_IMAGE_PREBUILT=1).
 _ensure_system_real_image() {
+    if [[ "${SYSTEM_REAL_IMAGE_PREBUILT:-}" == "1" ]]; then
+        _info "using prebuilt system-real runner image ${SYSTEM_REAL_IMAGE}"
+        return 0
+    fi
     _info "building system-real runner image ${SYSTEM_REAL_IMAGE}"
     docker build -t "${SYSTEM_REAL_IMAGE}" -f "${SYSTEM_REAL_DOCKERFILE}" "${REPO_ROOT}" \
         || _die "docker build of the system-real runner failed"
@@ -336,12 +350,14 @@ _ensure_system_real_image() {
 # anonymous /var/lib/docker volume). The host daemon never sees the box.
 # `-e CI` passes the host's CI through (only when it is set): bench.sh's
 # quiet-host wait is 120 s instead of 60 s on CI (issue #181).
+# `-e WORKTOOL_APT_MIRROR` likewise (issue #843): CI's Ubuntu mirror for the
+# box's first launch, applied by the entry inside the runner.
 _run_system_real_in_runner() {
     command -v docker >/dev/null 2>&1 \
         || _die "docker not found on host - required (tests run in Docker only)"
     _ensure_system_real_image
     _info "running --ci-system-real in ${SYSTEM_REAL_IMAGE} (docker-in-docker, --privileged)"
-    docker run --rm --privileged -e CI \
+    docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -458,7 +474,10 @@ _run_bats_tier() {
     fi
 
     local _min=0
-    if [[ "${_partial}" -eq 1 ]]; then
+    if [[ -n "${_shard_plan:-}" ]]; then
+        _min="${_shard_plan}"
+        _info "shard ${_shard} of ${_tier}: its required specs checked above; the union verdict covers the tier"
+    elif [[ "${_partial}" -eq 1 ]]; then
         _info "partial ${_tier} run; this does not stand for the whole tier"
     else
         _check_required_specs "${_tier}" _min
@@ -483,9 +502,117 @@ _run_bats_tier() {
     fi
     local _ok=0
     _verify_tap "${_tier}" "${_tap}" "${_min}" || _ok=1
+    if [[ "${_ok}" -eq 0 && -n "${_shard_plan:-}" ]]; then
+        _verify_shard_tap "${_tier}" "${_tap}" || _ok=1
+    fi
     rm -f "${_tap}"
     [[ "${_ok}" -eq 0 ]] || exit 1
     _info "${_tier} bats OK"
+}
+
+# A shard's TAP must hold exactly its plan: the plan equals the case count
+# of its specs, and exactly that many ok lines. Saved for the verdict when
+# a report directory is set.
+_verify_shard_tap() {
+    local _tier="$1" _tap="$2" _plan _oks
+    _plan="$(awk '/^1\.\.[0-9]+$/ { sub(/^1\.\./, ""); print; exit }' "${_tap}")" || _plan=''
+    if [[ "${_plan}" != "${_shard_plan}" ]]; then
+        _err "${_tier} shard ${_shard}: TAP plan '${_plan}' is not its specs' case count (${_shard_plan})"
+        return 1
+    fi
+    _oks="$(grep -cE '^ok [0-9]+ ' "${_tap}")" || _oks=0
+    if [[ "${_oks}" != "${_shard_plan}" ]]; then
+        _err "${_tier} shard ${_shard}: ${_oks} ok line(s) for a plan of ${_shard_plan}"
+        return 1
+    fi
+    # Written, not copied: the mktemp stream is 0600 and owned by the
+    # container's root, so a copy would be unreadable to the CI upload.
+    [[ -z "${_shard_out}" ]] || cat -- "${_tap}" >"${_shard_out}/shard.tap" \
+        || { _err "cannot save the shard TAP to ${_shard_out}"; return 1; }
+}
+
+# Print "<weight><TAB><spec>" for every spec of tier $1 (tier-relative paths
+# on stdin): the weights file's milliseconds when it lists the spec, else
+# the spec's @test count x 1000 (cheap and deterministic).
+_shard_weight_rows() {
+    local _tier="$1" _file="$2" _rel _w _n
+    local -A _known=()
+    if [[ -n "${_file}" ]]; then
+        while IFS=$'\t' read -r _rel _w; do
+            [[ "${_rel}" == "${_tier}/"* && "${_w}" =~ ^[0-9]+$ ]] || continue
+            _known["${_rel#"${_tier}/"}"]="${_w}"
+        done <"${_file}"
+    fi
+    while IFS= read -r _rel; do
+        if [[ -n "${_known[${_rel}]+set}" ]]; then
+            printf '%s\t%s\n' "${_known[${_rel}]}" "${_rel}"
+        else
+            _n="$(grep -c '^@test ' "${REPO_ROOT}/test/${_tier}/${_rel}")" || _n=0
+            printf '%s\t%s\n' "$((_n * 1000))" "${_rel}"
+        fi
+    done
+}
+
+# Run shard ${_shard} (I/N) of tier $1: every test/<tier>/**/*.bats is
+# assigned by weight (lib/test_shard.sh); this shard runs its own specs,
+# heaviest first, checks its own required specs before bats and an exact
+# plan after it, and (with a report directory) leaves the record the CI
+# union verdict reads: shard, weights hash, spec + case count rows, plan,
+# the TAP, and the junit base directory.
+_run_shard() {
+    local _tier="$1" _i="${_shard%/*}" _n="${_shard#*/}" _rel _count _weights='' _hash=none
+    local _dir="${REPO_ROOT}/test/${_tier}" _row _total=0 _required
+    local -a _all=() _mine=() _abs=()
+    # shellcheck source-path=SCRIPTDIR/../../lib
+    # shellcheck source=test_shard.sh
+    source "${REPO_ROOT}/lib/test_shard.sh"
+    mapfile -t _all < <(cd "${_dir}" && find . -type f -name '*.bats' | sed 's|^\./||' | LC_ALL=C sort)
+    [[ "${#_all[@]}" -gt 0 ]] || _die "no ${_tier} specs found under ${_dir}"
+    if [[ -n "${WORKTOOL_SHARD_WEIGHTS}" ]]; then
+        _weights="${REPO_ROOT}/${WORKTOOL_SHARD_WEIGHTS}"
+        [[ -f "${_weights}" ]] || _die "shard weights file missing: ${WORKTOOL_SHARD_WEIGHTS}"
+        if [[ -s "${_weights}" ]]; then
+            _hash="$(sha256sum <"${_weights}")" || _die "cannot hash ${WORKTOOL_SHARD_WEIGHTS}"
+            _hash="${_hash%% *}"
+        else
+            _weights=''
+        fi
+    fi
+    local _assigned
+    _assigned="$(printf '%s\n' "${_all[@]}" | _shard_weight_rows "${_tier}" "${_weights}" \
+        | test_shard_assign "${_n}")" || _die "shard assignment failed"
+    while IFS=$'\t' read -r _row _rel; do
+        [[ "${_row}" == "${_i}" ]] && _mine+=("${_rel}")
+    done <<<"${_assigned}"
+    [[ "${#_mine[@]}" -gt 0 ]] || _die "${_tier} shard ${_shard} has no spec (more shards than specs)"
+    _info "Running ${_tier} shard ${_shard}: ${#_mine[@]} of ${#_all[@]} spec(s) (weights: ${_hash})"
+    _required="$(_required_specs "${_tier}")" || _die "${_tier}: no required specs declared"
+    _shard_out=''
+    if [[ -n "${WORKTOOL_TEST_REPORT_DIR}" ]]; then
+        _shard_out="${REPO_ROOT}/${WORKTOOL_TEST_REPORT_DIR}/${_tier}"
+    fi
+    local _record
+    _record="$(printf 'shard\t%s\nweights\t%s\n' "${_shard}" "${_hash}")"
+    for _rel in "${_mine[@]}"; do
+        if ! _count="$(bats --count "${_dir}/${_rel}")" || [[ ! "${_count}" =~ ^[0-9]+$ ]]; then
+            _die "${_tier} spec unreadable by bats: test/${_tier}/${_rel}"
+        fi
+        if grep -qxF "${_tier}/${_rel}" <<<"${_required}" && [[ "${_count}" -eq 0 ]]; then
+            _die "${_tier} required spec defines zero cases: test/${_tier}/${_rel}"
+        fi
+        _record+=$'\n'"$(printf 'spec\t%s\t%s' "${_rel}" "${_count}")"
+        _total=$((_total + _count))
+        _abs+=("${_dir}/${_rel}")
+    done
+    _shard_plan="${_total}"
+    _run_bats_tier "${_tier}" "" -- "${_abs[@]}"
+    if [[ -n "${_shard_out}" ]]; then
+        printf '%s\nplan\t%s\n' "${_record}" "${_total}" >"${_shard_out}/shard.tsv" \
+            || _die "cannot write the shard record to ${_shard_out}"
+        _rel="$(dirname -- "${_mine[0]}")"
+        printf '%s\n' "${_rel}" >"${_shard_out}/base" \
+            || _die "cannot write the junit base to ${_shard_out}"
+    fi
 }
 
 _run_unit()        { _run_bats_tier unit "$@"; }
@@ -561,7 +688,16 @@ Environment:
                          report.xml; the TAP output is unchanged (default:
                          none)
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
+  SYSTEM_REAL_IMAGE_PREBUILT=1
+                         skip the DinD runner build (CI loads a cached one)
+  WORKTOOL_SHARD_WEIGHTS repo-relative "<tier>/<spec><TAB><ms>" weights for
+                         --shard (default: none, @test counts)
   GHOSTTY_IMAGE          ghostty image tag (default worktool-ghostty:local)
+  GHOSTTY_IMAGE_PREBUILT=1
+                         skip the ghostty image build (CI loads a cached one)
+  WORKTOOL_APT_MIRROR    Ubuntu mirror the real-engine box installs from
+                         (passed into the DinD runner; default: the box
+                         image's own sources)
 EOF
 }
 
@@ -587,6 +723,12 @@ given):
                   unreadable diff are also reported for CI verification.
   --unit [SPEC...] [--filter REGEX]
                   Unit bats (test/unit/), optionally narrowed by spec and name.
+  --unit --shard I/N, --matrix --shard I/N
+                  Run shard I of N of the tier: every spec of the tier is
+                  assigned by weight (WORKTOOL_SHARD_WEIGHTS, else its @test
+                  count); the shard checks its own required specs and an
+                  exact plan. Only the CI union verdict over all N shards
+                  stands for the whole tier.
   --matrix [SPEC...] [--filter REGEX]
                   Matrix bats (test/matrix/), optionally narrowed; slow in full.
   --integration [SPEC...] [--filter REGEX]
@@ -668,8 +810,10 @@ _run_ci_gate() {
                 || _die "Script layout check failed"
             _info "Script layout OK"
             ;;
-        --ci-unit)         _run_unit "$@" ;;
-        --ci-matrix)       _run_matrix "$@" ;;
+        --ci-unit)
+            if [[ -n "${_shard}" ]]; then _run_shard unit; else _run_unit "$@"; fi ;;
+        --ci-matrix)
+            if [[ -n "${_shard}" ]]; then _run_shard matrix; else _run_matrix "$@"; fi ;;
         --ci-integration)  _run_integration "$@" ;;
         --ci-integration-ghostty) _run_integration_ghostty ;;
         --ci-system)       _run_system "$@" ;;
@@ -686,6 +830,7 @@ _run_host_step() {
     shift 2
     local _selectors=("$@")
     [[ -z "${_filter}" ]] || _selectors+=(--filter "${_filter}")
+    [[ -z "${_shard}" ]] || _selectors+=(--shard "${_shard}")
     case "${_step}" in
         build)       _ensure_image ;;
         lint)        _run_in_container --ci-lint ;;
@@ -868,7 +1013,7 @@ _add_changed_spec() {
 # Single source for repository-wide guards; optional files follow the checkout.
 _guard_specs() {
     local _spec
-    for _spec in config_owner config_mutation config_validate config_graph \
+    for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
         adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
@@ -1026,6 +1171,11 @@ _parse_test_args() {
                 shift
                 _filter="$1"
                 ;;
+            --shard)
+                [[ $# -gt 1 ]] || _usage_error "option '--shard' requires a value"
+                shift
+                _shard="$1"
+                ;;
             --*) _usage_error "unknown option '$1'" ;;
             *) _paths+=("$1") ;;
         esac
@@ -1034,7 +1184,8 @@ _parse_test_args() {
 }
 
 main() {
-    _steps=() _paths=() _ci="" _step="" _help=0 _filter="" _tier=""
+    _steps=() _paths=() _ci="" _step="" _help=0 _filter="" _tier="" _shard=""
+    _shard_plan="" _shard_out=""
     _changed=0 _base="origin/main" _base_set=0
     [[ "${WORKTOOL_TEST_JOBS}" =~ ^[1-9][0-9]*$ ]] \
         || _usage_error "invalid WORKTOOL_TEST_JOBS '${WORKTOOL_TEST_JOBS}'"
@@ -1044,7 +1195,26 @@ main() {
             && "/${WORKTOOL_TEST_REPORT_DIR}/" != */./* ]] \
             || _usage_error "invalid WORKTOOL_TEST_REPORT_DIR '${WORKTOOL_TEST_REPORT_DIR}' (a repo-relative path)"
     fi
+    if [[ -n "${WORKTOOL_SHARD_WEIGHTS}" ]]; then
+        [[ "${WORKTOOL_SHARD_WEIGHTS}" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ \
+            && "/${WORKTOOL_SHARD_WEIGHTS}/" != */../* \
+            && "/${WORKTOOL_SHARD_WEIGHTS}/" != */./* ]] \
+            || _usage_error "invalid WORKTOOL_SHARD_WEIGHTS '${WORKTOOL_SHARD_WEIGHTS}' (a repo-relative path)"
+    fi
     _parse_test_args "$@"
+    if [[ -n "${_shard}" ]]; then
+        if [[ ! "${_shard}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] \
+            || (( BASH_REMATCH[1] > BASH_REMATCH[2] )); then
+            _usage_error "invalid shard '${_shard}' (expected I/N with 1 <= I <= N)"
+        fi
+        case "${_ci:-${_steps[*]:-}}" in
+            unit|matrix|--ci-unit|--ci-matrix) ;;
+            *) _usage_error "option '--shard' requires exactly one of --unit or --matrix" ;;
+        esac
+        if [[ "${#_paths[@]}" -gt 0 || -n "${_filter}" ]]; then
+            _usage_error "option '--shard' takes no spec path or --filter"
+        fi
+    fi
     if [[ -n "${_ci}" && "${#_steps[@]}" -gt 0 ]]; then
         _usage_error "internal flag ${_ci} takes no other option"
     fi
