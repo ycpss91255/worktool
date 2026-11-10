@@ -51,12 +51,42 @@ _job() {
 @test "report opens one issue on a failure with nothing open, otherwise comments on the open one" {
     run _job report
     assert_success
-    assert_line "    if: always() && needs.decide.outputs.run == 'true'"
+    # A run for a requested sha (#837) leaves the issue alone.
+    assert_line "    if: always() && needs.decide.outputs.run == 'true' && inputs.sha == ''"
     assert_line --partial "nightly_report \"\${RESULT}\" \"\${rc}\" \"\${open}\""
     assert_line --partial "gh issue create -R \"\${REPO}\" --label \"\${NIGHTLY_LABEL}\""
     assert_line --partial "gh issue comment \"\${action#comment }\" -R \"\${REPO}\" --body-file \"\${body}\""
     # The report job itself stays red when the suite was red.
     assert_line "          [ \"\${RESULT}\" = success ]"
+}
+
+# --- exact-commit full serial run (issue #837) --------------------------------
+
+@test "a manual run takes a sha and runs the full serial suite on exactly that commit, titled by it" {
+    run cat "${YML}"
+    assert_line "run-name: full-serial \${{ inputs.sha || github.sha }}"
+    assert_line '      sha:'
+    run _job full-serial
+    assert_line "          ref: \${{ inputs.sha || github.sha }}"
+    # The isolation job (#835) tests the same commit.
+    run _job isolation
+    assert_line "          ref: \${{ inputs.sha || github.sha }}"
+}
+
+@test "decide refuses a malformed sha before anything runs" {
+    run _job decide
+    assert_line "          SHA_INPUT: \${{ inputs.sha }}"
+    assert_line --partial "nightly_check_sha \"\${SHA_INPUT}\""
+}
+
+@test "a run for a requested sha never opens or comments on the nightly-failure issue" {
+    run _job report
+    assert_line "    if: always() && needs.decide.outputs.run == 'true' && inputs.sha == ''"
+}
+
+@test "two requested shas never replace each other in the concurrency queue" {
+    run cat "${YML}"
+    assert_line "  group: nightly-\${{ inputs.sha || 'main' }}"
 }
 
 @test "the full serial run takes Ubuntu packages from the same mirror as ci.yml (#843)" {

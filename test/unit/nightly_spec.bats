@@ -42,3 +42,15 @@ CASES
     run --separate-stderr nightly_decide schedule 1
     [[ "${stderr:-}" == *'running anyway'* ]] || fail "a failed listing must say it runs anyway: ${stderr:-}"
 }
+
+@test "nightly_check_sha accepts an empty input or a full 40-hex sha and refuses the rest (#837)" {
+    run nightly_check_sha ""
+    assert_success
+    run nightly_check_sha 0123456789abcdef0123456789abcdef01234567
+    assert_success
+    local _bad
+    for _bad in main HEAD 0123456 "0123456789abcdef0123456789abcdef0123456X" "$(printf 'a%.0s' {1..41})"; do
+        run nightly_check_sha "${_bad}"
+        assert_failure 2
+    done
+}

@@ -559,5 +559,7 @@ prereq-ok
 
 ## M17 release 2.0.0
 
-- 自動:release 前 CI 全綠。
+- 自動:release 前 CI 全綠;tag 只打在有綠燈完整序列執行的 sha 上(#837、ADR-0019):
+  `.agents/script/monitor/full-run.sh --repo <repo> --sha <要打 tag 的 sha> --dispatch`
+  回 0 才打 tag。有 release workflow 時,它必須在打 tag 前執行同一個檢查並在非 0 時失敗。
 - 人類:全清單通過 + 明確的 RELEASE 同意(唯一需人類同意的 release)。
