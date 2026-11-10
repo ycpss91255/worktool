@@ -383,7 +383,7 @@ _leg_names() {
     assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
     assert_line --regexp "$(_flow_has '    ' needs gate)"
     assert_line '          pattern: test-report-*'
-    assert_line --partial 'shard_weights_merge "${RUNNER_TEMP}/reports" unit matrix > .agents/state/shard-weights.tsv || exit 1'
+    assert_line --partial "shard_weights_merge \"\${RUNNER_TEMP}/reports\" unit matrix > .agents/state/shard-weights.tsv || exit 1"
     assert_line '        uses: actions/cache/save@v4'
     assert_line "          key: shard-weights-\${{ github.run_id }}-\${{ github.run_attempt }}"
     run _job_block ci-passed
