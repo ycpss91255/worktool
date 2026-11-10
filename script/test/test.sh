@@ -146,6 +146,8 @@ _required_specs() {
                 unit/link_spec.bats \
                 unit/config_spec.bats \
                 unit/config_mutation_spec.bats \
+                unit/config_mutation_part2_spec.bats \
+                unit/config_mutation_part3_spec.bats \
                 unit/config_owner_spec.bats \
                 unit/config_validate_spec.bats \
                 unit/enter_spec.bats \
@@ -1011,7 +1013,7 @@ _add_changed_spec() {
 # Single source for repository-wide guards; optional files follow the checkout.
 _guard_specs() {
     local _spec
-    for _spec in config_owner config_mutation config_validate config_graph \
+    for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
         adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
