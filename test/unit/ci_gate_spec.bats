@@ -355,16 +355,10 @@ EOF
     assert_output ""
 }
 
-@test "every declared required spec exists in the delivered tree and defines cases" {
-    local _tier _rel _n
-    for _tier in unit integration integration-ghostty system system-real acceptance; do
-        while IFS= read -r _rel; do
-            assert [ -f "${REPO_ROOT}/test/${_rel}" ]
-            _n="$(bats --count "${REPO_ROOT}/test/${_rel}")"
-            assert [ "${_n}" -gt 0 ]
-        done < <(_declared "${_tier}")
-    done
-}
+# The delivered tree's own required specs are checked where they run: each
+# tier's gate (_check_required_specs, before bats) and, for the sharded unit
+# tier, the union verdict (lib/test_shard.sh, test/unit/test_shard_spec.bats).
+# The cases below prove those rules on copies (issue #856).
 
 # --- negative: a deleted required spec fails the tier before bats runs -------
 
