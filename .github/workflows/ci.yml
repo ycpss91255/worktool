@@ -163,6 +163,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     needs: build-image
+    # Ubuntu packages on the amd64 legs come from the Azure mirror GitHub's
+    # own ubuntu runners use (issue #843: archive.ubuntu.com fell to
+    # ~130 kB/s there on 2026-11-10); the arm legs keep the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -213,6 +218,7 @@ jobs:
           tags: worktool-ghostty:local
           load: true
           cache-from: type=gha,scope=ghostty-${{ matrix.runner }}
+          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=ghostty-{0}', matrix.runner) || '' }}
 
       # 8 bats jobs (files and the cases of one file, #689): measured on the
@@ -351,6 +357,11 @@ jobs:
     if: needs.route.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    # Ubuntu packages on the amd64 legs come from the Azure mirror GitHub's
+    # own ubuntu runners use (issue #843: archive.ubuntu.com fell to
+    # ~130 kB/s there on 2026-11-10); the arm legs keep the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -380,6 +391,7 @@ jobs:
           tags: worktool-system-real:local
           load: true
           cache-from: type=gha,scope=system-real-${{ matrix.runner }}
+          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=system-real-{0}', matrix.runner) || '' }}
 
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
