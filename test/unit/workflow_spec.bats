@@ -3018,6 +3018,7 @@ _handover_replies() {
     jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
+        "full-run:":{state:"green",line:("full-run: " + ("a" * 40) + " completed success run=9")},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{content:"findings: output\n"},"artifact-write:":{ok:true},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
         "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
@@ -3049,9 +3050,9 @@ _handover_replies() {
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
+        [.calls[].role] == ["sync:","head:","full-run:","scratch:","findings:","artifact-write:Findings","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
         ([.calls[] | select(.role | test("^(findings|machine|evidence):") | not) | .schema] | all(. == null))' <<<"${output}"
-    jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("local scratch only")' <<<"${output}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
     jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
@@ -3061,6 +3062,28 @@ _handover_replies() {
     refute_output --partial '允許合併'
     run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
     assert_success
+}
+
+# #837: hand-over requires a green full serial run of the exact head.
+@test "milestone-handover requires a green full serial run of the exact head before Scratch (#837)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    jq -e '.result.status == "prepared"' <<<"${output}"
+    jq -e '.calls[] | select(.role == "full-run:") | .prompt |
+        contains("./.agents/script/monitor/full-run.sh --repo o/r --sha " + ("a" * 40) + " --dispatch") and
+        contains("--wait 540") and contains("10800")' <<<"${output}"
+    jq -e '[.calls[].phase] | index("Full run") == 2' <<<"${output}"
+}
+
+@test "milestone-handover refuses hand-over when the head has no green full serial run (#837)" {
+    local reply
+    for reply in '{"state":"pending","line":"full-run: x running"}' \
+        '{"state":"failed","line":"full-run: x completed failure run=9"}' \
+        '{"state":"green","line":"full-run: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb completed success run=9"}' \
+        '"prose instead of JSON"'; do
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+            "$(_handover_replies | jq --argjson r "${reply}" '."full-run:" = $r')"
+        jq -e '.result.status == "full-run-not-green" and ([.calls[].role] | index("scratch:") == null)' <<<"${output}"
+    done
 }
 
 @test "milestone-handover pins one bounded foreground codex launch with literal paths and forbids detaching (#453)" {
@@ -3419,15 +3442,15 @@ _pl_retry_run() {
 @test "milestone-handover initializes scratch exactly once after Head and stops on failure (#423)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     local json="${output}"
-    run jq -e '.result.status == "prepared" and [.calls[].role][0:4] ==
-        ["sync:","head:","scratch:","findings:"] and
+    run jq -e '.result.status == "prepared" and [.calls[].role][0:5] ==
+        ["sync:","head:","full-run:","scratch:","findings:"] and
         ([.calls[] | select(.role == "scratch:")] | length) == 1 and
         (.calls[] | select(.role == "scratch:") | .prompt | contains("rm -rf --") and contains("mkdir -p --")) and
         ([.calls[] | select(.role != "scratch:") | .prompt | contains("rm -rf")] | any | not)' <<<"${json}"
     assert_success
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
         "$(_handover_replies | jq '."scratch:"={error:"mkdir failed"}')"
-    jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","scratch:"]' <<<"${output}"
+    jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","full-run:","scratch:"]' <<<"${output}"
 }
 
 @test "milestone-handover checks real nonempty artifacts before stages and preserves successful output (#423)" {
@@ -3442,7 +3465,7 @@ _pl_retry_run() {
     assert_success
     json="${output}"
     run jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review",
+        [.calls[].role] == ["sync:","head:","full-run:","scratch:","findings:","artifact-write:Findings","artifact-check:Review",
             "review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
