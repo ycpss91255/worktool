@@ -194,6 +194,23 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
         --ci-system)"
 }
 
+@test "bare just test, through the real justfiles, runs the seven tiers in order and stops at the first failure (#834)" {
+    local _tier _expected
+    run just --justfile "${REPO_ROOT}/justfile" --working-directory "${REPO_ROOT}" test
+    assert_success
+    assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
+    # Fail each tier in turn: every tier before it ran, none after it did,
+    # and the failure reaches the caller as a non-zero exit.
+    for _tier in --ci-lint --ci-unit --ci-matrix --ci-integration --ci-system --ci-acceptance system-real-entry.sh; do
+        rm -f "${FAKE_DOCKER_CALLS}"
+        _expected="$(sed "/^${_tier}\$/q" <<<"${EVERYTHING_IN_ORDER}")"
+        FAKE_DOCKER_FAIL_ON="${_tier}" run just --justfile "${REPO_ROOT}/justfile" \
+            --working-directory "${REPO_ROOT}" test
+        assert_failure 1
+        assert_equal "$(_dispatched)" "${_expected}"
+    done
+}
+
 @test "test.sh with no flag stops when lint fails: no tier runs" {
     FAKE_DOCKER_FAIL_ON=--ci-lint run "${TEST_SH}"
     assert_failure
