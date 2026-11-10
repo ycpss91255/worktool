@@ -115,23 +115,22 @@ _green_jobs() {
 
 # --- evaluating its legs -----------------------------------------------------
 
-@test "expected legs are both runners of build-image, five gates, four unit shards and test-system-real, plus the unit verdict" {
+@test "expected legs are both runners of build-image, three gate legs, four unit shards and test-system-real, plus the unit verdict" {
     run ci_prior_run_expected_jobs false
     assert_success
-    assert_equal "${#lines[@]}" 23
+    assert_equal "${#lines[@]}" 19
+    assert_line 'lint-system-acceptance (ubuntu-latest)'
     assert_line 'test-unit 1/4 (ubuntu-latest)'
     assert_line 'test-unit 4/4 (ubuntu-24.04-arm)'
     assert_line 'test-unit-verdict'
     refute_line 'test-unit (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-latest)'
     assert_line 'Build test image (ubuntu-24.04-arm)'
-    assert_line 'lint (ubuntu-24.04-arm)'
-    assert_line 'test-acceptance (ubuntu-latest)'
     assert_line 'test-system-real (ubuntu-24.04-arm)'
     refute_line --partial 'verify-all'
     run ci_prior_run_expected_jobs true
     assert_success
-    assert_equal "${#lines[@]}" 25
+    assert_equal "${#lines[@]}" 21
     assert_line 'verify-all (ubuntu-latest)'
     assert_line 'verify-all (ubuntu-24.04-arm)'
 }
