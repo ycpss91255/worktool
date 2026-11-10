@@ -50,8 +50,22 @@
 #   - A check that cannot run here (no docker, no gh, no awk) is reported
 #     as UNAVAILABLE and exits non-zero. Nothing is ever skipped silently.
 #
-#   It sources lib/guard.sh, lib/log.sh and lib/verify_run.sh from the
-#   checkout it verifies. The other verify scripts source their own sets.
+#   It sources lib/guard.sh, lib/log.sh, lib/verify_run.sh and
+#   lib/verify_ci_gate.sh from the checkout it verifies. The other verify
+#   scripts source their own sets.
+#
+# CI MODE (#833, decided on #824 item 1)
+#   In CI the verify-all job runs after the gate jobs of the same workflow
+#   run and names that run (WORKTOOL_VERIFY_GATE_RUN / _SHA / _REPO). Items
+#   2.1 and 2.3 then do NOT run the tiers again: 2.1 requires the gate job
+#   of every bare `just test` stage (HOST_STEPS of script/test/test.sh) on
+#   every runner, 2.3 the integration and system-real jobs on every runner,
+#   to be completed, success, of that run and that head sha - anything else
+#   (missing, twice, running, skipped, cancelled, failed, other sha) fails.
+#   2.3 also judges each of those jobs' logs with the same block checks the
+#   local run applies. Stdout lists every reused job. With none of the three
+#   set (a local run) both items run the tiers as before; a partial request
+#   is UNAVAILABLE, never a fallback.
 #
 # GROUPS
 #   Each item declares a group that names its preconditions:
@@ -222,6 +236,11 @@ source "${REPO_ROOT}/lib/guard.sh"
 source "${REPO_ROOT}/lib/log.sh"
 # shellcheck source=verify_run.sh
 source "${REPO_ROOT}/lib/verify_run.sh"
+# shellcheck source=verify_ci_gate.sh
+source "${REPO_ROOT}/lib/verify_ci_gate.sh"
+
+# The runner whose HOST_STEPS are the stages of bare `just test` (CI mode).
+TEST_SH="${REPO_ROOT}/script/test/test.sh"
 
 TDD_SH="${REPO_ROOT}/doc/evidence/tdd.sh"
 TDD_AWK="${REPO_ROOT}/doc/evidence/tdd.awk"
@@ -338,7 +357,21 @@ _require_file() {
 }
 
 _preconditions_ci() {
-    local _item="$1"
+    local _item="$1" _mode=0
+    verify_ci_gate_mode || _mode=$?
+    if [[ "${_mode}" -eq 2 ]]; then
+        _unavailable "the CI gate request is incomplete or malformed - ${_item} cannot be judged"
+    fi
+    if [[ "${_mode}" -eq 0 ]]; then
+        _require_tool gh "${_item}"
+        _require_tool awk "${_item}"
+        _require_tool sed "${_item}"
+        _require_tool timeout "${_item}"
+        _require_tool grep "${_item}"
+        _require_tool mktemp "${_item}"
+        _require_file "${TEST_SH}" "${_item}"
+        return 0
+    fi
     _require_tool just "${_item}"
     _require_tool docker "${_item}"
     _require_tool timeout "${_item}"
@@ -560,9 +593,64 @@ _only_busy_latency() {
     awk -f "${REPO_ROOT}/lib/verify_busy_latency.awk" "$2" "$1"
 }
 
+# --- CI mode (#833) ------------------------------------------------------------
+
+# Print the stages of bare `just test`, one per line: HOST_STEPS of the
+# runner itself, read by sourcing it (its main is guarded), so the stage set
+# is never a second list kept here.
+_ci_steps() {
+    bash -c 'source "$1" && printf "%s\n" "${HOST_STEPS[@]}"' _ "${TEST_SH}"
+}
+
+# Fetch the job list of the named run into file $1 and judge every job name
+# after it. Prints the reused-job lines; returns 1 on any failure.
+_ci_judge_jobs() {
+    local _file="$1"
+    shift
+    _info "CI mode: judging run ${WORKTOOL_VERIFY_GATE_RUN} at ${WORKTOOL_VERIFY_GATE_SHA} instead of running the tiers again"
+    if ! verify_ci_gate_fetch_jobs "${WORKTOOL_VERIFY_GATE_REPO}" "${WORKTOOL_VERIFY_GATE_RUN}" "${_file}"; then
+        _err "could not list the jobs of run ${WORKTOOL_VERIFY_GATE_RUN} - nothing is reused"
+        return 1
+    fi
+    verify_ci_gate_evaluate "${_file}" "${WORKTOOL_VERIFY_GATE_SHA}" \
+        "${WORKTOOL_VERIFY_GATE_RUN}" "$@"
+}
+
+# Item 2.1 in CI: the gate job of every stage on every runner.
+_item_2_1_ci() {
+    local _dir="" _out="" _rc=0 _runner _step
+    local -a _steps=() _names=() _runners=()
+    mapfile -t _runners < <(verify_ci_gate_runners)
+    _out="$(_ci_steps)" || {
+        _err "could not read HOST_STEPS from ${TEST_SH}"
+        return 1
+    }
+    mapfile -t _steps <<<"${_out}"
+    if [[ "${#_steps[@]}" -eq 0 || -z "${_steps[0]}" ]]; then
+        _err "${TEST_SH} names no stage of bare just test"
+        return 1
+    fi
+    for _runner in "${_runners[@]}"; do
+        for _step in "${_steps[@]}"; do
+            _names+=("$(verify_ci_gate_job_name "${_step}" "${_runner}")")
+        done
+    done
+    _make_tmpdir _dir || return 1
+    _ci_judge_jobs "${_dir}/jobs.tsv" "${_names[@]}" || _rc=1
+    rm -rf -- "${_dir}" || _rc=1
+    if [[ "${_rc}" -ne 0 ]]; then
+        _err "the ${#_steps[@]}-stage gate is not green in run ${WORKTOOL_VERIFY_GATE_RUN}"
+    fi
+    return "${_rc}"
+}
+
 # Capture before judging so the original command status survives TAP parsing.
 _item_2_1() (
     local _rc=0 _dir=""
+    if verify_ci_gate_mode 2>/dev/null; then
+        _item_2_1_ci
+        return
+    fi
     _make_tmpdir _dir || return 1
     trap 'rm -rf "${_dir}"' EXIT
     verify_run "${GATE_TIMEOUT}" just test \
@@ -711,12 +799,30 @@ _item_2_2() {
 _run_chain_tier() {
     local _tier="$1" _pattern="$2" _file="$3"
     local -n _block_ref="$4"
-    local _rc=0 _notok=""
+    local _rc=0
 
     _block_ref=""
     _just_test_into "${_file}" _rc "${_tier}" || return 1
+    _judge_tier_file "${_tier}" "${_pattern}" "${_file}" "${_rc}" "$4"
+}
 
-    _grep_file_into _block_ref "${_pattern}" "${_file}" || return 1
+# Judge the captured output $3 of tier $1 (exit status $4): print the lines
+# pattern $2 selects, store them in the variable named by $5, and fail when
+# the tier exited non-zero, printed no such line or has a `not ok` case.
+# Shared by the local run (the output of `just test <tier>`) and CI mode
+# (the log of the gate job that ran it).
+_judge_tier_file() {
+    local _tier="$1" _pattern="$2" _file="$3" _rc="$4"
+    local -n _judged_ref="$5"
+
+    _grep_file_into _judged_ref "${_pattern}" "${_file}" || return 1
+    _judge_tier_block "${_tier}" "${_pattern}" "${_file}" "${_rc}" "${_judged_ref}"
+}
+
+# The verdict half of _judge_tier_file; $5 is the selected block's text.
+_judge_tier_block() {
+    local _tier="$1" _pattern="$2" _file="$3" _rc="$4" _block_ref="$5"
+    local _notok=""
     [[ -n "${_block_ref}" ]] && printf '%s\n' "${_block_ref}"
 
     if [[ "${_rc}" -ne 0 ]]; then
@@ -759,8 +865,60 @@ _check_system_real_block() {
 # Item 2.3: the integration ghostty group asserts what a real ghostty
 # resolves out of the managed block; the system-real group opens a real
 # window under xvfb and judges by the marker left INSIDE the box.
+# Item 2.3 in CI: the integration and system-real gate jobs of every runner
+# must be green, and each job's log must carry the block the document
+# publishes for its tier - the same checks the local run applies to the
+# output of `just test <tier>`.
+_item_2_3_ci() {
+    local _dir="" _rc=0 _runner _block="" _id _name
+    local -a _names=() _runners=()
+    mapfile -t _runners < <(verify_ci_gate_runners)
+    for _runner in "${_runners[@]}"; do
+        _names+=("$(verify_ci_gate_job_name integration "${_runner}")"
+            "$(verify_ci_gate_job_name system-real "${_runner}")")
+    done
+    _make_tmpdir _dir || return 1
+    _ci_judge_jobs "${_dir}/jobs.tsv" "${_names[@]}" || _rc=1
+    if [[ "${_rc}" -eq 0 ]]; then
+        for _runner in "${_runners[@]}"; do
+            for _name in integration system-real; do
+                _id="$(verify_ci_gate_job_id "${_dir}/jobs.tsv" "$(verify_ci_gate_job_name "${_name}" "${_runner}")")"
+                printf '\n'
+                if ! verify_ci_gate_fetch_log "${WORKTOOL_VERIFY_GATE_REPO}" "${_id}" "${_dir}/${_id}.log"; then
+                    _err "could not read the log of job ${_id} (${_name}, ${_runner})"
+                    _rc=1
+                    break 2
+                fi
+                if [[ "${_name}" == integration ]]; then
+                    if _judge_tier_file integration "${INTEGRATION_PATTERN}" "${_dir}/${_id}.log" 0 _block; then
+                        _check_integration_block "${_block}" || _rc=1
+                    else
+                        _rc=1
+                    fi
+                else
+                    if _judge_tier_file system-real "${SYSTEM_REAL_PATTERN}" "${_dir}/${_id}.log" 0 _block; then
+                        _check_system_real_block "${_block}" || _rc=1
+                    else
+                        _rc=1
+                    fi
+                fi
+                [[ "${_rc}" -eq 0 ]] || break 2
+            done
+        done
+    fi
+    rm -rf -- "${_dir}" || {
+        _err "could not remove the temporary directory ${_dir}"
+        _rc=1
+    }
+    return "${_rc}"
+}
+
 _item_2_3() {
     local _dir="" _rc=0 _block=""
+    if verify_ci_gate_mode 2>/dev/null; then
+        _item_2_3_ci
+        return
+    fi
     _make_tmpdir _dir || return 1
 
     if _run_chain_tier integration "${INTEGRATION_PATTERN}" "${_dir}/integration.log" _block; then

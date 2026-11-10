@@ -118,6 +118,13 @@ _make_repo_copy() {
     cp -R "${REPO_ROOT}/doc/evidence" "${COPY}/doc/evidence"
     mkdir -p "${COPY}/lib"
     cp "${REPO_ROOT}/lib/guard.sh" "${REPO_ROOT}/lib/log.sh" "${REPO_ROOT}/lib/verify_run.sh" "${REPO_ROOT}/lib/verify_busy_latency.awk" "${COPY}/lib/"
+    # CI mode (#833): the job-judging lib and the runner whose HOST_STEPS
+    # name the bare `just test` stages.
+    if [[ -f "${REPO_ROOT}/lib/verify_ci_gate.sh" ]]; then
+        cp "${REPO_ROOT}/lib/verify_ci_gate.sh" "${COPY}/lib/"
+    fi
+    mkdir -p "${COPY}/script/test"
+    cp "${REPO_ROOT}/script/test/test.sh" "${COPY}/script/test/test.sh"
 }
 
 # _stub <name> - body on stdin. The body runs with $REAL set to the real
@@ -1163,4 +1170,194 @@ EOF
     run sed -n '/^SYSTEM_REAL_PATTERN=/p' "${GATE_SH}"
     assert_success
     assert_output "SYSTEM_REAL_PATTERN='^# (chain|hang|single-instance)|^ok .*ghostty chain|^not ok'"
+}
+
+# --- CI mode (#833): 2.1 and 2.3 judge the gate jobs of their own run --------
+# verify-all names its run; gate.sh then reads that run's jobs (and, for 2.3,
+# their logs) through `gh api` instead of running `just test` again. `just`
+# is stubbed to fail loudly so a CI-mode case that falls back to running the
+# tiers turns red.
+
+CI_SHA=0123456789abcdef0123456789abcdef01234567
+CI_RUN=4242
+
+# The bare `just test` stages, read the way gate.sh reads them.
+_ci_steps() {
+    bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' _ "${REPO_ROOT}/script/test/test.sh"
+}
+
+# Write the job list of a fully green run: every stage on both runners.
+# Integration jobs get ids 101 / 102, system-real 201 / 202 (amd64 / arm).
+_ci_jobs_green() {
+    local _out="$1" _step _runner _name _id _i=0
+    : >"${_out}"
+    for _runner in ubuntu-latest ubuntu-24.04-arm; do
+        _i=$(( _i + 1 ))
+        while IFS= read -r _step; do
+            case "${_step}" in
+                lint) _name="lint (${_runner})" ;;
+                *)    _name="test-${_step} (${_runner})" ;;
+            esac
+            case "${_step}" in
+                integration) _id="10${_i}" ;;
+                system-real) _id="20${_i}" ;;
+                *)           _id="3${_i}0" ;;
+            esac
+            printf '%s\t%s\t%s\tcompleted\tsuccess\t%s\n' "${_name}" "${CI_SHA}" "${CI_RUN}" "${_id}" >>"${_out}"
+        done < <(_ci_steps)
+    done
+}
+
+# A gh that serves the job list in $1 and, per job id, the timestamped log
+# made from INT_BLOCK (ids 101 / 102) or SYS_BLOCK (201 / 202). $2 = the
+# exit status of every gh call (default 0).
+_stub_gh_ci() {
+    local _jobs="$1" _rc="${2:-0}" _logs="${BATS_TEST_TMPDIR}/ci-logs"
+    mkdir -p "${_logs}"
+    sed 's/^/2026-11-10T06:00:00.0000000Z /' "${INT_BLOCK}" >"${_logs}/101"
+    cp "${_logs}/101" "${_logs}/102"
+    sed 's/^/2026-11-10T06:00:00.0000000Z /' "${SYS_BLOCK}" >"${_logs}/201"
+    cp "${_logs}/201" "${_logs}/202"
+    _stub gh <<EOF
+printf 'gh %s\n' "\$*" >>$(printf '%q' "${BATS_TEST_TMPDIR}/gh-calls")
+[[ ${_rc} -eq 0 ]] || exit ${_rc}
+for _a in "\$@"; do
+    case "\${_a}" in
+        repos/*/actions/runs/${CI_RUN}/jobs*) cat -- $(printf '%q' "${_jobs}"); exit 0 ;;
+        repos/*/actions/jobs/*/logs) _id="\${_a#*/actions/jobs/}"; cat -- $(printf '%q' "${_logs}")/"\${_id%/logs}"; exit 0 ;;
+    esac
+done
+printf 'fake gh: unexpected: %s\n' "\$*" >&2
+exit 99
+EOF
+}
+
+_stub_just_must_not_run() {
+    _stub just <<'EOF'
+printf 'fake just: CI mode must not run just: %s\n' "$*" >&2
+exit 99
+EOF
+}
+
+# Run the copy's gate.sh in CI mode for item $1.
+_run_ci_item() {
+    WORKTOOL_VERIFY_GATE_RUN="${CI_RUN}" WORKTOOL_VERIFY_GATE_SHA="${CI_SHA}" \
+        WORKTOOL_VERIFY_GATE_REPO=owner/repo PATH="${BIN}:${PATH}" run "${COPY_GATE}" "$1"
+}
+
+@test "CI mode 2.1: every stage of bare just test green on both runners passes without running just" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.1
+    assert_success
+    refute_output --partial 'fake just'
+    local _n
+    _n="$(_ci_steps | wc -l)"
+    assert_equal "$(printf '%s\n' "${output}" | grep -c '^reused: ')" "$(( _n * 2 ))"
+    assert_line "reused: test-system-real (ubuntu-24.04-arm) success run=${CI_RUN} job=202"
+    assert_line "reused: lint (ubuntu-latest) success run=${CI_RUN} job=310"
+}
+
+@test "CI mode 2.1: the stage set comes from HOST_STEPS, so a stage without its job fails and is named" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/all.tsv"
+    grep -v '^test-matrix (ubuntu-24.04-arm)' "${BATS_TEST_TMPDIR}/all.tsv" >"${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.1
+    assert_failure 1
+    assert_output --partial 'job "test-matrix (ubuntu-24.04-arm)" appears 0 times'
+}
+
+@test "CI mode 2.1: a failed, skipped or other-sha job fails the item" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/all.tsv"
+    local _mut
+    for _mut in 's/^\(test-unit (ubuntu-latest)\t.*\t\)success\t/\1failure\t/' \
+                's/^\(lint (ubuntu-24.04-arm)\t.*\t\)success\t/\1skipped\t/' \
+                "s/^\\(test-system (ubuntu-latest)\\t\\)${CI_SHA}/\\1fedcba9876543210fedcba9876543210fedcba98/"; do
+        sed "${_mut}" "${BATS_TEST_TMPDIR}/all.tsv" >"${BATS_TEST_TMPDIR}/jobs.tsv"
+        _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+        _stub_just_must_not_run
+        _run_ci_item 2.1
+        assert_failure 1
+        assert_output --partial 'item 2.1 FAILED'
+    done
+}
+
+@test "CI mode 2.1: a job query that fails fails the item (fail closed)" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv" 1
+    _stub_just_must_not_run
+    _run_ci_item 2.1
+    assert_failure 1
+    refute_output --partial 'reused: '
+}
+
+@test "CI mode: a partial request is unavailable (3) and never falls back to running the tiers" {
+    _stub_just_must_not_run
+    _stub_gh
+    WORKTOOL_VERIFY_GATE_RUN="${CI_RUN}" PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.1
+    assert_failure 3
+    refute_output --partial 'fake just'
+    WORKTOOL_VERIFY_GATE_RUN="${CI_RUN}" PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 3
+    refute_output --partial 'fake just'
+}
+
+@test "CI mode 2.3: green integration and system-real jobs whose logs carry the documented blocks pass" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_success
+    assert_line "reused: test-integration (ubuntu-latest) success run=${CI_RUN} job=101"
+    assert_line "reused: test-system-real (ubuntu-24.04-arm) success run=${CI_RUN} job=202"
+    assert_line 'ok 1 preflight: a real ghostty is on PATH and reports its version'
+    assert_line '# single-instance: COMMAND_FINISHED=no'
+    # Both runners' logs were read.
+    run cat "${BATS_TEST_TMPDIR}/gh-calls"
+    assert_output --partial 'actions/jobs/101/logs'
+    assert_output --partial 'actions/jobs/102/logs'
+    assert_output --partial 'actions/jobs/201/logs'
+    assert_output --partial 'actions/jobs/202/logs'
+}
+
+@test "CI mode 2.3: a cancelled system-real job fails the item before any log counts" {
+    _write_tier_blocks
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/all.tsv"
+    sed 's/^\(test-system-real (ubuntu-24.04-arm)\t.*\t\)success\t/\1cancelled\t/' \
+        "${BATS_TEST_TMPDIR}/all.tsv" >"${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_failure 1
+    assert_output --partial 'concluded cancelled, not success'
+}
+
+@test "CI mode 2.3: a green job whose log lacks a documented case still fails (the block is judged too)" {
+    _write_tier_blocks
+    grep -v 'gtk-single-instance = false' "${SYS_BLOCK}" >"${SYS_BLOCK}.new"
+    mv "${SYS_BLOCK}.new" "${SYS_BLOCK}"
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_failure 1
+    assert_output --partial 'gtk-single-instance = false'
+}
+
+@test "CI mode 2.3: a green job whose log carries a not ok line fails" {
+    _write_tier_blocks
+    printf 'not ok 99 something broke\n' >>"${INT_BLOCK}"
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_failure 1
+    assert_output --partial 'not ok 99 something broke'
 }
