@@ -11,6 +11,8 @@
 # success), and only `completed` + `success` is green.
 #
 # Usage: full-run.sh --repo OWNER/REPO --sha SHA [--dispatch] [--wait SECONDS]
+#                    [--exclude-run ID]
+#   --exclude-run  ignore that run id (a run asking about its own sha, #851)
 #   --dispatch  when no run of the sha exists or the newest one did not
 #               succeed, start one (`gh workflow run nightly.yml --ref main
 #               -f sha=SHA`) and report pending
@@ -28,6 +30,7 @@ REPO=""
 SHA=""
 DISPATCH=0
 WAIT=0
+EXCLUDE=""
 POLL="${WORKTOOL_FULL_RUN_POLL:-30}"
 
 _usage() {
@@ -50,6 +53,9 @@ while [[ $# -gt 0 ]]; do
         --repo) [[ $# -ge 2 ]] || _arg_error "--repo requires OWNER/REPO"; REPO="$2"; shift ;;
         --sha) [[ $# -ge 2 ]] || _arg_error "--sha requires a commit"; SHA="$2"; shift ;;
         --dispatch) DISPATCH=1 ;;
+        --exclude-run)
+            [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || _arg_error "--exclude-run requires a run id"
+            EXCLUDE="$2"; shift ;;
         --wait)
             [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || _arg_error "--wait requires a number of seconds"
             WAIT="$2"; shift ;;
@@ -72,7 +78,7 @@ _newest() {
         --json displayTitle,status,conclusion,databaseId,createdAt \
         --jq '.[] | [.displayTitle, .status, .conclusion, (.databaseId | tostring), .createdAt] | @tsv')" \
         || return 1
-    awk -F '\t' -v t="${TITLE}" '$1 == t' <<<"${_rows}" \
+    awk -F '\t' -v t="${TITLE}" -v x="${EXCLUDE}" '$1 == t && $4 != x' <<<"${_rows}" \
         | LC_ALL=C sort -t "$(printf '\t')" -k5,5 \
         | tail -n 1 \
         | awk -F '\t' '{ print $2 "\t" ($3 == "" ? "none" : $3) "\t" $4 }'

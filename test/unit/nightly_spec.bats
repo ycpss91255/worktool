@@ -54,3 +54,30 @@ CASES
         assert_failure 2
     done
 }
+
+# #851: a main push runs the full check on every merged sha, so a
+# scheduled run only fills the gap - when main's HEAD has no green full run
+# yet. Argument 4 is full-run.sh's exit status for HEAD (this run excluded):
+# 0 green, 3 another run of HEAD still going, anything else (1, empty) none.
+@test "a scheduled run skips when main's HEAD already has a green full run or one is running (#851)" {
+    run --separate-stderr nightly_decide schedule 0 "" 0
+    assert_success
+    assert_output 'skip-green'
+    [[ "${stderr:-}" == *'already has a green full run'* ]] || fail "no reason logged: ${stderr:-}"
+    run --separate-stderr nightly_decide schedule 0 "" 3
+    assert_success
+    assert_output 'skip-running'
+    run --separate-stderr nightly_decide schedule 0 "" 1
+    assert_output 'run'
+    run --separate-stderr nightly_decide schedule 0 ""
+    assert_output 'run'
+    # An open failure issue still wins (no duplicate run, no new comment).
+    run --separate-stderr nightly_decide schedule 0 17 1
+    assert_output 'skip 17'
+}
+
+@test "a main push always runs the full check (#851)" {
+    run --separate-stderr nightly_decide push 0 17 0
+    assert_success
+    assert_output 'run'
+}

@@ -11,10 +11,13 @@
 # silently skips the suite.
 #
 # Public API:
-#   nightly_decide <event> <list_rc> <open issue numbers, newline separated>
+#   nightly_decide <event> <list_rc> <open issue numbers, newline separated> [head_rc]
 #       -> prints `run`, or `skip <n>` (n = the oldest open issue) for a
 #          schedule event while such an issue is open. list_rc != 0 means
-#          the listing failed: run.
+#          the listing failed: run. For a schedule event head_rc is
+#          full-run.sh's status for main's HEAD (#851): 0 prints
+#          `skip-green`, 3 `skip-running`, anything else runs. Any other
+#          event (push, workflow_dispatch) always runs.
 #   nightly_report <result> <list_rc> <open issue numbers>
 #       <result> is the full serial run's result (success, or anything
 #       else = failed).
@@ -55,6 +58,18 @@ nightly_decide() {
         printf 'skip %s\n' "${_n}"
         return 0
     fi
+    # #851: every main push already runs the full check on its sha, so a
+    # scheduled run only fills the gap.
+    case "${4:-}" in
+        0)
+            log_info "nightly: main's HEAD already has a green full run: skipping this scheduled run"
+            printf 'skip-green\n'
+            return 0 ;;
+        3)
+            log_info "nightly: a full run of main's HEAD is still going: skipping this scheduled run"
+            printf 'skip-running\n'
+            return 0 ;;
+    esac
     printf 'run\n'
 }
 

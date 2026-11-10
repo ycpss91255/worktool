@@ -520,6 +520,13 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 
 ### nightly 完整序列執行(#836)
 
+**main push 的完整檢查(#851、ADR-0020)**:每個合併進 main 的 sha 都觸發 `nightly.yml`
+(`push: branches: [main]`),在那個 sha 上跑 `full-serial` 與 `isolation`(不限時間),
+疊在 ci.yml 的分片 tier 之上;run 標題同為 `full-serial <sha>`,交接與 release 的
+`full-run.sh` 直接沿用。concurrency 依 sha 分組,連續合併時每個 sha 都跑完。失敗時與排程相同,
+開或留言 `nightly-failure` issue(有 open 的就不另開)。排程只補空缺:main HEAD 已有綠燈
+(`skip-green`)或正在跑(`skip-running`)的完整執行時略過並記錄原因。
+
 `.github/workflows/nightly.yml` 每天 03:00(台北,cron `0 19 * * *`)與手動
 (`workflow_dispatch`)在 main 上、兩種架構各一個 job,序列執行裸 `just test`(七個 tier
 依序、遇第一個失敗即停)與驗收 2.3 的檢查(`just test integration`、`just test system-real`),
