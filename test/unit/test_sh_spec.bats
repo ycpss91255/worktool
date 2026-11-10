@@ -298,6 +298,24 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR .* \./script/test/system-real-entry\.sh$'
 }
 
+# issue #843 follow-up: a run that builds the Ubuntu images itself (the
+# nightly full serial run, a local run) passes the same mirror knob as the
+# CI image builds; empty = the images' own sources.
+@test "test.sh passes WORKTOOL_APT_MIRROR to the ghostty and system-real image builds" {
+    unset SYSTEM_REAL_IMAGE_PREBUILT GHOSTTY_IMAGE_PREBUILT
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ run "${TEST_SH}" --integration --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build --build-arg APT_MIRROR=http://azure\.archive\.ubuntu\.com/ubuntu/ .*Dockerfile\.ghostty'
+    assert_line --regexp '^docker build --build-arg APT_MIRROR=http://azure\.archive\.ubuntu\.com/ubuntu/ .*Dockerfile\.system-real'
+    unset WORKTOOL_APT_MIRROR
+    : >"${FAKE_DOCKER_CALLS}"
+    run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build --build-arg APT_MIRROR= .*Dockerfile\.system-real'
+}
+
 @test "test.sh --build builds the test image and runs no gate" {
     unset TEST_IMAGE_PREBUILT
     run "${TEST_SH}" --build
