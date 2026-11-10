@@ -63,6 +63,28 @@ EOF
     assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
 }
 
+@test "--archives DIR keeps apt's downloaded packages in DIR, with or without a mirror; a DIR that is not a plain absolute path is refused (#847)" {
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /run/host/var/cache/worktool-apt "${MIRROR}"
+    assert_success
+    run cat "${CONF}"
+    assert_line 'Dir::Cache::Archives "/run/host/var/cache/worktool-apt/";'
+    assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
+    rm -f "${CONF}"
+    cp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /var/cache/x/
+    assert_success
+    run cat "${CONF}"
+    assert_output 'Dir::Cache::Archives "/var/cache/x/";'
+    run diff "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    assert_success
+    rm -f "${CONF}"
+    for bad in relative/dir '/a b' '/a"b' "/a'b" '/a;b' ''; do
+        run bash "${SCRIPT}" --root "${ROOT}" --archives "${bad}" "${MIRROR}"
+        assert_failure 2
+    done
+    assert [ ! -e "${CONF}" ]
+}
+
 @test "no mirror (or an empty one) changes nothing" {
     run bash "${SCRIPT}" --root "${ROOT}"
     assert_success
