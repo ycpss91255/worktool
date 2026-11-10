@@ -316,6 +316,24 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker build --build-arg APT_MIRROR= .*Dockerfile\.system-real'
 }
 
+# issue #853: a tier container (root) must never be the one that creates
+# .agents/state, or a later host-side step (lint's path snapshot) cannot
+# write there. Found by the isolation guard (#835) running unit before lint.
+@test "every container launch is preceded by the host creating .agents/state (#853)" {
+    local _fn _body
+    for _fn in _run_in_container _run_ghostty_in_container _run_system_real_in_runner; do
+        _body="$(bash -c 'source "$1"; declare -f "$2"' _ "${TEST_SH}" "${_fn}")"
+        assert [ -n "${_body}" ]
+        run awk '
+            /_host_state_dir/ && !seen_run { ok = 1 }
+            /docker run --rm/ { seen_run = 1; if (!ok) bad = 1 }
+            END { exit (ok && !bad) ? 0 : 1 }' <<<"${_body}"
+        assert_success "${_fn}: _host_state_dir must run before docker run"
+    done
+    run bash -c 'source "$1"; declare -f _host_state_dir' _ "${TEST_SH}"
+    assert_output --partial "mkdir -p \"\${REPO_ROOT}/.agents/state\""
+}
+
 @test "test.sh --build builds the test image and runs no gate" {
     unset TEST_IMAGE_PREBUILT
     run "${TEST_SH}" --build
