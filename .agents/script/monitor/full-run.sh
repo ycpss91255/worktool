@@ -37,10 +37,14 @@ POLL="${WORKTOOL_FULL_RUN_POLL:-30}"
 _usage() {
     cat <<'EOF'
 Usage: full-run.sh --repo OWNER/REPO --sha SHA [--dispatch] [--wait SECONDS]
+                   [--exclude-run ID]
+       full-run.sh --help
 Exit 0 when the newest Nightly run titled `full-serial SHA` completed with
-success; 1 when it did not (or none exists, or the query failed); 3 while it
-is pending. --dispatch starts a run when none is green or pending; --wait N
-polls a pending run for at most N seconds.
+success; 1 when it did not (or none exists, or a query failed); 2 on bad
+arguments, including a SHA that is no commit of the repo; 3 while it is
+pending. --dispatch starts a run when none is green or pending; --wait N
+polls a pending run for at most N seconds; --exclude-run ID ignores that
+run (a run asking about its own sha).
 EOF
 }
 

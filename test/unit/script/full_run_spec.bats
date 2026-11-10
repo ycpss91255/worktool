@@ -188,3 +188,17 @@ EOF
     run grep -c '^workflow run' "${GH_CALLS}"
     assert_output 0
 }
+
+@test "--help names every option the parser takes and every exit status (#876)" {
+    local _opt
+    PATH="${BIN}:${PATH}" run "${SCRIPT}" --help
+    assert_success
+    local _help="${output}"
+    while IFS= read -r _opt; do
+        assert [ -n "${_opt}" ]
+        [[ "${_help}" == *"${_opt}"* ]] || fail "--help does not name ${_opt}"
+    done < <(grep -oE '^ +--[a-z-]+(\|-h\|--help)?\)' "${SCRIPT}" | sed -E 's/^ +//; s/[|)].*//')
+    for _opt in 'Exit 0' ' 1 ' ' 2 ' ' 3 '; do
+        [[ "${_help}" == *"${_opt}"* ]] || fail "--help does not name '${_opt}'"
+    done
+}
