@@ -13,7 +13,7 @@ nightly 的 `isolation (ubuntu-latest)` 在多數 main push 失敗（#874）。�
 1. isolation job 先以 buildx 建兩個 Ubuntu 映像，參數與 ci.yml 相同（同 Dockerfile、tag、`APT_MIRROR` build arg、`cache-from: type=gha,scope=<image>-<runner>`），只讀不寫（沒有 `cache-to`，寫入者維持 ci.yml 的 main push），再以 `GHOSTTY_IMAGE_PREBUILT=1`、`SYSTEM_REAL_IMAGE_PREBUILT=1` 交給各階段。快取命中時映像建置不碰鏡像。隨機順序與殘留檢查（ADR-0018）不變；映像不在殘留快照內。
 2. `script/test/apt-mirror.sh` 給了鏡像時，把每行 `URIs:` 改成 apt 的 `mirror+file:/etc/apt/worktool-mirrors.list`：鏡像 `priority:1`，接著是 sources 檔原本的 URIs（依檔內順序，去重；amd64 為 archive.ubuntu.com 再 security.ubuntu.com，arm 為 ports.ubuntu.com）。鏡像取不到某個檔（404 或其他失敗）時，apt 對該檔改向下一個來源取，log 是 `Ign:N <鏡像> <套件>` 接著 `Get:N <下一個來源> <套件>`；每個檔照樣以索引的 hash 核對；全部來源都失敗時仍是 `E: Failed to fetch` 紅燈。這是固定順序的來源切換，不是盲目重試；腳本開頭印出鏡像與完整的備援順序。它套用在兩個映像建置與 box 首次啟動（三處都經由 apt-mirror.sh），所以 full-serial 與 ci.yml 也受保護。
 3. 必須帶 `priority:`：本機以 ubuntu:26.04（apt 3.2.0）實測，沒有 priority 的清單會把下載分散到各項（`libonig5` 走第二項、其餘走第一項），會把部分套件送到慢的上游、抵銷 #843；有 priority 時兩種順序各 37/37 個檔都從 priority 1 下載。priority 1 換成會 404 的路徑時每個檔都是 `Ign` 後由 priority 2 取得；全部 404 時 `apt-get` exit 100。
-4. 不另做映像建置的 deb 快取：BuildKit 的 `type=cache` mount 不會匯出到 `type=gha`，跨 runner 不保留；把 `apt-box` 以 build context 餵進建置會讓該 RUN 層的 cache key 隨 deb 集合變動，反而讓層快取失效；`apt-box` 保存的是 box 的套件，不是映像的。
+4. 不另做映像建置的 deb 快取：BuildKit 的 `type=cache` mount 不會匯出到 `type=gha`，跨 runner 不保留；把 `apt-box` 以 build context 餵進建置會讓該 RUN 層的 cache key 隨 deb 集合變動，反而讓層快取失效；`apt-box` 保存的是 box 的套件，不是映像的。這兩種做法仍不採用；映像建置的套件快取改由 ADR-0023 以 runner 本機代理（`http_proxy` build arg，不進層快取 key）提供（#892）。
 5. full-serial 不預先建映像：它跑的是使用者打的裸 `just test`，含 test.sh 自己的 `docker build`；決策 2 同樣保護它。
 
 ## 影響與限制

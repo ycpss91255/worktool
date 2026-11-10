@@ -383,10 +383,11 @@ _leg_names() {
     assert_line "review-log"
     assert_line "verify-all"
     assert_line "shard-weights"
+    assert_line "image-seed"
     assert_line "unit-shard"
     assert_line "test-unit-verdict"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 14
+    assert_equal "${#lines[@]}" 15
 }
 
 @test "bats gates upload a junit report and a main push stores the merged shard weights (#827)" {
@@ -638,14 +639,63 @@ _leg_names() {
 # legs are untouched (empty = no change).
 @test "the amd64 legs take Ubuntu packages from the runner-local mirror, the arm legs keep the default (#843)" {
     local _job
-    for _job in gate test-system-real; do
+    for _job in gate test-system-real image-seed; do
         run _job_block "${_job}"
         assert_success
         # Job level, so the image build and the gate step read one value.
         assert_line '    env:'
         assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
-        assert_line "          build-args: APT_MIRROR=\${{ env.WORKTOOL_APT_MIRROR }}"
+        assert_line "            APT_MIRROR=\${{ env.WORKTOOL_APT_MIRROR }}"
     done
+}
+
+# issue #892: a cold apt RUN layer (a Dockerfile or apt-mirror.sh changed)
+# took 21 min at ~100 kB/s on the amd64 mirror (run 42819549766). Every
+# Ubuntu image build reaches the local package proxy through the predefined
+# http_proxy build arg (outside the layer cache key, not in the image), and
+# a main push refreshes the package set the proxy serves.
+@test "every Ubuntu image build goes through the image package proxy, and a main push refreshes its packages (#892)" {
+    local _job _n
+    for _job in gate test-system-real image-seed; do
+        run _job_block "${_job}"
+        assert_success
+        assert_line '          driver-opts: network=host'
+        assert_line "          path: \${{ runner.temp }}/apt-image/*.deb"
+        assert_line "          key: apt-image-\${{ matrix.runner }}-none"
+        assert_line "          restore-keys: apt-image-\${{ matrix.runner }}-"
+        assert_line --partial "script/test/apt-seed.sh start --seed \"\${RUNNER_TEMP}/apt-image\""
+        assert_line "            http_proxy=\${{ steps.seed.outputs.url }}"
+        assert_line --partial 'script/test/apt-seed.sh stop --log'
+        # Exactly one proxy arg per build of the job.
+        _n="$(grep -c '        uses: docker/build-push-action@v6' <<<"${output}")"
+        run grep -c '            http_proxy=' <<<"${output}"
+        assert_output "${_n}"
+    done
+    # The PR-path builds only read the package set.
+    for _job in gate test-system-real; do
+        run _job_block "${_job}"
+        refute_output --partial '--record'
+        refute_output --partial 'apt-image-new'
+        refute_line --regexp 'key: apt-image-.*steps\.'
+    done
+    run _job_block image-seed
+    assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
+    assert_line '    needs: route'
+    assert_line "          file: dockerfile/Dockerfile.system-real"
+    assert_line "          file: dockerfile/Dockerfile.ghostty"
+    run grep -c '          no-cache: true' <<<"${output}"
+    assert_output 2
+    run _job_block image-seed
+    refute_output --partial 'cache-to'
+    refute_output --partial 'cache-from'
+    refute_output --partial 'load: true'
+    assert_line --partial "--record \"\${RUNNER_TEMP}/apt-image-new\""
+    assert_line --partial "kc=\"\$(apt_cache_key \"\${RUNNER_TEMP}/apt-image\")\""
+    assert_line "          key: apt-image-\${{ matrix.runner }}-\${{ steps.debs.outputs.key }}"
+    # ci-passed requires it on a main push.
+    run _job_block ci-passed
+    assert_line --regexp "$(_flow_has '    ' needs image-seed)"
+    assert_line "          SEED_RESULT: \${{ needs.image-seed.result }}"
 }
 
 @test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {

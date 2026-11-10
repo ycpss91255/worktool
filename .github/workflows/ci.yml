@@ -201,10 +201,29 @@ jobs:
         uses: extractions/setup-just@v2
 
       # The ghostty group of integration runs in its own image; build it
-      # with the same buildx cache as the DinD runner (issue #829).
+      # with the same buildx cache as the DinD runner (issue #829), through
+      # the image package proxy (issue #892, see test-system-real).
       - name: Set up buildx
         if: matrix.tier == 'integration'
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Restore image packages
+        if: matrix.tier == 'integration'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy
+        id: seed
+        if: matrix.tier == 'integration'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
 
       - name: Build ghostty image (buildx, gha cache)
         if: matrix.tier == 'integration'
@@ -218,8 +237,14 @@ jobs:
           tags: worktool-ghostty:local
           load: true
           cache-from: type=gha,scope=ghostty-${{ matrix.runner }}
-          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=ghostty-{0}', matrix.runner) || '' }}
+
+      - name: Stop the image package proxy
+        if: matrix.tier == 'integration' && steps.seed.outcome == 'success'
+        run: script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
 
       # 8 bats jobs (files and the cases of one file, #689): measured on the
       # 4-vCPU arm runner, unit 616 s / 503 s / 517 s and matrix 193 s /
@@ -407,8 +432,36 @@ jobs:
       # GitHub Actions cache, one scope per image and runner, loaded into
       # the runner's daemon. Only a main push writes the cache, so PRs read
       # main's layers instead of evicting them; a miss is a full build.
+      # The builder shares the runner's network so a RUN reaches the image
+      # package proxy on 127.0.0.1.
       - name: Set up buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      # Image packages (issue #892): a miss of the apt RUN layer (a
+      # Dockerfile or apt-mirror.sh changed) downloads every package again,
+      # and the amd64 mirror serves the ones it has not cached at ~100 kB/s.
+      # The build reaches a local proxy (script/test/apt-seed-proxy.mjs)
+      # through Docker's predefined `http_proxy` build arg, which is not part
+      # of the layer cache key and not written into the image: the
+      # Dockerfile and its layers are unchanged and a warm build still hits.
+      # The proxy serves pool .deb files from the newest apt-image entry
+      # (written by image-seed on a main push) and passes everything else,
+      # misses included, to the real source; apt checks every hash.
+      - name: Restore image packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy
+        id: seed
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
 
       - name: Build system-real runner image (buildx, gha cache)
         uses: docker/build-push-action@v6
@@ -421,8 +474,14 @@ jobs:
           tags: worktool-system-real:local
           load: true
           cache-from: type=gha,scope=system-real-${{ matrix.runner }}
-          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=system-real-{0}', matrix.runner) || '' }}
+
+      - name: Stop the image package proxy
+        if: steps.seed.outcome == 'success'
+        run: script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
 
       # The box's downloaded packages (issue #847): the first launch runs
       # distrobox-init's full apt install, with apt keeping its .deb files in
@@ -693,6 +752,99 @@ jobs:
             --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' > "${jobs}" || exit 1
           ci_prior_run_evaluate "${verify}" < "${jobs}"
 
+  # Main push only (issue #892): refresh the image packages the PR builds
+  # read. A main push's image builds hit the layer cache, so no package
+  # passes their proxy; this job builds both Ubuntu images again with
+  # no-cache, no output and no cache-to, through the proxy in record mode
+  # (seed hits and misses alike), so the recorded set is exactly what a
+  # cold build of this sha needs. It is saved keyed by that set's digest
+  # (lib/apt_cache.sh), so an unchanged set is not stored again. Steady
+  # state serves nearly everything from the seed; only the first fill and
+  # new package versions come from the mirror.
+  image-seed:
+    name: image-seed (${{ matrix.runner }})
+    needs: route
+    if: github.event_name == 'push' && needs.route.outputs.code == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Restore image packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy (record mode)
+        id: seed
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image" "${RUNNER_TEMP}/apt-image-new"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --record "${RUNNER_TEMP}/apt-image-new" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build system-real runner image (no-cache, record packages)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.system-real
+          no-cache: true
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+
+      - name: Build ghostty image (no-cache, record packages)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.ghostty
+          no-cache: true
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+
+      - name: Stop the proxy and key the recorded packages
+        id: debs
+        run: |
+          set -euo pipefail
+          script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
+          source lib/apt_cache.sh
+          find "${RUNNER_TEMP}/apt-image" -maxdepth 1 -name '*.deb' -delete
+          find "${RUNNER_TEMP}/apt-image-new" -maxdepth 1 -name '*.deb' -exec mv -t "${RUNNER_TEMP}/apt-image" {} +
+          kc="$(apt_cache_key "${RUNNER_TEMP}/apt-image")"
+          read -r key count <<< "${kc}"
+          echo "image packages: ${count} (key ${key})"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save image packages
+        if: steps.debs.outputs.count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-${{ steps.debs.outputs.key }}
+
   # Main push only (issue #827): merge every gate's junit report into the
   # shard weights (spec -> milliseconds, the slower runner kept; rule in
   # lib/shard_weights.sh) and save them to the actions cache. The key
@@ -743,7 +895,7 @@ jobs:
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all, shard-weights, unit-shard, test-unit-verdict]
+    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all, shard-weights, image-seed, unit-shard, test-unit-verdict]
     if: always()
     permissions:
       contents: read
@@ -784,6 +936,7 @@ jobs:
           VERIFY_RESULT: ${{ needs.verify-all.result }}
           WEIGHTS_REQUIRED: ${{ github.event_name == 'push' }}
           WEIGHTS_RESULT: ${{ needs.shard-weights.result }}
+          SEED_RESULT: ${{ needs.image-seed.result }}
         run: |
           echo "route: ${ROUTE_RESULT} (code path: ${CODE_PATH})"
           [ "${ROUTE_RESULT}" = "success" ] || exit 1
@@ -805,6 +958,10 @@ jobs:
             echo "shard-weights (required=${WEIGHTS_REQUIRED}, main push): ${WEIGHTS_RESULT}"
             if [ "${WEIGHTS_REQUIRED}" = "true" ]; then
               [ "${WEIGHTS_RESULT}" = "success" ] || exit 1
+            fi
+            echo "image-seed (required=${WEIGHTS_REQUIRED}, main push, both runners): ${SEED_RESULT}"
+            if [ "${WEIGHTS_REQUIRED}" = "true" ]; then
+              [ "${SEED_RESULT}" = "success" ] || exit 1
             fi
           elif [ "${CODE_PATH}" = "false" ]; then
             echo "prior-run (latest code run of this head sha, every leg green): ${PRIOR_RESULT}"
