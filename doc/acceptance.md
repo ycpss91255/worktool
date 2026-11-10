@@ -559,6 +559,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `doc/adr/0010-invariant-black-box-verifiable.md`
 - `doc/adr/0012-invariant-platform-neutral.md`
 - `doc/adr/0014-local-tests-changed-only.md`
+- `doc/adr/0017-ci-acceptance-reuses-gate-jobs.md`
 - `doc/contract.md`
 - `doc/design.md`
 - `doc/diagram/flow.drawio.svg`
@@ -577,6 +578,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `lib/home.sh`
 - `lib/realbox_interrupt.sh`
 - `lib/verify_busy_latency.awk`
+- `lib/verify_ci_gate.sh`
 - `lib/verify_run.sh`
 - `script/box/assemble.sh`
 - `script/box/bench.sh`

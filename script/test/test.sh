@@ -818,6 +818,8 @@ lib/review_log.sh|test/unit/review_log_spec.bats
 lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
 lib/verify_run.sh|test/unit/verify_realbox_spec.bats
 lib/verify_run.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
 script/box/assemble.sh|test/unit/assemble_spec.bats
 script/box/assemble.sh|test/integration/assemble_spec.bats
 script/box/assemble.sh|test/system/real_assemble_spec.bats
