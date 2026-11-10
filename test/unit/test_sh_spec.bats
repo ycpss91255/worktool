@@ -298,6 +298,25 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp '^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR .* \./script/test/system-real-entry\.sh$'
 }
 
+# issue #847: CI persists the box's downloaded packages in a host dir
+# (WORKTOOL_APT_CACHE_DIR); it is mounted at a fixed runner path the entry
+# is told about. Unset: no mount, no variable; not absolute: refused.
+@test "test.sh --system-real mounts WORKTOOL_APT_CACHE_DIR into the DinD runner for the box's apt" {
+    local _dir="${BATS_TEST_TMPDIR}/apt-box"
+    mkdir -p "${_dir}"
+    WORKTOOL_APT_CACHE_DIR="${_dir}" run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp "^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR -e WORKTOOL_APT_ARCHIVES=/var/cache/worktool-apt -v ${_dir}:/var/cache/worktool-apt -v .*:/source .* \./script/test/system-real-entry\.sh\$"
+    : >"${FAKE_DOCKER_CALLS}"
+    run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    refute_output --partial 'worktool-apt'
+    WORKTOOL_APT_CACHE_DIR=relative/dir run "${TEST_SH}" --system-real
+    assert_failure 2
+}
+
 # issue #843 follow-up: a run that builds the Ubuntu images itself (the
 # nightly full serial run, a local run) passes the same mirror knob as the
 # CI image builds; empty = the images' own sources.
