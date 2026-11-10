@@ -237,11 +237,20 @@ _meta_skeleton() {
     done
 }
 
+# Run through the workflow, not its wording: ciState comes from ciAt, so a
+# red CI reports red for the head CI judged (#815).
 @test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
     run grep -c "ci.state !== 'green'" "${PR_LOOP}"
     assert_output "2"
-    run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "2"
+    run _pl_804_run '{}' '{"ci:":{"state":"red","sha":"abc","detail":"red"}}'
+    assert_success
+    run jq -e '.error == null and .result.sha == "abc" and .result.ciState == "red" and .result.codexVerdict == "skipped"' <<<"${output}"
+    assert_success
+    run _pl_769_defect_run '{"implementer":"claude","maxRounds":1}' \
+        '{"ci:":[{"state":"green","sha":"abc","detail":""},{"state":"red","sha":"def","detail":"red"}]}'
+    assert_success
+    run jq -e '.error == null and .result.sha == "def" and .result.ciState == "red" and .result.codexVerdict == "blocked"' <<<"${output}"
+    assert_success
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
@@ -5146,17 +5155,17 @@ _pl_804_run() {
         "codex defects left after maxRounds|{\"implementer\":\"claude\",\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"blocked\" and .reviewer == \"codex\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
         'codex malformed findings|{"implementer":"claude"}|{"review:":{"verdict":"mergeable"}}|.codexVerdict == "no-output" and .reviewer == "codex" and .reviewVerdict == "no-output" and .blockingLeft == ["review returned missing or malformed findings"]'
         "Claude defects left after maxRounds|{\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"not-run\" and .reviewer == \"claude\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
-        'red CI before review|{}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red" and .reviewer == "none"'
+        'red CI before review|{}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "red" and .reviewer == "none"'
         'no PR after implementation|{}|{"locate:":null}|.codexVerdict == "none" and .pr == 0'
         'codex off|{"implementer":"claude","codex":"off"}|{}|.codexVerdict == "off" and .reviewer == "none"'
         'preparation failure|{"mode":"light"}|{"prepare:":{"state":"missing-job"}}|.codexVerdict == "blocked"'
-        'fresh light red CI|{"mode":"light"}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red"'
-        'fresh light end|{"mode":"light"}|{}|.codexVerdict == "skipped" and .ciState == "green" and .reviewer == "claude"'
+        'fresh light red CI|{"mode":"light"}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "red"'
+        'fresh light end|{"mode":"light"}|{}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "green" and .reviewer == "claude"'
         'light resume failed review|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"},"review:":{"verdict":"mergeable"}}|.codexVerdict == "skipped" and .reviewVerdict == "no-output"'
         "light resume PR head check failure|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":${head_fail}}|.codexVerdict == \"blocked\" and .reviewer == \"claude\""
         'light resume gate failure|{"mode":"light"}|{"prepare:":{"state":"resume"},"gates:":{"state":"red","detail":"red"}}|.codexVerdict == "blocked" and .pr == 0'
         'light resume without a PR|{"mode":"light"}|{"prepare:":{"state":"resume"}}|.codexVerdict == "none" and .pr == 0'
-        'light resume end|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"}}|.codexVerdict == "skipped" and .ciState == "green"'
+        'light resume end|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "green"'
     )
     local c name args over expr
     for c in "${cases[@]}"; do
@@ -5172,7 +5181,9 @@ _pl_804_run() {
 }
 
 # ciState describes CI on the reported head only: a head no CI stage judged is
-# never green (#810).
+# never green (#810). Every case pins the (sha, ciState) pair: the judged head
+# keeps its verdict, and a head a pushing stage may have moved without a
+# successful re-read is reported unknown as "" with none (#815).
 @test "#810: ciState reports CI of the returned head, never green for an unchecked head" {
     local ok='{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}'
     local defect='{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"x"}'
@@ -5185,9 +5196,15 @@ _pl_804_run() {
     local -a cases=(
         "_pl_769_defect_run|Fix check fails on a pushed head|${fix}|{\"stage-check:Fix\":${dirty_def}}|.sha == \"def\" and .ciState == \"none\""
         "_pl_769_defect_run|Fix check fails on the CI head|${fix}|{\"stage-check:Fix\":${abc}}|.sha == \"abc\" and .ciState == \"green\""
-        "_pl_769_defect_run|Fix check without evidence|${fix}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.ciState == \"none\""
+        "_pl_769_defect_run|Fix check without evidence, codex review|${fix}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.sha == \"\" and .ciState == \"none\""
+        "_pl_769_defect_run|Fix check without evidence, Claude review|{\"maxRounds\":1}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.sha == \"\" and .ciState == \"none\""
         "_pl_769_defect_run|adoption comment fails|${fix}|{\"adoption:\":{\"posted\":false}}|.sha == \"def\" and .ciState == \"none\""
-        "_pl_769_defect_run|codex Fix gates fail|{\"maxRounds\":1}|{\"gates:\":[{\"state\":\"green\",\"detail\":\"ok\"},{\"state\":\"red\",\"detail\":\"red\"}]}|.codexVerdict == \"blocked\" and .ciState == \"none\""
+        "_pl_769_defect_run|codex Fix gates fail on the CI head|{\"maxRounds\":1}|{\"gates:\":[{\"state\":\"green\",\"detail\":\"ok\"},{\"state\":\"red\",\"detail\":\"red\"}]}|.codexVerdict == \"blocked\" and .sha == \"abc\" and .ciState == \"green\""
+        "_pl_769_defect_run|codex Fix publication fails|{\"maxRounds\":1}|{\"publish:Fix\":null}|.codexVerdict == \"blocked\" and .sha == \"\" and .ciState == \"none\" and .blockingLeft == [\"publication failed\"]"
+        "_pl_769_defect_run|post-Fix CI returns nothing|${fix}|{\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},null]}|.codexVerdict == \"blocked\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|CI returns nothing before review|{}|{\"ci:\":null}|.codexVerdict == \"skipped\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|light CI returns nothing|{\"mode\":\"light\"}|{\"ci:\":null}|.codexVerdict == \"skipped\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|full resume check without evidence after CI|{\"pr\":7,\"codex\":\"off\",\"implementer\":\"claude\"}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},{\"evidence\":\"null\"}]}|.codexVerdict == \"blocked\" and .sha == \"abc\" and .ciState == \"green\""
         "_pl_769_defect_run|post-Fix CI green without a sha|${fix}|{\"review:\":[${defect},${ok}],\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"green\",\"sha\":\"\",\"detail\":\"\"}]}|.sha == \"def\" and .ciState == \"green\""
         "_pl_769_defect_run|post-Fix CI red without a sha|${fix}|{\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"red\",\"sha\":\"\",\"detail\":\"red\"}]}|.sha == \"def\" and .ciState == \"red\""
         "_pl_804_run|light resume head moved after CI|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},${def}]}|.sha == \"def\" and .ciState == \"none\""
