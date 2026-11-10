@@ -45,6 +45,20 @@
 #          record's plan equals the sum of its specs' case counts while its
 #          TAP holds exactly that many `ok` lines, no `not ok` and no
 #          `# skip`. Otherwise 1, every reason on stderr.
+#   test_shard_records_await <max_polls> <poll_seconds> <tier> <N> <runner>... -- <fetch...>
+#       runs <fetch...>, which prints the run's artifact listing as
+#       "<id><TAB><name><TAB><created_at>" rows, until every record
+#       test-report-<tier>-<i>-<runner> (i = 1..N, each runner) is listed;
+#       while one is not, it sleeps <poll_seconds> and fetches again, at
+#       most <max_polls> times (#890: a record finalized seconds before the
+#       verdict starts may not be listed yet). A name listed more than once
+#       (a re-run) counts by its newest created_at.
+#       -> prints "<id><TAB><name>" per listed record, runner by runner and
+#          i ascending, and returns 0 when all are listed; 1 when one is
+#          still missing after the last wait (the listed ones are still
+#          printed, each missing name on stderr), when a fetch fails or on
+#          bad arguments. The library never calls the GitHub API: the
+#          caller passes the fetch.
 #
 # Record format (shard.tsv, tab separated):
 #   shard   <i>/<N>
@@ -260,4 +274,69 @@ test_shard_verdict() {
     done
     rm -rf -- "${_scratch}"
     return "${_bad}"
+}
+
+# Print "<id>\t<name>" for every expected record name (one per line in the
+# file $1) the listing on stdin holds, newest created_at first wins; return
+# 1 when one is missing, its name in the file $2.
+_test_shard_records_pick() {
+    awk -F '\t' -v missing="$2" '
+        NR == FNR { want[$1] = 1; order[++n] = $1; next }
+        ($2 in want) && (!($2 in at) || $3 > at[$2]) { at[$2] = $3; id[$2] = $1 }
+        END {
+            bad = 0
+            printf "" > missing
+            for (i = 1; i <= n; i++) {
+                if (order[i] in id) printf "%s\t%s\n", id[order[i]], order[i]
+                else { print order[i] >> missing; bad = 1 }
+            }
+            exit bad
+        }' "$1" -
+}
+
+test_shard_records_await() {
+    local _polls="${1:-}" _secs="${2:-}" _tier="${3:-}" _n="${4:-}" _runners=() _scratch _listing _picked _i _j _rc
+    if (($# >= 4)); then
+        shift 4
+        while (($# > 0)) && [[ "$1" != -- ]]; do
+            _runners+=("$1")
+            shift
+        done
+    fi
+    if [[ ! "${_polls}" =~ ^[0-9]+$ || ! "${_secs}" =~ ^[1-9][0-9]*$ || -z "${_tier}" \
+        || ! "${_n}" =~ ^[1-9][0-9]*$ || ${#_runners[@]} -eq 0 || "${1:-}" != -- || $# -lt 2 ]]; then
+        log_error 'test_shard_records_await: expected <max_polls> <poll_seconds> <tier> <N> <runner>... -- <fetch...> (fail closed).'
+        return 1
+    fi
+    shift
+    _scratch="$(mktemp -d)" || return 1
+    for _j in "${_runners[@]}"; do
+        for ((_i = 1; _i <= _n; _i++)); do
+            printf 'test-report-%s-%s-%s\n' "${_tier}" "${_i}" "${_j}"
+        done
+    done >"${_scratch}/want"
+    for ((_i = 0; ; _i++)); do
+        if ! _listing="$("$@")"; then
+            log_error 'test_shard_records_await: listing the artifacts failed (fail closed).'
+            rm -rf -- "${_scratch}"
+            return 1
+        fi
+        _rc=0
+        _picked="$(_test_shard_records_pick "${_scratch}/want" "${_scratch}/missing" <<<"${_listing}")" || _rc=$?
+        if ((_rc == 0)); then
+            printf '%s\n' "${_picked}"
+            rm -rf -- "${_scratch}"
+            return 0
+        fi
+        if ((_i >= _polls)); then
+            [[ -z "${_picked}" ]] || printf '%s\n' "${_picked}"
+            while IFS= read -r _j; do
+                log_error "test_shard_records_await: ${_j} not listed after ${_polls} waits of ${_secs}s (fail closed)."
+            done <"${_scratch}/missing"
+            rm -rf -- "${_scratch}"
+            return 1
+        fi
+        log_info "test_shard_records_await: $(wc -l <"${_scratch}/missing") record(s) not listed yet, waiting ${_secs}s (${_i}/${_polls})."
+        sleep "${_secs}"
+    done
 }
