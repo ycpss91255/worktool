@@ -16,6 +16,18 @@
 
 ## 影響與限制
 
-- 映像建置（`Dockerfile.system-real`、`Dockerfile.ghostty`）仍只靠 buildx 的 gha cache；Dockerfile 一改或 main push 建置失敗時 PR 會重新 apt，未納入本決策。
-- 本 PR 自己的 CI 還沒有快取（只有 main push 寫入）；效果以合併後的 PR 量測，記在 #847。
+- 映像建置（`Dockerfile.system-real`、`Dockerfile.ghostty`）仍只靠 buildx 的 gha cache；Dockerfile 或它 bind mount 的 `apt-mirror.sh` 一改、或 main push 建置失敗時 PR 會重新 apt，未納入本決策。實例：PR #875 自己改了 `apt-mirror.sh`，amd64 runner 映像重建 `Fetched 129 MB in 11min 46s (182 kB/s)`，加上冷的 box 首次啟動 13m09s，job 1659 秒。
+- 引入的 PR 自己的 CI 沒有快取（只有 main push 寫入）。
+
+## 量測（後，#883）
+
+main push 42809978066（merge `9db08d23`）寫入 `apt-box-ubuntu-latest-e94df335af038c21`（278 個 .deb）與 `apt-box-ubuntu-24.04-arm-bd048f02e0c42faa`（276 個）。之後的 PR run 都以 `Cache restored from key: apt-box-…` 還原：
+
+| run | amd64 test-system-real job | box 首次啟動 |
+|---|---|---|
+| 42811109407（PR #879） | 189 秒 | 1m00s |
+| 42811998023（PR #879） | 194 秒 | 58s |
+| 42813085348（PR #881） | 172 秒 | 42s |
+
+鏡像正常時快取省下的時間不多（安裝本身約 40-60 秒）；它消除的是鏡像慢時的 11-15 分與 900 秒逾時：首次啟動不再隨鏡像當下的速度變動。
 - 守住本決策的 spec：`test/unit/apt_mirror_spec.bats`（`--archives`、修剪與 key）、`test/unit/system_real_entry_spec.bats`（box 映像重建）、`test/unit/test_sh_spec.bats`（掛載）、`test/unit/ci_yml_spec.bats`（還原、修剪、寫回的接線）。
