@@ -16,10 +16,15 @@
 # Sourced: provides functions only, sets no shell options. Diagnostics go
 # to stderr; stdout carries only the reused-job lines the document shows.
 
-# The runners every gate leg runs on (.github/workflows/ci.yml matrix
-# `runner:`; test/unit/verify_ci_gate_spec.bats keeps the two equal).
+# The runners of ci.yml's gate matrix ($1 = the workflow file), one per
+# line. Read from the workflow so a runner change cannot leave a stale list
+# here (#833, audit F8). Returns 1 when none can be read.
 verify_ci_gate_runners() {
-    printf '%s\n' ubuntu-latest ubuntu-24.04-arm
+    local _out
+    [[ -r "$1" ]] || { printf '[ERROR] verify_ci_gate: cannot read %s\n' "$1" >&2; return 1; }
+    _out="$(sed -nE '/^  gate:$/,/^  [a-z-]+:$/ s/^        runner: \[(.*)\]$/\1/p' "$1" | sed 's/, */\n/g')"
+    [[ -n "${_out}" ]] || { printf '[ERROR] verify_ci_gate: no gate runner matrix in %s\n' "$1" >&2; return 1; }
+    printf '%s\n' "${_out}"
 }
 
 # Seconds one GitHub API call (job list, one job log) may take.
@@ -49,14 +54,54 @@ verify_ci_gate_mode() {
     return 0
 }
 
-# The gate job name of one bare `just test` step on one runner: ci.yml
-# names the gate `lint`, `test-<tier>` or `test-system-real`, and every leg
-# carries its runner. $1 = step, $2 = runner.
-verify_ci_gate_job_name() {
-    case "$1" in
-        lint) printf 'lint (%s)\n' "$2" ;;
-        *)    printf 'test-%s (%s)\n' "$1" "$2" ;;
-    esac
+# The job names that stand for tier $2 in workflow $1, one per line, read
+# from the workflow itself (#833, audit F8) so a renamed or merged job can
+# never be judged by a stale name:
+#   1. a gate matrix `include` entry whose `tier:` lists the tier ->
+#      `<gate> (<runner>)` for every gate runner (this branch: `lint`,
+#      `test-unit`, ...; main: `lint-system-acceptance` for lint, system
+#      and acceptance);
+#   2. else a job `test-<tier>-verdict` (main's unit union verdict, which
+#      fails unless every shard of every runner passed) -> its `name:`;
+#   3. else a job `test-<tier>` named `test-<tier> (${{ matrix.runner }})`
+#      -> one name per gate runner (test-system-real).
+# A tier no job runs prints why and returns 1 (fail closed).
+verify_ci_gate_tier_jobs() {
+    local _yml="$1" _tier="$2" _gate _runner _name
+    local -a _runners=()
+    _runner="$(verify_ci_gate_runners "${_yml}")" || return 1
+    mapfile -t _runners <<<"${_runner}"
+    _gate="$(awk -v t="${_tier}" '
+        /^  gate:$/ { g = 1; next }
+        g && /^  [a-z-]+:$/ { g = 0 }
+        g && /^          - gate: / { cur = $3; next }
+        g && cur != "" && /^            tier: / {
+            sub(/^            tier: /, "")
+            n = split($0, ts, " ")
+            for (i = 1; i <= n; i++) if (ts[i] == t) { print cur; exit }
+        }' "${_yml}")"
+    if [[ -n "${_gate}" ]]; then
+        for _runner in "${_runners[@]}"; do printf '%s (%s)\n' "${_gate}" "${_runner}"; done
+        return 0
+    fi
+    _name="$(awk -v id="  test-${_tier}-verdict:" '
+        $0 == id { f = 1; next }
+        f && /^    name: / { sub(/^    name: /, ""); print; exit }
+        f && /^  [a-z-]+:$/ { exit }' "${_yml}")"
+    if [[ -n "${_name}" ]]; then
+        printf '%s\n' "${_name}"
+        return 0
+    fi
+    _name="$(awk -v id="  test-${_tier}:" '
+        $0 == id { f = 1; next }
+        f && /^    name: / { sub(/^    name: /, ""); print; exit }
+        f && /^  [a-z-]+:$/ { exit }' "${_yml}")"
+    if [[ "${_name}" == "test-${_tier} (\${{ matrix.runner }})" ]]; then
+        for _runner in "${_runners[@]}"; do printf 'test-%s (%s)\n' "${_tier}" "${_runner}"; done
+        return 0
+    fi
+    printf '[ERROR] verify_ci_gate: no job of %s runs tier %s\n' "${_yml}" "${_tier}" >&2
+    return 1
 }
 
 # Write the latest attempt of every job of run $2 in repo $1 to file $3, one

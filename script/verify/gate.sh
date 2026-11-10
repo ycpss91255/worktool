@@ -239,8 +239,10 @@ source "${REPO_ROOT}/lib/verify_run.sh"
 # shellcheck source=verify_ci_gate.sh
 source "${REPO_ROOT}/lib/verify_ci_gate.sh"
 
-# The runner whose HOST_STEPS are the stages of bare `just test` (CI mode).
+# The runner whose HOST_STEPS are the stages of bare `just test`, and the
+# workflow whose job names stand for them (CI mode).
 TEST_SH="${REPO_ROOT}/script/test/test.sh"
+CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
 
 TDD_SH="${REPO_ROOT}/doc/evidence/tdd.sh"
 TDD_AWK="${REPO_ROOT}/doc/evidence/tdd.awk"
@@ -370,6 +372,7 @@ _preconditions_ci() {
         _require_tool grep "${_item}"
         _require_tool mktemp "${_item}"
         _require_file "${TEST_SH}" "${_item}"
+        _require_file "${CI_YML}" "${_item}"
         return 0
     fi
     _require_tool just "${_item}"
@@ -619,8 +622,8 @@ _ci_judge_jobs() {
 # Item 2.1 in CI: the gate job of every stage on every runner.
 _item_2_1_ci() {
     local _dir="" _out="" _rc=0 _runner _step
-    local -a _steps=() _names=() _runners=()
-    mapfile -t _runners < <(verify_ci_gate_runners)
+    local -a _steps=() _names=() _tier_names=()
+    local _jobs
     _out="$(_ci_steps)" || {
         _err "could not read HOST_STEPS from ${TEST_SH}"
         return 1
@@ -630,11 +633,13 @@ _item_2_1_ci() {
         _err "${TEST_SH} names no stage of bare just test"
         return 1
     fi
-    for _runner in "${_runners[@]}"; do
-        for _step in "${_steps[@]}"; do
-            _names+=("$(verify_ci_gate_job_name "${_step}" "${_runner}")")
-        done
+    for _step in "${_steps[@]}"; do
+        _jobs="$(verify_ci_gate_tier_jobs "${CI_YML}" "${_step}")" || return 1
+        mapfile -t _tier_names <<<"${_jobs}"
+        _names+=("${_tier_names[@]}")
     done
+    # A merged leg stands for several stages: judge each job once.
+    mapfile -t _names < <(printf '%s\n' "${_names[@]}" | awk '!seen[$0]++')
     _make_tmpdir _dir || return 1
     _ci_judge_jobs "${_dir}/jobs.tsv" "${_names[@]}" || _rc=1
     rm -rf -- "${_dir}" || _rc=1
@@ -870,26 +875,27 @@ _check_system_real_block() {
 # publishes for its tier - the same checks the local run applies to the
 # output of `just test <tier>`.
 _item_2_3_ci() {
-    local _dir="" _rc=0 _runner _block="" _id _name
-    local -a _names=() _runners=()
-    mapfile -t _runners < <(verify_ci_gate_runners)
-    for _runner in "${_runners[@]}"; do
-        _names+=("$(verify_ci_gate_job_name integration "${_runner}")"
-            "$(verify_ci_gate_job_name system-real "${_runner}")")
+    local _dir="" _rc=0 _block="" _id _name _tier _jobs
+    local -a _names=() _tier_names=()
+    for _tier in integration system-real; do
+        _jobs="$(verify_ci_gate_tier_jobs "${CI_YML}" "${_tier}")" || return 1
+        mapfile -t _tier_names <<<"${_jobs}"
+        _names+=("${_tier_names[@]}")
     done
     _make_tmpdir _dir || return 1
     _ci_judge_jobs "${_dir}/jobs.tsv" "${_names[@]}" || _rc=1
     if [[ "${_rc}" -eq 0 ]]; then
-        for _runner in "${_runners[@]}"; do
-            for _name in integration system-real; do
-                _id="$(verify_ci_gate_job_id "${_dir}/jobs.tsv" "$(verify_ci_gate_job_name "${_name}" "${_runner}")")"
+        for _tier in integration system-real; do
+            _jobs="$(verify_ci_gate_tier_jobs "${CI_YML}" "${_tier}")" || { _rc=1; break; }
+            while IFS= read -r _name; do
+                _id="$(verify_ci_gate_job_id "${_dir}/jobs.tsv" "${_name}")"
                 printf '\n'
                 if ! verify_ci_gate_fetch_log "${WORKTOOL_VERIFY_GATE_REPO}" "${_id}" "${_dir}/${_id}.log"; then
-                    _err "could not read the log of job ${_id} (${_name}, ${_runner})"
+                    _err "could not read the log of job ${_id} (${_name})"
                     _rc=1
                     break 2
                 fi
-                if [[ "${_name}" == integration ]]; then
+                if [[ "${_tier}" == integration ]]; then
                     if _judge_tier_file integration "${INTEGRATION_PATTERN}" "${_dir}/${_id}.log" 0 _block; then
                         _check_integration_block "${_block}" || _rc=1
                     else
@@ -903,7 +909,7 @@ _item_2_3_ci() {
                     fi
                 fi
                 [[ "${_rc}" -eq 0 ]] || break 2
-            done
+            done <<<"${_jobs}"
         done
     fi
     rm -rf -- "${_dir}" || {

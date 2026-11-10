@@ -17,4 +17,4 @@ milestone-gate PR 的 `verify-all` 以 `just verify all` 實跑非實機驗收�
 
 ## 影響與限制
 
-milestone PR 的 CI 時間變成 gate 的時間加上 `verify-all` 其餘群組的時間；gate 紅時 `verify-all` 被 skip，`ci-passed` 在 milestone-gate PR 上把它讀成失敗。CI 模式相信 GitHub Actions 回報的 job 結論與 log；job 名稱與階段的對應（`lint`、`test-<階段>`，各帶 runner）及 runner 集合（`lib/verify_ci_gate.sh` 的 `verify_ci_gate_runners`，由 spec 對 ci.yml 檢查）若改變，判讀會失敗而不是誤判通過。main 的 unit 分片（#831）與 gate 合併（#841）同步進驗收分支時，對應規則要一起更新。
+milestone PR 的 CI 時間變成 gate 的時間加上 `verify-all` 其餘群組的時間；gate 紅時 `verify-all` 被 skip，`ci-passed` 在 milestone-gate PR 上把它讀成失敗。CI 模式相信 GitHub Actions 回報的 job 結論與 log。job 名稱與 runner 集合不另寫清單，由 `lib/verify_ci_gate.sh` 的 `verify_ci_gate_tier_jobs` 從同一個 checkout 的 `ci.yml` 推得（gate matrix 的 `include` 把 tier 對到 leg；沒有 leg 時用 `test-<tier>-verdict` 或 `test-<tier> (<runner>)` job；修訂 2026-11-10，稽核 F8）：main 的 unit 分片（#831，`test-unit-verdict`）與合併 leg（#841，`lint-system-acceptance`）同步進驗收分支後自動對上；任何 tier 對不到 job 時判讀失敗，不會誤判通過。
