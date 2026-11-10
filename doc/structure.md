@@ -474,7 +474,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
 `skip`:必要 spec 被刪、被清空、被 `skip` 都不會因為同層還有別的 spec 而被當成
 綠燈;非必要的額外 spec 照常一起跑。各 bats tier 預設以
-`WORKTOOL_TEST_JOBS=4` 跨 spec 並行、同一 spec 內序列執行;可在 `just` 前設定正整數
+`WORKTOOL_TEST_JOBS=4` 並行,跨 spec 也在同一 spec 內並行(#689);案例會與牆鐘期限賽跑、或共用檔案層狀態的 spec 在檔案層級寫 `export BATS_NO_PARALLELIZE_WITHIN_FILE=true`,維持該檔內序列執行。CI 的 bats gate 設 `WORKTOOL_TEST_JOBS=8`(4 vCPU runner 上實測的拐點:arm 的 unit 在 4／8／16 jobs 為 616／503／517 秒)。可在 `just` 前設定正整數
 覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
 exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,不得含 `..`)時,
 共用測試映像內的每個 bats tier 另以 `--report-formatter junit` 把每個案例的耗時寫到
