@@ -345,7 +345,7 @@ _prepare_box_image() {
     _image="$(_box_image)"
     [[ -n "${_image}" ]] || _die "no image= in ${BOX_MANIFEST}"
     if [[ -n "${APT_MIRROR}" ]]; then
-        _info "box image ${_image}: every apt source -> ${APT_MIRROR} (WORKTOOL_APT_MIRROR; the first launch still installs everything)"
+        _info "box image ${_image}: every apt source -> ${APT_MIRROR} first, the image's own sources after it on a failed fetch (WORKTOOL_APT_MIRROR; the first launch still installs everything)"
     fi
     if [[ -n "${APT_ARCHIVES}" ]]; then
         mkdir -p "${APT_ARCHIVES%/}/partial" || _die "cannot create ${APT_ARCHIVES%/}/partial"

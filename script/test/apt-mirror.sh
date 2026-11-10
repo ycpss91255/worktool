@@ -14,8 +14,17 @@
 #     launch still installs everything, only from that mirror.
 #
 # With a mirror, every `URIs:` line of <root>/etc/apt/sources.list.d/
-# ubuntu.sources (the archive pockets AND the security pocket) becomes that
-# mirror, and apt's retries are turned on. Without one (absent or empty)
+# ubuntu.sources (the archive pockets AND the security pocket) becomes one
+# apt mirror list (`mirror+file:`, <root>/etc/apt/worktool-mirrors.list):
+# the mirror first, then the file's own URIs in file order (archive then
+# security on amd64, ports on arm), each with a `priority:` so apt keeps
+# that strict order (without priorities apt spreads downloads over the
+# list). A file the mirror cannot serve - a 404 while its index already
+# names a version its pool does not hold yet (2026-11-10, perl
+# 5.40.1-7ubuntu0.4; issue #885) - is fetched from the next source, which
+# apt logs as `Ign:N <mirror> <package>` followed by `Get:N <next source>`;
+# apt checks every file against the index hash, and a file no source
+# serves still fails the install. apt's retries are turned on as well. Without one (absent or empty)
 # nothing is changed, so a local build is exactly what it was. A sources
 # file that cannot be rewritten is a failure, never a silent fall back.
 #
@@ -100,6 +109,9 @@ fi
 
 SOURCES="${ROOT}/etc/apt/sources.list.d/ubuntu.sources"
 CONF="${ROOT}/etc/apt/apt.conf.d/80worktool-ci"
+# Where apt reads the list at run time (inside the root), and on disk here.
+LIST_PATH="/etc/apt/worktool-mirrors.list"
+LIST="${ROOT}${LIST_PATH}"
 _conf=""
 
 if [[ -n "${MIRROR}" ]]; then
@@ -115,14 +127,29 @@ if [[ -n "${MIRROR}" ]]; then
         printf 'apt-mirror.sh: %s has no URIs line to rewrite\n' "${SOURCES}" >&2
         exit 1
     fi
-    sed -i "s|^URIs:.*|URIs: ${MIRROR}|" "${SOURCES}"
-    # Every URIs line must now name the mirror and nothing else.
-    if ! awk -v want="URIs: ${MIRROR}" '/^URIs:/ && $0 != want { bad = 1 } END { exit bad }' "${SOURCES}"; then
+    # The file's own sources, each once, in file order (a URIs line may
+    # hold several), the mirror itself left out.
+    _fallback="$(awk -v mirror="${MIRROR}" '
+        /^URIs:/ { for (i = 2; i <= NF; i++) if ($i != mirror && !seen[$i]++) print $i }
+    ' "${SOURCES}")"
+    {
+        printf '%s\tpriority:1\n' "${MIRROR}"
+        _prio=1
+        while IFS= read -r _uri; do
+            [[ -n "${_uri}" ]] || continue
+            _prio=$((_prio + 1))
+            printf '%s\tpriority:%s\n' "${_uri}" "${_prio}"
+        done <<<"${_fallback}"
+    } >"${LIST}"
+    sed -i "s|^URIs:.*|URIs: mirror+file:${LIST_PATH}|" "${SOURCES}"
+    # Every URIs line must now name the mirror list and nothing else.
+    if ! awk -v want="URIs: mirror+file:${LIST_PATH}" '/^URIs:/ && $0 != want { bad = 1 } END { exit bad }' "${SOURCES}"; then
         printf 'apt-mirror.sh: %s still names another source after the rewrite\n' "${SOURCES}" >&2
         exit 1
     fi
     _conf+="$(printf 'Acquire::Retries "%s";' "${RETRIES}")"$'\n'
-    printf 'apt-mirror.sh: apt sources -> %s (retries %s)\n' "${MIRROR}" "${RETRIES}" >&2
+    printf 'apt-mirror.sh: apt sources -> %s, then on a failed fetch %s (mirror list %s, retries %s)\n' \
+        "${MIRROR}" "$(printf '%s' "${_fallback}" | tr '\n' ' ')" "${LIST_PATH}" "${RETRIES}" >&2
 fi
 if [[ -n "${ARCHIVES}" ]]; then
     _conf+="$(printf 'Dir::Cache::Archives "%s";' "${ARCHIVES}")"$'\n'
