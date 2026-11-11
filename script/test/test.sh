@@ -914,6 +914,8 @@ script/box/setup.sh|test/unit/setup_spec.bats
 script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
+script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
     _changed_doc_path_map

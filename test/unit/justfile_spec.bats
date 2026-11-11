@@ -213,6 +213,17 @@ _listed_names() {
     assert_equal "$(_stub_calls)" ""
 }
 
+@test "verify diagram forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/diagram.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/diagram.sh"
+    _just verify diagram --root 'path with spaces' 4.1
+    assert_success
+    assert_output $'<--root>\n<path with spaces>\n<4.1>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {
