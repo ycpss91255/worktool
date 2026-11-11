@@ -270,6 +270,15 @@ _write_tier_blocks() {
     _system_real_block >"${SYS_BLOCK}"
 }
 
+# The report formatter annotates only TAP case lines, never diagnostics.
+_write_timed_tier_blocks() {
+    _write_tier_blocks
+    local _file
+    for _file in "${INT_BLOCK}" "${SYS_BLOCK}"; do
+        sed -i '/^ok [0-9][0-9]* /s/$/ # in 211 ms/' "${_file}"
+    done
+}
+
 # A `just` whose `test <tier>` prints the file for that tier. $1 is the exit
 # status of the integration tier, $2 of the system-real tier (both 0).
 _stub_just_blocks() {
@@ -986,6 +995,104 @@ EOF
     assert_output --partial 'which the document requires to come first'
 }
 
+@test "timed TAP: local integration and system-real exact sets and hang order pass" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_success
+    assert_line 'ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging # in 211 ms'
+    assert_line '# single-instance: COMMAND_FINISHED=no'
+}
+
+@test "timed TAP: a genuinely missing case remains missing" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    sed -i '1d' "${INT_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'missing case: the ghostty command just box setup writes enters the box directly without starting tmux'
+}
+
+@test "timed TAP: duplicate cases with different timings remain duplicates" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    printf 'ok 99 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive) # in 999 ms\n' >>"${SYS_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'repeated 2x: ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)'
+}
+
+@test "timed TAP: a wrong case name stays unexpected" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    sed -i '1s/starting tmux/starting something-else/' "${INT_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'unexpected case: the ghostty command just box setup writes enters the box directly without starting something-else'
+}
+
+@test "timed TAP: skipped or failed cases and nonzero tiers never pass" {
+    local _mode
+    _stub_ci_tools
+    for _mode in skip failed nonzero; do
+        _write_timed_tier_blocks
+        case "${_mode}" in
+            skip) sed -i '1s/ # in/ # skip unavailable # in/' "${INT_BLOCK}" ;;
+            failed) printf 'not ok 99 ghostty failed # in 211 ms\n' >>"${INT_BLOCK}" ;;
+        esac
+        if [[ "${_mode}" == nonzero ]]; then
+            _stub_just_blocks 1 0
+        else
+            _stub_just_blocks 0 0
+        fi
+        PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+        assert_failure 1
+        case "${_mode}" in
+            skip) assert_output --partial '# skip unavailable' ;;
+            failed) assert_output --partial 'reported failing cases' ;;
+            nonzero) assert_output --partial 'exited 1 - what it printed does not count' ;;
+        esac
+    done
+}
+
+@test "timed TAP: invalid or nonterminal timing text never rewrites a name" {
+    local _suffix
+    _stub_ci_tools
+    for _suffix in ' # in -1 ms' ' # in 1.5 ms' ' # in 2 ms trailing' ' # in 1 ms # in 2 ms'; do
+        _write_tier_blocks
+        sed -i "1s/\$/${_suffix}/" "${INT_BLOCK}"
+        _stub_just_blocks 0 0
+        PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+        assert_failure 1
+        assert_output --partial 'unexpected case:'
+    done
+}
+
+@test "timed TAP: diagnostic criteria keep their exact values and cannot borrow case timing" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    sed -i 's/^# single-instance: COMMAND_FINISHED=no$/& # in 211 ms/' "${SYS_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'printed no line meeting the documented criterion ^# single-instance: COMMAND_FINISHED=no$'
+}
+
+@test "timed TAP: reversed ready and hang markers still fail the documented order" {
+    _stub_ci_tools
+    _write_timed_tier_blocks
+    sed -i '/^# hang-ready: /d; /^# hang: /a # hang-ready: hang-ready fish=4.2.1 host=ca83e9d035cd' "${SYS_BLOCK}"
+    _stub_just_blocks 0 0
+    PATH="${BIN}:${PATH}" run "${COPY_GATE}" 2.3
+    assert_failure 1
+    assert_output --partial 'which the document requires to come first'
+    refute_output --partial 'so the documented order cannot hold'
+}
+
 # --- CLI contract ------------------------------------------------------------
 
 @test "cli: --help exits 0 and documents the exit codes" {
@@ -1334,6 +1441,42 @@ _run_ci_item() {
     assert_output --partial 'actions/jobs/102/logs'
     assert_output --partial 'actions/jobs/201/logs'
     assert_output --partial 'actions/jobs/202/logs'
+}
+
+@test "CI mode 2.3: mixed timed and untimed case names match the same exact documented set" {
+    _write_tier_blocks
+    sed -i '1s/$/ # in 4234 ms/; 2s/$/ # in 211 ms/' "${INT_BLOCK}"
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_success
+    assert_line 'ok 38 the ghostty command just box setup writes enters the box directly without starting tmux # in 4234 ms'
+    refute_output --partial 'missing case:'
+    refute_output --partial 'unexpected case:'
+}
+
+@test "CI mode 2.3: the real JUnit formatter supplies accepted timing metadata" {
+    _write_tier_blocks
+    local _spec="${BATS_TEST_TMPDIR}/producer.bats" _report="${BATS_TEST_TMPDIR}/producer-report"
+    cat >"${_spec}" <<'EOF'
+@test "the ghostty command just box setup writes enters the box directly without starting tmux" { :; }
+@test "setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line" { :; }
+EOF
+    mkdir -p "${_report}"
+    run bats --formatter tap --report-formatter junit --output "${_report}" "${_spec}"
+    assert_success
+    assert_line --regexp '^ok 1 .* # in [0-9]+ ms$'
+    local _actual="${output}"
+    tail -n +3 "${INT_BLOCK}" >"${INT_BLOCK}.rest"
+    printf '%s\n' "${_actual}" >"${INT_BLOCK}"
+    cat "${INT_BLOCK}.rest" >>"${INT_BLOCK}"
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _stub_just_must_not_run
+    _run_ci_item 2.3
+    assert_success
+    assert_line --regexp '^ok 1 .* # in [0-9]+ ms$'
 }
 
 @test "CI mode 2.3: a cancelled system-real job fails the item before any log counts" {

@@ -76,8 +76,8 @@ TEST_IMAGE="${TEST_IMAGE:-worktool-test:local}"
 DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 # Repo-relative directory for per-case junit reports (issue #827); empty =
-# no report. Each bats tier writes <dir>/<tier>/report.xml next to the TAP
-# stream, which stays exactly what it was (the gate still reads only TAP).
+# no report. Each bats tier writes <dir>/<tier>/report.xml; Bats adds case
+# timing comments to TAP, while the gate still judges its plan/status/skip.
 WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
 # Repo-relative shard weights ("<tier>/<spec><TAB><ms>", issue #831) for
 # --shard; empty or an empty file = every spec weighs its @test count.
@@ -759,7 +759,8 @@ Environment:
   WORKTOOL_TEST_REPORT_DIR
                          repo-relative directory: each bats tier also writes
                          a junit report (per-case times) to <dir>/<tier>/
-                         report.xml; the TAP output is unchanged (default:
+                         report.xml; Bats appends "# in N ms" to TAP case
+                         lines (plan/status/skip rules unchanged; default:
                          none)
   WORKTOOL_STRESS=1      run the three opt-in CPU repro cases (otherwise may skip in unit)
   WORKTOOL_TEST_RUN_ID   label test containers with worktool.verify-run=<id>
