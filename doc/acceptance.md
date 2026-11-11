@@ -461,6 +461,19 @@ prereq-ok
 - TDD 證據：`bash doc/evidence/tdd.sh` 檢查十個 sub-issue PR 描述中
   非空 RED 區塊先於非空 GREEN 區塊；證據內容仍需人類審閱。
 
+- [ ] 1.1 使用者介面：`just box` 列出 assemble、bench、default、enter、help、setup、status 七個動作，`just box help` 依序列出五支腳本的 usage。
+  - 驗收方式：`just verify ui 1.1; echo rc=$?`。
+  - 預期看到 recipe 清單及以下 usage 行，最後顯示 `five-usages` 與 `rc=0`；recipe 說明與行寬可隨工具版本變動。
+    ```text
+    Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
+    Usage: bench.sh [--box NAME] [--runs N] [--warmup N] [--max-ms N] [--json]
+    Usage: setup.sh [--auto-enter yes|no] [--terminal ghostty|none]
+    Usage: status.sh
+    Usage: enter.sh [--box <name>] [--distrobox <path>] [--timeout <seconds>]
+    five-usages
+    rc=0
+    ```
+
 - 交接前:同步驗收 PR 後取得最新 head SHA,在該 linked worktree 前景執行
   `.agents/script/monitor/full-run.sh --repo <repo> --sha <PR head SHA> --dispatch --wait 540`;
   回 3 時繼續以前景 `--wait 540` 查詢,總上限 10800 秒。只有回 0 才繼續 Scratch 與交接;
