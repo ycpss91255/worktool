@@ -469,6 +469,11 @@ prereq-ok
     `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
     之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
     斷言不是恆真。
+  - 冷啟動(#434、#472):以 host `SHELL=/bin/bash` 建盒,在尚未初始化時
+    執行 setup 實際寫出的 Ghostty 受管命令;送出任何輸入前先觀察預設登入
+    行程為 fish、mount namespace 等於 dev,並驗證首次初始化持續輸出不同的
+    進度、完成訊息與非空紀錄。unit 測試從同一類 setup 寫出的命令驗證
+    失敗及 timeout 有界且顯示診斷和復原方式。
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
     `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
     `distrobox enter dev -- fish <script>`,斷言**盒內**留下的標記檔顯示 fish 版本、
