@@ -307,7 +307,7 @@ _dispatched() {
 }
 
 @test "test.sh --changed selects both realbox specs for each dedicated dependency" {
-    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify" "${TEMP_REPO}/test/helper"
+    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify" "${TEMP_REPO}/test/helper" "${TEMP_REPO}/test/system"
     local path expected
     local -a paths=(lib/realbox_interrupt.sh script/verify/realbox.sh
         test/helper/interrupt_load.bash test/helper/realbox_window.bash)
@@ -317,6 +317,7 @@ _dispatched() {
     for path in verify_realbox verify_realbox_matrix; do
         printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
     done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/system/real_assemble_spec.bats"
     _commit_baseline
     for path in "${paths[@]}"; do
         printf '# changed\n' >>"${TEMP_REPO}/${path}"
@@ -326,6 +327,9 @@ _dispatched() {
         expected="$(_dispatched)"
         [[ "${expected}" == *test/unit/verify_realbox_spec.bats* ]]
         [[ "${expected}" == *test/unit/verify_realbox_matrix_spec.bats* ]]
+        if [[ "${path}" == script/verify/realbox.sh ]]; then
+            assert_output --partial "此改動由 CI 的 system 驗證"
+        fi
         if [[ "${path}" == test/helper/* ]]; then
             assert_output --partial "測試基礎設施變更"
         else

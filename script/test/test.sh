@@ -988,6 +988,7 @@ lib/realbox_interrupt.sh|test/unit/verify_realbox_spec.bats
 lib/realbox_interrupt.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
+script/verify/realbox.sh|test/system/real_assemble_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_matrix_spec.bats
 test/helper/realbox_window.bash|test/unit/verify_realbox_spec.bats
