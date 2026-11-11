@@ -554,6 +554,10 @@ prereq-ok
   盒內打 `tmux` 看不到 host 的 session;在 host 的 tmux pane 裡手動
   `distrobox enter dev` 後打 `tmux`,同樣看不到 host 的 session。
 
+### 非實機驗收入口
+
+執行 `just verify all` 依序驗證 ui、gate、setup、diagram 與 evidence；任一群組失敗即停止並列出已通過和未執行的群組。全部通過回 0，失敗回 1，無法驗證或結果未定回 3。此指令不執行需使用實機的 realbox。裸 `just verify` 只列清單，不執行驗證。
+
 ### 自動測試驗收
 
 - [ ] 2. 自動測試:七個階段全綠(含 300 ms 進盒延遲 gate)

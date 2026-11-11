@@ -189,6 +189,15 @@ _listed_names() {
     assert_line --regexp '^ +test \.\.\. +# '
 }
 
+@test "README lists every root namespace" {
+    local namespace
+    while IFS= read -r namespace; do
+        run grep -F "\`${namespace}\`" "${REPO_ROOT}/README.md"
+        assert_success
+        assert_output --partial "裸 \`just\` 列出 namespaces"
+    done < <(sed -nE "s/^mod\? ([^ ]+) .*/\1/p" "${REPO_ROOT}/justfile")
+}
+
 @test "bare just is just --list" {
     _just --list
     local _expected="${output}"
@@ -287,6 +296,18 @@ EOF
     assert_line '<--comment-tag>'
     assert_line '<tag with spaces>'
     assert_line '<5.1>'
+}
+
+@test "verify all forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/all.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/all.sh"
+    _just verify all --example 'value with spaces'
+    assert_success
+    assert_line '<--example>'
+    assert_line '<value with spaces>'
 }
 
 # --- test namespace: min -> max, verbatim forwarding -------------------------
