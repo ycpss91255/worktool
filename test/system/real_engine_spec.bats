@@ -282,12 +282,13 @@ _wait_default_login() {
     return 1
 }
 
+# shellcheck source=test/helper/cold_pty.bash
 source "${BATS_TEST_DIRNAME}/../helper/cold_pty.bash"
 
 # Keep stdin open but empty until the external process observation passes.
 _cold_default_login() (
     local _fifo="${HOME}/cold-input" _output="${HOME}/cold-output"
-    local _child _sid= _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
+    local _child _sid='' _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
     mkfifo "${_fifo}"
     exec 9<>"${_fifo}"
     WORKTOOL_COLD_LOGIN_TOKEN="${_token}" \
@@ -295,15 +296,13 @@ _cold_default_login() (
         <"${_fifo}" >"${_output}" 2>&1 &
     _child=$!
     trap 'exit 1' HUP INT TERM
-    trap 'exec 9>&-; if [[ -n "${_child}" && -n "${_sid}" ]]; then
+    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
         _cold_pty_cleanup "${_child}" "${_sid}" || exit 1
     fi; rm -f "${_fifo}"' EXIT
     local _deadline=$((SECONDS + 10))
     until _sid="$(_cold_pty_session "${_child}")"; do
         if (( SECONDS >= _deadline )); then
             echo "cold PTY session did not appear" >&2
-            if kill -KILL -- "-${_child}" 2>/dev/null; then :; fi
-            if wait "${_child}" 2>/dev/null; then :; fi
             return 1
         fi
         sleep 0.1
