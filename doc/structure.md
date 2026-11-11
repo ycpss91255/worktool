@@ -330,6 +330,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just test isolation [args]` | `./script/test/isolation.sh [args]`(tier 隔離守門,`--seed N` 重現順序;見 ADR-0018) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 | `just verify` | 列出可用驗收檢查；列清單不執行驗證 |
+| `just verify all [args]` | `./script/verify/all.sh [args]`（依序驗證所有非實機群組） |
 | `just verify setup [args]` | `./script/verify/setup.sh [args]`（在暫存 HOME 驗證設定與狀態） |
 | `just verify diagram [args]` | `./script/verify/diagram.sh [args]`（檢查圖面及 README 引用） |
 | `just verify ui [args]` | `./script/verify/ui.sh [args]`（檢查 box 動詞與 help） |
