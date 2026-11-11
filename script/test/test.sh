@@ -880,6 +880,7 @@ _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
+lib/guard.sh|test/unit/verify_diagram_spec.bats
 lib/guard.sh|test/unit/config_backup_spec.bats
 lib/guard.sh|test/unit/config_backup_dangling_spec.bats
 lib/guard.sh|test/unit/config_backup_security_spec.bats
