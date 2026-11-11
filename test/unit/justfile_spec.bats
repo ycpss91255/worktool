@@ -194,7 +194,7 @@ _listed_names() {
     while IFS= read -r namespace; do
         run grep -F "\`${namespace}\`" "${REPO_ROOT}/README.md"
         assert_success
-        assert_output --partial '裸 `just` 列出 namespaces'
+        assert_output --partial "裸 \`just\` 列出 namespaces"
     done < <(sed -nE "s/^mod\? ([^ ]+) .*/\1/p" "${REPO_ROOT}/justfile")
 }
 
