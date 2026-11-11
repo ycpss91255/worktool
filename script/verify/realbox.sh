@@ -859,12 +859,13 @@ _52_open_window() {
 
 # Ownership comes from our unique working directory on the direct Ghostty
 # child, never just from a process appearing after the snapshot.
+# A listing ps returned is complete: parse all of it, with no clock read that
+# could turn a taken snapshot into a failed one (#816).
 _52_process_snapshot() {
     local pid parent comm
     _52_ROWS="$(timeout -s KILL 1 ps -e -o pid=,ppid=,comm=)" || return 1
     _52_PARENTS=() _52_COMMS=()
     while read -r pid parent comm; do
-        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 1
         [[ "${pid}" =~ ^[1-9][0-9]*$ && "${parent}" =~ ^[0-9]+$ ]] || continue
         _52_PARENTS[${pid}]="${parent}"
         _52_COMMS[${pid}]="${comm}"
@@ -875,13 +876,14 @@ _52_process_snapshot() {
 _52_window_root() {
     local pid="$1" parent cwd depth
     for ((depth=0; depth<64; depth++)); do
-        (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 2
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
         parent="${_52_PARENTS[${pid}]:-0}"
         [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" != "${pid}" ]] || return 1
         if [[ "${_52_COMMS[${parent}]:-}" == ghostty ]]; then
-            cwd="$(timeout -s KILL 1 readlink "/proc/${pid}/cwd" 2>/dev/null)" || return 2
+            # The deadline only stops a cwd probe from starting; a cwd read
+            # that returned decides ownership (#816).
             (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 2
+            cwd="$(timeout -s KILL 1 readlink "/proc/${pid}/cwd" 2>/dev/null)" || return 2
             if [[ "${cwd}" == "${_52_WINDOW_DIR}" ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
                 printf '%s\n' "${pid}"
                 return 0
@@ -1041,28 +1043,29 @@ _52_current_root() {
 
 # Return 0 for empty, 1 for live members, 2 for undetermined. Validate the
 # entire listing even after a member is found; malformed evidence is unknown.
+# The deadline only stops the listing from starting; a listing ps returned
+# decides membership, never a later clock read (#816).
 _52_session_members() {
     local root="$1" rows pid pgid sid extra found=0
-    if (( SECONDS < _52_DEADLINE )) &&
-        rows="$(timeout -s KILL 1 ps -e -o pid=,pgid=,sid=)" &&
-        (( SECONDS < _52_DEADLINE )); then
-        while read -r pid pgid sid extra; do
-            if (( SECONDS >= _52_DEADLINE )) ||
-                [[ ! "${pid}" =~ ^[1-9][0-9]*$ || ! "${pgid}" =~ ^[0-9]+$ ||
-                   ! "${sid}" =~ ^[0-9]+$ || -n "${extra}" ]]; then
-                guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
-                return 2
-            fi
-            if [[ "${pgid}" == "${root}" || "${sid}" == "${root}" ]]; then
-                found=1
-            fi
-        done <<<"${rows}"
-        if (( SECONDS < _52_DEADLINE )); then
-            return "${found}"
-        fi
+    if (( SECONDS >= _52_DEADLINE )); then
+        guard_fail "cleanup deadline reached before owned window session ${root} was checked; keeping ownership evidence"
+        return 2
     fi
-    guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
-    return 2
+    if ! rows="$(timeout -s KILL 1 ps -e -o pid=,pgid=,sid=)"; then
+        guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
+        return 2
+    fi
+    while read -r pid pgid sid extra; do
+        if [[ ! "${pid}" =~ ^[1-9][0-9]*$ || ! "${pgid}" =~ ^[0-9]+$ ||
+              ! "${sid}" =~ ^[0-9]+$ || -n "${extra}" ]]; then
+            guard_fail "cannot determine owned window session ${root}; keeping ownership evidence"
+            return 2
+        fi
+        if [[ "${pgid}" == "${root}" || "${sid}" == "${root}" ]]; then
+            found=1
+        fi
+    done <<<"${rows}"
+    return "${found}"
 }
 
 _52_stop_window() {
@@ -1157,7 +1160,8 @@ _52_sweep_window() {
             rc=1
         fi
     done <<<"${_52_ROWS}"
-    (( SECONDS < _52_DEADLINE )) || return 1
+    # Every row was checked: the scan's result stands; only an interrupted
+    # scan (the per-row deadline returns above) leaves rows unknown (#816).
     [[ "${rc}" -eq 0 ]] || return 1
     [[ "${found}" -eq 1 ]] || return 2
 }
@@ -1165,7 +1169,8 @@ _52_sweep_window() {
 _52_close_window() {
     [[ -n "${_52_WINDOW_DIR:-}" ]] || return 0
     # Stop starting retries one second before the shared deadline. A sweep
-    # interrupted by that deadline, even mid-snapshot, returns 1 and keeps evidence.
+    # interrupted by that deadline before it checked every row returns 1 and
+    # keeps evidence.
     local _52_DEADLINE=$((SECONDS + 4)) rc scanned=0 retry_until=$((SECONDS + 3))
     while (( SECONDS < retry_until )); do
         rc=0
@@ -1177,8 +1182,9 @@ _52_close_window() {
     done
     [[ "${scanned}" -eq 1 ]] || { _52_keep_window; return 1; }
     if [[ "${rc}" -eq 2 && -n "${_52_WINDOW_ROOT:-}" ]]; then
+        # A 0 here means the session was confirmed empty; no later clock read
+        # may turn that into a kept window (#816).
         _52_stop_window "${_52_WINDOW_ROOT}" || { _52_keep_window; return 1; }
-        (( SECONDS < _52_DEADLINE )) || { _52_keep_window; return 1; }
     fi
     rm -rf -- "${_52_WINDOW_DIR}" || return 1
     _52_WINDOW_DIR=''

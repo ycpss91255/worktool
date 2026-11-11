@@ -566,8 +566,11 @@ exit 2 拒絕。`test/unit/ci_gate_spec.bats` 在 repo 副本上以
 映像的 matrix),以及獨立的 `test-system-real` job(自建 DinD runner 映像、
 `docker run --rm --privileged`,上限 40 分鐘)。貼有 `milestone-gate` 標籤的 PR
 另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 實跑非實機驗收,
-不傳 `--allow-real-box`,第 5 節留給實機驗收。其 gate 群組呼叫
-`just test system-real`,因此 `verify-all` 也間接使用 `--privileged`。
+`verify-all` 在同一個 run 的 `gate` 與 `test-system-real` 完成後才開始，並以
+`WORKTOOL_VERIFY_GATE_RUN`／`_SHA`／`_REPO` 指名該 run:驗收 2.1 與 2.3 改判讀這些
+job 的結果(2.3 另判讀其 log),不再重跑 tier(#833;本機 `just verify all` 照常完整跑),
+不傳 `--allow-real-box`,第 5 節留給實機驗收。本機模式下其 gate 群組呼叫
+`just test system-real`,因此 `just verify all` 也間接使用 `--privileged`(CI 模式改判讀 job 結果,不再呼叫)。
 PR 的 labeled / unlabeled 事件會重新計算 CI。
 
 `ci-passed` 要求映像建置、每個 matrix gate、`test-system-real`、`commit-email`、
