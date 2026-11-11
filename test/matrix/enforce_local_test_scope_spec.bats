@@ -17,6 +17,9 @@ _commands() {
         # A spec the shell expands may select the whole tier (#818).
         printf '2|just test %s test/%s/*.bats\n2|script/test/test.sh --%s test/%s/*.bats\n' "${tier}" "${tier}" "${tier}" "${tier}"
         printf "2|just test %s test/%s/{a,b}_spec.bats\n2|just test %s \$(ls test/%s)\n" "${tier}" "${tier}" "${tier}" "${tier}"
+        printf "%s|just test %s test/%s/example_spec.bats --filter \"\$FILTER\"\\n" "${expected}" "${tier}" "${tier}"
+        printf "2|just test %s test/%s/example_spec.bats --filter \$FILTER\\n" "${tier}" "${tier}"
+        printf "2|just test %s test/%s/example_spec.bats --filter \"\${FILTERS[@]}\"\\n" "${tier}" "${tier}"
     done
     for entry in 'just test system test/system/real_engine_spec.bats' \
         'script/test/test.sh --system test/system/real_engine_spec.bats' \
@@ -25,7 +28,14 @@ _commands() {
         printf '2|%s\n' "${entry}"
     done
     for entry in 'just test unit test/unit/*_spec.bats' "just test unit \$SPECS" \
-        'script/test/test.sh --ci-unit test/unit/*_spec.bats'; do
+        'script/test/test.sh --ci-unit test/unit/*_spec.bats' \
+        'script/test/test.sh --filter "" --system-real' \
+        'ba""sh -c "just test unit"' \
+        'bash -""c "just test unit"' \
+        'bash --rcfile "" -c "just test unit"' \
+        'ev""al "just test matrix"' \
+        'su""do bash -c "just test system-real"' \
+        "just test changed --base \$BASE"; do
         printf '2|%s\n' "${entry}"
     done
     for entry in 'just test' 'just test unit' 'just test unit --filter example' \
@@ -37,6 +47,9 @@ _commands() {
         'just test unit test/unit/log_spec.bats test/unit/manifest_spec.bats --filter example' \
         'script/test/test.sh --lint' 'script/test/test.sh --changed' 'script/test/test.sh --help' \
         'script/test/test.sh --unit test/unit/log_spec.bats' \
+        "just test unit test/unit/log_spec.bats --filter \"\$FILTER\"" \
+        "script/test/test.sh --unit test/unit/log_spec.bats --filter \"\$(printf pattern)\"" \
+        "just test changed --base \"\$BASE\"" \
         'script/test/test.sh --unit test/unit/log_spec.bats test/unit/manifest_spec.bats --filter example'; do
         printf '0|%s\n' "${entry}"
     done
