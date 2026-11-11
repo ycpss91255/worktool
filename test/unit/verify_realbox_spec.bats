@@ -3028,6 +3028,20 @@ STUB
     [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     _prepare_timeout_descendant
     _prepare_ready_timeout
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+bash -c '
+    trap "" TERM
+    IFS= read -r row <"/proc/${BASHPID}/stat"
+    read -r _state _parent group _rest <<<"${row##*) }"
+    printf "%s\n" "${group}" >"${ORPHAN_GROUP}"
+    printf "%s\n" "${BASHPID}" >"${ORPHAN_PID}"
+    sleep 3
+    touch "${ORPHAN_MARKER}"
+' >/dev/null 2>&1 &
+wait
+STUB
+    chmod +x "${STUBS}/just"
     interrupt_load_start
     # Keep the supervisor free to run while the assemble shell is contended.
     cat >"${STUBS}/bash" <<'STUB'
@@ -3042,13 +3056,14 @@ STUB
     export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
     export ORPHAN_TIMEOUT_INJECTED="${STATE}/timeout-injected"
     export ORPHAN_TIMEOUT_ERROR="${STATE}/timeout-error" ORPHAN_WATCHER="${STATE}/watcher.pid"
+    export ORPHAN_GROUP="${STATE}/orphan.group"
     for ((attempt=1; attempt<=trials; attempt++)); do
         rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}" "${ORPHAN_TIMEOUT_INJECTED}" \
-            "${ORPHAN_TIMEOUT_ERROR}" "${ORPHAN_WATCHER}"
+            "${ORPHAN_TIMEOUT_ERROR}" "${ORPHAN_WATCHER}" "${ORPHAN_GROUP}"
         run "${REALBOX}" --allow-real-box 5.1
         if [[ "${status}" -ne 1 || "${output}" != *'just box assemble failed'* ||
             ! -s "${ORPHAN_PID}" || ! -s "${ORPHAN_TIMEOUT_INJECTED}" ||
-            ! -s "${ORPHAN_WATCHER}" || -e "${ORPHAN_TIMEOUT_ERROR}" ||
+            ! -s "${ORPHAN_WATCHER}" || ! -s "${ORPHAN_GROUP}" || -e "${ORPHAN_TIMEOUT_ERROR}" ||
             "${output}" != *'cleanup-rc=0'* || -e "${ORPHAN_MARKER}" ]]; then
             failures=$((failures + 1))
             printf '# attempt=%s status=%s output=%s\n' "${attempt}" "${status}" "${output}" >&3
@@ -3059,6 +3074,12 @@ STUB
             if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
                 failures=$((failures + 1))
                 kill -KILL "${pid}"
+            fi
+        fi
+        if [[ -s "${ORPHAN_GROUP}" ]]; then
+            read -r pid <"${ORPHAN_GROUP}"
+            if bash -c 'source "$1/lib/verify_run.sh"; verify_group_running "$2"' _ "${REPO_ROOT}" "${pid}"; then
+                failures=$((failures + 1))
             fi
         fi
         if [[ -s "${ORPHAN_WATCHER}" ]]; then
