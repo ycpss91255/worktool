@@ -52,22 +52,16 @@ prereq-ok
       just
       ```
   - [ ] 0.2 namespace 清單與 help 都來自底層腳本
-    - 預期看到資訊
+    - 預期看到資訊: `just box` 列出目前的 box 動詞；assemble 說明的第一行為
       ```text
-      Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
-          default        # List the box verbs.
-          help           # Show the box wrapper help (assemble.sh --help). [alias: h]
-      ./script/test/test.sh --help
-      Usage: test.sh [OPTION...]
-      ./script/box/assemble.sh --help
-      Usage: assemble.sh [--file <manifest>] [--dry-run]
+      Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       ```
+      原 M2 清單只有 assemble；目前還有其他動詞，完整清單以 `just box` 的輸出為準。
     - 驗收方式
       ```bash
       just box
       just test help 2>&1 | head -2
-      just box help 2>&1 | head -2
+      just box assemble --help 2>&1 | head -1
       ```
   - [ ] 0.3 錯誤輸入不跑任何東西:未知動作 just 報錯 exit 1;未知選項腳本報錯 exit 2
     - 預期看到資訊
