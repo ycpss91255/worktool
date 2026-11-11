@@ -904,8 +904,10 @@ lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
+lib/log.sh|test/unit/verify_run_signal_spec.bats
 lib/log.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
+lib/guard.sh|test/unit/verify_gate_spec.bats
 lib/guard.sh|test/unit/verify_diagram_spec.bats
 lib/guard.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/config_backup_spec.bats
@@ -951,6 +953,14 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
+lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
+lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
+lib/verify_run.sh|test/unit/verify_gate_spec.bats
+script/verify/gate.sh|test/unit/verify_gate_spec.bats
+script/verify/justfile.verify|test/unit/verify_gate_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats

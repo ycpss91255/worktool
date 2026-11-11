@@ -18,3 +18,7 @@ setup *args:
 # Check the M3 external CI and process evidence (args: ITEM, --list, --help).
 evidence *args:
     ./script/verify/evidence.sh "$@"
+
+# Check the automated gates and their evidence (args: ITEM, --list, --help).
+gate *args:
+    ./script/verify/gate.sh "$@"
