@@ -4,6 +4,7 @@ load "${BATS_TEST_DIRNAME}/../helper/interrupt_load"
 
 setup() {
     export SIGNAL_STATE="${BATS_TEST_TMPDIR}"
+    BASE_PATH="$(printenv PATH)"
     cat >"${SIGNAL_STATE}/child" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -211,9 +212,8 @@ STUB
     local mode
     for mode in list remove stuck; do
         mkdir -p "${SIGNAL_STATE}/${mode}"
-        export CLEANUP_CASE="${mode}"
-        export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}/${mode}"
-        PATH="${SIGNAL_STATE}:${PATH}" run bash <<'PROBE'
+        run env CLEANUP_CASE="${mode}" VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}/${mode}" \
+            PATH="${SIGNAL_STATE}:${BASE_PATH}" bash <<'PROBE'
 source "${LIB_DIR}/log.sh"
 source "${LIB_DIR}/verify_run.sh"
 rc=0
@@ -242,9 +242,8 @@ trap 'exit 143' TERM
 trap 'if verify_restore_allowed; then echo restore-allowed; else echo restore-refused; fi' EXIT
 verify_run 10 just test
 CALLER
-    export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}"
-    export PATH="${SIGNAL_STATE}:${PATH}"
-    run signal_caller TERM
+    run env VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}" PATH="${SIGNAL_STATE}:${BASE_PATH}" \
+        node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash "${SIGNAL_STATE}/caller"
     assert_success
     assert_line 'rc=143'
     assert_line restore-refused
