@@ -213,3 +213,35 @@ _stub_calls() {
         _stub_group "${_group}" 0
     done
 }
+
+@test "each real group reports a missing tool as unavailable through all" {
+    local group missing tool path real previous
+    mkdir -p "${COPY}/lib" "${COPY}/box"
+    cp "${REPO_ROOT}"/lib/*.sh "${COPY}/lib/"
+    cp "${REPO_ROOT}/box/dev.ini" "${COPY}/box/"
+    cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
+    for group in ui gate setup diagram evidence; do
+        for previous in ui gate setup diagram evidence; do
+            _stub_group "${previous}" 0
+        done
+        case "${group}" in
+            ui|gate|diagram) missing=grep ;;
+            setup) missing=sed ;;
+            evidence) missing=gh ;;
+        esac
+        path="${BATS_TEST_TMPDIR}/missing-${group}"
+        mkdir -p "${path}"
+        for tool in bash sh dirname env just timeout grep sort wc sed find mktemp \
+            docker gh jq awk cut tee date uname mkdir ln distrobox; do
+            [[ "${tool}" == "${missing}" ]] && continue
+            real="$(command -v "${tool}")" || real=/bin/false
+            ln -s "${real}" "${path}/${tool}"
+        done
+        cp "${REPO_ROOT}/script/verify/${group}.sh" "${COPY}/script/verify/"
+        PATH="${path}" run /bin/bash "${ALL_SH}"
+        assert_failure 3
+        assert_line "verify all: ${group} UNAVAILABLE (rc=3)"
+        assert_output --partial "${missing} not found on PATH"
+        refute_output --partial 'VERDICT PASS'
+    done
+}
