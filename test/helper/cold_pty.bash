@@ -17,12 +17,11 @@ _cold_pty_session() {
 
 _cold_pty_cleanup() {
     local _launcher="$1" _sid="$2" _pid _parent _member_sid _snapshot _state _alive
-    local _deadline=$((SECONDS + 5)) _script=''
-    # Freeze the launcher group before inspecting the PTY transition.
-    if kill -STOP -- "-${_launcher}" 2>/dev/null; then :; fi
+    local _deadline=$((SECONDS + 5)) _script='' _error=0
     _snapshot="$(ps -eo pid=,ppid=,sid=)" || {
         printf 'cannot inspect cold PTY processes\n' >&2
-        return 1
+        _snapshot=''
+        _error=1
     }
     while read -r _pid _parent _member_sid; do
         if [[ "${_parent}" == "${_launcher}" ]]; then _script="${_pid}"; break; fi
@@ -34,11 +33,11 @@ _cold_pty_cleanup() {
             if kill -KILL "${_pid}" 2>/dev/null; then :; fi
         done <<<"${_snapshot}"
     fi
-    if kill -CONT -- "-${_launcher}" 2>/dev/null; then :; fi
     while [[ -n "${_sid}" ]]; do
         _snapshot="$(ps -eo pid=,sid=)" || {
             printf 'cannot inspect cold PTY session\n' >&2
-            return 1
+            _error=1
+            break
         }
         _alive=0
         while read -r _pid _member_sid; do
@@ -70,4 +69,5 @@ _cold_pty_cleanup() {
         printf 'cold launcher group %s did not stop\n' "${_launcher}" >&2
         return 1
     fi
+    return "${_error}"
 }

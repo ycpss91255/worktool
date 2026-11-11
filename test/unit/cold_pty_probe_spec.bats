@@ -13,6 +13,8 @@ sid=
 trap 'exit 1' HUP TERM
 trap '_cold_pty_cleanup "${child}" "${sid}"' EXIT
 if [[ "$1" == early ]]; then
+    until observed="$(_cold_pty_session "${child}")"; do sleep 0.1; done
+    printf '%s\n' "${observed}" >"${COLD_READY}.sid"
     printf '%s 0\n' "${child}" >"${COLD_READY}"
     while :; do sleep 0.1; done
 fi
@@ -33,6 +35,7 @@ _check_cleanup() {
         sleep 0.05
     done
     read -r _launcher _sid <"${COLD_READY}"
+    if [[ "${_mode}" == early ]]; then _sid="$(cat "${COLD_READY}.sid")"; fi
     if [[ "${_mode}" == early ]]; then
         kill -s TERM "${_supervisor}"
     elif [[ "${_mode}" != failure ]]; then
@@ -55,15 +58,28 @@ _check_cleanup() {
 @test "cold PTY cleanup after early TERM" { _check_cleanup early; }
 
 @test "session discovery rejects a child before it becomes a session leader" {
+    # shellcheck source=test/helper/cold_pty.bash
     source "${COLD_HELPER}"
     ps() { printf '%s\n' '10 1 10' '11 10 10' '12 11 10'; }
     if _cold_pty_session 10; then return 1; fi
 }
 
 @test "session discovery fails closed when ps fails" {
+    # shellcheck source=test/helper/cold_pty.bash
     source "${COLD_HELPER}"
     ps() { return 1; }
     local _rc=0
     _cold_pty_session 10 || _rc=$?
     [[ "${_rc}" -eq 2 ]]
+}
+
+@test "cleanup reports ps failure and stops the known launcher" {
+    # shellcheck source=test/helper/cold_pty.bash
+    source "${COLD_HELPER}"
+    setsid sleep 30 &
+    local _launcher=$! _rc=0
+    ps() { return 1; }
+    _cold_pty_cleanup "${_launcher}" '' || _rc=$?
+    [[ "${_rc}" -ne 0 ]]
+    ! kill -0 "${_launcher}" 2>/dev/null
 }
