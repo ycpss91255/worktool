@@ -276,6 +276,19 @@ EOF
     assert_line '<2.1>'
 }
 
+@test "verify realbox forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/realbox.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/realbox.sh"
+    _just verify realbox --comment-tag 'tag with spaces' 5.1
+    assert_success
+    assert_line '<--comment-tag>'
+    assert_line '<tag with spaces>'
+    assert_line '<5.1>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {

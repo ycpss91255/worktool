@@ -26,3 +26,7 @@ evidence *args:
 # Check the automated gates and their evidence (args: ITEM, --list, --help).
 gate *args:
     ./script/verify/gate.sh "$@"
+
+# Run real-machine acceptance checks (requires --allow-real-box for execution).
+realbox *args:
+    ./script/verify/realbox.sh "$@"
