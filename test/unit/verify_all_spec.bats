@@ -225,8 +225,8 @@ _stub_calls() {
             _stub_group "${previous}" 0
         done
         case "${group}" in
-            ui|gate|diagram) missing=grep ;;
-            setup) missing=sed ;;
+            ui|gate|diagram) missing="grep" ;;
+            setup) missing="sed" ;;
             evidence) missing=gh ;;
         esac
         path="${BATS_TEST_TMPDIR}/missing-${group}"
