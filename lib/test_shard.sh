@@ -6,7 +6,7 @@
 # A sharded tier must stay exactly as strict as the whole tier: every spec
 # runs in exactly one shard, and the whole-tier rules (every required spec
 # present and non-empty, the plan covering every case, nothing failed,
-# nothing skipped) are applied to the union of the shards. Every gap fails
+# no unexpected skips) are applied to the union of the shards. Every gap fails
 # closed.
 #
 # Public API:
@@ -44,7 +44,7 @@
 #          required spec is in the union with at least one case, and every
 #          record's plan equals the sum of its specs' case counts while its
 #          TAP holds exactly that many `ok` lines, no `not ok` and no
-#          `# skip`. Otherwise 1, every reason on stderr.
+#          unexpected `# skip`. Otherwise 1, every reason on stderr.
 #   test_shard_records_await <max_polls> <poll_seconds> <tier> <N> <runner>... -- <fetch...>
 #       runs <fetch...>, which prints the run's artifact listing as
 #       "<id><TAB><name><TAB><created_at>" rows, until every record
@@ -138,12 +138,31 @@ test_shard_assign() {
         }'
 }
 
+# Shared whole-tier and shard-union policy: only the named unit CPU
+# repro cases may skip while their stress opt-in is disabled.
+test_shard_has_unexpected_skip() {
+    awk -v tier="$1" -v stress="${WORKTOOL_STRESS:-}" '
+        /^ok [0-9]+ .*# skip/ {
+            sub(/^ok [0-9]+ /, "")
+            reason = " # skip set WORKTOOL_STRESS=1 to run CPU repro"
+            # Exempt names come from test/unit/verify_run_signal_spec.bats and
+            # test/unit/verify_realbox_spec.bats.
+            if (tier == "unit" && stress != "1" &&
+                ($0 == "verify_run: HUP under CPU load always finishes before cleanup" reason ||
+                 $0 == "5.1: group HUP under CPU load finishes before cleanup during assemble and bench" reason ||
+                 $0 == "timeout cleanup: TERM-ignoring just descendant under CPU load" reason)) next
+            unexpected = 1
+        }
+        END { exit !unexpected }
+    ' "$2"
+}
+
 # Check the records of runner $5 (see test_shard_verdict); $1 root, $2 tier,
 # $3 N, $4 a scratch directory. Prints the summary line, returns 1 with
 # every reason on stderr.
 _test_shard_verdict_runner() {
     local _root="$1" _tier="$2" _n="$3" _scratch="$4" _runner="$5"
-    local _i _dir _rec _tap _bad=0 _hash='' _line _key _a _b _plan _sum _oks _tplan _found
+    local _i _dir _rec _tap _bad=0 _hash='' _line _key _a _b _plan _sum _oks _tplan _found _skip_rc
     local _specs="${_scratch}/specs.${_runner}"
     : >"${_specs}"
     _found=0
@@ -215,8 +234,13 @@ _test_shard_verdict_runner() {
             log_error "${_tier} (${_runner}): shard ${_i}/${_n} TAP has a failed case"
             _bad=1
         fi
-        if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+        _skip_rc=0
+        test_shard_has_unexpected_skip "${_tier}" "${_tap}" || _skip_rc=$?
+        if [[ "${_skip_rc}" -eq 0 ]]; then
             log_error "${_tier} (${_runner}): shard ${_i}/${_n} TAP has a skipped case - a skipped case is not green"
+            _bad=1
+        elif [[ "${_skip_rc}" -ne 1 ]]; then
+            log_error "${_tier} (${_runner}): shard ${_i}/${_n} TAP skip check failed (exit ${_skip_rc})"
             _bad=1
         fi
     done

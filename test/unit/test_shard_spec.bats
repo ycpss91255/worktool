@@ -55,6 +55,24 @@ _good_union() {
     done
 }
 
+@test "union preserves the unit CPU repro skip exemptions and rejects them when opted in or in another tier" {
+    _good_union
+    local tap=$'1..3\nok 1 verify_run: HUP under CPU load always finishes before cleanup # skip set WORKTOOL_STRESS=1 to run CPU repro\nok 2 5.1: group HUP under CPU load finishes before cleanup during assemble and bench # skip set WORKTOOL_STRESS=1 to run CPU repro\nok 3 timeout cleanup: TERM-ignoring just descendant under CPU load # skip set WORKTOOL_STRESS=1 to run CPU repro'
+    TAP="${tap}" _record 2/2 ubuntu-latest b_spec.bats:3
+    WORKTOOL_STRESS='' run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
+    assert_success
+    WORKTOOL_STRESS=1 run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
+    assert_failure
+    assert_output --partial 'TAP has a skipped case'
+    local record="${ROOT}/test-report-unit-2-ubuntu-latest/unit/shard.tap"
+    WORKTOOL_STRESS='' run test_shard_has_unexpected_skip matrix "${record}"
+    assert_success
+    sed -i 's/run CPU repro/run something else/' "${record}"
+    WORKTOOL_STRESS='' run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
+    assert_failure
+    assert_output --partial 'TAP has a skipped case'
+}
+
 @test "assignment balances by weight, heaviest first, ties by path and lowest shard" {
     run test_shard_assign 3 <<'ROWS'
 100	a_spec.bats

@@ -41,12 +41,13 @@
 #               (default first), so `just test integration` stays the one
 #               command a user types; each group is a gate of its own with
 #               the same tier rules (required spec present and non-empty,
-#               at least one case, no failure, no skip).
+#               at least one case, no failure, no unexpected skip).
 #
 # A bats tier gate is green ONLY if every REQUIRED spec of the tier exists
 # and defines at least one case (see _required_specs: the M2 specs, listed
 # per tier), the TAP plan covers at least those cases, at least one case ran
-# and none was skipped. bats exits 0 on skips and happily runs a tier whose
+# and none was unexpectedly skipped. Named opt-in CPU repro cases may skip
+# in unit while stress is disabled. bats exits 0 on skips and happily runs a tier whose
 # required spec was deleted or emptied as long as some other spec remains,
 # so the required list is checked per file BEFORE bats runs and the TAP
 # stream is scanned AFTER: a missing, emptied or skipped required case fails
@@ -304,7 +305,7 @@ _run_in_container() {
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
+    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -426,12 +427,20 @@ _run_shellcheck() {
     _info "ShellCheck OK"
 }
 
+# The whole tier and shard verdict share one fail-closed skip policy.
+_has_unexpected_skip() {
+    # shellcheck source-path=SCRIPTDIR/../../lib
+    # shellcheck source=test_shard.sh
+    source "${REPO_ROOT}/lib/test_shard.sh"
+    test_shard_has_unexpected_skip "$@"
+}
+
 # Check the captured TAP stream of tier $1 in file $2 after the run: a plan
 # was emitted, at least one case ran (no "1..0"), the plan covers at least
-# the $3 cases the required specs define, and no case was skipped (bats
+# the $3 cases the required specs define, and no unexpected case was skipped (bats
 # itself exits 0 on a skip). Prints the reason and returns 1 on any miss.
 _verify_tap() {
-    local _tier="$1" _tap="$2" _min="$3" _plan
+    local _tier="$1" _tap="$2" _min="$3" _plan _skip_rc=0
     # One awk, no `| head`: an unreadable stream is a missing plan (return
     # 1 below), and there is no early-closed pipe to fail under pipefail.
     if ! _plan="$(awk '/^1\.\.[0-9]+$/ { sub(/^1\.\./, ""); print; exit }' "${_tap}")" \
@@ -447,8 +456,13 @@ _verify_tap() {
         _err "${_tier} bats plan (${_plan}) is below the required specs' case total (${_min})"
         return 1
     fi
-    if grep -qE '^ok [0-9]+ .*# skip' "${_tap}"; then
+    _has_unexpected_skip "${_tier}" "${_tap}" || _skip_rc=$?
+    if [[ "${_skip_rc}" -eq 0 ]]; then
         _err "${_tier} bats has skipped case(s) - a skipped required case is not green"
+        return 1
+    fi
+    if [[ "${_skip_rc}" -ne 1 ]]; then
+        _err "${_tier} bats skip check failed (awk exit ${_skip_rc})"
         return 1
     fi
     return 0
@@ -476,7 +490,7 @@ _die_bats_failed() {
 # Green requires: the paths exist, every required spec of the tier exists
 # and defines cases (_check_required_specs, before bats runs), no case
 # failed, and the TAP stream passes _verify_tap (plan covers the required
-# cases, nothing skipped). The stream is captured (and echoed) for that.
+# cases, no unexpected skips). The stream is captured (and echoed) for that.
 _run_bats_tier() {
     local _tier="$1" _filter="$2"
     shift 2
@@ -677,7 +691,7 @@ _run_system() {
 
 # System tier, real-engine group: exactly the real-engine spec, run by the
 # DinD runner entry once its nested dockerd is up. Same green rules: the spec
-# must exist, run at least one case, and skip nothing.
+# must exist, run at least one case, and have no unexpected skips.
 _run_system_real() { _run_bats_tier system-real "" -- "${SYSTEM_REAL_SPEC}"; }
 
 # --- Usage -------------------------------------------------------------------
@@ -685,6 +699,7 @@ _usage_environment() {
     cat >&2 <<'EOF'
 Environment:
   TEST_IMAGE             test image tag (default worktool-test:local)
+  WORKTOOL_STRESS=1      run opt-in CPU repro cases (otherwise may skip in unit)
   TEST_IMAGE_PREBUILT=1  skip the test image build (CI loads a prebuilt one)
   WORKTOOL_TEST_JOBS     bats cases to run in parallel, across and within
                          files (default 4)
