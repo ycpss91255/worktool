@@ -3000,6 +3000,30 @@ STUB
     chmod +x "${STUBS}/timeout"
 }
 
+@test "timeout stress fixture refuses a missing descendant ready signal" {
+    _prepare_ready_timeout
+    export ORPHAN_PID="${STATE}/missing-ready" ORPHAN_TIMEOUT_INJECTED="${STATE}/injected"
+    export ORPHAN_TIMEOUT_ERROR="${STATE}/timeout-error" ORPHAN_WATCHER="${STATE}/watcher.pid"
+    cat >"${STUBS}/just" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+STUB
+    chmod +x "${STUBS}/just"
+    run "${REALBOX}" --allow-real-box 5.1
+    assert_failure 1
+    assert_output --partial 'just box assemble failed'
+    assert_line 'cleanup-rc=0'
+    [ -s "${ORPHAN_TIMEOUT_ERROR}" ]
+    [ ! -e "${ORPHAN_TIMEOUT_INJECTED}" ]
+    [ ! -e "${ORPHAN_PID}" ]
+    local watcher
+    read -r watcher <"${ORPHAN_WATCHER}"
+    if kill -0 "${watcher}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${watcher}/stat"; then
+        kill -KILL "${watcher}"
+        fail 'ready watcher survived'
+    fi
+}
+
 @test "timeout cleanup: TERM-ignoring just descendant under CPU load" {
     [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     _prepare_timeout_descendant
