@@ -34,7 +34,7 @@ init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | ba
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
 放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 —— `just box setup` 預設把
-終端指到 `'<distrobox>' enter dev`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
+終端指到 `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
 使用者進盒後自己開的工具。M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、
 plugin)留在 M5。
 
@@ -623,7 +623,7 @@ issue #129),不再延後到 M5。
     fzf --version` 印出版本,容器狀態為 `running`;M3(issue #160)再加兩個案例:
     `distrobox enter dev -- tmux -V` 印出 `tmux <版本>`、`distrobox enter dev --
     fish --version` 印出 `fish, version <版本>`,兩個版本都印進 TAP log 當證據
-    (終端 profile 跑 `'<distrobox>' enter dev` 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
+    (終端 profile 經 `script/box/enter.sh` wrapper 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
     盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
     exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
     fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
