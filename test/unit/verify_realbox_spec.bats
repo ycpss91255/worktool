@@ -3002,8 +3002,8 @@ STUB
 
 @test "timeout stress fixture refuses a missing descendant ready signal" {
     _prepare_ready_timeout
-    export ORPHAN_PID="${STATE}/missing-ready" ORPHAN_TIMEOUT_INJECTED="${STATE}/injected"
-    export ORPHAN_TIMEOUT_ERROR="${STATE}/timeout-error" ORPHAN_WATCHER="${STATE}/watcher.pid"
+    export "ORPHAN_PID=${STATE}/missing-ready" "ORPHAN_TIMEOUT_INJECTED=${STATE}/injected"
+    export "ORPHAN_TIMEOUT_ERROR=${STATE}/timeout-error" "ORPHAN_WATCHER=${STATE}/watcher.pid"
     cat >"${STUBS}/just" <<'STUB'
 #!/usr/bin/env bash
 sleep 30
@@ -3053,10 +3053,10 @@ exec /bin/bash "$@"
 STUB
     chmod +x "${STUBS}/bash"
     local attempt failures=0 trials=30 pid ready=0
-    export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
-    export ORPHAN_TIMEOUT_INJECTED="${STATE}/timeout-injected"
-    export ORPHAN_TIMEOUT_ERROR="${STATE}/timeout-error" ORPHAN_WATCHER="${STATE}/watcher.pid"
-    export ORPHAN_GROUP="${STATE}/orphan.group"
+    export "ORPHAN_PID=${STATE}/orphan.pid" "ORPHAN_MARKER=${STATE}/late"
+    export "ORPHAN_TIMEOUT_INJECTED=${STATE}/timeout-injected"
+    export "ORPHAN_TIMEOUT_ERROR=${STATE}/timeout-error" "ORPHAN_WATCHER=${STATE}/watcher.pid"
+    export "ORPHAN_GROUP=${STATE}/orphan.group"
     for ((attempt=1; attempt<=trials; attempt++)); do
         rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}" "${ORPHAN_TIMEOUT_INJECTED}" \
             "${ORPHAN_TIMEOUT_ERROR}" "${ORPHAN_WATCHER}" "${ORPHAN_GROUP}"
