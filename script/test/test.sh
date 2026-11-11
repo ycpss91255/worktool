@@ -879,6 +879,18 @@ _changed_files() {
 _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
+lib/guard.sh|test/unit/guard_spec.bats
+lib/guard.sh|test/unit/config_backup_spec.bats
+lib/guard.sh|test/unit/config_backup_dangling_spec.bats
+lib/guard.sh|test/unit/config_backup_security_spec.bats
+lib/guard.sh|test/unit/verify_config_backup_cache_spec.bats
+lib/config_backup.sh|test/unit/config_backup_spec.bats
+lib/config_backup.sh|test/unit/config_backup_dangling_spec.bats
+lib/config_backup.sh|test/unit/config_backup_security_spec.bats
+lib/config_backup.sh|test/unit/verify_config_backup_cache_spec.bats
+script/verify/config_backup_paths.sh|test/unit/config_backup_spec.bats
+script/verify/config_backup_paths.sh|test/unit/config_backup_dangling_spec.bats
+script/verify/config_backup_paths.sh|test/unit/verify_config_backup_cache_spec.bats
 lib/manifest.sh|test/unit/manifest_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats

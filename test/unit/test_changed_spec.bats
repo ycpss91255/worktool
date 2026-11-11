@@ -230,6 +230,35 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
 }
 
+@test "test.sh --changed maps backup dependencies to their affected specs" {
+    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify"
+    local path spec expected
+    for path in lib/guard.sh lib/config_backup.sh script/verify/config_backup_paths.sh; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    for spec in guard config_backup config_backup_dangling config_backup_security verify_config_backup_cache; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+    for path in lib/guard.sh lib/config_backup.sh script/verify/config_backup_paths.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        for spec in config_backup config_backup_dangling verify_config_backup_cache; do
+            [[ "${expected}" == *"test/unit/${spec}_spec.bats"* ]]
+        done
+        if [[ "${path}" == lib/guard.sh ]]; then
+            [[ "${expected}" == *test/unit/guard_spec.bats* ]]
+        fi
+        if [[ "${path}" != script/verify/config_backup_paths.sh ]]; then
+            [[ "${expected}" == *test/unit/config_backup_security_spec.bats* ]]
+        fi
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
 @test "test.sh --changed maps a source file to specs across tiers" {
     mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration"
     printf '# setup script\n' >"${TEMP_REPO}/script/box/setup.sh"
