@@ -423,6 +423,12 @@ _cleanup_run() {
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
     local _rc=0 _restore_rc=0
+    # Confirmation can update the backup's ownership markers; preserve them
+    # too when a published backup is damaged.
+    if [[ -f "${CFGBK_B}/manifest" ]] && ! cfgbk_restore_preflight; then
+        printf 'cleanup-rc=1\n'
+        return 1
+    fi
     _finish_box_confirmation "${CFGBK_B}" || _rc=1
     _52_step3_restore || _restore_rc=$?
     [[ "${_rc}" -eq 1 ]] || _rc="${_restore_rc}"
