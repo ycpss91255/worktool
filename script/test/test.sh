@@ -86,6 +86,12 @@ WORKTOOL_SHARD_WEIGHTS="${WORKTOOL_SHARD_WEIGHTS:-}"
 WORKTOOL_APT_CACHE_DIR="${WORKTOOL_APT_CACHE_DIR:-}"
 APT_ARCHIVES_IN_RUNNER=/var/cache/worktool-apt
 
+# Only containers owned by a verification run receive its cleanup label.
+TEST_RUN_LABEL=()
+if [[ -n "${WORKTOOL_TEST_RUN_ID:-}" ]]; then
+    TEST_RUN_LABEL=(--label "worktool.verify-run=${WORKTOOL_TEST_RUN_ID}")
+fi
+
 # Docker-in-docker runner for the real-engine system group (built on demand;
 # never shared with the other gates, since it is the only --privileged one).
 SYSTEM_REAL_IMAGE="${SYSTEM_REAL_IMAGE:-worktool-system-real:local}"
@@ -305,7 +311,7 @@ _run_in_container() {
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
     fi
-    docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${TEST_IMAGE}" \
@@ -341,7 +347,7 @@ _run_ghostty_in_container() {
     _ensure_ghostty_image
     _info "running --ci-integration-ghostty in ${GHOSTTY_IMAGE}"
     _host_state_dir
-    docker run --rm \
+    docker run --rm "${TEST_RUN_LABEL[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${GHOSTTY_IMAGE}" \
@@ -386,7 +392,7 @@ _run_system_real_in_runner() {
         _apt_cache=(-e "WORKTOOL_APT_ARCHIVES=${APT_ARCHIVES_IN_RUNNER}"
             -v "${WORKTOOL_APT_CACHE_DIR}:${APT_ARCHIVES_IN_RUNNER}")
     fi
-    docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR "${_apt_cache[@]}" \
+    docker run --rm "${TEST_RUN_LABEL[@]}" --privileged -e CI -e WORKTOOL_APT_MIRROR "${_apt_cache[@]}" \
         -v "${REPO_ROOT}:/source" \
         -w /source \
         "${SYSTEM_REAL_IMAGE}" \
@@ -708,6 +714,7 @@ Environment:
                          a junit report (per-case times) to <dir>/<tier>/
                          report.xml; the TAP output is unchanged (default:
                          none)
+  WORKTOOL_TEST_RUN_ID   label test containers with worktool.verify-run=<id>
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   SYSTEM_REAL_IMAGE_PREBUILT=1
                          skip the DinD runner build (CI loads a cached one)
@@ -897,8 +904,10 @@ lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
+lib/log.sh|test/unit/verify_run_signal_spec.bats
 lib/log.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
+lib/guard.sh|test/unit/verify_gate_spec.bats
 lib/guard.sh|test/unit/verify_diagram_spec.bats
 lib/guard.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/config_backup_spec.bats
@@ -944,6 +953,14 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
+lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
+lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
+lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
+lib/verify_run.sh|test/unit/verify_gate_spec.bats
+script/verify/gate.sh|test/unit/verify_gate_spec.bats
+script/verify/justfile.verify|test/unit/verify_gate_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats

@@ -251,6 +251,19 @@ EOF
     assert_line '<6.1>'
 }
 
+@test "verify gate forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/gate.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/gate.sh"
+    _just verify gate --example 'value with spaces' 2.1
+    assert_success
+    assert_line '<--example>'
+    assert_line '<value with spaces>'
+    assert_line '<2.1>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {
