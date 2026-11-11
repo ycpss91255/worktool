@@ -42,7 +42,11 @@ verify_run() {
             return 1
         fi
         if [[ -n "${run_id}" ]]; then
-            verify_cleanup_containers "${run_id}" || rc=$?
+            if ! verify_cleanup_containers "${run_id}"; then
+                log_error "verify_run: container cleanup unconfirmed; configuration restore refused; inspect retained verification state before recovery"
+                verify_restore_signals "" "${saved_int}" "${saved_term}" "${saved_hup}"
+                return 1
+            fi
         fi
         [[ -n "${interrupted}" ]] || rc=124
     fi
@@ -135,13 +139,13 @@ verify_group_running() {
 verify_cleanup_containers() {
     local ids
     local -a containers=()
-    if ! ids="$(docker ps -aq --filter "label=worktool.verify-run=$1")"; then
+    if ! ids="$(timeout -k 1 5 docker ps -aq --filter "label=worktool.verify-run=$1")"; then
         log_error "cannot list verification containers for run $1"
         return 1
     fi
     [[ -n "${ids}" ]] || return 0
     mapfile -t containers <<<"${ids}"
-    if ! docker rm -f -v "${containers[@]}" >/dev/null; then
+    if ! timeout -k 1 5 docker rm -f -v "${containers[@]}" >/dev/null; then
         log_error "cannot remove verification containers for run $1"
         return 1
     fi

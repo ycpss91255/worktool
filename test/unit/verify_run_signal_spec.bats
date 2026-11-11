@@ -192,6 +192,43 @@ PROBE
     assert_output --partial 'post-KILL wait deadline exceeded'
 }
 
+@test "verify_run: failed or stuck container cleanup refuses restore" {
+    cat >"${SIGNAL_STATE}/just" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+STUB
+    cat >"${SIGNAL_STATE}/docker" <<'STUB'
+#!/usr/bin/env bash
+case "${CLEANUP_CASE}:$1" in
+    list:ps) exit 1 ;;
+    remove:ps) echo owned ;;
+    remove:rm) exit 1 ;;
+    stuck:ps) sleep 30 ;;
+    *) exit 2 ;;
+esac
+STUB
+    chmod +x "${SIGNAL_STATE}/just" "${SIGNAL_STATE}/docker"
+    local mode
+    for mode in list remove stuck; do
+        mkdir -p "${SIGNAL_STATE}/${mode}"
+        export CLEANUP_CASE="${mode}"
+        export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}/${mode}"
+        PATH="${SIGNAL_STATE}:${PATH}" run bash <<'PROBE'
+source "${LIB_DIR}/log.sh"
+source "${LIB_DIR}/verify_run.sh"
+rc=0
+verify_run 0.1 just test || rc=$?
+printf 'rc=%s\n' "${rc}"
+if verify_restore_allowed; then echo restore-allowed; else echo restore-refused; fi
+exit "${rc}"
+PROBE
+        assert_failure 1
+        assert_line restore-refused
+        refute_line restore-allowed
+        assert_output --partial 'container cleanup unconfirmed'
+    done
+}
+
 @test "verify_run: default TERM propagates instead of becoming caller failure 1" {
     cat >"${SIGNAL_STATE}/caller" <<'CALLER'
 #!/usr/bin/env bash
