@@ -11,12 +11,22 @@ CFGBK_USER_NAMES=(ghostty ghostty-modern distrobox-conf)
 CFGBK_PARENT_CHAIN_NAMES=("${CFGBK_NAMES[@]}")
 
 cfgbk_file_of() {
+    if [[ -n "${CFGBK_RESTORE_PATHS[$1]:-}" ]]; then
+        printf '%s\n' "${CFGBK_RESTORE_PATHS[$1]}"
+        return 0
+    fi
     case "$1" in
         ghostty) printf '%s/ghostty/config\n' "${CFGBK_C}" ;;
         ghostty-modern) printf '%s/ghostty/config.ghostty\n' "${CFGBK_C}" ;;
         worktool) printf '%s/worktool/config\n' "${CFGBK_C}" ;;
         distrobox-conf) printf '%s/distrobox/distrobox.conf\n' "${CFGBK_C}" ;;
-        init-log) printf '%s/worktool/%s-init.log\n' "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}" "${BOX}" ;;
+        init-log)
+            if [[ -n "${CFGBK_RESTORE_INIT_LOG:-}" ]]; then
+                printf '%s\n' "${CFGBK_RESTORE_INIT_LOG}"
+            else
+                printf '%s/worktool/%s-init.log\n' "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}" "${BOX}"
+            fi
+            ;;
         *) guard_fail "unknown config name '$1'"; return 1 ;;
     esac
 }
@@ -44,6 +54,7 @@ cfgbk_label_of() {
 # restoring either absent directory, so the sibling cannot obstruct rmdir.
 cfgbk_restore_all() {
     local _n _s _p _rc=0
+    cfgbk_restore_preflight || return 1
     for _n in ghostty ghostty-modern; do
         _s="$(guard_field "${CFGBK_B}" "${_n}")" || return 1
         if [[ "${_s}" == absent-dir ]]; then
