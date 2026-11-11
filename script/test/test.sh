@@ -879,6 +879,9 @@ _changed_files() {
 _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
+lib/log.sh|test/unit/verify_setup_spec.bats
+lib/config.sh|test/unit/verify_setup_spec.bats
+lib/guard.sh|test/unit/verify_setup_spec.bats
 lib/log.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
 lib/guard.sh|test/unit/verify_diagram_spec.bats
@@ -895,12 +898,14 @@ script/verify/config_backup_paths.sh|test/unit/config_backup_spec.bats
 script/verify/config_backup_paths.sh|test/unit/config_backup_dangling_spec.bats
 script/verify/config_backup_paths.sh|test/unit/verify_config_backup_cache_spec.bats
 lib/manifest.sh|test/unit/manifest_spec.bats
+lib/manifest.sh|test/unit/verify_setup_spec.bats
 lib/manifest.sh|test/unit/verify_evidence_spec.bats
 box/dev.ini|test/unit/verify_evidence_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
 lib/enter.sh|test/unit/enter_spec.bats
+lib/enter.sh|test/unit/verify_setup_spec.bats
 lib/approval.sh|test/unit/approval_spec.bats
 lib/approval.sh|test/unit/hook/enforce_milestone_gate_approval_representative_spec.bats
 lib/approval.sh|test/unit/hook/approval_check_spec.bats
@@ -916,10 +921,15 @@ script/box/bench.sh|test/unit/bench_spec.bats
 script/box/enter.sh|test/unit/enter_spec.bats
 script/box/enter.sh|test/integration/enter_spec.bats
 script/box/setup.sh|test/unit/setup_spec.bats
+script/box/setup.sh|test/unit/verify_setup_spec.bats
 script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
+script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
+script/verify/setup.sh|test/unit/verify_setup_spec.bats
+test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
+script/verify/justfile.verify|test/unit/verify_setup_spec.bats
 script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
