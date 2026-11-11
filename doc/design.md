@@ -27,8 +27,10 @@ install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/000
   #1),parent 底下有多個 sub-issue(移植 milestone 每工具一個、其餘依任務);
   該 milestone 的實作 PR 掛在對應的 Milestone 下。一個 sub-issue 一個 PR,
   CI 綠且 codex「可合併」後自主合併(merge commit,不 squash);只有 milestone
-  驗收 PR(驗收清單 + Closes parent issue)是人類 gate,不自動合併
-  (2026-09-19 修訂,見 doc/workflow.md)。
+  驗收 PR(驗收清單 + Closes parent issue)是人類 gate,不自動合併。
+  完整子功能 PR 依相依順序先各自進 main,全部完成後才從更新後的 main 準備
+  驗收 PR,只保留人類審查清單及必要證據,不彙整子功能變更(#918、ADR-0024;
+  原流程見 doc/workflow.md)。
 - milestone 驗收 PR 的核准紀錄(2026-09-29,#187):驗收 PR 貼 `milestone-gate`
   標籤,合併前必須有維護者在該 PR 上**留言記錄可以合併**;對話裡的同意、agent
   對留言的解讀都不算。格式:`author_association` 為 `OWNER`、本文(忽略開頭空白)

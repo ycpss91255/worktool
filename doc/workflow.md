@@ -75,7 +75,9 @@ Workflow({ scriptPath: "/path/to/worktool/.claude/workflows/pr-loop.js", args: {
 | `parent` | 否 | PR 描述的 `Part of` 參照(例如 `#5`) |
 | `repoDir` | 是 | 本機 main checkout 路徑(不預設,換機器就換值);worktree 在 `$(dirname <repoDir>)/worktree/<name>`、暫存檔在 `$(dirname <repoDir>)/worktree/.scratch/<name>` |
 
-`pr-loop` 以 `base` 指定 milestone 驗收分支（例如 `m3/5-acceptance`）時，CI 同樣適用。
+`pr-loop` 以 `base` 指定 milestone 驗收分支（例如 `m3/5-acceptance`）時，CI 同樣適用；
+此為既有分支的相容能力。子功能 PR 依 ADR-0024 合併到 main，新流程的驗收 PR
+差異只保留人類審查清單及必要證據。
 `ci.yml` 的 PR base 篩選接受 `main` 與 `m*/*-acceptance`，所有既有 CI gates 與
 `ci-passed` 彙總照常執行；push 觸發仍限 `main`。`verify-all` 仍依 PR 的
 `milestone-gate` 標籤決定是否執行，不因 base 是驗收分支而自動啟用。
