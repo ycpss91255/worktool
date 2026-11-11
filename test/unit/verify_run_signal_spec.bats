@@ -229,6 +229,28 @@ PROBE
     done
 }
 
+@test "verify_run: signal after failed cleanup propagates and refuses restore" {
+    cp "${SIGNAL_STATE}/child" "${SIGNAL_STATE}/just"
+    printf '#!/usr/bin/env bash\nexit 1\n' >"${SIGNAL_STATE}/docker"
+    chmod +x "${SIGNAL_STATE}/docker"
+    cat >"${SIGNAL_STATE}/caller" <<'CALLER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "${LIB_DIR}/log.sh"
+source "${LIB_DIR}/verify_run.sh"
+trap 'exit 143' TERM
+trap 'if verify_restore_allowed; then echo restore-allowed; else echo restore-refused; fi' EXIT
+verify_run 10 just test
+CALLER
+    export VERIFY_RUN_GUARD_DIR="${SIGNAL_STATE}"
+    export PATH="${SIGNAL_STATE}:${PATH}"
+    run signal_caller TERM
+    assert_success
+    assert_line 'rc=143'
+    assert_line restore-refused
+    refute_line restore-allowed
+}
+
 @test "verify_run: default TERM propagates instead of becoming caller failure 1" {
     cat >"${SIGNAL_STATE}/caller" <<'CALLER'
 #!/usr/bin/env bash

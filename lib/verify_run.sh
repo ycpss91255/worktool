@@ -44,7 +44,7 @@ verify_run() {
         if [[ -n "${run_id}" ]]; then
             if ! verify_cleanup_containers "${run_id}"; then
                 log_error "verify_run: container cleanup unconfirmed; configuration restore refused; inspect retained verification state before recovery"
-                verify_restore_signals "" "${saved_int}" "${saved_term}" "${saved_hup}"
+                verify_restore_signals "${interrupted}" "${saved_int}" "${saved_term}" "${saved_hup}"
                 return 1
             fi
         fi
