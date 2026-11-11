@@ -277,4 +277,3 @@ esac
 exec "${FAKE_STATE_DIR}/cleanup-readlink" "$@"
 STUB
 }
-
