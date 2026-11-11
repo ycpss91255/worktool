@@ -198,3 +198,29 @@ _job() {
         assert_line "        run: test \"\$(git rev-parse HEAD)\" = \"\${EXPECTED_SHA}\""
     done
 }
+
+# Restrict checkout inputs to the actual action step in the named job:
+# full history on decide/report or another step cannot satisfy this guard.
+_checkout() {
+    _job "$1" | awk '
+        /^      - / { checkout = 0 }
+        /^        uses: actions\/checkout@/ { checkout = 1; print; next }
+        checkout { print }
+    '
+}
+
+@test "full-serial checks out the exact target with full history for its tiers" {
+    run _checkout full-serial
+    assert_success
+    assert_line '        uses: actions/checkout@v4'
+    assert_line "          ref: \${{ inputs.sha || github.sha }}"
+    assert_line '          fetch-depth: 0'
+}
+
+@test "isolation checks out the exact target with full history for its tiers" {
+    run _checkout isolation
+    assert_success
+    assert_line '        uses: actions/checkout@v4'
+    assert_line "          ref: \${{ inputs.sha || github.sha }}"
+    assert_line '          fetch-depth: 0'
+}
