@@ -64,7 +64,7 @@ DIAGRAM_NAMES=(architecture flow milestone)
 
 # The four label lines of the flow diagram's `just test` node, in order.
 F_TEST_LINE_1="2. just test"
-F_TEST_LINE_2="六道 gate,全部在 Docker"
+F_TEST_LINE_2="七道 gate,全部在 Docker"
 F_TEST_LINE_3="測試依賴皆在 Docker 內"
 F_TEST_LINE_4="(host 只需 docker + just)"
 OLD_F_TEST_WORDING="host 不裝任何套件"
