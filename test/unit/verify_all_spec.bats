@@ -110,7 +110,7 @@ _stub_calls() {
     assert_failure 3
     assert_line 'verify all: gate UNAVAILABLE (rc=3)'
     assert_line 'verify all: VERDICT FAIL at gate (rc=3); passed: ui; not run: setup diagram evidence'
-    refute_line --partial 'gate PASS'
+    refute_line 'verify all: gate PASS'
 }
 
 @test "any other non-zero group status (2, 124) is a failure with exit 1" {

@@ -355,7 +355,7 @@ _dispatched() {
     mkdir -p "${TEMP_REPO}/script/verify"
     printf '# all check\n' >"${TEMP_REPO}/script/verify/all.sh"
     printf '@test "all" { true; }\n' >"${TEMP_REPO}/test/unit/verify_all_spec.bats"
-    _baseline
+    _commit_baseline
     printf '# changed\n' >>"${TEMP_REPO}/script/verify/all.sh"
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
     assert_success
