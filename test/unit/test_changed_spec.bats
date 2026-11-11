@@ -236,7 +236,7 @@ _dispatched() {
     for path in lib/guard.sh lib/config_backup.sh script/verify/config_backup_paths.sh; do
         printf '# source\n' >"${TEMP_REPO}/${path}"
     done
-    for spec in guard config_backup config_backup_dangling config_backup_security verify_config_backup_cache; do
+    for spec in guard config_backup config_backup_dangling config_backup_security verify_config_backup_cache verify_diagram; do
         printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
     done
     _commit_baseline
@@ -251,12 +251,25 @@ _dispatched() {
         done
         if [[ "${path}" == lib/guard.sh ]]; then
             [[ "${expected}" == *test/unit/guard_spec.bats* ]]
+            [[ "${expected}" == *test/unit/verify_diagram_spec.bats* ]]
         fi
         if [[ "${path}" != script/verify/config_backup_paths.sh ]]; then
             [[ "${expected}" == *test/unit/config_backup_security_spec.bats* ]]
         fi
         git -C "${TEMP_REPO}" checkout -- "${path}"
     done
+}
+
+@test "test.sh --changed maps the diagram check to its spec" {
+    mkdir -p "${TEMP_REPO}/script/verify"
+    printf '# diagram check\n' >"${TEMP_REPO}/script/verify/diagram.sh"
+    printf '@test "diagram" { true; }\n' >"${TEMP_REPO}/test/unit/verify_diagram_spec.bats"
+    _commit_baseline
+    printf '\n# changed\n' >>"${TEMP_REPO}/script/verify/diagram.sh"
+
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/verify_diagram_spec.bats')"
 }
 
 @test "test.sh --changed maps a source file to specs across tiers" {

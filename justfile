@@ -3,9 +3,9 @@
 # `just` IS the interface, modelled on ycpss91255-docker/base
 # (ADR-00000005/10/11): zero special cases - every action is a namespace
 # declared with `mod?` below and nothing else lives at this level; the
-# namespaces are action-named (test, box; never ci/cd); bare `just <ns>`
-# runs the most (`just test` = everything CI runs) and sub-recipes only
-# narrow; every recipe is a thin forwarder that hands its arguments to the
+# namespaces are action-named (test, box, verify, agent, worktree, job;
+# never ci/cd). Bare `just test` runs everything CI runs; bare `just verify`
+# lists checks without running them. Sub-recipes narrow the scope; every recipe is a thin forwarder that hands its arguments to the
 # script under script/<ns>/ verbatim - ALL validation, usage text and
 # --help live in those scripts. Bare `just` lists the namespaces.
 #
@@ -15,6 +15,8 @@
 mod? test 'script/test/justfile.test'
 # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status | enter [--box N] [-- CMD]  (M3 adds rm)
 mod? box 'script/box/justfile.box'
+# Acceptance checks; just --list verify lists its recipes.
+mod? verify 'script/verify/justfile.verify'
 # Agent launch without GitHub authentication (headless fallback).
 mod? agent 'script/agent/justfile.agent'
 

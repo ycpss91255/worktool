@@ -1,0 +1,12 @@
+# Acceptance verification namespace. Recipes are added with their checks.
+set working-directory := '../..'
+set positional-arguments
+
+# List available checks; listing does not run verification.
+default:
+    @just --justfile '{{source_file()}}' --list
+    @echo 'NOTE: listing checks does not run verification.'
+
+# Check the repository diagrams (args: ITEM, --root <repo>, --list, --realbox, --help).
+diagram *args:
+    ./script/verify/diagram.sh "$@"
