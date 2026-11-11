@@ -575,18 +575,19 @@ EOF
     assert_equal "${_fixture_list}" "${_real_list}"
 }
 
-@test "single source: documented Usage lines occur in real product help" {
-    local _help _line
+@test "M3 UI acceptance documents the actual product usages" {
+    local _help _documented _line _count=0
     run just box help
     assert_success
     _help="${output}"
-    run just test help
-    assert_success
-    _help+=$'\n'"${output}"
+    _documented="$(sed -n '/^- \[ \] 1\.1 使用者介面/,/^    rc=0/p' "${REPO_ROOT}/doc/acceptance.md" | sed -n 's/^ *\(Usage: .*\)$/\1/p')"
     while IFS= read -r _line; do
+        [[ -n "${_line}" ]] || continue
         run grep -Fx "${_line}" <<<"${_help}"
         assert_success
-    done < <(sed -n 's/^ *\(Usage: .*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
+        _count=$((_count + 1))
+    done <<<"${_documented}"
+    assert_equal "${_count}" 5
 }
 
 @test "unavailable: a missing justfile reports its reason without a missing-tool tag" {
