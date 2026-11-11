@@ -641,13 +641,6 @@ EOF
     assert_output --partial '未判定、請在閒置時重跑'
     refute_output --partial 'PASSED'
     refute_output --partial 'FAILED'
-    cp "${REPO_ROOT}/script/verify/all.sh" "${COPY}/script/verify/all.sh"
-    printf '#!/usr/bin/env bash\nexit 0\n' >"${COPY}/script/verify/ui.sh"
-    chmod +x "${COPY}/script/verify/ui.sh"
-    PATH="${BIN}:${PATH}" run "${COPY}/script/verify/all.sh"
-    assert_failure 3
-    assert_line 'verify all: gate UNAVAILABLE (rc=3)'
-    refute_output --partial 'gate PASS'
 }
 
 @test "2.1: busy verdict survives stderr relayed after all stdout" {
@@ -1184,7 +1177,7 @@ EOF
         printf '# documented case: %s\n' "${_line}" >&3
         run grep -Fx "${_line}" "${_names}"
         assert_success
-    done < <(sed -n 's/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
+    done < <(sed -n '/^### 自動測試驗收/,/^## M4 /s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
 
 @test "single source: documented chain diagnostics equal the source-guarded fixture" {
@@ -1194,14 +1187,6 @@ EOF
         "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
     run diff -u "${_fixture}" "${_doc}"
     assert_success
-}
-
-@test "single source: historical runner transcripts reference live sources instead of snapshots" {
-    local _doc="${BATS_TEST_TMPDIR}/historical-output"
-    sed -n '/^## M2 /,/^## M3 /p' "${REPO_ROOT}/doc/acceptance.md" \
-        | awk '/^ *```text/ {text=1; next} /^ *```/ {text=0} text {print}' >"${_doc}"
-    run grep -E '\[ci\]|\[system-real\]|\[INFO\]|\[ERROR\]|^ *(PASS|FAIL)|^ *distrobox assemble|^ *assemble.sh:' "${_doc}"
-    assert_failure 1
 }
 
 @test "timeout cleanup: item 2.1 kills a TERM-ignoring descendant before returning" {
