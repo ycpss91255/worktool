@@ -34,10 +34,11 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
     done
 }
 
-@test "CI: test-unit and verify-all checkouts fetch full history for scope acceptance" {
+@test "CI: gate, unit-shard and verify-all checkouts fetch full history for scope acceptance" {
     local _job
-    # test-unit is a matrix leg of the gate job, sharing its checkout.
-    for _job in gate verify-all; do
+    # The real unit cases run in unit-shard; the union verdict only reads
+    # their records and cannot provide Git history to the shard checkouts.
+    for _job in gate unit-shard verify-all; do
         run awk -v job="${_job}" '
             /^  [[:alnum:]_-]+:$/ { in_job = ($0 == "  " job ":") }
             in_job && /^      - / { checkout = 0; with_options = 0 }

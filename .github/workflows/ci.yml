@@ -299,6 +299,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # M3 scope cases run in these shards and need origin/main plus
+          # its merge base; a shallow checkout cannot verify the scope.
+          fetch-depth: 0
 
       - name: Download test image (${{ matrix.runner }})
         uses: actions/download-artifact@v4
