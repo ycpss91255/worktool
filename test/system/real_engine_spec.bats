@@ -31,7 +31,7 @@
 #   which does not list the host session.
 #
 #   M3 (issue #180): the FIRST enter runs through the delivered entry
-#   wrapper script/box/enter.sh (the manual just box enter command),
+#   setup-written command through script/box/enter.sh (issue #434),
 #   and asserts that a real first initialisation is observable - the
 #   first-launch notice, the host log path and progress lines on stderr -
 #   and that the host log file exists and is not empty.
@@ -225,7 +225,7 @@ _diag() {
     printf 'worktool-link-probe\n' >"${HOME}/.ssh/worktool-link-probe"
     printf '[user]\n\tname = worktool-link-probe\n' >"${HOME}/.gitconfig"
     cd "${REPO_ROOT}"
-    run timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
+    run env SHELL=/bin/bash timeout "${ASSEMBLE_TIMEOUT}" "${ASSEMBLE}" --home "${BOX_HOME}" </dev/null
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
     assert_output --partial "Distrobox 'dev' successfully created."
@@ -256,37 +256,47 @@ _log_lines() {
 
 # --- (c) the box is usable: the manifest tools run inside it -----------------
 
-# M3 (issue #180): the FIRST enter goes through the delivered entry wrapper
-# `script/box/enter.sh`, as a manual just box enter would, so a
-# real first initialisation is observable: stderr carries the first-launch
-# notice, the host log path and progress lines (the interval is shortened
-# to 5 s so even a fast CI init shows several), and the host log exists
-# and holds the init output. The progress lines go into the TAP stream as
-# evidence.
-@test "real engine: enter.sh --box dev -- rg --version shows first-launch progress and the host log, then prints a ripgrep version" {
+# shellcheck source=test/helper/cold_pty.bash
+source "${BATS_TEST_DIRNAME}/../helper/cold_pty.bash"
+
+# Issue #434: execute the command setup really writes before any first enter.
+# A PTY supplies fish input while preserving the terminal entry command.
+@test "ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish" {
     cd "${REPO_ROOT}"
-    local _log="${HOME}/.cache/worktool/dev-init.log"
+    run "${REPO_ROOT}/script/box/setup.sh" --terminal ghostty --box dev
+    assert_success
+    local _body _command _log="${HOME}/.cache/worktool/dev-init.log"
+    _body="$(enter_block_body "$(enter_ghostty_target)")"
+    [[ "${_body}" == 'command = '* ]] || fail "setup wrote no managed command"
+    _command="${_body#command = }"
     run _docker inspect --type container -f '{{.State.StartedAt}}' dev
     assert_success
     assert_output --regexp '^0001-01-01'
-    WORKTOOL_INIT_INTERVAL=5 run timeout "${FIRST_ENTER_TIMEOUT}" \
-        "${ENTER}" --box dev --timeout "${FIRST_ENTER_TIMEOUT}" -- rg --version </dev/null
+    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT="${FIRST_ENTER_TIMEOUT}" \
+        run _cold_default_login "${_command}"
     [[ "${status}" -eq 0 ]] || _diag
     assert_success
-    assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
+    local _out _progress
+    _out="$(tr '\r' '\n' <<<"${output}")"
+    _progress="$(grep -E 'first launch: .+ - [0-9m]+s elapsed - ' <<<"${_out}" | sort -u | wc -l)" || _progress=0
+    [[ "${_progress}" -ge 2 ]] || fail "expected changing progress, got ${_progress}: ${_out}"
+    assert_output --partial "default-login comm=fish namespace="
     assert_output --partial "first launch of box 'dev'"
     assert_output --partial "full init log: ${_log}"
-    assert_line --regexp '^\[INFO\] first launch: .+ - [0-9m]+s elapsed - '
-    assert_line --regexp 'first launch: initialisation complete after '
-    local _first=()
-    mapfile -t _first < <(printf '%s\n' "${lines[@]}" | grep -F 'first launch')
-    _log_lines first-launch "${_first[@]}"
+    assert_output --partial "initialisation complete after"
+    [[ "${_out}" =~ cold-fish=[0-9]+\.[0-9]+ ]] || fail "the command did not enter fish: ${_out}"
+    [[ "${_out}" == *"$(_dev_mntns)"* ]] || fail "fish did not run in the dev mount namespace"
     assert [ -s "${_log}" ]
     run grep -c 'container_setup_done' "${_log}"
     assert_success
-    # The box is now a running, initialised container.
-    run _docker inspect dev --format '{{.State.Status}}'
-    assert_output "running"
+    _log_lines chain-cold "changing progress updates=${_progress}; setup command entered fish in dev"
+}
+
+@test "real engine: enter.sh --box dev -- rg --version prints a ripgrep version after cold init" {
+    run timeout -k 5 "${ENTER_TIMEOUT}" "${ENTER}" --box dev -- rg --version </dev/null
+    [[ "${status}" -eq 0 ]] || _diag
+    assert_success
+    assert_line --regexp '^ripgrep [0-9]+\.[0-9]+'
 }
 
 @test "real engine: distrobox enter dev -- fzf --version prints a version" {
