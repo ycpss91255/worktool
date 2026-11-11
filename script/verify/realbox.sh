@@ -1381,6 +1381,8 @@ _52_step3_restore() {
             "${CFGBK_B}"
         return 1
     fi
+    # Never mutate live state if any published backup is damaged.
+    cfgbk_restore_preflight || return 1
     _just box setup --auto-enter no >/dev/null 2>&1
     _rrc=$?
     printf 'restore-rc=%s\n' "${_rrc}"

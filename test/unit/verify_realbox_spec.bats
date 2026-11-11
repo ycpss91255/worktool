@@ -1882,6 +1882,44 @@ STUB
     assert_equal "$(_count_calls just)" "0"
 }
 
+@test "5.2.3 refuses a damaged backup before setup or changes to live files" {
+    _realbox_quiet 5.2.1
+    printf 'live user configuration\n' >"$(_ghostty_config)"
+    cp "$(_ghostty_config)" "${STATE}/live-before"
+    printf 'damaged backup\n' >"$(_backup_dir)/ghostty.config"
+    local calls
+    calls="$(_count_calls just)"
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure
+    assert_equal "$(_count_calls just)" "${calls}"
+    run cmp "${STATE}/live-before" "$(_ghostty_config)"
+    assert_success
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "5.2.3 refuses a damaged symlink target backup before changing live state" {
+    local target="${HOME}/ghostty-user-config"
+    printf 'original user configuration\n' >"${target}"
+    rm "$(_ghostty_config)"
+    ln -s "${target}" "$(_ghostty_config)"
+    _realbox_quiet 5.2.1
+    printf 'live user configuration\n' >"${target}"
+    cp "${target}" "${STATE}/target-before"
+    printf 'damaged backup\n' >"$(_backup_dir)/ghostty.target"
+    local calls
+    calls="$(_count_calls just)"
+
+    run "${REALBOX}" --allow-real-box 5.2.3
+    assert_failure
+    assert_equal "$(_count_calls just)" "${calls}"
+    [ -L "$(_ghostty_config)" ]
+    assert_equal "$(readlink "$(_ghostty_config)")" "${target}"
+    run cmp "${STATE}/target-before" "${target}"
+    assert_success
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
 @test "5.2.3 happy path prints the documented restore evidence and removes the box it owned" {
     _realbox_quiet 5.2.1
     _realbox_quiet 5.2.2
