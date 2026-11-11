@@ -278,7 +278,7 @@ probe_run() { enter_config_check; touch "${PROBE_LOG}"; }
 probe_run
 EOF2
     chmod +x "${_tree}/script/a/probe.sh"
-    printf '%s\n' 'source "$UNKNOWN/dependency.sh"' >"${_tree}/script/z/broken.sh"
+    printf 'source "$%s/dependency.sh"\n' UNKNOWN >"${_tree}/script/z/broken.sh"
     _derive_judges "${_tree}" "${_d}"
     PROBE_LOG="${_log}" run _value_matrix "${_tree}" "${_d}" enter_config_check
     assert_failure
