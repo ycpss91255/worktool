@@ -423,6 +423,7 @@ _cleanup_run() {
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
     local _rc=0 _restore_rc=0
+    guard_require date stat readlink grep sha256sum || return $?
     # Confirmation can update the backup's ownership markers; preserve them
     # too when a published backup is damaged.
     if [[ -f "${CFGBK_B}/manifest" ]] && ! cfgbk_restore_preflight; then
@@ -778,7 +779,7 @@ _52_step1_backup() {
 
 # --- step 2 ------------------------------------------------------------------
 _52_apply_require_tools() {
-    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath || return $?
+    guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink id ps realpath date stat || return $?
     _52_window_require_tools
 }
 
@@ -1355,7 +1356,7 @@ _52_report_restore_window() {
 
 _52_restore_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum grep cut readlink cp rm rmdir mkdir id \
-        ps find cmp stat touch || return $?
+        ps find cmp stat touch date || return $?
 }
 
 _52_windows_closed() {
@@ -1507,7 +1508,7 @@ _52_desktop_preflight() {
 
 _52_require_tools() {
     guard_require ghostty distrobox just timeout awk sha256sum cp mv mkdir rm rmdir readlink \
-        grep cut id cat find sort cmp ps realpath stat touch || return $?
+        grep cut id cat find sort cmp ps realpath stat touch date || return $?
     _52_window_require_tools
 }
 

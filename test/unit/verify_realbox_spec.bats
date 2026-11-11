@@ -1882,11 +1882,26 @@ STUB
     assert_equal "$(_count_calls just)" "0"
 }
 
+@test "5.2 restore paths require date before changing state" {
+    _realbox_quiet 5.2.1
+    local path item calls
+    path="$(_path_without date)"
+    for item in 5.2 5.2.2 5.2.3; do
+        calls="$(_count_calls just)"
+        run env PATH="${path}" "${REALBOX}" --allow-real-box "${item}"
+        assert_failure 3
+        assert_output --partial '[UNAVAILABLE] realbox.sh: date not found on PATH'
+        assert_equal "$(_count_calls just)" "${calls}"
+        [ -f "$(_backup_dir)/manifest" ]
+    done
+}
+
 @test "5.2.3 refuses a damaged backup before setup or changes to live files" {
     _realbox_quiet 5.2.1
     printf 'live user configuration\n' >"$(_ghostty_config)"
     cp "$(_ghostty_config)" "${STATE}/live-before"
     printf 'damaged backup\n' >"$(_backup_dir)/ghostty.config"
+    : >"$(_backup_dir)/assemble-started"
     local calls
     calls="$(_count_calls just)"
 
@@ -1896,6 +1911,7 @@ STUB
     run cmp "${STATE}/live-before" "$(_ghostty_config)"
     assert_success
     [ -f "$(_backup_dir)/manifest" ]
+    [ -f "$(_backup_dir)/assemble-started" ]
 }
 
 @test "5.2.3 refuses a damaged symlink target backup before changing live state" {
