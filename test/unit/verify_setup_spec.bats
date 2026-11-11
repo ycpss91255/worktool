@@ -1156,7 +1156,7 @@ FRAG
     assert_success
     _real="${output}"
     sed -n '/^## M3 /,/^## M4 /p' "${REPO_ROOT}/doc/acceptance.md" \
-        | sed -n '/^- \[ \] 3\. /,/^- \[ \] 4\./p' >"${_doc}"
+        | sed -n '/^- \[ \] 3\. /,/^### M3 實機驗收/p' >"${_doc}"
     while IFS= read -r _line; do
         [[ "${_line}" == 'command = ...' ]] && continue
         case "${_line}" in

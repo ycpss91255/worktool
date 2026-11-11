@@ -959,6 +959,205 @@ prereq-ok
       home: not recorded (run: just box assemble)
       status-rc=0
       ```
+### M3 實機驗收
+
+- [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，並連結真實 config 目錄中除 `worktool/` 以外的所有頂層項目（含隱藏項目），讓 assemble、bench 與清理沿用相同的容器工具儲存位置、連線設定、container manager、使用者設定與 TMUX 隔離區塊；成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的五個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf、初始化 log（init-log）（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
+  - 快取隔離（#511）：5.1 的 assemble、首次初始化與 bench 都將 `XDG_CACHE_HOME` 指向本輪 scratch 的 `cache/`；5.2 由 realbox 執行的 assemble 指向本輪備份目錄的 `cache/`；5.3 decoy 的 create 指向本輪 scratch 的 `cache/`。5.2 的 setup、status 與還原時的 setup 不呼叫產品 enter.sh，不寫初始化 log。這些隔離呼叫及其子行程寫入的初始化 log 都落在本輪目錄，成功清理時隨 scratch／備份一起移除；清理失敗則沿用保留目錄供檢查與重試的規則。realbox 自己的這些呼叫不改動真實 `${XDG_CACHE_HOME:-~/.cache}/worktool`（預設 `~/.cache/worktool`）：原本不存在時仍不存在，既有內容與 mtime 不變，也不以備份後覆寫再還原代替隔離。
+  - 盒名由交付的 `box/dev.ini` manifest 決定（目前為 `[dev]`），不支援自訂 manifest。省略 `--box` 時沿用該盒名；`--box <name>` 只能指定相同名稱。若不一致（例如 `--box work`），在任何副作用前以 exit 2 拒絕，stderr 的 `realbox.sh: ...` 訊息會說明 manifest 決定盒名；不呼叫 assemble、distrobox 或 gh。5.3 的 decoy 仍使用 manifest 的盒名。
+  - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。assemble、首次初始化或 bench 中斷時，腳本先停止本輪子行程群組，再自行清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理失敗優先，以 exit 1 結束。
+    - assemble 完成後先以 `just box enter --box dev -- true` 完成首次啟動與初始化（沿用本輪 data／cache／config 隔離，stdin 關閉以避免失敗等待互動確認），再呼叫 bench，讓既有 quiet-wait 等待主機安靜後才量測。stderr 依序印 `phase=first-start`、產品首次初始化進度、`phase=bench` 與 bench 診斷；初始化失敗回 1、清理且不執行 bench、不發留言。ADR 0003 的 2.00 門檻、連續 5 秒、warmup 檢查、300 ms 與 exit 3 語意不變。
+    - 預期看到資訊（實機正常路徑的 stdout 如下；assemble 的輸出略；數字是實測值，host baseline 的項目數依環境而異，`comment` 與 `run` 每次不同；最後一行是 `echo rc=$?`）。清理狀態行出現在 `posted=1` 之後、`cleanup-rc=0` 之前，依序回報盒 HOME／tmux 清理前後與 host 狀態清理前、保留未知項目數、清理後。
+      ````text
+      preexisting-dev=0
+      host-state baseline: present=0
+      enter: min=136.1 median=171.1 max=197.0 ms
+      shell: min=143.8 median=176.9 max=215.5 ms
+      inbox: min=14.9 median=17.5 max=25.4 ms
+      rc=0
+      posted=1 comment=<id> run=<run>
+      box-state before-cleanup: home=1 tmux=1
+      box-state after-cleanup: home=0 tmux=0
+      host-state before-cleanup: new=0
+      host-state kept-unknown=0
+      host-state after-cleanup: new=0
+      cleanup-rc=0
+      rc=0
+      ````
+      stderr 的固定階段與摘要行如下；首次初始化進度、bench 的 setup 決策／設定寫入與 PSI／量測進度、just recipe echo 屬額外診斷，不是 stdout。兩個串流交錯顯示時，不保證相對順序。stub 不建立盒 HOME／tmux，因此其 `box-state before-cleanup` 為 `home=0 tmux=0`；實機正常建盒後為 `home=1 tmux=1`。
+      ````text stderr
+      phase=first-start
+      phase=bench
+      [INFO] shell median 176.9 ms within --max-ms 300
+      ````
+      (三行數字本身也在判準內,不只是形狀:每個指標都要 `min <= median <= max`,而且 `shell` 的 median 要小於或等於這一輪真的傳給 `bench` 的 `--max-ms`(300;剛好等於門檻算通過,與 `bench` 及 #181 一致)。只比形狀的話,`min=500 median=400 max=1` 是三個合法的數字、卻不是任何東西的量測,而且 median 還超過它自己的門檻,照樣會過。
+      `posted=1` 的判準有三個,缺一不可:那則留言在 #22 上、帶本輪 `run` 識別碼、而且**逐字**含本輪量到的三行。舊留言再像也命不中(#176 item 3);上一版用 `?per_page=100` 不翻頁,#22 留言超過 100 則之後會無故變紅,改成依 id 直接取那一則就沒有這個問題。`cleanup-rc` 在盒子、獨立 HOME、host 狀態與 scratch 清理結果都確定後只印一次；任何一步失敗都印 `cleanup-rc=1` 並讓本項 exit 非 0。盒子仍在時需手動移除；HOME 或 host 狀態清理失敗時保留 scratch 與未知資料供檢查，scratch 刪除失敗時也回報 1，不能將盒子已移除讀成整體清理成功。所有權須以 assemble 前確認盒子不存在、執行後合法列表確認盒子存在為證據，才把該盒的 container ID 寫入 `created-box`。清理前必須以合法列表比對本輪記錄的 ID；ID 不同或取不到時拒絕刪盒、回非零並保留證據。ID 相符的盒子照常清理；空表仍代表盒子不存在。`assemble-started` 只記錄已確認不存在後的 assemble 嘗試，不授予所有權；正常成功另記 `assemble-success`，仍須再次查到盒子。中斷後 assemble 回非零時，先停止本輪子行程群組，再於本次 realbox 執行內以合法列表確認盒子存在並記下 ID（assemble 子 shell 被中斷時，由已停止子行程的父行程在還原與互動前完成最後一次確認，隨即取消補記權限），才取得清理所有權；因此 Ctrl-C 跑到一半仍可清掉本輪已確認 ID 的盒。若本次執行結束時仍未記下 ID，後續獨立執行 5.2.3 不得只憑名稱補取得所有權。失敗且確認盒子不存在時不取得所有權、不呼叫刪盒，並清除嘗試紀錄，避免日後還原誤認使用者新建的同名盒；列表失敗或無法解析時拒絕刪盒、回非零並保留證據；assemble 失敗且確認列表無法解析（列表狀態 2）時，必須保留 `assemble-started`、印 `cleanup-rc=1`，且不呼叫 `distrobox rm`。取得所有權後清理只看最後盒子是否確定不存在，`distrobox rm` 沒東西可刪不算失敗。)
+    - assemble 的暫存檔以本輪 scratch 下的 `assemble-tmp` 為 TMPDIR。distrobox 1.8.2.5 的 `distrobox-assemble` 在解析前以 `expanded_file=$(mktemp -u)` 建立展開的 manifest，卻未將它列入 EXIT trap；realbox 因此將建立步驟的暫存目錄納入本輪所有權，成功、失敗與 INT／TERM／HUP 後均隨 scratch 清除，不刪外層 TMPDIR 的其他檔案。5.4 每格也核對本輪 scratch 已不存在。
+    - 主機忙碌時，bench 依 ADR 0003 回 3，代表未判定。本項仍清理本輪建立的盒子，不發 #22 留言；清理成功時不印 `[FAIL]`，整項 exit 3。預期輸出包含以下各行（清理的狀態行照常穿插，最後一行為 `echo rc=$?`）：
+      ```text
+      rc=3
+      [INCONCLUSIVE] item 5.1: host too busy (bench exit 3), re-run when idle
+      cleanup-rc=0
+      rc=3
+      ```
+      清理失敗優先：即使 bench 未判定，仍印清理失敗診斷並以 exit 1 結束；bench 回 1（有效量測超標或量測失敗）也維持功能失敗、exit 1。300 ms 判準、PSI 門檻 2.00、不重試與不刪樣本均不變；未判定須等主機閒置後另行重跑，不算通過或退化。
+    - 驗收方式：維護者本人執行可省略標記；agent 必須加 `--comment-tag '[codex]'`（換成自己的名稱標記，例如 `[claude]`）。標記須符合 `^\[[a-z]+\]$`，否則 exit 2。指定時留言第一行以 `<標記> ` 接原本的 `M3 5.1 real-machine bench` 開頭；省略時本文維持原樣。讀回判準也必須確認本文以指定標記開頭。
+      ```bash
+      just verify realbox --allow-real-box 5.1; echo rc=$?
+      ```
+  - [ ] 5.2 開終端即在盒內 fish，主觀無明顯延遲；一次呼叫依序備份、建盒、首次初始化、套用、確認新視窗、還原。套用期間收到 SIGINT／SIGTERM／SIGHUP 時先停止本輪子行程群組，再自行還原、清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理成功時回 130／143／129，還原或清理失敗時回 1、保留備份，單獨跑 5.2.3 重試還原。
+    - 完整的 `just verify realbox --allow-real-box 5.2` 在建盒、備份與 setup 套用前先檢查桌面（#529）：以 `loginctl show-session "${XDG_SESSION_ID:-self}" --property=LockedHint --value` 查詢呼叫者的 session，查詢有 timeout。成功回 `yes` 時，stderr 印 `[INCONCLUSIVE] item 5.2: session is locked; an unlocked desktop is needed, unlock and re-run`，exit 3；不建盒、不建立備份、不改設定。成功回 `no` 時維持原流程；有呼叫者 session 時，loginctl 缺少、查詢失敗（即使 stdout 是 `yes`）、空值或非 yes/no 時，stderr 印 `[WARN] item 5.2: cannot determine session lock state; proceeding` 並繼續，但仍須通過 display 檢查。此方法只偵測 logind 的 LockedHint；未向 logind 回報的鎖定方式無法偵測，也無法保證檢查後桌面不再鎖定。
+    - 沒有 `XDG_SESSION_ID` 且 `self` 查不到 yes/no 時（#545），改以有 timeout 的 `loginctl list-sessions --no-legend --no-pager` 列出 session，只查 `id -u` 對應使用者的 session，再以 `show-session` 取得 `User`、`Type`、`Active`、`LockedHint`。所有查詢成功且至少一個 session 的 User 是目前 uid、Type 是 wayland／x11、Active=yes、LockedHint=no，才繼續；其他使用者的 session 不算。列表或任一同使用者 session 查詢失敗（即使有看似有效的 stdout）、找不到合格 session、鎖定或未知狀態都印 `[INCONCLUSIVE] item 5.2: cannot confirm an unlocked graphical session for this user; unlock the desktop and re-run`，exit 3，不建盒、不備份、不改設定。有一個合格 session 即可，不判斷使用者實際看的是哪個；LockedHint 仍依桌面回報，沒有回報鎖定時無法偵測。
+    - 首次初始化（#691）：assemble 成功後、setup 與 apply 開窗前，以 `just box enter --box dev -- true </dev/null` 完成首次啟動；`XDG_DATA_HOME` 與 `XDG_CACHE_HOME` 分別沿用本輪備份目錄的 `data`／`cache`，不覆寫使用者的 distrobox config。stderr 先印 `phase=first-start`，再由真實 enter.sh 印首次啟動通知、log 路徑、進度與完成訊息。enter 預設初始化期限 900 秒（可由 WORKTOOL_INIT_TIMEOUT 調整），外層 verify_run 另有 1800 秒整體上限，因此不依賴 distrobox-enter 無期限的初始化迴圈。失敗一律 rc=1；完整 5.2 與獨立 5.2.2 都先還原設定，再清理盒子與本輪 HOME，此時尚未開窗。成功後才開始原本的 10 秒新 shell 搜尋；期限仍有穩定非 fish shell 回 1，沒有候選或候選已消失回 3。
+    - assemble 暫存目錄（#562）：5.2 以 `TMPDIR=<本輪 5.2 備份目錄>/assemble-tmp` 執行 assemble，展開後的 manifest 留在該目錄；成功清理時隨備份目錄一起移除，清理失敗時隨備份目錄保留，供 5.2.3 重試。
+    - display 檢查：`WAYLAND_DISPLAY` 的絕對路徑或 `${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}` 必須是可讀寫 Unix socket；若不可用，再檢查 X11。本機 `DISPLAY`（`:N[.screen]`、`unix:N[.screen]`、`unix/:N[.screen]`）須有 `/tmp/.X11-unix/XN` socket；非本機 X11 若有 `xdpyinfo`，以 timeout 包住 `xdpyinfo -display "$DISPLAY"`，回非零即不可用。沒有 xdpyinfo 時無法確認非本機 X11，印 warning 後繼續。兩種 display 都不可用時，stderr 印 `[INCONCLUSIVE] item 5.2: no usable Wayland/X11 display; an unlocked desktop is needed, re-run from its graphical session`，exit 3，同樣不建盒、不備份、不改設定。本機 socket 檢查不驗證協定握手或 X11 授權；後續原有視窗證據仍須通過。exit 3 代表未判定，須回到解鎖的圖形桌面重跑，不算通過或產品失敗。獨立 5.2.1 與 5.3 維持原入口行為；5.2.2 與 5.2.3 開窗前也檢查桌面，但還原磁碟檔案不因鎖定而受阻。
+    - 中斷後先關閉本輪開啟的視窗，再還原檔案並自動確認還原後的新視窗；清理期間忽略 SIGINT／SIGTERM／SIGHUP。確認失敗仍還原磁碟檔案、清理本輪盒子並保留備份，之後用 `just verify realbox --allow-real-box 5.2.3` 重試。逾時、鎖定或沒有圖形 session 是 rc=3（未判定）；中斷清理未完成時回 1。
+    - 真實 Ghostty 新視窗的快取是產品行為，與上述 realbox 呼叫分開：setup 寫入的受管 `command` 只帶 `enter.sh`、distrobox 路徑及盒名，不帶 `XDG_CACHE_HOME`。從已執行的 Ghostty 開新視窗時，wrapper 沿用 Ghostty 的環境，不會繼承 realbox 對 assemble 的暫時環境。依 [enter.sh](../script/box/enter.sh) 的 `_first_launch`／`_init_notice`／`_first_init`，若 Docker 的 `State.StartedAt` 顯示盒子從未啟動，就建立或截斷 Ghostty 環境下 `${XDG_CACHE_HOME:-~/.cache}/worktool/<盒名>-init.log`，再寫入啟動及初始化輸出；預設盒名的路徑是 `~/.cache/worktool/dev-init.log`。盒子已啟動過則不走這段初始化 log 寫入。本驗收先在隔離 cache 完成初始化，正常 apply 新視窗不再寫真實 init log；若盒子被外部重建，真實新視窗仍可能改動它；5.2.1 將此檔納入備份，5.2.3 逐 byte 還原，原本不存在時刪除，並納入 `restore-files-ok` 核對。產品行為不變；執行驗收時的 `XDG_CACHE_HOME` 必須與 Ghostty 的環境一致。
+    - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`、`${XDG_CACHE_HOME:-~/.cache}/worktool/<盒名>-init.log`（manifest 預設盒名為 dev）；init log 原本不存在時記為 `absent-file`；另以 `absent-directories` 記錄五個受管檔案各自原本不存在的完整上層目錄鏈，例如 `~/missing/config/ghostty` 與 `${XDG_CACHE_HOME:-~/.cache}/worktool`，各自一路記錄到第一個既有祖先前的所有缺失目錄（#589、#626）。`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。集合來源是 [config_backup_paths.sh](../script/verify/config_backup_paths.sh) 的 `CFGBK_NAMES`；3.x 的 `tmux.conf=intact` 是不得改動使用者檔案的判準，不代表它列入 5.2 備份。
+    - init-log 若是 dangling symlink，備份保留連結本身，manifest 的 `.tpath` 記錄解析後的絕對目標路徑，以空的 `.tsha` 記錄目標原本不存在；無法確定目標是否不存在時拒絕備份，不發布 manifest。套用前重新校驗連結仍相同且目標仍不存在；5.2.3 還原連結，並刪除原本不存在、驗收期間才建立的目標檔，最後核對連結仍為 dangling 且該目標路徑不存在（含不得殘留 symlink）。刪除或核對失敗均回非零並保留備份，不以「連結文字相同」當作還原成功（#588）。
+    - cache 路徑：`XDG_CACHE_HOME` 未設或為空時用 `~/.cache`。非絕對路徑的 `XDG_CACHE_HOME` 不會單憑此條件拒絕備份；缺失父目錄鏈以備份當時工作目錄為基準，經 `readlink -m` 正規化為絕對路徑後記錄，因此該目錄鏈可從其他工作目錄還原。這不會將 `cfgbk_file_of` 的 init-log 路徑改為絕對路徑，檔案操作仍依呼叫時的環境與工作目錄解析；驗收與重試應維持相同環境及工作目錄，不應解讀成所有相對路徑檔案均可跨工作目錄還原。正規化、目錄記錄或 mtime 讀取失敗時備份回非零，不發布 manifest（#589）。
+    - 目錄 mtime（#526）：5.2.1 同時記錄備份集合內各檔案（含原本不存在的檔案）及 symlink 目標的既有上層目錄 mtime，HOME 內的路徑一路記錄至 HOME（含 HOME），保留 #526 的既有保證。HOME 外的受管路徑只記錄至其 `XDG_CONFIG_HOME` 或 `XDG_CACHE_HOME` 根目錄（含根目錄）；HOME 外的 symlink 目標只記錄解析後目標的直接父目錄，不向上延伸。根目錄與父目錄以正規化後的路徑判定；備份集合中原本存在的直接父目錄仍受保護，一般路徑依 #536 不記錄、不核對，也不恢復設定根目錄以上的系統目錄 mtime；但五個受管檔案的缺失父目錄鏈各自另記錄第一個既有祖先的 mtime，移除目錄鏈後還原並核對。第一個既有祖先可能高於 config 或 cache 根目錄，例如 HOME，或 HOME 外 config／cache 路徑的既有祖先；例如 `XDG_CONFIG_HOME=/x/missing/config` 且 `/x` 是第一個既有祖先時，記錄並還原 /x 的 mtime，這是 #589 引入、#626 擴及五個受管檔案的 #536 範圍例外。5.2.3 還原時，live 檔案與備份的類型、內容、mode 與連結目標均相同就略過，不刪除、不重建，inode 不變；symlink 及其目標各自比對。需要重建或刪除檔案時，所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime，最後核對全部記錄。判準包含 `~/.config`、`~/.config/ghostty`、`~/.cache/worktool` 與集合內其他檔案的既有上層目錄 mtime 回到備份值；本輪建立後刪除的目錄不在判準內。目錄 mtime 不一致時 `restore-files-ok=0`、`restore-ok=0`，回非零並保留備份。已知限制：除上述五個受管檔案缺失父目錄鏈的第一個既有祖先外，設定根目錄以上的目錄 mtime 不受保護；執行期間其他程式若改動記錄範圍內的目錄，mtime 可能被恢復成備份值，或在核對時被誤判為還原失敗。
+    - 5.2.1 備份前先檢查兩份 Ghostty 設定檔（legacy `config` 與 `config.ghostty`）：任一份含 worktool 受管區塊就拒絕，stdout 只印 `baseline-managed-ghostty=1`，回非零；不建立任何備份、不套用、不改動任何設定檔。stderr 說明此基準還原後可能正確進入原本的盒子，無法符合 host 新視窗判準，並指示先移除受管區塊（例如執行 `just box setup --terminal none`），再重跑 5.2。5.2 套用時明確執行 `just box setup --terminal ghostty --auto-enter yes --box <manifest 盒名>`，啟用 Ghostty 自動進入 manifest 的盒子，不沿用已保存的 terminal、auto-enter 或盒名選擇；結束後由既有五檔備份還原原本的設定與使用者選擇，狀態檔仍須與備份前逐 byte 相同。受管區塊以外的內容與其他設定檔的既有內容仍照原規則保留、備份與還原。
+    - 預期看到資訊（無 Ghostty 受管區塊的基準）：`backup-covers=5/5`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對，另加真實新視窗的 init log）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
+      `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
+      還原先印 `restore-rc=0`、`restore-files-ok=1`，接著自動重新載入還原後的 Ghostty 設定並開窗，印 `ghostty-reload=1`、`ghostty-new-window=1`，自動尋找新 host shell。成功依序印 `restore-window-evidence: pid=<PID> comm=<shell> host=mnt:[<host>] window=mnt:[<host>] enter=absent`、`restore-window-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`、`cleanup-rc=0`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），Ghostty 的既有受管區塊已在 5.2.1 拒絕，其他設定檔的既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。所有受管檔案還原後，五個受管檔案原本不存在的上層目錄鏈依正規化路徑反向排序（`LC_ALL=C sort -zru`）去重，由最深層往上以 `rmdir` 移除；只移除空目錄，非空目錄保留，還原 fail closed，回非零並保留備份供重試（#589、#626）。`leftover-dirs=N` 計算這些記錄與舊版 manifest 的原本不存在受管設定目錄中仍存在的路徑（含被換成 symlink 的路徑），共用路徑只計一次，N 非零就失敗。還原失敗保留備份。`restore-files-ok=1` 只代表磁碟檔案已還原；reload 證據未通過時印 `restore-window-ok=0`、`restore-ok=0`，回非零，不印 `backup-removed=1`。
+    - 驗收方式
+      ```bash
+      just verify realbox --allow-real-box 5.2; echo rc=$?
+      # 中斷時的還原手段：
+      just verify realbox --allow-real-box 5.2.3; echo rc=$?
+      ```
+      預期 `rc=0`。5.2 套用與 5.2.3 還原均可使用非 tty stdin，自動重新載入、開窗並尋找新 shell。找不到新視窗或開窗逾時回 rc=3，仍保留還原能力；尋找新 shell 以未判定回 rc=3 時，stderr 一律說明原因：`[WARN] Ghostty new shell timed out; acceptance inconclusive`（搜尋期限內沒有新 shell）、`[WARN] window ownership undetermined; acceptance inconclusive`（所有權探測無法判定）、`[WARN] Ghostty new shell not confirmed at deadline; acceptance inconclusive`（期限時最後的非 fish 候選無法確認，含探測失敗）、`[WARN] process snapshot failed before the window deadline; window ownership undetermined; acceptance inconclusive`（期限前的 `timeout -s KILL 1 ps` 行程快照失敗或逾時）、`[WARN] window search retry pause failed; Ghostty new shell not confirmed; acceptance inconclusive`（輪間的 `sleep 0.1` 失敗）。完整 5.2 仍會還原磁碟檔案並清理本輪盒子，還原確認未通過時保留備份。5.2.3 先還原磁碟檔案；備份沒有 `processes-before` 時不執行視窗檢查，不要求視窗專用工具。備份有 `processes-before` 但缺少視窗工具時，印 `restore-files-ok=1`、`restore-window-ok=0`、`restore-ok=0`，並說明 `config restored, but the window check could not run`；清理本輪盒子後保留備份，回 rc=3 供補齊工具後重試。共用執行保護機制仍需要 `mktemp`，此依賴不屬於視窗檢查。沒有備份時 5.2.3 的 stdout 只印 `no-backup=1`；備份路徑不存在與可能原因的說明以 `[INFO]` 寫到 stderr。備份使用帶 uid 的專屬目錄，既有目錄或 symlink 都拒絕；套用僅信任已發布 manifest，重新校驗 checksum 後才建盒。所有權沿用 5.1 的「assemble 前確認不存在、執行後確認存在」證據；assemble 嘗試紀錄不代表所有權，中斷也須在子行程停止後確認，清理會判斷盒是否真的消失。
+      自動化機制（Linux GTK Ghostty 1.3.1）：先以 `gapplication action com.mitchellh.ghostty reload-config` 呼叫執行中應用的 action，再以 `ghostty +new-window --working-directory=<本輪專屬目錄>` 請它開窗。依據 [Ghostty v1.3.1 GTK application 原始碼](https://github.com/ghostty-org/ghostty/blob/v1.3.1/src/apprt/gtk/class/application.zig) 的 `initActions`、`actionReloadConfig` 與 `actionNewWindow`：前者註冊 reload-config，後兩者執行 reload 與解析 working-directory。依據 [Ghostty v1.3.1 的 +new-window 原始碼與 help](https://github.com/ghostty-org/ghostty/blob/v1.3.1/src/cli/new_window.zig)，視窗設定僅支援 working-directory、command、title，不使用 `--env`。依據 [distrobox-enter 1.8.2.5](https://github.com/89luca89/distrobox/blob/1.8.2.5/distrobox-enter)，預設將工作目錄傳入 engine exec，家目錄外的路徑加上 `/run/host` 前綴；以盒內 fish 的 `/proc/<pid>/cwd` 核對本輪專屬目錄。此處原始碼核對與 Docker stub 測試不等於桌面實測；維護者已回報桌面版本為 Ghostty 1.3.1，尚缺修正後的 5.2 桌面執行證據，因此不得宣稱已滿足「以實測版本為準」。不對 Ghostty 行程發送訊號。IPC 成功只代表請求已送出，最終仍須通過新 shell 的客觀證據。
+      逾時／rc=3 時保留專屬目錄與開窗前快照，再用有界收尾掃描等待 D-Bus 排隊後才出現的視窗；收尾以整數 SECONDS 設共用期限為開始值加 4，第 3 秒起不再開始重試（開始值加 3）；關窗升級沿用同一期限，不另起計時。期限前開始的最後一次外部呼叫可能是 `guard_timed 1 ps` 或 `guard_timed 1 kill`：1 秒後 TERM，最多再等 10 秒才 KILL，因此收尾掃描與升級的等待上限為 15 秒（4 + 11）。快照、cwd 與 root 消失後另查 PGID／SID 的 session 探測使用 `timeout -s KILL 1`，各硬限 1 秒，不會增加上述最長等待。此處上限只計期限與 timeout 的等待，不含排程延遲、shell 解析與未設 timeout 的本機檔案操作；收尾不計入新 shell 搜尋預算。每輪以行程快照與 cwd 確認新 Ghostty 直接子行程，只關閉本輪專屬目錄所屬的隔離 session，沿用 HUP／TERM／KILL 有界升級，追蹤到的 root PID 消失後（含首次收尾快照已缺少已確認 root 的情況），同樣確認 session 的 PGID／SID 已無存活成員後才移除目錄；成員仍存活或 session 檢查無法判定時，保留目錄並回非零；只有完整掃描確定沒有本輪視窗，且未有無法判定的紀錄時，才可在重試期滿後清除目錄；掃描因共用期限中斷時回 rc=1、保留目錄，不能視為「沒有視窗」。期限只決定是否開始下一個外部觀測或動作：已取得的快照、cwd 與 session 清單照實判定，已完成的掃描與已確認清空的 session 不會被之後的期限讀值推翻；期限造成的中止，訊息說的是期限（#816）。超過收尾期限才出現的視窗不在此有界掃描的保證內。腳本在開窗前記錄行程，以快照與所有權掃描的 10 秒搜尋預算尋找新 fish（還原後接受 fish／bash／sh／zsh／dash／ksh）：整數 SECONDS 的開始值加 9 為掃描期限，預留 1 秒給最後的非 fish 探測。每輪只取一份含 PID／PPID／comm 的行程快照，從該表解析所有權，內層掃描也檢查同一期限，不逐一 fork ps 查祖先。快照與 cwd 探測各用 `timeout -s KILL 1`；期限前已開始的呼叫最多再等 1 秒，輪間另有 `sleep 0.1`，最後非 fish 探測另以 `timeout -s KILL 1 ps` 硬限 1 秒，因此 10 秒是搜尋預算，並非整段確認的硬上限。找到候選後的證據探測不受該搜尋期限截斷：ps 與引擎 `exec <box> readlink` 各沿用 TIMEOUT_SHORT=180 秒，TERM 後最多再等 10 秒才 KILL（各最多等待 190 秒）；namespace 的本機 readlink 沒有獨立 timeout，還原祖先鏈最多 64 次 ps 也各自計時，不能將整段證據確認視為 10 秒內完成。候選 shell 必須是新行程。套用時先找出 cwd 等於本輪專屬目錄的新 Ghostty 直接子行程，候選 fish 的 `/proc/<pid>/cwd` 也必須等於同一本輪專屬目錄，或 distrobox 加上 `/run/host` 前綴的對應路徑。盒內 fish 的父行程可為 podman 的 conmon 或 docker 的 containerd-shim，不要求其祖先到達 Ghostty；僅憑出現在快照之後不能取得所有權；候選 fish 的 cwd 讀取失敗或目錄不同時均被排除。找窗（套用與還原）對 Ghostty 直接子行程的所有權探測若無法判定（cwd 讀取失敗／逾時，不論該行程是否仍存在，或探測開始前已到期），立即印 `window ownership undetermined; acceptance inconclusive` 並回 rc=3，不跳過該結果後繼續宣告成功。套用模式的例外：到期時若先前已記錄非 fish 候選，即使期限落在 apply-root 掃描內，仍由最後的非 fish 探測決定：穩定非 fish 回 rc=1，候選已消失或無法確認回 rc=3；所有結果均非零。仍執行獨立收尾，若收尾也無法判定則依前述規則保留證據並將整體結果升為 rc=1。套用判準沿用 `_52_window_evidence`：fish 不在 setup 前清單中，mount namespace 不同於 host 且等於本輪盒子；盒子 namespace 由 distrobox 引擎的 `exec <box> readlink /proc/self/ns/mnt` 取得。錯誤 namespace、讀取失敗或格式錯誤均回非零，不算通過。還原要求新 shell 的 namespace 等於 host、祖先鏈到達 Ghostty 且不含 `script/box/enter.sh`；沒有套用紀錄的備份還原無須開窗確認。
+      成功、失敗與中斷都會清理本輪視窗：重新核對專屬目錄、Ghostty 祖先與獨立 session 後，只向該視窗行程群組送 HUP，未退出才依序 TERM、KILL；不關閉既有視窗、不向 Ghostty 本身送訊號。無法安全清理時回非零並保留所有權證據。對任何 Ghostty 直接子行程的 cwd 探測失敗（讀取失敗或逾時，不論該行程是否仍存在）一律屬於「無法判定」，與「確定不是本輪視窗」分開處理；收尾只要有任何一筆無法判定，或掃描因期限中斷，就回 rc=1 並保留 `window.*` 目錄。stderr 印出以下診斷（路徑以實際值代入），要求人工核對快照、行程 cwd 與祖先，確認視窗已關閉、保存證據後才移除目錄並重跑 5.2.3：
+      ```text stderr
+      [WARN] cannot safely close owned window; keeping ownership evidence; kept evidence=<本輪 window.* 目錄>
+      [WARN] manual check: inspect <本輪 window.* 目錄>/before and process cwd/ancestry; confirm the owned window is closed, save evidence, then remove <本輪 window.* 目錄> and retry 5.2.3
+      ```
+      5.2.3 即使已成功還原設定與確認還原視窗，只要備份內仍有保留的 `window.*` 所有權目錄，就不刪除備份並回非零；須先人工確認該視窗已關閉、保存所需證據並移除對應目錄，才能重跑 5.2.3 完成清理。本輪結束最後印「請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。」
+      正常路徑不啟動 tmux，但 `box/dev.ini` 的第一個 init_hook 仍建立 `${TMUX_TMPDIR}`（本輪 `box-home/.cache/tmux`），因此成功初始化後實機清理前為 `box-state before-cleanup: home=1 tmux=1`；欄位表示 HOME 與 `.cache/tmux` 是否存在，不表示目前有無 tmux session。純 stub 不建立盒 HOME，故清理前為 home=0 tmux=0。以下以乾淨基準、真實 enter.sh／setup.sh／status.sh 與外部工具 stub 示範完整 stdout（Docker start stub 模擬 init hook 建立 HOME 與 tmux 目錄）；實機的既有檔案類型、checksum、路徑、PID、namespace 與狀態值依環境而異，還原 host shell 可為 sh 等支援的 shell（stub 固定 fish）。
+      ````text stdout
+      backup-covers=5/5
+      host-state baseline: present=0
+      ghostty=regular
+      ghostty.sha=<sha>
+      ghostty-modern=absent-file
+      worktool=absent-dir
+      distrobox-conf=absent-dir
+      init-log=absent-file
+      backup=<path> ok=1
+      revalidate=1
+      preexisting-dev=0
+      config: <path>
+      auto-enter: yes (user)
+      terminal: ghostty (user)
+      box: dev (user)
+      ghostty: <path> (managed block: present)
+      distrobox.conf: <path> (managed block: present)
+      wrapper: <path> (recorded in a managed block: runnable)
+      distrobox: <path> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      setup-rc=0
+      user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact
+      ghostty-reload=1
+      ghostty-new-window=1
+      window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]
+      restore-rc=0
+      restore-files-ok=1
+      ghostty-reload=1
+      ghostty-new-window=1
+      restore-window-evidence: pid=4344 comm=fish host=mnt:[100] window=mnt:[100] enter=absent
+      restore-window-ok=1
+      restore-ok=1
+      blocks=0
+      leftover-dirs=0
+      dev-gone=1
+      box-state before-cleanup: home=1 tmux=1
+      box-state after-cleanup: home=0 tmux=0
+      host-state before-cleanup: new=0
+      host-state kept-unknown=0
+      host-state after-cleanup: new=0
+      backup-removed=1
+      cleanup-rc=0
+      請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
+      ````
+      首次啟動與 setup 的 stderr（setup 診斷僅節錄 auto-enter；另有 terminal、box、設定路徑、寫入與重新載入提示；正常 Docker 新盒的初始化進度可出現多行，依安裝耗時與階段而異）：
+      ````text stderr
+      phase=first-start
+      [INFO] first launch of box 'dev': distrobox installs its packages first - this can take several minutes (timeout 15m00s)
+      [INFO] follow the full output in another terminal: docker logs -f dev
+      [INFO] full init log: <path>
+      [INFO] first launch: initialisation complete after <elapsed> - entering the box
+      [INFO] auto-enter: yes (user)
+      ````
+      此例的 assemble stub 未記錄 HOME／link，因此 status 如上；實機會依 assemble 保存的 HOME／link 印出對應路徑與狀態。實機每 10 秒可能另印 `[INFO] first launch: <stage> - <elapsed> elapsed - <latest>`。純 just stub 不執行 enter.sh，stderr 僅有 phase 行；雙向比對 spec 使用真實 enter.sh、setup.sh、status.sh 與立即完成的 Docker stub，核對完整 stdout 與節錄的 stderr；setup 的診斷走 stderr。以下保留純 stub 的視窗與還原輸出，供視窗 spec 比對：
+      stubbed 非 tty 完整執行的視窗與還原輸出如下（其餘備份明細如上；PID 與 namespace 由 fixture 固定）：
+      ```text
+      ghostty-reload=1
+      ghostty-new-window=1
+      window-evidence: pid=4242 comm=fish host=mnt:[100] window=mnt:[200] dev=mnt:[200]
+      restore-rc=0
+      restore-files-ok=1
+      ghostty-reload=1
+      ghostty-new-window=1
+      restore-window-evidence: pid=4344 comm=fish host=mnt:[100] window=mnt:[100] enter=absent
+      restore-window-ok=1
+      restore-ok=1
+      blocks=0
+      leftover-dirs=0
+      dev-gone=1
+      box-state before-cleanup: home=0 tmux=0
+      box-state after-cleanup: home=0 tmux=0
+      host-state before-cleanup: new=0
+      host-state kept-unknown=0
+      host-state after-cleanup: new=0
+      backup-removed=1
+      cleanup-rc=0
+      請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
+      ```
+  - [ ] 5.3 先建同名 dev 盒，證明 5.1 與 5.2 套用都拒絕，既有盒始終不被刪除。最後清理本輪建立的 decoy，`decoy-cleanup-rc` 與 5.1 相同，納入盒子、獨立 HOME、host 狀態與 scratch 的最終結果後只印一次；任何一步失敗都印 1、回非零，HOME 或 host 狀態失敗時保留 scratch 與未知資料。
+    - decoy create 失敗（包含檢查後發生的同名衝突）時，不取得刪盒權、不呼叫 `distrobox rm`；印出所有權未確認的診斷與 `decoy-cleanup-rc=1`，保留盒子與 scratch 供人工檢查。
+    - create 成功後，沿用 5.1／5.2 的 `guard_box_id` 所有權確認路徑，將容器 ID 記入 scratch 的 `created-box` 才取得刪盒權。清理前重新查詢 ID；ID 不同、盒子不存在、查詢失敗或輸出無法解析時，不呼叫 `distrobox rm`，印出原因與 `decoy-cleanup-rc=1`，保留 scratch 與所有權證據供人工檢查。仍有「確認 ID 相同」到「按名稱執行 `distrobox rm -f dev`」之間的競態窗口；distrobox 此入口無法按 ID 刪除，執行驗收時應避免其他操作同時建立或替換同名盒。
+    - 拒絕套用後的還原也遵守 5.2 的目錄 mtime 與 inode 判準：所有既有上層目錄 mtime 不變；與備份相同的檔案、symlink 及其目標保持原 inode。`restore-files-ok=1`／`restore-ok=1` 包含目錄 mtime 核對，不能只以內容相同判定成功；其他程式同時改動目錄的已知限制同 5.2。
+    - 預期看到資訊：`preexisting=dev`、`51-rc=1`；備份摘要同 5.2（`backup-covers=5/5`），`revalidate=1` 後套用拒絕，印 `52-rc=1`。接著還原依序印 `restore-rc=0`、`restore-files-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-untouched=1`、`backup-removed=1`、`cleanup-rc=0`，最後確認既有盒仍在，印 `still-there=dev`；本項最後只清除自己建的 decoy。
+    - 驗收方式
+      ```bash
+      just verify realbox --allow-real-box 5.3; echo rc=$?
+      ```
+      預期 `rc=0`；本項最初就遇到既有 dev 時直接拒絕，不取得所有權。
+  - [ ] 5.4 自動完成 assemble／bench × SIGINT／SIGTERM／SIGHUP 實機中斷矩陣，不需要人按鍵。每格在獨立 session／行程群組啟動原有 5.1；指定 `--comment-tag` 時原樣轉發給內層 5.1，省略時不帶此參數。assemble 以 distrobox list 觀察盒子出現，查詢返回後及送訊號前都再次確認 capture 尚無 `phase=first-start` 或 `phase=bench`（若已進入首次初始化或 bench 或送訊號前無法讀取 phase 證據就判失敗，不送該格指定的訊號，改以 TERM 收尾），bench 格先完成首次初始化與既有 quiet-wait，初始化進度與 `phase=first-start` 不算 bench 事件；bench 以實際 `[INFO] psi before enter run ...` 或 `[INFO] enter: ... done` 診斷行決定時點。觀察 deadline 為 1800 秒，中斷後須在 180 秒內完成，逾時即失敗並停止本輪 session；deadline 只限制等待，絕不依 sleep 或經過時間送出訊號。每格先拒絕既有同名盒，5.1 保持只刪本輪盒與 #511／#516 的 XDG 隔離。
+    - 通過的格必須回 130／143／129，捕捉到 `cleanup-rc=0`、`box-state after-cleanup: home=0 tmux=0`、`host-state after-cleanup: new=0`，再次查詢確認盒已移除、獨立 HOME 不存在，並確認該 session 無仍能執行的子行程。訊號前後以 `gh issue view --json comments` 比對完整留言 ID 集合，集合不變且沒有 `posted=` 回報才算沒有發出 #22 留言；若其他使用者同時留言也會失敗，須重跑。查詢失敗不能當作集合為空。
+    - bench 格的內層 5.1 因主機忙碌回 3 時（含尚未出現可中斷事件就結束），依 ADR 0003 分類為未判定；仍須通過上述全部清理、盒子／HOME／session 與留言檢查。該格印 `interrupt bench <signal>: INCONCLUSIVE (rc=3; cleanup-rc=0; host too busy, re-run when idle)`，原始 5.1 輸出送到 stderr，不印該格 FAIL 或 PASS，繼續其餘格。任何格或清理真正失敗仍優先 exit 1；沒有失敗但至少一格未判定時，移除本輪證據目錄後印 `interrupt-matrix: INCONCLUSIVE (host too busy, re-run when idle)`、exit 3，代表「未判定、請在閒置時重跑」。只有六格全部通過才印 `interrupt-matrix: PASS (6/6)`、exit 0。
+      `just verify realbox --allow-real-box 5.4` 與 5.1 相同，保留 exit 3、不加印 `[FAIL] item 5.4 failed`；無項目或指定多項目的 realbox 遇到未判定即停止後續項目。`just verify all` 不執行或彙整 realbox（須在實機明確 opt-in），其 PASS 只涵蓋非實機組，不能代替 5.4 的結果；5.4 未判定須另行重跑實機入口。
+    - 外層收尾等待逾時（rc=124）或停止 session 失敗（包含 cell 失敗後重試仍失敗）時 exit 1，保留本輪證據目錄，不印矩陣 PASS／INCONCLUSIVE。目錄中的 `cleanup.pid` 紀錄本輪擁有的子行程（session leader）的 PID；寫入成功時 stderr 印 `[ERROR] interrupt cleanup: kept evidence=<目錄>; pid-record=<目錄>/cleanup.pid; pid=<PID>`。若無法寫入紀錄，stderr 保留 `[ERROR] interrupt cleanup: cannot write PID record (pid=<PID>)` 錯誤，並改印 `[ERROR] interrupt cleanup: kept evidence=<目錄>; pid-record=missing; pid=<PID>`，人工復原指引也不要求檢查缺失的 `cleanup.pid`。兩種情況都會印 `[ERROR] interrupt cleanup: surviving processes in owned session <PID>:`、每個仍可執行行程的 `[ERROR] interrupt cleanup: surviving process: pid=<PID> ppid=<PPID> pgid=<PGID> sid=<SID> stat=<狀態>`，以及 `[ERROR] interrupt cleanup: manual recovery:` 指引。先檢查 capture 與成功寫入的 PID 紀錄；紀錄缺失時參考 stderr 的 PID 與行程清單，確認所有權並排除 PID 重用，再對仍存活的本輪行程群組送 TERM；確認全部停止後才手動刪除證據目錄。即使逾時後已無存活行程，也保留資料供檢查；行程清單是當下快照。正常收尾仍刪除證據目錄。
+    - 剩餘非原子窗口：外部 5.1 的 phase marker 寫入與 supervisor 的檢查、送訊號無法原子化。assemble 在送訊號後立即再讀 capture；若此時出現 `phase=first-start`、`phase=bench` 或讀取失敗，無法確定切換與訊號的先後，保守回報 `signal-phase=unknown` 並判該格失敗，絕不列為 assemble PASS；這也可能拒絕實際仍打在 assemble 的訊號，須重跑。送訊號前已看到 bench 時不印指定訊號的 `signal-phase`。`signal-phase=assemble` 只代表前後觀察均未見首次初始化或 bench，不是原子同步的保證；marker 尚未寫入或在訊號後檢查完成才變更的窗口仍存在。bench 格的事件判定與內層 rc=3 分類不變。
+    - stdout 成功輸出如下（每格逐行比對；`<ms>` 是實測的非負整數）。每格送訊號後印出 `signal-phase`（訊號前後觀察一致的 assemble／bench 階段）與 `signal-after-ms`（從子行程啟動到送訊號的毫秒數，以 Bash `EPOCHREALTIME` wall clock 計算），緊鄰結果行；成功刪除證據目錄後仍保留這些 stdout 欄位。任一格失敗即停止、回 1，印該格 `FAIL (rc=...; cleanup-rc=...; evidence=...)` 與 `interrupt-matrix: FAIL`；子行程啟動前失敗（既有同名盒被拒或盒狀態查詢失敗、留言快照查詢失敗、證據目錄或 capture 建立失敗）也印 `interrupt <phase> <signal>: FAIL (<reason>)` 與 `interrupt-matrix: FAIL`，不啟動 5.1。原始 5.1 輸出送到 stderr，本輪證據與尚存的盒／HOME 保留供檢查。不宣稱涵蓋每行指令間的中斷，也不替代人類 Ctrl-C 主觀體驗。
+      ```text
+      interrupt assemble INT: signal-phase=assemble signal-after-ms=<ms>
+      interrupt assemble INT: rc=130 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt assemble TERM: signal-phase=assemble signal-after-ms=<ms>
+      interrupt assemble TERM: rc=143 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt assemble HUP: signal-phase=assemble signal-after-ms=<ms>
+      interrupt assemble HUP: rc=129 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench INT: signal-phase=bench signal-after-ms=<ms>
+      interrupt bench INT: rc=130 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench TERM: signal-phase=bench signal-after-ms=<ms>
+      interrupt bench TERM: rc=143 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt bench HUP: signal-phase=bench signal-after-ms=<ms>
+      interrupt bench HUP: rc=129 cleanup-rc=0 box-gone=1 home=0 tmux=0 host-new=0 posted=0 PASS
+      interrupt-matrix: PASS (6/6)
+      ```
+    - 驗收方式：
+      ```bash
+      just verify realbox --allow-real-box 5.4; echo rc=$?
+      ```
+      預期 `rc=0`。無參數的 realbox 現在依序執行 5.1–5.4；5.4 本身不發留言。
+
+  realbox 監督的命令收到中斷後，若停止行程群組失敗，或停止函式回報成功但群組仍有存活成員，會回報 `configuration restore refused`、exit 1，並嘗試以 KILL 清除存活成員；即使補救成功，也不會進入會改動設定的還原或清理。保留本輪備份、scratch 與診斷中的 `wt-verify-guard.*` 目錄，供人工確認行程已停止後再復原。停止成功時，原有訊號退出碼、容器清理與還原流程維持不變。驗證：`test/unit/verify_realbox_spec.bats` 的 `5.2: failed group stop after real TERM refuses config restore and kills survivors`，`5.2: surviving group after successful stop report refuses config restore`，以及既有 realbox／verify_run 中斷案例。
+
+  realbox 自己的 5.1 assemble／首次初始化／bench、5.2 assemble 與 5.3 decoy create 將 `XDG_DATA_HOME` 指到本輪 scratch／備份目錄的 `data`，刪盒也使用同一路徑。Docker 中固定 distrobox 1.8.2.5 的真實 create／generate-entry 驗證 desktop entry 與 Ubuntu 圖示落在該目錄，清理後隨本輪目錄移除。host `${XDG_DATA_HOME:-~/.local/share}/applications` 與 `icons/distrobox` 保持執行前的內容與 mtime，原本不存在時仍不存在；不以刪除 host 匯出檔案補救。
+  PR #228 後盒 HOME 獨立且建盒後固定。5.1 用本輪 scratch 下的 `box-home`；5.2 用備份目錄下的 `box-home`；5.3 的 decoy 也用本輪 scratch 下的 `box-home`。user config 連結只落在該 HOME。realbox 在建盒前記錄 host 預設目錄（`~/<盒名>-box`，dev 為 `~/dev-box`）的既有項目；還原時先刪除本輪建立的盒子，再回報 host 預設目錄的清理前／後新增項目數，所有權僅限本輪明確指定的獨立 `box-home`；基準差異與 `created-box` 都不能證明 host 預設目錄內路徑的歸屬。該目錄的所有新增項目（含目錄、檔案、symlink 與 socket）一律保留，stdout 印 `host-state kept-unknown=<新增項目數>`（正常為 `0`），stderr 逐項列出路徑；若數量非零，清理後仍印 `host-state after-cleanup: new=<新增項目數>` 並回非零，保留備份供檢查與重試。5.1、5.2、5.3 共用此規則，本輪獨立 HOME 仍會先清除。5.2.3 缺少 `created-box` 代表本輪未確認盒子所有權（未執行 assemble、失敗且未建出盒子，或尚未確認列表；有嘗試紀錄但沒有本輪記錄的 ID 時，不得因同名盒存在而取得所有權；拒絕刪盒、保留嘗試紀錄並回非零，留給使用者手動處理）；確認仍無所有權時，stdout 只印 `dev-untouched=1` 與 `host-state untouched: new=<新增項目數>`，不清理 host 預設目錄；本輪未確認所有權、保留所有盒的說明以 `[INFO]` 寫到 stderr，5.3 的還原也相同；5.2.1 之後由使用者新增的檔案、symlink、目錄與 socket 全部保留，新增項目不視為本輪殘留。自訂盒 HOME（含 `.cache/tmux` 下的 socket 目錄）也回報清理前／後是否存在，清理後必須不存在。刪盒或狀態清理失敗會回非零並保留尚未清除的盒 HOME 與備份供重試；`leftover-dirs=0` 代表五個受管檔案原本不存在的完整上層目錄鏈均無殘留，不能單獨證明盒內狀態已清乾淨。產品預設 HOME 與 config 的保存／回報由 3.2 驗。
 
 ## M4 host bootstrap
 
