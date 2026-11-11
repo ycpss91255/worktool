@@ -87,16 +87,18 @@ _shuffle_into() {
 # --- Residue snapshot ----------------------------------------------------------
 _snapshot() {
     local _out="$1" _tmp="${TMPDIR:-/tmp}"
+    # Callers test this function in an OR-list, which disables errexit here.
+    # Propagate every pipeline failure explicitly, even before later reads.
     {
-        docker ps -aq --no-trunc | sed 's/^/container /'
-        docker volume ls -q | sed 's/^/volume /'
+        docker ps -aq --no-trunc | sed 's/^/container /' || return 1
+        docker volume ls -q | sed 's/^/volume /' || return 1
         git -C "${REPO_ROOT}" status --porcelain=v1 --ignored --untracked-files=all \
-            | sed -E 's/^.. //' | awk '!/^\.agents\/state\// { print "checkout " $0 }'
+            | sed -E 's/^.. //' | awk '!/^\.agents\/state\// { print "checkout " $0 }' || return 1
         # Plain find + awk (no GNU -printf: the test image is busybox).
         find "${HOME}" -mindepth 1 -maxdepth 1 \
-            | awk -v p="${HOME}/" '{ print "home " substr($0, length(p) + 1) }'
+            | awk -v p="${HOME}/" '{ print "home " substr($0, length(p) + 1) }' || return 1
         find "${_tmp}" -mindepth 1 -maxdepth 1 -user "$(id -u)" \
-            | awk -v p="${_tmp}/" '{ print "tmp " substr($0, length(p) + 1) }'
+            | awk -v p="${_tmp}/" '{ print "tmp " substr($0, length(p) + 1) }' || return 1
     } | LC_ALL=C sort -u >"${_out}"
 }
 
