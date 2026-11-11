@@ -81,5 +81,24 @@ _check_cleanup() {
     ps() { return 1; }
     _cold_pty_cleanup "${_launcher}" '' || _rc=$?
     [[ "${_rc}" -ne 0 ]]
-    ! kill -0 "${_launcher}" 2>/dev/null
+    if kill -0 "${_launcher}" 2>/dev/null; then return 1; fi
+}
+
+@test "cleanup kills the known PTY group when ps fails" {
+    # shellcheck source=test/helper/cold_pty.bash
+    source "${COLD_HELPER}"
+    setsid timeout 30 script -qec 'sleep 30' /dev/null </dev/null >/dev/null 2>&1 &
+    local _launcher=$! _sid='' _rc=0 _deadline=$((SECONDS + 5))
+    until _sid="$(_cold_pty_session "${_launcher}")"; do
+        (( SECONDS < _deadline )) || return 1
+        sleep 0.1
+    done
+    ps() { return 1; }
+    _cold_pty_cleanup "${_launcher}" "${_sid}" || _rc=$?
+    [[ "${_rc}" -ne 0 ]] || return 1
+    _deadline=$((SECONDS + 5))
+    while kill -0 -- "-${_sid}" 2>/dev/null; do
+        (( SECONDS < _deadline )) || return 1
+        sleep 0.1
+    done
 }

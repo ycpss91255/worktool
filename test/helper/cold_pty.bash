@@ -52,6 +52,9 @@ _cold_pty_cleanup() {
         fi
         sleep 0.1
     done
+    if [[ "${_error}" -ne 0 && -n "${_sid}" ]]; then
+        if kill -KILL -- "-${_sid}" 2>/dev/null; then :; fi
+    fi
     if kill -KILL -- "-${_launcher}" 2>/dev/null; then :; fi
     while kill -0 "${_launcher}" 2>/dev/null; do
         if [[ -r "/proc/${_launcher}/stat" ]]; then
