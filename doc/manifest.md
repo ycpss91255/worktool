@@ -172,7 +172,8 @@ user config 的 symlink(見下兩節)。選項:
   `[ERROR] <設定檔>: home.source without home (the two are recorded together)`。
 - **交給 distrobox 的方式**:以環境變數 `DBX_CONTAINER_CUSTOM_HOME`(distrobox-create
   文件列出的變數,效果等同 `--home`)傳入,所以 dry-run 印出的指令行維持
-  `distrobox assemble create --file <清單>` 不變;使用者環境裡原本的
+  `distrobox assemble create --file <清單>` 不變;這不是包含環境設定的重播指令,
+  例如 #472 建盒時的 `SHELL=/usr/bin/fish` 也不會印出。使用者環境裡原本的
   `DBX_CONTAINER_CUSTOM_HOME` 一律被解析結果蓋掉。清單裡若自己寫了
   distrobox-assemble 的 `home=` 鍵(它會蓋過環境變數)則拒絕、exit 1,盒子 HOME
   只由 `--home` 決定。

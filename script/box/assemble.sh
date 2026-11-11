@@ -275,8 +275,8 @@ _assemble_exec() {
 
     if [[ "${OPT_DRY_RUN}" -eq 1 ]]; then
         # Print with per-argument shell escaping so the line is faithfully
-        # re-runnable: a path containing spaces, `;` or `$()` is represented
-        # as a single safe argument, not split or interpreted on replay.
+        # re-runnable as arguments: a path containing spaces, `;` or `$()` is
+        # represented as one safe argument. Environment settings are omitted.
         local _quoted
         printf -v _quoted ' %q' "${_cmd[@]}"
         printf '%s\n' "${_quoted# }"
@@ -291,7 +291,8 @@ _assemble_exec() {
     _check_existing_box || return 1
     log_info "assembling box from ${_resolved}"
     local _rc=0
-    DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
+    # distrobox-create records SHELL's basename; init resolves fish in-box.
+    SHELL=/usr/bin/fish DBX_CONTAINER_CUSTOM_HOME="${BOX_HOME}" \
         TMUX_TMPDIR="${BOX_HOME}/.cache/tmux" "${_cmd[@]}" || _rc=$?
     [[ "${_rc}" -eq 0 ]] || return "${_rc}"
     if ! home_record "${BOX_HOME}" "${BOX_HOME_SRC}"; then
