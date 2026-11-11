@@ -28,10 +28,20 @@
 # a library's own `_<NAME>_LIB_DIR` is its directory, which is lib/).
 
 _graph_target() {
-    local _a="${1#\"}"
+    local _a="${1#\"}" _dir
     _a="${_a%\"}"
     case "${_a}" in
-        '${SCRIPT_DIR}/../../lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;
+        '${SCRIPT_DIR}/../../lib/'*)
+            _a="${_a#'${SCRIPT_DIR}/../../lib/'}"
+            [[ "${_a}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "${_a}" != *..* ]] || return 1
+            printf 'lib/%s\n' "${_a}"
+            ;;
+        '${SCRIPT_DIR}/'*)
+            _a="${_a#*\}/}"
+            [[ "${_a}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "${_a}" != *..* ]] || return 1
+            _dir="${2%/*}"
+            printf '%s/%s\n' "${_dir}" "${_a}"
+            ;;
         '${'*'LIB_DIR}/'*) printf 'lib/%s\n' "${_a#*\}/}" ;;
         '${'*'}/lib/'*) printf 'lib/%s\n' "${_a##*/lib/}" ;;
         *) return 1 ;;
@@ -50,7 +60,7 @@ graph_modules() {
         printf '%s\n' "${_f}"
         while IFS= read -r _line; do
             [[ "${_line}" =~ ^[[:space:]]*(source|\.)[[:space:]]+([^[:space:]]+) ]] || continue
-            if ! _t="$(_graph_target "${BASH_REMATCH[2]}")"; then
+            if ! _t="$(_graph_target "${BASH_REMATCH[2]}" "$2")"; then
                 printf 'unresolved source line in %s: %s\n' "${_f}" "${_line}" >&2
                 return 1
             fi

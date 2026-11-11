@@ -27,6 +27,10 @@ evidence *args:
 gate *args:
     ./script/verify/gate.sh "$@"
 
+# Run real-machine acceptance checks (requires --allow-real-box for execution).
+realbox *args:
+    ./script/verify/realbox.sh "$@"
+
 # Run every non-real-machine acceptance group (args: --list, --help).
 all *args:
     ./script/verify/all.sh "$@"
