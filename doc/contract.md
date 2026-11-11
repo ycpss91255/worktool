@@ -19,6 +19,12 @@
 - **tool config 隨重建回來。** tool config 在 repo 內只有一份（不變量 2），重建時就位在盒子自己的 HOME。盒子使用獨立 HOME（[ADR 0002](adr/0002-box-owns-its-home.md)，預設 `~/<盒名>-box`，dev 盒為 `~/dev-box`，可用 `just box assemble --home <路徑>` 指定），tool config 只放在盒子 HOME。
   - 驗證：待驗（tool config 從 M5 起才放進盒子 HOME，尚無「重建後 tool config 仍在」的測試）。盒子 HOME 本身已有檢查：`test/system/real_engine_spec.bats` 的 #198 案例（盒內 `$HOME` 就是 `--home` 指定的路徑；已存在的盒子給了不同的 `--home` 以結束碼 1 拒絕且盒子 HOME 不變）；`test/unit/assemble_spec.bats` 的 #198 案例（預設路徑、`--home` 的驗證與紀錄）。
 
+## 驗收設定備份的還原限制
+
+- 新格式記錄設定的備份位置；還原前須驗證全部備份及目標，並假設備份在檢查至還原期間不被並行修改。沒有可信簽章時，無法偵測資料與其校驗資料遭一致竄改。
+- 舊格式若缺少可驗證的位置資料，拒絕自動還原，保留備份並提示人工檢視與復原；不猜測原位置或自動改寫備份。
+  - 驗證：`test/unit/config_backup_restore_integrity_spec.bats`（損毀和舊格式不覆寫 live 設定）、`test/unit/verify_config_backup_cache_spec.bats`（相對 cache 跨工作目錄還原）。
+
 ## 3. worktool 不做的事
 
 - **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，user config 之後會以 symlink 從 host HOME 帶進盒子 HOME（不複製、不修改，host 那份是唯一一份），尚未實作，將由 #199 實作。

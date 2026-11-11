@@ -36,6 +36,7 @@
 #   cfgbk_backup_body           write and publish the manifest, print ok=1
 #   cfgbk_states_ok             exactly one valid state line per name
 #   cfgbk_revalidate            re-check disk against the published manifest
+#   cfgbk_restore_preflight     validate the entire backup before any restore
 #   cfgbk_restore_one <name>    put one config back the way it was
 #   cfgbk_restore_dirs          restore existing parent mtimes after ALL files
 #   cfgbk_dirs_ok               verify every recorded directory mtime
@@ -73,6 +74,8 @@ CFGBK_PARENT_CHAIN_NAMES=()
 CFGBK_C=""
 CFGBK_H=""
 CFGBK_B=""
+CFGBK_RESTORE_INIT_LOG=""
+declare -gA CFGBK_RESTORE_PATHS=()
 
 # The managed-block markers, spelled out here rather than sourced from
 # lib/enter.sh: enter.sh is the code 5.2 is accepting, so a degraded
@@ -85,6 +88,8 @@ CFGBK_BLOCK_END='# END worktool managed block'
 # user on the machine the SAME backup directory.
 cfgbk_paths() {
     local _uid
+    CFGBK_RESTORE_INIT_LOG=""
+    CFGBK_RESTORE_PATHS=()
     [[ -n "${HOME:-}" ]] \
         || { guard_fail "HOME is unset, so the files just box setup writes cannot be located"; return 1; }
     CFGBK_H="${HOME}"
@@ -106,6 +111,10 @@ cfgbk_paths() {
 # state is always `absent-file`. Acceptance overrides these path mappings.
 
 cfgbk_file_of() {
+    if [[ -n "${CFGBK_RESTORE_PATHS[$1]:-}" ]]; then
+        printf '%s\n' "${CFGBK_RESTORE_PATHS[$1]}"
+        return 0
+    fi
     case "$1" in
         ghostty | worktool) printf '%s/%s/config\n' "${CFGBK_C}" "$1" ;;
         tmux-conf) printf '%s/.tmux.conf\n' "${CFGBK_H}" ;;
@@ -315,12 +324,31 @@ _cfgbk_backup_one() {
 }
 
 cfgbk_backup_body() {
-    local _n
+    local _n _cwd _path _sha
     : >"${CFGBK_B}/manifest.partial" || { guard_fail "cannot start the manifest"; return 1; }
+    _cfgbk_manifest_add "backup.version=2" || return 1
+    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME}" != /* ]]; then
+        for _n in "${CFGBK_NAMES[@]}"; do
+            [[ "${_n}" == init-log ]] || continue
+            _cwd="$(pwd -P)" || return 1
+            _path="$(cfgbk_file_of init-log)" || return 1
+            _cwd="$(readlink -m -- "${_path%/*}")" || return 1
+            _path="${_cwd}/${_path##*/}"
+            _cwd="$(pwd -P)" || return 1
+            _cfgbk_manifest_add "backup.cwd=${_cwd}" "init-log.root=${XDG_CACHE_HOME}" || return 1
+        done
+    fi
     for _n in "${CFGBK_NAMES[@]}"; do
+        _path="$(cfgbk_file_of "${_n}")" || return 1
+        _cwd="$(readlink -m -- "${_path%/*}")" || return 1
+        _cfgbk_manifest_add "${_n}.path=${_cwd}/${_path##*/}" || return 1
         _cfgbk_backup_one "${_n}" || return 1
     done
     _cfgbk_backup_dirs || return 1
+    for _n in directories absent-directories; do
+        _sha="$(guard_sha256 "${CFGBK_B}/${_n}")" || return 1
+        _cfgbk_manifest_add "${_n}.sha=${_sha}" || return 1
+    done
     cfgbk_states_ok "${CFGBK_B}/manifest.partial" || return 1
     # Publishing is the atomic commit point: step 2 trusts this file and
     # nothing else, least of all a variable left over from this shell.
@@ -340,7 +368,7 @@ _cfgbk_parent_root() {
         return 0
     fi
     if [[ "${_target}" == no ]]; then
-        for _root in "${CFGBK_C}" "${XDG_CACHE_HOME:-${CFGBK_H}/.cache}"; do
+        for _root in "${CFGBK_C}" "${_restore_cache_root:-${XDG_CACHE_HOME:-${CFGBK_H}/.cache}}"; do
             _root="$(readlink -m -- "${_root}")" || return 1
             if [[ "${_p}" == "${_root}" || "${_p}" == "${_root}/"* ]]; then
                 printf '%s\n' "${_root}"
@@ -571,6 +599,202 @@ cfgbk_revalidate() {
         esac
     done
     return 0
+}
+
+# Check the complete backup before restore touches any live path. Unlike
+# cfgbk_revalidate, live files may legitimately differ after acceptance.
+# The backup must not be modified concurrently between this check and restore.
+_cfgbk_restore_field() {
+    local _key="$1" _count _pattern
+    _pattern="${_key//./\\.}"
+    _count="$(guard_count_lines "${CFGBK_B}/manifest" "^${_pattern}=")" || return 1
+    [[ "${_count}" -eq 1 ]] || { guard_fail "${_key}: manifest field is missing or duplicated"; return 1; }
+    guard_field "${CFGBK_B}" "${_pattern}"
+}
+
+# Only paths the backup traversal could record are eligible for restore.
+_cfgbk_recorded_absent_dir() {
+    local _entry
+    while IFS= read -r -d '' _entry; do
+        [[ "${_entry}" == "$1" ]] && return 0
+    done <"${CFGBK_B}/absent-directories"
+    return 1
+}
+
+_cfgbk_restore_dir_allowed() {
+    local _dir="$1" _path _parent _root _kind _i
+    [[ "${_dir}" == /* && "${_dir}" != / ]] || return 1
+    for _i in "${!_restore_paths[@]}"; do
+        _path="${_restore_paths[${_i}]}"
+        _kind="${_restore_kinds[${_i}]}"
+        _parent="${_path%/*}"
+        _root="$(_cfgbk_parent_root "${_parent}" "${_kind}")" || return 1
+        while [[ -n "${_parent}" && "${_parent}" != / ]]; do
+            [[ "${_dir}" == "${_parent}" ]] && return 0
+            if [[ "${_parent}" == "${_root}" ]]; then
+                # Missing config chains may include the first existing parent
+                # above the root. External link targets never record these.
+                [[ "${_kind}" == no ]] || break
+                while _cfgbk_recorded_absent_dir "${_parent}"; do
+                    _parent="${_parent%/*}"
+                    [[ -n "${_parent}" && "${_parent}" != / ]] || break
+                    [[ "${_dir}" == "${_parent}" ]] && return 0
+                done
+                break
+            fi
+            _parent="${_parent%/*}"
+        done
+    done
+    return 1
+}
+
+_cfgbk_restore_dirs_preflight() {
+    local _p="" _mtime _previous="" _seen_path _seen_time _i _n _sha _expected
+    local LC_ALL=C
+    local -a _absent=() _recorded_dirs=() _recorded_times=()
+    [[ -f "${CFGBK_B}/directories" && ! -L "${CFGBK_B}/directories" && -s "${CFGBK_B}/directories" ]] || return 1
+    [[ -f "${CFGBK_B}/absent-directories" && ! -L "${CFGBK_B}/absent-directories" ]] || return 1
+    for _n in directories absent-directories; do
+        _expected="$(_cfgbk_restore_field "${_n}.sha")" || return 1
+        _sha="$(guard_sha256 "${CFGBK_B}/${_n}")" || return 1
+        [[ "${_sha}" == "${_expected}" ]] || return 1
+    done
+    while IFS= read -r -d '' _p; do
+        _cfgbk_restore_dir_allowed "${_p}" || return 1
+        if [[ -n "${_previous}" ]]; then
+            [[ "${_previous}" > "${_p}" ]] || return 1
+        fi
+        _previous="${_p}"
+        _absent+=("${_p}")
+    done <"${CFGBK_B}/absent-directories"
+    [[ -z "${_p}" ]] || return 1
+    _p=""
+    while IFS= read -r -d '' _p; do
+        IFS= read -r -d '' _mtime || return 1
+        _cfgbk_restore_dir_allowed "${_p}" || return 1
+        [[ -d "${_p}" && -n "${_mtime}" ]] || return 1
+        date -d "${_mtime}" +%s >/dev/null 2>&1 || return 1
+        for _seen_path in "${_absent[@]}"; do [[ "${_p}" != "${_seen_path}" ]] || return 1; done
+        for _i in "${!_recorded_dirs[@]}"; do
+            _seen_path="${_recorded_dirs[${_i}]}"; _seen_time="${_recorded_times[${_i}]}"
+            [[ "${_p}" != "${_seen_path}" || "${_mtime}" == "${_seen_time}" ]] || return 1
+        done
+        _recorded_dirs+=("${_p}"); _recorded_times+=("${_mtime}")
+    done <"${CFGBK_B}/directories"
+    [[ -z "${_p}" ]] || return 1
+}
+
+_cfgbk_restore_metadata_ok() {
+    local _mode _mtime
+    _mode="$(stat -c %a -- "$1")" || return 1
+    [[ "${_mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+    _mtime="$(stat -c %y -- "$1")" || return 1
+    [[ -n "${_mtime}" ]] || return 1
+    date -d "${_mtime}" +%s >/dev/null 2>&1
+}
+
+cfgbk_restore_preflight() {
+    local _n _s _bp _sha _expected _link _target _live _resolved _dir _cwd _root _count _init_path="" _restore_cache_root=""
+    local -a _restore_paths=() _restore_kinds=()
+    local -A _validated_paths=()
+    CFGBK_RESTORE_INIT_LOG=""
+    CFGBK_RESTORE_PATHS=()
+    [[ -f "${CFGBK_B}/manifest" && ! -L "${CFGBK_B}/manifest" ]] \
+        || { guard_fail "no trustworthy published manifest"; return 1; }
+    [[ ! -e "${CFGBK_B}/manifest.partial" && ! -L "${CFGBK_B}/manifest.partial" ]] \
+        || { guard_fail "backup manifest is incomplete"; return 1; }
+    _expected="$(_cfgbk_restore_field backup.version)" || { guard_fail "backup lacks path metadata; preserve it and inspect or restore manually"; return 1; }
+    [[ "${_expected}" == 2 ]] || { guard_fail "unsupported backup version; preserve it and inspect or restore manually"; return 1; }
+    cfgbk_states_ok "${CFGBK_B}/manifest" || return 1
+    for _n in "${CFGBK_NAMES[@]}"; do
+        _s="$(_cfgbk_restore_field "${_n}")" || return 1
+        _bp="${CFGBK_B}/${_n}.config"
+        _live="$(cfgbk_file_of "${_n}")" || return 1
+        _count="$(guard_count_lines "${CFGBK_B}/manifest" "^${_n}\.path=")" || return 1
+        [[ "${_count}" -eq 1 ]] || { guard_fail "${_n}: backup lacks path metadata; preserve it and inspect or restore manually"; return 1; }
+        if [[ "${_n}" != init-log ]]; then
+            _expected="$(_cfgbk_restore_field "${_n}.path")" || return 1
+            _resolved="$(readlink -m -- "${_live%/*}")" || return 1
+            [[ "${_resolved}/${_live##*/}" == "${_expected}" ]] || { guard_fail "${_n}: live path changed since backup"; return 1; }
+        fi
+        if [[ "${_n}" == init-log ]]; then
+            _count="$(guard_count_lines "${CFGBK_B}/manifest" '^backup\.cwd=')" || return 1
+            if [[ "${_count}" -gt 0 ]]; then
+                _cwd="$(_cfgbk_restore_field backup.cwd)" || return 1
+                _root="$(_cfgbk_restore_field init-log.root)" || return 1
+                _init_path="$(_cfgbk_restore_field init-log.path)" || return 1
+                [[ "${_cwd}" == /* && -n "${_root}" && "${_root}" != /* ]] || { guard_fail "invalid recorded cache root"; return 1; }
+                _restore_cache_root="$(readlink -m -- "${_cwd}/${_root}")" || return 1
+                _resolved="$(readlink -m -- "${_restore_cache_root}/worktool")" || return 1
+                _resolved="${_resolved}/${BOX}-init.log"
+                [[ "${_resolved}" == "${_init_path}" ]] || { guard_fail "init-log backup path mismatch"; return 1; }
+                _live="${_init_path}"
+            elif [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME}" != /* ]]; then
+                guard_fail "relative cache backup lacks its original working directory"
+                return 1
+            else
+                _count="$(guard_count_lines "${CFGBK_B}/manifest" '^init-log\.path=')" || return 1
+                if [[ "${_count}" -gt 0 ]]; then
+                    _expected="$(_cfgbk_restore_field init-log.path)" || return 1
+                    _resolved="$(readlink -m -- "${_live%/*}")" || return 1
+                    [[ "${_resolved}/${_live##*/}" == "${_expected}" ]] || { guard_fail "init-log: live path changed since backup"; return 1; }
+                fi
+            fi
+        fi
+        _resolved="$(readlink -m -- "${_live%/*}")" || return 1
+        _restore_paths+=("${_resolved}/${_live##*/}")
+        _validated_paths["${_n}"]="${_resolved}/${_live##*/}"
+        _restore_kinds+=(no)
+        case "${_s}" in
+            regular)
+                [[ "$(guard_path_type "${_bp}")" == regular ]] || { guard_fail "${_n}: invalid backup file"; return 1; }
+                _cfgbk_restore_metadata_ok "${_bp}" || { guard_fail "${_n}: invalid backup metadata"; return 1; }
+                _expected="$(_cfgbk_restore_field "${_n}.sha")" || return 1
+                _sha="$(guard_sha256 "${_bp}")" || return 1
+                [[ "${_sha}" == "${_expected}" ]] || { guard_fail "${_n}: backup checksum mismatch"; return 1; }
+                ;;
+            symlink)
+                [[ "$(guard_path_type "${_bp}")" == symlink ]] || { guard_fail "${_n}: invalid backup link"; return 1; }
+                _cfgbk_restore_metadata_ok "${_bp}" || { guard_fail "${_n}: invalid link metadata"; return 1; }
+                _link="$(readlink -- "${_bp}")" || return 1
+                _expected="$(_cfgbk_restore_field "${_n}.link")" || return 1
+                [[ "${_link}" == "${_expected}" ]] || { guard_fail "${_n}: backup link mismatch"; return 1; }
+                _target="$(_cfgbk_restore_field "${_n}.tpath")" || return 1
+                [[ "${_target}" == /* ]] || { guard_fail "${_n}: invalid link target path"; return 1; }
+                if [[ "${_link}" == /* ]]; then
+                    _resolved="$(readlink -m -- "${_link}")" || return 1
+                else
+                    _resolved="$(readlink -m -- "${_live%/*}/${_link}")" || return 1
+                fi
+                [[ "${_resolved}" == "${_target}" ]] || { guard_fail "${_n}: link target path mismatch"; return 1; }
+                _restore_paths+=("${_target}")
+                _restore_kinds+=(yes)
+                _expected="$(_cfgbk_restore_field "${_n}.tsha")" || return 1
+                if [[ -n "${_expected}" ]]; then
+                    [[ "$(guard_path_type "${CFGBK_B}/${_n}.target")" == regular ]] || { guard_fail "${_n}: invalid backup target"; return 1; }
+                    _cfgbk_restore_metadata_ok "${CFGBK_B}/${_n}.target" || { guard_fail "${_n}: invalid target metadata"; return 1; }
+                    _sha="$(guard_sha256 "${CFGBK_B}/${_n}.target")" || return 1
+                    [[ "${_sha}" == "${_expected}" ]] || { guard_fail "${_n}: backup target checksum mismatch"; return 1; }
+                else
+                    [[ ! -e "${CFGBK_B}/${_n}.target" && ! -L "${CFGBK_B}/${_n}.target" ]] \
+                        || { guard_fail "${_n}: unexpected backup target"; return 1; }
+                fi
+                ;;
+            absent-file | absent-dir)
+                if [[ "${_s}" == absent-dir ]]; then
+                    _dir="$(cfgbk_dir_of "${_n}")" || return 1
+                    [[ -n "${_dir}" ]] || { guard_fail "${_n}: no owned directory"; return 1; }
+                fi
+                [[ ! -e "${_bp}" && ! -L "${_bp}" ]] || { guard_fail "${_n}: unexpected backup file"; return 1; }
+                ;;
+            *) guard_fail "${_n}: invalid manifest state"; return 1 ;;
+        esac
+    done
+    _cfgbk_restore_dirs_preflight || { guard_fail "invalid backup directory metadata"; return 1; }
+    for _n in "${CFGBK_NAMES[@]}"; do
+        CFGBK_RESTORE_PATHS["${_n}"]="${_validated_paths[${_n}]}"
+    done
+    export CFGBK_RESTORE_INIT_LOG="${_init_path}"
 }
 
 # --- step 3: restore ---------------------------------------------------------

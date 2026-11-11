@@ -130,8 +130,11 @@ _use_absent_config_root() {
             cfgbk_dir_create
             cfgbk_backup_body
             mkdir -p "$XDG_CACHE_HOME/worktool"
+            mkdir -p "$TMPDIR/relcache/worktool"
+            printf "sentinel\n" >"$TMPDIR/relcache/worktool/dev-init.log"
             cd "$TMPDIR"
             cfgbk_restore_all
+            [[ "$(cat "$TMPDIR/relcache/worktool/dev-init.log")" == sentinel ]]
             cfgbk_report_leftover_dirs
         '\''
     '
@@ -213,4 +216,74 @@ _use_absent_config_root() {
     assert [ ! -e "${ancestor}/nested" ]
     assert_equal "$(cat "${ancestor}/keep")" 'user content'
     assert_equal "$(stat -c %y "${ancestor}")" '2001-01-01 00:00:00.000000000 +0000'
+}
+
+@test "relative cache symlink restores from an external cwd without touching the other cwd" {
+    run bash -euo pipefail -c '
+        source "$REPO_ROOT/lib/guard.sh"
+        source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+        export XDG_CACHE_HOME=relcache
+        mkdir -p "$TMPDIR/a/relcache/worktool" "$TMPDIR/b/relcache/worktool"
+        printf "original\n" >"$TMPDIR/a/relcache/target"
+        ln -s ../target "$TMPDIR/a/relcache/worktool/dev-init.log"
+        printf "sentinel\n" >"$TMPDIR/b/relcache/worktool/dev-init.log"
+        cd "$TMPDIR/a"
+        cfgbk_paths
+        cfgbk_preflight
+        cfgbk_dir_create
+        cfgbk_backup_body
+        printf "changed\n" >"$TMPDIR/a/relcache/target"
+        cd "$TMPDIR/b"
+        cfgbk_restore_all
+        [[ -L "$TMPDIR/a/relcache/worktool/dev-init.log" ]]
+        [[ "$(cat "$TMPDIR/a/relcache/target")" == original ]]
+        [[ "$(cat "$TMPDIR/b/relcache/worktool/dev-init.log")" == sentinel ]]
+    '
+    assert_success
+}
+
+@test "relative cache dangling link restores from an external cwd" {
+    run bash -euo pipefail -c '
+        source "$REPO_ROOT/lib/guard.sh"
+        source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+        export XDG_CACHE_HOME=relcache
+        mkdir -p "$TMPDIR/a/relcache/worktool" "$TMPDIR/b/relcache/worktool"
+        ln -s ../missing "$TMPDIR/a/relcache/worktool/dev-init.log"
+        printf "sentinel\n" >"$TMPDIR/b/relcache/worktool/dev-init.log"
+        cd "$TMPDIR/a"
+        cfgbk_paths
+        cfgbk_preflight
+        cfgbk_dir_create
+        cfgbk_backup_body
+        printf "created\n" >"$TMPDIR/a/relcache/missing"
+        cd "$TMPDIR/b"
+        cfgbk_restore_all
+        [[ -L "$TMPDIR/a/relcache/worktool/dev-init.log" ]]
+        [[ ! -e "$TMPDIR/a/relcache/missing" ]]
+        [[ "$(cat "$TMPDIR/b/relcache/worktool/dev-init.log")" == sentinel ]]
+    '
+    assert_success
+}
+
+@test "relative cache backup keeps its recorded target when restore environment changes" {
+    run bash -euo pipefail -c '
+        source "$REPO_ROOT/lib/guard.sh"
+        source "$REPO_ROOT/script/verify/config_backup_paths.sh"
+        export XDG_CACHE_HOME=relcache
+        mkdir -p "$TMPDIR/a/relcache/worktool" "$HOME/.cache/worktool"
+        printf "original\n" >"$TMPDIR/a/relcache/worktool/dev-init.log"
+        printf "sentinel\n" >"$HOME/.cache/worktool/dev-init.log"
+        cd "$TMPDIR/a"
+        cfgbk_paths
+        cfgbk_preflight
+        cfgbk_dir_create
+        cfgbk_backup_body
+        printf "changed\n" >"$TMPDIR/a/relcache/worktool/dev-init.log"
+        unset XDG_CACHE_HOME
+        cfgbk_paths
+        cfgbk_restore_all
+        [[ "$(cat "$TMPDIR/a/relcache/worktool/dev-init.log")" == original ]]
+        [[ "$(cat "$HOME/.cache/worktool/dev-init.log")" == sentinel ]]
+    '
+    assert_success
 }
