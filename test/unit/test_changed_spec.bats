@@ -306,6 +306,28 @@ _dispatched() {
     done
 }
 
+@test "test.sh --changed selects both realbox specs for its entry and interrupt library" {
+    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify"
+    local path expected
+    for path in lib/realbox_interrupt.sh script/verify/realbox.sh; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    for path in verify_realbox verify_realbox_matrix; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
+    done
+    _commit_baseline
+    for path in lib/realbox_interrupt.sh script/verify/realbox.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        [[ "${expected}" == *test/unit/verify_realbox_spec.bats* ]]
+        [[ "${expected}" == *test/unit/verify_realbox_matrix_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
 @test "test.sh --changed maps the diagram check to its spec" {
     mkdir -p "${TEMP_REPO}/script/verify"
     printf '# diagram check\n' >"${TEMP_REPO}/script/verify/diagram.sh"
