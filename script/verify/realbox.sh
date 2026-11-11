@@ -422,16 +422,19 @@ _cleanup_run() {
 
 # Report the full restore result, including owned box and host state.
 _52_cleanup_report() {
-    local _rc=0 _restore_rc=0
+    local _rc=0 _restore_rc=0 _validated=0
     guard_require date stat readlink grep sha256sum || return $?
     # Confirmation can update the backup's ownership markers; preserve them
     # too when a published backup is damaged.
-    if [[ -f "${CFGBK_B}/manifest" ]] && ! cfgbk_restore_preflight; then
-        printf 'cleanup-rc=1\n'
-        return 1
+    if [[ -f "${CFGBK_B}/manifest" ]]; then
+        if ! cfgbk_restore_preflight; then
+            printf 'cleanup-rc=1\n'
+            return 1
+        fi
+        _validated=1
     fi
     _finish_box_confirmation "${CFGBK_B}" || _rc=1
-    _52_step3_restore || _restore_rc=$?
+    _52_step3_restore "${_validated}" || _restore_rc=$?
     [[ "${_rc}" -eq 1 ]] || _rc="${_restore_rc}"
     printf 'cleanup-rc=%s\n' "${_rc}"
     return "${_rc}"
@@ -472,6 +475,13 @@ _on_exit() {
     trap - EXIT
     # EXIT may run inside assemble's redirection or bench's pipeline.
     exec 1>&"${REALBOX_REPORT_FD}"
+    # A signal may arrive while an isolated child call temporarily overrides
+    # this variable. Restore the caller's cache root before locating backups.
+    if [[ "${REALBOX_CACHE_WAS_SET}" == 1 ]]; then
+        export XDG_CACHE_HOME="${REALBOX_HOST_CACHE}"
+    else
+        unset XDG_CACHE_HOME
+    fi
     verify_restore_allowed || exit 1
     while [[ "${#CLEANUP_STACK[@]}" -gt 0 ]]; do
         _cleanup_pop_run || _crc=1
@@ -1388,8 +1398,11 @@ _52_step3_restore() {
             "${CFGBK_B}"
         return 1
     fi
-    # Never mutate live state if any published backup is damaged.
-    cfgbk_restore_preflight || return 1
+    # The normal caller already validated the backup before confirming box
+    # ownership; the no-backup path must validate if a backup appeared later.
+    if [[ "${1:-0}" != 1 ]]; then
+        cfgbk_restore_preflight || return 1
+    fi
     _just box setup --auto-enter no >/dev/null 2>&1
     _rrc=$?
     printf 'restore-rc=%s\n' "${_rrc}"
@@ -1781,6 +1794,9 @@ _run_requested_items() {
     guard_require mktemp rmdir || return $?
     exec {REALBOX_REPORT_FD}>&1
     REALBOX_OWNER_PID="${BASHPID}"
+    REALBOX_CACHE_WAS_SET="${XDG_CACHE_HOME+x}"
+    [[ -z "${REALBOX_CACHE_WAS_SET}" ]] || REALBOX_CACHE_WAS_SET=1
+    REALBOX_HOST_CACHE="${XDG_CACHE_HOME-}"
     VERIFY_RUN_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wt-verify-guard.XXXXXXXX")" || return 1
     # Bash can return 127 from an implicit foreground wait at trap entry.
     # Cleanup handles its own failures; errexit must not short-circuit it.
