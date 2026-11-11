@@ -811,9 +811,23 @@ _run_chain_tier() {
     _judge_tier_file "${_tier}" "${_pattern}" "${_file}" "${_rc}" "$4"
 }
 
+# JUnit reporting makes Bats append timing metadata to passing TAP cases.
+# Keep every byte of names, criteria and other annotations; only this exact
+# terminal formatter suffix on an ok case is outside the documented name.
+_without_case_timing() {
+    local _line
+    while IFS= read -r _line; do
+        if [[ "${_line}" =~ ^(ok[[:space:]]+[0-9]+[[:space:]].*)\ \#\ in\ [0-9]+\ ms$ ]]; then
+            _line="${BASH_REMATCH[1]}"
+        fi
+        printf '%s\n' "${_line}"
+    done <<<"$1"
+}
+
 # Judge the captured output $3 of tier $1 (exit status $4): print the lines
-# pattern $2 selects, store them in the variable named by $5, and fail when
-# the tier exited non-zero, printed no such line or has a `not ok` case.
+# pattern $2 selects verbatim, store the matching block without case timing
+# in the variable named by $5, and fail when the tier exited non-zero,
+# printed no such line or has a `not ok` case.
 # Shared by the local run (the output of `just test <tier>`) and CI mode
 # (the log of the gate job that ran it).
 _judge_tier_file() {
@@ -821,7 +835,8 @@ _judge_tier_file() {
     local -n _judged_ref="$5"
 
     _grep_file_into _judged_ref "${_pattern}" "${_file}" || return 1
-    _judge_tier_block "${_tier}" "${_pattern}" "${_file}" "${_rc}" "${_judged_ref}"
+    _judge_tier_block "${_tier}" "${_pattern}" "${_file}" "${_rc}" "${_judged_ref}" || return 1
+    _judged_ref="$(_without_case_timing "${_judged_ref}")"
 }
 
 # The verdict half of _judge_tier_file; $5 is the selected block's text.
