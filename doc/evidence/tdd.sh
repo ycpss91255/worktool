@@ -17,7 +17,7 @@
 # A gh failure is reported per PR and does not abort the remaining ones.
 set -euo pipefail
 
-REPO=${REPO:-ycpss91255/worktool}
+readonly REPO=ycpss91255/worktool
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 
 PRS=("$@")
