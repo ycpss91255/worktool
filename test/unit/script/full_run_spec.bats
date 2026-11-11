@@ -5,7 +5,7 @@
 # WHAT THIS PROVES
 #   Hand-over and release need a green full serial run of the EXACT commit.
 #   The script finds the newest Nightly run titled `full-serial <sha>` and
-#   answers green (0) only when that run completed with success; a newer
+#   answers green (0) only with four successful jobs and checkout proofs; a newer
 #   failure beats an older success, a run of another sha never counts, a
 #   run still going is pending (3), and no run at all or a failed query is
 #   not green (1). --dispatch starts a run for the sha when none exists or
@@ -27,6 +27,12 @@ setup() {
     BIN="${BATS_TEST_TMPDIR}/bin"
     RUNS="${BATS_TEST_TMPDIR}/runs.tsv"
     GH_CALLS="${BATS_TEST_TMPDIR}/gh-calls"
+    VIEW="${BATS_TEST_TMPDIR}/view.json"
+    jq -n --arg sha "${SHA}" '{displayTitle: ("full-serial " + $sha), headSha: $sha, event: "push", status: "completed", conclusion: "success", jobs:
+        ["full-serial (ubuntu-latest)", "full-serial (ubuntu-24.04-arm)",
+         "isolation (ubuntu-latest)", "isolation (ubuntu-24.04-arm)"] |
+        map({name: ., status: "completed", conclusion: "success", steps:
+            [{name: ("Verify checkout " + $sha), status: "completed", conclusion: "success"}]})}' >"${VIEW}"
     mkdir -p "${BIN}"
     : >"${RUNS}"
     cat >"${BIN}/gh" <<'EOF'
@@ -42,12 +48,13 @@ case "$1 $2" in
         [[ -z "${FAKE_GH_API_DOWN:-}" ]] || { printf 'error connecting to api.github.com\n' >&2; exit 1; }
         printf '%s\n' "${2##*/}" ;;
     "run list") cat -- "${RUNS}" ;;
+    "run view") [[ -z "${FAKE_GH_VIEW_FAIL:-}" ]] || exit 1; cat -- "${VIEW}" ;;
     "workflow run") [[ -z "${FAKE_FLIP:-}" ]] || cp -- "${FAKE_FLIP}" "${RUNS}" ;;
     *) exit 99 ;;
 esac
 EOF
     chmod +x "${BIN}/gh"
-    export RUNS GH_CALLS
+    export RUNS GH_CALLS VIEW
 }
 
 # _run <title> <status> <conclusion> <id> <createdAt>
@@ -201,4 +208,81 @@ EOF
     for _opt in 'Exit 0' ' 1 ' ' 2 ' ' 3 '; do
         [[ "${_help}" == *"${_opt}"* ]] || fail "--help does not name '${_opt}'"
     done
+}
+
+@test "a latest skipped-success cannot hide an older actual failure" {
+    _run "full-serial ${SHA}" completed failure 11 2026-11-10T01:00:00Z
+    _run "full-serial ${SHA}" completed success 12 2026-11-10T02:00:00Z
+    _mutate_view '.event = "schedule" | .jobs[].conclusion = "skipped"'
+    _fr
+    assert_failure 1
+}
+
+# Mutations act on Actions API-shaped evidence, never the gate implementation.
+_mutate_view() {
+    jq --arg sha "${SHA}" --arg other "${OTHER}" "$1" "${VIEW}" >"${VIEW}.tmp"
+    mv "${VIEW}.tmp" "${VIEW}"
+}
+
+@test "all four required jobs and exact checkout proofs are mandatory, including both architectures" {
+    local mutation
+    cp "${VIEW}" "${VIEW}.good"
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    for mutation in \
+        '.jobs |= .[1:]' \
+        '.jobs += [.jobs[0]]' \
+        '.jobs[0].conclusion = "skipped"' \
+        '.jobs[1].conclusion = "failure"' \
+        '.jobs[2].status = "in_progress"' \
+        '.jobs[3].steps = []' \
+        ".jobs[0].steps[0].name = (\"Verify checkout \" + \$other)" \
+        '.jobs[1].steps[0].conclusion = "skipped"' \
+        '.jobs[2].steps += [.jobs[2].steps[0]]' \
+        '.jobs[3].steps[0].status = "queued"' \
+        ".headSha = \$other" \
+        ".displayTitle = (\"full-serial \" + \$other)" \
+        '.event = "pull_request"' \
+        '.status = "in_progress"' \
+        '.conclusion = "failure"'; do
+        cp "${VIEW}.good" "${VIEW}"
+        _mutate_view "${mutation}"
+        _fr
+        assert_failure 1
+        assert_output --partial 'completed unverified run=11'
+    done
+}
+
+@test "dispatch target is proven by actual checkout checks even when workflow head differs" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    _mutate_view ".event = \"workflow_dispatch\" | .headSha = \$other"
+    _fr
+    assert_success
+    _mutate_view ".jobs[0].steps[0].name = (\"Verify checkout \" + \$other)"
+    _fr
+    assert_failure 1
+}
+
+@test "failed job evidence query is not green and never dispatches on a query failure" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    FAKE_GH_VIEW_FAIL=1 _fr --dispatch
+    assert_failure 1
+    assert_output --partial 'query-failed run=11'
+    run grep -c '^workflow run ' "${GH_CALLS}"
+    assert_output 0
+}
+
+@test "unverified success dispatches fresh evidence rather than falling back to an old green" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    _mutate_view '.jobs = []'
+    _fr --dispatch
+    assert_failure 3
+    assert_output "full-run: ${SHA} dispatched"
+}
+
+@test "malformed job evidence is a query failure and never dispatches" {
+    _run "full-serial ${SHA}" completed success 11 2026-11-10T01:00:00Z
+    printf 'not-json\n' >"${VIEW}"
+    _fr --dispatch
+    assert_failure 1
+    assert_output --partial 'query-failed run=11'
 }
