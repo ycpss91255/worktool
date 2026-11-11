@@ -1177,7 +1177,7 @@ EOF
         printf '# documented case: %s\n' "${_line}" >&3
         run grep -Fx "${_line}" "${_names}"
         assert_success
-    done < <(sed -n '/^### 自動測試驗收/,/^## M4 /s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
+    done < <(sed -n '/^### 自動測試驗收/,/^- \[ \] 3\. 進盒設定:/s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
 
 @test "single source: documented chain diagnostics equal the source-guarded fixture" {
