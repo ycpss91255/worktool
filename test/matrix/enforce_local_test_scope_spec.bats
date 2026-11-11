@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # Full approved command x shell-wrapper product; CI only (#326, #800).
 # ADR 0014 decision 2: a touched spec of any tier except system-real is
-# local; a whole tier, the real-engine group and every-tier runs are CI's.
+# local; a whole tier, the real-engine group and every-tier runs are CI's,
+# and so is a spec argument the shell expands (#818).
 load "${BATS_TEST_DIRNAME}/../helper/common"
 load "${BATS_TEST_DIRNAME}/../helper/hook"
 
@@ -13,11 +14,18 @@ _commands() {
         printf '2|just test %s\n%s|just test %s test/%s/example_spec.bats\n' "${tier}" "${expected}" "${tier}" "${tier}"
         printf '2|script/test/test.sh --%s\n%s|script/test/test.sh --%s test/%s/example_spec.bats\n' "${tier}" "${expected}" "${tier}" "${tier}"
         printf '2|just test %s --filter example\n2|script/test/test.sh --ci-%s\n' "${tier}" "${tier}"
+        # A spec the shell expands may select the whole tier (#818).
+        printf '2|just test %s test/%s/*.bats\n2|script/test/test.sh --%s test/%s/*.bats\n' "${tier}" "${tier}" "${tier}" "${tier}"
+        printf "2|just test %s test/%s/{a,b}_spec.bats\n2|just test %s \$(ls test/%s)\n" "${tier}" "${tier}" "${tier}" "${tier}"
     done
     for entry in 'just test system test/system/real_engine_spec.bats' \
         'script/test/test.sh --system test/system/real_engine_spec.bats' \
         'script/test/test.sh --unit test/unit/log_spec.bats --matrix' \
         'script/test/test.sh --ci-unit' 'script/test/test.sh --ci-integration-ghostty'; do
+        printf '2|%s\n' "${entry}"
+    done
+    for entry in 'just test unit test/unit/*_spec.bats' "just test unit \$SPECS" \
+        'script/test/test.sh --ci-unit test/unit/*_spec.bats'; do
         printf '2|%s\n' "${entry}"
     done
     for entry in 'just test' 'just test unit' 'just test unit --filter example' \
