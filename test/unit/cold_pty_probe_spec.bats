@@ -1,20 +1,37 @@
 #!/usr/bin/env bats
 
-@test "PTY process session probe" {
-    local _child_file="${BATS_TEST_TMPDIR}/child" _launcher _child _stat
-    cat >"${BATS_TEST_TMPDIR}/child.sh" <<'SCRIPT'
-printf '%s\n' "$$" >"${CHILD_FILE}"
-exec sleep 60
+setup() {
+    export COLD_HELPER="${BATS_TEST_DIRNAME}/../helper/cold_pty.bash"
+    export COLD_READY="${BATS_TEST_TMPDIR}/ready"
+    cat >"${BATS_TEST_TMPDIR}/supervisor.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+source "${COLD_HELPER}"
+setsid timeout 30 script -qec 'sleep 30' /dev/null </dev/null >/dev/null 2>&1 &
+child=$!
+sid=
+trap 'exit 1' HUP TERM
+trap 'if [[ -n "${sid}" ]]; then _cold_pty_cleanup "${child}" "${sid}"; fi' EXIT
+until sid="$(_cold_pty_session "${child}")"; do sleep 0.1; done
+printf '%s %s\n' "${child}" "${sid}" >"${COLD_READY}"
+if [[ "$1" == failure ]]; then exit 1; fi
+while :; do sleep 0.1; done
 SCRIPT
-    CHILD_FILE="${_child_file}" setsid timeout 30 script -qec "bash ${BATS_TEST_TMPDIR}/child.sh" /dev/null </dev/null >/dev/null 2>&1 &
-    _launcher=$!
-    trap 'if [[ -n "${_child:-}" ]]; then kill -KILL "${_child}" 2>/dev/null || :; fi; kill -KILL -- "-${_launcher}" 2>/dev/null || :; wait "${_launcher}" 2>/dev/null || :' RETURN
-    timeout 5 bash -c 'until [[ -s "$1" ]]; do sleep 0.05; done' _ "${_child_file}"
-    _child="$(cat "${_child_file}")"
-    _stat="$(cat "/proc/${_child}/stat")"
-    printf '# launcher=%s child stat=%s\n' "${_launcher}" "${_stat}" >&3
-    kill -KILL "${_child}" 2>/dev/null || :
-    kill -KILL -- "-${_launcher}" 2>/dev/null || :
-    wait "${_launcher}" 2>/dev/null || :
-    trap - RETURN
 }
+
+_check_cleanup() {
+    local _mode="$1" _supervisor _launcher _sid _rc=0
+    bash "${BATS_TEST_TMPDIR}/supervisor.sh" "${_mode}" &
+    _supervisor=$!
+    timeout 10 bash -c 'until [[ -s "$1" ]]; do sleep 0.05; done' _ "${COLD_READY}"
+    read -r _launcher _sid <"${COLD_READY}"
+    if [[ "${_mode}" != failure ]]; then kill -s "${_mode}" "${_supervisor}"; fi
+    wait "${_supervisor}" || _rc=$?
+    [[ "${_rc}" -ne 0 ]]
+    ! kill -0 -- "-${_launcher}" 2>/dev/null
+    ! ps -eo sid= | grep -qx "[[:space:]]*${_sid}"
+}
+
+@test "cold PTY cleanup after failure" { _check_cleanup failure; }
+@test "cold PTY cleanup after HUP" { _check_cleanup HUP; }
+@test "cold PTY cleanup after TERM" { _check_cleanup TERM; }

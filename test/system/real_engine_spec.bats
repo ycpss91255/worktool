@@ -282,38 +282,38 @@ _wait_default_login() {
     return 1
 }
 
-# Kill descendants before their parent, including PTY children in other sessions.
-_cold_kill_tree() {
-    local _parent="$1" _pid _ppid
-    while read -r _pid _ppid; do
-        [[ "${_ppid}" == "${_parent}" ]] || continue
-        _cold_kill_tree "${_pid}"
-    done < <(ps -eo pid=,ppid=)
-    if kill -KILL "${_parent}" 2>/dev/null; then :; fi
-}
+source "${BATS_TEST_DIRNAME}/../helper/cold_pty.bash"
 
 # Keep stdin open but empty until the external process observation passes.
 _cold_default_login() (
     local _fifo="${HOME}/cold-input" _output="${HOME}/cold-output"
-    local _child _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
+    local _child _sid= _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
     mkfifo "${_fifo}"
     exec 9<>"${_fifo}"
     WORKTOOL_COLD_LOGIN_TOKEN="${_token}" \
         setsid timeout -k 5 "${FIRST_ENTER_TIMEOUT}" script -qec "$1" /dev/null \
         <"${_fifo}" >"${_output}" 2>&1 &
     _child=$!
-    trap 'exit 1' INT TERM
-    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
-        _cold_kill_tree "${_child}"
-        if wait "${_child}" 2>/dev/null; then :; fi
+    trap 'exit 1' HUP INT TERM
+    trap 'exec 9>&-; if [[ -n "${_child}" && -n "${_sid}" ]]; then
+        _cold_pty_cleanup "${_child}" "${_sid}" || exit 1
     fi; rm -f "${_fifo}"' EXIT
+    local _deadline=$((SECONDS + 10))
+    until _sid="$(_cold_pty_session "${_child}")"; do
+        if (( SECONDS >= _deadline )); then
+            echo "cold PTY session did not appear" >&2
+            if kill -KILL -- "-${_child}" 2>/dev/null; then :; fi
+            if wait "${_child}" 2>/dev/null; then :; fi
+            return 1
+        fi
+        sleep 0.1
+    done
     if ! _wait_default_login "${_token}"; then
         cat "${_output}"
         return 1
     fi
     printf '%s\n' "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit" >&9
     wait "${_child}" || _rc=$?
-    _child=
     cat "${_output}"
     return "${_rc}"
 )
