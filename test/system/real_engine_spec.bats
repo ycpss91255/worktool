@@ -282,6 +282,16 @@ _wait_default_login() {
     return 1
 }
 
+# Kill descendants before their parent, including PTY children in other sessions.
+_cold_kill_tree() {
+    local _parent="$1" _pid _ppid
+    while read -r _pid _ppid; do
+        [[ "${_ppid}" == "${_parent}" ]] || continue
+        _cold_kill_tree "${_pid}"
+    done < <(ps -eo pid=,ppid=)
+    if kill -KILL "${_parent}" 2>/dev/null; then :; fi
+}
+
 # Keep stdin open but empty until the external process observation passes.
 _cold_default_login() (
     local _fifo="${HOME}/cold-input" _output="${HOME}/cold-output"
@@ -289,16 +299,21 @@ _cold_default_login() (
     mkfifo "${_fifo}"
     exec 9<>"${_fifo}"
     WORKTOOL_COLD_LOGIN_TOKEN="${_token}" \
-        timeout -k 5 "${FIRST_ENTER_TIMEOUT}" script -qec "$1" /dev/null \
+        setsid timeout -k 5 "${FIRST_ENTER_TIMEOUT}" script -qec "$1" /dev/null \
         <"${_fifo}" >"${_output}" 2>&1 &
     _child=$!
-    trap 'exec 9>&-; if kill -0 "${_child}" 2>/dev/null; then kill "${_child}"; fi; rm -f "${_fifo}"' EXIT
+    trap 'exit 1' INT TERM
+    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
+        _cold_kill_tree "${_child}"
+        if wait "${_child}" 2>/dev/null; then :; fi
+    fi; rm -f "${_fifo}"' EXIT
     if ! _wait_default_login "${_token}"; then
         cat "${_output}"
         return 1
     fi
     printf '%s\n' "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit" >&9
     wait "${_child}" || _rc=$?
+    _child=
     cat "${_output}"
     return "${_rc}"
 )
