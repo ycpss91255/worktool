@@ -140,7 +140,7 @@ worktool/
 ├── .vscode/
 │   └── extensions.json  推薦 `hediet.vscode-drawio`:在 VS Code 內就地編輯 `doc/diagram/*.drawio.svg`
 ├── AGENTS.md            給 agent 的 repo 約定(Agent skills、決議流程、git 慣例、shell 慣例);CLAUDE.md 是指向它的 symlink
-├── justfile             使用者介面入口:五個 `mod?`(test / box / agent / worktree / job)+ `default`(= just --list)
+├── justfile             使用者介面入口:六個 `mod?`(test / box / verify / agent / worktree / job)+ `default`(= just --list)
 └── .github/workflows/
     ├── ci.yml           GitHub Actions:push / PR 到 main 時跑全部 gate + commit-email + commit-attribution + commit-refs + review-log；milestone-gate PR 加跑 verify-all，由 ci-passed 彙總；只改 PR 說明／標題／標籤時走 meta 路徑,跳過測試 tier、改要求同一 head sha 最新 code run 全綠(#688)
     └── milestone-gate.yml  PR / PR 留言事件時以 lib/approval.sh 判斷,設 commit status `milestone-gate-approval`(#187)
@@ -329,6 +329,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh [args]`(`--root X` 直接透傳) |
 | `just test isolation [args]` | `./script/test/isolation.sh [args]`(tier 隔離守門,`--seed N` 重現順序;見 ADR-0018) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
+| `just verify` | 列出可用驗收檢查；列清單不執行驗證 |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--home <路徑>`、`--help`) |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <名稱>`、`--distrobox <路徑>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
