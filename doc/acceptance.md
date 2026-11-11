@@ -61,7 +61,7 @@ prereq-ok
       ```bash
       just box
       just test help 2>&1 | head -2
-      just box assemble --help 2>&1 | head -1
+      just box assemble --help 2>&1 | head -2
       ```
   - [ ] 0.3 錯誤輸入不跑任何東西:未知動作 just 報錯 exit 1;未知選項腳本報錯 exit 2
     - 預期看到資訊
