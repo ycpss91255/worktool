@@ -397,7 +397,7 @@ config: /home/me/.config/worktool/config
 auto-enter: yes (default)
 terminal: ghostty (default)
 box: work (user)
-ghostty: /home/me/.config/ghostty/config (managed block: present)
+ghostty: /home/me/.config/ghostty/config.ghostty (managed block: present)
 distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
 wrapper: /home/me/worktool/script/box/enter.sh (recorded in a managed block: runnable)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
