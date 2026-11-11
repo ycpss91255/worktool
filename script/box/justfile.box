@@ -36,7 +36,7 @@ default:
 assemble *args:
     ./script/box/assemble.sh "$@"
 
-# Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
+# Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --max-wait N, --json, --shell CMD, --help; the script validates --box / --shell).
 bench *args:
     ./script/box/bench.sh "$@"
 
