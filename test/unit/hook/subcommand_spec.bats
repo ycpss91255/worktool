@@ -27,6 +27,43 @@ setup() {
     source "${REPO_ROOT}/.agents/hook/lib/subcommand.sh"
 }
 
+@test "#902: quoted scalar values stay one argv while splitting expansions stay marked" {
+    local value word
+    local -a words
+    for value in "\"\$FILTER\"" "\"\${FILTER:-a.*}\"" "\"\${FILTERS[*]}\"" "\"\$(printf pattern)\""; do
+        run hook_subcommands_raw "probe ${value}"
+        assert_success
+        read -r -a words <<<"${lines[0]}"
+        word="${words[1]}"
+        run hook_word_has_expansion "${word}"
+        assert_success
+        run hook_word_has_split_expansion "${word}"
+        assert_failure
+    done
+    for value in "\$FILTER" 'a.*' '{a,b}' "\"\$@\"" "\"\${FILTERS[@]}\"" "\"\${!FILTER}\""; do
+        run hook_subcommands_raw "probe ${value}"
+        assert_success
+        read -r -a words <<<"${lines[0]}"
+        run hook_word_has_expansion "${words[1]}"
+        assert_success
+        run hook_word_has_split_expansion "${words[1]}"
+        assert_success
+    done
+}
+
+@test "#902: an empty quoted word keeps its argv position" {
+    local -a words
+    run hook_subcommands_raw 'probe --filter "" --system-real'
+    assert_success
+    read -r -a words <<<"${lines[0]}"
+    assert_equal "${#words[@]}" 4
+    run hook_word "${words[2]}"
+    assert_success
+    assert_output ''
+    run hook_word "${words[3]}"
+    assert_output '--system-real'
+}
+
 @test "a single command is one sub-command" {
     run hook_subcommands "just test unit"
     assert_success

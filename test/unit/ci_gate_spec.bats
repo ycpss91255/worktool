@@ -16,8 +16,10 @@
 #   the copy's own test.sh in its container-side mode (--ci-unit /
 #   --ci-integration / ...), exactly as the CI job does. The real tree is
 #   never touched. Negative cases die before bats runs, so they need no
-#   daemon; the positive cases nest a bats run of a FAST tier of the copy
-#   (integration / system shim / acceptance).
+#   daemon. The positive cases run the gate on a STUB tree instead (the real
+#   script/ lib/ test/helper/ and one-case stub specs, _make_stub_tree):
+#   they prove the gate's logic, not that the real tier passes, which that
+#   tier's own gate proves in the same CI run (issue #857).
 #
 #   RECURSION GUARD: the copy's test/unit/ci_gate_spec.bats is replaced by a
 #   one-case stub of the same name. A nested unit-tier run of the copy
@@ -87,7 +89,56 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 EOF
 }
 
-@test "a bats tier passes the configured parallel job count to bats" {
+# Write a spec at $1 with one case named $2 that FAILS if it ever runs: an
+# excluded group's spec (ghostty, real engine) in a stub tree, so a gate
+# that wrongly includes it is red.
+_write_failing_spec() {
+    {
+        printf '#!/usr/bin/env bats\n'
+        printf '@test "%s" {\n    false\n}\n' "$2"
+    } >"$1"
+}
+
+# Write a spec at $1 with two passing cases named "$2 one" / "$2 two" (an
+# additional, non-required spec in a stub tree).
+_write_two_case_spec() {
+    {
+        printf '#!/usr/bin/env bats\n'
+        printf '@test "%s one" {\n    true\n}\n' "$2"
+        printf '@test "%s two" {\n    true\n}\n' "$2"
+    } >"$1"
+}
+
+# Stub tree at $COPY: the real script/ lib/ test/helper/ (the gate under
+# test) and, for each tier $@, a one-case stub for every required spec
+# test.sh declares (derived, never listed here). Nothing else: the gate's
+# rules are proven on these few cases, not by re-running a real tier.
+_make_stub_tree() {
+    local _tier _rel _seen
+    mkdir -p "${COPY}/test"
+    cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${COPY}/"
+    cp -R "${REPO_ROOT}/test/helper" "${COPY}/test/"
+    for _tier in "$@"; do
+        _seen=0
+        while IFS= read -r _rel; do
+            [[ -n "${_rel}" ]] || continue
+            _seen=1
+            mkdir -p "$(dirname -- "${COPY}/test/${_rel}")"
+            _write_one_case_spec "${COPY}/test/${_rel}" "stub ${_rel}"
+        done < <(_declared "${_tier}")
+        [[ "${_seen}" -eq 1 ]] || fail "no required specs declared for ${_tier}"
+    done
+}
+
+# Stub tree for the integration default group: its required stubs plus the
+# ghostty spec as a failing stub (the other group's; it must never run here).
+_make_integration_stub_tree() {
+    _make_stub_tree integration
+    _write_failing_spec "${COPY}/test/integration/ghostty_config_spec.bats" \
+        "a real ghostty is on PATH (stub: fails if the default group runs it)"
+}
+
+@test "a bats tier passes the job count to bats and lets the cases of one file run in parallel" {
     _make_repo_copy
     local _bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "${_bin}"
@@ -106,9 +157,87 @@ EOF
     export WORKTOOL_TEST_JOBS=3
     PATH="${_bin}:${PATH}" _run_copy_gate --ci-integration
     assert_success
-    run grep -F -- "--formatter tap --jobs 3 --no-parallelize-within-files -r" \
+    run grep -F -- "--formatter tap --jobs 3 -r" "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_success
+    run grep -F -- "--no-parallelize-within-files" "${BATS_TEST_TMPDIR}/bats.calls"
+    assert_failure
+}
+
+@test "a report directory adds a junit report per tier and keeps the TAP stream" {
+    _make_repo_copy
+    local _bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "${_bin}"
+    cat >"${_bin}/bats" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${BATS_TEST_TMPDIR}/bats.calls"
+if [[ "$1" == "--count" ]]; then
+    printf '1\n'
+else
+    printf '1..4\n'
+    printf 'ok 1 one\nok 2 two\nok 3 three\nok 4 four\n'
+fi
+EOF
+    chmod +x "${_bin}/bats"
+
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report PATH="${_bin}:${PATH}" \
+        _run_copy_gate --ci-acceptance
+    assert_success
+    assert_line 'ok 4 four'
+    run grep -F -- "--formatter tap --report-formatter junit --output ${COPY}/.agents/state/test-report/acceptance " \
         "${BATS_TEST_TMPDIR}/bats.calls"
     assert_success
+    assert [ -d "${COPY}/.agents/state/test-report/acceptance" ]
+}
+
+@test "a spec never inherits the outer gate's report directory or shard weights" {
+    local _spec="${BATS_TEST_TMPDIR}/probe/unit/probe_spec.bats"
+    mkdir -p "${_spec%/*}"
+    ln -s "${TEST_DIR}/helper" "${BATS_TEST_TMPDIR}/probe/helper"
+    cat >"${_spec}" <<'EOF'
+#!/usr/bin/env bats
+load "${BATS_TEST_DIRNAME}/../helper/common"
+@test "probe" {
+    [[ -z "${WORKTOOL_TEST_REPORT_DIR:-}" && -z "${WORKTOOL_SHARD_WEIGHTS:-}" ]]
+}
+EOF
+    WORKTOOL_TEST_REPORT_DIR=.agents/state/test-report \
+        WORKTOOL_SHARD_WEIGHTS=.agents/state/shard-weights.tsv run bats --formatter tap "${_spec}"
+    assert_success
+    assert_line 'ok 1 probe'
+}
+
+@test "every shard of a tier leaves a record the union verdict accepts (#831)" {
+    mkdir -p "${COPY}/test"
+    cp -R "${REPO_ROOT}/script" "${REPO_ROOT}/lib" "${COPY}/"
+    cp -R "${REPO_ROOT}/test/helper" "${COPY}/test/"
+    mkdir -p "${COPY}/test/unit/hook"
+    _write_one_case_spec "${COPY}/test/unit/log_spec.bats" "log one"
+    _write_one_case_spec "${COPY}/test/unit/b_spec.bats" "b one"
+    printf '#!/usr/bin/env bats\n@test "c one" { true; }\n@test "c two" { true; }\n' \
+        >"${COPY}/test/unit/hook/c_spec.bats"
+    local _i _root="${BATS_TEST_TMPDIR}/artifacts"
+    for _i in 1 2; do
+        WORKTOOL_TEST_REPORT_DIR=out "${COPY}/script/test/test.sh" --ci-unit --shard "${_i}/2" \
+            >"${BATS_TEST_TMPDIR}/shard${_i}.log" 2>&1 \
+            || fail "shard ${_i}/2 failed: $(cat "${BATS_TEST_TMPDIR}/shard${_i}.log")"
+        mkdir -p "${_root}/test-report-unit-${_i}-r"
+        cp -R "${COPY}/out/unit" "${_root}/test-report-unit-${_i}-r/"
+        rm -rf "${COPY}/out"
+    done
+    # The heaviest spec (two cases) goes first, alone, to shard 1.
+    run cat "${_root}/test-report-unit-1-r/unit/shard.tsv"
+    assert_output "$(printf 'shard\t1/2\nweights\tnone\nspec\thook/c_spec.bats\t2\nplan\t2')"
+    run cat "${_root}/test-report-unit-1-r/unit/base"
+    assert_output 'hook'
+    # Readable by anyone: CI uploads the record as another user.
+    run stat -c %a "${_root}/test-report-unit-1-r/unit/shard.tap"
+    assert_output --regexp '^6[0-7]4$'
+    printf '%s\n' b_spec.bats hook/c_spec.bats log_spec.bats >"${BATS_TEST_TMPDIR}/list"
+    printf '%s\n' log_spec.bats >"${BATS_TEST_TMPDIR}/required"
+    run bash -c 'source "$1/lib/test_shard.sh" && test_shard_verdict "$2" unit 2 "$3" "$4" r' _ \
+        "${COPY}" "${_root}" "${BATS_TEST_TMPDIR}/list" "${BATS_TEST_TMPDIR}/required"
+    assert_success
+    assert_output 'unit (r): 2 shard(s), 3 spec(s), 4 case(s): the union is the whole tier'
 }
 
 @test "an invalid parallel job count is an argument error before bats runs" {
@@ -120,6 +249,20 @@ EOF
     WORKTOOL_TEST_JOBS=0 PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
     assert_failure 2
     assert_output "test.sh: invalid WORKTOOL_TEST_JOBS '0' (see --help)"
+    assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
+}
+
+@test "a report directory outside the checkout is an argument error before bats runs" {
+    local _bin="${BATS_TEST_TMPDIR}/bin" _dir
+    mkdir -p "${_bin}"
+    printf '#!/usr/bin/env bash\ntouch "%s/bats-ran"\n' "${BATS_TEST_TMPDIR}" >"${_bin}/bats"
+    chmod +x "${_bin}/bats"
+
+    for _dir in /tmp/report ../report a/../../b 'a b' ./report; do
+        WORKTOOL_TEST_REPORT_DIR="${_dir}" PATH="${_bin}:${PATH}" run "${TEST_SH}" --ci-acceptance
+        assert_failure 2
+        assert_output "test.sh: invalid WORKTOOL_TEST_REPORT_DIR '${_dir}' (a repo-relative path) (see --help)"
+    done
     assert [ ! -e "${BATS_TEST_TMPDIR}/bats-ran" ]
 }
 
@@ -263,16 +406,10 @@ EOF
     assert_output ""
 }
 
-@test "every declared required spec exists in the delivered tree and defines cases" {
-    local _tier _rel _n
-    for _tier in unit integration integration-ghostty system system-real acceptance; do
-        while IFS= read -r _rel; do
-            assert [ -f "${REPO_ROOT}/test/${_rel}" ]
-            _n="$(bats --count "${REPO_ROOT}/test/${_rel}")"
-            assert [ "${_n}" -gt 0 ]
-        done < <(_declared "${_tier}")
-    done
-}
+# The delivered tree's own required specs are checked where they run: each
+# tier's gate (_check_required_specs, before bats) and, for the sharded unit
+# tier, the union verdict (lib/test_shard.sh, test/unit/test_shard_spec.bats).
+# The cases below prove those rules on copies (issue #856).
 
 # --- negative: a deleted required spec fails the tier before bats runs -------
 
@@ -321,21 +458,23 @@ EOF
 }
 
 @test "integration (default group): the ghostty spec is NOT run by it (no ghostty needed here)" {
-    _make_repo_copy
+    _make_integration_stub_tree
     local _n
     _n="$(_integration_default_count)"
     # The default group must not depend on the other group's spec at all:
-    # deleting it leaves the group green, and its cases were never in the
-    # plan (this very gate runs in the alpine test image, which has no
-    # ghostty - if the spec ran here it would fail).
-    rm "${COPY}/test/integration/ghostty_config_spec.bats"
-
+    # present (a stub that fails if run) it is never in the plan, and
+    # deleting it leaves the group green.
     _run_copy_gate --ci-integration
     assert_success
     assert_line "1..${_n}"
     # Neither the file nor any of its cases were part of the run.
     refute_output --partial "ghostty_config_spec.bats"
     refute_output --partial "a real ghostty is on PATH"
+
+    rm "${COPY}/test/integration/ghostty_config_spec.bats"
+    _run_copy_gate --ci-integration
+    assert_success
+    assert_line "1..${_n}"
 }
 
 @test "system-real: deleting real_engine_spec fails the group" {
@@ -417,7 +556,8 @@ EOF
 # --- positive: a normal tree passes, every case of the tier in the plan -----
 
 @test "integration: a normal tree passes and the plan covers every case" {
-    _make_repo_copy
+    _make_integration_stub_tree
+    _write_two_case_spec "${COPY}/test/integration/more_spec.bats" "more"
     local _n
     _n="$(_integration_default_count)"
 
@@ -430,11 +570,17 @@ EOF
 }
 
 @test "system (shim): a normal tree passes and the plan covers every shim case" {
-    _make_repo_copy
-    local _n
+    _make_stub_tree system
+    _write_two_case_spec "${COPY}/test/system/more_spec.bats" "more"
+    # The real-engine spec is the other group's: a stub that fails if run.
+    _write_failing_spec "${COPY}/test/system/real_engine_spec.bats" \
+        "real engine (stub: fails if the shim group runs it)"
+    local _f _n=0
     # Every shim spec: all of test/system/*.bats but the real-engine one.
-    _n="$(bats --count "${COPY}/test/system/real_assemble_spec.bats" \
-        "${COPY}/test/system/real_enter_env_spec.bats")"
+    for _f in "${COPY}"/test/system/*.bats; do
+        [[ "${_f}" == */real_engine_spec.bats ]] && continue
+        _n=$(( _n + $(bats --count "${_f}") ))
+    done
 
     _run_copy_gate --ci-system
     assert_success
@@ -443,7 +589,8 @@ EOF
 }
 
 @test "acceptance: a normal tree passes and the plan covers every case" {
-    _make_repo_copy
+    _make_stub_tree acceptance
+    _write_two_case_spec "${COPY}/test/acceptance/more_spec.bats" "more"
     local _n
     _n="$(bats --count -r "${COPY}/test/acceptance")"
 
@@ -456,7 +603,7 @@ EOF
 # --- additional specs still run on top of the required ones ------------------
 
 @test "integration: an additional non-required spec still runs and counts in the plan" {
-    _make_repo_copy
+    _make_integration_stub_tree
     local _n
     _n="$(_integration_default_count)"
     _write_one_case_spec "${COPY}/test/integration/extra_spec.bats" \
@@ -470,7 +617,7 @@ EOF
 }
 
 @test "integration: a skipped case in an additional spec still fails the tier" {
-    _make_repo_copy
+    _make_integration_stub_tree
     {
         printf '#!/usr/bin/env bats\n'
         printf '@test "extra: skipped" {\n    skip "not green"\n}\n'

@@ -10,7 +10,7 @@ milestone-gate PR 的 `verify-all` 以 `just verify all` 實跑非實機驗收�
 
 ## 決策
 
-1. CI 中 `verify-all` 依賴 `gate` 與 `test-system-real`，在它們完成後才開始，並以 `WORKTOOL_VERIFY_GATE_RUN`／`_SHA`／`_REPO` 指名自己的 run 與 PR head sha。
+1. CI 中 `verify-all` 依賴 `gate`、unit 分片的 `test-unit-verdict` 與 `test-system-real`，在它們完成後才開始，並以 `WORKTOOL_VERIFY_GATE_RUN`／`_SHA`／`_REPO` 指名自己的 run 與 PR head sha。
 2. 有這三個變數時，`script/verify/gate.sh` 的 2.1 判讀該 run 中每個架構、裸 `just test` 每個階段的 gate job；階段集合讀自 `script/test/test.sh` 的 `HOST_STEPS`，不另寫一份清單。2.3 判讀每個架構的 integration 與 system-real job，並下載它們的 log，以本機模式相同的區塊檢查判讀。
 3. fail closed：job 缺少、重複、未完成、skipped、cancelled、非 success、run 或 head sha 不符，都使該項失敗；查詢失敗也失敗。三個變數只設一部分是 UNAVAILABLE（3），不退回本機模式。stdout 列出每個沿用的 job（名稱、結果、run、job id）。
 4. 本機 `just verify gate`／`just verify all` 不設這三個變數，照常完整執行 tier。

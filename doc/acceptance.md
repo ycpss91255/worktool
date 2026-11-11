@@ -425,6 +425,15 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 
 ## M3 終端自動進盒 + 效能達標(審核中)
 
+- 交接前:同步驗收 PR 後取得最新 head SHA,在該 linked worktree 前景執行
+  `.agents/script/monitor/full-run.sh --repo <repo> --sha <PR head SHA> --dispatch --wait 540`;
+  回 3 時繼續以前景 `--wait 540` 查詢,總上限 10800 秒。只有回 0 才繼續 Scratch 與交接;
+  查不到、查詢失敗、SHA 不符、仍 pending 或必要測試未完整成功均拒絕交接(#837、#899)。
+  綠燈要求兩架構(`ubuntu-latest`、`ubuntu-24.04-arm`)的 full-serial/isolation 各一個
+  completed/success job,各有成功的 `Verify checkout <PR head SHA>` 實際 HEAD 比對步驟。
+  workflow success 但 job skipped 不算完整驗證,最新非綠燈也不回退舊綠燈。
+  `milestone-handover` 的 Head -> Full run -> Scratch 順序使用同一個檢查。
+
 - 自動:進盒延遲量測腳本回報 ≤ 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
   fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
   實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
@@ -505,7 +514,7 @@ recipe 名稱與說明以根目錄 `justfile`、`script/box/justfile.box`、`scr
 每個「驗收方式」區塊都是**一行 `just verify <動作> [ITEM]` 加上 `echo rc=$?`**,以 **bash** 執行(fish 使用者先打 `bash`);**請原樣貼上,不要改寫**,改寫過的區塊不算數。文件本身已經不帶任何 shell 邏輯 —— 判準全部搬進 repo 的 `script/verify/`(`ui.sh` / `gate.sh` / `setup.sh` / `diagram.sh` / `realbox.sh` / `evidence.sh`),由 `just verify` namespace 轉發。每支腳本自己建立並清理臨時目錄 / 暫存檔,自己守住每條管線與每個計數(先判外部指令自己的結束碼再用它的輸出、每個計數都與它的退化情況分得開),跑不動的環境一律明講並回非 0,不會靜默跳過;`test/unit/verify_*_spec.bats` 再以「印得出像樣輸出、結束碼卻非 0」的 stub 證明它們咬得動。**裸 `just verify` 只列出動作、什麼都不驗**(它自己會印一行 `NOTE: this only lists the verify groups - nothing has been verified. ...` 並回 0,那個 rc=0 不代表通過;#182);**一次跑完全部非實機驗收的是 `just verify all`**(依序 ui、gate、setup、diagram、evidence,遇第一個失敗即停,每組一行摘要加一行總判決,任一組失敗就回非 0;5 是實機,需 `--allow-real-box`,不在內)。`just verify <動作> --help` 是該腳本自己的說明,`just verify <動作> --list` 列出它涵蓋的項目。
 
 搬出文件的原因是 #176 item 8:維護者那一輪跑 2.2 得到 9/10 `order=BAD`,但十份 PR 描述其實都滿足 2.2 的主張(同一份判定邏輯實測 10/10),awk 實作、locale、CRLF、貼上時的 shell 與縮排都已逐項排除,**根因未解** —— 那一輪跑在維護者的指令執行器裡,那個環境在這裡沒有、重現不了;處置因此是結構性的(把邏輯搬出文件),不是找出成因。逐項排除的指令與輸出見 `doc/evidence/README.md`。
-本 PR(#157)相對 main 的改動範圍（`origin/main...m3/5-acceptance`）包含：七階段措辭與流程圖同步；專案狀態行更新到 M3；README、`doc/design.md`、`doc/structure.md`、`doc/manifest.md`、`doc/enter.md` 與各 justfile 的指令說明對齊實際介面（namespace 規則、recipe 參數註解、目錄樹、範例日誌、`doc/design.md` M3 受管命令的 wrapper 形態）；300 ms 門檻措辭同步（≤ 300 ms）；`doc/contract.md` 與 ADR 0004 對齊已交付行為（user config 已交付、狀態檔以 `config_set` 原地更新、`just verify` 的結束碼 3、300 ms 條目已由 ADR 0003 定案）；ADR 0008／0010 的措辭；本機守門選取描述（ADR 0014 的 config mutation 案例拆分，含 `lib/config.sh` 契約註解）；驗收清單與證據（含 2.1 CPU 負載重現 skip 豁免與 runner 清單一致性 spec）；驗收程式與入口；建盒預設 fish；盒內指令說明移除過時的 rm 承諾；延遲 gate 補讀盒子 cgroup PSI（含 `script/box/bench.sh` 的完整說明改寫到 stderr、自身 PSI 失讀時保留來源的診斷）；產品共用程式（`lib/distrobox_manager.sh` 由 `lib/home.sh` 抽出，行為不變；`lib/` 與 `script/box/` 的過時註解，以及備份祖先不是目錄時的通用診斷）；測試入口（`script/test/test.sh`、`just test changed` 的 spec 對應）、完整歷史 checkout 與相關測試；逐檔的範圍條目見下方「PR #157 範圍條目」清單。逐 PR 的來源見 PR #157 說明，這裡只列範圍，不逐 PR 註記。**`just verify` namespace 與 `script/verify/` 只在本 PR 分支上**，所以下面直接 clone 本 PR 分支 `m3/5-acceptance`（= main 加上述變更）。clone 成 main 的話，每個區塊都會是 just 自己的 `Justfile does not contain recipe`（rc=1），什麼都不會跑。
+本 PR(#157)相對 main 的改動範圍（`origin/main...m3/5-acceptance`）包含：七階段措辭同步；專案狀態行更新到 M3；README、`doc/design.md`、`doc/structure.md`、`doc/manifest.md`、`doc/enter.md` 與各 justfile 的指令說明對齊實際介面（namespace 規則、recipe 參數註解、目錄樹、範例日誌、`doc/design.md` M3 受管命令的 wrapper 形態）；300 ms 門檻措辭同步（≤ 300 ms）；`doc/contract.md` 與 ADR 0004 對齊已交付行為（user config 已交付、狀態檔以 `config_set` 原地更新、`just verify` 的結束碼 3、300 ms 條目已由 ADR 0003 定案）；ADR 0008／0010 的措辭；本機守門選取描述（ADR 0014 的 config mutation 案例拆分，含 `lib/config.sh` 契約註解）；驗收清單與證據（含 2.1 CPU 負載重現 skip 豁免與 runner 清單一致性 spec）；驗收程式與入口；CI 驗收 2.1／2.3 判讀同 run、同 SHA 的 gate，分片聯集與整層共用 CPU 重現 skip 判準，以及 ADR 0016／0017 的對應說明；建盒預設 fish；盒內指令說明移除過時的 rm 承諾；延遲 gate 補讀盒子 cgroup PSI（含 `script/box/bench.sh` 的完整說明改寫到 stderr、自身 PSI 失讀時保留來源的診斷）；產品共用程式（`lib/distrobox_manager.sh` 由 `lib/home.sh` 抽出，行為不變；`lib/` 與 `script/box/` 的過時註解，以及備份祖先不是目錄時的通用診斷）；測試入口（`script/test/test.sh`、`just test changed` 的 spec 對應）、完整歷史 checkout 與相關測試；逐檔的範圍條目見下方「PR #157 範圍條目」清單。逐 PR 的來源見 PR #157 說明，這裡只列範圍，不逐 PR 註記。**`just verify` namespace 與 `script/verify/` 只在本 PR 分支上**，所以下面直接 clone 本 PR 分支 `m3/5-acceptance`（= main 加上述變更）。clone 成 main 的話，每個區塊都會是 just 自己的 `Justfile does not contain recipe`（rc=1），什麼都不會跑。
 
 ```bash
 git clone --branch m3/5-acceptance https://github.com/ycpss91255/worktool.git && cd worktool   # M3 deliveries: see PR #157 delivery table linked below.
@@ -559,10 +568,10 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `doc/adr/0010-invariant-black-box-verifiable.md`
 - `doc/adr/0012-invariant-platform-neutral.md`
 - `doc/adr/0014-local-tests-changed-only.md`
+- `doc/adr/0016-ci-unit-shards-union-verdict.md`
 - `doc/adr/0017-ci-acceptance-reuses-gate-jobs.md`
 - `doc/contract.md`
 - `doc/design.md`
-- `doc/diagram/flow.drawio.svg`
 - `doc/enter.md`
 - `doc/evidence/README.md`
 - `doc/evidence/negative/`
@@ -577,6 +586,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `lib/guard.sh`
 - `lib/home.sh`
 - `lib/realbox_interrupt.sh`
+- `lib/test_shard.sh`
 - `lib/verify_busy_latency.awk`
 - `lib/verify_ci_gate.sh`
 - `lib/verify_run.sh`
@@ -598,6 +608,8 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `test/unit/config_backup_dangling_spec.bats`
 - `test/unit/config_backup_spec.bats`
 - `test/unit/config_mutation_drift_spec.bats`
+- `test/unit/config_mutation_part2_spec.bats`
+- `test/unit/config_mutation_part3_spec.bats`
 - `test/unit/config_mutation_spec.bats`
 - `test/unit/config_owner_spec.bats`
 - `test/unit/config_spec.bats`
@@ -614,6 +626,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 - `test/unit/setup_spec.bats`
 - `test/unit/test_changed_spec.bats`
 - `test/unit/test_sh_spec.bats`
+- `test/unit/test_shard_spec.bats`
 - `test/unit/verify_*_spec.bats`
 <!-- pr157-scope:end -->
 
@@ -678,7 +691,7 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
       ```
       (本項完整擷取整條 `just test` 的 stdout 與 stderr 後，先將 stdout 重播到 stdout，再將 stderr 重播到 stderr，各串流內的內容與順序保留；上例按重播順序列出，不代表執行當下兩串流的交錯順序。`[ci]` 與 `[system-real]` 行屬於 stderr。數字是你機器的實測;判準 = `just test` **自己**回 0,加上 shell median ≤ 300 且三行指標都在。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish ≤ 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 fish」整條鏈由 2.3 在 CI 內驗證,實機主觀感受由 5.2 驗)
     - 依 ADR 0003，若 `just test` 回 1，且完整 system-real TAP 的所有紅燈都只來自上述兩個 bench 案例，每個紅燈都同時帶有 assertion 的 exit 3 與 bench 主機忙碌的未判定診斷，2.1 印出「延遲 gate 未判定、請在閒置時重跑」並回 3，不印 PASSED／FAILED。`just verify all` 顯示 `verify all: gate UNAVAILABLE (rc=3)`，總判決仍非通過並回 3。其他失敗、混合失敗、輸出不完整或無法可靠辨識時，一律回 1；system-real 本身仍將 bench 的 3 當紅燈，CI 不跳過 gate。2.1 分別完整擷取兩個串流，再依上述順序重播供判讀；未判定辨識不依賴 stdout 與 stderr 之間的到達順序。
-    - 唯一 skip 例外：未設 `WORKTOOL_STRESS=1`（未設定或值不是 `1`）時，unit 層只允許以下三個 CPU 負載重現案例以列出的訊息 skip。除此之外，每層都不得有任何 skip；設 `WORKTOOL_STRESS=1` 時，這三個案例也不得 skip。案例名稱與訊息必須完全符合 `script/test/test.sh` 的豁免清單。
+    - 唯一 skip 例外：未設 `WORKTOOL_STRESS=1`（未設定或值不是 `1`）時，unit 層只允許以下三個 CPU 負載重現案例以列出的訊息 skip。除此之外，每層都不得有任何 skip；設 `WORKTOOL_STRESS=1` 時，這三個案例也不得 skip。案例名稱與訊息必須完全符合 `lib/test_shard.sh` 的共用豁免清單（整層與分片聯集都使用）。
 
       | 案例名稱 | skip 訊息（TAP 後綴） |
       | --- | --- |
@@ -1394,5 +1407,9 @@ PR #157 範圍條目（一行一條，依位元組序排序，即 `LC_ALL=C sort
 
 ## M17 release 2.0.0
 
-- 自動:release 前 CI 全綠。
+- 自動:release 前 CI 全綠;tag 只打在有綠燈完整序列執行的 sha 上(#837、ADR-0019):
+  `.agents/script/monitor/full-run.sh --repo <repo> --sha <要打 tag 的 sha> --dispatch`
+  回 0 才打 tag。綠燈包含兩架構 full-serial/isolation 各一個成功 job 與實際 checkout
+  sha 的成功驗證;workflow success 但必要 job skipped／缺漏／重複或證據查詢失敗均非綠燈(#899)。
+  有 release workflow 時,它必須在打 tag 前執行同一個檢查並在非 0 時失敗。
 - 人類:全清單通過 + 明確的 RELEASE 同意(唯一需人類同意的 release)。

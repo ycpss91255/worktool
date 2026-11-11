@@ -21,6 +21,8 @@
 #     outside single quotes; a lone $ is literal) and, unquoted, a glob
 #     (* ?, [ with a closing ] in the same word) or a brace expansion ({ with
 #     a , or .. and a closing } in the same word)
+#   - \001w additionally marks an expansion that may produce several argv;
+#     \001q keeps an empty quoted word present without changing its text
 #   - no input byte is a marker: subcommand.sh escapes every \001 of the
 #     input as \001z before this pass, so a \001 here is always a two-byte
 #     escape - \001z (a literal \001, kept) or \001v (an expansion of an
@@ -53,6 +55,34 @@ function pop() {
     q = sq[sd]; par = spar[sd]
     buf = sbuf[sd] ESC ((q == "" && skind[sd] != "<") ? "u" : "s"); sd--
 }
+# Quoted scalar parameters stay one argv. Positional/array @ and indirect
+# parameters can produce several; unquoted parameters can split or glob.
+function splits_parameter(i,    nx, tail) {
+    nx = substr(T, i + 1, 1)
+    if (q == "") return nx != SQ && nx != "\""
+    if (nx == "@") return 1
+    if (nx != "{") return 0
+    tail = substr(T, i + 2)
+    return tail ~ /^[@!]/ || tail ~ /^[A-Za-z_][A-Za-z0-9_]*\[@\]/
+}
+# Empty spans inside a nonempty word add no argv. Keep their placeholder
+# only when the WHOLE word is empty, so ba""sh and -""c stay recognizable.
+function empty_word(word,    plain) {
+    plain = word
+    gsub(ESC "q", "", plain)
+    return plain == "" ? word : plain
+}
+function keep_empty_words(text,    j, c, word, out) {
+    word = ""; out = ""
+    for (j = 1; j <= length(text); j++) {
+        c = substr(text, j, 1)
+        if (index(SEP, c)) {
+            out = out empty_word(word) c
+            word = ""
+        } else word = word c
+    }
+    return out empty_word(word)
+}
 # The whole input is one text (a quoted span may cross lines): read every
 # line, rejoin with newlines, and run the pass at the end.
 { T = T $0 "\n" }
@@ -62,8 +92,11 @@ END {
         c = substr(T, i, 1); nx = substr(T, i + 1, 1)
         if (c == ESC) {
             # A two-byte escape (see the header), kept as is in any quoting.
-            buf = buf ESC ((nx == "v") ? "v" : "z")
-            if (nx == "v" || nx == "z") i++
+            # A carried expansion belongs to an outer script-building
+            # shell, so inner quotes cannot prove its argv boundary.
+            if (nx == "v") buf = buf ESC "v" ESC "w"
+            else buf = buf ESC ((nx == "w" || nx == "q") ? nx : "z")
+            if (nx == "v" || nx == "w" || nx == "q" || nx == "z") i++
             continue
         }
         if (q == SQ) { if (c == SQ) q = ""; else buf = buf enc(c); continue }
@@ -79,14 +112,20 @@ END {
             continue
         }
         if (q == "" && c == ")" && par == 0 && sd > 0 && skind[sd] != BQ) { pop(); continue }
-        if (c == "$" && nx != "" && index(" \t\r\n", nx) == 0 && !(q == "\"" && nx == "\"")) buf = buf ESC "v"
-        if (q == "" && (c == "*" || c == "?" || (c == "[" && closes(i, "]", 0)) || (c == "{" && closes(i, "}", 1)))) buf = buf ESC "v"
+        if (c == "$" && nx != "" && index(" \t\r\n", nx) == 0 && !(q == "\"" && nx == "\"")) {
+            buf = buf ESC "v"
+            if (splits_parameter(i)) buf = buf ESC "w"
+        }
+        if (q == "" && (c == "*" || c == "?" || (c == "[" && closes(i, "]", 0)) || (c == "{" && closes(i, "}", 1)))) buf = buf ESC "v" ESC "w"
         if (q == "" && c == "(") par++
         if (q == "" && c == ")" && par > 0) par--
-        if (q == "" && (c == SQ || c == "\"")) { q = c; continue }
+        if (q == "" && (c == SQ || c == "\"")) {
+            if (nx == c) buf = buf ESC "q"
+            q = c; continue
+        }
         if (q == "\"" && c == "\"") { q = ""; continue }
         buf = buf (q == "" ? c : enc(c))
     }
     while (sd > 0) pop()
-    printf "%s%s", buf, extra
+    printf "%s", keep_empty_words(buf extra)
 }

@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# apt-mirror.sh - point an Ubuntu root's apt at ONE mirror (issue #843).
+#
+# CI's pass/fail must not hang on the state of an external mirror: on
+# 2026-11-10 the amd64 runners got ~130 kB/s from archive.ubuntu.com and a
+# 404 from a half-synced security.ubuntu.com. CI therefore names the mirror
+# its runners sit next to, and this script applies it wherever Ubuntu
+# packages are installed for a gate:
+#   - dockerfile/Dockerfile.ghostty and dockerfile/Dockerfile.system-real
+#     run it (bind-mounted) before their first `apt-get update`, with the
+#     APT_MIRROR build arg;
+#   - script/test/system-real-entry.sh runs it inside the nested daemon's
+#     copy of the box image (box/dev.ini `image=`), so the box's first
+#     launch still installs everything, only from that mirror.
+#
+# With a mirror, every `URIs:` line of <root>/etc/apt/sources.list.d/
+# ubuntu.sources (the archive pockets AND the security pocket) becomes one
+# apt mirror list (`mirror+file:`, <root>/etc/apt/worktool-mirrors.list):
+# the mirror first, then the file's own URIs in file order (archive then
+# security on amd64, ports on arm), each with a `priority:` so apt keeps
+# that strict order (without priorities apt spreads downloads over the
+# list). A file the mirror cannot serve - a 404 while its index already
+# names a version its pool does not hold yet (2026-11-10, perl
+# 5.40.1-7ubuntu0.4; issue #885) - is fetched from the next source, which
+# apt logs as `Ign:N <mirror> <package>` followed by `Get:N <next source>`;
+# apt checks every file against the index hash, and a file no source
+# serves still fails the install. apt's retries are turned on as well. Without one (absent or empty)
+# nothing is changed, so a local build is exactly what it was. A sources
+# file that cannot be rewritten is a failure, never a silent fall back.
+#
+# --archives DIR (issue #847) keeps apt's downloaded packages in DIR
+# (`Dir::Cache::Archives`) instead of /var/cache/apt/archives, with or
+# without a mirror: CI points the box at a directory it persists between
+# runs, so the box's first launch still runs every apt-get it runs, and
+# only packages apt does not already hold (same version, same hash) are
+# downloaded. DIR must be a plain absolute path.
+#
+# Usage: apt-mirror.sh [--root DIR] [--archives DIR] [MIRROR]
+#        apt-mirror.sh --check MIRROR
+# Exit: 0 done (or nothing to do), 1 the sources file cannot be rewritten,
+#       2 bad arguments or a MIRROR that is not a plain http(s) URL.
+#
+# Self-contained on purpose (plain printf to stderr, no lib/log.sh): the
+# image builds bind-mount this one file, without the rest of the repo.
+
+set -euo pipefail
+
+ROOT=""
+ARCHIVES=""
+CHECK=0
+MIRROR=""
+HAVE_MIRROR=0
+RETRIES=5
+
+_usage() {
+    cat <<'EOF'
+Usage: apt-mirror.sh [--root DIR] [--archives DIR] [MIRROR]
+       apt-mirror.sh --check MIRROR
+Point every URIs line of <root>/etc/apt/sources.list.d/ubuntu.sources at
+MIRROR and turn on apt retries; no MIRROR (or an empty one) changes nothing.
+--archives DIR keeps the packages apt downloads in DIR (a plain absolute path).
+--check only validates MIRROR (a plain http(s) URL).
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --root)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                printf 'apt-mirror.sh: --root requires a path (see --help)\n' >&2
+                exit 2
+            fi
+            ROOT="$2"; shift ;;
+        --archives)
+            # Lands in an apt.conf string and a Dockerfile line.
+            if [[ $# -lt 2 || ! "$2" =~ ^/[A-Za-z0-9._/-]*$ ]]; then
+                printf 'apt-mirror.sh: --archives requires a plain absolute path (see --help)\n' >&2
+                exit 2
+            fi
+            ARCHIVES="${2%/}/"; shift ;;
+        --check) CHECK=1 ;;
+        -h|--help) _usage; exit 0 ;;
+        -*) printf "apt-mirror.sh: unknown option '%s' (see --help)\n" "$1" >&2; exit 2 ;;
+        *)
+            if [[ "${HAVE_MIRROR}" == 1 ]]; then
+                printf "apt-mirror.sh: unexpected argument '%s' (see --help)\n" "$1" >&2
+                exit 2
+            fi
+            MIRROR="$1"; HAVE_MIRROR=1 ;;
+    esac
+    shift
+done
+
+# The value lands in a Dockerfile line and a sed replacement: allow only a
+# scheme, a host and a path without spaces, quotes, `|`, `\`, `&` or `$`.
+_valid_mirror() {
+    [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/%+-]*)?$ ]]
+}
+
+if [[ "${CHECK}" == 1 ]]; then
+    if [[ -z "${MIRROR}" ]] || ! _valid_mirror "${MIRROR}"; then
+        printf "apt-mirror.sh: not a plain http(s) mirror URL: '%s'\n" "${MIRROR}" >&2
+        exit 2
+    fi
+    exit 0
+fi
+
+[[ -n "${MIRROR}" || -n "${ARCHIVES}" ]] || exit 0
+
+SOURCES="${ROOT}/etc/apt/sources.list.d/ubuntu.sources"
+CONF="${ROOT}/etc/apt/apt.conf.d/80worktool-ci"
+# Where apt reads the list at run time (inside the root), and on disk here.
+LIST_PATH="/etc/apt/worktool-mirrors.list"
+LIST="${ROOT}${LIST_PATH}"
+_conf=""
+
+if [[ -n "${MIRROR}" ]]; then
+    if ! _valid_mirror "${MIRROR}"; then
+        printf "apt-mirror.sh: not a plain http(s) mirror URL: '%s'\n" "${MIRROR}" >&2
+        exit 2
+    fi
+    if [[ ! -f "${SOURCES}" ]]; then
+        printf 'apt-mirror.sh: %s not found (not an Ubuntu deb822 root?)\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    if ! grep -q '^URIs:' "${SOURCES}"; then
+        printf 'apt-mirror.sh: %s has no URIs line to rewrite\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    # The file's own sources, each once, in file order (a URIs line may
+    # hold several), the mirror itself left out.
+    _fallback="$(awk -v mirror="${MIRROR}" '
+        /^URIs:/ { for (i = 2; i <= NF; i++) if ($i != mirror && !seen[$i]++) print $i }
+    ' "${SOURCES}")"
+    {
+        printf '%s\tpriority:1\n' "${MIRROR}"
+        _prio=1
+        while IFS= read -r _uri; do
+            [[ -n "${_uri}" ]] || continue
+            _prio=$((_prio + 1))
+            printf '%s\tpriority:%s\n' "${_uri}" "${_prio}"
+        done <<<"${_fallback}"
+    } >"${LIST}"
+    sed -i "s|^URIs:.*|URIs: mirror+file:${LIST_PATH}|" "${SOURCES}"
+    # Every URIs line must now name the mirror list and nothing else.
+    if ! awk -v want="URIs: mirror+file:${LIST_PATH}" '/^URIs:/ && $0 != want { bad = 1 } END { exit bad }' "${SOURCES}"; then
+        printf 'apt-mirror.sh: %s still names another source after the rewrite\n' "${SOURCES}" >&2
+        exit 1
+    fi
+    _conf+="$(printf 'Acquire::Retries "%s";' "${RETRIES}")"$'\n'
+    printf 'apt-mirror.sh: apt sources -> %s, then on a failed fetch %s (mirror list %s, retries %s)\n' \
+        "${MIRROR}" "$(printf '%s' "${_fallback}" | tr '\n' ' ')" "${LIST_PATH}" "${RETRIES}" >&2
+fi
+if [[ -n "${ARCHIVES}" ]]; then
+    _conf+="$(printf 'Dir::Cache::Archives "%s";' "${ARCHIVES}")"$'\n'
+    printf 'apt-mirror.sh: downloaded packages -> %s\n' "${ARCHIVES}" >&2
+fi
+mkdir -p "$(dirname -- "${CONF}")"
+printf '%s' "${_conf}" >"${CONF}"

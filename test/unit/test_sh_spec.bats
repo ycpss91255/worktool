@@ -21,8 +21,9 @@
 #     --build        the test image build only
 #
 # HOW
-#   The REAL script/test/test.sh runs with a FAKE `docker` first on PATH
-#   that records every call (one line per call) and answers as told:
+#   A per-case repo copies the REAL script/test/test.sh and justfiles so
+#   host dispatch state stays private. A FAKE `docker` first on PATH
+#   records every call (one line per call) and answers as told:
 #   exit 0, or exit 1 when the call mentions $FAKE_DOCKER_FAIL_ON. Every
 #   host-side route ends in a docker call (a `docker run` of the in-container
 #   flag, or the DinD runner's `docker build` + `docker run --privileged`), so
@@ -34,15 +35,30 @@
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    TEST_SH="${REPO_ROOT}/script/test/test.sh"
+    # Host dispatch creates state before entering the fake container. Keep
+    # that state in a per-case checkout, away from parallel spec guards.
+    RUNNER_REPO="${BATS_TEST_TMPDIR}/runner"
+    mkdir -p "${RUNNER_REPO}/script/test" "${RUNNER_REPO}/test/helper" \
+        "${RUNNER_REPO}/test/unit" "${RUNNER_REPO}/test/integration" "${RUNNER_REPO}/test/system"
+    cp "${REPO_ROOT}/script/test/test.sh" "${REPO_ROOT}/script/test/justfile.test" \
+        "${RUNNER_REPO}/script/test/"
+    cp "${REPO_ROOT}/justfile" "${RUNNER_REPO}/justfile"
+    cp -R "${REPO_ROOT}/lib" "${RUNNER_REPO}/lib"
+    cp "${REPO_ROOT}/test/helper/common.bash" "${RUNNER_REPO}/test/helper/"
+    cp "${REPO_ROOT}/test/unit/test_sh_spec.bats" "${REPO_ROOT}/test/unit/ci_gate_spec.bats" \
+        "${REPO_ROOT}/test/unit/verify_run_signal_spec.bats" "${RUNNER_REPO}/test/unit/"
+    cp "${REPO_ROOT}/test/integration/ghostty_config_spec.bats" \
+        "${REPO_ROOT}/test/integration/smoke_spec.bats" "${RUNNER_REPO}/test/integration/"
+    cp "${REPO_ROOT}/test/system/real_engine_spec.bats" "${RUNNER_REPO}/test/system/"
+    TEST_SH="${RUNNER_REPO}/script/test/test.sh"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     export FAKE_DOCKER_CALLS="${BATS_TEST_TMPDIR}/docker.calls"
-    export FAKE_GIT_ROOT="${REPO_ROOT}"
+    export FAKE_GIT_ROOT="${RUNNER_REPO}"
     unset FAKE_DOCKER_FAIL_ON
     mkdir -p "${FAKE_BIN}"
     _write_fake_docker
-    # Stub only the host lint listing; its path snapshot is tested below
-    # against a separate real linked worktree.
+    # The copied host fixture has no Git metadata. Stub only its host
+    # listing; commands against dedicated Git fixtures still use real git.
     cat >"${FAKE_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == -C && "$2" == "${FAKE_GIT_ROOT}" && "$3" == ls-files ]]; then
@@ -54,6 +70,26 @@ EOF
     chmod +x "${FAKE_BIN}/docker" "${FAKE_BIN}/git"
     export PATH="${FAKE_BIN}:${PATH}"
     export TEST_IMAGE_PREBUILT=1
+    if [[ "${FAKE_KEEP_LAYOUT_SNAPSHOT:-}" == 1 ]]; then
+        cat >"${FAKE_BIN}/rm" <<'EOF'
+#!/usr/bin/env bash
+# Cleanup mutant: report success without deleting this fixture's snapshot.
+if [[ "$*" == *"${FAKE_GIT_ROOT}/.agents/state/layout-paths."* ]]; then
+    exit 0
+fi
+exec /bin/rm "$@"
+EOF
+        chmod +x "${FAKE_BIN}/rm"
+    fi
+}
+
+teardown() {
+    # Isolation must not hide a broken cleanup behind Bats' tmpdir removal.
+    if [[ -d "${RUNNER_REPO}/.agents/state" ]]; then
+        run find "${RUNNER_REPO}/.agents/state" -type f
+        assert_success
+        assert_output ''
+    fi
 }
 
 _write_fake_docker() {
@@ -87,6 +123,10 @@ if [[ -n "${FAKE_DOCKER_SNAPSHOT:-}" ]]; then
 fi
 if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
     exit 1
+fi
+if [[ -n "${FAKE_DOCKER_OBSERVER:-}" ]]; then
+    bats --formatter tap "${FAKE_DOCKER_OBSERVER}"
+    exit "$?"
 fi
 exit 0
 EOF
@@ -230,6 +270,23 @@ EOF
         --ci-system)"
 }
 
+@test "bare just test, through the real justfiles, runs the seven tiers in order and stops at the first failure (#834)" {
+    local _tier _expected
+    run just --justfile "${RUNNER_REPO}/justfile" --working-directory "${RUNNER_REPO}" test
+    assert_success
+    assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
+    # Fail each tier in turn: every tier before it ran, none after it did,
+    # and the failure reaches the caller as a non-zero exit.
+    for _tier in --ci-lint --ci-unit --ci-matrix --ci-integration --ci-system --ci-acceptance system-real-entry.sh; do
+        rm -f "${FAKE_DOCKER_CALLS}"
+        _expected="$(sed "/^${_tier}\$/q" <<<"${EVERYTHING_IN_ORDER}")"
+        FAKE_DOCKER_FAIL_ON="${_tier}" run just --justfile "${RUNNER_REPO}/justfile" \
+            --working-directory "${RUNNER_REPO}" test
+        assert_failure 1
+        assert_equal "$(_dispatched)" "${_expected}"
+    done
+}
+
 @test "test.sh with no flag stops when lint fails: no tier runs" {
     FAKE_DOCKER_FAIL_ON=--ci-lint run "${TEST_SH}"
     assert_failure
@@ -292,11 +349,84 @@ EOF
 # issue #181: bench.sh waits up to 120 s (not 60 s) for a quiet host when
 # CI is set; the real-engine gate runs INSIDE the runner, so CI must reach
 # it. `-e CI` without a value passes the host's CI through only when set.
+@test "prebuilt system-real and ghostty images are used as loaded, never rebuilt" {
+    SYSTEM_REAL_IMAGE_PREBUILT=1 GHOSTTY_IMAGE_PREBUILT=1 run "${TEST_SH}" --integration --system-real
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-integration --ci-integration-ghostty system-real-entry.sh)"
+    run cat "${FAKE_DOCKER_CALLS}"
+    refute_line --regexp '^docker build '
+}
+
 @test "test.sh --system-real passes CI through to the DinD runner (-e CI)" {
     CI=true run "${TEST_SH}" --system-real
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp '^docker run --rm --privileged -e CI .* \./script/test/system-real-entry\.sh$'
+}
+
+# issue #843: CI picks the box's apt mirror (WORKTOOL_APT_MIRROR); the
+# entry inside the runner applies it, so it must reach the runner. `-e`
+# without a value passes it only when the host has it set.
+@test "test.sh --system-real passes WORKTOOL_APT_MIRROR through to the DinD runner" {
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR .* \./script/test/system-real-entry\.sh$'
+}
+
+# issue #847: CI persists the box's downloaded packages in a host dir
+# (WORKTOOL_APT_CACHE_DIR); it is mounted at a fixed runner path the entry
+# is told about. Unset: no mount, no variable; not absolute: refused.
+@test "test.sh --system-real mounts WORKTOOL_APT_CACHE_DIR into the DinD runner for the box's apt" {
+    local _dir="${BATS_TEST_TMPDIR}/apt-box"
+    mkdir -p "${_dir}"
+    WORKTOOL_APT_CACHE_DIR="${_dir}" run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp "^docker run --rm --privileged -e CI -e WORKTOOL_APT_MIRROR -e WORKTOOL_APT_ARCHIVES=/var/cache/worktool-apt -v ${_dir}:/var/cache/worktool-apt -v .*:/source .* \./script/test/system-real-entry\.sh\$"
+    : >"${FAKE_DOCKER_CALLS}"
+    run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    refute_output --partial 'worktool-apt'
+    WORKTOOL_APT_CACHE_DIR=relative/dir run "${TEST_SH}" --system-real
+    assert_failure 2
+}
+
+# issue #843 follow-up: a run that builds the Ubuntu images itself (the
+# nightly full serial run, a local run) passes the same mirror knob as the
+# CI image builds; empty = the images' own sources.
+@test "test.sh passes WORKTOOL_APT_MIRROR to the ghostty and system-real image builds" {
+    unset SYSTEM_REAL_IMAGE_PREBUILT GHOSTTY_IMAGE_PREBUILT
+    WORKTOOL_APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu/ run "${TEST_SH}" --integration --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build --build-arg APT_MIRROR=http://azure\.archive\.ubuntu\.com/ubuntu/ .*Dockerfile\.ghostty'
+    assert_line --regexp '^docker build --build-arg APT_MIRROR=http://azure\.archive\.ubuntu\.com/ubuntu/ .*Dockerfile\.system-real'
+    unset WORKTOOL_APT_MIRROR
+    : >"${FAKE_DOCKER_CALLS}"
+    run "${TEST_SH}" --system-real
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp '^docker build --build-arg APT_MIRROR= .*Dockerfile\.system-real'
+}
+
+# issue #853: a tier container (root) must never be the one that creates
+# .agents/state, or a later host-side step (lint's path snapshot) cannot
+# write there. Found by the isolation guard (#835) running unit before lint.
+@test "every container launch is preceded by the host creating .agents/state (#853)" {
+    local _fn _body
+    for _fn in _run_in_container _run_ghostty_in_container _run_system_real_in_runner; do
+        _body="$(bash -c 'source "$1"; declare -f "$2"' _ "${TEST_SH}" "${_fn}")"
+        assert [ -n "${_body}" ]
+        run awk '
+            /_host_state_dir/ && !seen_run { ok = 1 }
+            /docker run --rm/ { seen_run = 1; if (!ok) bad = 1 }
+            END { exit (ok && !bad) ? 0 : 1 }' <<<"${_body}"
+        assert_success "${_fn}: _host_state_dir must run before docker run"
+    done
+    run bash -c 'source "$1"; declare -f _host_state_dir' _ "${TEST_SH}"
+    assert_output --partial "mkdir -p \"\${REPO_ROOT}/.agents/state\""
 }
 
 @test "test.sh --build builds the test image and runs no gate" {
@@ -314,7 +444,7 @@ EOF
     run "${TEST_SH}" --unit
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
-    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -v .*:/source( -v .*:ro)? -w /source .* \./script/test/test\.sh --ci-unit$'
+    assert_line --regexp '^docker run --rm -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK -v .*:/source( -v .*:ro)? -w /source .* \./script/test/test\.sh --ci-unit$'
 }
 
 @test "test.sh --unit forwards one spec path to the container gate" {
@@ -373,6 +503,30 @@ _prepare_git_mount_repo() {
     assert_line '1..1'
     assert_line --regexp '^ok 1 test\.sh -h is the same as --help$'
     refute_output --partial 'test.sh --help exits 0'
+}
+
+@test "test.sh --shard I/N forwards to the unit or matrix container and refuses anything else" {
+    run "${TEST_SH}" --unit --shard 2/4
+    assert_success
+    run cat "${FAKE_DOCKER_CALLS}"
+    assert_line --regexp 'test\.sh --ci-unit --shard 2/4$'
+    local _args _msg _argv
+    while IFS='|' read -r _args _msg; do
+        read -r -a _argv <<<"${_args}"
+        run "${TEST_SH}" "${_argv[@]}"
+        assert_failure 2
+        assert_output "test.sh: ${_msg} (see --help)"
+    done <<'CASES'
+--unit --shard 0/4|invalid shard '0/4' (expected I/N with 1 <= I <= N)
+--unit --shard 5/4|invalid shard '5/4' (expected I/N with 1 <= I <= N)
+--unit --shard 1of4|invalid shard '1of4' (expected I/N with 1 <= I <= N)
+--unit --shard|option '--shard' requires a value
+--integration --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --matrix --shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--shard 1/2|option '--shard' requires exactly one of --unit or --matrix
+--unit --shard 1/2 test/unit/log_spec.bats|option '--shard' takes no spec path or --filter
+--unit --shard 1/2 --filter x|option '--shard' takes no spec path or --filter
+CASES
 }
 
 @test "test.sh rejects a spec path from another tier" {
@@ -455,7 +609,7 @@ _prepare_lint_worktree() {
     cp "${TEST_SH}" "${LINT_ROOT}/script/test/test.sh"
     cp "${REPO_ROOT}/script/test/check-script-layout.sh" "${LINT_ROOT}/script/test/"
     mkdir -p "${LINT_ROOT}/lib"
-    cp "${REPO_ROOT}/lib/log.sh" "${LINT_ROOT}/lib/"
+    cp "${REPO_ROOT}/lib/log.sh" "${REPO_ROOT}/lib/test_shard.sh" "${LINT_ROOT}/lib/"
     printf '.agents/state/\n' >"${LINT_ROOT}/.gitignore"
     git -C "${LINT_ROOT}" init -q
     git -C "${LINT_ROOT}" add .
@@ -559,4 +713,169 @@ EOF
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_output --partial '-e WORKTOOL_STRESS'
+}
+
+# issue #861: the bats version every runner image ships is pinned and the
+# same. bats before 1.14 prints `1..0` and exits 0 when --filter selects no
+# case, so an unpinned `latest` can turn a filtered run vacuous.
+@test "every bats runner image pins the same bats release, never latest" {
+    local _dockerfile _tags=''
+    for _dockerfile in \
+        dockerfile/Dockerfile.test \
+        dockerfile/Dockerfile.ghostty \
+        dockerfile/Dockerfile.system-real; do
+        run grep -E '^FROM bats/bats:' "${REPO_ROOT}/${_dockerfile}"
+        assert_success
+        assert_output "FROM bats/bats:\${BATS_TAG} AS bats-src"
+        run grep -E '^ARG BATS_TAG=' "${REPO_ROOT}/${_dockerfile}"
+        assert_success
+        assert_output --regexp '^ARG BATS_TAG=[0-9]+\.[0-9]+\.[0-9]+$'
+        _tags+="${output}"$'\n'
+    done
+    assert_equal "$(sort -u <<<"${_tags%$'\n'}" | wc -l)" 1
+}
+
+# Prints file:line of every `run bats ... --filter ...` call (an env prefix,
+# `run` flags and `\` continuation lines allowed) that is followed by
+# assert_success but not by an `assert_line --regexp '^ok ...'` before the
+# next `run` or the end of its @test: such a case reads green when the
+# filter selects nothing. A `bats --count` call is skipped: it prints a
+# number its case asserts. The last line is `scanned <n>`: how many
+# filtered calls it saw.
+_unproved_filters() {
+    awk '
+        BEGIN {
+            q = "\047"
+            env = "[A-Za-z_][A-Za-z_0-9]*=(\"[^\"]*\"|" q "[^" q "]*" q "|[^[:space:]]*)[[:space:]]+"
+            runcmd = "^[[:space:]]*(" env ")*run[[:space:]]"
+            runbats = "^[[:space:]]*(" env ")*run([[:space:]]+-[^[:space:]]+)*[[:space:]]+bats([[:space:]]|$)"
+        }
+        function flush() {
+            if (pending && success && !ok) print where
+            pending = 0; success = 0; ok = 0
+        }
+        FNR == 1 { flush(); cont = 0 }
+        cont {
+            if ($0 ~ /--filter/) filtered = 1
+            if ($0 ~ /--count/) counted = 1
+            if ($0 ~ /\\$/) next
+            cont = 0
+            if (filtered && !counted) { pending = 1; scanned++ }
+            next
+        }
+        /^@test / || /^}/ { flush(); next }
+        $0 ~ runbats {
+            flush()
+            where = FILENAME ":" FNR
+            filtered = ($0 ~ /--filter/)
+            counted = ($0 ~ /--count/)
+            if ($0 ~ /\\$/) { cont = 1; next }
+            if (filtered && !counted) { pending = 1; scanned++ }
+            next
+        }
+        $0 ~ runcmd { flush(); next }
+        /^[[:space:]]*assert_success([[:space:]]|$)/ { success = 1; next }
+        /^[[:space:]]*assert_line --regexp .\^ok / { ok = 1; next }
+        END { flush(); print "scanned " scanned + 0 }
+    ' "$@"
+}
+
+@test "the filtered-run scanner flags a filter that may select nothing and passes a proved one" {
+    local _f="${BATS_TEST_TMPDIR}/x_spec.bats"
+    # Each fixture line starts with `|` so this file itself does not hold
+    # the fixture calls (the sweep below scans it too).
+    sed 's/^|//' >"${_f}" <<'SPEC'
+|@test "vacuous" {
+|    run bats --filter '^a$' x.bats
+|    assert_success
+|}
+|
+|@test "vacuous across lines, quoted env prefix" {
+|    A="b c" run bats \
+|        --filter '^a$' \
+|        x.bats
+|    assert_success
+|}
+|
+|@test "proved" {
+|    run -0 bats --filter '^a$' x.bats
+|    assert_success
+|    assert_line --regexp '^ok [0-9]+ a$'
+|}
+|
+|@test "a failure is not vacuous" {
+|    run bats --filter '^a$' x.bats
+|    assert_failure
+|}
+|
+|@test "no filter" {
+|    run bats x.bats
+|    assert_success
+|}
+|
+|@test "a count is no filtered run" {
+|    run bats --count --filter '^a$' x.bats
+|    assert_success
+|    assert_output 1
+|}
+|
+|@test "a later run ends the filtered call" {
+|    run bats --filter '^a$' x.bats
+|    run true
+|    assert_success
+|}
+SPEC
+    run _unproved_filters "${_f}"
+    assert_success
+    assert_output "$(printf '%s\n' "${_f}:2" "${_f}:7" 'scanned 5')"
+}
+
+# issue #861: every spec that runs bats with --filter directly and expects
+# success also proves at least one case ran (`^ok `). Filters run through
+# test.sh are judged by its gate (zero cases fail there).
+@test "every filtered bats run that expects success proves a case ran" {
+    local -a _specs
+    mapfile -t _specs < <(find "${REPO_ROOT}/test" -path "${REPO_ROOT}/test/fixture" -prune -o -name '*.bats' -print)
+    (( ${#_specs[@]} > 0 )) || fail "no spec found"
+    run _unproved_filters "${_specs[@]}"
+    assert_success
+    [[ "${lines[-1]}" =~ ^scanned\ ([0-9]+)$ ]] || fail "scanner: ${output}"
+    (( BASH_REMATCH[1] >= 5 )) || fail "only ${BASH_REMATCH[1]} filtered bats run(s) found"
+    # Everything above the count line is an unproved filtered run.
+    assert_equal "$(printf '%s\n' "${lines[@]:0:${#lines[@]}-1}")" ''
+}
+
+@test "host dispatch state stays isolated while another spec checks checkout residue" {
+    local guard="${BATS_TEST_TMPDIR}/guard"
+    mkdir -p "${guard}"
+    source "${REPO_ROOT}/test/helper/hook_state.bash"
+    BATS_FILE_TMPDIR="${guard}" hook_state_guard_begin
+    export STATE_GUARD_DIR="${guard}" SOURCE_REPO="${REPO_ROOT}"
+    export FAKE_DOCKER_OBSERVER="${BATS_TEST_TMPDIR}/observer.bats"
+    cat >"${FAKE_DOCKER_OBSERVER}" <<'OBSERVER'
+#!/usr/bin/env bats
+load "/usr/lib/bats/bats-support/load"
+load "/usr/lib/bats/bats-assert/load"
+@test "another spec sees no dispatch state in the checkout" {
+    REPO_ROOT="${SOURCE_REPO}"
+    source "${REPO_ROOT}/test/helper/hook_state.bash"
+    BATS_FILE_TMPDIR="${STATE_GUARD_DIR}"
+    hook_state_guard_end
+}
+OBSERVER
+    # The fake container observes the checkout while lint's real snapshot
+    # is live, before test.sh gets a chance to clean it up. No timing race.
+    run "${TEST_SH}" --lint
+    assert_success
+    assert_output --partial 'ok 1 another spec sees no dispatch state'
+    BATS_FILE_TMPDIR="${guard}" hook_state_guard_end
+}
+
+@test "isolated dispatch fixture still rejects a snapshot cleanup leak" {
+    run env FAKE_KEEP_LAYOUT_SNAPSHOT=1 bats --formatter tap \
+        "${REPO_ROOT}/test/unit/test_sh_spec.bats" \
+        --filter '^test.sh with no flag stops when lint fails: no tier runs$'
+    assert_failure
+    assert_output --partial 'from function `teardown'
+    assert_output --partial '/runner/.agents/state/layout-paths.'
 }

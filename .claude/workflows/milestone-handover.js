@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Sync', detail: 'Sync acceptance worktree with main, gate, push and wait for CI' },
     { title: 'Head', detail: 'Require current-head checks' },
+    { title: 'Full run', detail: 'Require a green full serial run of the exact head' },
     { title: 'Scratch', detail: 'Initialize the per-head scratch directory once' },
     { title: 'Findings', detail: 'Collect all maintainer acceptance findings' },
     { title: 'Review', detail: 'Independent codex review of the whole head' },
@@ -104,6 +105,19 @@ if (!head || head.error || head.sha !== sync.sha || !/^[0-9a-f]{40}$/.test(head.
     (A.milestoneIssue !== undefined && head.milestoneIssue !== A.milestoneIssue) ||
     !checksGreen(head.checks)) {
   return { pr: A.pr, status: 'head-blocked', report: head || 'PR query failed' }
+}
+// #837: nothing is handed over unless the exact head has a green full
+// serial run (Nightly dispatched for that sha). Pending, failed, missing or
+// a run of another sha all refuse the hand-over.
+const FULL_RUN = `./.agents/script/monitor/full-run.sh --repo ${A.repo} --sha ${head.sha}`
+const fullRunRaw = await agent(`${RULES}
+Require a green full serial run of head ${head.sha} (issues #837, #899): both architectures must pass full-serial and isolation, each with a successful actual-checkout SHA verification. Workflow success alone is insufficient; the shared script checks this evidence. In the foreground run \`cd ${sq(A.repoDir)} && ${FULL_RUN} --dispatch --wait 540\` once. Its exit status decides: 0 green, 1 not green (failed, none or query failed), 3 still pending. While it exits 3, run \`cd ${sq(A.repoDir)} && ${FULL_RUN} --wait 540\` again, each call one foreground Bash call, until it exits 0 or 1 or 10800 seconds have passed since the first call. Never Monitor, background or another polling loop.
+Return {state: "green" only when the last call exited 0, "failed" when it exited 1, "pending" when the 10800 seconds ran out, line: the last stdout line verbatim}.`,
+{ label: `${RUN_ID} full-run:`, phase: 'Full run', agentType: 'general-purpose' })
+const fullRun = decode(fullRunRaw)
+if (!fullRun || fullRun.state !== 'green' || typeof fullRun.line !== 'string' ||
+    !fullRun.line.startsWith(`full-run: ${head.sha} completed success run=`)) {
+  return { pr: A.pr, sha: head.sha, status: 'full-run-not-green', report: fullRun || 'Full run query failed' }
 }
 const SCRATCH = `${A.repoDir}/.agents/state/milestone-handover-${A.pr}-${head.sha}`
 const scratchRaw = await agent(`${RULES}

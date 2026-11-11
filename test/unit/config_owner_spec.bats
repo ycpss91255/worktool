@@ -376,6 +376,7 @@ echo "$1"
 EOF
     run bats --filter "${_filter}" "${_tree}/test/unit/config_owner_spec.bats"
     assert_success
+    assert_line --regexp '^ok [0-9]+ structure guard: every script '
 
     cat >"${_tree}/script/test/unrelated.sh" <<'EOF'
 source "${LIB_DIR}/config.sh"

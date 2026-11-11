@@ -1207,6 +1207,15 @@ _ci_jobs_green() {
             printf '%s\t%s\t%s\tcompleted\tsuccess\t%s\n' "${_name}" "${CI_SHA}" "${CI_RUN}" "${_id}" >>"${_out}"
         done < <(_ci_steps)
     done
+    if [[ "${2:-}" != legacy ]]; then
+        grep -vE '^(lint|test-unit|test-system|test-acceptance) \(' "${_out}" >"${_out}.new"
+        {
+            printf 'test-unit-verdict\t%s\t%s\tcompleted\tsuccess\t900\n' "${CI_SHA}" "${CI_RUN}"
+            printf 'lint-system-acceptance (ubuntu-latest)\t%s\t%s\tcompleted\tsuccess\t901\n' "${CI_SHA}" "${CI_RUN}"
+            printf 'lint-system-acceptance (ubuntu-24.04-arm)\t%s\t%s\tcompleted\tsuccess\t902\n' "${CI_SHA}" "${CI_RUN}"
+        } >>"${_out}.new"
+        mv "${_out}.new" "${_out}"
+    fi
 }
 
 # A gh that serves the job list in $1 and, per job id, the timestamped log
@@ -1254,11 +1263,10 @@ _run_ci_item() {
     _run_ci_item 2.1
     assert_success
     refute_output --partial 'fake just'
-    local _n
-    _n="$(_ci_steps | wc -l)"
-    assert_equal "$(printf '%s\n' "${output}" | grep -c '^reused: ')" "$(( _n * 2 ))"
+    # Three matrix legs and real-engine on both runners, plus unit verdict.
+    assert_equal "$(printf '%s\n' "${output}" | grep -c '^reused: ')" 9
     assert_line "reused: test-system-real (ubuntu-24.04-arm) success run=${CI_RUN} job=202"
-    assert_line "reused: lint (ubuntu-latest) success run=${CI_RUN} job=310"
+    assert_line "reused: lint-system-acceptance (ubuntu-latest) success run=${CI_RUN} job=901"
 }
 
 @test "CI mode 2.1: the stage set comes from HOST_STEPS, so a stage without its job fails and is named" {
@@ -1276,9 +1284,9 @@ _run_ci_item() {
     _write_tier_blocks
     _ci_jobs_green "${BATS_TEST_TMPDIR}/all.tsv"
     local _mut
-    for _mut in 's/^\(test-unit (ubuntu-latest)\t.*\t\)success\t/\1failure\t/' \
-                's/^\(lint (ubuntu-24.04-arm)\t.*\t\)success\t/\1skipped\t/' \
-                "s/^\\(test-system (ubuntu-latest)\\t\\)${CI_SHA}/\\1fedcba9876543210fedcba9876543210fedcba98/"; do
+    for _mut in 's/^\(test-unit-verdict\t.*\t\)success\t/\1failure\t/' \
+                's/^\(lint-system-acceptance (ubuntu-24.04-arm)\t.*\t\)success\t/\1skipped\t/' \
+                "s/^\\(lint-system-acceptance (ubuntu-latest)\\t\\)${CI_SHA}/\\1fedcba9876543210fedcba9876543210fedcba98/"; do
         sed "${_mut}" "${BATS_TEST_TMPDIR}/all.tsv" >"${BATS_TEST_TMPDIR}/jobs.tsv"
         _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
         _stub_just_must_not_run
@@ -1377,7 +1385,7 @@ _run_ci_item() {
     ' "${COPY}/.github/workflows/ci.yml" >"${COPY}/ci.new"
     mv "${COPY}/ci.new" "${COPY}/.github/workflows/ci.yml"
     # The old names, all green, are not evidence any more.
-    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv"
+    _ci_jobs_green "${BATS_TEST_TMPDIR}/jobs.tsv" legacy
     _stub_gh_ci "${BATS_TEST_TMPDIR}/jobs.tsv"
     _stub_just_must_not_run
     _run_ci_item 2.1

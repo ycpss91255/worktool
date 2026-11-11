@@ -975,7 +975,10 @@ _dispatch_realbox_item() {
 
 @test "realbox: ownership is claimed before anything is created, and EXIT INT TERM HUP are armed" {
     _stub_distrobox
-    run bash -c '
+    # Parallel workers can inherit ignored SIGINT; Bash cannot arm it then.
+    # Start the subject with the normal disposition before loading its traps.
+    local proof
+    proof="$(cat <<'PROOF'
         source "$1"
         EVIDENCE_ALLOW_REALBOX=1
         _realbox_begin 5.1 || exit 9
@@ -983,7 +986,9 @@ _dispatch_realbox_item() {
         [ "${EVIDENCE_REALBOX_OWNED}" -eq 1 ] && printf "owned=1\n"
         trap -p EXIT INT TERM HUP
         trap - EXIT INT TERM HUP
-    ' _ "${EVIDENCE}"
+PROOF
+)"
+    run env --default-signal=INT bash -c "${proof}" _ "${EVIDENCE}"
     assert_success
     assert_line "preexisting-dev=0"
     assert_line "claim=yes"
@@ -1066,5 +1071,68 @@ STUB
             assert_line 'rc=3'
             refute_line 'rc=1'
         done
+    done
+}
+
+_trap_proof_fixture() {
+    TRAP_REPO="${BATS_TEST_TMPDIR}/trap-repo"
+    mkdir -p "${TRAP_REPO}/script/verify" "${TRAP_REPO}/box" \
+        "${TRAP_REPO}/test/unit" "${TRAP_REPO}/test/helper"
+    cp "${EVIDENCE}" "${TRAP_REPO}/script/verify/evidence.sh"
+    cp -R "${REPO_ROOT}/lib" "${TRAP_REPO}/lib"
+    cp "${REPO_ROOT}/box/dev.ini" "${TRAP_REPO}/box/"
+    cp "${REPO_ROOT}/test/helper/common.bash" "${TRAP_REPO}/test/helper/"
+    cp "${BATS_TEST_FILENAME}" "${TRAP_REPO}/test/unit/verify_evidence_spec.bats"
+}
+
+_run_trap_proof() {
+    # Reproduce the worker's incoming disposition even in a serial test run.
+    run bash -c 'trap "" INT; exec bats --formatter tap --filter "$1" "$2"' _ \
+        '^realbox: ownership is claimed before anything is created, and EXIT INT TERM HUP are armed$' \
+        "${TRAP_REPO}/test/unit/verify_evidence_spec.bats"
+}
+
+@test "realbox trap proof works when its worker inherits ignored SIGINT" {
+    _trap_proof_fixture
+    _run_trap_proof
+    assert_success
+    assert_line --regexp '^ok 1 realbox: ownership is claimed'
+}
+
+@test "realbox trap proof rejects missing INT and a wrong handler despite the signal reset" {
+    _trap_proof_fixture
+    local subject="${TRAP_REPO}/script/verify/evidence.sh" mutation expected
+    for mutation in missing-int wrong-handler; do
+        cp "${EVIDENCE}" "${subject}"
+        case "${mutation}" in
+            missing-int)
+                sed -i "s/trap '_realbox_trap' EXIT INT TERM HUP/trap '_realbox_trap' EXIT TERM HUP/" "${subject}"
+                expected="_realbox_trap' SIGINT" ;;
+            wrong-handler)
+                sed -i "s/trap '_realbox_trap' EXIT INT TERM HUP/trap ':' EXIT INT TERM HUP/" "${subject}"
+                expected="_realbox_trap' EXIT" ;;
+        esac
+        _run_trap_proof
+        assert_failure
+        assert_output --partial "${expected}"
+    done
+}
+
+@test "realbox trap proof rejects a missing ownership flag or claim" {
+    _trap_proof_fixture
+    local subject="${TRAP_REPO}/script/verify/evidence.sh" mutation expected
+    for mutation in missing-flag missing-claim; do
+        cp "${EVIDENCE}" "${subject}"
+        case "${mutation}" in
+            missing-flag)
+                sed -i 's/^    EVIDENCE_REALBOX_OWNED=1$/    EVIDENCE_REALBOX_OWNED=0/' "${subject}"
+                expected='assert_line "owned=1"' ;;
+            missing-claim)
+                sed -i "s/if ! : >\"\${EVIDENCE_REALBOX_CLAIM}\"; then/if ! true; then/" "${subject}"
+                expected='assert_line "claim=yes"' ;;
+        esac
+        _run_trap_proof
+        assert_failure
+        assert_output --partial "${expected}"
     done
 }

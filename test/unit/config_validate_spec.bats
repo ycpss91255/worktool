@@ -20,6 +20,8 @@
 #     give byte-identical stdout and stderr files (cmp) and the same status;
 #     bare, empty and blank are refused (link: warned about and skipped), a
 #     valid value is accepted (link: linked).
+# The judged-key matrix is one generated case per key (issue #859), so the
+# keys run in parallel; together they are the whole matrix.
 
 load "${BATS_TEST_DIRNAME}/../helper/common"
 load "${BATS_TEST_DIRNAME}/../helper/graph"
@@ -158,6 +160,7 @@ _value_matrix() {
     for _r in "$@"; do _of[${_r}]="$(_judges "${_r}")" || return 1; done
     mkdir -p "$(dirname -- "${CONFIG}")"
     while IFS='|' read -r _k _r _v _c; do
+        [[ -z "${JUDGED_KEY:-}" || "${_k}" == "${JUDGED_KEY}" ]] || continue
         [[ -n "${_of[${_r}]+x}" ]] || continue
         while IFS= read -r _s; do
             _p="${BATS_TEST_TMPDIR}/v.${_k}.${_s##*/}"
@@ -191,8 +194,28 @@ _value_matrix() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
-@test "bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted" {
-    _value_matrix "${REPO_ROOT}" "${BATS_FILE_TMPDIR}/judges" enter_config_check home_config_check
+# Run the same fail-closed matrix for one generated key.
+_judge_key() {
+    JUDGED_KEY="$1" _value_matrix "${REPO_ROOT}" "${BATS_FILE_TMPDIR}/judges" \
+        enter_config_check home_config_check
+}
+
+# One case per judged key, named "...: <key> via <reader>" (config_mutation
+# selects the enter_config_check keys by that suffix).
+_KEY_CASE='bare key = empty value: every judged key, every judge, identical bytes; bare, empty and blank refused, valid accepted'
+while IFS='|' read -r _gen_k _gen_r _; do
+    bats_test_function --description "${_KEY_CASE}: ${_gen_k} via ${_gen_r}" -- _judge_key "${_gen_k}"
+done < <(_keys)
+unset _gen_k _gen_r
+
+@test "the judged-key matrix has exactly one generated case per judged key" {
+    local _k _r _ _n
+    while IFS='|' read -r _k _r _; do
+        _n="$(bats --count --filter "^${_KEY_CASE//./\\.}: ${_k//./\\.} via ${_r}\$" "${BATS_TEST_FILENAME}")"
+        [[ "${_n}" -eq 1 ]] || fail "key ${_k}: ${_n} generated case(s), want 1"
+    done < <(_keys)
+    _n="$(bats --count --filter "^${_KEY_CASE//./\\.}: " "${BATS_TEST_FILENAME}")"
+    assert_equal "${_n}" "$(_keys | wc -l)"
 }
 
 @test "bare key = empty value: link, every judge (bare, empty and blank warned about and skipped; a path linked)" {

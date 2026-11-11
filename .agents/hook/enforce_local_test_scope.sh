@@ -10,27 +10,40 @@ hook_bootstrap "enforce-local-test-scope"
 
 # ADR 0014 decision 2: lint plus the touched specs of any tier run locally;
 # a whole tier, the real-engine group and every-tier runs are left to CI.
+# Only literal spec/tier arguments count (#818). Filter/base values stay
+# data when their quoting proves one argv; a splitting value can inject specs.
 _heavy_test() {
-    local _launch="$1" _word _lead
+    local _launch="$1" _word _lead _skip=0 _recipe=0 _value=0
     local -a _encoded=() _words=()
     _lead="$(hook_timeout_lead "${_launch}")"
     _launch="$(_hook_strip_wrappers "${_launch#"${_lead}"}")"
     read -r -a _encoded <<<"${_launch}"
     for _word in "${_encoded[@]}"; do _words+=("$(hook_word "${_word}")"); done
     case "${_words[0]:-}" in
-        bash|sh|*/bash|*/sh) _words=("${_words[@]:1}") ;;
+        bash|sh|*/bash|*/sh) _skip=1 ;;
     esac
-    case "${_words[0]:-}" in
+    case "${_words[_skip]:-}" in
         just|*/just)
-            [[ "${_words[1]:-}" == test ]] || return 1
-            _words=("${_words[@]:2}")
-            # A just test recipe forwards to the test.sh flag of its name.
-            if [[ "${#_words[@]}" -gt 0 && "${_words[0]}" != -* ]]; then
-                _words[0]="--${_words[0]}"
-            fi ;;
-        script/test/test.sh|*/script/test/test.sh) _words=("${_words[@]:1}") ;;
+            [[ "${_words[_skip + 1]:-}" == test ]] || return 1
+            _skip=$((_skip + 2)) _recipe=1 ;;
+        script/test/test.sh|*/script/test/test.sh) _skip=$((_skip + 1)) ;;
         *) return 1 ;;
     esac
+    _encoded=("${_encoded[@]:_skip}")
+    _words=("${_words[@]:_skip}")
+    for _word in "${_encoded[@]}"; do
+        if [[ "${_value}" -eq 1 ]]; then
+            hook_word_has_split_expansion "${_word}" && return 0
+            _value=0
+            continue
+        fi
+        if hook_word_has_expansion "${_word}"; then return 0; fi
+        case "$(hook_word "${_word}")" in --filter|--base) _value=1 ;; esac
+    done
+    # A just test recipe forwards to the test.sh flag of its name.
+    if [[ "${_recipe}" -eq 1 && "${#_words[@]}" -gt 0 && "${_words[0]}" != -* ]]; then
+        _words[0]="--${_words[0]}"
+    fi
     _out_of_scope "${_words[@]}"
 }
 
@@ -68,8 +81,8 @@ main() {
     local _launch
     while IFS= read -r _launch; do
         if _heavy_test "${_launch}"; then
-            hook_block 'A whole tier, the real-engine group and every-tier runs are verified by CI (ci-passed).' \
-                'ADR 0014 decision 2: locally run just test lint plus the specs you touched, in any tier except system-real: just test <tier> <spec...> [--filter REGEX].'
+            hook_block 'A whole tier, the real-engine group, every-tier runs and spec arguments the shell expands (glob, brace, parameter or command substitution) are verified by CI (ci-passed).' \
+                'ADR 0014 decision 2: locally run just test lint plus the specs you touched, written as literal paths, in any tier except system-real: just test <tier> <spec...> [--filter '"'"'REGEX'"'"'].'
         fi
     done < <(hook_subcommands_raw "$(hook_command)")
     hook_allow

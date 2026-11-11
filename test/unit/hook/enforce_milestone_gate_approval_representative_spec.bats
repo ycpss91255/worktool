@@ -17,21 +17,31 @@ setup() {
 @test "unit representative: merge approval behavior crosses the hook interface" {
     run bats --filter '^merge of a milestone-gate PR without an approval is blocked and says what is missing$' "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ merge of a milestone-gate PR without an approval is blocked and says what is missing$'
 }
 
 @test "unit representative: comment body behavior crosses the hook interface" {
     run bats --filter '^an unmarked inline body with the phrase is blocked on every comment path$' "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ an unmarked inline body with the phrase is blocked on every comment path$'
 }
 
+# One cell of the GraphQL product (a [claude]-tagged addComment from -f,
+# which a REST comment would let through): the full product runs in the
+# matrix tier.
 @test "unit representative: GraphQL behavior crosses the hook interface" {
-    run bats --filter '^matrix: tag x GraphQL comment / review mutation x body source - every cell blocks \(these mutations block outright\)$' "${MATRIX_SPEC}"
+    GATE_MATRIX_MUTATION=addComment GATE_MATRIX_TAG=claude GATE_MATRIX_SOURCE=f run bats \
+        --filter '^matrix: tag x GraphQL comment / review mutation x body source - every cell blocks \(these mutations block outright\)$' \
+        "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ matrix: tag x GraphQL comment / review mutation x body source - every cell blocks \(these mutations block outright\)$'
+    assert_line --regexp '^ok 1 matrix: tag x GraphQL '
 }
 
 @test "unit representative: direct HTTP behavior crosses the hook interface" {
     run bats --filter '^httpie --raw BODY \(separate value\) is a write even with GET / HEAD$' "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ httpie --raw BODY \(separate value\) is a write even with GET / HEAD$'
 }
 
 @test "every moved full-product case name exists in the matrix tier" {
@@ -42,7 +52,6 @@ setup() {
         "matrix: every comment-writing operation x body source x tag - untagged blocks, tagged passes"
         "matrix: tag x GraphQL comment / review mutation x body source - every cell blocks (these mutations block outright)"
         "matrix: hook_http_is_write - method x data flag x option spelling x curl -G x tool, full product"
-        "matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked (full product)"
         "matrix: every REST endpoint path x host is recognised as an API endpoint"
         "matrix: tool x GraphQL body - a query reads, a mutation or an unreadable body is a write"
         "matrix: hook_api_endpoint_urls counts every host x path spelling of an API write URL"
@@ -54,14 +63,17 @@ setup() {
         run grep -Fqx -- "@test \"${_name}\" {" "${MATRIX_SPEC}"
         assert_success
     done
-}
-
-@test "approval rejection preserves exit two after evaluation and cleanup" {
-    run bats --filter '^merge of a milestone-gate PR without an approval is blocked and says what is missing$' "${MATRIX_SPEC}"
+    # Generated per class (issue #859): the registration guard above stands
+    # for them, and the product's cases are counted by name.
+    run bats --count --filter '^matrix: tool x method x data flag x REST endpoint class - reads pass, writes are blocked .full product.: ' "${MATRIX_SPEC}"
     assert_success
+    assert_output 4
 }
 
 @test "a merge without -R or a selector still resolves the PR under errexit" {
     run bats --filter '^(without -R the repo comes from gh repo view|a PR URL selector gives both repo and number|a failed repo or PR resolution blocks the merge \(fail closed\))$' "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ without -R the repo comes from gh repo view$'
+    assert_line --regexp '^ok [0-9]+ a PR URL selector gives both repo and number$'
+    assert_line --regexp '^ok [0-9]+ a failed repo or PR resolution blocks the merge \(fail closed\)$'
 }
