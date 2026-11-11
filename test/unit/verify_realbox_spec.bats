@@ -261,7 +261,7 @@ PROBE
 }
 
 @test "5.2: interrupted assembly preserves the caller cache root" {
-    export XDG_CACHE_HOME="${BATS_TEST_TMPDIR}/caller-cache"
+    export "XDG_CACHE_HOME=${BATS_TEST_TMPDIR}/caller-cache"
     mkdir -p "${XDG_CACHE_HOME}/worktool"
     printf 'keep user cache\n' >"${XDG_CACHE_HOME}/worktool/sentinel"
     cp "${XDG_CACHE_HOME}/worktool/sentinel" "${STATE}/sentinel-before"
