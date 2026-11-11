@@ -150,7 +150,7 @@ _trim() {
 
 @test "real assemble: the create request reaching the manager carries name dev, image ubuntu:26.04 and the manifest packages" {
     cd "${REPO_ROOT}"
-    run "${ASSEMBLE}"
+    run env SHELL=/bin/bash "${ASSEMBLE}"
     assert_success
     # distrobox-create's own success line: the real upstream code ran to
     # completion against the fake manager.
@@ -161,6 +161,11 @@ _trim() {
     _create="$(_argv_file_of create)"
     _load_argv "${_create}"
     assert_equal "${ARGV[0]}" "create"
+
+    # #472: real distrobox-create records fish even when the host uses bash.
+    local _shell_i
+    _shell_i="$(_index_of SHELL=fish)"
+    assert_equal "${ARGV[$((_shell_i - 1))]}" "--env"
 
     # Container name: the first --name is docker's (the second one, after the
     # image, is distrobox-init's --name <user>).
