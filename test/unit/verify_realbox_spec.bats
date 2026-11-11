@@ -2955,9 +2955,55 @@ STUB
     [ ! -e "${marker}" ]
 }
 
+# Drive the real timeout deadline only after the target descendant is ready.
+# Other timeout calls keep their original arguments.
+_prepare_ready_timeout() {
+    cat >"${STUBS}/timeout" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+if [[ "$*" != *'just box assemble'* ]]; then
+    exec /usr/bin/timeout "$@"
+fi
+shift 3
+controller="${BASHPID}"
+(
+    limit=$((SECONDS + 8))
+    printf '%s\n' "${BASHPID}" >"${ORPHAN_WATCHER}"
+    while (( SECONDS < limit )); do
+        executable="" caught=0
+        if [[ -r "/proc/${controller}/cmdline" ]]; then
+            IFS= read -r -d '' executable <"/proc/${controller}/cmdline" || :
+        fi
+        if [[ -r "/proc/${controller}/status" ]]; then
+            while read -r key value _; do
+                if [[ "${key}" == SigCgt: ]]; then
+                    if (( (16#${value} & 8192) != 0 )); then caught=1; fi
+                    break
+                fi
+            done <"/proc/${controller}/status"
+        fi
+        if [[ -s "${ORPHAN_PID}" && "${executable}" == /usr/bin/timeout && "${caught}" -eq 1 ]]; then
+            if kill -ALRM "${controller}"; then
+                printf 'injected\n' >"${ORPHAN_TIMEOUT_INJECTED}"
+                exit 0
+            fi
+            exit 1
+        fi
+        sleep 0.01
+    done
+    printf 'no-ready\n' >"${ORPHAN_TIMEOUT_ERROR}"
+) >/dev/null 2>&1 &
+# This is only a fixture safety bound; readiness triggers the actual expiry.
+exec /usr/bin/timeout -k 1 10 "$@"
+STUB
+    chmod +x "${STUBS}/timeout"
+}
+
 @test "timeout cleanup: TERM-ignoring just descendant under CPU load" {
     [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     _prepare_timeout_descendant
+    _prepare_ready_timeout
     interrupt_load_start
     # Keep the supervisor free to run while the assemble shell is contended.
     cat >"${STUBS}/bash" <<'STUB'
@@ -2971,11 +3017,14 @@ STUB
     local attempt failures=0 trials=30 pid ready=0
     export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
     export ORPHAN_TIMEOUT_INJECTED="${STATE}/timeout-injected"
+    export ORPHAN_TIMEOUT_ERROR="${STATE}/timeout-error" ORPHAN_WATCHER="${STATE}/watcher.pid"
     for ((attempt=1; attempt<=trials; attempt++)); do
-        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}" "${ORPHAN_TIMEOUT_INJECTED}"
+        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}" "${ORPHAN_TIMEOUT_INJECTED}" \
+            "${ORPHAN_TIMEOUT_ERROR}" "${ORPHAN_WATCHER}"
         run "${REALBOX}" --allow-real-box 5.1
         if [[ "${status}" -ne 1 || "${output}" != *'just box assemble failed'* ||
             ! -s "${ORPHAN_PID}" || ! -s "${ORPHAN_TIMEOUT_INJECTED}" ||
+            ! -s "${ORPHAN_WATCHER}" || -e "${ORPHAN_TIMEOUT_ERROR}" ||
             "${output}" != *'cleanup-rc=0'* || -e "${ORPHAN_MARKER}" ]]; then
             failures=$((failures + 1))
             printf '# attempt=%s status=%s output=%s\n' "${attempt}" "${status}" "${output}" >&3
@@ -2983,6 +3032,13 @@ STUB
         if [[ -s "${ORPHAN_PID}" ]]; then
             ready=$((ready + 1))
             read -r pid <"${ORPHAN_PID}"
+            if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
+                failures=$((failures + 1))
+                kill -KILL "${pid}"
+            fi
+        fi
+        if [[ -s "${ORPHAN_WATCHER}" ]]; then
+            read -r pid <"${ORPHAN_WATCHER}"
             if kill -0 "${pid}" 2>/dev/null && ! grep -qE '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"; then
                 failures=$((failures + 1))
                 kill -KILL "${pid}"
