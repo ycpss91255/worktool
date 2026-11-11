@@ -541,6 +541,149 @@ prereq-ok
   盒內打 `tmux` 看不到 host 的 session;在 host 的 tmux pane 裡手動
   `distrobox enter dev` 後打 `tmux`,同樣看不到 host 的 session。
 
+### 自動測試驗收
+
+- [ ] 2. 自動測試:七個階段全綠(含 300 ms 進盒延遲 gate)
+  - [ ] 2.1 裸 `just test` 跑完七個階段(依序為 lint、unit、matrix、integration、system、acceptance、system-real);system-real 內盒有 tmux + fish,bench 以 `fish -c exit` 通過 `--max-ms 300`,負向 `--max-ms 1` 會咬
+    - 預期看到資訊(完整入口請預留至少一小時，負載下實測約 65 分鐘（見上方說明）;每層 `required specs OK` 後全部 ok,案例數隨版本增加不釘死)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
+      ```text
+      ./script/verify/gate.sh "$@"
+      ...(stdout：每層的 N 由來源掃描取得，1..N 全部 ok;沒有 not ok，skip 僅允許下列 unit 負載重現例外)
+      ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
+      ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
+      # bench: enter: min=91.1 median=93.8 max=102.0 ms
+      # bench: shell: min=95.2 median=99.7 max=100.3 ms
+      # bench: inbox: min=4.7 median=5.1 max=5.9 ms
+      # bench: [INFO] shell median 99.7 ms within --max-ms 300
+      ok 9 real engine: bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit' --max-ms ENTER_MAX_MS exits 0 (enter-latency gate on fish) and prints the enter, shell and inbox metric lines
+      # bench-gate: [ERROR] shell median 98.4 ms exceeds --max-ms 1
+      ok 10 real engine: bench.sh --box dev --runs 1 --warmup 0 --shell 'fish -c exit' --max-ms 1 exits 1 with the threshold message (the gate bites on a real box)
+      ...(接著重播 stderr，以下省略其他階段的診斷)
+      ./script/test/test.sh
+      [ci] ShellCheck OK
+      （required specs OK 的案例與檔案數直接由 script/test/test.sh 掃描現行 declarations）
+      ...(各層的 `[ci] <tier> bats OK`)
+      [ci] system-real bats OK
+      [system-real] cleanup: containers left in the nested daemon: 0
+      rc=0
+      ```
+      (本項完整擷取整條 `just test` 的 stdout 與 stderr 後，先將 stdout 重播到 stdout，再將 stderr 重播到 stderr，各串流內的內容與順序保留；上例按重播順序列出，不代表執行當下兩串流的交錯順序。`[ci]` 與 `[system-real]` 行屬於 stderr。數字是你機器的實測;判準 = `just test` **自己**回 0,加上 shell median ≤ 300 且三行指標都在。自動測試只證明「盒內有 tmux + fish、進盒 + 起 fish ≤ 300 ms」;「ghostty 開窗 -> 受管 command -> 盒內 fish」整條鏈由 2.3 在 CI 內驗證,實機主觀感受由 5.2 驗)
+    - 依 ADR 0003，若 `just test` 回 1，且完整 system-real TAP 的所有紅燈都只來自上述兩個 bench 案例，每個紅燈都同時帶有 assertion 的 exit 3 與 bench 主機忙碌的未判定診斷，2.1 印出「延遲 gate 未判定、請在閒置時重跑」並回 3，不印 PASSED／FAILED。其他失敗、混合失敗、輸出不完整或無法可靠辨識時，一律回 1；system-real 本身仍將 bench 的 3 當紅燈，CI 不跳過 gate。2.1 分別完整擷取兩個串流，再依上述順序重播供判讀；未判定辨識不依賴 stdout 與 stderr 之間的到達順序。
+    - 唯一 skip 例外：未設 `WORKTOOL_STRESS=1`（未設定或值不是 `1`）時，unit 層只允許以下三個 CPU 負載重現案例以列出的訊息 skip。除此之外，每層都不得有任何 skip；設 `WORKTOOL_STRESS=1` 時，這三個案例也不得 skip。案例名稱與訊息必須完全符合 `lib/test_shard.sh` 的共用豁免清單（整層與分片聯集都使用）。
+
+      | 案例名稱 | skip 訊息（TAP 後綴） |
+      | --- | --- |
+      | `verify_run: HUP under CPU load always finishes before cleanup` | `# skip set WORKTOOL_STRESS=1 to run CPU repro` |
+      | `5.1: group HUP under CPU load finishes before cleanup during assemble and bench` | `# skip set WORKTOOL_STRESS=1 to run CPU repro` |
+      | `timeout cleanup: TERM-ignoring just descendant under CPU load` | `# skip set WORKTOOL_STRESS=1 to run CPU repro` |
+
+      另跑這三個案例時，設定 `WORKTOOL_STRESS=1`，透過 `just` 在 Docker 內執行各自的切片：
+      ```bash
+      WORKTOOL_STRESS=1 just test unit test/unit/verify_run_signal_spec.bats --filter '^verify_run: HUP under CPU load always finishes before cleanup$'
+      WORKTOOL_STRESS=1 just test unit test/unit/verify_realbox_spec.bats --filter '^5\.1: group HUP under CPU load finishes before cleanup during assemble and bench$'
+      WORKTOOL_STRESS=1 just test unit test/unit/verify_realbox_spec.bats --filter '^timeout cleanup: TERM-ignoring just descendant under CPU load$'
+      ```
+      #582 的 Docker amd64 重現：四個 CPU worker 與 assemble shell 固定在同一個允許的 CPU，timeout 監督程序不固定 CPU；沿用 0.2 秒 stub，各跑 30 次。修正前漏印診斷 17/30，修正後 0/30；兩輪 descendant 的 PID 就緒標記皆為 30/30，且沒有存活的 descendant 或延遲寫入。原因是逾時監督程序退出後立即清除 process group，內層 shell 未必來得及印診斷；改由存活的外層在取得監督結果後印出 assemble 失敗訊息。這是產品程式競態，未改逾時長度或清理順序。
+    - 驗收方式
+      ```bash
+      just verify gate 2.1; echo rc=$?
+      ```
+    - CI 模式（#833，#824 第 1 項）：當 CI 在同一個 run 的 gate job 之後執行此項，並以 `WORKTOOL_VERIFY_GATE_RUN`／`_SHA`／`_REPO` 指名該 run；此時 2.1 不再重跑 `just test`，改判讀該 run 中每個架構、裸 `just test` 每個階段（`script/test/test.sh` 的 `HOST_STEPS`）的 gate job：每個都必須恰好一個、`completed`、`success`、屬於該 run 且 head sha 相同；缺少、重複、執行中、skipped、cancelled、失敗或 sha 不符一律失敗（fail closed）。stdout 逐行列出沿用的 job：`reused: <job 名稱> success run=<run> job=<id>`。三個變數只設一部分時回 3（UNAVAILABLE），不會退回本機模式。本機 `just verify gate 2.1` 三者都不設，照常完整執行 `just test`。
+  - [ ] 2.2 TDD 證據:固定十個 sub-issue PR(#152-#156、#165-#169)的描述都有一個非空的 RED 程式碼區塊,且其後另有一個非空的 GREEN 程式碼區塊(只證明「有貼輸出且順序正確」,不判讀內容語意;`red=` / `green=` 是該區塊開頭的行號)
+    - 預期看到資訊(10 行,每行 order=ok;行號依 PR 內容而異)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
+      ```text
+      #152 order=ok red=31 green=51
+      #153 order=ok red=21 green=40
+      #154 order=ok red=27 green=41
+      #155 order=ok red=31 green=49
+      #156 order=ok red=29 green=49
+      #165 order=ok red=25 green=72
+      #166 order=ok red=21 green=58
+      #167 order=ok red=20 green=56
+      #168 order=ok red=25 green=44
+      #169 order=ok red=22 green=47
+      rc=0
+      ```
+      (失敗時的樣子:缺段、區塊是空的或順序錯是 `#N order=BAD ...`,查詢失敗是 `#N evidence=gh-failed`,兩者最後都 `rc=1`。
+      判準是「上面這十個 PR 各有一行、各只有一行 `order=ok`,且 `green` 大於 `red`」,不是「有看到某一行 order=ok」——
+      `script/verify/gate.sh` 就是照這個集合判的:少一個、多一個、重複一個都會被指名並回 `rc=1`。
+      **行的順序也在判準內**:十行全對但其中兩行對調,代表檢查程式跑的是另一份清單,
+      `gate.sh` 會印出實測順序與本文件公佈的順序並回 `rc=1`)
+    - 驗收方式
+      ```bash
+      just verify gate 2.2; echo rc=$?
+      ```
+  - [ ] 2.3 「開窗 -> 進盒 -> fish」整條鏈由 CI 自動驗證(#172):整合層用真的 ghostty 斷言受管區塊解析出的 command;system-real 用 `xvfb-run` 開真視窗,判準是**盒內**留下的標記檔(runner 自己沒有 fish);另有 #434 冷啟動：在尚未啟動的乾淨盒上執行 setup，讀回並在 PTY 終端原樣執行受管命令，以至少兩次變動的進度更新、初始化完成與盒內 fish 輸出判定成功；失敗與 timeout 則由 unit 的 setup 命令入口驗證有界非零結果、原因與復原訊息。並有防卡與假陽性兩個負向測試
+    - 預期看到資訊(`just test` 的 integration 與 system-real 兩段,中間空一行;每段的 tier 輸出先整份收進檔案再 grep,所以「`just test` 失敗」和「grep 一行都沒對到」分得開,rc 反映的是上游 `just test` 的結果)
+      輸出類型：動態示例；編號、數量、SHA、行號與實測值不逐字比對，固定判準依本項說明。
+      ```text
+      ok 38 the ghostty command just box setup writes enters the box directly without starting tmux
+      ok 39 setup then status: status reports the stored decisions, sources and the ghostty block present, no tmux line
+      ok 1 preflight: a real ghostty is on PATH and reports its version
+      ok 2 setup.sh writes a ghostty config that +validate-config accepts
+      ok 5 +show-config follows setup.sh --box work (the box name reaches ghostty)
+      ok 6 #175: the effective command ghostty resolves is an ABSOLUTE distrobox path, not the bare name
+      ok 9 #175r2: a distrobox path holding a newline is refused, because ghostty could not parse what it would write
+      ok 10 #175r1: a distrobox path with spaces and metacharacters survives ghostty and the shell it hands the command to
+      ok 11 after setup.sh --auto-enter no there is no enter command left for ghostty to run
+      ok 12 +validate-config refuses a config ghostty cannot parse (the check bites)
+
+      # chain-cold: changing progress updates=42; setup command entered fish in dev
+      ok 5 ghostty chain cold start (#434): setup-written command reports continuous first-init progress and enters fish
+      ok 12 ghostty chain: the managed block pins gtk-single-instance = false (no D-Bus false positive)
+      # chain: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
+      # chain-in-box: marker mntns=mnt:[1234] == dev container; host=ca83e9d035cd == docker inspect dev hostname
+      ok 13 ghostty chain: a real window runs the managed block's command and leaves a marker INSIDE the box (fish, the box's mount namespace, no tmux)
+      # hang-ready: hang-ready fish=4.2.1 host=ca83e9d035cd
+      # hang: in-box command started, then timed out after 45s (budget 45s, status 124)
+      ok 14 ghostty chain: a command that has STARTED inside the box and never ends FAILS within its budget instead of hanging
+      # single-instance: PRIMARY=up
+      # single-instance: SECOND_RC=0
+      # single-instance: SECOND_ELAPSED=1
+      # single-instance: STARTED_AT_RETURN=1
+      # single-instance: FORWARDED_STARTED=yes
+      # single-instance: FORWARDED_AFTER_RETURN=yes
+      # single-instance: FORWARDED_DELAY_MS=319
+      # single-instance: RUNNING_COMMANDS=2
+      # single-instance: PRIMARY_WRAPPER_ALIVE=yes
+      # single-instance: COMMAND_FINISHED=no
+      ok 15 ghostty chain: with gtk-single-instance on, a forwarded launch exits 0 while the command it asked for has not begun yet (the false positive the guard prevents)
+      # chain-desktop-path: inbox-ok fish=4.2.1 ctrenv=/run/.containerenv mntns=mnt:[1234] tmux=no host=ca83e9d035cd
+      # chain-desktop-path-in-box: marker mntns=mnt:[1234] == dev container; host=ca83e9d035cd == docker inspect dev hostname
+      ok 16 ghostty chain (#175): the absolute distrobox path just box setup writes enters the box from a desktop session's PATH
+      rc=0
+      ```
+      (`host=` 是那一輪盒子的容器 id、`fish=`、`FORWARDED_DELAY_MS=` 與 `SECOND_ELAPSED=` 是實測值,每次都不一樣,不要照字面比 —— 尤其 `SECOND_ELAPSED` 是「第二次啟動花了幾秒」,測試接受的是 0-15,上面印 `1` 只是某一輪的實測(round 11:一輪量到 `0`,照字面比會無故變紅);判準是這些 `ok` 行都在、沒有 `not ok`、`FORWARDED_STARTED` / `FORWARDED_AFTER_RETURN` 是 `yes`、`COMMAND_FINISHED` 是 `no`、整段 `rc=0`。任何一層出現 `not ok`,即使該層 `just test` 回 0 也算失敗;integration 紅掉時不會再跑 system-real。hang 案例只在盒內 ready 標記出現後才接受 `timeout` 的 124,否則算「沒進到盒子」這個不同的失敗;single-instance 案例證明為什麼所有測試設定都明寫 `gtk-single-instance = false`。
+      `script/verify/gate.sh` 判的就是上面這整組,不是「有某一行對到就算數」:integration 與 system-real 的 `ok` 案例分別以 `INTEGRATION_CASES` 與 `SYSTEM_REAL_CASES` 清單為準(以案例敘述比對,不比 `ok` 後面的編號,編號會隨新增案例位移)，清單中的每個案例各出現一次、不能多也不能少，只適用於 pattern 選中的 `ok` 行（含 ghostty）；其餘案例的失敗由 `^not ok` 與 tier rc 擋住;`tmux=no`、`PRIMARY=up`、`SECOND_RC=0`、`STARTED_AT_RETURN=1`、`FORWARDED_STARTED=yes`、`FORWARDED_AFTER_RETURN=yes`、`RUNNING_COMMANDS=2`、`PRIMARY_WRAPPER_ALIVE=yes`、`COMMAND_FINISHED=no` 這些判定值逐字比對,`ctrenv=` 必須是 `/run/.containerenv` 或 `/.dockerenv`，mntns 相等由 bats 案例保證，`gate.sh` 只檢查 `mntns=mnt:[數字]` 格式與字面 `== dev container`；`host=` / `fish=` / `FORWARDED_DELAY_MS=` / budget 秒數這些實測值只比形狀;`SECOND_ELAPSED=` 也是實測值,但本文件公佈了它的範圍(0-15),所以 `gate.sh` 就照 `0-15` 比 —— 只比 `[0-9]+` 的話,`SECOND_ELAPSED=999`(第二次啟動花了十六分鐘才返回,正好是本案例要否證的那件事)也會過;`# hang-ready:` 必須排在 `# hang:` 與 hang 案例之前。新增一個 ghostty 鏈案例時,這份文件的區塊與 `gate.sh` 的清單要一起改)
+    - 驗收方式
+      ```bash
+      just verify gate 2.3; echo rc=$?
+      ```
+    - CI 模式（#833）：同 2.1 的條件下，2.3 不再重跑 integration 與 system-real，改判讀同一個 run 中每個架構的 `test-integration (<runner>)` 與 `test-system-real (<runner>)` job（判準與 2.1 相同，fail closed），再下載這些 job 的 log、去掉時間戳記後，以本機模式相同的區塊檢查（案例集合、判準值、順序、`^not ok`）逐一判讀；stdout 先列 `reused:` 行，再依架構印出各 tier 的區塊。本機模式不變。
+  - [ ] 2.4 驗收程式本身的負向:2.2 的檢查程式會咬錯誤的證據;沒有 `pipefail` 的 pipeline 會漏掉上游失敗(#176 item 7 / item 8 的回歸守門)
+    - 預期看到資訊(前四行 = 檢查程式咬住順序顛倒與空的 RED 區塊;後兩行 = 同一條 pipeline 有無 `pipefail` 的差別)
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
+      ```text
+      order=BAD red=6 green=0
+      wrong-order rc=1
+      order=BAD red=0 green=0
+      empty-red-block rc=1
+      guarded-rc=7
+      unguarded-rc=0
+      rc=0
+      ```
+      (前四行是 `script/verify/gate.sh` 拿 2.2 的檢查程式去跑兩份壞掉的證據:兩次都必須
+      **先** exit 1(拒絕),印出來的判定行才拿去比對。`unguarded-rc=0` 是**刻意留下的
+      反例**,不是本清單還在用的寫法 —— 它就是這一項要示範的那個缺陷:上游 exit 7,
+      整條 pipeline 仍然回 0。`script/verify/` 的每支腳本都不用這種寫法:外部指令的輸出
+      先收進變數或檔案、先判它自己的結束碼再用)
+    - 驗收方式
+      ```bash
+      just verify gate 2.4; echo rc=$?
+      ```
+
 - [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(`script/verify/setup.sh` 每項自建拋棄式 HOME 並在 EXIT / INT / TERM / HUP 清掉,不動你的家目錄)
 
   受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少，連檔尾空白行與最後換行也必須相同。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
