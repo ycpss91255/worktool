@@ -11,6 +11,10 @@ default:
 diagram *args:
     ./script/verify/diagram.sh "$@"
 
+# Check the box namespace interface (args: ITEM, --list, --help).
+ui *args:
+    ./script/verify/ui.sh "$@"
+
 # Check setup and status in a temporary HOME (args: ITEM, --list, --allow-real-box, --help).
 setup *args:
     ./script/verify/setup.sh "$@"

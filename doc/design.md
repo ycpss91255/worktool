@@ -148,13 +148,13 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    難擴充的原因;重複 recipe 名在 `just` 是硬錯誤,`mod?` 是唯一免衝突的機制,
    ADR-00000010)。
 2. **namespace 以動作命名**:`test`(所有 CI 檢查,**含 lint**)、`box`(盒子
-   生命週期)。**不用** `ci` / `cd` 這類描述機制、不描述動作的名字(base
+   生命週期)、`verify`(驗收檢查),另有 `agent`、`worktree`、`job`。**不用** `ci` / `cd` 這類描述機制、不描述動作的名字(base
    ADR-00000011 §2:使用者想的是「跑測試」,不是「跑 CI」);lint 不是 `test` 的頂層
    同儕,而是 `just test lint`。
 3. **min -> max:裸指令跑最大範圍,子 recipe / 選項只收窄**。`just test` 跑 CI 會跑的
    **全部**(lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個
    失敗即停);`just test unit` 只跑單元層;`just box assemble --dry-run` 只印指令、
-   不執行(base ADR-00000011 §3)。
+   不執行(base ADR-00000011 §3)。`just verify` 例外：裸指令只列檢查，不執行驗收。
 4. **justfile 是薄轉發器**:每個 recipe 就是把 `*args` **原樣**傳給對應腳本的一行
    (`just` 不吃 `--flag` 與 `VAR=VALUE`,這正是 base ADR-00000005 捨棄 make 的原因)。
    **所有**參數驗證、usage 文字、選項清單與 `--help` 都住在腳本;justfile **不印**
@@ -162,10 +162,10 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
    「Justfile does not contain recipe `bogus`」(exit 1、什麼都不跑);
    `just box assemble --bogus` 得到的是 `assemble.sh` 自己的
    `assemble.sh: unknown option '--bogus' (see --help)`(exit 2、什麼都不跑)。
-5. **每個 module 都有自己的 `default` 與 `help`(alias `h`)**,並以
+5. **module 有自己的 `default`**,`test` 與 `box` 另有 `help`(alias `h`),並以
    `set working-directory := '../..'` 讓 recipe 一律在 repo 根目錄執行(module 檔住在
    `script/<ns>/`,`just` 預設以 module 檔所在目錄為 cwd)。namespace 層級的說明是
-   `just <ns>` 或 `just <ns> help`;recipe 層級的 `--help` 由 recipe 原樣轉發給腳本
+   `just <ns>` 或支援 help 的 `just <ns> help`;recipe 層級的 `--help` 由 recipe 原樣轉發給腳本
    (base ADR-00000011 §6:`just <ns> --help` 這種帶橫線的名字不會被 `just` 當成
    recipe,所以 namespace 說明走 `help` recipe)。recipe 上方那一行英文註解就是
    `just --list` 顯示的說明,保持一行。
@@ -174,7 +174,11 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 
 ```just
 mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
-mod? box  'script/box/justfile.box'     # Dev box lifecycle: just box assemble [--dry-run] [--file X]  (M3 adds enter / rm)
+mod? box 'script/box/justfile.box'
+mod? verify 'script/verify/justfile.verify'
+mod? agent 'script/agent/justfile.agent'
+mod? worktree '.agents/script/worktree/justfile.worktree'
+mod? job '.agents/script/justfile.job'
 
 # Default: list the namespaces.
 default:
@@ -206,10 +210,17 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 | 指令 | 轉發到 |
 |------|--------|
 | `just box` | 列出 box 的動詞:`@just --justfile '{{source_file()}}' --list` |
-| `just box assemble [args]` | `./script/box/assemble.sh "$@"`(args:`--dry-run`、`--file <manifest>`、`--help`) |
-| `just box help` / `just box h` | `./script/box/assemble.sh --help`(M2 只有 assemble 一個動詞) |
+| `just box assemble [args]` | `./script/box/assemble.sh "$@"` |
+| `just box bench [args]` | `./script/box/bench.sh "$@"` |
+| `just box setup [args]` | `./script/box/setup.sh "$@"` |
+| `just box status [args]` | `./script/box/status.sh "$@"` |
+| `just box enter [args]` | `./script/box/enter.sh "$@"` |
+| `just box help` / `just box h` | 依序呼叫 assemble、bench、setup、status、enter 的 `--help` |
 
-**腳本佈局**(module 檔與它轉發的腳本住在同一個 `script/<ns>/`;`script/ci/` 不再
+**namespace `verify`**：裸 `just verify` 列出可用檢查；`just verify ui [args]` 轉發至
+`./script/verify/ui.sh "$@"`，`just verify diagram [args]` 轉發至 `./script/verify/diagram.sh "$@"`。
+
+**當時的腳本佈局範例**(module 檔與它轉發的腳本住在同一個 `script/<ns>/`;`script/ci/` 不再
 存在,`script/selfcheck.sh` 與 `script/assemble.sh` 搬進 namespace 目錄):
 
 ```text
@@ -250,8 +261,8 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    namespace,附自己的 `justfile.<ns>` 與 `script/<ns>/`)+ **一個 justfile spec
    案例**(`test/unit/justfile_spec.bats`:recipe 存在、`*args` 原樣抵達腳本、壞參數
    由腳本而非 justfile 拒絕)+ **腳本自己擁有 `--help`**(usage、選項驗證、錯誤
-   訊息)。三者缺一不可。例如 M3 的 `enter` / `rm` 就是 `box` namespace 的兩個
-   recipe 加各自的腳本。
+   訊息)。三者缺一不可。例如 M3 的 `enter` 是 `box` namespace 的
+   recipe，並有對應腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
    (lint-system-acceptance、test-matrix、test-integration、test-system-real、
