@@ -553,6 +553,13 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   以該 sha 最新一次 run 判定(較新的失敗蓋過較舊的成功):0 綠燈、1 非綠燈(失敗、沒有
   run、查詢失敗)、2 參數錯誤(含 sha 不是該 repo 的 commit,#865)、3 仍在執行;milestone
   交接(`milestone-handover` 的 Full run 階段)與 release 打 tag 都要求退出碼 0。
+  綠燈另要求兩架構(`ubuntu-latest`、`ubuntu-24.04-arm`)的 `full-serial` 與
+  `isolation` 各恰好一個 job,皆 completed/success,且各有恰好一個成功的
+  `Verify checkout <sha>` 步驟,實際比較 checkout HEAD 與目標 sha(#899)。push/schedule
+  另核對 run headSha;dispatch 的 headSha 是 workflow ref,目標以 checkout 證據核對。
+  最新 run 即使 workflow success,若測試 skipped、缺漏、重複或無 checkout 證據仍是非綠燈;
+  不回退較舊綠燈,`--dispatch` 可重跑。run/job 查詢失敗不綠燈也不自動 dispatch。
+  修復前缺 checkout 證據的舊 run 需重跑。此 monitor 需要 `gh` 與 `jq`。
 
 ### unit 分片與聯集 verdict(#831,ADR-0016)
 

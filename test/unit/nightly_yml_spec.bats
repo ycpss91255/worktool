@@ -188,3 +188,13 @@ _job() {
     refute_line --partial 'PREBUILT'
     refute_line --partial 'docker/build-push-action'
 }
+
+@test "each required test job proves its actual checkout matches the target SHA" {
+    local job
+    for job in full-serial isolation; do
+        run _job "${job}"
+        assert_line "      - name: Verify checkout \${{ inputs.sha || github.sha }}"
+        assert_line "          EXPECTED_SHA: \${{ inputs.sha || github.sha }}"
+        assert_line "        run: test \"\$(git rev-parse HEAD)\" = \"\${EXPECTED_SHA}\""
+    done
+}

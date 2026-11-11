@@ -445,6 +445,15 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能
 
+- 交接前:同步驗收 PR 後取得最新 head SHA,在該 linked worktree 前景執行
+  `.agents/script/monitor/full-run.sh --repo <repo> --sha <PR head SHA> --dispatch --wait 540`;
+  回 3 時繼續以前景 `--wait 540` 查詢,總上限 10800 秒。只有回 0 才繼續 Scratch 與交接;
+  查不到、查詢失敗、SHA 不符、仍 pending 或必要測試未完整成功均拒絕交接(#837、#899)。
+  綠燈要求兩架構(`ubuntu-latest`、`ubuntu-24.04-arm`)的 full-serial/isolation 各一個
+  completed/success job,各有成功的 `Verify checkout <PR head SHA>` 實際 HEAD 比對步驟。
+  workflow success 但 job skipped 不算完整驗證,最新非綠燈也不回退舊綠燈。
+  `milestone-handover` 的 Head -> Full run -> Scratch 順序使用同一個檢查。
+
 - 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
   fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
   實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
@@ -561,5 +570,7 @@ prereq-ok
 
 - 自動:release 前 CI 全綠;tag 只打在有綠燈完整序列執行的 sha 上(#837、ADR-0019):
   `.agents/script/monitor/full-run.sh --repo <repo> --sha <要打 tag 的 sha> --dispatch`
-  回 0 才打 tag。有 release workflow 時,它必須在打 tag 前執行同一個檢查並在非 0 時失敗。
+  回 0 才打 tag。綠燈包含兩架構 full-serial/isolation 各一個成功 job 與實際 checkout
+  sha 的成功驗證;workflow success 但必要 job skipped／缺漏／重複或證據查詢失敗均非綠燈(#899)。
+  有 release workflow 時,它必須在打 tag 前執行同一個檢查並在非 0 時失敗。
 - 人類:全清單通過 + 明確的 RELEASE 同意(唯一需人類同意的 release)。

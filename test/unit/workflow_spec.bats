@@ -3070,7 +3070,8 @@ _handover_replies() {
     jq -e '.result.status == "prepared"' <<<"${output}"
     jq -e '.calls[] | select(.role == "full-run:") | .prompt |
         contains("./.agents/script/monitor/full-run.sh --repo o/r --sha " + ("a" * 40) + " --dispatch") and
-        contains("--wait 540") and contains("10800")' <<<"${output}"
+        contains("--wait 540") and contains("10800") and
+        contains("both architectures") and contains("actual-checkout SHA verification")' <<<"${output}"
     jq -e '[.calls[].phase] | index("Full run") == 2' <<<"${output}"
 }
 
