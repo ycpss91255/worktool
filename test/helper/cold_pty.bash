@@ -74,3 +74,61 @@ _cold_pty_cleanup() {
     fi
     return "${_error}"
 }
+
+# Observe the login process from the runner before typing any input.
+# A unique inherited environment token identifies this enter's shell;
+# docker exec allocates a separate container PTY, so tty numbers cannot.
+_wait_default_login() {
+    local _token="$1" _deadline=$((SECONDS + FIRST_ENTER_TIMEOUT))
+    local _ns _pid _comm
+    while [[ "${SECONDS}" -lt "${_deadline}" ]]; do
+        if _ns="$(_dev_mntns)"; then
+            while read -r _pid _comm; do
+                case "${_comm}" in fish|bash) ;; *) continue ;; esac
+                [[ "$(readlink "/proc/${_pid}/ns/mnt")" == "${_ns}" ]] || continue
+                if ! tr '\0' '\n' <"/proc/${_pid}/environ" \
+                    | grep -qxF "WORKTOOL_COLD_LOGIN_TOKEN=${_token}"; then
+                    continue
+                fi
+                printf 'default-login comm=%s namespace=%s\n' "${_comm}" "${_ns}"
+                [[ "${_comm}" == fish ]] || return 1
+                return 0
+            done < <(ps -eo pid=,comm=)
+        fi
+        sleep 1
+    done
+    echo "default login process did not appear before timeout" >&2
+    return 1
+}
+
+# Keep stdin open but empty until the external process observation passes.
+_cold_default_login() (
+    local _fifo="${HOME}/cold-input" _output="${HOME}/cold-output"
+    local _child _sid='' _rc=0 _token="${BATS_TEST_TMPDIR}/cold-login"
+    mkfifo "${_fifo}"
+    exec 9<>"${_fifo}"
+    WORKTOOL_COLD_LOGIN_TOKEN="${_token}" \
+        setsid timeout -k 5 "${FIRST_ENTER_TIMEOUT}" script -qec "$1" /dev/null \
+        <"${_fifo}" >"${_output}" 2>&1 &
+    _child=$!
+    trap 'exit 1' HUP INT TERM
+    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
+        _cold_pty_cleanup "${_child}" "${_sid}" || exit 1
+    fi; rm -f "${_fifo}"' EXIT
+    local _deadline=$((SECONDS + 10))
+    until _sid="$(_cold_pty_session "${_child}")"; do
+        if (( SECONDS >= _deadline )); then
+            echo "cold PTY session did not appear" >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+    if ! _wait_default_login "${_token}"; then
+        cat "${_output}"
+        return 1
+    fi
+    printf '%s\n' "fish -c 'printf \"cold-fish=%s\\n\" \"\$FISH_VERSION\"; readlink /proc/self/ns/mnt'; exit" >&9
+    wait "${_child}" || _rc=$?
+    cat "${_output}"
+    return "${_rc}"
+)

@@ -555,3 +555,25 @@ EOF
     assert [ ! -e "${HOME}/.cache/worktool/work-init.log" ]
     assert [ ! -e injected ]
 }
+
+@test "cold helper rejects a corrupted setup-written command and cleans up its PTY" {
+    # shellcheck source=test/helper/cold_pty.bash
+    source "${BATS_TEST_DIRNAME}/../helper/cold_pty.bash"
+    _dev_mntns() { readlink /proc/self/ns/mnt; }
+    run just box setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    local _cmd _pid _comm _token="${BATS_TEST_TMPDIR}/cold-login"
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    [[ -n "${_cmd}" ]] || fail 'setup wrote no managed command'
+    # Corrupt the command in isolation: it never reaches the original entry.
+    FIRST_ENTER_TIMEOUT=2 run _cold_default_login "sleep 30; exit 17; ${_cmd}"
+    assert_failure
+    assert [ ! -e "${HOME}/cold-input" ]
+    while read -r _pid _comm; do
+        [[ -r "/proc/${_pid}/environ" ]] || continue
+        if tr '\0' '\n' <"/proc/${_pid}/environ" 2>/dev/null \
+            | grep -qxF "WORKTOOL_COLD_LOGIN_TOKEN=${_token}"; then
+            fail "cold helper left process ${_pid} (${_comm}) alive"
+        fi
+    done < <(ps -eo pid=,comm=)
+}
