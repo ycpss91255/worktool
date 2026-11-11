@@ -183,3 +183,26 @@ unset _gen_k _gen_r
             || fail "link via ${_s}: the path was not linked: $(cat "${_p}.valid.out" "${_p}.valid.err")"
     done < <(_judges link_entries)
 }
+
+@test "a new script that calls a reader is run through the matrix" {
+    local _tree="${BATS_TEST_TMPDIR}/repo" _d="${BATS_TEST_TMPDIR}/judges" _log="${BATS_TEST_TMPDIR}/probe.log"
+    mkdir -p "${_tree}/script/x" "${_tree}/lib"
+    printf '%s\n' 'enter_config_check() { :; }' >"${_tree}/lib/enter.sh"
+    # A judge that accepts every value, and records each state file it saw.
+    cat >"${_tree}/script/x/probe.sh" <<'EOF2'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../lib/enter.sh"
+probe_run() { enter_config_check; head -n 1 "${HOME}/.config/worktool/config" >>"${PROBE_LOG}"; }
+probe_run
+EOF2
+    chmod +x "${_tree}/script/x/probe.sh"
+    _derive_judges "${_tree}" "${_d}"
+    PROBE_LOG="${_log}" run _value_matrix "${_tree}" "${_d}" enter_config_check
+    assert_failure
+    assert_output --partial 'auto-enter via script/x/probe.sh: empty not refused'
+    run cat "${_log}"
+    assert_success
+    assert_output "$(printf '%s\n' auto-enter auto-enter= 'auto-enter=  ' auto-enter=yes)"
+}
+
