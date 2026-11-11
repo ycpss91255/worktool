@@ -2970,11 +2970,13 @@ STUB
     chmod +x "${STUBS}/bash"
     local attempt failures=0 trials=30 pid ready=0
     export ORPHAN_PID="${STATE}/orphan.pid" ORPHAN_MARKER="${STATE}/late"
+    export ORPHAN_TIMEOUT_INJECTED="${STATE}/timeout-injected"
     for ((attempt=1; attempt<=trials; attempt++)); do
-        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}"
+        rm -f "${ORPHAN_PID}" "${ORPHAN_MARKER}" "${ORPHAN_TIMEOUT_INJECTED}"
         run "${REALBOX}" --allow-real-box 5.1
         if [[ "${status}" -ne 1 || "${output}" != *'just box assemble failed'* ||
-            ! -s "${ORPHAN_PID}" || -e "${ORPHAN_MARKER}" ]]; then
+            ! -s "${ORPHAN_PID}" || ! -s "${ORPHAN_TIMEOUT_INJECTED}" ||
+            "${output}" != *'cleanup-rc=0'* || -e "${ORPHAN_MARKER}" ]]; then
             failures=$((failures + 1))
             printf '# attempt=%s status=%s output=%s\n' "${attempt}" "${status}" "${output}" >&3
         fi
