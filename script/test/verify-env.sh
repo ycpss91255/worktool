@@ -15,7 +15,8 @@ if [[ "${HELP}" == 1 ]]; then
 fi
 cd "${REPO_ROOT}"
 just test build
-docker build -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .
+docker build --build-arg "APT_MIRROR=${WORKTOOL_APT_MIRROR:-}" \
+    -t worktool-ghostty:local -f dockerfile/Dockerfile.ghostty .
 docker build -t worktool-verify:local -f dockerfile/Dockerfile.verify .
 mkdir -p .agents/state
 FIXTURE="$(mktemp -d "${REPO_ROOT}/.agents/state/verify-env.XXXXXX")"
