@@ -566,8 +566,10 @@ EOF
     _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
     [[ -n "${_cmd}" ]] || fail 'setup wrote no managed command'
     # Corrupt the command in isolation: it never reaches the original entry.
-    FIRST_ENTER_TIMEOUT=2 run _cold_default_login "sleep 30; exit 17; ${_cmd}"
+    FIRST_ENTER_TIMEOUT=2 run _cold_default_login "printf corrupted-command-started; sleep 30; exit 17; ${_cmd}"
     assert_failure
+    assert_output --partial "corrupted-command-started"
+    assert_output --partial "default login process did not appear before timeout"
     assert [ ! -e "${HOME}/cold-input" ]
     while read -r _pid _comm; do
         [[ -r "/proc/${_pid}/environ" ]] || continue
