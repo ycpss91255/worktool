@@ -60,6 +60,11 @@ EOF
     # = a second container appeared.
     cat >"${BIN}/docker" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${SNAPSHOT_FAULT:-}" == "docker-$1" ]] &&
+    { [[ "${SNAPSHOT_PHASE:-before}" == before ]] || [[ -s "${CALLS}" ]]; }; then
+    printf 'injected inventory failure: docker %s\n' "$1" >&2
+    exit 9
+fi
 case "$1" in
     ps)
         printf 'aaa111\n'
@@ -208,4 +213,68 @@ _iso() {
     run awk '/^  report:$/,0' "${_yml}"
     assert_line '    needs: [decide, full-serial, isolation]'
     assert_line "          RESULT: \${{ (needs.full-serial.result == 'success' && needs.isolation.result == 'success') && 'success' || 'failure' }}"
+}
+
+_assert_snapshot_failure() {
+    local _inventory="$1" _phase
+    for _phase in before after; do
+        rm -f "${CALLS}"
+        SNAPSHOT_FAULT="${_inventory}" SNAPSHOT_PHASE="${_phase}" _iso --seed 42
+        assert_failure 1
+        assert_output --partial 'injected inventory failure'
+        assert_output --partial "cannot take the snapshot ${_phase}"
+        refute_output --partial 'isolation: clean'
+        if [[ "${_phase}" == before ]]; then
+            assert [ ! -e "${CALLS}" ]
+        else
+            assert_equal "$(wc -l <"${CALLS}" | tr -d ' ')" 1
+        fi
+    done
+}
+
+@test "container inventory failure stops before the first or after the current stage" {
+    _assert_snapshot_failure docker-ps
+}
+
+@test "volume inventory failure stops before the first or after the current stage" {
+    _assert_snapshot_failure docker-volume
+}
+
+_fault_inventory_command() {
+    local _command="$1"
+    export REAL_INVENTORY_COMMAND
+    REAL_INVENTORY_COMMAND="$(command -v "${_command}")"
+    cat >"${BIN}/${_command}" <<'EOF'
+#!/usr/bin/env bash
+inventory=git
+if [[ "${0##*/}" == find ]]; then
+    case "$1" in
+        "${HOME}") inventory=home ;;
+        "${TMPDIR}") inventory=tmp ;;
+        *) inventory=specs ;;
+    esac
+fi
+if [[ "${SNAPSHOT_FAULT:-}" == "${inventory}" ]] &&
+    { [[ "${SNAPSHOT_PHASE:-before}" == before ]] || [[ -s "${CALLS}" ]]; }; then
+    printf 'injected inventory failure: %s\n' "${inventory}" >&2
+    exit 9
+fi
+exec "${REAL_INVENTORY_COMMAND}" "$@"
+EOF
+    chmod +x "${BIN}/${_command}"
+}
+
+@test "checkout inventory failure stops before the first or after the current stage" {
+    _fault_inventory_command git
+    _assert_snapshot_failure git
+}
+
+@test "HOME inventory failure stops before the first or after the current stage" {
+    _fault_inventory_command find
+    _assert_snapshot_failure home
+}
+
+@test "TMPDIR inventory failure stops before the first or after the current stage" {
+    _fault_inventory_command find
+    _assert_snapshot_failure tmp
 }

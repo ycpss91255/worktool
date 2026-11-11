@@ -21,8 +21,9 @@
 #     --build        the test image build only
 #
 # HOW
-#   The REAL script/test/test.sh runs with a FAKE `docker` first on PATH
-#   that records every call (one line per call) and answers as told:
+#   A per-case repo copies the REAL script/test/test.sh and justfiles so
+#   host dispatch state stays private. A FAKE `docker` first on PATH
+#   records every call (one line per call) and answers as told:
 #   exit 0, or exit 1 when the call mentions $FAKE_DOCKER_FAIL_ON. Every
 #   host-side route ends in a docker call (a `docker run` of the in-container
 #   flag, or the DinD runner's `docker build` + `docker run --privileged`), so
@@ -34,15 +35,30 @@
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 setup() {
-    TEST_SH="${REPO_ROOT}/script/test/test.sh"
+    # Host dispatch creates state before entering the fake container. Keep
+    # that state in a per-case checkout, away from parallel spec guards.
+    RUNNER_REPO="${BATS_TEST_TMPDIR}/runner"
+    mkdir -p "${RUNNER_REPO}/script/test" "${RUNNER_REPO}/test/helper" \
+        "${RUNNER_REPO}/test/unit" "${RUNNER_REPO}/test/integration" "${RUNNER_REPO}/test/system"
+    cp "${REPO_ROOT}/script/test/test.sh" "${REPO_ROOT}/script/test/justfile.test" \
+        "${RUNNER_REPO}/script/test/"
+    cp "${REPO_ROOT}/justfile" "${RUNNER_REPO}/justfile"
+    cp -R "${REPO_ROOT}/lib" "${RUNNER_REPO}/lib"
+    cp "${REPO_ROOT}/test/helper/common.bash" "${RUNNER_REPO}/test/helper/"
+    cp "${REPO_ROOT}/test/unit/test_sh_spec.bats" "${REPO_ROOT}/test/unit/ci_gate_spec.bats" \
+        "${REPO_ROOT}/test/unit/verify_run_signal_spec.bats" "${RUNNER_REPO}/test/unit/"
+    cp "${REPO_ROOT}/test/integration/ghostty_config_spec.bats" \
+        "${REPO_ROOT}/test/integration/smoke_spec.bats" "${RUNNER_REPO}/test/integration/"
+    cp "${REPO_ROOT}/test/system/real_engine_spec.bats" "${RUNNER_REPO}/test/system/"
+    TEST_SH="${RUNNER_REPO}/script/test/test.sh"
     FAKE_BIN="${BATS_TEST_TMPDIR}/bin"
     export FAKE_DOCKER_CALLS="${BATS_TEST_TMPDIR}/docker.calls"
-    export FAKE_GIT_ROOT="${REPO_ROOT}"
+    export FAKE_GIT_ROOT="${RUNNER_REPO}"
     unset FAKE_DOCKER_FAIL_ON
     mkdir -p "${FAKE_BIN}"
     _write_fake_docker
-    # Stub only the host lint listing; its path snapshot is tested below
-    # against a separate real linked worktree.
+    # The copied host fixture has no Git metadata. Stub only its host
+    # listing; commands against dedicated Git fixtures still use real git.
     cat >"${FAKE_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == -C && "$2" == "${FAKE_GIT_ROOT}" && "$3" == ls-files ]]; then
@@ -54,6 +70,26 @@ EOF
     chmod +x "${FAKE_BIN}/docker" "${FAKE_BIN}/git"
     export PATH="${FAKE_BIN}:${PATH}"
     export TEST_IMAGE_PREBUILT=1
+    if [[ "${FAKE_KEEP_LAYOUT_SNAPSHOT:-}" == 1 ]]; then
+        cat >"${FAKE_BIN}/rm" <<'EOF'
+#!/usr/bin/env bash
+# Cleanup mutant: report success without deleting this fixture's snapshot.
+if [[ "$*" == *"${FAKE_GIT_ROOT}/.agents/state/layout-paths."* ]]; then
+    exit 0
+fi
+exec /bin/rm "$@"
+EOF
+        chmod +x "${FAKE_BIN}/rm"
+    fi
+}
+
+teardown() {
+    # Isolation must not hide a broken cleanup behind Bats' tmpdir removal.
+    if [[ -d "${RUNNER_REPO}/.agents/state" ]]; then
+        run find "${RUNNER_REPO}/.agents/state" -type f
+        assert_success
+        assert_output ''
+    fi
 }
 
 _write_fake_docker() {
@@ -87,6 +123,10 @@ if [[ -n "${FAKE_DOCKER_SNAPSHOT:-}" ]]; then
 fi
 if [[ -n "${FAKE_DOCKER_FAIL_ON:-}" && "$*" == *"${FAKE_DOCKER_FAIL_ON}"* ]]; then
     exit 1
+fi
+if [[ -n "${FAKE_DOCKER_OBSERVER:-}" ]]; then
+    bats --formatter tap "${FAKE_DOCKER_OBSERVER}"
+    exit "$?"
 fi
 exit 0
 EOF
@@ -232,7 +272,7 @@ EOF
 
 @test "bare just test, through the real justfiles, runs the seven tiers in order and stops at the first failure (#834)" {
     local _tier _expected
-    run just --justfile "${REPO_ROOT}/justfile" --working-directory "${REPO_ROOT}" test
+    run just --justfile "${RUNNER_REPO}/justfile" --working-directory "${RUNNER_REPO}" test
     assert_success
     assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
     # Fail each tier in turn: every tier before it ran, none after it did,
@@ -240,8 +280,8 @@ EOF
     for _tier in --ci-lint --ci-unit --ci-matrix --ci-integration --ci-system --ci-acceptance system-real-entry.sh; do
         rm -f "${FAKE_DOCKER_CALLS}"
         _expected="$(sed "/^${_tier}\$/q" <<<"${EVERYTHING_IN_ORDER}")"
-        FAKE_DOCKER_FAIL_ON="${_tier}" run just --justfile "${REPO_ROOT}/justfile" \
-            --working-directory "${REPO_ROOT}" test
+        FAKE_DOCKER_FAIL_ON="${_tier}" run just --justfile "${RUNNER_REPO}/justfile" \
+            --working-directory "${RUNNER_REPO}" test
         assert_failure 1
         assert_equal "$(_dispatched)" "${_expected}"
     done
@@ -803,4 +843,39 @@ SPEC
     (( BASH_REMATCH[1] >= 5 )) || fail "only ${BASH_REMATCH[1]} filtered bats run(s) found"
     # Everything above the count line is an unproved filtered run.
     assert_equal "$(printf '%s\n' "${lines[@]:0:${#lines[@]}-1}")" ''
+}
+
+@test "host dispatch state stays isolated while another spec checks checkout residue" {
+    local guard="${BATS_TEST_TMPDIR}/guard"
+    mkdir -p "${guard}"
+    source "${REPO_ROOT}/test/helper/hook_state.bash"
+    BATS_FILE_TMPDIR="${guard}" hook_state_guard_begin
+    export STATE_GUARD_DIR="${guard}" SOURCE_REPO="${REPO_ROOT}"
+    export FAKE_DOCKER_OBSERVER="${BATS_TEST_TMPDIR}/observer.bats"
+    cat >"${FAKE_DOCKER_OBSERVER}" <<'OBSERVER'
+#!/usr/bin/env bats
+load "/usr/lib/bats/bats-support/load"
+load "/usr/lib/bats/bats-assert/load"
+@test "another spec sees no dispatch state in the checkout" {
+    REPO_ROOT="${SOURCE_REPO}"
+    source "${REPO_ROOT}/test/helper/hook_state.bash"
+    BATS_FILE_TMPDIR="${STATE_GUARD_DIR}"
+    hook_state_guard_end
+}
+OBSERVER
+    # The fake container observes the checkout while lint's real snapshot
+    # is live, before test.sh gets a chance to clean it up. No timing race.
+    run "${TEST_SH}" --lint
+    assert_success
+    assert_output --partial 'ok 1 another spec sees no dispatch state'
+    BATS_FILE_TMPDIR="${guard}" hook_state_guard_end
+}
+
+@test "isolated dispatch fixture still rejects a snapshot cleanup leak" {
+    run env FAKE_KEEP_LAYOUT_SNAPSHOT=1 bats --formatter tap \
+        "${REPO_ROOT}/test/unit/test_sh_spec.bats" \
+        --filter '^test.sh with no flag stops when lint fails: no tier runs$'
+    assert_failure
+    assert_output --partial 'from function `teardown'
+    assert_output --partial '/runner/.agents/state/layout-paths.'
 }

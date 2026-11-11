@@ -118,6 +118,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify checkout ${{ inputs.sha || github.sha }}
+        env:
+          EXPECTED_SHA: ${{ inputs.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
       - name: Install just
         uses: extractions/setup-just@v2
@@ -164,6 +170,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify checkout ${{ inputs.sha || github.sha }}
+        env:
+          EXPECTED_SHA: ${{ inputs.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
       - name: Install just
         uses: extractions/setup-just@v2
