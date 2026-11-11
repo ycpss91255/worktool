@@ -31,3 +31,10 @@ EOF
     assert_output ""
     [[ "${stderr}" == *'unresolved source line'* ]] || fail "missing graph diagnostic: ${stderr}"
 }
+
+@test "source graph follows the manager library through home" {
+    run graph_modules "${REPO_ROOT}" script/box/assemble.sh
+    assert_success
+    assert_line "lib/home.sh"
+    assert_line "lib/distrobox_manager.sh"
+}
