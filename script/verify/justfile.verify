@@ -10,3 +10,7 @@ default:
 # Check the repository diagrams (args: ITEM, --root <repo>, --list, --realbox, --help).
 diagram *args:
     ./script/verify/diagram.sh "$@"
+
+# Check setup and status in a temporary HOME (args: ITEM, --list, --allow-real-box, --help).
+setup *args:
+    ./script/verify/setup.sh "$@"

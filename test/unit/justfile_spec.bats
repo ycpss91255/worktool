@@ -226,6 +226,18 @@ EOF
     assert_line '<4.1>'
 }
 
+@test "verify setup forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/setup.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/setup.sh"
+    _just verify setup --allow-real-box '3.1 with spaces'
+    assert_success
+    assert_line '<--allow-real-box>'
+    assert_line '<3.1 with spaces>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {

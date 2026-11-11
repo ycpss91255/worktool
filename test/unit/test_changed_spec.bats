@@ -272,6 +272,17 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/verify_diagram_spec.bats')"
 }
 
+@test "test.sh --changed maps the setup check to its spec" {
+    mkdir -p "${TEMP_REPO}/script/verify"
+    printf '# setup check\n' >"${TEMP_REPO}/script/verify/setup.sh"
+    printf '@test "setup" { true; }\n' >"${TEMP_REPO}/test/unit/verify_setup_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/verify/setup.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/verify_setup_spec.bats')"
+}
+
 @test "test.sh --changed maps a source file to specs across tiers" {
     mkdir -p "${TEMP_REPO}/script/box" "${TEMP_REPO}/test/integration"
     printf '# setup script\n' >"${TEMP_REPO}/script/box/setup.sh"
