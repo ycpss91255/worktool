@@ -482,6 +482,11 @@ prereq-ok
     一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
     distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
     `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
+    冷啟動(#434、#472):以 host `SHELL=/bin/bash` 建盒,在尚未初始化時
+    執行 setup 實際寫出的 Ghostty 受管命令;送出任何輸入前先觀察預設登入
+    行程為 fish、mount namespace 等於 dev,並驗證首次初始化持續輸出不同的
+    進度、完成訊息與非空紀錄。unit 測試從同一類 setup 寫出的命令驗證
+    失敗及 timeout 有界且顯示診斷和復原方式。
   - host 上已有 tmux server 的情境(issue #179,system-real):runner(host 端)先開
     一個 tmux server,session 名稱就是 `main`(舊命令 `-A` 會附著的那個);(1) 把
     `just box setup` **實際寫出的**受管 command 原樣交給真 ghostty 開窗,由 ghostty 的
