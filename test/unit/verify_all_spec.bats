@@ -228,15 +228,25 @@ _scope_fixture_doc() {
     elif _scope_git rev-parse --verify 'main^{commit}' >/dev/null 2>&1; then
         _main=main
     else
-        skip 'no main ref resolves'
+        fail 'no main ref resolves; PR 157 scope applicability cannot be verified'
     fi
     _head="$(_scope_git rev-parse HEAD)"
-    [[ "${_head}" != "$(_scope_git rev-parse "${_main}")" ]] \
-        || skip 'HEAD is the main ref itself'
-    # This frozen scope belongs to PR 157, not to branches after its merge.
-    if _scope_git cat-file -e "${_main}:script/verify" 2>/dev/null; then
-        skip 'main already contains PR 157 verification'
+    if [[ "${_head}" == "$(_scope_git rev-parse "${_main}")" ]]; then
+        # No real changed path exists on main itself, including the path
+        # the negative case would remove. Assert that fact, never Bats skip.
+        run _scope_git diff --name-only "${_main}...HEAD"
+        assert_success
+        assert_output ''
+        return 0
     fi
+    # This frozen scope belongs to PR 157, not to branches after its merge.
+    # A failed Git query is a failure, not proof of either applicability state.
+    run _scope_git ls-tree -d --name-only "${_main}" -- script/verify
+    assert_success
+    if [[ "${output}" == script/verify ]]; then
+        return 0
+    fi
+    assert_output ''
     _scope="$(_pr157_scope_block "${REPO_ROOT}/doc/acceptance.md")"
     _missing="$(_scope_missing_paths "${REPO_ROOT}" "${_main}" "${_scope}")" || {
         printf 'Paths missing from PR 157 scope:\n%s\n' "${_missing}" >&2
@@ -245,17 +255,27 @@ _scope_fixture_doc() {
 }
 
 @test "acceptance: dropping one real PR 157 scope entry names exactly that path" {
-    local _main _doc="${BATS_TEST_TMPDIR}/acceptance.md" _scope
+    local _main _head _doc="${BATS_TEST_TMPDIR}/acceptance.md" _scope
     if _scope_git rev-parse --verify 'origin/main^{commit}' >/dev/null 2>&1; then
         _main=origin/main
     elif _scope_git rev-parse --verify 'main^{commit}' >/dev/null 2>&1; then
         _main=main
     else
-        skip 'no main ref resolves'
+        fail 'no main ref resolves; PR 157 scope applicability cannot be verified'
     fi
-    if _scope_git cat-file -e "${_main}:script/verify" 2>/dev/null; then
-        skip 'main already contains PR 157 verification'
+    _head="$(_scope_git rev-parse HEAD)"
+    if [[ "${_head}" == "$(_scope_git rev-parse "${_main}")" ]]; then
+        run _scope_git diff --name-only "${_main}...HEAD"
+        assert_success
+        assert_output ''
+        return 0
     fi
+    run _scope_git ls-tree -d --name-only "${_main}" -- script/verify
+    assert_success
+    if [[ "${output}" == script/verify ]]; then
+        return 0
+    fi
+    assert_output ''
     run grep -Fx -- "- \`test/unit/manifest_doc_spec.bats\`" "${REPO_ROOT}/doc/acceptance.md"
     assert_success
     grep -Fxv -- "- \`test/unit/manifest_doc_spec.bats\`" "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
@@ -265,14 +285,17 @@ _scope_fixture_doc() {
     assert_output 'test/unit/manifest_doc_spec.bats'
 }
 
-@test "acceptance: later PR skips PR 157 scope once main contains verification" {
-    local _repo="${BATS_TEST_TMPDIR}/later-pr" _spec
+@test "acceptance: strict unit runs both real scope cases on merged main and later unrelated PRs" {
+    local _repo="${BATS_TEST_TMPDIR}/later-pr" _spec _real_git
     mkdir -p "${_repo}/test/unit" "${_repo}/test/helper" \
-        "${_repo}/script/verify" "${_repo}/doc" "${_repo}/.claude/workflows"
+        "${_repo}/script/verify" "${_repo}/doc" "${_repo}/.claude/workflows" \
+        "${_repo}/script/test" "${_repo}/lib"
     _spec="${_repo}/test/unit/verify_all_spec.bats"
     cp "${BATS_TEST_FILENAME}" "${_spec}"
     cp "${REPO_ROOT}/test/helper/common.bash" "${_repo}/test/helper/"
     cp "${REPO_ROOT}/script/verify/all.sh" "${_repo}/script/verify/"
+    cp "${REPO_ROOT}/script/test/test.sh" "${_repo}/script/test/"
+    cp "${REPO_ROOT}/lib/test_shard.sh" "${REPO_ROOT}/lib/log.sh" "${_repo}/lib/"
     cp "${REPO_ROOT}/doc/acceptance.md" "${_repo}/doc/acceptance.md"
     git -C "${_repo}" init -q -b main
     git -C "${_repo}" config user.name 'Scope test'
@@ -280,15 +303,57 @@ _scope_fixture_doc() {
     git -C "${_repo}" add .
     git -C "${_repo}" commit -qm 'Merge PR 157 acceptance'
     git -C "${_repo}" update-ref refs/remotes/origin/main HEAD
+
+    # Use the real unit runner: Bats itself returns success on a skipped case.
+    WORKTOOL_TEST_JOBS=1 run "${_repo}/script/test/test.sh" --ci-unit \
+        test/unit/verify_all_spec.bats --filter 'every real changed path|dropping one real'
+    assert_success
+    assert_output --partial '[ci] unit bats OK'
+    refute_output --partial '# skip'
+
     git -C "${_repo}" checkout -qb later-pr
     printf 'later PR change\n' >"${_repo}/.claude/workflows/pr-loop.js"
     git -C "${_repo}" add .
     git -C "${_repo}" commit -qm 'Change workflow in a later PR'
-
-    # Exercise the actual scope case against a real post-merge Git history.
-    run bats --formatter tap --filter 'every real changed path' "${_spec}"
+    run git -C "${_repo}" diff --name-only origin/main...HEAD
     assert_success
-    assert_line --regexp '^ok [0-9]+ .*# skip main already contains PR 157 verification$'
+    assert_output '.claude/workflows/pr-loop.js'
+    run _scope_missing_paths "${_repo}" origin/main \
+        "$(_pr157_scope_block "${_repo}/doc/acceptance.md")"
+    assert_failure 1
+    assert_output '.claude/workflows/pr-loop.js'
+
+    WORKTOOL_TEST_JOBS=1 run "${_repo}/script/test/test.sh" --ci-unit \
+        test/unit/verify_all_spec.bats --filter 'every real changed path|dropping one real'
+    assert_success
+    assert_output --partial '[ci] unit bats OK'
+    refute_output --partial '# skip'
+
+    # Unreadable applicability evidence must not become a successful no-op.
+    _real_git="$(command -v git)"
+    mkdir -p "${_repo}/bin"
+    cat >"${_repo}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+case " $* " in
+    *" ls-tree "*) printf 'scope fixture: tree query failed\n' >&2; exit 1 ;;
+esac
+exec "${SCOPE_REAL_GIT}" "$@"
+EOF
+    chmod +x "${_repo}/bin/git"
+    PATH="${_repo}/bin:${PATH}" SCOPE_REAL_GIT="${_real_git}" WORKTOOL_TEST_JOBS=1 \
+        run "${_repo}/script/test/test.sh" --ci-unit \
+        test/unit/verify_all_spec.bats --filter 'every real changed path|dropping one real'
+    assert_failure 1
+    assert_output --partial 'scope fixture: tree query failed'
+    refute_output --partial '# skip'
+
+    git -C "${_repo}" update-ref -d refs/remotes/origin/main
+    git -C "${_repo}" branch -m main merged-acceptance
+    WORKTOOL_TEST_JOBS=1 run "${_repo}/script/test/test.sh" --ci-unit \
+        test/unit/verify_all_spec.bats --filter 'every real changed path|dropping one real'
+    assert_failure 1
+    assert_output --partial 'no main ref resolves; PR 157 scope applicability cannot be verified'
+    refute_output --partial '# skip'
 }
 
 setup() {
