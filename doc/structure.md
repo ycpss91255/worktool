@@ -89,6 +89,7 @@ worktool/
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同；含 Stop 回覆語言檢查 #281)
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
+│   │       ├── apt_origin.mjs    APT origin／proxy 的真 HTTP 測試 fixture
 │   │       ├── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   │       ├── config_race.sh    設定檔並行寫入測試驅動
 │   │       ├── realbox_tool.sh   實機驗收工具替身

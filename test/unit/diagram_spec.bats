@@ -162,6 +162,16 @@ _source_cell() {
         | sed -E 's/&lt;\/mxCell&gt;.*$//'
 }
 
+# XML serialization order is not the flow order: draw.io may append a new
+# cell anywhere. Check the actual directed edges between the stage cells.
+_source_has_edge() {
+    tr -d '\n' < "$1" \
+        | sed 's/&lt;mxCell /\n&/g' \
+        | grep 'edge=&quot;1&quot;' \
+        | grep "source=&quot;$2&quot;" \
+        | grep -q "target=&quot;$3&quot;"
+}
+
 # --- The #163 wording guard (ONE predicate; real diagram and fixtures) -------
 #
 # Both halves are scoped to the f_test cell: what other cells say never
@@ -599,7 +609,7 @@ _write_fixture_wording_moved() {
     run _source_cell "$(_svg flow)" gates
     assert_success
     assert_output --partial "${count}道 gate"
-    local rendered="" source=""
+    local rendered="" source="" previous=""
     for stage in "${stages[@]}"; do
         case "${stage}" in system-real) cell=g_real ;; *) cell="g_${stage}" ;; esac
         run _cell_label_lines "$(_svg flow)" "${cell}"
@@ -610,26 +620,53 @@ _write_fixture_wording_moved() {
         assert_success
         assert_output --partial "value=&quot;${stage}"
         source+="${source:+ }${cell}"
+        if [[ -n "${previous}" ]]; then
+            run _source_has_edge "$(_svg flow)" "${previous}" "${cell}"
+            assert_success
+        fi
+        previous="${cell}"
     done
-    run bash -c 'grep -oE "data-cell-id=\"g_[^\"]+\"" "$1" | sed -E "s/data-cell-id=\"([^\"]+)\"/\1/" | paste -sd " "' _ "$(_svg flow)"
+    run bash -c 'grep -oE "data-cell-id=\"g_[^\"]+\"" "$1" | sed -E "s/data-cell-id=\"([^\"]+)\"/\1/" | LC_ALL=C sort | paste -sd " "' _ "$(_svg flow)"
     assert_success
-    assert_output "${rendered}"
-    run bash -c 'grep -oE "id=&quot;g_[^&]+&quot;" "$1" | sed -E "s/id=&quot;([^&]+)&quot;/\1/" | paste -sd " "' _ "$(_svg flow)"
+    assert_output "$(tr ' ' '\n' <<<"${rendered}" | LC_ALL=C sort | paste -sd ' ')"
+    run bash -c 'grep -oE "id=&quot;g_[^&]+&quot;" "$1" | sed -E "s/id=&quot;([^&]+)&quot;/\1/" | LC_ALL=C sort | paste -sd " "' _ "$(_svg flow)"
     assert_success
-    assert_output "${source}"
+    assert_output "$(tr ' ' '\n' <<<"${source}" | LC_ALL=C sort | paste -sd ' ')"
 }
 
-@test "flow CI architecture labels count every HOST_STEPS stage" {
+@test "flow CI grouped architecture labels count every HOST_STEPS stage" {
     run bash -c 'source "$1"; printf "%s\n" "${#HOST_STEPS[@]}"' \
         _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
-    local count="${output}" cell
+    local -a counts=(零 一 二 三 四 五 六 七 八 九 十)
+    local count="${counts[output]}" cell
+    [[ -n "${count}" ]]
     for cell in ci_amd64 ci_arm64; do
         run _cell_label_lines "$(_svg flow)" "${cell}"
         assert_success
-        assert_line "just test &lt;tier&gt; x ${count}"
+        assert_line "同一組${count}個 tier"
         run _source_cell "$(_svg flow)" "${cell}"
         assert_success
-        assert_output --partial "just test &amp;lt;tier&amp;gt; x ${count}"
+        assert_output --partial "同一組${count}個 tier"
     done
+    cell=ci_matrix
+    run _cell_label_lines "$(_svg flow)" "${cell}"
+    assert_success
+    assert_output --partial "兩架構各跑${count}個 tier"
+    assert_output --partial 'unit 分片'
+    assert_output --partial '其餘依 CI leg 分組'
+    run _source_cell "$(_svg flow)" "${cell}"
+    assert_success
+    assert_output --partial "兩架構各跑${count}個 tier"
+    assert_output --partial 'unit 分片'
+    assert_output --partial '其餘依 CI leg 分組'
+}
+
+@test "flow stage order guard rejects an edge bypassing matrix" {
+    local fixture="${BATS_TEST_TMPDIR}/edge.xml"
+    printf '%s\n' '&lt;mxCell id=&quot;e&quot; edge=&quot;1&quot; source=&quot;g_unit&quot; target=&quot;g_matrix&quot;&gt;' >"${fixture}"
+    run _source_has_edge "${fixture}" g_unit g_matrix
+    assert_success
+    run _source_has_edge "${fixture}" g_unit g_integration
+    assert_failure
 }
