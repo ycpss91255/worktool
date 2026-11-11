@@ -301,7 +301,7 @@ _run_in_container() {
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
     local _layout_paths="" _rc=0
-    local _layout_env=()
+    local _layout_env=() _git_mount=()
     _host_state_dir
     if [[ "${_flag}" == --ci-lint ]]; then
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
@@ -310,9 +310,15 @@ _run_in_container() {
             _die "could not enumerate repository paths for lint"
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    elif [[ -f "${REPO_ROOT}/.git" ]]; then
+        local _git_common_dir
+        _git_common_dir="$(git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+            rev-parse --path-format=absolute --git-common-dir)" \
+            || _die "cannot resolve Git common directory"
+        _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
     docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
-        -v "${REPO_ROOT}:/source" \
+        -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \
         ./script/test/test.sh "${_flag}" "$@" || _rc=$?
