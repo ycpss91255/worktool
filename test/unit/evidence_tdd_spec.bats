@@ -26,3 +26,19 @@ setup() {
     assert_failure 1
     assert_output --partial 'order=BAD'
 }
+
+@test "TDD evidence entry checks requested PRs and fails on query errors" {
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    cat > "${BATS_TEST_TMPDIR}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$3" == 2 ]]; then
+    exit 1
+fi
+printf 'RED\n```text\nnot ok 1\n```\nGREEN\n```text\nok 1\n```\n'
+STUB
+    chmod +x "${BATS_TEST_TMPDIR}/bin/gh"
+    PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run bash "${REPO_ROOT}/doc/evidence/tdd.sh" 1 2
+    assert_failure 1
+    assert_line --partial '#1 order=ok'
+    assert_line '#2 evidence=gh-failed'
+}
