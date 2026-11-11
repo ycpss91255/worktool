@@ -39,7 +39,7 @@ fish(設定留 M5)。
 
 ### 流程
 
-clone -> `just test`(六道 gate,全部在 Docker)-> `just box assemble` -> 進盒
+clone -> `just test`(七道 gate,全部在 Docker)-> `just box assemble` -> 進盒
 (ghostty profile,使用者可選、預設開)-> 日常使用;CI 以 amd64 / arm64 matrix 跑
 同一套 `just test <tier>`,`ci-passed` 彙總。
 
@@ -68,16 +68,18 @@ M1-M17 依序、不可跨越,每個 milestone 之間有人類審核 gate;M1、M2
 justfile 只是薄轉發器,參數驗證與 `--help` 都在腳本(決策與完整對照表見
 [`doc/design.md`](doc/design.md)「決策」)。
 
-裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明。
+裸 `just` 列出 namespaces(`test`、`box`、`verify`)與各自的一行說明。
 
 | 指令 | 說明 |
 |------|------|
-| `just test` | 跑 CI 會跑的**全部**:lint、unit、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
+| `just test` | 跑 CI 會跑的**全部**:lint、unit、matrix、integration、system、acceptance、system-real,依序,遇到第一個失敗即停(`system-real` 最後:docker-in-docker、`--privileged`、慢) |
 | `just test build` | 建置測試映像(選用;gate 會按需自動建) |
 | `just test lint` | ShellCheck gate(Docker 內) |
-| `just test unit` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
+| `just test unit` / `matrix` / `integration` / `system` / `system-real` / `acceptance` | 只跑那一層測試(`integration` 跑兩組:預設組在測試映像內,ghostty 組在 ubuntu:26.04 的 ghostty 映像內,不需顯示器) |
 | `just test selfcheck [--root <repo>]` | 交付自檢(`script/test/selfcheck.sh`) |
 | `just test help`(或 `h`) | 印 `script/test/test.sh` 的 usage |
+| `just verify` | 列出驗收檢查；列清單不執行驗證 |
+| `just verify all` | 依序執行 ui、gate、setup、diagram、evidence；實機驗收須另行執行 |
 | `just box` | 列出 box 的動詞(`assemble`、`bench`、`setup`、`status`、`enter`) |
 | `just box assemble [--dry-run] [--file <manifest>] [--home <路徑>]` | 從清單 assemble dev 盒;`--dry-run` 只印出 distrobox 指令、不執行;`--file` 預設 `box/dev.ini`(例:`just box assemble --dry-run --file box/other.ini`);`--home` 是盒子自己的 HOME,預設 `~/<盒名>-box`(dev 盒 = `~/dev-box`),distrobox 建立容器後不可改 |
 | `just box setup [--auto-enter yes\|no] [--terminal ghostty\|none] [--box <名稱>] [--distrobox <路徑>] [--dry-run]` | 終端自動進盒設定:預設 = 直接進盒(`yes` / 偵測到 ghostty **執行檔** / `dev`;終端跑 `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`,得到盒內 fish,不自動開 tmux、不碰 `~/.tmux.conf`),每個決策印 `[INFO] <key>: <value> (default\|user)`(`terminal` 用預設時還會印偵測依據),寫單一設定檔 `~/.config/worktool/config` 與終端 profile 的受管區塊(wrapper 與 distrobox 都是**已 quote 的絕對路徑**,桌面啟動的終端才找得到;解析不到就拒絕整次執行,或用 `--distrobox` 指定);`--auto-enter no` 還原 host shell 並印出還原了什麼(見 [`doc/enter.md`](doc/enter.md)) |

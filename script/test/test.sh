@@ -962,6 +962,8 @@ lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
 lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
 lib/verify_run.sh|test/unit/verify_gate_spec.bats
 lib/verify_run.sh|test/unit/verify_ui_spec.bats
+script/verify/all.sh|test/unit/verify_all_spec.bats
+script/verify/justfile.verify|test/unit/verify_all_spec.bats
 script/verify/gate.sh|test/unit/verify_gate_spec.bats
 script/verify/justfile.verify|test/unit/verify_gate_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats

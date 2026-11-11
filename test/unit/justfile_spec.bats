@@ -276,6 +276,18 @@ EOF
     assert_line '<2.1>'
 }
 
+@test "verify all forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/all.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/all.sh"
+    _just verify all --example 'value with spaces'
+    assert_success
+    assert_line '<--example>'
+    assert_line '<value with spaces>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {
