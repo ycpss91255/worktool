@@ -38,8 +38,9 @@ function finish_case() {
 function tap_line(    line, number) {
     if ($0 ~ /^1\.\.[0-9]+$/) {
         finish_case()
-        if (plan && (count != plan || failures)) bad = 1
+        if (plan && (count != plan || failures || skipped)) bad = 1
         plan = substr($0, 4) + 0
+        if (!plan) bad = 1
         count = failed = failures = skipped = 0
         return
     }

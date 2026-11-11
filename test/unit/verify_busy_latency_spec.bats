@@ -58,3 +58,21 @@ judge_streams() {
     run judge_streams
     [ "${status}" -eq 1 ]
 }
+
+@test "rejects a skipped case in an earlier TAP plan" {
+    local previous="${BATS_TEST_TMPDIR}/previous.tap"
+    printf '%s\n' '1..1' 'ok 1 unavailable case # skip' >"${previous}"
+    cat "${tap}" >>"${previous}"
+    mv "${previous}" "${tap}"
+    run judge_streams
+    [ "${status}" -eq 1 ]
+}
+
+@test "rejects an empty earlier TAP plan" {
+    local previous="${BATS_TEST_TMPDIR}/previous.tap"
+    printf '%s\n' '1..0' >"${previous}"
+    cat "${tap}" >>"${previous}"
+    mv "${previous}" "${tap}"
+    run judge_streams
+    [ "${status}" -eq 1 ]
+}
