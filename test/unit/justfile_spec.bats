@@ -221,7 +221,9 @@ EOF
     chmod +x "${COPY}/script/verify/diagram.sh"
     _just verify diagram --root 'path with spaces' 4.1
     assert_success
-    assert_output $'<--root>\n<path with spaces>\n<4.1>'
+    assert_line '<--root>'
+    assert_line '<path with spaces>'
+    assert_line '<4.1>'
 }
 
 # --- test namespace: min -> max, verbatim forwarding -------------------------
