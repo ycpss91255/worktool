@@ -541,6 +541,271 @@ prereq-ok
   盒內打 `tmux` 看不到 host 的 session;在 host 的 tmux pane 裡手動
   `distrobox enter dev` 後打 `tmux`,同樣看不到 host 的 session。
 
+- [ ] 3. 進盒設定:user 可選、預設直接進盒、每個決策印 log(`script/verify/setup.sh` 每項自建拋棄式 HOME 並在 EXIT / INT / TERM / HUP 清掉,不動你的家目錄)
+
+  受管檔案是**使用者的**,`just box setup` 只是在裡面租一個區塊。所以**每一個**會寫入或移除受管區塊的項目 —— 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 3.8 / 3.9 / 3.10 / 3.11 / 3.12 / 3.13 —— 都在跑 setup **之前**就先把臨時 HOME 的 ghostty 設定與 `~/.tmux.conf` 種進三行看得出來的使用者內容,並在每一次寫入、改寫、移除之後再查一次:受管區塊以外的內容必須還是那三行、順序不變、一行不多一行不少，連檔尾空白行與最後換行也必須相同。這是 `user-content <時機>: ghostty=intact tmux.conf=intact` 那幾行。少了這個斷言,一個「把整份設定覆寫成受管區塊」的 setup 會讓區塊在、`status` 說 `present`、檔案數與結束碼全對 —— 而使用者的 ghostty 設定已經被刪掉了。3.4 不在名單裡,因為它只驗「被拒絕的輸入」與壞掉的狀態檔,整項從頭到尾不寫也不移除任何受管區塊(它反而要求 HOME 底下一個檔案都沒被建立)。
+
+  PR #232 後不再有 tmux 決策，也不碰 host 的 `~/.tmux.conf`；`tmux.conf=intact` 在所有項目都表示它未被改動。3.7 改驗 distrobox.conf 的隔離區塊；3.8 驗 terminal none 的移除；3.9 改驗 PR #351 的 Ghostty 單區塊搬移。其餘項目保留寫入／移除兩側的使用者內容判準。#178 的五條 setup 路徑單元案例已由 PR #227 交付，新增驗收範圍留在 #231。
+
+  `<repo>` 是 checkout 的絕對路徑；`<D>` 是 distrobox 絕對路徑。受管 command 使用產品的 shell quoting 與預設盒名，來源比對由 `verify_setup_spec.bats` 守住。
+
+  - [ ] 3.1 dry-run 只印決策、不寫檔;受管 command 寫的是**已 quote 的 distrobox 絕對路徑**(#175)
+    - 預期看到資訊
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable <G>)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] dry-run: would write <H>/.config/worktool/config
+      [INFO] dry-run: would write <H>/.config/distrobox/distrobox.conf (managed block: _worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != 'dev' ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v)
+      [INFO] dry-run: would write <H>/.config/ghostty/config (managed block: command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev')
+      rc=0
+      files 2->2
+      user-content after-dry-run: ghostty=intact tmux.conf=intact
+      rc=0
+      ```
+      (第一個 `rc=` 是 `just box setup` 自己的結束碼,最後一行是本項 `echo rc=$?`。files 是整個臨時 HOME 的檔案總數,不只 worktool 設定檔:那兩個是本項在跑 setup 前種下的 ghostty 設定與 `~/.tmux.conf`,dry-run 不得新增任何檔案,也不得改動它們 —— 檔案數看不出「dry-run 把既有檔案重寫了一遍」,`user-content` 那行看得出來。`terminal detected:` 那行說明 ghostty 是怎麼判出來的;`<G>` 是 `script/verify/setup.sh` 自己用 `command -v ghostty` 算出來、再從輸出換掉的,所以 ghostty 裝在哪都對得起來,PATH 上沒有 ghostty 的機器則在跑 setup 前就報 `[UNAVAILABLE]` 並回非 0。上面每一行**內容**都在判準內、且各只能出現一次 —— 結束碼與檔案數看不出「受管 command 退回裸名字」(#175 的回歸)或「某個決策不再印 log」,只有文字看得出來)
+    - 驗收方式
+      ```bash
+      just verify setup 3.1; echo rc=$?
+      ```
+  - [ ] 3.2 寫入後由 status 與檔案全文確認直接進盒、distrobox.conf 隔離區塊；狀態檔由共用 config 介面保存，沒有 tmux 決策（PR #232、#228）
+    - 寫入後還要出現 Ghostty reload 提示；完整文字以 `script/box/setup.sh` 的 `_ghostty_reload_hint` 為來源，由真實產品 control 與移除提示的負例守住。
+    - 預期看到資訊：`command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
+    - 驗收方式
+      ```bash
+      just verify setup 3.2; echo rc=$?
+      ```
+      預期 `rc=0`。狀態檔全文逐行比對；受管區塊必須放進使用者設定，既有內容必須完整保留。`~/.tmux.conf` 僅作為不得被改動的使用者檔案。
+      第二輪透過 `lib/config.sh` 種下 `home=<H>/dev-box`、`home.source=default` 與 `link=.acceptance-user`，並建立 symlink，再跑 setup；原有 home／link 行不變，status 印 `home: <H>/dev-box (default)` 與 `link: <H>/dev-box/.acceptance-user -> <H>/.acceptance-user (linked)`（PR #228）。盒子預設獨立 HOME 是 `~/dev-box`，建立後固定；使用者設定以連結帶入，不靠共用 host HOME。
+  - [ ] 3.3 `--auto-enter no` 移除 Ghostty 受管 command，保留 distrobox.conf 的 TMUX／TMUX_PANE 隔離區塊（PR #232）
+    - 預期看到資訊：`blocks-before=1`、`blocks=0`、`ghostty: <H>/.config/ghostty/config (managed block: absent)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`。`user-content after-write` 與 `after-removal` 都是 `ghostty=intact tmux.conf=intact`；沒有 tmux 決策或 tmux.conf 移除訊息。
+    - 驗收方式
+      ```bash
+      just verify setup 3.3; echo rc=$?
+      ```
+      預期 `rc=0`；先量區塊確實存在，再判斷移除，並比對使用者內容。
+  - [ ] 3.4 錯誤輸入 exit 2、不建檔；壞掉的 terminal 設定不論 default／user 來源都 exit 1；受管標記損壞或多個區塊時 dry-run 與實際 setup 都拒絕、整個 HOME 不變，status 報 MALFORMED（PR #232、#351）
+    - 預期看到資訊：unknown option `--bogus`、`rc=2`、`files=0`；兩次 `invalid value 'sideways' for terminal (expected ghostty|none)` 與 `rc=1`。逐檔印 `malformed-refused=distrobox/distrobox.conf unchanged=yes`、`malformed-refused=ghostty/config unchanged=yes`、`malformed-refused=ghostty/config.ghostty unchanged=yes`；各檔 status 是 `managed block: MALFORMED - BEGIN at line 1 has no END; fix or remove the markers, then re-run: just box setup`。
+    - 驗收方式
+      ```bash
+      just verify setup 3.4; echo rc=$?
+      ```
+      預期 `rc=0`；拒絕後以 HOME 全目錄比對確認沒有部分寫入。
+      同檔兩個區塊（distrobox.conf、Ghostty legacy）與 Ghostty 兩檔各一個區塊都必須拒絕，不再折疊成一個；印 `multiple-refused=<檔案> unchanged=yes`。同檔重複區塊 status 報 MALFORMED；跨檔各一個區塊由 setup 的總數驗證拒絕。
+  - [ ] 3.5 PATH 上沒有 distrobox 時 setup 直接拒絕、什麼都不寫;`--distrobox <絕對路徑>` 可以指定要寫進受管 command 的執行檔(#175:桌面啟動的終端找不到 `~/.local/bin`,所以受管 command 絕不能是裸名字)
+    - 預期看到資訊
+      輸出類型：工具版本會影響的輸出（just 診斷行）；其餘為固定判準（替換佔位符後逐字比對）。
+      ```text
+      ./script/box/setup.sh "$@"
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (default)
+      [INFO] terminal detected: ghostty (ghostty executable <H>/bin/ghostty)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [ERROR] distrobox: not found on PATH - the managed command must name an absolute path a terminal launched from the desktop can run (install distrobox, or pass --distrobox <path>); nothing was written
+      error: Recipe `setup` failed on line 45 with exit code 1
+      rc=1
+      files 2->2
+      user-content after-refusal: ghostty=intact tmux.conf=intact
+      rc=0
+      command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'
+      user-content after-write: ghostty=intact tmux.conf=intact
+      rc=0
+      ```
+      (just 診斷屬於**工具版本會影響的輸出**：``error: Recipe `setup` failed on line 45 with exit code 1`` 是示例，大小寫、行號會隨 just 版本與 recipe 位置變動；只比對 recipe 名稱 `setup` 與 `exit code 1`。其餘正規化產品行是固定判準，逐字比對。
+      前半是「PATH 上沒有 distrobox」那一輪:`rc=1`、`files 2->2`(什麼都沒寫);後半是 `--distrobox <絕對路徑>` 那一輪:`rc=0` 與它寫出的受管 command。最後一行是本項 `echo rc=$?`。
+      `files` 的那兩個數字是本項在跑 setup 前種下的 ghostty 設定與 `~/.tmux.conf`:被拒絕的那一輪不得新增檔案,也不得改動既有的 —— 檔案數看不出「拒絕之前先把設定重寫了一遍」,`user-content after-refusal` 看得出來(round 17)。
+      `--distrobox` 那一輪是本項真正寫出受管區塊的地方,所以後面跟著 `user-content after-write`:受管 command 那行寫得再對,也分不出區塊是**放進**使用者的設定裡,還是**取代**了整份設定 —— 把 `enter_block_compose` 退化成「印出區塊、忘掉原檔」後,上面的 `command = ...` 一字不差,而使用者的 `font-size` 已經沒了)
+    - 驗收方式
+      ```bash
+      just verify setup 3.5; echo rc=$?
+      ```
+  - [ ] 3.6 `status` 的 `distrobox:` 那行:除了 3.2 的 runnable,其餘四種狀態(#177)各印一次,證明「受管 command 還跑不跑得起來」在壞掉的情況下也講得出來
+    - 預期看到資訊(四案各兩行,依序:受管絕對路徑被移走、舊版留下的裸名稱、沒有受管紀錄但 PATH 上有、兩者都沒有;每案的第二行是那次 `status` 自己的結束碼與它寫到 stderr 的行數。兩行 `user-content` 夾住本項用來佈置狀態的那一次寫入與那一次移除)
+      輸出類型：固定判準（佔位符以本輪路徑替換後逐字比對；省略號只表示省略內容）。
+      ```text
+      user-content after-write: ghostty=intact tmux.conf=intact
+      distrobox: <H>/bin/distrobox (recorded in a managed block: NOT RUNNABLE - moved or removed; re-run: just box setup)
+      rc=0 stderr=0
+      distrobox: distrobox (recorded in a managed block: a bare name, not an absolute path - a terminal launched from the desktop may not find it; re-run: just box setup)
+      rc=0 stderr=0
+      user-content after-removal: ghostty=intact tmux.conf=intact
+      distrobox: <D> (on PATH; no managed block records one)
+      rc=0 stderr=0
+      distrobox: not found on PATH (install distrobox, then re-run: just box setup)
+      rc=0 stderr=0
+      distinct-states=4/4
+      rc=0
+      ```
+      (這行共五種狀態,runnable 由 3.2 驗,其餘四種在這裡。**上面那四行 `distrobox:` 是逐字判準,而且各綁定它所屬的那一個狀態**:本項問的不是「有沒有一行以 `distrobox:` 開頭」,而是「這個狀態有沒有印出本文件為它公佈的那一行」。這是必要的 —— 把 `status.sh` 的三分支改成單分支、一律回 `runnable`,四案仍然各有一行 `distrobox:`、各自 `rc=0 stderr=0`,舊版判準全綠(round 16)。`distinct-states=4/4` 是同一件事的另一半:四案確實給了四個**不同**的答案。**沒有被端到端涵蓋的是裸名稱那一種**:#175 之後的 `setup` 一律拒絕裸名字,本版沒有任何路徑會寫出它,所以這裡只能手寫一個舊格式的受管區塊 —— 驗的是 `status` 讀到舊設定時講不講得清楚,不是本版產得出這種設定。最後一案的受限 PATH 放的是 `status` 這條路徑**真正會用到的**六個工具(`just` / `sh` / `bash` / `dirname` / `awk` / `grep`)、獨缺 distrobox,所以不管你的 distrobox 裝在 `/usr/bin` 還是 `~/.local/bin`,那一輪都一定找不到 —— 而且找不到的是 distrobox,不是 `status` 自己要用的工具。`rc=` / `stderr=` 是這件事的守門:`stderr=0` 表示那次 `status` 除了 just 的回聲之外一個字都沒往 stderr 寫,少放工具的話那些 `command not found` 會被算進去(實測把 `awk` / `grep` 拿掉是 `stderr=18`),案子直接紅,不會被後面的 `grep` 濾掉當成過關;`script/verify/setup.sh` 在這裡不架任何管線,輸出先落到檔案再讀,所以 `rc=` 一定是那次 `status` 自己的結束碼(round 11)。stderr 收在臨時 HOME 底下,跟著 HOME 一起被清掉。
+      本項不是只讀 `status`:它用一次真的 `setup --distrobox` 寫出受管區塊、再用一次真的 `setup --auto-enter no` 把它移除,才佈置得出第一案與第三案,所以那兩步的兩側各查一次使用者內容(round 17)。少了這兩行,把 `enter_block_compose` 退化成覆寫整份檔案、或把 `enter_block_strip` 退化成清空整份檔案,上面四個 `distrobox:` 文字、四個 `rc=0 stderr=0` 與 `distinct-states=4/4` 全數照舊 —— 第三案的「沒有受管紀錄」對一份被清空的設定同樣成立 —— 而使用者的 ghostty 設定已經被刪掉了。最後一行是本項 `echo rc=$?`)
+    - 驗收方式
+      ```bash
+      just verify setup 3.6; echo rc=$?
+      ```
+  - [ ] 3.7 distrobox.conf 受管區塊清掉進入 dev 時繼承的 `TMUX`／`TMUX_PANE`，保留其他盒子的環境與使用者內容（PR #232）
+    - 預期看到資訊：`distrobox-blocks=1`、`TMUX=unset TMUX_PANE=unset`、`TMUX=host TMUX_PANE=pane`、`user-content after-write: ghostty=intact tmux.conf=intact`。
+    - 驗收方式
+      ```bash
+      just verify setup 3.7; echo rc=$?
+      ```
+      預期 `rc=0`；受管 distrobox.conf 在 shell 中以 dev 與 other 參數執行，前者清掉 host tmux 環境、後者保留。設定檔原有內容不變；host 的 `~/.tmux.conf` 完全不改動。
+  - [ ] 3.8 `--terminal none` 移除 Ghostty profile，保存 none 決策及 distrobox 隔離區塊（PR #232）
+    - 預期看到資訊：`ghostty-blocks-before=1`、`ghostty-blocks=0`、`terminal: none (user)`、`ghostty: <H>/.config/ghostty/config (managed block: absent)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`。寫入與移除後的 `user-content` 都是 `ghostty=intact tmux.conf=intact`；沒有 distrobox 執行檔解析或 terminal 偵測決策。
+    - 驗收方式
+      ```bash
+      just verify setup 3.8; echo rc=$?
+      ```
+      預期 `rc=0`。先量既有區塊，再確認移除及使用者全文不變；不寫終端 command 仍保留 distrobox.conf。
+  - [ ] 3.9 `config.ghostty` 存在時成為目標；legacy config 的單一區塊搬過去，兩個檔案的使用者內容保留（PR #351）
+    - 預期看到資訊：`[INFO] ghostty config: <H>/.config/ghostty/config.ghostty (config.ghostty exists)`、`[INFO] moved: <H>/.config/ghostty/config -> <H>/.config/ghostty/config.ghostty (managed block)`、`legacy-blocks=0 target-blocks=1`。status 分別報新檔 `present`、舊檔 `absent`；目標 command 是 `command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`。
+    - 驗收方式
+      ```bash
+      just verify setup 3.9; echo rc=$?
+      ```
+      預期 `rc=0`。先確認 legacy 確實有一個區塊，再建立新檔、搬移並比較兩份檔案的使用者內容。3.1–3.8 沒有新檔時仍使用 legacy fallback；兩檔驗證與損壞／多區塊拒絕由 3.4 檢查。
+      host Ghostty 低於 1.3.0 且選用新檔時，必須有 `[WARN] ghostty <版本> does not read <H>/.config/ghostty/config.ghostty (requires 1.3.0 or newer)`；host 沒有執行檔就不查版本（PR #351）。
+  - [ ] 3.10 原子寫入失敗不破壞原檔；status 報 absent，重跑補完
+    - 驗收方式：`just verify setup 3.10`。只讓 Ghostty profile 的最後 rename 失敗，worktool 狀態檔與 distrobox.conf 仍照實寫入。錯誤必須恰好一次、setup exit 1；原檔逐 byte 相同，沒有 `config.XXXXXX` 殘留。status exit 0 且報 absent，移除故障後 setup exit 0、區塊 present、使用者內容保留。
+    - 下列判準取自 Docker 內實際執行輸出；路徑以 `<H>`／`<D>`／`<repo>` 正規化。進度與 just 的 recipe echo 不列入判準；本項最後 exit 0。
+      輸出類型：工具版本會影響的輸出（just 診斷行）；其餘為固定判準（替換佔位符後逐字比對）。just 診斷只比對 recipe 名稱 `setup` 與 `exit code 1`，大小寫與行號不列入逐字判準，與 3.5 相同。
+      ```text
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] wrote: <H>/.config/distrobox/distrobox.conf (managed block: _worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != 'dev' ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v)
+      [ERROR] failed to write <H>/.config/ghostty/config
+      error: Recipe `setup` failed on line 45 with exit code 1
+      setup-rc=1
+      original=intact temp-files=0
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      distrobox: <D> (on PATH; no managed block records one)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      [INFO] auto-enter: yes (default)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <D> (absolute path written into the managed command)
+      [INFO] wrote: <H>/.config/worktool/config
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] wrote: <H>/.config/ghostty/config (managed block: command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev')
+      [INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open.
+      setup-rc=0
+      user-content after-recovery: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
+  - [ ] 3.11 既有受管檔案的 0644／0600 模式不變
+    - 驗收方式：`just verify setup 3.11`。各以 legacy `config` 與 `config.ghostty` 當目標，種下使用者內容及 0644／0600，真的寫入 dev、改寫成 second、再以 `--auto-enter no` 移除 Ghostty 區塊；每步以 `stat -c %a` 比較 Ghostty、distrobox.conf 與 worktool 狀態檔。後兩檔在移除操作中仍保留；host tmux.conf 不受管理，每次寫入、改寫與移除後都檢查 `~/.tmux.conf` 的使用者內容。
+    - 下列為 Docker 實跑輸出的判準行（依原順序）；各步 setup／status exit 0，區塊以外的使用者內容保持完整。
+      ```text
+      setup-rc=0
+      mode 644 config after-write: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config after-rewrite: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config after-removal: ghostty=644 distrobox=644 state=644
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 644 config.ghostty after-write: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config.ghostty after-rewrite: ghostty=644 distrobox=644 state=644
+      setup-rc=0
+      mode 644 config.ghostty after-removal: ghostty=644 distrobox=644 state=644
+      ghostty: <H>/.config/ghostty/config.ghostty (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 600 config after-write: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config after-rewrite: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config after-removal: ghostty=600 distrobox=600 state=600
+      ghostty: <H>/.config/ghostty/config (managed block: absent)
+      status-rc=0
+      setup-rc=0
+      mode 600 config.ghostty after-write: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config.ghostty after-rewrite: ghostty=600 distrobox=600 state=600
+      setup-rc=0
+      mode 600 config.ghostty after-removal: ghostty=600 distrobox=600 state=600
+      ghostty: <H>/.config/ghostty/config.ghostty (managed block: absent)
+      status-rc=0
+      ```
+  - [ ] 3.12 已有區塊的 dry-run 移除不寫檔
+    - 驗收方式：`just verify setup 3.12`。先真的寫入一個 Ghostty 區塊，再跑 `--dry-run --auto-enter no`；不是以空檔案的無事可做當作通過。Ghostty、distrobox.conf、worktool 狀態檔均與第一次寫入後逐 byte 相同；status 仍讀到原本的 yes 決策與 present 區塊。host tmux.conf 的使用者內容也不變。
+    - 下列判準取自 Docker 實跑的 dry-run 與其後 status；setup／status／本項皆 exit 0。
+      ```text
+      [INFO] auto-enter: no (user)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (default)
+      [INFO] ghostty config: <H>/.config/ghostty/config (config.ghostty absent; legacy fallback)
+      [INFO] dry-run: would write <H>/.config/worktool/config
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] dry-run: would remove managed block from <H>/.config/ghostty/config
+      setup-rc=0
+      ghostty-blocks-before=1 ghostty-blocks-after=1
+      dry-run-files=identical
+      user-content after-dry-run: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
+  - [ ] 3.13 同決策連跑兩次，受管區塊 unchanged
+    - 驗收方式：`just verify setup 3.13`。兩次真的呼叫同一組 setup 決策，第二次兩個受管區塊都逐行回報 unchanged、各只有一塊，沒有 Ghostty／distrobox.conf 的 wrote 行。比對三份檔案的 bytes 與兩個區塊檔的 inode，證明 unchanged 沒有重新 rename；worktool 狀態檔仍可照正常流程回報 wrote，但內容相同。
+    - 下列判準取自 Docker 實跑的第二次 setup 與 status；setup／status／本項皆 exit 0。
+      ```text
+      [INFO] unchanged: <H>/.config/distrobox/distrobox.conf (managed block already up to date)
+      [INFO] unchanged: <H>/.config/ghostty/config (managed block already up to date)
+      setup-rc=0
+      unchanged-inodes=identical
+      unchanged-files=identical ghostty-blocks=1 distrobox-blocks=1
+      user-content after-unchanged: ghostty=intact tmux.conf=intact
+      config: <H>/.config/worktool/config
+      auto-enter: yes (default)
+      terminal: ghostty (user)
+      box: dev (default)
+      ghostty: <H>/.config/ghostty/config (managed block: present)
+      distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)
+      wrapper: <repo>/script/box/enter.sh (recorded in a managed block: runnable)
+      distrobox: <D> (recorded in a managed block: runnable)
+      link: box HOME not recorded - user config not linked yet (run: just box assemble)
+      home: not recorded (run: just box assemble)
+      status-rc=0
+      ```
+
 ## M4 host bootstrap
 
 - 自動:乾淨環境跑 install.sh 後 docker 與 distrobox 皆存在;再跑一次為 no-op
