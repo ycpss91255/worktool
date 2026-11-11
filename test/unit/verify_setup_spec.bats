@@ -1446,7 +1446,7 @@ _degrade_setup_line() {
             HUP) _expected=129 ;;
         esac
         _record="${BATS_TEST_TMPDIR}/signal-${_signal}"
-        run bash -c "source \"${VERIFY}\"; _item_begin; printf '%s\\n' \"\${ITEM_T}\" >\"${_record}\"; kill -s ${_signal} \$\$; exit 99"
+        run env --default-signal=INT bash -c "source \"${VERIFY}\"; _item_begin; printf '%s\\n' \"\${ITEM_T}\" >\"${_record}\"; kill -s ${_signal} \$\$; exit 99"
         assert_failure "${_expected}"
         assert [ -s "${_record}" ]
         _created="$(cat "${_record}")"
