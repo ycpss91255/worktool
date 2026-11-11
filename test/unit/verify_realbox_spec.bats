@@ -67,7 +67,14 @@ if [[ "${2:-}" == bench ]]; then
 fi
 exec "${VERIFY_TOOL}" "$@"
 STUB
-    run bash -c 'export VERIFY_PID=$$; exec "$@"' _ "${REALBOX}" --allow-real-box 5.1
+    # Parallel bats workers may inherit ignored SIGINT. Node resets signal
+    # dispositions for the child, as the group-interrupt driver does.
+    run node -e '
+        const {spawnSync} = require("child_process");
+        const child = spawnSync(process.argv[1], process.argv.slice(2), {stdio: "inherit"});
+        if (child.error) throw child.error;
+        process.exit(child.status === null ? 1 : child.status);
+    ' bash -c 'export VERIFY_PID=$$; exec "$@"' _ "${REALBOX}" --allow-real-box 5.1
     assert_failure 130
     assert_line "cleanup-rc=0"
     [ ! -s "${STATE}/boxes" ]
