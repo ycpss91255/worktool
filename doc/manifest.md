@@ -511,7 +511,7 @@ issue #129),不再延後到 M5。
     一句話:**清單被真實 distrobox 1.8.2.5 解析成預期的 create 請求**。
   - **不證明什麼**:映像真的拉得下來、套件真的裝進盒(distrobox-init 在這裡從未
     執行,沒有任何容器被啟動)、盒子可用。這些交給下面的 real-engine 組。
-  - gate:`just test system`(CI `test-system` job,必要;底層
+  - gate:`just test system`(CI `lint-system-acceptance` leg 的 system 步驟,必要;底層
     `./script/test/test.sh --system`)。
     `script/test/test.sh` 對每一層 bats gate 都要求「至少跑了一個案例、無失敗、無
     `skip`」,並在 `_required_specs` 明列該層的**必要 spec**,bats 跑之前逐檔確認
@@ -581,8 +581,12 @@ issue #129),不再延後到 M5。
     arm 腿為空),`test.sh` 以 `-e WORKTOOL_APT_MIRROR` 傳進 runner。設了它時,
     entry 在 dockerd 就緒後於巢狀 daemon 內以真正的 `ubuntu:26.04` 為底、**以同一
     個 tag** 重建 box 映像,差別只有 `script/test/apt-mirror.sh` 把
-    `ubuntu.sources` 每一個 `URIs:`(archive 與 security)改成該鏡像並開
-    `Acquire::Retries`。鎖定版 distrobox 在映像已存在時不 pull(manifest 沒有
+    `ubuntu.sources` 每一個 `URIs:` 改成
+    `mirror+file:/etc/apt/worktool-mirrors.list`,並開 `Acquire::Retries`。清單以
+    該鏡像為 `priority:1`,再依 sources 檔原有 URIs 的順序去重加入備援來源
+    (amd64 為 archive 再 security;有設定鏡像的 arm root 則為 ports)。apt 對單一
+    檔案下載失敗時依 priority 改向下一個來源取,仍以索引 hash 核對;全部來源失敗
+    仍讓安裝失敗(#885、[ADR-0022](adr/0022-isolation-image-cache-and-apt-source-fallback.md))。鎖定版 distrobox 在映像已存在時不 pull(manifest 沒有
     `pull=`),所以 assemble、manifest、`image=ubuntu:26.04` 與 distrobox-init
     首次啟動的完整 apt 安裝(case 5 驗的進度行與 host log)都不變,**只有套件從哪
     裡下載不同**;因此不把套件預先烤進映像(那會跳過受測的安裝路徑)。未設時(本機、
@@ -766,11 +770,11 @@ issue #129),不再延後到 M5。
   - **不證明什麼(延後)**:真實硬體上的盒子(效能目標、非 root 使用者、GPU 等)——
     留在下方「M2 驗收紀錄」的人類清單與 **M3/M5**;「盒子可用」本身已由系統層
     real-engine 組在 CI 內證明。
-  - gate:`just test acceptance`(CI `test-acceptance` job,必要;底層
+  - gate:`just test acceptance`(CI `lint-system-acceptance` leg 的 acceptance 步驟,必要;底層
     `./script/test/test.sh --acceptance`)。
 
 所有測試都在 Docker 內執行(host 不安裝任何套件);裸 `just test`(底層
-`./script/test/test.sh` 不帶旗標)依序跑 lint 與六個 tier(lint、unit、matrix、integration、
+`./script/test/test.sh` 不帶旗標)依序跑七個 tier(lint、unit、matrix、integration、
 system、acceptance、system-real),遇到第一個失敗即停,等同 CI;子 recipe
 `just test <tier>` 只收窄到一層。執行方式見 [`structure.md`](structure.md)。
 
@@ -816,7 +820,7 @@ cd worktool
 
 入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明(`test`
 那一行就列了全部子 recipe);裸 `just test` **不是列表**,而是直接跑全部;腳本層的
-usage 用 `just test help`。第一次可先建測試映像,再依序跑六道 gate;每一步下一行的
+usage 用 `just test help`。第一次可先建測試映像,再依序跑七個 tier;每一步下一行的
 `# 底層:` 標出 recipe 實際轉發到的腳本(沒有 `just` 時可直接執行那一行):
 
 ```bash
@@ -826,6 +830,8 @@ just test lint          # ShellCheck(*.sh + *.bats)
 # 底層:./script/test/test.sh --lint
 just test unit          # 單元 bats(test/unit/)
 # 底層:./script/test/test.sh --unit
+just test matrix        # 完整乘積矩陣 bats(test/matrix/)
+# 底層:./script/test/test.sh --matrix
 just test integration   # 整合 bats(test/integration/;兩組:預設組 + ghostty 組,後者在 ubuntu:26.04 的 ghostty 映像內,不需顯示器)
 # 底層:./script/test/test.sh --integration
 just test system        # 系統 bats,shim 組(test/system/;真實 distrobox + 假容器管理器)
@@ -837,7 +843,8 @@ just test system-real   # 系統 bats,real-engine 組(docker-in-docker,--privile
 ```
 
 一次跑完:裸 `just test`(底層 `./script/test/test.sh` 不帶旗標;依序 lint、unit、
-integration、system、acceptance、system-real,遇到第一個失敗即停,和 CI 跑的一模一樣)。
+matrix、integration、system、acceptance、system-real,遇到第一個失敗即停;CI 以合併 leg
+與 unit 分片執行相同七個 tier,執行方式見 [`structure.md`](structure.md#ci))。
 子 recipe 只收窄:`just test <tier>` 只跑那一層。打錯 recipe 名(例如 `just test bogus`)
 得到的是 `just` 自己的錯誤「Justfile does not contain recipe `bogus`」、exit 1,什麼都
 不跑;justfile 本身不印 usage,說明由腳本提供(`just test help`,底層
