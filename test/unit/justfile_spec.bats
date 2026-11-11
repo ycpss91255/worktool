@@ -226,6 +226,18 @@ EOF
     assert_line '<4.1>'
 }
 
+@test "verify ui forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/ui.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/ui.sh"
+    _just verify ui 1.1 --list
+    assert_success
+    assert_line '<1.1>'
+    assert_line '<--list>'
+}
+
 @test "verify setup forwards arguments without splitting" {
     cat >"${COPY}/script/verify/setup.sh" <<'EOF'
 #!/usr/bin/env bash
