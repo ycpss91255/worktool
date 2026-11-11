@@ -8,7 +8,7 @@
 # milestone-handover.js) and a release tag require such a run to be green
 # for their exact head. This script answers that question, fail closed:
 # the NEWEST run with that title decides (a newer failure beats an older
-# success), and only `completed` + `success` is green.
+# success), and only verified, complete successful jobs are green.
 #
 # Usage: full-run.sh --repo OWNER/REPO --sha SHA [--dispatch] [--wait SECONDS]
 #                    [--exclude-run ID]
@@ -40,7 +40,8 @@ Usage: full-run.sh --repo OWNER/REPO --sha SHA [--dispatch] [--wait SECONDS]
                    [--exclude-run ID]
        full-run.sh --help
 Exit 0 when the newest Nightly run titled `full-serial SHA` completed with
-success; 1 when it did not (or none exists, or a query failed); 2 on bad
+success and both architectures passed full-serial, isolation and checkout SHA
+verification; 1 when it did not (or none exists, or a query failed); 2 on bad
 arguments, including a SHA that is no commit of the repo; 3 while it is
 pending. --dispatch starts a run when none is green or pending; --wait N
 polls a pending run for at most N seconds; --exclude-run ID ignores that
@@ -102,9 +103,36 @@ _newest() {
         | awk -F '\t' '{ print $2 "\t" ($3 == "" ? "none" : $3) "\t" $4 }'
 }
 
+# A workflow success may contain only skipped jobs. Require each actual test
+# job exactly once and its explicit checkout proof; dispatch headSha describes
+# the workflow ref, so the successful proof step binds its tested input SHA.
+_verified_jobs() {
+    local _id="$1" _view _rc=0
+    _view="$(gh run view "${_id}" -R "${REPO}" \
+        --json displayTitle,headSha,event,status,conclusion,jobs)" || return 2
+    jq -e --arg sha "${SHA}" --arg title "${TITLE}" '
+        .displayTitle == $title and .status == "completed" and .conclusion == "success" and
+        ((.event == "workflow_dispatch") or
+         ((.event == "push" or .event == "schedule") and .headSha == $sha)) and
+        (["full-serial (ubuntu-latest)", "full-serial (ubuntu-24.04-arm)",
+          "isolation (ubuntu-latest)", "isolation (ubuntu-24.04-arm)"] as $required |
+         .jobs as $jobs |
+         all($required[]; . as $name |
+             [$jobs[] | select(.name == $name)] as $matching |
+             ($matching | length) == 1 and
+             all($matching[];
+                 .status == "completed" and .conclusion == "success" and
+                 ([.steps[] | select(.name == ("Verify checkout " + $sha))] as $proof |
+                  ($proof | length) == 1 and
+                  all($proof[]; .status == "completed" and .conclusion == "success")))))
+    ' <<<"${_view}" >/dev/null || _rc=$?
+    [[ "${_rc}" -le 1 ]] || return 2
+    return "${_rc}"
+}
+
 # Judge the newest run once: print the line, return 0 / 1 / 3.
 _judge() {
-    local _row _status _concl _id
+    local _row _status _concl _id _verified_rc
     if ! _row="$(_newest)"; then
         printf 'full-run: %s query-failed\n' "${SHA}"
         printf 'full-run.sh: could not list the Nightly runs of %s\n' "${REPO}" >&2
@@ -119,6 +147,19 @@ _judge() {
         printf 'full-run: %s %s run=%s\n' "${SHA}" "${_status}" "${_id}"
         return 3
     fi
+    if [[ "${_concl}" == success ]]; then
+        _verified_rc=0
+        _verified_jobs "${_id}" || _verified_rc=$?
+        if [[ "${_verified_rc}" == 2 ]]; then
+            printf 'full-run: %s query-failed run=%s\n' "${SHA}" "${_id}"
+            printf 'full-run.sh: could not query Nightly jobs for run %s\n' "${_id}" >&2
+            return 1
+        fi
+        if [[ "${_verified_rc}" != 0 ]]; then
+            printf 'full-run: %s completed unverified run=%s\n' "${SHA}" "${_id}"
+            return 1
+        fi
+    fi
     printf 'full-run: %s completed %s run=%s\n' "${SHA}" "${_concl:-none}" "${_id}"
     [[ "${_concl}" == success ]] || return 1
     return 0
@@ -126,7 +167,7 @@ _judge() {
 
 rc=0
 line="$(_judge)" || rc=$?
-if [[ "${DISPATCH}" == 1 && "${rc}" -eq 1 && "${line}" != *query-failed ]]; then
+if [[ "${DISPATCH}" == 1 && "${rc}" -eq 1 && "${line}" != *query-failed* ]]; then
     gh workflow run nightly.yml -R "${REPO}" --ref main -f "sha=${SHA}" >&2 \
         || { printf '%s\n' "${line}"; printf 'full-run.sh: could not dispatch Nightly for %s\n' "${SHA}" >&2; exit 1; }
     printf 'full-run: %s dispatched\n' "${SHA}"
