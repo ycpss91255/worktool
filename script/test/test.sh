@@ -924,6 +924,7 @@ script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
+test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
