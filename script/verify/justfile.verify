@@ -14,3 +14,7 @@ diagram *args:
 # Check setup and status in a temporary HOME (args: ITEM, --list, --allow-real-box, --help).
 setup *args:
     ./script/verify/setup.sh "$@"
+
+# Check the M3 external CI and process evidence (args: ITEM, --list, --help).
+evidence *args:
+    ./script/verify/evidence.sh "$@"

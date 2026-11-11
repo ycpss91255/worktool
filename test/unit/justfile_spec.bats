@@ -238,6 +238,19 @@ EOF
     assert_line '<3.1 with spaces>'
 }
 
+@test "verify evidence forwards arguments without splitting" {
+    cat >"${COPY}/script/verify/evidence.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>\n' "$@"
+EOF
+    chmod +x "${COPY}/script/verify/evidence.sh"
+    _just verify evidence --example 'value with spaces' 6.1
+    assert_success
+    assert_line '<--example>'
+    assert_line '<value with spaces>'
+    assert_line '<6.1>'
+}
+
 # --- test namespace: min -> max, verbatim forwarding -------------------------
 
 @test "just test (bare) forwards to test.sh with NO argument: everything CI runs" {

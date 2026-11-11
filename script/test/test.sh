@@ -882,8 +882,10 @@ lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
+lib/log.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
 lib/guard.sh|test/unit/verify_diagram_spec.bats
+lib/guard.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/config_backup_spec.bats
 lib/guard.sh|test/unit/config_backup_dangling_spec.bats
 lib/guard.sh|test/unit/config_backup_security_spec.bats
@@ -897,6 +899,8 @@ script/verify/config_backup_paths.sh|test/unit/config_backup_dangling_spec.bats
 script/verify/config_backup_paths.sh|test/unit/verify_config_backup_cache_spec.bats
 lib/manifest.sh|test/unit/manifest_spec.bats
 lib/manifest.sh|test/unit/verify_setup_spec.bats
+lib/manifest.sh|test/unit/verify_evidence_spec.bats
+box/dev.ini|test/unit/verify_evidence_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
@@ -926,6 +930,10 @@ script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
+script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
+doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
+doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
+doc/evidence/negative/*.md|test/unit/evidence_tdd_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
