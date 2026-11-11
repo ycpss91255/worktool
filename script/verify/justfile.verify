@@ -10,3 +10,7 @@ default:
 # Check the repository diagrams (args: ITEM, --root <repo>, --list, --realbox, --help).
 diagram *args:
     ./script/verify/diagram.sh "$@"
+
+# Check the M3 external CI and process evidence (args: ITEM, --list, --help).
+evidence *args:
+    ./script/verify/evidence.sh "$@"
