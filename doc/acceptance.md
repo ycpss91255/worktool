@@ -445,6 +445,19 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能
 
+- 外部證據：`just verify evidence` 查驗固定的 M3 sub-issue PR CI 結果、
+  決議紀錄與 blocked review 後續（6.1–6.3）；可傳入項目編號單獨執行，
+  `--list` 列出項目。查詢失敗或證據不足不算通過。
+  - 6.1：#152–#156、#165–#169 的 CI 均通過；#152 早於 arm64 runner，
+    其餘 PR 需兩種架構。對應 issue 依序為 #151、#149、#150、#21、
+    #23、#164、#163、#160、#161、#162。
+  - 6.2：查詢指定 issue 的 `[claude]` 留言，檢查各決議關鍵字均存在。
+  - 6.3：#156、#165–#169 的最後 `[codex]` 判決需可合併；原本 blocked
+    的 #152、#153、#154、#155 分別由 issue #163、#164、#162、#161
+    與修復 PR #166、#165、#169、#168 接續，修復 PR 的最後判決需可合併。
+- TDD 證據：`bash doc/evidence/tdd.sh` 檢查十個 sub-issue PR 描述中
+  非空 RED 區塊先於非空 GREEN 區塊；證據內容仍需人類審閱。
+
 - 交接前:同步驗收 PR 後取得最新 head SHA,在該 linked worktree 前景執行
   `.agents/script/monitor/full-run.sh --repo <repo> --sha <PR head SHA> --dispatch --wait 540`;
   回 3 時繼續以前景 `--wait 540` 查詢,總上限 10800 秒。只有回 0 才繼續 Scratch 與交接;

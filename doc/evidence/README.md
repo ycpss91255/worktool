@@ -6,9 +6,9 @@
 | 檔案 | 用途 |
 | --- | --- |
 | `tdd.sh` | 2.2:對固定十個 sub-issue PR(#152-#156、#165-#169)的描述判定「非空 RED 區塊在前、非空 GREEN 區塊在後」 |
-| `tdd.awk` | `tdd.sh` 的判定核心,單獨吃一份 PR 描述;2.4 也直接拿它跑負向 fixture |
-| `negative/wrong-order.md` | 2.4 的負向 fixture:RED / GREEN 顛倒 |
-| `negative/empty-red-block.md` | 2.4 的負向 fixture:RED 區塊是空的 |
+| `tdd.awk` | `tdd.sh` 的判定核心,單獨吃一份 PR 描述 |
+| `negative/wrong-order.md` | 單元測試的負向 fixture:RED / GREEN 顛倒 |
+| `negative/empty-red-block.md` | 單元測試的負向 fixture:RED 區塊是空的 |
 
 ## 2.2 的 9/10 `order=BAD`:排除了什麼、根因未解、處置是什麼(#176 item 8)
 
