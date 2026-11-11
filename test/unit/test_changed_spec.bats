@@ -529,7 +529,7 @@ _mutation_fixture() {
         cp "${REPO_ROOT}/test/helper/config_mutation_mutants.bash" "${TEMP_REPO}/test/helper/"
     fi
     local _spec
-    for _spec in config_owner config_mutation_drift config_mutation config_validate config_graph; do
+    for _spec in config_owner config_mutation_drift config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph; do
         printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/${_spec}_spec.bats"
     done
 }
@@ -558,8 +558,11 @@ _mutation_change() {
 
 @test "test.sh --changed selects mutation cases for config library input" {
     _mutation_change lib/config.sh
-    [[ "$(_dispatched)" == *'test/unit/config_mutation_spec.bats'* ]] \
-        || fail 'config library did not select mutants'
+    local _spec
+    for _spec in config_mutation config_mutation_part2 config_mutation_part3; do
+        [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
+            || fail "config library did not select ${_spec}"
+    done
 }
 
 @test "test.sh --changed selects mutation cases for a changed case spec" {
@@ -572,7 +575,7 @@ _mutation_change() {
 @test "test.sh --changed adds all drift guards and mutation cases when only bench changes" {
     _mutation_change script/box/bench.sh
     local _spec
-    for _spec in config_owner config_mutation_drift config_mutation config_validate config_graph; do
+    for _spec in config_owner config_mutation_drift config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph; do
         [[ "$(_dispatched)" == *"test/unit/${_spec}_spec.bats"* ]] \
             || fail "missing guard or owner mutants: ${_spec}"
     done

@@ -288,7 +288,7 @@ _scope_fixture_doc() {
     # Exercise the actual scope case against a real post-merge Git history.
     run bats --formatter tap --filter 'every real changed path' "${_spec}"
     assert_success
-    assert_output --partial '# skip main already contains PR 157 verification'
+    assert_line --regexp '^ok [0-9]+ .*# skip main already contains PR 157 verification$'
 }
 
 setup() {

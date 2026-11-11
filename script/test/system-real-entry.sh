@@ -49,6 +49,28 @@
 #                                   (default 90; authoritative total)
 #   WORKTOOL_DOCKER_CALL_TIMEOUT    seconds per short engine query
 #                                   (`docker info` / `docker ps`; default 10)
+#   WORKTOOL_APT_MIRROR             CI only (issue #843): a plain http(s)
+#                                   Ubuntu mirror. When set, once dockerd
+#                                   is ready the box image (box/dev.ini
+#                                   `image=`) is rebuilt in the NESTED
+#                                   daemon under the same tag with only its
+#                                   apt sources pointed at that mirror
+#                                   (script/test/apt-mirror.sh); the pinned
+#                                   distrobox does not pull an image that
+#                                   exists, so the box's first launch still
+#                                   runs distrobox-init's full apt install,
+#                                   only from that mirror. Unset or empty:
+#                                   nothing changes. Validated first.
+#   WORKTOOL_APT_ARCHIVES           CI only (issue #847): a plain absolute
+#                                   directory of this runner container that
+#                                   CI persists between runs. When set, the
+#                                   box image is rebuilt the same way with
+#                                   its apt keeping downloaded packages in
+#                                   /run/host<dir> (distrobox shares the
+#                                   runner's / there), so the first launch
+#                                   runs the same full install and only
+#                                   fetches what the dir does not hold.
+#                                   Validated first.
 #
 # Guards: `set -euo pipefail` (doc/adr/0001-scripts-use-errexit.md): an
 # unhandled failure stops the script at once. A non-zero status the script
@@ -67,6 +89,12 @@ DOCKERD_READY_TIMEOUT="${WORKTOOL_DOCKERD_READY_TIMEOUT:-90}"
 DOCKERD_STOP_TIMEOUT=20
 DOCKERD_SOCKET="unix:///var/run/docker.sock"
 BOX_NAME="dev"
+BOX_MANIFEST="${SCRIPT_DIR}/../../box/dev.ini"
+APT_MIRROR_SH="${SCRIPT_DIR}/apt-mirror.sh"
+APT_MIRROR="${WORKTOOL_APT_MIRROR:-}"
+APT_ARCHIVES="${WORKTOOL_APT_ARCHIVES:-}"
+# Pull of the base image + one RUN that edits two files.
+BOX_IMAGE_BUILD_TIMEOUT=600
 
 # Per-call bounds (seconds). Short queries (`docker info` / `docker ps`) get
 # DOCKER_CALL_TIMEOUT; the two removals in the cleanup trap get their own,
@@ -124,6 +152,18 @@ _check_positive_seconds() {
 _check_timeouts() {
     _check_positive_seconds WORKTOOL_DOCKERD_READY_TIMEOUT "${DOCKERD_READY_TIMEOUT}"
     _check_positive_seconds WORKTOOL_DOCKER_CALL_TIMEOUT "${DOCKER_CALL_TIMEOUT}"
+}
+
+# WORKTOOL_APT_MIRROR ends up in a Dockerfile line: refuse anything that is
+# not a plain http(s) URL (apt-mirror.sh owns the rule), before dockerd;
+# WORKTOOL_APT_ARCHIVES likewise must be a plain absolute path (#847).
+_check_apt_mirror() {
+    if [[ -n "${APT_MIRROR}" ]]; then
+        bash "${APT_MIRROR_SH}" --check "${APT_MIRROR}" 2>/dev/null \
+            || _die "WORKTOOL_APT_MIRROR is not a plain http(s) mirror URL: '${APT_MIRROR}'"
+    fi
+    [[ -z "${APT_ARCHIVES}" || "${APT_ARCHIVES}" =~ ^/[A-Za-z0-9._/-]*$ ]] \
+        || _die "WORKTOOL_APT_ARCHIVES is not a plain absolute path: '${APT_ARCHIVES}'"
 }
 
 # CAP_SYS_ADMIN is bit 21 of the effective capability mask; a nested dockerd
@@ -286,13 +326,47 @@ _cleanup() {
     exit "${_rc}"
 }
 
+# --- Box image apt source (issue #843) -----------------------------------------
+
+# The box image box/dev.ini names (its first `image=`, without the outer
+# quotes doc/manifest.md allows).
+_box_image() {
+    awk -F= '$1 == "image" { sub(/^image=/, ""); gsub(/^["\047]|["\047]$/, ""); print; exit }' "${BOX_MANIFEST}"
+}
+
+# With WORKTOOL_APT_MIRROR set, rebuild the box image in the nested daemon
+# under its own tag, changed only in its apt sources (apt-mirror.sh, bind
+# mounted from this directory). Nothing else differs: the manifest, the tag
+# assemble asks for and distrobox-init's first-launch install all stay;
+# only where apt downloads from changes. Unset: no engine call at all.
+_prepare_box_image() {
+    [[ -n "${APT_MIRROR}" || -n "${APT_ARCHIVES}" ]] || return 0
+    local _image _archives=''
+    _image="$(_box_image)"
+    [[ -n "${_image}" ]] || _die "no image= in ${BOX_MANIFEST}"
+    if [[ -n "${APT_MIRROR}" ]]; then
+        _info "box image ${_image}: every apt source -> ${APT_MIRROR} first, the image's own sources after it on a failed fetch (WORKTOOL_APT_MIRROR; the first launch still installs everything)"
+    fi
+    if [[ -n "${APT_ARCHIVES}" ]]; then
+        mkdir -p "${APT_ARCHIVES%/}/partial" || _die "cannot create ${APT_ARCHIVES%/}/partial"
+        _archives="--archives '/run/host${APT_ARCHIVES%/}/' "
+        _info "box image ${_image}: apt keeps downloaded packages in /run/host${APT_ARCHIVES%/}/ (WORKTOOL_APT_ARCHIVES; the first launch still installs everything)"
+    fi
+    printf 'FROM %s\nRUN --mount=type=bind,source=apt-mirror.sh,target=/tmp/apt-mirror.sh bash /tmp/apt-mirror.sh %s'"'"'%s'"'"'\n' \
+        "${_image}" "${_archives}" "${APT_MIRROR}" \
+        | _bounded "${BOX_IMAGE_BUILD_TIMEOUT}" docker build -t "${_image}" -f - "${SCRIPT_DIR}" >&2 \
+        || _die "could not build the box image ${_image} with apt mirror ${APT_MIRROR}"
+}
+
 # --- Main --------------------------------------------------------------------
 main() {
     _check_timeouts
+    _check_apt_mirror
     _preflight
     trap _cleanup EXIT
     _start_dockerd
     _wait_dockerd
+    _prepare_box_image
     _info "running the real-engine system gate"
     "${TEST_SH}" --ci-system-real
 }

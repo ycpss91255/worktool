@@ -1,4 +1,7 @@
 #!/usr/bin/env bats
+# Cases of this file race wall-clock bounds (timeouts, elapsed-seconds
+# checks), so they stay serial within the file under `bats --jobs` (#689).
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 # test/unit/enter_spec.bats - script/box/enter.sh: the in-box entry wrapper
 # with observable first-launch progress (M3, issue #180)
 #

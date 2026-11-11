@@ -20,10 +20,11 @@ name: CI
 # grammar a user types (`just test lint`, `just test unit`, ..., `just test
 # system-real`; all of them at once: bare `just test`). Each recipe is a
 # thin forwarder to script/test/test.sh (`--lint`, `--unit`, ...). The
-# gate NAMES stay lint / test-unit / test-matrix / test-integration / test-system /
-# test-acceptance / test-system-real, so a check reads "<gate> (<runner>)",
-# e.g. "lint (ubuntu-24.04-arm)"; the matrix maps each name to its tier
-# instead of reusing the name as the tier. Branch protection keys on the
+# gate NAMES: lint-system-acceptance (lint, system and acceptance on one
+# leg, issue #841) / test-matrix / test-integration / test-unit I/N (the
+# unit shards, issue #831) / test-system-real, so a check reads
+# "<gate> (<runner>)", e.g. "test-matrix (ubuntu-24.04-arm)"; the matrix
+# maps each name to its tier(s) instead of reusing the name as the tier. Branch protection keys on the
 # single `ci-passed` aggregator, not on the per-leg names.
 #
 # Every test leg is REQUIRED: the `ci-passed` aggregator fails unless every
@@ -35,11 +36,34 @@ name: CI
 # Milestone PRs additionally require every verify-all leg to succeed;
 # other PRs and main pushes do not require that conditional job.
 #
+# Code path vs meta path (issue #688). A PR body, title or label edit
+# fires edited / labeled / unlabeled, but leaves the head sha (what the
+# tiers test) unchanged. One routing expression, repeated verbatim in
+# run-name, concurrency and the route job, picks the path:
+#   - code path: push, opened, synchronize, reopened, adding the
+#     milestone-gate label (verify-all becomes required) and an edit that
+#     changes the base branch (the merge result changes). Every tier runs.
+#   - meta path: any other edited / labeled / unlabeled event. The code
+#     tiers are skipped; the policy jobs (PR body included) still run, and
+#     prior-run requires that the latest code run of the same head sha and
+#     PR finished with every test leg green (plus verify-all when the PR is
+#     labelled milestone-gate NOW), via lib/ci_prior_run.sh. No such run,
+#     one still running, or any non-green leg fails ci-passed: a skipped
+#     tier never reads as green (fail closed).
+# The two paths use separate concurrency groups, so a body edit never
+# cancels a running code run; only pull_request runs cancel in progress, so
+# a push to main is never cancelled. Branch protection still keys on the
+# single ci-passed check; the newest ci-passed check run of the head sha
+# decides, so a meta run that fails because the code run is unfinished is
+# superseded by that code run's ci-passed, created after it.
+#
 # The test-system-real gate uses --privileged: its runner starts a
 # nested dockerd so the real pinned distrobox can build and enter a real dev
 # box. Everything it creates lives in that nested daemon and is destroyed
 # with the runner container (docker run --rm).
 # verify-all also invokes that gate through the acceptance entry.
+
+run-name: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }}
 
 on:
   push:
@@ -52,14 +76,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'code' || 'meta' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Code path or meta path (see the header); every other job keys on it.
+  route:
+    name: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.path.outputs.code }}
+    steps:
+      - name: Pick the code or meta path
+        id: path
+        env:
+          EVENT: ${{ github.event_name }}/${{ github.event.action }}
+          CODE_PATH: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false' }}
+        run: |
+          echo "event ${EVENT}: code path=${CODE_PATH}"
+          echo "code=${CODE_PATH}" >> "${GITHUB_OUTPUT}"
+
   # One test image per arch. The artifact name carries the runner so the two
   # legs never overwrite each other and each gate below loads its own arch.
   build-image:
     name: Build test image (${{ matrix.runner }})
+    needs: route
+    if: needs.route.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -75,14 +118,36 @@ jobs:
       - name: Save image
         run: docker save worktool-test:local -o /tmp/worktool-test.tar
 
+      # Shard weights (issue #831): read the newest main-push weights once
+      # per arch, here, and ship them with the image so every unit shard of
+      # this arch splits the tier from the same file. A miss ships an empty
+      # file: every spec then weighs its @test count.
+      - name: Restore shard weights
+        uses: actions/cache/restore@v4
+        with:
+          path: .agents/state/shard-weights.tsv
+          key: shard-weights-none
+          restore-keys: shard-weights-
+
+      - name: Stage shard weights
+        run: |
+          if [ -f .agents/state/shard-weights.tsv ]; then
+            cp .agents/state/shard-weights.tsv /tmp/shard-weights.tsv
+          else
+            : > /tmp/shard-weights.tsv
+          fi
+          wc -l /tmp/shard-weights.tsv
+
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: worktool-test-image-${{ matrix.runner }}
-          path: /tmp/worktool-test.tar
+          path: |
+            /tmp/worktool-test.tar
+            /tmp/shard-weights.tsv
           retention-days: 1
 
-  # 6 gates x 2 runners. `needs: build-image` waits for BOTH build legs;
+  # 3 gate legs x 2 runners. `needs: build-image` waits for BOTH build legs;
   # each gate leg then downloads the artifact of its own runner.
   #
   # test-integration is the one gate that also builds an image of its own:
@@ -98,28 +163,27 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     needs: build-image
+    # Ubuntu packages on the amd64 legs come from the Azure mirror GitHub's
+    # own ubuntu runners use (issue #843: archive.ubuntu.com fell to
+    # ~130 kB/s there on 2026-11-10); the arm legs keep the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
-        gate: [lint, test-unit, test-matrix, test-integration, test-system, test-acceptance]
+        gate: [lint-system-acceptance, test-matrix, test-integration]
         # gate = job name (unchanged; ci-passed and the per-leg check names
         #        key on it)
         # tier = the `just test <tier>` that job runs; `include` attaches it
         #        to every runner leg of the matching gate
         include:
-          - gate: lint
-            tier: lint
-          - gate: test-unit
-            tier: unit
+          - gate: lint-system-acceptance
+            tier: lint system acceptance
           - gate: test-matrix
             tier: matrix
           - gate: test-integration
             tier: integration
-          - gate: test-system
-            tier: system
-          - gate: test-acceptance
-            tier: acceptance
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,10 +202,204 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # The ghostty group of integration runs in its own image; build it
+      # with the same buildx cache as the DinD runner (issue #829), through
+      # the image package proxy (issue #892, see test-system-real).
+      - name: Set up buildx
+        if: matrix.tier == 'integration'
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Restore image packages
+        if: matrix.tier == 'integration'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy
+        id: seed
+        if: matrix.tier == 'integration'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build ghostty image (buildx, gha cache)
+        if: matrix.tier == 'integration'
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.ghostty
+          tags: worktool-ghostty:local
+          load: true
+          cache-from: type=gha,scope=ghostty-${{ matrix.runner }}
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=ghostty-{0}', matrix.runner) || '' }}
+
+      - name: Stop the image package proxy
+        if: matrix.tier == 'integration' && steps.seed.outcome == 'success'
+        run: script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
+
+      # 8 bats jobs (files and the cases of one file, #689): measured on the
+      # 4-vCPU arm runner, unit 616 s / 503 s / 517 s and matrix 193 s /
+      # 172 s / 183 s at 4 / 8 / 16 jobs, so 8 is the knee. Local runs keep
+      # test.sh's default of 4.
+      # A leg may carry several short tiers (issue #841: lint, system and
+      # acceptance share one leg per runner to stay under the 20 concurrent
+      # jobs); each still runs as its own `just test <tier>`, in order, and
+      # the first failing tier fails the leg.
       - name: Run gate (${{ matrix.gate }} = just test ${{ matrix.tier }})
         env:
           TEST_IMAGE_PREBUILT: "1"
-        run: just test ${{ matrix.tier }}
+          GHOSTTY_IMAGE_PREBUILT: ${{ matrix.tier == 'integration' && '1' || '' }}
+          WORKTOOL_TEST_JOBS: "8"
+          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report
+          TIERS: ${{ matrix.tier }}
+        run: for tier in ${TIERS}; do just test "${tier}" || exit 1; done
+
+      # Per-case durations (junit, issue #827): the shard weights' source.
+      # Uploaded even when the gate failed; a green bats gate without a
+      # report fails here instead of silently leaving the weights stale.
+      - name: Upload junit report (${{ matrix.gate }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.gate }}-${{ matrix.runner }}
+          path: .agents/state/test-report
+          if-no-files-found: error
+          retention-days: 7
+
+  # The unit tier as UNIT_SHARDS weighted shards per runner (issue #831):
+  # `just test unit --shard I/N` assigns every test/unit spec by the
+  # weights build-image shipped (lib/test_shard.sh), runs its own share,
+  # checks its own required specs and an exact plan, and uploads its
+  # record, TAP and junit report. No shard stands for the tier: only
+  # test-unit-verdict, over all shards of both runners, does. The shard
+  # count is declared here (shard, shards) and in test-unit-verdict's
+  # UNIT_SHARDS; ci_yml_spec keeps them equal.
+  unit-shard:
+    name: test-unit ${{ matrix.shard }}/${{ matrix.shards }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    needs: build-image
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        shard: [1, 2, 3, 4]
+        shards: [4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download test image (${{ matrix.runner }})
+        uses: actions/download-artifact@v4
+        with:
+          name: worktool-test-image-${{ matrix.runner }}
+          path: /tmp
+
+      - name: Load test image
+        run: docker load -i /tmp/worktool-test.tar
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Stage shard weights
+        run: |
+          mkdir -p .agents/state
+          cp /tmp/shard-weights.tsv .agents/state/shard-weights.tsv
+
+      - name: Run gate (test-unit = just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }})
+        env:
+          TEST_IMAGE_PREBUILT: "1"
+          WORKTOOL_TEST_JOBS: "8"
+          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report
+          WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv
+        run: just test unit --shard ${{ matrix.shard }}/${{ matrix.shards }}
+
+      - name: Upload shard record and junit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-unit-${{ matrix.shard }}-${{ matrix.runner }}
+          path: .agents/state/test-report
+          if-no-files-found: error
+          retention-days: 7
+
+  # The union verdict of the unit shards (issue #831), fail closed: for
+  # each runner exactly UNIT_SHARDS records labelled i/N with one weights
+  # hash, pairwise disjoint specs whose union is exactly the test/unit list
+  # of THIS checkout, every required spec present with cases, and every
+  # shard's plan equal to its specs' case counts with that many ok lines
+  # and no failure or unexpected skip (lib/test_shard.sh). It is a leg: ci-passed and
+  # the meta path's prior-run require it.
+  # The records are fetched by name, not by pattern (issue #890): a pattern
+  # download takes whatever the run's artifact listing holds at that moment,
+  # and a record finalized seconds earlier can be missing from it. So the
+  # verdict waits, bounded, until every record test-report-unit-<i>-<runner>
+  # is listed, then downloads each by id into <shards>/<name>/. A shard that
+  # never recorded (ran nothing, crashed, skipped, failed upload) is still
+  # missing after the wait and the verdict fails on it.
+  test-unit-verdict:
+    name: test-unit-verdict
+    needs: [route, unit-shard]
+    if: needs.route.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    env:
+      UNIT_SHARDS: 4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download shard records by name
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          source lib/test_shard.sh
+          listing() {
+            gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired | not) | [(.id | tostring), .name, .created_at] | @tsv'
+          }
+          ids="${RUNNER_TEMP}/shard-ids"
+          rc=0
+          test_shard_records_await 12 10 unit "${UNIT_SHARDS}" ubuntu-latest ubuntu-24.04-arm -- listing > "${ids}" || rc=$?
+          mkdir -p "${RUNNER_TEMP}/shards"
+          while IFS=$'\t' read -r id name; do
+            gh api "repos/${REPO}/actions/artifacts/${id}/zip" > "${RUNNER_TEMP}/${name}.zip" || exit 1
+            unzip -q -d "${RUNNER_TEMP}/shards/${name}" "${RUNNER_TEMP}/${name}.zip" || exit 1
+          done < "${ids}"
+          # A missing record is reported, with every other gap, by the
+          # verdict below; this step only fetches what is there.
+          if [ "${rc}" -ne 0 ]; then
+            echo "::warning::shard record(s) missing after the bounded wait; the verdict fails on them"
+          fi
+
+      - name: Apply the whole-tier rules to the union of the shards
+        run: |
+          set -uo pipefail
+          source lib/test_shard.sh
+          list="${RUNNER_TEMP}/unit-specs"
+          required="${RUNNER_TEMP}/unit-required"
+          (cd test/unit && find . -type f -name '*.bats' | sed 's|^\./||' | LC_ALL=C sort) > "${list}" || exit 1
+          bash -c 'source script/test/test.sh && _required_specs unit' | sed 's|^unit/||' > "${required}" || exit 1
+          test_shard_verdict "${RUNNER_TEMP}/shards" unit "${UNIT_SHARDS}" "${list}" "${required}" ubuntu-latest ubuntu-24.04-arm
 
   # Real-engine system group: docker-in-docker, on both runners. Builds its
   # own runner image (dockerfile/Dockerfile.system-real, independent of the
@@ -152,8 +410,15 @@ jobs:
   # bounds every step, and the job is capped too.
   test-system-real:
     name: test-system-real (${{ matrix.runner }})
+    needs: route
+    if: needs.route.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    # Ubuntu packages on the amd64 legs come from the Azure mirror GitHub's
+    # own ubuntu runners use (issue #843: archive.ubuntu.com fell to
+    # ~130 kB/s there on 2026-11-10); the arm legs keep the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -165,8 +430,100 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # Cached build of the DinD runner image (issue #829): buildx with the
+      # GitHub Actions cache, one scope per image and runner, loaded into
+      # the runner's daemon. Only a main push writes the cache, so PRs read
+      # main's layers instead of evicting them; a miss is a full build.
+      # The builder shares the runner's network so a RUN reaches the image
+      # package proxy on 127.0.0.1.
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      # Image packages (issue #892): a miss of the apt RUN layer (a
+      # Dockerfile or apt-mirror.sh changed) downloads every package again,
+      # and the amd64 mirror serves the ones it has not cached at ~100 kB/s.
+      # The build reaches a local proxy (script/test/apt-seed-proxy.mjs)
+      # through Docker's predefined `http_proxy` build arg, which is not part
+      # of the layer cache key and not written into the image: the
+      # Dockerfile and its layers are unchanged and a warm build still hits.
+      # The proxy serves pool .deb files from the newest apt-image entry
+      # (written by image-seed on a main push) and passes everything else,
+      # misses included, to the real source; apt checks every hash.
+      - name: Restore image packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy
+        id: seed
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build system-real runner image (buildx, gha cache)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.system-real
+          tags: worktool-system-real:local
+          load: true
+          cache-from: type=gha,scope=system-real-${{ matrix.runner }}
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=system-real-{0}', matrix.runner) || '' }}
+
+      - name: Stop the image package proxy
+        if: steps.seed.outcome == 'success'
+        run: script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
+
+      # The box's downloaded packages (issue #847): the first launch runs
+      # distrobox-init's full apt install, with apt keeping its .deb files in
+      # this dir (test.sh WORKTOOL_APT_CACHE_DIR -> apt-mirror.sh --archives),
+      # so only packages it does not already hold are fetched. Every run
+      # reads the newest entry; only a main push prunes (newest version per
+      # package, lib/apt_cache.sh) and saves, keyed by the kept set, so an
+      # unchanged set is not stored again.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
       - name: Run gate (test-system-real = just test system-real, docker-in-docker, --privileged)
+        env:
+          SYSTEM_REAL_IMAGE_PREBUILT: "1"
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
         run: just test system-real
+
+      - name: Prune and key box packages
+        id: debs
+        if: github.event_name == 'push' && !cancelled()
+        run: |
+          set -euo pipefail
+          source lib/apt_cache.sh
+          apt_cache_prune "${RUNNER_TEMP}/apt-box"
+          kc="$(apt_cache_key "${RUNNER_TEMP}/apt-box")"
+          read -r key count <<< "${kc}"
+          echo "box packages: ${count} (key ${key})"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save box packages
+        if: steps.debs.outcome == 'success' && steps.debs.outputs.count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-${{ steps.debs.outputs.key }}
 
   # Milestone acceptance runs the checkout's real entry, not verify stubs.
   # `all` excludes section 5 (realbox); it drives Docker gates itself.
@@ -174,13 +531,13 @@ jobs:
   # the verify image adds host tools and the shared image's pinned distrobox.
   verify-all:
     name: verify-all (${{ matrix.runner }})
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
+    if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     # Items 2.1 and 2.3 judge the gate jobs of THIS run (#833), so they
     # must be done first; a red gate leaves verify-all skipped, which
     # ci-passed reads as a failure on a milestone-gate PR.
-    needs: [build-image, gate, test-system-real]
+    needs: [route, build-image, gate, test-unit-verdict, test-system-real]
     permissions:
       contents: read
       pull-requests: read
@@ -356,23 +713,232 @@ jobs:
           mapfile -t revs <<< "${range}"
           review_log_check_commits . "${revs[@]}"
 
+  # Meta path only: the code tiers were skipped, so require the latest code
+  # run of this head sha and PR to have passed every test leg (issue #688).
+  # verify-all is required from the PR's labels NOW (live, not the event
+  # payload), so removing milestone-gate stops requiring it and a label
+  # still present keeps requiring it. The rule lives in lib/ci_prior_run.sh.
+  # A code run of the head sha still going when the meta run starts (a body
+  # edit mid-run, #872) is waited for, up to 380 x 30 s (past verify-all's
+  # 180 min), then judged: failing at once would leave a red ci-passed that
+  # the code run's later green does not replace.
+  prior-run:
+    name: prior-run
+    needs: route
+    if: needs.route.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Require a green code run of this head sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          source lib/ci_prior_run.sh
+          labels="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.labels[].name')" || exit 1
+          verify=false
+          if grep -Fqx milestone-gate <<< "${labels}"; then
+            verify=true
+          fi
+          _runs() {
+            gh api --paginate "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD}&event=pull_request&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .run_number, .status, .display_title, ([.pull_requests[].number | tostring] | join(" "))] | @tsv'
+          }
+          id="$(ci_prior_run_await 380 30 "${RUN_ID}" "${PR_NUMBER}" -- _runs)" || exit 1
+          echo "latest code run of ${PR_HEAD}: ${id} (verify-all required: ${verify})"
+          jobs="${RUNNER_TEMP}/jobs"
+          gh api --paginate "repos/${REPO}/actions/runs/${id}/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv' > "${jobs}" || exit 1
+          ci_prior_run_evaluate "${verify}" < "${jobs}"
+
+  # Main push only (issue #892): refresh the image packages the PR builds
+  # read. A main push's image builds hit the layer cache, so no package
+  # passes their proxy; this job builds both Ubuntu images again with
+  # no-cache, no output and no cache-to, through the proxy in record mode
+  # (seed hits and misses alike), so the recorded set is exactly what a
+  # cold build of this sha needs. It is saved keyed by that set's digest
+  # (lib/apt_cache.sh), so an unchanged set is not stored again. Steady
+  # state serves nearly everything from the seed; only the first fill and
+  # new package versions come from the mirror.
+  image-seed:
+    name: image-seed (${{ matrix.runner }})
+    needs: route
+    if: github.event_name == 'push' && needs.route.outputs.code == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Restore image packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-none
+          restore-keys: apt-image-${{ matrix.runner }}-
+
+      - name: Start the image package proxy (record mode)
+        id: seed
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apt-image" "${RUNNER_TEMP}/apt-image-new"
+          url="$(script/test/apt-seed.sh start --seed "${RUNNER_TEMP}/apt-image" --record "${RUNNER_TEMP}/apt-image-new" --log "${RUNNER_TEMP}/apt-seed.log")" || exit 1
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build system-real runner image (no-cache, record packages)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.system-real
+          no-cache: true
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+
+      - name: Build ghostty image (no-cache, record packages)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.ghostty
+          no-cache: true
+          build-args: |
+            APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+            http_proxy=${{ steps.seed.outputs.url }}
+
+      - name: Stop the proxy and key the recorded packages
+        id: debs
+        run: |
+          set -euo pipefail
+          script/test/apt-seed.sh stop --log "${RUNNER_TEMP}/apt-seed.log"
+          source lib/apt_cache.sh
+          find "${RUNNER_TEMP}/apt-image" -maxdepth 1 -name '*.deb' -delete
+          find "${RUNNER_TEMP}/apt-image-new" -maxdepth 1 -name '*.deb' -exec mv -t "${RUNNER_TEMP}/apt-image" {} +
+          kc="$(apt_cache_key "${RUNNER_TEMP}/apt-image")"
+          read -r key count <<< "${kc}"
+          echo "image packages: ${count} (key ${key})"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save image packages
+        if: steps.debs.outputs.count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-image/*.deb
+          key: apt-image-${{ matrix.runner }}-${{ steps.debs.outputs.key }}
+
+  # Main push only (issue #827): merge every gate's junit report into the
+  # shard weights (spec -> milliseconds, the slower runner kept; rule in
+  # lib/shard_weights.sh) and save them to the actions cache. The key
+  # carries the run, so each push adds an entry; a PR restores the newest
+  # one by prefix. The weights only balance work, never decide what runs.
+  shard-weights:
+    name: shard-weights
+    needs: [route, gate, unit-shard]
+    if: github.event_name == 'push' && needs.route.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download junit reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-report-*
+          path: ${{ runner.temp }}/reports
+
+      - name: Merge the reports into shard weights
+        run: |
+          set -uo pipefail
+          source lib/shard_weights.sh
+          mkdir -p .agents/state
+          shard_weights_merge "${RUNNER_TEMP}/reports" unit matrix > .agents/state/shard-weights.tsv || exit 1
+          cat .agents/state/shard-weights.tsv
+
+      - name: Save shard weights
+        uses: actions/cache/save@v4
+        with:
+          path: .agents/state/shard-weights.tsv
+          key: shard-weights-${{ github.run_id }}-${{ github.run_attempt }}
+
   # Single required status: green only if every build-image leg AND every
   # matrix gate leg AND every real-engine leg AND all commit policy jobs
   # succeeded, plus verify-all on milestone-gate PRs. `needs` on a matrix
   # job covers all of its legs, and its `result` is `success` only when
   # every leg is. `if: always()` makes it run even when a leg failed or was
   # skipped, so that state is reported as a failure rather than as "no
-  # check".
+  # check". It is never skipped: a skipped check run would read as passing.
+  # On the meta path prior-run stands in for the skipped code tiers; on
+  # both paths the PR body is re-read live first, so an edit made while a
+  # code run was running cannot ride on that run's earlier body check.
   ci-passed:
     name: ci-passed
     runs-on: ubuntu-latest
-    needs: [build-image, gate, test-system-real, commit-email, commit-attribution, commit-refs, review-log, verify-all]
+    needs: [route, build-image, gate, test-system-real, prior-run, commit-email, commit-attribution, commit-refs, review-log, verify-all, shard-weights, image-seed, unit-shard, test-unit-verdict]
     if: always()
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Re-check the live pull request body
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          source lib/commit_attribution.sh
+          body="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')" || exit 1
+          commit_attribution_check_pr_body pull_request "${body}"
+
       - name: Verify every leg succeeded
         env:
+          ROUTE_RESULT: ${{ needs.route.result }}
+          CODE_PATH: ${{ needs.route.outputs.code }}
+          PRIOR_RESULT: ${{ needs.prior-run.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
           GATE_RESULT: ${{ needs.gate.result }}
+          UNIT_SHARD_RESULT: ${{ needs.unit-shard.result }}
+          UNIT_VERDICT_RESULT: ${{ needs.test-unit-verdict.result }}
           SYSTEM_REAL_RESULT: ${{ needs.test-system-real.result }}
           EMAIL_RESULT: ${{ needs.commit-email.result }}
           ATTRIBUTION_RESULT: ${{ needs.commit-attribution.result }}
@@ -380,22 +946,47 @@ jobs:
           REVIEW_LOG_RESULT: ${{ needs.review-log.result }}
           VERIFY_REQUIRED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate') }}
           VERIFY_RESULT: ${{ needs.verify-all.result }}
+          WEIGHTS_REQUIRED: ${{ github.event_name == 'push' }}
+          WEIGHTS_RESULT: ${{ needs.shard-weights.result }}
+          SEED_RESULT: ${{ needs.image-seed.result }}
         run: |
-          echo "build-image (both runners): ${BUILD_RESULT}"
-          echo "gate (6 gates x both runners): ${GATE_RESULT}"
-          echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
+          echo "route: ${ROUTE_RESULT} (code path: ${CODE_PATH})"
+          [ "${ROUTE_RESULT}" = "success" ] || exit 1
+          if [ "${CODE_PATH}" = "true" ]; then
+            echo "build-image (both runners): ${BUILD_RESULT}"
+            echo "gate (3 gate legs x both runners): ${GATE_RESULT}"
+            echo "test-system-real (docker-in-docker, both runners): ${SYSTEM_REAL_RESULT}"
+            [ "${BUILD_RESULT}" = "success" ] || exit 1
+            [ "${GATE_RESULT}" = "success" ] || exit 1
+            echo "unit-shard (unit tier shards x both runners): ${UNIT_SHARD_RESULT}"
+            echo "test-unit-verdict (union of the unit shards): ${UNIT_VERDICT_RESULT}"
+            [ "${UNIT_SHARD_RESULT}" = "success" ] || exit 1
+            [ "${UNIT_VERDICT_RESULT}" = "success" ] || exit 1
+            [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
+            echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
+            if [ "${VERIFY_REQUIRED}" = "true" ]; then
+              [ "${VERIFY_RESULT}" = "success" ] || exit 1
+            fi
+            echo "shard-weights (required=${WEIGHTS_REQUIRED}, main push): ${WEIGHTS_RESULT}"
+            if [ "${WEIGHTS_REQUIRED}" = "true" ]; then
+              [ "${WEIGHTS_RESULT}" = "success" ] || exit 1
+            fi
+            echo "image-seed (required=${WEIGHTS_REQUIRED}, main push, both runners): ${SEED_RESULT}"
+            if [ "${WEIGHTS_REQUIRED}" = "true" ]; then
+              [ "${SEED_RESULT}" = "success" ] || exit 1
+            fi
+          elif [ "${CODE_PATH}" = "false" ]; then
+            echo "prior-run (latest code run of this head sha, every leg green): ${PRIOR_RESULT}"
+            [ "${PRIOR_RESULT}" = "success" ] || exit 1
+          else
+            echo "unknown path '${CODE_PATH}'"
+            exit 1
+          fi
           echo "commit-email (noreply author and committer): ${EMAIL_RESULT}"
           echo "commit-attribution (commit messages and PR body): ${ATTRIBUTION_RESULT}"
           echo "commit-refs (issue footers): ${REFS_RESULT}"
           echo "review-log (no committed review notes): ${REVIEW_LOG_RESULT}"
-          [ "${BUILD_RESULT}" = "success" ] || exit 1
-          [ "${GATE_RESULT}" = "success" ] || exit 1
-          [ "${SYSTEM_REAL_RESULT}" = "success" ] || exit 1
           [ "${EMAIL_RESULT}" = "success" ] || exit 1
           [ "${ATTRIBUTION_RESULT}" = "success" ] || exit 1
           [ "${REFS_RESULT}" = "success" ] || exit 1
           [ "${REVIEW_LOG_RESULT}" = "success" ] || exit 1
-          echo "verify-all (required=${VERIFY_REQUIRED}, both runners): ${VERIFY_RESULT}"
-          if [ "${VERIFY_REQUIRED}" = "true" ]; then
-            [ "${VERIFY_RESULT}" = "success" ] || exit 1
-          fi

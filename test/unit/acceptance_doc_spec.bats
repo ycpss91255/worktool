@@ -16,7 +16,7 @@ bats_require_minimum_version 1.5.0
 
 @test "acceptance 2.1 documents exactly the runner CPU skip exemptions (#575)" {
     local policy section reason expected documented
-    policy="$(sed -n '/^_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/script/test/test.sh")"
+    policy="$(sed -n '/^test_shard_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/lib/test_shard.sh")"
     reason="$(sed -n 's/.*reason = " \(.*\)"/\1/p' <<<"${policy}")"
     expected="$(sed -n "s/.*\$0 == \"\([^\"]*\)\" reason.*/\1/p" <<<"${policy}" |
         while IFS= read -r name; do printf '%s | %s\n' "${name}" "${reason}"; done | sort)"
@@ -413,7 +413,7 @@ _compare_52_doc() {
 
 @test "#724: structure documents exactly the runner unit CPU skip exemptions" {
     local policy section reason expected documented
-    policy="$(sed -n '/^_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/script/test/test.sh")"
+    policy="$(sed -n '/^test_shard_has_unexpected_skip() {/,/^}/p' "${REPO_ROOT}/lib/test_shard.sh")"
     reason="$(sed -n 's/.*reason = " \(.*\)"/\1/p' <<<"${policy}")"
     expected="$(sed -n "s/.*\$0 == \"\([^\"]*\)\" reason.*/\1/p" <<<"${policy}" |
         while IFS= read -r name; do printf '%s | %s\n' "${name}" "${reason}"; done | sort)"

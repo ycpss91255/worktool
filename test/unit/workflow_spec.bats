@@ -237,11 +237,20 @@ _meta_skeleton() {
     done
 }
 
+# Run through the workflow, not its wording: ciState comes from ciAt, so a
+# red CI reports red for the head CI judged (#815).
 @test "pr-loop treats CI as a gate: a red result returns ciState red before codex and after every fix" {
     run grep -c "ci.state !== 'green'" "${PR_LOOP}"
     assert_output "2"
-    run grep -c "ciState: 'red'" "${PR_LOOP}"
-    assert_output "2"
+    run _pl_804_run '{}' '{"ci:":{"state":"red","sha":"abc","detail":"red"}}'
+    assert_success
+    run jq -e '.error == null and .result.sha == "abc" and .result.ciState == "red" and .result.codexVerdict == "skipped"' <<<"${output}"
+    assert_success
+    run _pl_769_defect_run '{"implementer":"claude","maxRounds":1}' \
+        '{"ci:":[{"state":"green","sha":"abc","detail":""},{"state":"red","sha":"def","detail":"red"}]}'
+    assert_success
+    run jq -e '.error == null and .result.sha == "def" and .result.ciState == "red" and .result.codexVerdict == "blocked"' <<<"${output}"
+    assert_success
 }
 
 @test "pr-loop (node): explicit full preserves the default structured review contract (#310)" {
@@ -3009,6 +3018,7 @@ _handover_replies() {
     jq -n '{"sync:":{state:"synced",repoDir:"/tmp/acceptance",sha:("a" * 40)},"head:":{sha:("a" * 40),labels:["milestone-gate"],milestoneIssue:5,
         checks:(["verify-all (ubuntu-latest)","verify-all (ubuntu-24.04-arm)","ci-passed"] |
             map({name:.,status:"COMPLETED",conclusion:"SUCCESS",url:"https://github.com/o/r/actions/runs/1"}))},
+        "full-run:":{state:"green",line:("full-run: " + ("a" * 40) + " completed success run=9")},
         "artifact-check:":{ok:true},"scratch:":{ok:true},"findings:":{content:"findings: output\n"},"artifact-write:":{ok:true},
         "review:":{line:("交出判定：可交出 head=" + ("a" * 40))},
         "snapshot:":{equal:true,digests:{before:("a" * 64),after:("a" * 64)},diff:[]},
@@ -3040,9 +3050,9 @@ _handover_replies() {
 @test "milestone-handover prepares evidence in ordered unstructured stages without publishing readiness (#412)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
+        [.calls[].role] == ["sync:","head:","full-run:","scratch:","findings:","artifact-write:Findings","artifact-check:Review","review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
         ([.calls[] | select(.role | test("^(findings|machine|evidence):") | not) | .schema] | all(. == null))' <<<"${output}"
-    jq -e '.calls[3].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
+    jq -e '.calls[4].prompt | contains("OWNER") and contains("F1..Fn") and contains("user entry point")' <<<"${output}"
     jq -e '.calls[] | select(.role == "review:") | .prompt | contains("codex exec") and contains("doc/acceptance.md") and contains("actually prints") and contains("local scratch only")' <<<"${output}"
     jq -e '.calls[] | select(.role == "machine:") | .prompt | contains("safeRun=true") and contains("backup+restore") and contains("max 2 worktool-test")' <<<"${output}"
     jq -e '.calls[] | select(.role == "evidence:") | .prompt | contains("| 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |") and contains("Do not post")' <<<"${output}"
@@ -3052,6 +3062,28 @@ _handover_replies() {
     refute_output --partial '允許合併'
     run jq -e '[.calls[].prompt | test("gh pr merge|/merge")] | any | not' <<<"${output}"
     assert_success
+}
+
+# #837: hand-over requires a green full serial run of the exact head.
+@test "milestone-handover requires a green full serial run of the exact head before Scratch (#837)" {
+    _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
+    jq -e '.result.status == "prepared"' <<<"${output}"
+    jq -e '.calls[] | select(.role == "full-run:") | .prompt |
+        contains("./.agents/script/monitor/full-run.sh --repo o/r --sha " + ("a" * 40) + " --dispatch") and
+        contains("--wait 540") and contains("10800")' <<<"${output}"
+    jq -e '[.calls[].phase] | index("Full run") == 2' <<<"${output}"
+}
+
+@test "milestone-handover refuses hand-over when the head has no green full serial run (#837)" {
+    local reply
+    for reply in '{"state":"pending","line":"full-run: x running"}' \
+        '{"state":"failed","line":"full-run: x completed failure run=9"}' \
+        '{"state":"green","line":"full-run: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb completed success run=9"}' \
+        '"prose instead of JSON"'; do
+        _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
+            "$(_handover_replies | jq --argjson r "${reply}" '."full-run:" = $r')"
+        jq -e '.result.status == "full-run-not-green" and ([.calls[].role] | index("scratch:") == null)' <<<"${output}"
+    done
 }
 
 @test "milestone-handover pins one bounded foreground codex launch with literal paths and forbids detaching (#453)" {
@@ -3410,15 +3442,15 @@ _pl_retry_run() {
 @test "milestone-handover initializes scratch exactly once after Head and stops on failure (#423)" {
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' "$(_handover_replies)"
     local json="${output}"
-    run jq -e '.result.status == "prepared" and [.calls[].role][0:4] ==
-        ["sync:","head:","scratch:","findings:"] and
+    run jq -e '.result.status == "prepared" and [.calls[].role][0:5] ==
+        ["sync:","head:","full-run:","scratch:","findings:"] and
         ([.calls[] | select(.role == "scratch:")] | length) == 1 and
         (.calls[] | select(.role == "scratch:") | .prompt | contains("rm -rf --") and contains("mkdir -p --")) and
         ([.calls[] | select(.role != "scratch:") | .prompt | contains("rm -rf")] | any | not)' <<<"${json}"
     assert_success
     _handover_run '{"repo":"o/r","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":7}' \
         "$(_handover_replies | jq '."scratch:"={error:"mkdir failed"}')"
-    jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","scratch:"]' <<<"${output}"
+    jq -e '.result.status == "scratch-failed" and [.calls[].role] == ["sync:","head:","full-run:","scratch:"]' <<<"${output}"
 }
 
 @test "milestone-handover checks real nonempty artifacts before stages and preserves successful output (#423)" {
@@ -3433,7 +3465,7 @@ _pl_retry_run() {
     assert_success
     json="${output}"
     run jq -e '.result.status == "prepared" and
-        [.calls[].role] == ["sync:","head:","scratch:","findings:","artifact-write:Findings","artifact-check:Review",
+        [.calls[].role] == ["sync:","head:","full-run:","scratch:","findings:","artifact-write:Findings","artifact-check:Review",
             "review:","artifact-check:Machine","machine:","artifact-write:Machine","snapshot:codex-before","independent-codex:","independent-cleanup:","snapshot:codex-after","snapshot:claude-before","independent-claude:","independent-claude-cleanup:","snapshot:claude-after","independent-assess:","artifact-write:Independent reports","independent-publish:","artifact-check:Evidence","evidence:","artifact-write:Evidence","artifact-check:Prepared"] and
         ([.ran[] | select(.cmd | contains("test -s"))] | length) == 4' <<<"${json}"
     assert_success
@@ -5146,17 +5178,17 @@ _pl_804_run() {
         "codex defects left after maxRounds|{\"implementer\":\"claude\",\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"blocked\" and .reviewer == \"codex\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
         'codex malformed findings|{"implementer":"claude"}|{"review:":{"verdict":"mergeable"}}|.codexVerdict == "no-output" and .reviewer == "codex" and .reviewVerdict == "no-output" and .blockingLeft == ["review returned missing or malformed findings"]'
         "Claude defects left after maxRounds|{\"maxRounds\":0}|{\"review:\":${defect}}|.codexVerdict == \"not-run\" and .reviewer == \"claude\" and .reviewVerdict == \"blocked\" and .blockingLeft == [\"broken\"]"
-        'red CI before review|{}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red" and .reviewer == "none"'
+        'red CI before review|{}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "red" and .reviewer == "none"'
         'no PR after implementation|{}|{"locate:":null}|.codexVerdict == "none" and .pr == 0'
         'codex off|{"implementer":"claude","codex":"off"}|{}|.codexVerdict == "off" and .reviewer == "none"'
         'preparation failure|{"mode":"light"}|{"prepare:":{"state":"missing-job"}}|.codexVerdict == "blocked"'
-        'fresh light red CI|{"mode":"light"}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .ciState == "red"'
-        'fresh light end|{"mode":"light"}|{}|.codexVerdict == "skipped" and .ciState == "green" and .reviewer == "claude"'
+        'fresh light red CI|{"mode":"light"}|{"ci:":{"state":"red","sha":"abc","detail":"red"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "red"'
+        'fresh light end|{"mode":"light"}|{}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "green" and .reviewer == "claude"'
         'light resume failed review|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"},"review:":{"verdict":"mergeable"}}|.codexVerdict == "skipped" and .reviewVerdict == "no-output"'
         "light resume PR head check failure|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":${head_fail}}|.codexVerdict == \"blocked\" and .reviewer == \"claude\""
         'light resume gate failure|{"mode":"light"}|{"prepare:":{"state":"resume"},"gates:":{"state":"red","detail":"red"}}|.codexVerdict == "blocked" and .pr == 0'
         'light resume without a PR|{"mode":"light"}|{"prepare:":{"state":"resume"}}|.codexVerdict == "none" and .pr == 0'
-        'light resume end|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"}}|.codexVerdict == "skipped" and .ciState == "green"'
+        'light resume end|{"mode":"light","pr":7}|{"prepare:":{"state":"resume"}}|.codexVerdict == "skipped" and .sha == "abc" and .ciState == "green"'
     )
     local c name args over expr
     for c in "${cases[@]}"; do
@@ -5172,7 +5204,9 @@ _pl_804_run() {
 }
 
 # ciState describes CI on the reported head only: a head no CI stage judged is
-# never green (#810).
+# never green (#810). Every case pins the (sha, ciState) pair: the judged head
+# keeps its verdict, and a head a pushing stage may have moved without a
+# successful re-read is reported unknown as "" with none (#815).
 @test "#810: ciState reports CI of the returned head, never green for an unchecked head" {
     local ok='{"verdict":"mergeable","defects":[],"limitations":[],"suggestions":[],"answer":"ok"}'
     local defect='{"verdict":"blocked","defects":["broken"],"limitations":[],"suggestions":[],"answer":"x"}'
@@ -5185,9 +5219,15 @@ _pl_804_run() {
     local -a cases=(
         "_pl_769_defect_run|Fix check fails on a pushed head|${fix}|{\"stage-check:Fix\":${dirty_def}}|.sha == \"def\" and .ciState == \"none\""
         "_pl_769_defect_run|Fix check fails on the CI head|${fix}|{\"stage-check:Fix\":${abc}}|.sha == \"abc\" and .ciState == \"green\""
-        "_pl_769_defect_run|Fix check without evidence|${fix}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.ciState == \"none\""
+        "_pl_769_defect_run|Fix check without evidence, codex review|${fix}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.sha == \"\" and .ciState == \"none\""
+        "_pl_769_defect_run|Fix check without evidence, Claude review|{\"maxRounds\":1}|{\"stage-check:Fix\":{\"evidence\":\"null\"}}|.sha == \"\" and .ciState == \"none\""
         "_pl_769_defect_run|adoption comment fails|${fix}|{\"adoption:\":{\"posted\":false}}|.sha == \"def\" and .ciState == \"none\""
-        "_pl_769_defect_run|codex Fix gates fail|{\"maxRounds\":1}|{\"gates:\":[{\"state\":\"green\",\"detail\":\"ok\"},{\"state\":\"red\",\"detail\":\"red\"}]}|.codexVerdict == \"blocked\" and .ciState == \"none\""
+        "_pl_769_defect_run|codex Fix gates fail on the CI head|{\"maxRounds\":1}|{\"gates:\":[{\"state\":\"green\",\"detail\":\"ok\"},{\"state\":\"red\",\"detail\":\"red\"}]}|.codexVerdict == \"blocked\" and .sha == \"abc\" and .ciState == \"green\""
+        "_pl_769_defect_run|codex Fix publication fails|{\"maxRounds\":1}|{\"publish:Fix\":null}|.codexVerdict == \"blocked\" and .sha == \"\" and .ciState == \"none\" and .blockingLeft == [\"publication failed\"]"
+        "_pl_769_defect_run|post-Fix CI returns nothing|${fix}|{\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},null]}|.codexVerdict == \"blocked\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|CI returns nothing before review|{}|{\"ci:\":null}|.codexVerdict == \"skipped\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|light CI returns nothing|{\"mode\":\"light\"}|{\"ci:\":null}|.codexVerdict == \"skipped\" and .sha == \"\" and .ciState == \"none\""
+        "_pl_804_run|full resume check without evidence after CI|{\"pr\":7,\"codex\":\"off\",\"implementer\":\"claude\"}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},{\"evidence\":\"null\"}]}|.codexVerdict == \"blocked\" and .sha == \"abc\" and .ciState == \"green\""
         "_pl_769_defect_run|post-Fix CI green without a sha|${fix}|{\"review:\":[${defect},${ok}],\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"green\",\"sha\":\"\",\"detail\":\"\"}]}|.sha == \"def\" and .ciState == \"green\""
         "_pl_769_defect_run|post-Fix CI red without a sha|${fix}|{\"ci:\":[{\"state\":\"green\",\"sha\":\"abc\",\"detail\":\"\"},{\"state\":\"red\",\"sha\":\"\",\"detail\":\"red\"}]}|.sha == \"def\" and .ciState == \"red\""
         "_pl_804_run|light resume head moved after CI|{\"mode\":\"light\",\"pr\":7}|{\"prepare:\":{\"state\":\"resume\"},\"stage-check:\":[${abc},${def}]}|.sha == \"def\" and .ciState == \"none\""

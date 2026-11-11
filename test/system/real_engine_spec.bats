@@ -96,6 +96,11 @@
 #   its failure diagnostics open. On failure the daemon log and the box's
 #   own log are printed so a red run is diagnosable.
 
+# Cases build on one another (one box created, used, then removed, with
+# shared state in BATS_FILE_TMPDIR), so they stay serial within the file
+# under `bats --jobs` (#689).
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
 load "${BATS_TEST_DIRNAME}/../helper/common"
 
 # `run -127` (a control case asserting `command not found`) is a flagged

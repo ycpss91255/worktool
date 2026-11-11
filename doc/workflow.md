@@ -175,7 +175,7 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    開 PR(zh-TW 描述:`Closes #N`、`Part of`、「這個 PR 只做一件事」、commit 清單、「測試證據」)。
    Locate 找到 PR 後，以腳本讀取 `git status --porcelain`、本地 HEAD、`git ls-remote` 的遠端分支 HEAD 與 PR head；工作區必須乾淨，三個 HEAD 必須相同。檢查失敗就以 `blockingLeft` 附上狀態與 HEAD 比較，不進入 CI。
 2. **Locate**:agent 以 `gh pr list --head <branch>` 結構化回傳 PR 編號與 head SHA(不從自由文字猜)。
-3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red`、`codexVerdict: "skipped"` 結束,不進 codex。
+3. **CI**:agent 以 `gh pr checks --watch` 等到全綠;紅就讀 log 修正、再推(最多兩輪);仍紅就以 `ciState: red`、`codexVerdict: "skipped"` 結束,不進 codex;CI stage 沒有回傳結果時沒有任何 CI 判定,修復也可能已推送,以 `sha: ""`、`ciState: none`、`codexVerdict: "skipped"` 結束(#815)。
 4. **Codex**:agent 把 **PR 描述 + 對應 issue + 完整 diff** 餵給 `codex exec`,逐項確認
    (一件事 / TDD 證據 / 自足 / 正確性與健壯性 / 文件一致 / 新問題),把 codex 原文以 `[codex]`
    貼到 PR,加一行 `[claude] double-check`(上下文是否完整、每項是否引用 diff 位置)與可重現指令。
@@ -193,7 +193,8 @@ light 不受 `implementer` 的選擇影響，也不因 `codex: "off"` 留配額�
    Fix 結束也以同一腳本確認工作區乾淨、本地 HEAD 已推送且與 PR head 相同，並要求 PR head 與修正前不同；codex 與 Claude 路徑皆適用。任一檢查失敗就回報 `blocked`，`blockingLeft` 附上 git status、修正前後 HEAD 與遠端比較，不進入下一輪 CI／審查。
    已推送的 commit 不得 rebase、amend、reset 或 force push 改寫；只追加新 commit，需要同步 main 時用 merge。
 6. 回傳 `{ issue, pr, sha, ciState, codexVerdict, reviewer, reviewVerdict, reviews, rounds, blockingLeft, limitations, suggestions }`，`blockingLeft` 列出剩餘缺陷；流程中止時列出失敗原因，Fix 檢查失敗與 Fix 後 CI 紅另附該輪缺陷。
-   `ciState` 只描述回傳的 `sha`：最後一次 CI stage 判定的正是該 head 時，回該次的 `green` 或 `red`；還沒跑 CI，或該 head 沒有經過 CI 判定時回 `none`，例如 Fix 已推送但 Fix 檢查或採納留言失敗、接續時 CI 之後 PR head 又變動、codex Fix 的 gate 或發布中止，以及 Fix 檢查沒有有效證據（#810）。
+   `ciState` 只描述回傳的 `sha`：最後一次 CI stage 判定的正是該 head 時，回該次的 `green` 或 `red`；還沒跑 CI，或該 head 沒有經過 CI 判定時回 `none`，例如 Fix 已推送但 Fix 檢查或採納留言失敗、接續時 CI 之後 PR head 又變動（#810）。
+   可能推送的 stage 執行後沒有成功讀到 PR head 時，head 未知，回 `sha: ""` 與 `none`：codex Fix 的發布中止、Fix 檢查沒有有效證據（Fix 已可能推送），以及 CI stage 沒有回傳結果（沒有任何 CI 判定，修復也可能已推送）。codex Fix 的 gate 中止（gate 修復只在本地 commit，PR head 仍是 CI 判定過的 head）與接續檢查沒有有效證據（CI 與該檢查之間沒有 stage 推送）回 CI 判定過的 head 與該次的 `green` 或 `red`（#815）。
    `reviewer` 是最後一次審查的審查者（`claude`、`codex`，沒有審查時為 `none`），`reviewVerdict` 是該次審查的結論（`mergeable`、`blocked`、`no-output`，沒有審查時為 `none`），`reviews` 是審查次數，與只計 Fix 輪數的 `rounds` 分開（#755）。
    預設 `implementer: "codex"` 由 Claude 審查：審查迴圈正常結束時（審查通過、`maxRounds` 用完仍有缺陷，或審查回傳缺漏或格式錯誤的結果；最後一種的 `reviewVerdict` 是 `no-output`，`blockingLeft` 寫明原因，#784）`codexVerdict` 是 `not-run`，審查結論看 `reviewVerdict` 與 `blockingLeft`；RED 紀錄（每次審查前檢查，第一輪時還沒有任何審查）、Fix、採納留言或 Fix 後 CI 任一流程中止時回 `blocked`，與審查者無關（#769）。呼叫者依 `reviewer` 判斷是否仍需 codex 確認。
    `implementer: "claude"` 由 codex 審查：審查通過且下述留言確認成功回 `mergeable`；`maxRounds` 用完仍有缺陷回 `blocked`；審查回傳缺漏或格式錯誤回 `no-output`；RED 紀錄、留言快照、Fix、採納留言、Fix 後 CI 中止或留言確認失敗回 `blocked`（#804）。
@@ -502,6 +503,12 @@ API 留言不得繞過檢查。腳本檔與執行期組出的呼叫仍沿用 app
 2. **Head**：確認 full head SHA、`milestone-gate`、所有 head checks 綠燈，
    包括兩種架構的 `verify-all` 與 `ci-passed`；只排除 `milestone-gate-approval`。
    最新仍在執行或缺少必要 check 時依共用規則等待；失敗或逾時即回報並停止。
+   **Full run**（#837、ADR-0019）：交出前同一個 head 必須有綠燈的完整序列執行。
+   前景執行 `./.agents/script/monitor/full-run.sh --repo <repo> --sha <head> --dispatch --wait 540`
+   （沒有該 sha 的 run 或最新一次失敗時以 `workflow_dispatch` 對該 sha 啟動 Nightly），
+   仍 pending（退出碼 3）就以 `--wait 540` 再查，累計最多 10800 秒；只有退出碼 0
+   且輸出為 `full-run: <head> completed success run=<id>` 才繼續，失敗、查不到、逾時或
+   sha 不符一律回 `full-run-not-green` 並停止，不進入 Scratch。
 3. **Scratch**：Head 通過後，在前景統一清除並建立當次 per-head scratch 目錄，僅執行一次；
    初始化失敗即停止，不進入 Findings。
    所有 scratch 報告都視為 workflow 產物：Findings、Machine、Evidence agent 只回傳內容字串，
