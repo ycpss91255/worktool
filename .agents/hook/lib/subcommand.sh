@@ -68,6 +68,9 @@
 #   hook_word_has_bare_subst <encoded word>   0 when the word holds an
 #     UNQUOTED $(...) / `...`: the shell word-splits its output, so the one
 #     word seen here may launch as several (options included)
+#   hook_word_has_split_expansion <encoded word>   0 when an expansion may
+#     produce several argv, including quoted positional/array @ and an
+#     outer expansion carried into a dynamically built shell script
 #   hook_is_interpreter <word>   0 when <word> (a path allowed) names a
 #     non-shell interpreter that runs inline code (python, perl, ruby, node,
 #     php, awk, lua ...); a heredoc fed to one becomes a here-string word of
@@ -526,13 +529,13 @@ _hook_decode_sep() {
 }
 
 # _hook_decode <word> - an opaque word as text: separators restored, each
-# expansion escape (\001v) dropped, each substitution (\001s quoted, \001u
+# expansion escape (\001v) and argv metadata (\001q / \001w) dropped, each substitution (\001s quoted, \001u
 # unquoted) shown as '_', and the literal-\001 escape (\001z) turned back
 # into \001 last, so no decoded byte is read as an escape again.
 _hook_decode() {
     local _s
     _s="$(_hook_decode_sep "$1")"
-    _s="${_s//$'\001'v/}"
+    _s="${_s//$'\001'[vqw]/}"
     _s="${_s//$'\001'[su]/_}"
     printf '%s' "${_s//$'\001'z/$'\001'}"
 }
@@ -555,6 +558,10 @@ hook_word_has_expansion() {
 # hook_word_has_bare_subst <encoded word> - see the header.
 hook_word_has_bare_subst() {
     [[ "$1" == *$'\001'u* ]]
+}
+
+hook_word_has_split_expansion() {
+    [[ "$1" == *$'\001'[uw]* ]]
 }
 
 # Long wrapper options that take their value as the NEXT word.
@@ -680,6 +687,7 @@ _hook_emit() {
         # carry it in as the escape \001v (a substitution as \001v_), which
         # the quoting pass keeps; the literal-\001 escape \001z stays too.
         _script="${_script//$'\001'[su]/$'\001'v_}"
+        _script="${_script//$'\001'q/}"
         while IFS= read -r _line; do
             printf '%s%s\n' "${_lead}" "${_line}"
         done < <(_hook_subcommands_enc "$(_hook_decode_sep "${_script}")")
@@ -688,7 +696,7 @@ _hook_emit() {
     if [[ -n "${_HOOK_RAW:-}" ]]; then
         printf '%s\n' "$1"
     else
-        _t="${1//$'\001'v/}"
+        _t="${1//$'\001'[vqw]/}"
         _t="${_t//$'\001'[a-u]/_}"
         printf '%s\n' "${_t//$'\001'z/$'\001'}"
     fi

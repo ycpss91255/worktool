@@ -63,6 +63,61 @@ _check() { run_hook enforce_local_test_scope "$(hook_json "$1")"; }
     done
 }
 
+@test "#902: quoted single filter and base values do not select extra specs" {
+    local cmd wrapped
+    for cmd in "just test unit test/unit/log_spec.bats --filter \"\$FILTER\"" \
+        "script/test/test.sh --unit test/unit/log_spec.bats --filter \"\${FILTER:-a.*}\"" \
+        "just test unit test/unit/log_spec.bats --filter \"\$(printf pattern)\"" \
+        "just test changed --base \"\$BASE\"" \
+        "script/test/test.sh --changed --base \"\${BASE:-origin/main}\""; do
+        for wrapped in "${cmd}" "bash -c $(printf '%q' "${cmd}")" "eval $(printf '%q' "${cmd}")"; do
+            _check "${wrapped}"
+            assert_success
+        done
+    done
+}
+
+@test "#902: splitting option values and expanded spec arguments remain blocked" {
+    local cmd wrapped
+    for cmd in "just test unit test/unit/log_spec.bats --filter \$FILTER" \
+        'just test unit test/unit/log_spec.bats --filter a.*' \
+        'just test unit test/unit/log_spec.bats --filter {a,b}' \
+        "just test unit test/unit/log_spec.bats --filter \"\$@\"" \
+        "just test unit test/unit/log_spec.bats --filter \"\${FILTERS[@]}\"" \
+        "just test unit test/unit/log_spec.bats --filter \"\${!FILTER}\"" \
+        "just test unit test/unit/log_spec.bats --filter \"\$FILTER\" \"\$SPECS\"" \
+        "just test unit test/unit/log_spec.bats --filter \"\$(just test unit)\"" \
+        "just test changed --base \$BASE" \
+        'script/test/test.sh --filter "" --system-real'; do
+        for wrapped in "${cmd}" "bash -c $(printf '%q' "${cmd}")" "eval $(printf '%q' "${cmd}")"; do
+            _check "${wrapped}"
+            assert_failure 2
+        done
+    done
+}
+
+@test "#902: inner quoting cannot bless an outer script-building expansion" {
+    local dollar="\$"
+    _check "bash -c \"just test unit test/unit/log_spec.bats --filter '${dollar}FILTER'\""
+    assert_failure 2
+    _check "eval \"just test unit test/unit/log_spec.bats --filter '${dollar}FILTER'\""
+    assert_failure 2
+}
+
+@test "#902: empty quoted spans cannot hide shell and pass-through launchers" {
+    local cmd
+    for cmd in 'ba""sh -c "just test unit"' \
+        '""bash -c "just test unit"' \
+        'bash"" -c "just test unit"' \
+        'bash -""c "just test unit"' \
+        'bash --rcfile "" -c "just test unit"' \
+        'ev""al "just test matrix"' \
+        'su""do bash -c "just test system-real"'; do
+        _check "${cmd}"
+        assert_failure 2
+    done
+}
+
 @test "#800: internal container gates follow the same scope rule" {
     local cmd
     for cmd in 'script/test/test.sh --ci-unit' 'script/test/test.sh --ci-matrix' \

@@ -38,10 +38,12 @@ matrix locally for 40-50 minutes each and saturated the host. #326 added
 `enforce_local_test_scope.sh` against it; since #800 it applies ADR-0014
 decision 2 to literal arguments: an explicit spec of any tier except
 system-real runs, while a whole tier, the real-engine group and a bare
-every-tier run are blocked. Since #818 any argument the shell expands (glob,
-brace, $VAR, $(...)) is blocked too, since it may select a whole tier the hook
-cannot see; write each touched spec as a literal path and quote a --filter
-regex. A literal list that happens to name every spec of a tier is taken as
+every-tier run are blocked. Since #818 spec/tier arguments the shell expands
+(glob, brace, $VAR, $(...)) are blocked too, since they may select a whole
+tier the hook cannot see. Filter/base values stay data when their quoting
+proves one argv (#902); unquoted splitting values and quoted positional/array
+@ remain blocked. Write each touched spec as a literal path and quote a
+--filter regex. A literal list that happens to name every spec of a tier is taken as
 touched specs and allowed (decision 2 allows any tier's touched specs, and
 test/acceptance has a single spec). A 30-minute audit cron stops any such run. On a
 red CI job, check `gh pr checks <n> -R ycpss91255/worktool` first to see
