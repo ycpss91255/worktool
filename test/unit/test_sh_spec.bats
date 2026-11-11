@@ -225,6 +225,22 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_equal "$(_dispatched)" "${EVERYTHING_IN_ORDER}"
 }
 
+@test "test.sh labels every verification-owned container and leaves ordinary runs unlabelled" {
+    WORKTOOL_TEST_RUN_ID=fixture-run run "${TEST_SH}"
+    assert_success
+    local calls
+    calls="$(grep '^docker run ' "${FAKE_DOCKER_CALLS}")"
+    assert_equal "$(wc -l <<<"${calls}")" 8
+    run grep -vF -- '--label worktool.verify-run=fixture-run' <<<"${calls}"
+    assert_failure 1
+
+    rm -f "${FAKE_DOCKER_CALLS}"
+    WORKTOOL_TEST_RUN_ID='' run "${TEST_SH}" --integration
+    assert_success
+    run grep -F -- '--label worktool.verify-run=' "${FAKE_DOCKER_CALLS}"
+    assert_failure 1
+}
+
 @test "test.sh with no flag stops at the first failing step" {
     FAKE_DOCKER_FAIL_ON=--ci-system run "${TEST_SH}"
     assert_failure
