@@ -553,6 +553,13 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   以該 sha 最新一次 run 判定(較新的失敗蓋過較舊的成功):0 綠燈、1 非綠燈(失敗、沒有
   run、查詢失敗)、2 參數錯誤(含 sha 不是該 repo 的 commit,#865)、3 仍在執行;milestone
   交接(`milestone-handover` 的 Full run 階段)與 release 打 tag 都要求退出碼 0。
+  綠燈另要求兩架構(`ubuntu-latest`、`ubuntu-24.04-arm`)的 `full-serial` 與
+  `isolation` 各恰好一個 job,皆 completed/success,且各有恰好一個成功的
+  `Verify checkout <sha>` 步驟,實際比較 checkout HEAD 與目標 sha(#899)。push/schedule
+  另核對 run headSha;dispatch 的 headSha 是 workflow ref,目標以 checkout 證據核對。
+  最新 run 即使 workflow success,若測試 skipped、缺漏、重複或無 checkout 證據仍是非綠燈;
+  不回退較舊綠燈,`--dispatch` 可重跑。run/job 查詢失敗不綠燈也不自動 dispatch。
+  修復前缺 checkout 證據的舊 run 需重跑。此 monitor 需要 `gh` 與 `jq`。
 
 ### unit 分片與聯集 verdict(#831,ADR-0016)
 
@@ -573,9 +580,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
   一份分片)都失敗。分片 leg 與 verdict 都是 `ci-passed` 與 `prior-run` 要求的 leg。
 - **本機**:`just test unit --shard I/N` 可單獨跑一片;它只代表那一片,整層仍是
   `just test unit`。
-- **流程圖**:`doc/diagram/flow.drawio.svg` 的 CI 區塊畫的是「每個架構跑同一組
-  `just test <tier>`、全部 success 才綠」;分片只改 unit 在 CI 的執行方式,這兩點不變,
-  圖面不需改動。
+- **流程圖**:`doc/diagram/flow.drawio.svg` 列出完整七個 tier(含 matrix),CI 區塊
+  表達「每個架構跑同一組 tier、unit 分片、其餘依 CI leg 分組、全部 success 才綠」;
+  分片數與 leg 接線以本節及 `ci.yml` 為準(#831、#841、#901)。
 
 ### code 路徑與 meta 路徑(#688)
 
@@ -597,10 +604,11 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 - **concurrency**:兩條路徑各自一個 group,改說明不會取消正在跑的 code run;
   `cancel-in-progress` 只對 `pull_request` 生效,main push 不會被取消。
 - **required check 不變**:branch protection 仍只要求 `ci-passed`(與
-  `milestone-gate-approval`),以 head sha 上最新的 `ci-passed` check run 為準。
-  code run 還在跑時改說明,meta run 的 `ci-passed` 會先失敗,code run 結束時
-  建立的 `ci-passed` 較晚,接手成為結果。本 issue 原本設想拆出獨立 workflow 並新增
-  required check,因不改 branch protection 而改採此做法(見 #688 留言)。
+  `milestone-gate-approval`)。code run 還在跑時改說明,meta run 的 `prior-run`
+  會等待 code run 完成再判定;超時或測試 leg 不綠仍失敗(#872)。不能依賴 code run
+  較晚的綠燈覆蓋 meta run 的紅燈,因為 GitHub 可能仍採用較新的 meta check suite。
+  #688 原本設想拆出獨立 workflow 並新增 required check,因不改 branch protection
+  而改採同一 workflow 的 code／meta 分流(見 #688 留言)。
 - `test/unit/ci_prior_run_spec.bats` 測判斷規則,`test/unit/ci_yml_spec.bats`
   釘住分流、concurrency 與 `prior-run`／`ci-passed` 接線,並核對 lib 預期的 leg
   名稱與 `ci.yml` 矩陣一致。
