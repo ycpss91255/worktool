@@ -306,17 +306,19 @@ _dispatched() {
     done
 }
 
-@test "test.sh --changed selects both realbox specs for its entry and interrupt library" {
-    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify"
+@test "test.sh --changed selects both realbox specs for each dedicated dependency" {
+    mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify" "${TEMP_REPO}/test/helper"
     local path expected
-    for path in lib/realbox_interrupt.sh script/verify/realbox.sh; do
+    local -a paths=(lib/realbox_interrupt.sh script/verify/realbox.sh
+        test/helper/interrupt_load.bash test/helper/realbox_window.bash)
+    for path in "${paths[@]}"; do
         printf '# source\n' >"${TEMP_REPO}/${path}"
     done
     for path in verify_realbox verify_realbox_matrix; do
         printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
     done
     _commit_baseline
-    for path in lib/realbox_interrupt.sh script/verify/realbox.sh; do
+    for path in "${paths[@]}"; do
         printf '# changed\n' >>"${TEMP_REPO}/${path}"
         : >"${FAKE_DOCKER_CALLS}"
         run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
@@ -324,6 +326,11 @@ _dispatched() {
         expected="$(_dispatched)"
         [[ "${expected}" == *test/unit/verify_realbox_spec.bats* ]]
         [[ "${expected}" == *test/unit/verify_realbox_matrix_spec.bats* ]]
+        if [[ "${path}" == test/helper/* ]]; then
+            assert_output --partial "測試基礎設施變更"
+        else
+            refute_output --partial "測試基礎設施變更"
+        fi
         git -C "${TEMP_REPO}" checkout -- "${path}"
     done
 }

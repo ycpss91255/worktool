@@ -1230,6 +1230,13 @@ _run_changed() {
             continue
         fi
         if _is_test_infrastructure "${_path}"; then
+            # Shared helpers still require CI's full coverage, but run their
+            # explicitly mapped specs locally as well.
+            _mapped="$(_mapped_specs "${_path}")"
+            while IFS= read -r _spec; do
+                [[ -n "${_spec}" ]] || continue
+                _add_changed_spec "${_spec}" 1 "${_path}"
+            done <<<"${_mapped}"
             _info "此改動由 CI 的 unit 驗證：${_path}（測試基礎設施變更；全部 tier 交給 CI）"
             _full_fallback=1
             continue
