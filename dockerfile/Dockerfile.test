@@ -29,8 +29,12 @@
 # ENV DISTROBOX_VERSION in the final stage so specs can assert on it).
 ARG DISTROBOX_VERSION=1.8.2.5
 ARG DISTROBOX_SHA256=0c3bc4785ee3be3b89f93abb7cc0a9f60e56989e81319af140a4b60403b18f80
+# The same bats release as Dockerfile.ghostty and Dockerfile.system-real
+# (issue #861; test/unit/test_sh_spec.bats keeps them equal). Never
+# `latest`: bats before 1.14 exits 0 when --filter selects no case.
+ARG BATS_TAG=1.14.0
 
-FROM bats/bats:latest AS bats-src
+FROM bats/bats:${BATS_TAG} AS bats-src
 
 FROM alpine:latest AS bats-extensions
 # hadolint ignore=DL3018

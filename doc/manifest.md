@@ -576,6 +576,26 @@ issue #129),不再延後到 M5。
   (含其基底 `docker:29.8.0-dind` 的層)與 Docker 建置快取 —— 和 `worktool-test:local`
   測試映像同一類、可用 `docker rmi` / `docker builder prune` 清掉;測試在巢狀
   daemon 內建立的東西則一件都不會留在 host 上。
+  - **CI 的 apt 來源(issue #843)**:CI 的 amd64 腿設 `WORKTOOL_APT_MIRROR`
+    (GitHub ubuntu runner 自己用的 `http://azure.archive.ubuntu.com/ubuntu/`;
+    arm 腿為空),`test.sh` 以 `-e WORKTOOL_APT_MIRROR` 傳進 runner。設了它時,
+    entry 在 dockerd 就緒後於巢狀 daemon 內以真正的 `ubuntu:26.04` 為底、**以同一
+    個 tag** 重建 box 映像,差別只有 `script/test/apt-mirror.sh` 把
+    `ubuntu.sources` 每一個 `URIs:`(archive 與 security)改成該鏡像並開
+    `Acquire::Retries`。鎖定版 distrobox 在映像已存在時不 pull(manifest 沒有
+    `pull=`),所以 assemble、manifest、`image=ubuntu:26.04` 與 distrobox-init
+    首次啟動的完整 apt 安裝(case 5 驗的進度行與 host log)都不變,**只有套件從哪
+    裡下載不同**;因此不把套件預先烤進映像(那會跳過受測的安裝路徑)。未設時(本機、
+    arm 腿)完全不動。`Dockerfile.ghostty` / `Dockerfile.system-real` 以同名
+    build arg `APT_MIRROR`(預設空)套用同一支腳本。
+  - **CI 保存 box 下載的套件(issue #847)**:CI 兩個架構都設 `WORKTOOL_APT_CACHE_DIR`
+    (actions/cache 還原的目錄),`test.sh` 把它掛到 runner 的 `/var/cache/worktool-apt`
+    並以 `WORKTOOL_APT_ARCHIVES` 告訴 entry;entry 同樣以同一個 tag 重建 box 映像,
+    `apt-mirror.sh --archives /run/host/var/cache/worktool-apt/` 只多寫一行
+    `Dir::Cache::Archives`(distrobox 把 runner 的 `/` 掛在 box 的 `/run/host`)。
+    distrobox-init 照樣跑 `apt-get update` 與完整的 `apt-get install`,apt 以索引的
+    版本與 hash 核對目錄裡的 `.deb`,相符的不下載、不符的照常下載,**受測的安裝路徑不變**。
+    只有 main push 修剪(每個套件與架構留最新版本,`lib/apt_cache.sh`)並寫回 cache。
   - **驗證什麼**:(a) 前置:runner 內真的有活著的引擎(`docker info`)、跑的是
     鎖定版 distrobox、巢狀 daemon 起初沒有 `dev`;(b) 以真實(非 dry-run)模式、
     `DBX_CONTAINER_MANAGER=docker`、**交付的** `box/dev.ini` 跑

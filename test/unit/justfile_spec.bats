@@ -545,8 +545,8 @@ _listed_names() {
     # Matrix: job name (gate, keyed on by branch protection / ci-passed) ->
     # tier. The names are the pre-existing ones.
     local _pair _gate _tier
-    for _pair in 'lint=lint' 'test-unit=unit' 'test-matrix=matrix' 'test-integration=integration' \
-        'test-system=system' 'test-acceptance=acceptance'; do
+    for _pair in 'lint-system-acceptance=lint system acceptance' 'test-matrix=matrix' \
+        'test-integration=integration'; do
         _gate="${_pair%%=*}"
         _tier="${_pair#*=}"
         run grep -A1 -E "^ +- gate: ${_gate}$" "${_yml}"
@@ -555,13 +555,19 @@ _listed_names() {
     done
     run grep -E '^ +run: just |^ +worktool-verify:local -c ' "${_yml}"
     assert_success
-    assert_line --regexp '^ +run: just test \$\{\{ matrix\.tier \}\}$'
+    # A gate leg runs each of its tiers as `just test <tier>` (#841).
+    run grep -E 'just test "\$\{tier\}"' "${_yml}"
+    assert_success
+    run grep -E '^ +run: just |^ +worktool-verify:local -c |just test "\$\{tier\}"' "${_yml}"
+    assert_success
     assert_line --regexp '^ +run: just test system-real$'
+    # The unit tier runs as weighted shards of the same recipe (#831).
+    assert_line --regexp '^ +run: just test unit --shard \$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.shards \}\}$'
     # Milestone acceptance drives just verify inside the real-tool container.
     assert_line --regexp "^ +worktool-verify:local -c 'just verify all'$"
     assert_line --regexp '^ +run: just test verify-env$'
-    # Exactly those four invocations: no gate bypasses the grammar.
-    assert_equal "${#lines[@]}" 4
+    # Exactly those five invocations: no gate bypasses the grammar.
+    assert_equal "${#lines[@]}" 5
 }
 
 @test "just agent lists the Codex launcher without starting it" {

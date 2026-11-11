@@ -1,0 +1,205 @@
+#!/usr/bin/env bats
+# shellcheck source-path=SCRIPTDIR  # resolve `source=` relative to this file's dir
+# test/unit/apt_mirror_spec.bats - script/test/apt-mirror.sh (issue #843)
+#
+# WHAT THIS PROVES
+#   CI's Ubuntu package source is one knob: given a mirror, the script points
+#   EVERY `URIs:` line of an Ubuntu deb822 sources file (the archive pockets
+#   and the security pocket alike) at one apt mirror list - that mirror
+#   first, the file's own sources after it in a strict order, so a file the
+#   mirror cannot serve comes from the next one (#885) - and turns on apt's
+#   retries; given no mirror it changes nothing, so a local build or run is
+#   byte-for-byte what it was. A sources file it cannot rewrite is a failure,
+#   never a silent fall back to the default mirror, and a mirror that is not
+#   a plain http(s) URL is refused before anything is written (it ends up in
+#   a Dockerfile line). The two Ubuntu test images run it before their first
+#   `apt-get update`, from the one ARG the workflow sets.
+#
+# HOW
+#   The script is run with --root against a fake root holding the
+#   ubuntu:26.04 sources file; nothing outside BATS_TEST_TMPDIR is touched.
+
+load "${BATS_TEST_DIRNAME}/../helper/common"
+
+MIRROR="http://azure.archive.ubuntu.com/ubuntu/"
+
+setup() {
+    SCRIPT="${REPO_ROOT}/script/test/apt-mirror.sh"
+    ROOT="${BATS_TEST_TMPDIR}/root"
+    SOURCES="${ROOT}/etc/apt/sources.list.d/ubuntu.sources"
+    CONF="${ROOT}/etc/apt/apt.conf.d/80worktool-ci"
+    LIST="${ROOT}/etc/apt/worktool-mirrors.list"
+    mkdir -p "${ROOT}/etc/apt/sources.list.d" "${ROOT}/etc/apt/apt.conf.d"
+    # The ubuntu:26.04 file: archive pockets and security on two hosts.
+    cat >"${SOURCES}" <<'EOF'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: resolute resolute-updates resolute-backports
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu/
+Suites: resolute-security
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+    cp "${SOURCES}" "${BATS_TEST_TMPDIR}/orig.sources"
+}
+
+@test "a mirror points every URIs line at one mirror list: the mirror first, then the file's own sources in order, and keeps the rest (#885)" {
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    run grep -c "^URIs: mirror+file:/etc/apt/worktool-mirrors.list\$" "${SOURCES}"
+    assert_output 2
+    run grep -cE '^URIs:' "${SOURCES}"
+    assert_output 2
+    # Strict order (apt spreads downloads over a list without priorities):
+    # a file the mirror cannot serve (the index/pool skew of 2026-11-10, a
+    # 404) is fetched from the next source; all failing is still a failure.
+    run cat "${LIST}"
+    assert_output "$(printf '%s\tpriority:1\n%s\tpriority:2\n%s\tpriority:3' \
+        "${MIRROR}" http://archive.ubuntu.com/ubuntu/ http://security.ubuntu.com/ubuntu/)"
+    # Only the URIs lines changed.
+    run diff <(grep -v '^URIs:' "${BATS_TEST_TMPDIR}/orig.sources") <(grep -v '^URIs:' "${SOURCES}")
+    assert_success
+}
+
+@test "the fallback list names each source once: an arm root falls back to ports only (#885)" {
+    sed -i 's|^URIs:.*|URIs: http://ports.ubuntu.com/ubuntu-ports/|' "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    run cat "${LIST}"
+    assert_output "$(printf '%s\tpriority:1\n%s\tpriority:2' "${MIRROR}" http://ports.ubuntu.com/ubuntu-ports/)"
+}
+
+@test "the log names the mirror and every fallback source in order (#885)" {
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    assert_output --partial "apt-mirror.sh: apt sources -> ${MIRROR}, then on a failed fetch http://archive.ubuntu.com/ubuntu/ http://security.ubuntu.com/ubuntu/"
+}
+
+@test "a mirror turns on apt retries" {
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_success
+    run cat "${CONF}"
+    assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
+}
+
+@test "--archives DIR keeps apt's downloaded packages in DIR, with or without a mirror; a DIR that is not a plain absolute path is refused (#847)" {
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /run/host/var/cache/worktool-apt "${MIRROR}"
+    assert_success
+    run cat "${CONF}"
+    assert_line 'Dir::Cache::Archives "/run/host/var/cache/worktool-apt/";'
+    assert_line --regexp '^Acquire::Retries "[1-9][0-9]*";$'
+    rm -f "${CONF}"
+    cp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" --archives /var/cache/x/
+    assert_success
+    run cat "${CONF}"
+    assert_output 'Dir::Cache::Archives "/var/cache/x/";'
+    run diff "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    assert_success
+    rm -f "${CONF}"
+    for bad in relative/dir '/a b' '/a"b' "/a'b" '/a;b' ''; do
+        run bash "${SCRIPT}" --root "${ROOT}" --archives "${bad}" "${MIRROR}"
+        assert_failure 2
+    done
+    assert [ ! -e "${CONF}" ]
+}
+
+@test "no mirror (or an empty one) changes nothing" {
+    run bash "${SCRIPT}" --root "${ROOT}"
+    assert_success
+    run bash "${SCRIPT}" --root "${ROOT}" ""
+    assert_success
+    run cmp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+    assert_success
+    assert [ ! -e "${CONF}" ]
+    assert [ ! -e "${LIST}" ]
+}
+
+@test "a missing sources file fails instead of silently keeping the default mirror" {
+    rm "${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_failure 1
+    assert_output --partial 'ubuntu.sources'
+}
+
+@test "a sources file without a URIs line fails" {
+    grep -v '^URIs:' "${BATS_TEST_TMPDIR}/orig.sources" >"${SOURCES}"
+    run bash "${SCRIPT}" --root "${ROOT}" "${MIRROR}"
+    assert_failure 1
+}
+
+@test "a mirror that is not a plain http(s) URL is refused (exit 2) before anything is written" {
+    local _bad
+    for _bad in "ftp://example.org/ubuntu/" "http://a b/" "http://x/'y" "http://x/|y" "archive.ubuntu.com"; do
+        run bash "${SCRIPT}" --root "${ROOT}" "${_bad}"
+        assert_failure 2
+        run cmp "${BATS_TEST_TMPDIR}/orig.sources" "${SOURCES}"
+        assert_success
+    done
+}
+
+@test "--check validates a mirror without touching anything" {
+    run bash "${SCRIPT}" --check "${MIRROR}"
+    assert_success
+    run bash "${SCRIPT}" --check "http://x/'y"
+    assert_failure 2
+}
+
+@test "--help exits 0 and an unknown option exits 2 with the standard message" {
+    run bash "${SCRIPT}" --help
+    assert_success
+    run bash "${SCRIPT}" --bogus
+    assert_failure 2
+    assert_output "apt-mirror.sh: unknown option '--bogus' (see --help)"
+}
+
+@test "apt-mirror.sh runs under set -euo pipefail" {
+    run grep -c '^set -euo pipefail$' "${SCRIPT}"
+    assert_output 1
+}
+
+@test "both Ubuntu test images take APT_MIRROR (empty by default) and apply it before their first apt-get update" {
+    local _df _first_update _mirror_line
+    for _df in dockerfile/Dockerfile.ghostty dockerfile/Dockerfile.system-real; do
+        run grep -E '^ARG APT_MIRROR=$' "${REPO_ROOT}/${_df}"
+        assert_success "${_df} must declare ARG APT_MIRROR="
+        run grep -F 'RUN --mount=type=bind,source=script/test/apt-mirror.sh,target=/tmp/apt-mirror.sh' "${REPO_ROOT}/${_df}"
+        assert_success
+        _mirror_line="$(grep -nF "bash /tmp/apt-mirror.sh \"\${APT_MIRROR}\"" "${REPO_ROOT}/${_df}" | head -n 1 | cut -d: -f1)"
+        _first_update="$(grep -n 'apt-get update' "${REPO_ROOT}/${_df}" | head -n 1 | cut -d: -f1)"
+        assert [ -n "${_mirror_line}" ]
+        assert [ -n "${_first_update}" ]
+        assert [ "${_mirror_line}" -le "${_first_update}" ]
+    done
+}
+
+# --- the persisted box package dir (issue #847, lib/apt_cache.sh) -------------
+
+@test "apt_cache_prune keeps the newest version of each package and arch; apt_cache_key names the kept set (#847)" {
+    local _d="${BATS_TEST_TMPDIR}/debs"
+    mkdir -p "${_d}/partial"
+    touch "${_d}/perl-base_5.40.1-7ubuntu0.3_amd64.deb" "${_d}/perl-base_5.40.1-7ubuntu0.10_amd64.deb" \
+        "${_d}/perl-base_5.40.1-7ubuntu0.3_arm64.deb" "${_d}/tzdata_2026a-1_all.deb" \
+        "${_d}/libc6_2.42-0ubuntu3_amd64.deb" "${_d}/libc6_1%3a2.41-1_amd64.deb" "${_d}/lock"
+    # shellcheck source=../../lib/apt_cache.sh
+    source "${LIB_DIR}/apt_cache.sh"
+    run apt_cache_prune "${_d}"
+    assert_success
+    run bash -c 'cd "$1" && ls' _ "${_d}"
+    assert_output "$(printf '%s\n' 'libc6_1%3a2.41-1_amd64.deb' lock partial \
+        perl-base_5.40.1-7ubuntu0.10_amd64.deb perl-base_5.40.1-7ubuntu0.3_arm64.deb tzdata_2026a-1_all.deb)"
+    run apt_cache_key "${_d}"
+    assert_success
+    assert_output --regexp '^[0-9a-f]{16} 4$'
+    local _key="${output}"
+    touch "${_d}/fish_4.0-1_amd64.deb"
+    run apt_cache_key "${_d}"
+    assert_output --regexp '^[0-9a-f]{16} 5$'
+    refute_output "${_key}"
+    run apt_cache_prune "${BATS_TEST_TMPDIR}/missing"
+    assert_failure 1
+}

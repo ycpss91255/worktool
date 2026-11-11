@@ -19,6 +19,7 @@ setup() {
         --filter '^the acceptance matrix holds for a direct launch, bash -c and eval$' \
         "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ the acceptance matrix holds for a direct launch, bash -c and eval$'
 }
 
 @test "unit representative: every launch form crosses the blocked commit-state interface" {
@@ -26,6 +27,7 @@ setup() {
         --filter '^the acceptance matrix holds for a direct launch, bash -c and eval$' \
         "${MATRIX_SPEC}"
     assert_success
+    assert_line --regexp '^ok [0-9]+ the acceptance matrix holds for a direct launch, bash -c and eval$'
 }
 
 @test "the moved full-product case exists in the matrix tier" {

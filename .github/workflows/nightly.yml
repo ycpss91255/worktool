@@ -1,0 +1,269 @@
+name: Nightly
+
+# Nightly full serial run (issue #836, maintainer decision recorded on
+# #824). On main, on both architectures: bare `just test` (the seven tiers
+# in order, stop at the first failure, exactly what a user types; it holds
+# acceptance 2.3's checks, integration and system-real, so they are not run
+# a second time, issue #888), serial in one job per runner, no sharding, no
+# reuse of PR results.
+#
+# Duplicate rule (#836): an open issue labelled `nightly-failure` means
+# the last failure is not resolved yet, so a SCHEDULED run does not run
+# the suite: it logs which issue caused the skip and ends green, with no
+# new issue and no new comment. A manual run (workflow_dispatch) always
+# runs, so a fix can be verified. If the open issues cannot be listed the
+# suite runs anyway (a broken check never skips silently). A failed run
+# with nothing open opens exactly one new `nightly-failure` issue with the
+# run link; any run with an open issue puts its run link on that issue
+# (green or red); closing stays with the fixing PR or a person. The rules
+# live in lib/nightly.sh (test/unit/nightly_spec.bats).
+
+# Exact-commit run (issue #837): a manual run may name a commit (`sha`);
+# the suite then runs on exactly that commit and the run is titled
+# `full-serial <sha>`, which is what .agents/script/monitor/full-run.sh
+# looks for before a milestone hand-over or a release tag. Such a run never
+# opens or comments on the nightly-failure issue: its caller reads the
+# result itself.
+run-name: full-serial ${{ inputs.sha || github.sha }}
+
+# Main push (issue #851): every sha merged into main runs this full check
+# (full-serial + isolation, no time limit) on top of ci.yml's tiers; a
+# failure opens or comments on the nightly-failure issue like a scheduled
+# run. The cron then only fills the gap: it skips while main's HEAD already
+# has a green (or still running) full run, logging why.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 19 * * *'  # 03:00 Asia/Taipei
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full 40-hex commit to run on (empty = the dispatched ref)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ inputs.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Skip while an earlier nightly failure is unresolved
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          set -uo pipefail
+          source lib/nightly.sh
+          nightly_check_sha "${SHA_INPUT}" || exit 1
+          rc=0
+          gh label create "${NIGHTLY_LABEL}" -R "${REPO}" --color B60205 \
+            --description 'Nightly full serial run failed and is not resolved yet' --force || rc=$?
+          open=''
+          if [ "${rc}" -eq 0 ]; then
+            open="$(gh issue list -R "${REPO}" --label "${NIGHTLY_LABEL}" --state open --json number --jq '.[].number')" || rc=$?
+          fi
+          head_rc=''
+          if [ "${EVENT}" = schedule ]; then
+            head_rc=0
+            ./.agents/script/monitor/full-run.sh --repo "${REPO}" --sha "${GITHUB_SHA}" --exclude-run "${GITHUB_RUN_ID}" || head_rc=$?
+          fi
+          decision="$(nightly_decide "${EVENT}" "${rc}" "${open}" "${head_rc}")" || exit 1
+          echo "decision: ${decision}"
+          if [ "${decision}" = run ]; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  full-serial:
+    name: full-serial (${{ matrix.runner }})
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    # Same Ubuntu package source as ci.yml (issue #843): the amd64 leg
+    # takes the box's and the images' packages from the runner-local
+    # mirror; the arm leg keeps the default (empty).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      # The box's downloaded packages (issue #878): read the newest set
+      # ci.yml's main push saves (#847); nightly never writes it.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
+      # Full-check mode (issue #870): every nightly run (main push, cron,
+      # dispatch) is a complete check; PR runs (ci.yml) never
+      # set it.
+      - name: Bare just test (seven tiers in order, serial)
+        env:
+          WORKTOOL_FULL_CHECK: '1'
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
+        run: just test
+
+  # Tier isolation guard (issue #835, ADR-0018): the same stages in a
+  # seeded random order, failing on anything a stage leaves behind on the
+  # runner. Its own job next to full-serial (not after it), so the full
+  # serial run - the one a hand-over waits for - is not made longer; the
+  # report reads both. The seed is in the log; `just test isolation --seed
+  # N` reproduces the order.
+  isolation:
+    name: isolation (${{ matrix.runner }})
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    # Same Ubuntu package source as ci.yml (issue #843).
+    env:
+      WORKTOOL_APT_MIRROR: ${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      # The box's downloaded packages (issue #878): read the newest set
+      # ci.yml's main push saves (#847); nightly never writes it.
+      - name: Restore box packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-box/*.deb
+          key: apt-box-${{ matrix.runner }}-none
+          restore-keys: apt-box-${{ matrix.runner }}-
+
+      # The two Ubuntu images (issue #885): built with the same buildx
+      # parameters and gha cache scopes as ci.yml, read-only (ci.yml's main
+      # push is the one writer), so a cache hit never downloads from the
+      # mirror; the stages then use them (*_IMAGE_PREBUILT). Images are not
+      # part of the residue snapshot, and the stage order and residue check
+      # (ADR-0018) are unchanged. A miss is a full build whose apt falls
+      # back to the next source on a 404 (apt-mirror.sh, ADR-0022).
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ghostty image (buildx, gha cache, read-only)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.ghostty
+          tags: worktool-ghostty:local
+          load: true
+          cache-from: type=gha,scope=ghostty-${{ matrix.runner }}
+          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+
+      - name: Build system-real runner image (buildx, gha cache, read-only)
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          file: dockerfile/Dockerfile.system-real
+          tags: worktool-system-real:local
+          load: true
+          cache-from: type=gha,scope=system-real-${{ matrix.runner }}
+          build-args: APT_MIRROR=${{ env.WORKTOOL_APT_MIRROR }}
+
+      - name: Tier isolation (random order, residue check)
+        env:
+          WORKTOOL_APT_CACHE_DIR: ${{ runner.temp }}/apt-box
+          GHOSTTY_IMAGE_PREBUILT: '1'
+          SYSTEM_REAL_IMAGE_PREBUILT: '1'
+        run: just test isolation
+
+  report:
+    name: report
+    needs: [decide, full-serial, isolation]
+    if: always() && needs.decide.outputs.run == 'true' && inputs.sha == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Open or update the nightly-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT: ${{ (needs.full-serial.result == 'success' && needs.isolation.result == 'success') && 'success' || 'failure' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          source lib/nightly.sh
+          rc=0
+          open="$(gh issue list -R "${REPO}" --label "${NIGHTLY_LABEL}" --state open --json number --jq '.[].number')" || rc=$?
+          action="$(nightly_report "${RESULT}" "${rc}" "${open}")" || exit 1
+          echo "full serial run: ${RESULT}; action: ${action}"
+          body="${RUNNER_TEMP}/body.md"
+          case "${action}" in
+            open)
+              printf '[nightly] 完整序列執行失敗（%s，commit `%s`）：%s\n\n修正合併後，以 workflow_dispatch 手動跑 Nightly 確認綠燈再關閉本 issue；本 issue 開著時排程執行會略過。\n\nmilestone: 無\n' \
+                "${EVENT}" "${SHA}" "${RUN_URL}" > "${body}"
+              gh issue create -R "${REPO}" --label "${NIGHTLY_LABEL}" \
+                --title "nightly：完整序列執行失敗（${SHA:0:8}）" --body-file "${body}" || exit 1
+              ;;
+            comment\ *)
+              printf '[nightly] %s 執行（commit `%s`）結果 %s：%s\n' \
+                "${EVENT}" "${SHA}" "${RESULT}" "${RUN_URL}" > "${body}"
+              gh issue comment "${action#comment }" -R "${REPO}" --body-file "${body}" || exit 1
+              ;;
+            none) ;;
+            *) echo "unknown action '${action}'"; exit 1 ;;
+          esac
+          [ "${RESULT}" = success ]

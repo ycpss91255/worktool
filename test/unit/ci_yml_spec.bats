@@ -5,19 +5,20 @@
 # WHAT THIS PROVES
 #   The workflow has a runner dimension on every leg-carrying job:
 #
-#   - build-image, gate (lint / test-unit / test-integration / test-system /
-#     test-acceptance) and test-system-real each `runs-on` the matrix runner
+#   - build-image, gate (lint / test-matrix / test-integration / test-system /
+#     test-acceptance), unit-shard (the unit tier's weighted shards, issue
+#     #831) and test-system-real each `runs-on` the matrix runner
 #     and their `runner:` dimension is EXACTLY the set {ubuntu-latest
 #     (amd64), ubuntu-24.04-arm (arm64)} - no job hardcodes one
 #     architecture, and a third runner (in the flow list or smuggled in
 #     through `include:`) turns this spec red (issue #164);
-#   - the `gate:` dimension is EXACTLY the set {lint, test-unit,
+#   - the `gate:` dimension is EXACTLY the set {lint, test-matrix,
 #     test-integration, test-system, test-acceptance}, and the `include:`
 #     that maps each gate to its `just test` tier names exactly those five
 #     - a sixth gate anywhere turns this spec red (issue #164);
 #   - the matrix `include:` is EXACTLY five entries and each entry is
 #     EXACTLY one `gate` plus one `tier`, the entry set being {lint=lint,
-#     test-unit=unit, test-integration=integration, test-system=system,
+#     test-matrix=matrix, test-integration=integration, test-system=system,
 #     test-acceptance=acceptance}: a swapped or wrong tier, an entry
 #     without a tier or with two, an extra key inside an entry, or an
 #     extra entry that names no gate at all (`- experimental: true`) turns
@@ -41,6 +42,13 @@
 #     ci-passed.
 #   - pushes remain main-only; PR bases include main and milestone
 #     acceptance branches such as m3/5-acceptance (issue #389).
+#   - code path vs meta path (issue #688): one routing expression, verbatim
+#     in run-name, concurrency and the route job; the code tiers run only
+#     on the code path; on the meta path prior-run (lib/ci_prior_run.sh)
+#     must prove the latest code run of the head sha passed every leg the
+#     lib expects, and those legs are exactly the ones ci.yml runs; only
+#     pull_request runs cancel in progress; ci-passed re-reads the live PR
+#     body and its aggregator shell is executed for both paths.
 #
 #   This spec is a REQUIRED unit spec of test.sh, so it cannot be deleted
 #   silently.
@@ -59,13 +67,20 @@ load "${BATS_TEST_DIRNAME}/../helper/common"
 setup() {
     CI_YML="${REPO_ROOT}/.github/workflows/ci.yml"
     RUNNERS=(ubuntu-latest ubuntu-24.04-arm)
-    LEG_JOBS=(build-image gate test-system-real verify-all)
-    GATES=(lint test-unit test-matrix test-integration test-system test-acceptance)
+    LEG_JOBS=(build-image gate unit-shard test-system-real verify-all)
+    GATES=(lint-system-acceptance test-matrix test-integration)
+    # The unit tier runs as UNIT_SHARDS weighted shards (issue #831).
+    UNIT_SHARDS=4
     # gate=tier: the `just test <tier>` each gate runs (the include map).
-    TIERS=(lint=lint test-unit=unit test-matrix=matrix test-integration=integration
-        test-system=system test-acceptance=acceptance)
+    # lint, system and acceptance share one leg per runner (issue #841).
+    TIERS=("lint-system-acceptance=lint system acceptance" test-matrix=matrix
+        test-integration=integration)
     # The literal GitHub expression as it appears in ci.yml.
     ARTIFACT="worktool-test-image-\${{ matrix.runner }}"
+    # The one routing expression (issue #688): true = code path (every
+    # tier runs), false = meta path (PR body / title / label edit). It is
+    # repeated verbatim in run-name, concurrency and the route job.
+    CODE_EXPR="(github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null))"
 }
 
 @test "CI reference docs describe verify-all conditional gating and indirect privileged execution" {
@@ -237,11 +252,128 @@ _trigger_branches() {
     assert_equal "${_matches}" 1
 }
 
+# --- code path vs meta path (issue #688) -------------------------------------
+
+@test "run-name, concurrency and the route job share one routing expression" {
+    run grep -cF "${CODE_EXPR}" "${CI_YML}"
+    assert_output 3
+    run grep -F "${CODE_EXPR}" "${CI_YML}"
+    assert_line "run-name: \${{ ${CODE_EXPR} && 'CI code run' || 'CI meta run' }}"
+    assert_line "  group: ci-\${{ github.ref }}-\${{ ${CODE_EXPR} && 'code' || 'meta' }}"
+    assert_line "          CODE_PATH: \${{ ${CODE_EXPR} && 'true' || 'false' }}"
+    run _job_block route
+    assert_line --partial "CODE_PATH: \${{ ${CODE_EXPR}"
+    assert_line "      code: \${{ steps.path.outputs.code }}"
+    assert_line --partial "echo \"code=\${CODE_PATH}\" >> \"\${GITHUB_OUTPUT}\""
+}
+
+@test "only pull_request runs cancel in progress, so a main push is never cancelled" {
+    run sed -n '/^concurrency:$/,/^jobs:$/p' "${CI_YML}"
+    assert_line "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
+    refute_line '  cancel-in-progress: true'
+}
+
+@test "the code tiers run only on the code path" {
+    local _job
+    for _job in build-image test-system-real; do
+        run _job_block "${_job}"
+        assert_line '    needs: route'
+        assert_line "    if: needs.route.outputs.code == 'true'"
+    done
+    run _job_block gate
+    assert_line '    needs: build-image'
+    run _job_block verify-all
+    assert_line '    needs: [route, build-image]'
+}
+
+@test "the meta path requires a green code run of the same head sha (fail closed)" {
+    run _job_block prior-run
+    assert_success
+    assert_line '    name: prior-run'
+    assert_line '    needs: route'
+    assert_line "    if: needs.route.outputs.code == 'false'"
+    assert_line '      actions: read'
+    assert_line '      pull-requests: read'
+    assert_line '          persist-credentials: false'
+    assert_line --regexp '^ +source lib/ci_prior_run\.sh$'
+    assert_line "          PR_HEAD: \${{ github.event.pull_request.head.sha }}"
+    assert_line "          RUN_ID: \${{ github.run_id }}"
+    assert_output --partial "actions/workflows/ci.yml/runs?head_sha=\${PR_HEAD}&event=pull_request"
+    assert_output --partial '.display_title'
+    assert_output --partial '.pull_requests[].number'
+    # #872: a code run still going is waited for (380 x 30 s, past
+    # verify-all's 180 min), then judged; the job's own bound is above it.
+    assert_line --partial "id=\"\$(ci_prior_run_await 380 30 \"\${RUN_ID}\" \"\${PR_NUMBER}\" -- _runs)\" || exit 1"
+    assert_line '    timeout-minutes: 200'
+    assert_output --partial "actions/runs/\${id}/jobs?filter=latest"
+    assert_line --regexp '^ +ci_prior_run_evaluate "\$\{verify\}" < "\$\{jobs\}"$'
+    # verify-all is required from the LIVE labels, not the event payload.
+    assert_output --partial "repos/\${REPO}/pulls/\${PR_NUMBER}"
+    assert_output --partial 'milestone-gate'
+    refute_output --partial 'github.event.pull_request.labels'
+}
+
+@test "the code run names its run exactly as ci_prior_run_select looks for it" {
+    run bash -c 'source "$1" && printf "%s\n%s\n" "${CI_PRIOR_RUN_CODE_TITLE}" "${CI_PRIOR_RUN_META_TITLE}"' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_equal "${lines[0]}" 'CI code run'
+    assert_equal "${lines[1]}" 'CI meta run'
+}
+
+# Print the check name of every leg of job $1, expanded over its matrix.
+_leg_names() {
+    local _template _runner _gate _expanded
+    _template="$(_job_block "$1" | sed -nE 's/^    name: (.*)$/\1/p')"
+    while IFS= read -r _runner; do
+        if [[ "$1" == gate ]]; then
+            while IFS= read -r _gate; do
+                _expanded="${_template//\$\{\{ matrix.gate \}\}/${_gate}}"
+                printf '%s\n' "${_expanded//\$\{\{ matrix.runner \}\}/${_runner}}"
+            done < <(_flow_items gate '        ' gate)
+        elif [[ "$1" == unit-shard ]]; then
+            local _shard _shards
+            _shards="$(_flow_items unit-shard '        ' shards)"
+            while IFS= read -r _shard; do
+                _expanded="${_template//\$\{\{ matrix.shard \}\}/${_shard}}"
+                _expanded="${_expanded//\$\{\{ matrix.shards \}\}/${_shards}}"
+                printf '%s\n' "${_expanded//\$\{\{ matrix.runner \}\}/${_runner}}"
+            done < <(_flow_items unit-shard '        ' shard)
+        else
+            printf '%s\n' "${_template//\$\{\{ matrix.runner \}\}/${_runner}}"
+        fi
+    done < <(_flow_items "$1" '        ' runner)
+}
+
+@test "the legs ci_prior_run_evaluate expects are exactly the legs ci.yml runs" {
+    local _expected
+    _expected="$({ for _job in build-image gate unit-shard test-system-real; do _leg_names "${_job}"; done
+        echo test-unit-verdict; } | sort)"
+    run bash -c 'source "$1" && ci_prior_run_expected_jobs false | sort' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_output "${_expected}"
+    _expected="$({ for _job in build-image gate unit-shard test-system-real verify-all; do _leg_names "${_job}"; done
+        echo test-unit-verdict; } | sort)"
+    run bash -c 'source "$1" && ci_prior_run_expected_jobs true | sort' _ "${LIB_DIR}/ci_prior_run.sh"
+    assert_success
+    assert_output "${_expected}"
+}
+
+@test "ci-passed re-checks the live PR body before aggregating" {
+    run _job_block ci-passed
+    assert_line '      pull-requests: read'
+    assert_line '          persist-credentials: false'
+    assert_line "        if: github.event_name == 'pull_request'"
+    assert_output --partial "gh api \"repos/\${REPO}/pulls/\${PR_NUMBER}\" --jq '.body // \"\"'"
+    assert_line --regexp '^ +commit_attribution_check_pr_body pull_request "\$\{body\}"$'
+}
+
 # --- every leg-carrying job runs on both runners -----------------------------
 
 @test "ci.yml declares exactly the expected jobs" {
     run _job_ids
     assert_success
+    assert_line "route"
+    assert_line "prior-run"
     assert_line "build-image"
     assert_line "gate"
     assert_line "test-system-real"
@@ -250,8 +382,83 @@ _trigger_branches() {
     assert_line "commit-refs"
     assert_line "review-log"
     assert_line "verify-all"
+    assert_line "shard-weights"
+    assert_line "image-seed"
+    assert_line "unit-shard"
+    assert_line "test-unit-verdict"
     assert_line "ci-passed"
-    assert_equal "${#lines[@]}" 9
+    assert_equal "${#lines[@]}" 15
+}
+
+@test "bats gates upload a junit report and a main push stores the merged shard weights (#827)" {
+    run _job_block gate
+    assert_success
+    assert_line '          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report'
+    assert_line "          name: test-report-\${{ matrix.gate }}-\${{ matrix.runner }}"
+    assert_line '          path: .agents/state/test-report'
+    assert_line '          if-no-files-found: error'
+    assert_line "        if: always()"
+    # Every tier of a leg runs as its own `just test <tier>`, in order, and
+    # the leg fails at the first failing tier (issue #841).
+    assert_line "          TIERS: \${{ matrix.tier }}"
+    assert_line "        run: for tier in \${TIERS}; do just test \"\${tier}\" || exit 1; done"
+
+    run _job_block shard-weights
+    assert_success
+    assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
+    assert_line --regexp "$(_flow_has '    ' needs gate)"
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
+    assert_line '          pattern: test-report-*'
+    assert_line --partial "shard_weights_merge \"\${RUNNER_TEMP}/reports\" unit matrix > .agents/state/shard-weights.tsv || exit 1"
+    assert_line '        uses: actions/cache/save@v4'
+    assert_line "          key: shard-weights-\${{ github.run_id }}-\${{ github.run_attempt }}"
+    run _job_block ci-passed
+    assert_success
+    assert_line "          WEIGHTS_REQUIRED: \${{ github.event_name == 'push' }}"
+}
+
+@test "the unit tier runs as weighted shards and a union verdict applies the whole-tier rules (#831)" {
+    local _i _items=()
+    for ((_i = 1; _i <= UNIT_SHARDS; _i++)); do _items+=("${_i}"); done
+    # One shard count: the shard dimension, the shards value and the verdict.
+    run _flow_items unit-shard '        ' shard
+    assert_output "$(_sorted_set "${_items[@]}")"
+    run _flow_items unit-shard '        ' shards
+    assert_output "${UNIT_SHARDS}"
+    run _job_block unit-shard
+    assert_success
+    assert_line "    name: test-unit \${{ matrix.shard }}/\${{ matrix.shards }} (\${{ matrix.runner }})"
+    assert_line '    needs: build-image'
+    assert_line "          name: ${ARTIFACT}"
+    assert_line "        run: just test unit --shard \${{ matrix.shard }}/\${{ matrix.shards }}"
+    assert_line '          WORKTOOL_SHARD_WEIGHTS: .agents/state/shard-weights.tsv'
+    assert_line '          WORKTOOL_TEST_REPORT_DIR: .agents/state/test-report'
+    assert_line "          name: test-report-unit-\${{ matrix.shard }}-\${{ matrix.runner }}"
+    assert_line '          if-no-files-found: error'
+    # The weights are read once per arch, in build-image, and travel with
+    # the image artifact, so every shard of an arch uses the same file.
+    run _job_block build-image
+    assert_success
+    assert_line '        uses: actions/cache/restore@v4'
+    assert_line '          restore-keys: shard-weights-'
+    assert_line '            /tmp/shard-weights.tsv'
+    run _job_block test-unit-verdict
+    assert_success
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
+    assert_line "      UNIT_SHARDS: ${UNIT_SHARDS}"
+    # By name, waited for, not by pattern (#890): a pattern download takes
+    # only what the listing holds at that moment.
+    refute_line --partial 'pattern: test-report-unit-'
+    refute_line --partial 'uses: actions/download-artifact'
+    assert_line '      actions: read'
+    assert_line --partial "test_shard_records_await 12 10 unit \"\${UNIT_SHARDS}\" ubuntu-latest ubuntu-24.04-arm -- listing"
+    assert_line --partial "repos/\${REPO}/actions/artifacts/\${id}/zip"
+    assert_line --partial "unzip -q -d \"\${RUNNER_TEMP}/shards/\${name}\""
+    assert_line --partial "test_shard_verdict \"\${RUNNER_TEMP}/shards\" unit \"\${UNIT_SHARDS}\" \"\${list}\" \"\${required}\" ubuntu-latest ubuntu-24.04-arm"
+    # Both are legs: ci-passed requires them on the code path.
+    run _job_block ci-passed
+    assert_line --regexp "$(_flow_has '    ' needs unit-shard)"
+    assert_line --regexp "$(_flow_has '    ' needs test-unit-verdict)"
 }
 
 # ADR 0012 cites the next two case names verbatim as guards; keep them.
@@ -293,7 +500,7 @@ _trigger_branches() {
     done
 }
 
-@test "gate runs every one of the six gates on the runner dimension" {
+@test "gate runs every one of the three gate legs on the runner dimension" {
     local _gate
     run _job_block gate
     assert_success
@@ -304,7 +511,7 @@ _trigger_branches() {
     assert_line --regexp '^    name: .*\$\{\{ matrix\.gate \}\}.*\$\{\{ matrix\.runner \}\}'
 }
 
-@test "the gate dimension is EXACTLY the six gates (a seventh turns red)" {
+@test "the gate dimension is EXACTLY the three gate legs (a fourth turns red)" {
     # The flow list, as a sorted set: nothing extra, nothing missing.
     run _flow_items gate '        ' gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -315,7 +522,7 @@ _trigger_branches() {
     assert_equal "${#lines[@]}" $(( 1 + ${#GATES[@]} ))
 }
 
-@test "gate's matrix include maps EXACTLY the six gates to a tier and adds no runner" {
+@test "gate's matrix include maps EXACTLY the three gate legs to their tiers and adds no runner" {
     # One `- gate: <name>` include entry per gate, no more, no less.
     run _include_values gate gate
     assert_output "$(_sorted_set "${GATES[@]}")"
@@ -329,7 +536,7 @@ _trigger_branches() {
     assert_equal "${#lines[@]}" "${#GATES[@]}"
 }
 
-@test "the include is EXACTLY six entries, each EXACTLY one gate plus its tier (an extra entry, key or tier turns red)" {
+@test "the include is EXACTLY three entries, each EXACTLY one gate plus its tiers (an extra entry, key or tier turns red)" {
     local _pair _entries=()
     for _pair in "${TIERS[@]}"; do
         _entries+=("gate=${_pair%%=*},tier=${_pair#*=}")
@@ -373,7 +580,7 @@ _trigger_branches() {
     local _line
     run grep -E '^ +name: worktool-test-image' "${CI_YML}"
     assert_success
-    assert_equal "${#lines[@]}" 3
+    assert_equal "${#lines[@]}" 4
     for _line in "${lines[@]}"; do
         assert_equal "${_line}" "          name: ${ARTIFACT}"
     done
@@ -404,11 +611,107 @@ _trigger_branches() {
     assert_output "${_n}"
 }
 
+@test "system-real and ghostty images come from a buildx gha cache that only a main push writes (#829)" {
+    local _job _image
+    for _job in test-system-real:system-real gate:ghostty; do
+        _image="${_job#*:}"
+        run _job_block "${_job%%:*}"
+        assert_success
+        assert_line '        uses: docker/setup-buildx-action@v3'
+        assert_line '        uses: docker/build-push-action@v6'
+        assert_line "          file: dockerfile/Dockerfile.${_image}"
+        assert_line "          tags: worktool-${_image}:local"
+        assert_line '          load: true'
+        assert_line "          cache-from: type=gha,scope=${_image}-\${{ matrix.runner }}"
+        assert_line "          cache-to: \${{ github.event_name == 'push' && format('type=gha,mode=max,scope=${_image}-{0}', matrix.runner) || '' }}"
+    done
+    run _job_block test-system-real
+    assert_line '          SYSTEM_REAL_IMAGE_PREBUILT: "1"'
+    run _job_block gate
+    assert_line "        if: matrix.tier == 'integration'"
+    assert_line "          GHOSTTY_IMAGE_PREBUILT: \${{ matrix.tier == 'integration' && '1' || '' }}"
+}
+
+# issue #843: on 2026-11-10 the amd64 runners got ~130 kB/s from
+# archive.ubuntu.com (arm: 21 MB/s from ports.ubuntu.com), so the box's
+# first launch hit its 900 s budget. The amd64 legs take every Ubuntu
+# package from the Azure mirror GitHub's own ubuntu runners use; the arm
+# legs are untouched (empty = no change).
+@test "the amd64 legs take Ubuntu packages from the runner-local mirror, the arm legs keep the default (#843)" {
+    local _job
+    for _job in gate test-system-real image-seed; do
+        run _job_block "${_job}"
+        assert_success
+        # Job level, so the image build and the gate step read one value.
+        assert_line '    env:'
+        assert_line "      WORKTOOL_APT_MIRROR: \${{ matrix.runner == 'ubuntu-latest' && 'http://azure.archive.ubuntu.com/ubuntu/' || '' }}"
+        assert_line "            APT_MIRROR=\${{ env.WORKTOOL_APT_MIRROR }}"
+    done
+}
+
+# issue #892: a cold apt RUN layer (a Dockerfile or apt-mirror.sh changed)
+# took 21 min at ~100 kB/s on the amd64 mirror (run 42819549766). Every
+# Ubuntu image build reaches the local package proxy through the predefined
+# http_proxy build arg (outside the layer cache key, not in the image), and
+# a main push refreshes the package set the proxy serves.
+@test "every Ubuntu image build goes through the image package proxy, and a main push refreshes its packages (#892)" {
+    local _job _n
+    for _job in gate test-system-real image-seed; do
+        run _job_block "${_job}"
+        assert_success
+        assert_line '          driver-opts: network=host'
+        assert_line "          path: \${{ runner.temp }}/apt-image/*.deb"
+        assert_line "          key: apt-image-\${{ matrix.runner }}-none"
+        assert_line "          restore-keys: apt-image-\${{ matrix.runner }}-"
+        assert_line --partial "script/test/apt-seed.sh start --seed \"\${RUNNER_TEMP}/apt-image\""
+        assert_line "            http_proxy=\${{ steps.seed.outputs.url }}"
+        assert_line --partial 'script/test/apt-seed.sh stop --log'
+        # Exactly one proxy arg per build of the job.
+        _n="$(grep -c '        uses: docker/build-push-action@v6' <<<"${output}")"
+        run grep -c '            http_proxy=' <<<"${output}"
+        assert_output "${_n}"
+    done
+    # The PR-path builds only read the package set.
+    for _job in gate test-system-real; do
+        run _job_block "${_job}"
+        refute_output --partial '--record'
+        refute_output --partial 'apt-image-new'
+        refute_line --regexp 'key: apt-image-.*steps\.'
+    done
+    run _job_block image-seed
+    assert_line "    if: github.event_name == 'push' && needs.route.outputs.code == 'true'"
+    assert_line '    needs: route'
+    assert_line "          file: dockerfile/Dockerfile.system-real"
+    assert_line "          file: dockerfile/Dockerfile.ghostty"
+    run grep -c '          no-cache: true' <<<"${output}"
+    assert_output 2
+    run _job_block image-seed
+    refute_output --partial 'cache-to'
+    refute_output --partial 'cache-from'
+    refute_output --partial 'load: true'
+    assert_line --partial "--record \"\${RUNNER_TEMP}/apt-image-new\""
+    assert_line --partial "kc=\"\$(apt_cache_key \"\${RUNNER_TEMP}/apt-image\")\""
+    assert_line "          key: apt-image-\${{ matrix.runner }}-\${{ steps.debs.outputs.key }}"
+    # ci-passed requires it on a main push.
+    run _job_block ci-passed
+    assert_line --regexp "$(_flow_has '    ' needs image-seed)"
+    assert_line "          SEED_RESULT: \${{ needs.image-seed.result }}"
+}
+
+@test "bats gates run 8 parallel jobs in CI, the measured knee on the 4-vCPU runners (#689)" {
+    run _job_block gate
+    assert_success
+    assert_line '          WORKTOOL_TEST_JOBS: "8"'
+    run _job_block unit-shard
+    assert_success
+    assert_line '          WORKTOOL_TEST_JOBS: "8"'
+}
+
 # --- --privileged stays with test-system-real --------------------------------
 
 @test "--privileged is named by the test-system-real job only" {
     local _job
-    for _job in build-image gate verify-all commit-email commit-attribution commit-refs review-log ci-passed; do
+    for _job in route prior-run build-image gate verify-all commit-email commit-attribution commit-refs review-log ci-passed; do
         run _job_block "${_job}"
         refute_output --partial '--privileged'
     done
@@ -501,8 +804,8 @@ _trigger_branches() {
 @test "milestone-gate PRs require native acceptance with read-only evidence access" {
     run _job_block verify-all
     assert_success
-    assert_line "    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
-    assert_line '    needs: build-image'
+    assert_line "    if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
+    assert_line '    needs: [route, build-image]'
     assert_line --partial 'uses: actions/checkout@'
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
@@ -517,16 +820,60 @@ _trigger_branches() {
 }
 
 # Execute the checked-in aggregator shell with resolved Actions inputs.
+# Only the "Verify every leg succeeded" step (the last step of the job);
+# a code-path run by default. $1 = VERIFY_REQUIRED, $2 = VERIFY_RESULT,
+# the rest are VAR=value overrides.
 _run_aggregator() {
-    local _script
+    local _script _required="$1" _result="$2"
+    shift 2
     _script="$(_job_block ci-passed | awk '
-        /^        run: \|$/ { script = 1; next }
+        /^      - name: / { script = 0; step = ($0 == "      - name: Verify every leg succeeded") }
+        step && /^        run: \|$/ { script = 1; next }
         script { print substr($0, 11) }
     ')"
-    env BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
+    [[ -n "${_script}" ]] || return 99
+    env ROUTE_RESULT=success CODE_PATH=true PRIOR_RESULT=skipped \
+        BUILD_RESULT=success GATE_RESULT=success SYSTEM_REAL_RESULT=success \
+        UNIT_SHARD_RESULT=success UNIT_VERDICT_RESULT=success \
         EMAIL_RESULT=success ATTRIBUTION_RESULT=success REFS_RESULT=success REVIEW_LOG_RESULT=success \
-        "VERIFY_REQUIRED=$1" "VERIFY_RESULT=$2" "${3:-GATE_RESULT=success}" \
+        "VERIFY_REQUIRED=${_required}" "VERIFY_RESULT=${_result}" "$@" \
         bash -eo pipefail -c "${_script}"
+}
+
+@test "on the meta path ci-passed needs the prior-run proof instead of the skipped code tiers" {
+    local _result _gate
+    # Meta path: code tiers skipped, a green prior code run stands in.
+    run _run_aggregator true skipped CODE_PATH=false PRIOR_RESULT=success \
+        BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped
+    assert_success
+    for _result in failure skipped cancelled ''; do
+        run _run_aggregator false skipped CODE_PATH=false "PRIOR_RESULT=${_result}" \
+            BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped
+        assert_failure
+    done
+    # Policy jobs are never waived on the meta path.
+    for _gate in EMAIL ATTRIBUTION REFS REVIEW_LOG; do
+        run _run_aggregator false skipped CODE_PATH=false PRIOR_RESULT=success \
+            BUILD_RESULT=skipped GATE_RESULT=skipped SYSTEM_REAL_RESULT=skipped "${_gate}_RESULT=failure"
+        assert_failure
+    done
+    # Code path: a green prior-run never replaces a skipped code tier.
+    for _gate in BUILD GATE SYSTEM_REAL UNIT_SHARD UNIT_VERDICT; do
+        run _run_aggregator false skipped PRIOR_RESULT=success "${_gate}_RESULT=skipped"
+        assert_failure
+    done
+    # The route job itself, and an unknown path, fail closed.
+    for _result in failure skipped cancelled; do
+        run _run_aggregator false skipped "ROUTE_RESULT=${_result}"
+        assert_failure
+    done
+    for _result in '' maybe TRUE; do
+        run _run_aggregator false skipped "CODE_PATH=${_result}" PRIOR_RESULT=success
+        assert_failure
+    done
+    run _job_block ci-passed
+    assert_line "          CODE_PATH: \${{ needs.route.outputs.code }}"
+    assert_line "          PRIOR_RESULT: \${{ needs.prior-run.result }}"
 }
 
 @test "ci-passed requires verify success only for milestone-gate PRs and never waives other gates" {
@@ -543,7 +890,7 @@ _run_aggregator() {
             fi
         done
     done
-    for _gate in BUILD GATE SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
+    for _gate in ROUTE BUILD GATE UNIT_SHARD UNIT_VERDICT SYSTEM_REAL EMAIL ATTRIBUTION REFS REVIEW_LOG; do
         run _run_aggregator false skipped "${_gate}_RESULT=failure"
         assert_failure
     done
@@ -599,4 +946,33 @@ _run_aggregator() {
     assert_failure
     run _run_aggregator false skipped REVIEW_LOG_RESULT=skipped
     assert_failure
+}
+
+# --- the box's downloaded packages persist between runs (issue #847) ---------
+
+@test "test-system-real restores the box's packages, mounts them for the gate, and only a main push prunes and saves them (#847)" {
+    run _job_block test-system-real
+    assert_success
+    assert_line '      - name: Restore box packages'
+    assert_line '        uses: actions/cache/restore@v4'
+    assert_line "          key: apt-box-\${{ matrix.runner }}-none"
+    assert_line "          restore-keys: apt-box-\${{ matrix.runner }}-"
+    assert_line "          WORKTOOL_APT_CACHE_DIR: \${{ runner.temp }}/apt-box"
+    assert_line '      - name: Prune and key box packages'
+    assert_line "        if: github.event_name == 'push' && !cancelled()"
+    assert_line --partial "apt_cache_prune \"\${RUNNER_TEMP}/apt-box\""
+    assert_line '        uses: actions/cache/save@v4'
+    assert_line "          key: apt-box-\${{ matrix.runner }}-\${{ steps.debs.outputs.key }}"
+    # Restore and save name the same path, or the save is a new cache version.
+    run grep -c "          path: \${{ runner.temp }}/apt-box/\*\.deb\$" <<<"$(_job_block test-system-real)"
+    assert_output 2
+    # Order: restore -> gate -> prune/key -> save.
+    local _r _g _p _s
+    _r="$(_job_block test-system-real | grep -n 'name: Restore box packages' | cut -d: -f1)"
+    _g="$(_job_block test-system-real | grep -n 'run: just test system-real' | cut -d: -f1)"
+    _p="$(_job_block test-system-real | grep -n 'name: Prune and key box packages' | cut -d: -f1)"
+    _s="$(_job_block test-system-real | grep -n 'uses: actions/cache/save@v4' | cut -d: -f1)"
+    assert [ "${_r}" -lt "${_g}" ]
+    assert [ "${_g}" -lt "${_p}" ]
+    assert [ "${_p}" -lt "${_s}" ]
 }

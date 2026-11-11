@@ -196,6 +196,7 @@ recipe 原文,也是 `just` 執行時回顯的那一行):
 | `just test system-real [args]` | `./script/test/test.sh --system-real "$@"` |
 | `just test acceptance [args]` | `./script/test/test.sh --acceptance "$@"` |
 | `just test selfcheck [args]` | `./script/test/selfcheck.sh "$@"`(交付自檢;`--root X` 原樣傳入) |
+| `just test isolation [args]` | `./script/test/isolation.sh "$@"`(tier 隔離守門:裸 `just test` 的階段與 spec 以 seed 隨機順序執行,每階段後檢查殘留;`--seed N` 重現;nightly 執行,ADR-0018) |
 | `just test help` / `just test h` | `./script/test/test.sh --help` |
 
 **namespace `box`**(`script/box/justfile.box`,`set working-directory := '../..'`):
@@ -251,12 +252,18 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
    recipe 加各自的腳本。
 2. 不新增頂層 recipe;不在 justfile 裡驗證參數或印 usage;namespace 以動作命名。
 3. CI(`.github/workflows/ci.yml`)跑的與使用者打的是同一套指令:job 名稱不變
-   (lint、test-unit、test-matrix、test-integration、test-system、test-acceptance、
-   test-system-real、ci-passed),另加 milestone 驗收 job `verify-all`。matrix 以 `just test <tier>` 執行(tier 為 lint /
+   (lint-system-acceptance、test-matrix、test-integration、test-system-real、
+   ci-passed;lint、system、acceptance 每個架構共用一條 leg,各自仍以
+   `just test <tier>` 依序執行,#841),另加 milestone 驗收 job `verify-all`。unit tier 以
+   `just test unit --shard I/N` 分片(check 名稱 `test-unit I/N (<runner>)`),由
+   `test-unit-verdict` 對所有分片的聯集套用整層規則(#831,ADR-0016)。matrix 以 `just test <tier>` 執行(tier 為 lint /
    unit / matrix / integration / system / acceptance),real job 以 `just test system-real`
    執行。`verify-all` 只在貼有 `milestone-gate` 標籤的 PR 以 `just verify all` 執行
    非實機驗收(不傳 `--allow-real-box`,第 5 節留給實機驗收),兩種架構全部成功才通過
    `ci-passed`。普通 PR 與 main push 不要求 `verify-all`,其餘必要 gate 仍須全部成功。
+   只改 PR 說明、標題或標籤的事件走 meta 路徑:跳過測試 tier,改要求同一 head sha
+   最新一次 code run 的每一條 leg 都綠,缺一律失敗,`ci-passed` 仍是唯一的 CI
+   required check(#688,細節見 `doc/structure.md`「code 路徑與 meta 路徑」)。
 4. `just` 在 **M4 host bootstrap** 納入 host 安裝(與 docker、distrobox 一起);
    M4 之前為**前置需求**(host 需自行安裝 docker + just)。
 
