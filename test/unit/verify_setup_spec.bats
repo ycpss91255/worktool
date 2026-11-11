@@ -1436,3 +1436,20 @@ _degrade_setup_line() {
     assert_line '[INFO] distrobox: <D> (absolute path written into the managed command)'
     assert_line "[INFO] wrote: <H>/.config/ghostty/config (managed block: ${MANAGED_EXPECTED})"
 }
+
+@test "cleanup: TERM, INT and HUP remove a created temporary HOME and preserve signal status" {
+    local _signal _expected _record _created
+    for _signal in TERM INT HUP; do
+        case "${_signal}" in
+            TERM) _expected=143 ;;
+            INT) _expected=130 ;;
+            HUP) _expected=129 ;;
+        esac
+        _record="${BATS_TEST_TMPDIR}/signal-${_signal}"
+        run bash -c "source \"${VERIFY}\"; _item_begin; printf '%s\\n' \"\${ITEM_T}\" >\"${_record}\"; kill -s ${_signal} \$\$; exit 99"
+        assert_failure "${_expected}"
+        assert [ -s "${_record}" ]
+        _created="$(cat "${_record}")"
+        assert [ ! -e "${_created}" ]
+    done
+}
