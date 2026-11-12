@@ -832,8 +832,7 @@ cd worktool
 
 ### 2. 自動測試(全部在 Docker 內,不需 distrobox)
 
-入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`、`verify`、`agent`、`worktree`、`job`)與各自的一行說明(`test`
-那一行就列了全部子 recipe);裸 `just test` **不是列表**,而是直接跑全部;腳本層的
+入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`、`verify`、`agent`、`worktree`、`job`)與各自的一行說明；`just --list test` 列出 test 的子 recipe。裸 `just test` **不是列表**,而是直接跑全部;腳本層的
 usage 用 `just test help`。第一次可先建測試映像,再依序跑七個 tier;每一步下一行的
 `# 底層:` 標出 recipe 實際轉發到的腳本(沒有 `just` 時可直接執行那一行):
 

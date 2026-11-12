@@ -686,6 +686,7 @@ _manifest_manual_matches() {
     namespaces="$(sed -nE 's/^mod\? ([a-z][a-z0-9_-]*).*/\1/p' "${justfile}" | LC_ALL=C sort)"
     actual="$(sed -n '/入口是 .*列出 namespaces/p' "${doc}" | sed -E 's/^[^(]*\(([^)]*)\).*/\1/' | sed 's/、/\n/g' | tr -d '\`' | LC_ALL=C sort)"
     [[ -n "${namespaces}" && "${actual}" == "${namespaces}" ]] || return 1
+    grep -F "\`just --list test\` 列出 test 的子 recipe" "${doc}" >/dev/null || return 1
     table="$(grep -F '| 真實可用盒(' "${doc}")" || return 1
     [[ "${table}" == *'案例數依目前 spec 的 TAP 計畫為準'* ]] || return 1
     output="$(grep -F '接著 ' "${doc}" | grep -F 'TAP 計畫')" || return 1
@@ -715,6 +716,9 @@ _manifest_manual_matches() {
     assert_failure
     sed '/^mod? job /d' "${REPO_ROOT}/justfile" > "${justfile}"
     run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${justfile}"
+    assert_failure
+    sed "s/\`just --list test\` 列出 test 的子 recipe/那一行就列了全部子 recipe/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
     assert_failure
     sed 's/案例數依目前 spec 的 TAP 計畫為準/12 案例/' "${REPO_ROOT}/doc/manifest.md" > "${doc}"
     run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
