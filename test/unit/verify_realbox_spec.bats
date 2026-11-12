@@ -1763,6 +1763,67 @@ STUB
     [ -e "$(_backup_dir)/created-box" ]
 }
 
+_apply_rejects_unrestorable_backup() {
+    local damage="$1" target="${HOME}/ghostty-user-config" before calls reloads windows
+    printf 'preserve user configuration\n' >"${target}"
+    rm "$(_ghostty_config)"
+    ln -s "${target}" "$(_ghostty_config)"
+    _realbox_quiet 5.2.1
+    case "${damage}" in
+        directories) printf 'damaged\n' >>"$(_backup_dir)/directories" ;;
+        legacy) sed -i '/^backup\.version=/d' "$(_backup_dir)/manifest" ;;
+    esac
+    printf 'sentinel\n' >"${HOME}/sentinel"
+    cp -a "${HOME}" "${STATE}/home-before"
+    cp -a "$(_backup_dir)" "${STATE}/backup-before"
+    find "${STATE}/backup-before" -printf '%P %y %m %T@ %l\n' | sort >"${STATE}/backup-meta-before"
+    before="$(stat -c '%a:%y:%s' "${target}")"
+    cp -a "${target}" "${STATE}/target-before"
+    calls="$(_count_calls just)"
+    reloads="$(_count_calls gapplication)"
+    windows="$(_count_calls ghostty)"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_equal "$(_count_calls just)" "${calls}"
+    assert_equal "$(_count_calls gapplication)" "${reloads}"
+    assert_equal "$(_count_calls ghostty)" "${windows}"
+    [ -L "$(_ghostty_config)" ]
+    assert_equal "$(readlink "$(_ghostty_config)")" "${target}"
+    assert_equal "$(stat -c '%a:%y:%s' "${target}")" "${before}"
+    cmp "${STATE}/target-before" "${target}"
+    assert_equal "$(cat "${HOME}/sentinel")" sentinel
+    diff -r "${STATE}/home-before" "${HOME}"
+    diff -r "${STATE}/backup-before" "$(_backup_dir)"
+    find "$(_backup_dir)" -printf '%P %y %m %T@ %l\n' | sort >"${STATE}/backup-meta-after"
+    cmp "${STATE}/backup-meta-before" "${STATE}/backup-meta-after"
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#974: 5.2.2 refuses damaged directory metadata before any apply" {
+    _apply_rejects_unrestorable_backup directories
+}
+
+@test "#974: 5.2.2 refuses legacy path metadata before any apply" {
+    _apply_rejects_unrestorable_backup legacy
+}
+
+@test "#974: restore path cache cannot hide a changed relative cache root" {
+    local first="${BATS_TEST_TMPDIR}/first" second="${BATS_TEST_TMPDIR}/second"
+    mkdir -p "${first}/cache/worktool" "${second}/cache/worktool"
+    printf 'original\n' >"${first}/cache/worktool/dev-init.log"
+    printf 'different\n' >"${second}/cache/worktool/dev-init.log"
+    export "XDG_CACHE_HOME=cache"
+    (cd "${first}" && _realbox_quiet 5.2.1)
+    run bash -c 'cd "$1" && exec "$2" --allow-real-box 5.2.2' _ "${second}" "${REALBOX}"
+    assert_failure
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls gapplication)" 0
+    assert_equal "$(cat "${second}/cache/worktool/dev-init.log")" different
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+
+
 @test "5.2.2: no published manifest means nothing is applied" {
     run "${REALBOX}" --allow-real-box 5.2.2
     assert_failure
@@ -3425,11 +3486,16 @@ if [[ -e "${SIGNAL_STATE}/replacement" ]]; then
 fi
 exec "${SIGNAL_STATE}/interrupt-distrobox" "$@"
 STUB
-    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+    SIGNAL_READY_MS=15000 SIGNAL_WATCHDOG_MS=20000 SIGNAL_TRACE=1 run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
         "${REALBOX}" --allow-real-box 5.2
     assert_success
+    assert_output --partial 'ready-pid='
+    assert_output --partial 'sent=SIGINT pgid='
+    printf '# %s\n' "$(printf '%s\n' "${output}" | grep '^ready-pid=')" >&3
+    printf '# %s\n' "$(printf '%s\n' "${output}" | grep '^sent=SIGINT ')" >&3
     assert_line 'rc=1'
     assert_line 'cleanup-rc=1'
+    assert_line 'restore-files-ok=1'
     assert_equal "$(_count_calls 'distrobox rm')" '0'
     assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
     [ -e "$(_backup_dir)/assemble-started" ]
