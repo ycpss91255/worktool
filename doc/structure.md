@@ -540,7 +540,9 @@ exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,�
 另跑 `verify-all` job(上限 180 分鐘),以 `just verify all` 執行非實機驗收,
 不傳 `--allow-real-box`,第 5 節留給實機驗收。CI 的 2.1／2.3 等待並判讀同一次
 run、同一 PR head SHA 的必要 gate job；2.3 另檢查 integration 與 system-real 日誌。
-缺少或不符的證據不通過，不退回重跑；本機則完整執行這兩項(ADR-0017、#951)。
+`test-system-real` 前置 job 以 `--privileged` 實跑；CI 模式的 `verify-all` 對 2.1／2.3 只判讀
+這些 job 的結果與日誌，不重跑 2.1／2.3 的測試 tier。缺少或不符的證據不通過，
+不退回重跑；本機則完整執行這兩項(ADR-0017、#951)。
 `test-system-real` 的 DinD runner 映像與 integration ghostty 群組的映像由 buildx 以 GitHub
 Actions cache(`type=gha`,每個映像、每個架構一個 scope)建置後載入,`test.sh` 以
 `SYSTEM_REAL_IMAGE_PREBUILT=1`／`GHOSTTY_IMAGE_PREBUILT=1` 沿用而不重建;只有 main push 寫
