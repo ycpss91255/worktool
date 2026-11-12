@@ -226,3 +226,13 @@ _checks_per_promise() {
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
+
+@test "verify exit 3 covers unavailable checks and inconclusive latency" {
+    run bash -c 'grep -A1 "^- \*\*永不靜默失敗" "$1"' _ "${CONTRACT}"
+    assert_success
+    assert_output --partial "\`just verify\` 系列以結束碼 \`3\`"
+    assert_output --partial '必要工具、環境或驗收證據不可用'
+    assert_output --partial '延遲量測因主機不夠安靜而未判定'
+    assert_output --partial 'test/unit/verify_all_spec.bats'
+    assert_output --partial 'test/unit/verify_gate_spec.bats'
+}
