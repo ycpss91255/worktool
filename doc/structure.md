@@ -338,12 +338,15 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just job wait <name> [--max-seconds N]` | 單次阻塞收集結果與尾段／失敗段落；成功 0、失敗 1、仍執行 124、參數錯誤 2 |
 | `just job status <name>` | 不阻塞回報 success／failed／running；退出碼分別 0／1／124 |
 | `just job help [args...]` | job.sh 驗證整份參數後顯示 help |
+| `just worktree` | 列出 worktree 動作 |
+| `just worktree prune-merged [args]` | 清理已合併的 linked worktree，預設預覽 |
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test verify-env [--help]` | `./script/test/verify-env.sh [args]`（建置真實驗收映像，驗證 uid 1001 bind mount 的 Git checkout 與 host 工具） |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
+| `just test script-layout [args]` | `./script/test/check-script-layout.sh [args]`（檢查腳本版面） |
 | `just test guards [args]` | `./script/test/test.sh --guards [args]`（執行 `test.sh` 的共用全 repo 守門清單） |
 | `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，執行改到或映射到的 unit 與 matrix spec；改到 `script/`、`lib/`、`box/`、`justfile*`、`doc/adr/` 時加跑整份守門清單；無法判定影響、缺少映射 spec、測試基礎設施變更或無法讀取 diff 時，列出檔名（若可取得）與原因，提示交由 CI 驗證；integration、system、system-real、acceptance 與需建映像的驗證只提示交由 CI） |
 | `just test unit [spec...] [--filter REGEX]` | `./script/test/test.sh --unit [spec...] [--filter REGEX]` |
@@ -365,6 +368,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just verify realbox [args]` | `./script/verify/realbox.sh [args]`（實機驗收；執行需 `--allow-real-box`） |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--home <路徑>`、`--help`) |
+| `just box bench [args]` | `./script/box/bench.sh [args]`（效能量測） |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <名稱>`、`--distrobox <路徑>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
