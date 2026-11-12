@@ -96,6 +96,9 @@ _write_fake_docker() {
     cat >"${FAKE_BIN}/docker" <<'EOF'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"${FAKE_DOCKER_CALLS}"
+if [[ -n "${FAKE_DOCKER_ARGS:-}" ]]; then
+    printf '%s\n' "$@" >"${FAKE_DOCKER_ARGS}"
+fi
 if [[ -n "${FAKE_DOCKER_SNAPSHOT:-}" ]]; then
     args=("$@")
     mounts=() values=()
@@ -474,6 +477,17 @@ _prepare_git_mount_repo() {
     assert_success
     run cat "${FAKE_DOCKER_CALLS}"
     assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats test/unit/ci_gate_spec\.bats$'
+}
+
+@test "test.sh forwards a filter containing spaces as one container argument" {
+    export FAKE_DOCKER_ARGS="${BATS_TEST_TMPDIR}/docker.args"
+    run "${TEST_SH}" --unit test/unit/test_sh_spec.bats --filter '^case with spaces$'
+    assert_success
+    run cat "${FAKE_DOCKER_ARGS}"
+    assert_line -- '--ci-unit'
+    assert_line -- '--filter'
+    assert_line '^case with spaces$'
+    assert_line 'test/unit/test_sh_spec.bats'
 }
 
 @test "test.sh --filter runs only matching cases" {
