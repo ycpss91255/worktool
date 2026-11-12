@@ -52,8 +52,9 @@ prereq-ok
       just
       ```
   - [ ] 0.2 namespace 清單與 help 都來自底層腳本
-    - 預期看到資訊: `just box` 列出目前的 box 動詞；assemble 說明的第一行為
+    - 預期看到資訊: `just box` 列出目前的 box 動詞；test 與 assemble 說明的第一行為
       ```text
+      Usage: test.sh [OPTION...]
       Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       ```
       原 M2 清單只有 assemble；目前還有其他動詞，完整清單以 `just box` 的輸出為準。
