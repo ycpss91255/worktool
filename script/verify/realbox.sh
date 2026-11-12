@@ -798,6 +798,9 @@ _52_step2_apply() {
     _52_apply_require_tools || return $?
     cfgbk_paths || return 1
     cfgbk_revalidate || return 1
+    # Validate the whole restore package without retaining its restore-only
+    # path cache; subsequent operations must use the current live paths.
+    (cfgbk_restore_preflight) || return 1
     printf 'revalidate=1\n'
 
     _refuse_preexisting_box \
