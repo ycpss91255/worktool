@@ -80,28 +80,23 @@ prereq-ok
       just box assemble --bogus; echo rc=$?
       ```
 
-- [ ] 1. 自動測試:四層 gate 全綠
+- [ ] 1. 自動測試:各層 gate 全綠
   - [ ] 1.1 lint:ShellCheck 零違規
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --lint "$@"
-      [ci]   found 21 script(s)
-      [ci] ShellCheck OK
       rc=0
       ```
     - 驗收方式
       ```bash
       just test lint; echo rc=$?
       ```
-  - [ ] 1.2 單元:8 個必要 spec、135 案例全 ok、無 skip
+  - [ ] 1.2 單元:現行必要 spec 與案例全 ok，skip 依 runner 政策判定
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --unit "$@"
-      [ci]   required specs OK (135 case(s) declared by 8 file(s))
-      1..135
-      ok 1 ...
-      ...(135 行全部 ok;沒有 not ok、沒有 # skip)
-      [ci] unit bats OK
       rc=0
       ```
     - 驗收方式
@@ -110,12 +105,9 @@ prereq-ok
       ```
   - [ ] 1.3 整合:mock distrobox 逐參數記錄,無效清單絕不呼叫 distrobox
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --integration "$@"
-      [ci]   required specs OK (10 case(s) declared by 2 file(s))
-      1..10
-      ...(全部 ok)
-      [ci] integration bats OK
       rc=0
       ```
     - 驗收方式
@@ -124,12 +116,9 @@ prereq-ok
       ```
   - [ ] 1.4 系統 shim:真實 distrobox 1.8.2.5 + 假 container manager
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --system "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] system bats OK
       rc=0
       ```
     - 驗收方式
@@ -138,27 +127,10 @@ prereq-ok
       ```
   - [ ] 1.5 系統 real-engine(docker-in-docker):真的建出可用 dev 盒;host docker 前後不變
     - 預期看到資訊(約 2-4 分鐘)
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh)、[script/test/system-real-entry.sh](../script/test/system-real-entry.sh) 與 [test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats) 為準；此項依行為與結束碼驗收，不固定輸出快照。host 前後清單相同時，下方比較指令印出 `host unchanged`。
+
       ```text
-      ./script/test/test.sh --system-real "$@"
-      [system-real] dockerd ready after 1s
-      [system-real] engine 29.8.0 driver=overlayfs cgroup=cgroupfs/2
-      [ci]   required specs OK (12 case(s) declared by 1 file(s))
-      1..12
-      ok 1 preflight: a real docker engine is live inside the runner
-      ...
-      ok 5 real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)
-      ok 6 real engine: distrobox enter dev -- fzf --version prints a version
-      # tmux: tmux 3.x
-      ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
-      # fish: fish, version 4.x
-      ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
-      ...
-      ok 11 real engine: a second assemble.sh run exits 0 and does not duplicate the dev box
-      ok 12 real engine: distrobox rm -f dev removes the box from the engine
-      [ci] system-real bats OK
-      [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
-      host unchanged
       ```
     - 驗收方式
       ```bash
@@ -168,12 +140,9 @@ prereq-ok
       ```
   - [ ] 1.6 交付驗收:直接執行交付的 selfcheck(含負向案例)
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --acceptance "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] acceptance bats OK
       rc=0
       ```
     - 驗收方式
@@ -965,6 +934,24 @@ prereq-ok
       ```
 ### M3 實機驗收
 
+- [ ] 4. README 圖（draw.io，可編輯）
+  - [ ] 4.1 `doc/diagram/` 恰有三張 `.drawio.svg`，皆無 foreignObject 且內嵌 mxfile；README 有四行引用；流程圖包含「host 只需 docker + just」。
+    - 預期看到資訊（固定判準）：
+      ```text
+      svg=3
+      foreignobject=0/3
+      mxfile=3/3
+      readme=4
+      flow-wording=1
+      rc=0
+      ```
+    - 驗收方式：
+      ```bash
+      just verify diagram 4.1; echo rc=$?
+      ```
+      分母是實際掃描的檔案數。輸入不存在、不可讀或為空，或工具無法可靠讀取時須失敗；不完整輸出不可視為通過。此項檢查結構與文字，不代替圖面的人工審查。
+  - [ ] 4.2 維護者在 [GitHub README 的架構與流程](https://github.com/ycpss91255/worktool#架構與流程)目視三張圖，確認文字可見且沒有「Text is not SVG」，並核對流程圖顯示的階段和連線與其內嵌圖源一致。
+
 - [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，並連結真實 config 目錄中除 `worktool/` 以外的所有頂層項目（含隱藏項目），讓 assemble、bench 與清理沿用相同的容器工具儲存位置、連線設定、container manager、使用者設定與 TMUX 隔離區塊；成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的五個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf、初始化 log（init-log）（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
   - 5.2 套用（含 5.2.2）在任何套用副作用前先檢查 live 設定仍與備份一致，並驗證完整備份可還原；備份損壞或缺少可驗證的路徑 metadata 時拒絕套用並保留備份。檢查期間及其後不支援並發修改備份。
   - 快取隔離（#511）：5.1 的 assemble、首次初始化與 bench 都將 `XDG_CACHE_HOME` 指向本輪 scratch 的 `cache/`；5.2 由 realbox 執行的 assemble 指向本輪備份目錄的 `cache/`；5.3 decoy 的 create 指向本輪 scratch 的 `cache/`。5.2 的 setup、status 與還原時的 setup 不呼叫產品 enter.sh，不寫初始化 log。這些隔離呼叫及其子行程寫入的初始化 log 都落在本輪目錄，成功清理時隨 scratch／備份一起移除；清理失敗則沿用保留目錄供檢查與重試的規則。realbox 自己的這些呼叫不改動真實 `${XDG_CACHE_HOME:-~/.cache}/worktool`（預設 `~/.cache/worktool`）：原本不存在時仍不存在，既有內容與 mtime 不變，也不以備份後覆寫再還原代替隔離。
@@ -1019,12 +1006,12 @@ prereq-ok
     - 真實 Ghostty 新視窗的快取是產品行為，與上述 realbox 呼叫分開：setup 寫入的受管 `command` 只帶 `enter.sh`、distrobox 路徑及盒名，不帶 `XDG_CACHE_HOME`。從已執行的 Ghostty 開新視窗時，wrapper 沿用 Ghostty 的環境，不會繼承 realbox 對 assemble 的暫時環境。依 [enter.sh](../script/box/enter.sh) 的 `_first_launch`／`_init_notice`／`_first_init`，若 Docker 的 `State.StartedAt` 顯示盒子從未啟動，就建立或截斷 Ghostty 環境下 `${XDG_CACHE_HOME:-~/.cache}/worktool/<盒名>-init.log`，再寫入啟動及初始化輸出；預設盒名的路徑是 `~/.cache/worktool/dev-init.log`。盒子已啟動過則不走這段初始化 log 寫入。本驗收先在隔離 cache 完成初始化，正常 apply 新視窗不再寫真實 init log；若盒子被外部重建，真實新視窗仍可能改動它；5.2.1 將此檔納入備份，5.2.3 逐 byte 還原，原本不存在時刪除，並納入 `restore-files-ok` 核對。產品行為不變；執行驗收時的 `XDG_CACHE_HOME` 必須與 Ghostty 的環境一致。
     - 備份集合（PR #157 說明的第 5 節）：`$XDG_CONFIG_HOME/ghostty/config`（Ghostty legacy config）、`$XDG_CONFIG_HOME/ghostty/config.ghostty`、`$XDG_CONFIG_HOME/worktool/config`（狀態檔）、`$XDG_CONFIG_HOME/distrobox/distrobox.conf`、`${XDG_CACHE_HOME:-~/.cache}/worktool/<盒名>-init.log`（manifest 預設盒名為 dev）；init log 原本不存在時記為 `absent-file`；另以 `absent-directories` 記錄五個受管檔案各自原本不存在的完整上層目錄鏈，例如 `~/missing/config/ghostty` 與 `${XDG_CACHE_HOME:-~/.cache}/worktool`，各自一路記錄到第一個既有祖先前的所有缺失目錄（#589、#626）。`XDG_CONFIG_HOME` 未設時用 `~/.config`，不包含 `~/.tmux.conf`。集合來源是 [config_backup_paths.sh](../script/verify/config_backup_paths.sh) 的 `CFGBK_NAMES`；3.x 的 `tmux.conf=intact` 是不得改動使用者檔案的判準，不代表它列入 5.2 備份。
     - init-log 若是 dangling symlink，備份保留連結本身，manifest 的 `.tpath` 記錄解析後的絕對目標路徑，以空的 `.tsha` 記錄目標原本不存在；無法確定目標是否不存在時拒絕備份，不發布 manifest。套用前重新校驗連結仍相同且目標仍不存在；5.2.3 還原連結，並刪除原本不存在、驗收期間才建立的目標檔，最後核對連結仍為 dangling 且該目標路徑不存在（含不得殘留 symlink）。刪除或核對失敗均回非零並保留備份，不以「連結文字相同」當作還原成功（#588）。
-    - cache 路徑：`XDG_CACHE_HOME` 未設或為空時用 `~/.cache`。非絕對路徑的 `XDG_CACHE_HOME` 不會單憑此條件拒絕備份；缺失父目錄鏈以備份當時工作目錄為基準，經 `readlink -m` 正規化為絕對路徑後記錄，因此該目錄鏈可從其他工作目錄還原。這不會將 `cfgbk_file_of` 的 init-log 路徑改為絕對路徑，檔案操作仍依呼叫時的環境與工作目錄解析；驗收與重試應維持相同環境及工作目錄，不應解讀成所有相對路徑檔案均可跨工作目錄還原。正規化、目錄記錄或 mtime 讀取失敗時備份回非零，不發布 manifest（#589）。
+    - cache 路徑：`XDG_CACHE_HOME` 未設或為空時用 `~/.cache`。非絕對路徑的 `XDG_CACHE_HOME` 不會單憑此條件拒絕備份；缺失父目錄鏈以備份當時工作目錄為基準，經 `readlink -m` 正規化為絕對路徑後記錄，因此該目錄鏈可從其他工作目錄還原。新版 manifest 記錄受管目標；相對 cache 另記錄備份時的工作目錄與 cache 根目錄。還原前驗證這些資料並使用同一組已驗證的原目標，因此相對 cache 可從其他工作目錄還原，不會改寫該工作目錄下的無關檔案。套用前的 live 一致性檢查仍使用當前環境與工作目錄，不會沿用還原專用路徑。缺少足以驗證原目標的舊版備份拒絕自動還原，保留備份供人工檢視與復原。正規化、目錄記錄或 mtime 讀取失敗時備份回非零，不發布 manifest（#589）。
     - 目錄 mtime（#526）：5.2.1 同時記錄備份集合內各檔案（含原本不存在的檔案）及 symlink 目標的既有上層目錄 mtime，HOME 內的路徑一路記錄至 HOME（含 HOME），保留 #526 的既有保證。HOME 外的受管路徑只記錄至其 `XDG_CONFIG_HOME` 或 `XDG_CACHE_HOME` 根目錄（含根目錄）；HOME 外的 symlink 目標只記錄解析後目標的直接父目錄，不向上延伸。根目錄與父目錄以正規化後的路徑判定；備份集合中原本存在的直接父目錄仍受保護，一般路徑依 #536 不記錄、不核對，也不恢復設定根目錄以上的系統目錄 mtime；但五個受管檔案的缺失父目錄鏈各自另記錄第一個既有祖先的 mtime，移除目錄鏈後還原並核對。第一個既有祖先可能高於 config 或 cache 根目錄，例如 HOME，或 HOME 外 config／cache 路徑的既有祖先；例如 `XDG_CONFIG_HOME=/x/missing/config` 且 `/x` 是第一個既有祖先時，記錄並還原 /x 的 mtime，這是 #589 引入、#626 擴及五個受管檔案的 #536 範圍例外。5.2.3 還原時，live 檔案與備份的類型、內容、mode 與連結目標均相同就略過，不刪除、不重建，inode 不變；symlink 及其目標各自比對。需要重建或刪除檔案時，所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime，最後核對全部記錄。判準包含 `~/.config`、`~/.config/ghostty`、`~/.cache/worktool` 與集合內其他檔案的既有上層目錄 mtime 回到備份值；本輪建立後刪除的目錄不在判準內。目錄 mtime 不一致時 `restore-files-ok=0`、`restore-ok=0`，回非零並保留備份。已知限制：除上述五個受管檔案缺失父目錄鏈的第一個既有祖先外，設定根目錄以上的目錄 mtime 不受保護；執行期間其他程式若改動記錄範圍內的目錄，mtime 可能被恢復成備份值，或在核對時被誤判為還原失敗。
     - 5.2.1 備份前先檢查兩份 Ghostty 設定檔（legacy `config` 與 `config.ghostty`）：任一份含 worktool 受管區塊就拒絕，stdout 只印 `baseline-managed-ghostty=1`，回非零；不建立任何備份、不套用、不改動任何設定檔。stderr 說明此基準還原後可能正確進入原本的盒子，無法符合 host 新視窗判準，並指示先移除受管區塊（例如執行 `just box setup --terminal none`），再重跑 5.2。5.2 套用時明確執行 `just box setup --terminal ghostty --auto-enter yes --box <manifest 盒名>`，啟用 Ghostty 自動進入 manifest 的盒子，不沿用已保存的 terminal、auto-enter 或盒名選擇；結束後由既有五檔備份還原原本的設定與使用者選擇，狀態檔仍須與備份前逐 byte 相同。受管區塊以外的內容與其他設定檔的既有內容仍照原規則保留、備份與還原。
     - 預期看到資訊（無 Ghostty 受管區塊的基準）：`backup-covers=5/5`；每個 manifest key（清單以 `script/verify/config_backup_paths.sh` 為來源，守門 spec 與真實 setup 寫檔集合比對，另加真實新視窗的 init log）印 `regular`／`symlink`／`absent-file`／`absent-dir` 與對應 checksum／link 明細。其後有 `revalidate=1`、`preexisting-dev=0`、setup／status 輸出及 `setup-rc=0`。
       `user-content after-apply: ghostty=intact config.ghostty=intact distrobox.conf=intact` 在還原前檢查。worktool 狀態由 lib/config.sh 共用，HOME／link 保留由 3.2 驗；host 的 tmux.conf 不再是受管檔或備份對象（PR #228、#232）。
-      還原先印 `restore-rc=0`、`restore-files-ok=1`，接著自動重新載入還原後的 Ghostty 設定並開窗，印 `ghostty-reload=1`、`ghostty-new-window=1`，自動尋找新 host shell。成功依序印 `restore-window-evidence: pid=<PID> comm=<shell> host=mnt:[<host>] window=mnt:[<host>] enter=absent`、`restore-window-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`、`cleanup-rc=0`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），Ghostty 的既有受管區塊已在 5.2.1 拒絕，其他設定檔的既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。所有受管檔案還原後，五個受管檔案原本不存在的上層目錄鏈依正規化路徑反向排序（`LC_ALL=C sort -zru`）去重，由最深層往上以 `rmdir` 移除；只移除空目錄，非空目錄保留，還原 fail closed，回非零並保留備份供重試（#589、#626）。`leftover-dirs=N` 計算這些記錄與舊版 manifest 的原本不存在受管設定目錄中仍存在的路徑（含被換成 symlink 的路徑），共用路徑只計一次，N 非零就失敗。還原失敗保留備份。`restore-files-ok=1` 只代表磁碟檔案已還原；reload 證據未通過時印 `restore-window-ok=0`、`restore-ok=0`，回非零，不印 `backup-removed=1`。
+      還原先印 `restore-rc=0`、`restore-files-ok=1`，接著自動重新載入還原後的 Ghostty 設定並開窗，印 `ghostty-reload=1`、`ghostty-new-window=1`，自動尋找新 host shell。成功依序印 `restore-window-evidence: pid=<PID> comm=<shell> host=mnt:[<host>] window=mnt:[<host>] enter=absent`、`restore-window-ok=1`、`restore-ok=1`、`blocks=<執行前的區塊總數>`、`leftover-dirs=0`、`dev-gone=1`、`backup-removed=1`、`cleanup-rc=0`。還原判準是內容與執行前基準逐 byte 相同（含原本不存在的檔案），Ghostty 的既有受管區塊已在 5.2.1 拒絕，其他設定檔的既有受管區塊不算失敗；`blocks` 只報告區塊數，讀取失敗仍回非零。兩個 Ghostty 檔共用目錄，還原先移掉原本不存在的檔案，再還原目錄，避免 sibling 阻擋移除。所有受管檔案還原後，五個受管檔案原本不存在的上層目錄鏈依正規化路徑反向排序（`LC_ALL=C sort -zru`）去重，由最深層往上以 `rmdir` 移除；只移除空目錄，非空目錄保留，還原 fail closed，回非零並保留備份供重試（#589、#626）。`leftover-dirs=N` 計算這些記錄與 manifest 的原本不存在受管設定目錄中仍存在的路徑（含被換成 symlink 的路徑），共用路徑只計一次，N 非零就失敗。還原失敗保留備份。`restore-files-ok=1` 只代表磁碟檔案已還原；reload 證據未通過時印 `restore-window-ok=0`、`restore-ok=0`，回非零，不印 `backup-removed=1`。
     - 驗收方式
       ```bash
       just verify realbox --allow-real-box 5.2; echo rc=$?
