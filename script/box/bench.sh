@@ -198,8 +198,8 @@ prints `<metric>: min=<ms> median=<ms> max=<ms> ms` (one line each).
   -h, --help     Show this help and exit.
 
 EOF
-    _usage_rules
-    _usage_env
+    _usage_rules >&2
+    _usage_env >&2
 }
 
 _usage_rules() {

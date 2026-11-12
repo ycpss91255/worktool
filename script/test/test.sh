@@ -305,7 +305,7 @@ _run_in_container() {
     _host_state_dir
     if [[ "${_flag}" == --ci-lint ]]; then
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
-        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
+        if ! _write_lint_paths "${_layout_paths}"; then
             rm -f "${_layout_paths}"
             _die "could not enumerate repository paths for lint"
         fi
@@ -407,12 +407,46 @@ _run_system_real_in_runner() {
 
 # --- Container side: gates ----------------------------------------------------
 
-# Emit NUL-delimited lintable shell scripts. -print0 keeps paths with odd
-# characters intact.
+# Write repository-relative paths, NUL-delimited to preserve odd characters.
+# A per-command safe.directory permits root to inspect the mounted checkout.
+_write_lint_paths() {
+    local _destination="$1" _path _listing
+    if ! command -v git >/dev/null 2>&1; then
+        _info "git unavailable; falling back to filesystem lint discovery"
+    elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+        ls-files --cached --others --exclude-standard -z >"${_destination}" 2>/dev/null; then
+        return 0
+    else
+        _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
+    fi
+    _listing="$(mktemp)" || { _err "cannot create filesystem lint discovery snapshot"; return 1; }
+    if ! find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0 >"${_listing}"; then
+        rm -f "${_listing}"
+        _err "filesystem lint discovery failed"
+        return 1
+    fi
+    if ! ( while IFS= read -r -d '' _path; do
+        printf '%s\0' "${_path#"${REPO_ROOT}/"}" || exit 1
+    done <"${_listing}" ) >"${_destination}"; then
+        rm -f "${_listing}"
+        _err "cannot write filesystem lint discovery snapshot"
+        return 1
+    fi
+    rm -f "${_listing}"
+}
+
+# Emit existing regular shell scripts from the selected path snapshot.
 _find_lintable_sh() {
-    find "${REPO_ROOT}" \
-        -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.sh' -print0
+    local _path
+    while IFS= read -r -d '' _path; do
+        case "${_path}" in
+            *.sh|*.bats)
+                if [[ -f "${REPO_ROOT}/${_path}" && ! -L "${REPO_ROOT}/${_path}" ]]; then
+                    printf '%s\0' "${REPO_ROOT}/${_path}"
+                fi ;;
+        esac
+    done <"${WORKTOOL_LAYOUT_PATHS}"
 }
 
 _run_shellcheck() {
@@ -421,12 +455,6 @@ _run_shellcheck() {
     while IFS= read -r -d '' _f; do
         _files+=("${_f}")
     done < <(_find_lintable_sh)
-    # *.bats are bash under the hood; check them too (info-level findings
-    # still fail the gate, matching init_ubuntu's lint policy).
-    while IFS= read -r -d '' _f; do
-        _files+=("${_f}")
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.bats' -print0)
 
     if [[ "${#_files[@]}" -eq 0 ]]; then
         _info "  (no shell scripts to check - skipping)"
@@ -438,6 +466,23 @@ _run_shellcheck() {
         || _die "ShellCheck failed - see violations above"
     _info "ShellCheck OK"
 }
+
+# Host lint supplies a snapshot when linked-worktree metadata is outside
+# /source. Direct container callers create their own, with filesystem fallback.
+_run_lint() (
+    if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]]; then
+        WORKTOOL_LAYOUT_PATHS="$(mktemp)"
+        trap 'rm -f "${WORKTOOL_LAYOUT_PATHS}"' EXIT
+        _write_lint_paths "${WORKTOOL_LAYOUT_PATHS}"
+    fi
+    [[ -r "${WORKTOOL_LAYOUT_PATHS}" ]] || _die "lint path snapshot unreadable"
+    export WORKTOOL_LAYOUT_PATHS
+    _run_shellcheck
+    _info "Checking script layout and process artifacts"
+    "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+        || _die "Script layout check failed"
+    _info "Script layout OK"
+)
 
 # The whole tier and shard verdict share one fail-closed skip policy.
 _has_unexpected_skip() {
@@ -844,11 +889,7 @@ _run_ci_gate() {
     shift
     case "${_flag}" in
         --ci-lint)
-            _run_shellcheck
-            _info "Checking script layout and process artifacts"
-            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
-                || _die "Script layout check failed"
-            _info "Script layout OK"
+            _run_lint
             ;;
         --ci-unit)
             if [[ -n "${_shard}" ]]; then _run_shard unit; else _run_unit "$@"; fi ;;
@@ -1011,6 +1052,10 @@ test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal.js|test/unit/verify_run_signal_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_run_signal_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
