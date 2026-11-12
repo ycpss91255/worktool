@@ -457,6 +457,26 @@ _remove_exact_row() {
     done
 }
 
+@test "test.sh --changed dispatches the namespace rules consumer" {
+    mkdir -p "${TEMP_REPO}/test/helper" "${TEMP_REPO}/test/unit"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/namespace_rules.jq"
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/justfile_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/test/helper/namespace_rules.jq"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" == *test/unit/justfile_spec.bats* ]]
+    local row='test/helper/namespace_rules.jq|test/unit/justfile_spec.bats'
+    git -C "${TEMP_REPO}" checkout -- test/helper/namespace_rules.jq
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${row}"
+    _commit_baseline
+    printf '# changed again\n' >>"${TEMP_REPO}/test/helper/namespace_rules.jq"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" != *test/unit/justfile_spec.bats* ]]
+}
+
 @test "test.sh --changed selects exactly the cold PTY consumers" {
     mkdir -p "${TEMP_REPO}/test/helper"
     printf '# helper\n' >"${TEMP_REPO}/test/helper/cold_pty.bash"

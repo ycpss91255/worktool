@@ -1009,6 +1009,7 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+test/helper/namespace_rules.jq|test/unit/justfile_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
 lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
