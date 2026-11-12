@@ -653,8 +653,7 @@ teardown() {
     for _bad in 'a"b' 'a b' $'a\nb' 'a\b' 'a/b' "a\$b" "a'b"; do
         run bash -c '"$1" --json --box "$2" >"$3" 2>"$4"' _ "${BENCH}" "${_bad}" "${_out}" "${_err}"
         assert_failure 2
-        run cat "${_out}"
-        assert_output ""
+        [[ ! -s "${_out}" ]]
         run cat "${_err}"
         assert_output --regexp '^bench\.sh: invalid --box .*\(see --help\)$'
         assert_equal "$(_calls)" ""
@@ -673,8 +672,7 @@ teardown() {
     for _bad in $'sh -c :\n' $'sh\t-c :' $'sh -c :\x1b' $'\x01sh -c :'; do
         run bash -c '"$1" --json --shell "$2" >"$3" 2>"$4"' _ "${BENCH}" "${_bad}" "${_out}" "${_err}"
         assert_failure 2
-        run cat "${_out}"
-        assert_output ""
+        [[ ! -s "${_out}" ]]
         run cat "${_err}"
         assert_equal "${#lines[@]}" 1
         assert_output --regexp '^bench\.sh: invalid --shell .*\(see --help\)$'
@@ -692,11 +690,18 @@ teardown() {
 # --- the tool owns its CLI: --help and unknown / invalid options --------------
 
 @test "--help exits 0, names every option and the three metrics, and calls distrobox nothing" {
-    run "${BENCH}" --help
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
     assert_success
+    [[ ! -s "${_out}" ]]
+    run cat "${_err}"
     assert_output --partial "Usage: bench.sh"
+    assert_output --partial "Quiet host:"
+    assert_output --partial "Exit codes:"
+    assert_output --partial "Environment (tests only):"
+    assert_output --partial "BENCH_CLOCK"
     local _opt
-    for _opt in --box --runs --warmup --max-ms --json --shell --help; do
+    for _opt in --box --runs --warmup --max-ms --json --shell --max-wait -h --help; do
         assert_output --partial "${_opt}"
     done
     assert_line --regexp '^ *enter '
@@ -707,19 +712,29 @@ teardown() {
 }
 
 @test "-h is the same as --help" {
-    run "${BENCH}" --help
-    local _long="${output}"
-    run "${BENCH}" -h
+    local _out="${TMP}/out" _long="${TMP}/long" _short="${TMP}/short"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_long}"
     assert_success
-    assert_output "${_long}"
+    [[ ! -s "${_out}" ]]
+    run bash -c '"$1" -h >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_short}"
+    assert_success
+    [[ ! -s "${_out}" ]]
+    run cmp "${_long}" "${_short}"
+    assert_success
+    assert_equal "$(_calls)" ""
+}
+
+@test "help stdout emptiness check rejects a newline" {
+    local _out="${TMP}/out"
+    printf '\n' >"${_out}"
+    [[ -s "${_out}" ]]
 }
 
 @test "an unknown option exits 2 with the documented message on stderr, nothing on stdout, nothing recorded" {
     local _out="${TMP}/out" _err="${TMP}/err"
     run bash -c '"$1" --bogus >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
     assert_failure 2
-    run cat "${_out}"
-    assert_output ""
+    [[ ! -s "${_out}" ]]
     run cat "${_err}"
     assert_output "bench.sh: unknown option '--bogus' (see --help)"
     assert_equal "$(_calls)" ""
@@ -900,8 +915,7 @@ _busy_re() {
     assert_failure 3
     assert_equal "$(_sleeps)" "7"
     assert_equal "$(_calls)" ""
-    run cat "${_out}"
-    assert_output ""
+    [[ ! -s "${_out}" ]]
     run cat "${_err}"
     assert_line --regexp "$(_busy_re 9.50 7)"
     refute_line --partial "within --max-ms"
@@ -951,8 +965,7 @@ _busy_re() {
     assert_failure 3
     # The 2nd run left the host busy: its after-run reading voids the batch.
     assert_equal "$(_calls | wc -l)" "2"
-    run cat "${_out}"
-    assert_output ""
+    [[ ! -s "${_out}" ]]
     run cat "${_err}"
     assert_line --regexp "^\[ERROR\] host too busy mid-run \(inconclusive\): ${BENCH_PSI_FILE//./\\.} some avg10=7\.25 after enter run 2; loadavg=[^;]+; batch void, re-run when idle$"
     refute_line --partial "max-ms"

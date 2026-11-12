@@ -341,6 +341,8 @@ EOF
     assert_line "unit/test_sh_spec.bats"
     assert_line "unit/selfcheck_spec.bats"
     assert_line "unit/justfile_spec.bats"
+    assert_line "unit/m2_acceptance_warning_spec.bats"
+    assert_line "unit/acceptance_output_types_spec.bats"
     # M3: the enter-latency tool (issue #150).
     assert_line "unit/bench_spec.bats"
     # Repo-level agent config (issue #189): layout, hooks, agent scripts.
@@ -648,6 +650,26 @@ EOF
         _ "${TEST_SH}" "${BATS_TEST_TMPDIR}/missing.tap"
     assert_failure 1
     assert_output --partial "unit bats emitted no TAP plan"
+}
+
+@test "_verify_tap fails closed when the skip scanner errors" {
+    local bin="${BATS_TEST_TMPDIR}/bin" tap="${BATS_TEST_TMPDIR}/valid.tap"
+    mkdir -p "${bin}"
+    printf '1..1\nok 1 normal case\n' >"${tap}"
+    REAL_AWK="$(command -v awk)"
+    export REAL_AWK
+    cat >"${bin}/awk" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == -v && "$2" == tier=* ]]; then
+    exit 2
+fi
+exec "${REAL_AWK}" "$@"
+STUB
+    chmod +x "${bin}/awk"
+    PATH="${bin}:${PATH}" run bash -c 'set -euo pipefail; source "$1"; _verify_tap unit "$2" 1' \
+        _ "${TEST_SH}" "${tap}"
+    assert_failure 1
+    assert_output --partial 'unit bats skip check failed (awk exit 2)'
 }
 
 @test "unit: only named opt-in CPU repro skips are accepted" {

@@ -86,7 +86,7 @@ _contract_promise_1() {
     refute_output --partial "待寫"
 }
 
-@test "ADR 0004 states the state-file key ownership exception and lists the dropped user lines as 待補" {
+@test "ADR 0004 states the state-file key ownership exception and cites foreign-line coverage" {
     run sed -n '/^## 性質/,/^## /p' "${ADR_0004}"
     assert_success
     assert_output --partial "狀態鍵"
@@ -96,15 +96,25 @@ _contract_promise_1() {
     assert_success
     refute_output --partial "沒有刻意改動受管區塊以外既有內容的路徑"
     refute_output --partial "保留它不管的行"
-    assert_output --regexp "狀態檔裡使用者自己加的行.*待補"
+    assert_output --regexp '狀態檔裡使用者自己加的行.*#199 r4:.*#199 r5:.*原樣保留'
+    refute_output --regexp '狀態檔裡使用者自己加的行：待補'
 }
 
-@test "doc/contract.md invariant-1 promise carries the state-key exception and the known state-file gap" {
+@test "ADR 0004 distinguishes linked user config from unverified profile and state-file symlinks" {
+    run _adr4_guard_section
+    assert_success
+    assert_output --regexp 'user config 連結已由 #199.*test/integration/assemble_spec\.bats.*test/unit/link_spec\.bats'
+    assert_output --regexp 'profile 或狀態檔是 symlink 時：待補.*連結消失.*沒有測試'
+}
+
+@test "doc/contract.md invariant-1 promise carries the state-key exception and evidence boundaries" {
     run _contract_promise_1
     assert_success
     [ "${#lines[@]}" -eq 2 ]
     assert_line --index 0 --partial "\`~/.config/worktool/config\`"
     assert_line --index 0 --partial "狀態鍵"
     assert_line --index 0 --partial "](adr/0004-invariant-user-content.md)"
-    assert_line --index 1 --regexp "^  - 驗證：.*狀態檔裡使用者自己加的行.*待驗"
+    assert_line --index 1 --regexp '^  - 驗證：.*要改先問.*待驗'
+    assert_line --index 1 --regexp '狀態檔裡使用者自己加的行.*test/unit/setup_spec\.bats.*#199 r4／r5.*保留'
+    refute_line --index 1 --regexp '狀態檔裡使用者自己加的行：待驗'
 }

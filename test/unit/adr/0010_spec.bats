@@ -72,3 +72,15 @@ _adr_0010_check_guards() {
     assert_output --partial "build-image"
     assert_output --partial "docker build"
 }
+
+@test "ADR 0010 describes current CI evidence without overstating it" {
+    local _section
+    _section="$(_adr_0010_section 目前由哪些機制或測試守住)"
+    [[ "${_section}" == *"unit 分片"* ]]
+    [[ "${_section}" == *"verify-env"* ]]
+    [[ "${_section}" == *"just verify all"* ]]
+    [[ "${_section}" == *"文字檢查"* ]]
+    [[ "${_section}" == *"不證明這些步驟已執行"* ]]
+    [[ "${_section}" != *"尚未進 main"* ]]
+    [[ "${_section}" == *"還沒有機械檢查"* ]]
+}
