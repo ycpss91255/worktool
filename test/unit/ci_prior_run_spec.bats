@@ -53,6 +53,38 @@ _green_jobs() {
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
 }
 
+@test "new names select only the fixed code prefix for the matching PR" {
+    run ci_prior_run_select 900 7 < <(
+        _run 800 40 completed 'CI code run' 7
+        _run 810 41 completed 'CI code run · PR #7 · a title' 7
+        _run 820 42 completed 'CI meta run · PR #7 · CI code run · PR #7 · forged' 7
+        _run 830 43 completed 'CI code run · PR #8 · wrong number' 7
+        _run 840 44 completed 'CI code run · PR #7 · wrong association' 8
+        _run 850 45 completed 'CI code run extra · PR #7 · similar' 7
+    )
+    assert_success
+    assert_output 810
+}
+
+@test "unknown or incomplete names never count as code evidence" {
+    run ci_prior_run_select 900 7 < <(
+        _run 801 41 completed 'CI code run · PR #7' 7
+        _run 802 42 completed 'CI code run · PR #70 · title' 7
+        _run 803 43 completed 'CI unknown run · PR #7 · CI code run' 7
+        _run 804 44 completed '' 7
+        _run 805 45 completed 'CI meta run · PR #7 · title' 7
+    )
+    assert_failure
+}
+
+@test "newest new-format code run remains pending even with an older green run" {
+    run ci_prior_run_select 900 7 < <(
+        _run 800 40 completed 'CI code run' 7
+        _run 810 41 in_progress 'CI code run · PR #7 · title' 7
+    )
+    assert_equal "$status" 3
+}
+
 @test "ci_prior_run.sh can be sourced without output and without changing shell options" {
     run bash -c 'before="$-"; source "$1"; [ "$-" = "${before}" ]' _ "${LIB_DIR}/ci_prior_run.sh"
     assert_success

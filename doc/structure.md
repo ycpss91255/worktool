@@ -598,8 +598,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 - **分流**:`ci.yml` 以同一個運算式(`run-name`、`concurrency`、`route` job 三處逐字相同)
   判定路徑。push、`opened`／`synchronize`／`reopened`、加上 `milestone-gate` 標籤
   (`verify-all` 變成必要)、改 base 的 `edited` 走 **code 路徑**,所有 tier 照跑,
-  run 名稱為 `CI code run`;其餘 edited／labeled／unlabeled 走 **meta 路徑**
-  (`CI meta run`),跳過 build-image、gate、`test-system-real`、`verify-all`。
+  run 名稱以 `CI code run` 開頭;其餘 edited／labeled／unlabeled 走 **meta 路徑**
+  (以 `CI meta run` 開頭),跳過 build-image、gate、`test-system-real`、`verify-all`。
+  PR 名稱後接 `· PR #編號 · 標題`,其他事件後接 `· ref · SHA`;舊版固定名稱仍可識別。
 - **meta 路徑不放水**:policy job(`commit-email`、`commit-attribution` 含 PR 說明、
   `commit-refs`、`review-log`)照跑;新增的 `prior-run` job 以 `lib/ci_prior_run.sh`
   找出同一 head sha、同一 PR **最新一次** code run,要求它已完成且兩個架構的每一條
