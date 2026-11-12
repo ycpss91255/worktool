@@ -336,6 +336,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just verify ui [args]` | `./script/verify/ui.sh [args]`（檢查 box 動詞與 help） |
 | `just verify gate [args]` | `./script/verify/gate.sh [args]`（檢查自動 gate 與 TDD 證據） |
 | `just verify evidence [args]` | `./script/verify/evidence.sh [args]`（查驗 M3 外部 CI 與流程證據） |
+| `just verify realbox [args]` | `./script/verify/realbox.sh [args]`（實機驗收；執行需 `--allow-real-box`） |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--home <路徑>`、`--help`) |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <名稱>`、`--distrobox <路徑>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
