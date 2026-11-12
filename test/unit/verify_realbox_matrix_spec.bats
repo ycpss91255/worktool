@@ -814,11 +814,34 @@ STUB
 @test "5.4: a failed observer cannot leave the cell waiting forever for its child" {
     _matrix_child_stub
     sed -i "s/^trap .* TERM$/trap '' TERM/" "${MATRIX_STATE}/child"
-    sed -i '/^_54_poll() {/a\    return 1' "${MATRIX_STATE}/repo/lib/realbox_interrupt.sh"
+    # The ready marker follows the TERM trap; an immediate observer failure
+    # could signal the child before it installs that trap and miss the test.
+    cat >>"${MATRIX_STATE}/repo/lib/realbox_interrupt.sh" <<'STUB'
+_54_poll() {
+    local deadline=$((SECONDS + 2))
+    while [[ ! -e "${MATRIX_STATE}/ready" ]]; do
+        if ((SECONDS >= deadline)); then
+            printf 'fixture: child did not become ready\n' >&2
+            return 1
+        fi
+        sleep 0.05
+    done
+    printf 'fixture: TERM-ignoring child ready\n' >&2
+    return 1
+}
+STUB
     run timeout --kill-after=1 8 "${REALBOX}" --allow-real-box 5.4
     assert_failure 1
+    assert_line 'fixture: TERM-ignoring child ready'
+    refute_output --partial 'fixture: child did not become ready'
     assert_line --partial 'interrupt assemble INT: child reap wait deadline exceeded'
     assert_line 'interrupt-matrix: FAIL'
+    local pid
+    read -r pid <"${MATRIX_STATE}/child.pid"
+    # shellcheck source=lib/verify_run.sh
+    source "${LIB_DIR}/verify_run.sh"
+    run verify_group_running "${pid}"
+    assert_failure 1
 }
 
 @test "5.4: outer cleanup bounds the wait for a TERM-ignoring child" {
