@@ -678,7 +678,7 @@ _document_change() {
 }
 
 @test "test.sh --changed maps root documentation to existing documentation guards" {
-    _document_change doc/structure.md test/unit/contract_spec.bats \
+    _document_change doc/structure.md test/unit/structure_tree_spec.bats test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
