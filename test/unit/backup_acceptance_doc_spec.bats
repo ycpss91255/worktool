@@ -40,7 +40,12 @@ _backup_doc_valid() {
         '共用路徑只計一次' '非空目錄保留，還原 fail closed' \
         '五個受管檔案的缺失父目錄鏈各自另記錄第一個既有祖先的 mtime' \
         '第一個既有祖先可能高於 config 或 cache 根目錄' \
-        'init-log 若是 dangling symlink' "空的 \`.tsha\`" \
+        "反向排序（\`LC_ALL=C sort -zru\`）去重，由最深層往上以 \`rmdir\` 移除" \
+        'N 非零就失敗' \
+        '無法確定目標是否不存在時拒絕備份，不發布 manifest' \
+        '最後核對連結仍為 dangling 且該目標路徑不存在' \
+        '所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime' \
+        'init-log 若是 dangling symlink'  "空的 \`.tsha\`" \
         '刪除原本不存在、驗收期間才建立的目標檔' \
         '還原前驗證這些資料並使用同一組已驗證的原目標' \
         '缺少足以驗證原目標的舊版備份拒絕自動還原' \
@@ -67,4 +72,18 @@ _backup_doc_valid() {
     printf '%s\n' '檔案操作仍依呼叫時的環境與工作目錄解析' >>"${copy}"
     run _backup_doc_valid "${copy}"
     assert_failure
+}
+
+@test "backup documentation guard rejects missing restore boundaries" {
+    local original="${REPO_ROOT}/doc/acceptance.md" copy="${BATS_TEST_TMPDIR}/acceptance.md" phrase
+    for phrase in \
+        "反向排序（\`LC_ALL=C sort -zru\`）去重，由最深層往上以 \`rmdir\` 移除" \
+        'N 非零就失敗' \
+        '無法確定目標是否不存在時拒絕備份，不發布 manifest' \
+        '最後核對連結仍為 dangling 且該目標路徑不存在' \
+        '所有檔案、本輪新增設定目錄與五個受管檔案的缺失父目錄鏈處理完後才恢復既有目錄 mtime'; do
+        PHRASE="${phrase}" awk '{ p = index($0, ENVIRON["PHRASE"]); if (p) $0 = substr($0, 1, p-1) "removed" substr($0, p+length(ENVIRON["PHRASE"])); print }' "${original}" >"${copy}"
+        run _backup_doc_valid "${copy}"
+        assert_failure
+    done
 }
