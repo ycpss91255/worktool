@@ -497,7 +497,7 @@ issue #129),不再延後到 M5。
     `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
     是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
     `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
-    `'<distrobox 絕對路徑>' enter dev`(後面不接 tmux,issue #179)、`--box work`
+    `'<repo>/script/box/enter.sh' --distrobox '<distrobox 絕對路徑>' --box 'dev'`(後面不接 tmux,issue #179)、`--box work`
     換成該盒名。另有兩個對照案例證明斷言不是
     恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
     `+validate-config` 以 `unknown field` 拒絕。
@@ -642,8 +642,8 @@ issue #129),不再延後到 M5。
     (`[INFO] host quiet: <PSI 路徑> ...` 或讀不到 PSI 的 `[WARN]`,issue #181),
     且只接受自己的判定碼(0 / 1),所以 runner 太忙回 3 一樣是紅;(e) **ghostty 鏈**(M3,issue #172):在 runner 內
     用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
-    ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
-    釘住 `gtk-single-instance = false`,command 為
+    ghostty 視窗**,測試設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
+    釘住 `gtk-single-instance = false`,測試自行指定的 command 為
     `distrobox enter dev -- fish <盒內腳本>`(issue #179:中間沒有 tmux);判準是
     **盒內**留下的標記檔(內容含 `fish=<版本>`、`ctrenv=<容器檔>`、
     `mntns=<mount namespace>`、`tmux=no`、`host=<節點名>`),而不是 ghostty 的結束碼
@@ -657,7 +657,9 @@ issue #129),不再延後到 M5。
     `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
     HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
     +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
-    件事,不是路徑本身。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
+    件事,不是路徑本身。桌面 PATH 案則取 setup 寫出的 wrapper command,附加
+    `-- fish <盒內腳本>` 開真視窗並驗證相同標記;先證明該 PATH 下裸 `distrobox`
+    回 127。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
     tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
     tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
     打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
