@@ -750,3 +750,59 @@ EOF
     assert_success
     assert_equal "$(_listed_names)" "codex default "
 }
+
+_manifest_manual_matches() {
+    local doc="$1" justfile="$2" namespaces actual table output skip
+    namespaces="$(sed -nE 's/^mod\? ([a-z][a-z0-9_-]*).*/\1/p' "${justfile}" | LC_ALL=C sort)"
+    actual="$(sed -n '/入口是 .*列出 namespaces/p' "${doc}" | sed -E 's/^[^(]*\(([^)]*)\).*/\1/' | sed 's/、/\n/g' | tr -d '\`' | LC_ALL=C sort)"
+    [[ -n "${namespaces}" && "${actual}" == "${namespaces}" ]] || return 1
+    grep -F "\`just --list test\` 列出 test 的子 recipe" "${doc}" >/dev/null || return 1
+    table="$(grep -F '| 真實可用盒(' "${doc}")" || return 1
+    [[ "${table}" == *'案例數依目前 spec 的 TAP 計畫為準'* ]] || return 1
+    output="$(grep -F '接著 ' "${doc}" | grep -F 'TAP 計畫')" || return 1
+    [[ "${output}" == *"接著 \`1..N\` 且 N 項全 \`ok\`"* ]] || return 1
+    skip="$(grep -F '只有 unit 的三個 CPU repro' "${doc}")" || return 1
+    [[ "${skip}" == *"\`WORKTOOL_STRESS\` 不為 \`1\`"* &&
+       "${skip}" == *'set WORKTOOL_STRESS=1 to run CPU repro'* &&
+       "${skip}" == *"設為 \`1\` 時必須執行"* ]]
+}
+
+@test "manifest manual verification tracks root modules, test tiers and runner policy" {
+    local -a tiers=(lint unit matrix integration system acceptance system-real)
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${REPO_ROOT}/justfile"
+    assert_success
+    run bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    assert_equal "${lines[*]}" "${tiers[*]}"
+    run grep -F '自動化全綠(lint + unit + matrix + integration + system + acceptance + system-real)' "${REPO_ROOT}/doc/manifest.md"
+    assert_success
+}
+
+@test "manifest manual guard rejects module and runner policy drift" {
+    local doc="${BATS_TEST_TMPDIR}/manifest.md" justfile="${BATS_TEST_TMPDIR}/justfile"
+    cp "${REPO_ROOT}/justfile" "${justfile}"
+    printf "mod? extra 'extra.just'\n" >> "${justfile}"
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${justfile}"
+    assert_failure
+    sed '/^mod? job /d' "${REPO_ROOT}/justfile" > "${justfile}"
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${justfile}"
+    assert_failure
+    sed "s/\`just --list test\` 列出 test 的子 recipe/那一行就列了全部子 recipe/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed 's/案例數依目前 spec 的 TAP 計畫為準/12 案例/' "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/接著 \`1\.\.N\` 且 N 項全 \`ok\`/接著 \`1..12\` 且 12 項全 \`ok\`/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/\`WORKTOOL_STRESS\` 不為 \`1\`/\`WORKTOOL_STRESS\` 為 \`1\`/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed 's/set WORKTOOL_STRESS=1 to run CPU repro/different reason/' "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/設為 \`1\` 時必須執行/設為 \`1\` 時可以略過/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+}
