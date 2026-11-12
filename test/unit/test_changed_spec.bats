@@ -900,7 +900,8 @@ _document_change() {
 }
 
 @test "test.sh --changed selects all acceptance documentation guards together" {
-    _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
+    _document_change doc/acceptance.md test/unit/acceptance_tools_spec.bats \
+        test/unit/evidence_doc_spec.bats \
         test/unit/realbox_52_doc_spec.bats test/unit/realbox_window_doc_spec.bats \
         test/unit/acceptance_output_types_spec.bats test/unit/setup_acceptance_doc_spec.bats \
         test/unit/gate_acceptance_doc_spec.bats test/unit/ownership_acceptance_doc_spec.bats \
