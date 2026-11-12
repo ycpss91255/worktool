@@ -1119,3 +1119,34 @@ _document_change() {
     assert_success
     [[ "$(_dispatched)" != *wait_ubuntu_dns_spec.bats* ]]
 }
+
+@test "changed dispatches verify list guard for each direct source" {
+    local path row
+    local -a paths=(justfile script/verify/justfile.verify script/verify/ui.sh
+        script/verify/gate.sh script/verify/setup.sh script/verify/diagram.sh
+        script/verify/realbox.sh script/verify/evidence.sh)
+    mkdir -p "${TEMP_REPO}/script/verify"
+    for path in "${paths[@]}"; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/verify_list_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/verify_list_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+        row="${path}|test/unit/verify_list_spec.bats"
+        _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${row}"
+        git -C "${TEMP_REPO}" add script/test/test.sh
+        git -C "${TEMP_REPO}" commit -qm mutant
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" != *test/unit/verify_list_spec.bats* ]]
+        git -C "${TEMP_REPO}" reset --hard HEAD^ >/dev/null
+    done
+}
