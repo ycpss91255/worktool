@@ -381,6 +381,58 @@ _remove_exact_row() {
     done
 }
 
+_stress_spec_dispatch() {
+    local path="$1" selected
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    selected="$(_dispatched)"
+    [[ "$(tr ' ' '\n' <<<"${selected}" | grep -cxF "${path}")" == 1 ]]
+    [[ "$(tr ' ' '\n' <<<"${selected}" | grep -cxF test/unit/verify_stress_spec.bats)" == 1 ]]
+}
+
+@test "changed CPU repro specs select themselves and the stress consumer" {
+    local path
+    for path in verify_run_signal verify_realbox verify_stress; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
+    done
+    _commit_baseline
+    for path in test/unit/verify_run_signal_spec.bats test/unit/verify_realbox_spec.bats; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        _stress_spec_dispatch "${path}"
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "stress consumer dispatch fails its check when either source mapping is removed" {
+    local path
+    for path in verify_run_signal verify_realbox verify_stress; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
+    done
+    _commit_baseline
+    for path in test/unit/verify_run_signal_spec.bats test/unit/verify_realbox_spec.bats; do
+        cp "${REPO_ROOT}/script/test/test.sh" "${TEMP_REPO}/script/test/test.sh"
+        _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${path}|test/unit/verify_stress_spec.bats"
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run _stress_spec_dispatch "${path}"
+        assert_failure
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects stress harness for interrupt load helper alone" {
+    mkdir -p "${TEMP_REPO}/test/helper"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/interrupt_load.bash"
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/verify_stress_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/test/helper/interrupt_load.bash"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" == *test/unit/verify_stress_spec.bats* ]]
+}
+
 @test "acceptance tool guard maps each document and helper even without the common guard" {
     local path
     mkdir -p "${TEMP_REPO}/doc" "${TEMP_REPO}/test/helper"
