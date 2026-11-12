@@ -52,3 +52,16 @@ STUB
     run "$SCRIPT" --help
     [ "$status" -eq 0 ]
 }
+
+@test "help validates wrapper options but does not parse command arguments" {
+    run "$SCRIPT" --help --bogus
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown option '--bogus'"* ]]
+    run "$SCRIPT" --help --attempts nope
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"invalid value 'nope'"* ]]
+    run "$SCRIPT" --help
+    [ "$status" -eq 0 ]
+    run "$SCRIPT" --attempts 1 --interval 0 --timeout 1 -- bash -c 'exit 37' -- --help --bogus
+    [ "$status" -eq 37 ]
+}

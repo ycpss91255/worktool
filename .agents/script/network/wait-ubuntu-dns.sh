@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/log.sh"
+
 usage() {
   cat <<'HELP'
 Usage: wait-ubuntu-dns.sh [--attempts N] [--interval SECONDS] [--timeout SECONDS] -- COMMAND [ARG...]
@@ -21,9 +23,10 @@ error() {
 attempts=5
 interval=10
 lookup_timeout=5
+help_requested=0
 while (($#)); do
   case "$1" in
-    --help) usage; exit 0 ;;
+    --help) help_requested=1; shift ;;
     --attempts|--interval|--timeout)
       option=$1
       (($# >= 2)) || error "missing value for '$option'"
@@ -40,15 +43,19 @@ while (($#)); do
     *) error "unknown option '$1'" ;;
   esac
 done
+if ((help_requested)); then
+  usage
+  exit 0
+fi
 (($# > 0)) || error 'missing command after --'
 
 for ((attempt = 1; attempt <= attempts; attempt++)); do
   failed=0
   for host in archive.ubuntu.com security.ubuntu.com ports.ubuntu.com; do
     if timeout --kill-after=1 "${lookup_timeout}s" getent ahosts "$host" >/dev/null 2>&1; then
-      printf 'wait-ubuntu-dns.sh: resolved %s (attempt %s/%s)\n' "$host" "$attempt" "$attempts" >&2
+      log_info "wait-ubuntu-dns.sh: resolved $host (attempt $attempt/$attempts)"
     else
-      printf 'wait-ubuntu-dns.sh: failed to resolve %s (attempt %s/%s)\n' "$host" "$attempt" "$attempts" >&2
+      log_warn "wait-ubuntu-dns.sh: failed to resolve $host (attempt $attempt/$attempts)"
       failed=1
     fi
   done
@@ -59,5 +66,5 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     sleep "$interval"
   fi
 done
-printf 'wait-ubuntu-dns.sh: DNS checks failed after %s attempts; command not run\n' "$attempts" >&2
+log_error "wait-ubuntu-dns.sh: DNS checks failed after $attempts attempts; command not run"
 exit 1
