@@ -478,7 +478,7 @@ prereq-ok
   workflow success 但 job skipped 不算完整驗證,最新非綠燈也不回退舊綠燈。
   `milestone-handover` 的 Head -> Full run -> Scratch 順序使用同一個檢查。
 
-- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
+- 自動:進盒延遲量測腳本的 shell median ≤ 300 ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
   fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
   實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
   shell median 仍以 300 ms 判定。終端**不自動開 tmux**(issue #179:
