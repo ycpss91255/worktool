@@ -1561,3 +1561,28 @@ EOF
     assert_success
     assert_line "reused: test-unit-verdict success run=${CI_RUN} job=900"
 }
+
+@test "CLI: help and list validate trailing unknown arguments" {
+    local option invalid expected rc out="${BATS_TEST_TMPDIR}/stdout" err="${BATS_TEST_TMPDIR}/stderr"
+    for option in --help --list; do
+        for invalid in --bogus 9.9; do
+            if [[ "${invalid}" == --bogus ]]; then
+                expected="unknown option"
+            else
+                expected="unknown item"
+            fi
+            rc=0
+            "${GATE_SH}" "${option}" "${invalid}" >"${out}" 2>"${err}" || rc=$?
+            assert_equal "${rc}" 2
+            [ ! -s "${out}" ]
+            printf "%s\n" "gate.sh: ${expected} '${invalid}' (see --help)" | cmp -s - "${err}"
+        done
+    done
+}
+
+@test "CLI: help takes priority over list after validation" {
+    local out="${BATS_TEST_TMPDIR}/stdout" err="${BATS_TEST_TMPDIR}/stderr"
+    "${GATE_SH}" --list --help >"${out}" 2>"${err}"
+    [ ! -s "${out}" ]
+    grep -q '^Usage:' "${err}"
+}
