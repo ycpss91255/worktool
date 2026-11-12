@@ -149,6 +149,7 @@ _required_specs() {
                 unit/selfcheck_spec.bats \
                 unit/justfile_spec.bats \
                 unit/m2_acceptance_warning_spec.bats \
+                unit/acceptance_output_types_spec.bats \
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
@@ -1118,6 +1119,7 @@ doc/adr/*.md|test/unit/adr/0010_spec.bats
 doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/acceptance.md|test/unit/acceptance_output_types_spec.bats
 doc/structure.md|test/unit/structure_tree_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats

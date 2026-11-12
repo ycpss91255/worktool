@@ -342,6 +342,7 @@ EOF
     assert_line "unit/selfcheck_spec.bats"
     assert_line "unit/justfile_spec.bats"
     assert_line "unit/m2_acceptance_warning_spec.bats"
+    assert_line "unit/acceptance_output_types_spec.bats"
     # M3: the enter-latency tool (issue #150).
     assert_line "unit/bench_spec.bats"
     # Repo-level agent config (issue #189): layout, hooks, agent scripts.
