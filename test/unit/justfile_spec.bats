@@ -143,21 +143,92 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe" {
-    assert [ -f "${REPO_ROOT}/justfile" ]
+_root_shape_valid() {
+    local root="$1" dump
+    awk '
+        /^[[:space:]]*(#|$)/ { next }
+        /^mod[?][[:space:]]+[A-Za-z_][A-Za-z0-9_-]*[[:space:]]+\047[^\047]+\047[[:space:]]*$/ && !seen_default { modules++; next }
+        /^default:[[:space:]]*$/ && !seen_default { seen_default = 1; next }
+        /^[[:space:]]+@just --list[[:space:]]*$/ && seen_default && !body { body = 1; next }
+        { exit 1 }
+        END { if (!modules || !seen_default || !body) exit 1 }
+    ' "${root}/justfile" || return 1
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        return 1
+    fi
+    jq -e '
+        (.recipes | keys) == ["default"] and
+        .recipes.default.body == [["@just --list"]] and
+        .recipes.default.dependencies == [] and
+        .recipes.default.parameters == [] and
+        .aliases == {} and .assignments == {}
+    ' <<<"${dump}" >/dev/null
+}
+
+@test "root justfile has only modules and its default recipe" {
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
-    # Everything that is not a comment or blank line, verbatim.
-    run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
+    run _root_shape_valid "${REPO_ROOT}"
     assert_success
-    assert_equal "${#lines[@]}" 8
-    assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
-    assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
-    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
-    assert_line --index 5 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
-    assert_line --index 6 "default:"
-    assert_line --index 7 --regexp '^[[:space:]]+@just --list$'
+}
+
+@test "root shape rejects extra declarations and a changed default" {
+    local mutation
+    for mutation in alias setting assignment recipe default; do
+        cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
+        case "$mutation" in
+            alias) printf '\nalias extra := default\n' >>"${COPY}/justfile" ;;
+            setting) printf '\nset quiet := false\n' >>"${COPY}/justfile" ;;
+            assignment) printf "\nextra := 'value'\n" >>"${COPY}/justfile" ;;
+            recipe) printf '\nextra:\n    @echo extra\n' >>"${COPY}/justfile" ;;
+            default) sed -i 's/@just --list/@echo changed/' "${COPY}/justfile" ;;
+        esac
+        run _root_shape_valid "${COPY}"
+        assert_failure
+    done
+}
+
+_root_mod_comments() {
+    awk '
+        /^# / { comment = substr($0, 3) }
+        /^mod[?] / { print $1, $2, $3, "# " comment }
+        # Only adjacent doc comments belong to a module; clear after printing it.
+        !/^# / { comment = "" }
+    ' "$1"
+}
+
+@test "#701: root module comments do not carry across blank lines or recipe code" {
+    local _fixture="${BATS_TEST_TMPDIR}/justfile.comments"
+    cat >"${_fixture}" <<'EOF'
+# First doc.
+mod? a 'a/justfile.a'
+
+mod? b 'b/justfile.b'
+default:
+    @just --list
+mod? c 'c/justfile.c'
+EOF
+    run _root_mod_comments "${_fixture}"
+    assert_success
+    assert_equal "${#lines[@]}" 3
+    assert_line --index 0 "mod? a 'a/justfile.a' # First doc."
+    assert_line --index 1 "mod? b 'b/justfile.b' # "
+    assert_line --index 2 "mod? c 'c/justfile.c' # "
+}
+
+@test "#701: design root justfile block matches namespace names, paths and doc comments in order" {
+    local _actual
+    _actual="$(_root_mod_comments "${REPO_ROOT}/justfile")"
+    run awk '
+        /^```just$/ { block = 1; next }
+        block && /^```$/ { exit }
+        block && /^mod[?] / {
+            comment = $0
+            sub(/^[^#]*# /, "", comment)
+            print $1, $2, $3, "# " comment
+        }
+    ' "${REPO_ROOT}/doc/design.md"
+    assert_success
+    assert_output "${_actual}"
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
@@ -181,12 +252,56 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the six namespaces and default, nothing else" {
+_listing_has_exact_names() {
+    local expected="$1" actual
+    actual=$(sed -nE 's/^ +([A-Za-z0-9_-]+).*/\1/p' | LC_ALL=C sort)
+    [[ "${actual}" == "${expected}" ]]
+}
+
+@test "just --list shows exactly the loaded namespaces and default" {
+    local dump expected namespace
+    dump=$(just --justfile "${COPY}/justfile" --dump --dump-format json)
+    expected=$(jq -r '(.modules | keys[]), "default"' <<<"${dump}" | LC_ALL=C sort)
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default job test verify worktree "
-    assert_line --regexp '^ +box \.\.\. +# '
-    assert_line --regexp '^ +test \.\.\. +# '
+    local listing="${output}"
+    while IFS= read -r namespace; do
+        assert_line --regexp "^ +${namespace} \\.\\.\\. +# "
+    done < <(jq -r '.modules | keys[]' <<<"$dump")
+    run _listing_has_exact_names "${expected}" <<<"${listing}"
+    assert_success
+}
+
+@test "namespace listing rejects missing or extra entries" {
+    local expected
+    expected=$(printf '%s\n' box default test | LC_ALL=C sort)
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    test ... # tests
+EOF
+    assert_success
+    run _listing_has_exact_names "$(printf '%s\n' default foo2 | LC_ALL=C sort)" <<'EOF'
+Available recipes:
+    default # list
+    foo2 ... # numbered module
+EOF
+    assert_success
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+EOF
+    assert_failure
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    extra ... # extra
+    test ... # tests
+EOF
+    assert_failure
 }
 
 @test "README lists every root namespace" {
@@ -749,4 +864,60 @@ EOF
     _just agent
     assert_success
     assert_equal "$(_listed_names)" "codex default "
+}
+
+_manifest_manual_matches() {
+    local doc="$1" justfile="$2" namespaces actual table output skip
+    namespaces="$(sed -nE 's/^mod\? ([a-z][a-z0-9_-]*).*/\1/p' "${justfile}" | LC_ALL=C sort)"
+    actual="$(sed -n '/入口是 .*列出 namespaces/p' "${doc}" | sed -E 's/^[^(]*\(([^)]*)\).*/\1/' | sed 's/、/\n/g' | tr -d '\`' | LC_ALL=C sort)"
+    [[ -n "${namespaces}" && "${actual}" == "${namespaces}" ]] || return 1
+    grep -F "\`just --list test\` 列出 test 的子 recipe" "${doc}" >/dev/null || return 1
+    table="$(grep -F '| 真實可用盒(' "${doc}")" || return 1
+    [[ "${table}" == *'案例數依目前 spec 的 TAP 計畫為準'* ]] || return 1
+    output="$(grep -F '接著 ' "${doc}" | grep -F 'TAP 計畫')" || return 1
+    [[ "${output}" == *"接著 \`1..N\` 且 N 項全 \`ok\`"* ]] || return 1
+    skip="$(grep -F '只有 unit 的三個 CPU repro' "${doc}")" || return 1
+    [[ "${skip}" == *"\`WORKTOOL_STRESS\` 不為 \`1\`"* &&
+       "${skip}" == *'set WORKTOOL_STRESS=1 to run CPU repro'* &&
+       "${skip}" == *"設為 \`1\` 時必須執行"* ]]
+}
+
+@test "manifest manual verification tracks root modules, test tiers and runner policy" {
+    local -a tiers=(lint unit matrix integration system acceptance system-real)
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${REPO_ROOT}/justfile"
+    assert_success
+    run bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    assert_equal "${lines[*]}" "${tiers[*]}"
+    run grep -F '自動化全綠(lint + unit + matrix + integration + system + acceptance + system-real)' "${REPO_ROOT}/doc/manifest.md"
+    assert_success
+}
+
+@test "manifest manual guard rejects module and runner policy drift" {
+    local doc="${BATS_TEST_TMPDIR}/manifest.md" justfile="${BATS_TEST_TMPDIR}/justfile"
+    cp "${REPO_ROOT}/justfile" "${justfile}"
+    printf "mod? extra 'extra.just'\n" >> "${justfile}"
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${justfile}"
+    assert_failure
+    sed '/^mod? job /d' "${REPO_ROOT}/justfile" > "${justfile}"
+    run _manifest_manual_matches "${REPO_ROOT}/doc/manifest.md" "${justfile}"
+    assert_failure
+    sed "s/\`just --list test\` 列出 test 的子 recipe/那一行就列了全部子 recipe/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed 's/案例數依目前 spec 的 TAP 計畫為準/12 案例/' "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/接著 \`1\.\.N\` 且 N 項全 \`ok\`/接著 \`1..12\` 且 12 項全 \`ok\`/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/\`WORKTOOL_STRESS\` 不為 \`1\`/\`WORKTOOL_STRESS\` 為 \`1\`/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed 's/set WORKTOOL_STRESS=1 to run CPU repro/different reason/' "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
+    sed "s/設為 \`1\` 時必須執行/設為 \`1\` 時可以略過/" "${REPO_ROOT}/doc/manifest.md" > "${doc}"
+    run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
+    assert_failure
 }

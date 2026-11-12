@@ -148,6 +148,8 @@ _required_specs() {
                 unit/test_sh_spec.bats \
                 unit/selfcheck_spec.bats \
                 unit/justfile_spec.bats \
+                unit/m2_acceptance_warning_spec.bats \
+                unit/acceptance_output_types_spec.bats \
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
@@ -184,6 +186,8 @@ _required_specs() {
                 unit/adr/0012_spec.bats \
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \
+                unit/setup_acceptance_doc_spec.bats \
+                unit/gate_acceptance_doc_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -1020,10 +1024,33 @@ script/verify/justfile.verify|test/unit/verify_ui_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
+doc/acceptance.md|test/unit/evidence_doc_spec.bats
+doc/evidence/README.md|test/unit/evidence_doc_spec.bats
+doc/evidence/tdd.sh|test/unit/evidence_doc_spec.bats
 script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
 doc/evidence/negative/*.md|test/unit/evidence_tdd_spec.bats
+lib/log.sh|test/unit/realbox_52_doc_spec.bats
+lib/manifest.sh|test/unit/realbox_52_doc_spec.bats
+lib/home.sh|test/unit/realbox_52_doc_spec.bats
+lib/link.sh|test/unit/realbox_52_doc_spec.bats
+lib/enter.sh|test/unit/realbox_52_doc_spec.bats
+lib/config.sh|test/unit/realbox_52_doc_spec.bats
+lib/guard.sh|test/unit/realbox_52_doc_spec.bats
+lib/config_backup.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/config_backup_paths.sh|test/unit/realbox_52_doc_spec.bats
+lib/verify_run.sh|test/unit/realbox_52_doc_spec.bats
+lib/distrobox_manager.sh|test/unit/realbox_52_doc_spec.bats
+lib/realbox_interrupt.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/realbox.sh|test/unit/realbox_52_doc_spec.bats
+test/helper/realbox_window.bash|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_shim.sh|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/realbox_52_doc_spec.bats
+script/box/enter.sh|test/unit/realbox_52_doc_spec.bats
+script/box/setup.sh|test/unit/realbox_52_doc_spec.bats
+script/box/status.sh|test/unit/realbox_52_doc_spec.bats
+doc/acceptance.md|test/unit/realbox_52_doc_spec.bats
 lib/guard.sh|test/unit/verify_realbox_spec.bats
 lib/guard.sh|test/unit/verify_realbox_matrix_spec.bats
 lib/config_backup.sh|test/unit/verify_realbox_spec.bats
@@ -1050,6 +1077,9 @@ script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
 script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_group_control_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_pty_probe_spec.bats
+test/helper/cold_pty.bash|test/unit/enter_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_matrix_spec.bats
 test/helper/realbox_window.bash|test/unit/verify_realbox_spec.bats
@@ -1092,9 +1122,16 @@ doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
 doc/acceptance.md|test/unit/realbox_window_doc_spec.bats
+doc/acceptance.md|test/unit/acceptance_output_types_spec.bats
+doc/structure.md|test/unit/structure_tree_spec.bats
+doc/acceptance.md|test/unit/setup_acceptance_doc_spec.bats
+script/verify/setup.sh|test/unit/setup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/gate_acceptance_doc_spec.bats
+script/verify/gate.sh|test/unit/gate_acceptance_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
+doc/acceptance.md|test/unit/m2_acceptance_warning_spec.bats
 box/dev.ini|test/unit/acceptance_51_doc_spec.bats
 script/verify/justfile.verify|test/unit/acceptance_51_doc_spec.bats
 doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
@@ -1148,6 +1185,7 @@ _changed_hook_path_map() {
 .agents/script/job.sh|test/unit/script/job_spec.bats
 .agents/script/justfile.job|test/unit/script/job_spec.bats
 .agents/script/justfile.job|test/unit/justfile_spec.bats
+.agents/script/network/wait-ubuntu-dns.sh|test/unit/script/wait_ubuntu_dns_spec.bats
 .agents/script/monitor/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
 .agents/script/monitor/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP
@@ -1200,7 +1238,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout structure_tree; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

@@ -35,6 +35,38 @@ _dispatched() {
         "${FAKE_DOCKER_CALLS}"
 }
 
+_remove_exact_row() {
+    local file="$1" row="$2" count rc=0 tmp="${BATS_TEST_TMPDIR}/mapping-row"
+    count="$(grep -Fxc -- "${row}" "${file}")" || rc=$?
+    [[ "${rc}" -le 1 && "${count}" == 1 ]] || return 1
+    ROW="${row}" awk '$0 != ENVIRON["ROW"]' "${file}" >"${tmp}" || return 1
+    cat "${tmp}" >"${file}" || return 1
+    rc=0
+    grep -Fxq -- "${row}" "${file}" || rc=$?
+    [[ "${rc}" == 1 ]]
+}
+
+@test "mapping mutation removes exactly one literal row and preserves other rows" {
+    local file="${BATS_TEST_TMPDIR}/rows" row='.agents/a#@.sh|test/unit/a[1].bats'
+    printf '%s\n' before "${row}" after >"${file}"
+    _remove_exact_row "${file}" "${row}"
+    assert_equal "$(cat "${file}")" "$(printf '%s\n' before after)"
+}
+
+@test "mapping mutation refuses missing or duplicate rows without changing the file" {
+    local file="${BATS_TEST_TMPDIR}/rows" original
+    printf '%s\n' other >"${file}"
+    original="$(cat "${file}")"
+    run _remove_exact_row "${file}" missing
+    assert_failure
+    assert_equal "$(cat "${file}")" "${original}"
+    printf '%s\n' row row >"${file}"
+    original="$(cat "${file}")"
+    run _remove_exact_row "${file}" row
+    assert_failure
+    assert_equal "$(cat "${file}")" "${original}"
+}
+
 @test "changed documentation consistently leaves unknown impact verification to CI" {
     run just --justfile "${REPO_ROOT}/script/test/justfile.test" --list
     assert_success
@@ -306,6 +338,24 @@ _dispatched() {
     done
 }
 
+@test "test.sh --changed selects the evidence documentation guard for each document source" {
+    mkdir -p "${TEMP_REPO}/doc/evidence"
+    local path
+    for path in doc/acceptance.md doc/evidence/README.md doc/evidence/tdd.sh; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/evidence_doc_spec.bats"
+    _commit_baseline
+    for path in doc/acceptance.md doc/evidence/README.md doc/evidence/tdd.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/evidence_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
 @test "test.sh --changed selects both realbox specs for each dedicated dependency" {
     mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify" "${TEMP_REPO}/test/helper" "${TEMP_REPO}/test/system"
     local path expected
@@ -314,7 +364,7 @@ _dispatched() {
     for path in "${paths[@]}"; do
         printf '# source\n' >"${TEMP_REPO}/${path}"
     done
-    for path in verify_realbox verify_realbox_matrix; do
+    for path in verify_realbox verify_realbox_matrix realbox_52_doc; do
         printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
     done
     printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/system/real_assemble_spec.bats"
@@ -327,6 +377,9 @@ _dispatched() {
         expected="$(_dispatched)"
         [[ "${expected}" == *test/unit/verify_realbox_spec.bats* ]]
         [[ "${expected}" == *test/unit/verify_realbox_matrix_spec.bats* ]]
+        if [[ "${path}" == script/verify/realbox.sh || "${path}" == test/helper/realbox_window.bash ]]; then
+            [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        fi
         if [[ "${path}" == script/verify/realbox.sh ]]; then
             assert_output --partial "此改動由 CI 的 system 驗證"
         fi
@@ -336,6 +389,98 @@ _dispatched() {
             refute_output --partial "測試基礎設施變更"
         fi
         git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects the 5.2 document guard for product libraries" {
+    local path expected
+    for path in lib/enter.sh lib/config.sh; do
+        mkdir -p "${TEMP_REPO}/lib"
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in lib/enter.sh lib/config.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects the 5.2 document guard for transitive inputs" {
+    local path expected
+    local -a paths=(lib/log.sh lib/manifest.sh lib/home.sh lib/link.sh)
+    mkdir -p "${TEMP_REPO}/lib"
+    for path in "${paths[@]}"; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "5.2 dispatch check rejects each missing transitive mapping" {
+    local path row mapping="${TEMP_REPO}/script/test/test.sh"
+    local -a paths=(lib/log.sh lib/manifest.sh lib/home.sh lib/link.sh)
+    mkdir -p "${TEMP_REPO}/lib"
+    for path in "${paths[@]}"; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        git -C "${TEMP_REPO}" checkout -- script/test/test.sh
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/realbox_52_doc_spec.bats* ]]
+        row="${path}|test/unit/realbox_52_doc_spec.bats"
+        _remove_exact_row "${mapping}" "${row}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" != *test/unit/realbox_52_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects exactly the cold PTY consumers" {
+    mkdir -p "${TEMP_REPO}/test/helper"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/cold_pty.bash"
+    local spec expected
+    for spec in cold_group_control cold_pty_probe enter; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/test/helper/cold_pty.bash"
+    expected="$(printf '%s\n' --ci-lint '--ci-unit test/unit/cold_group_control_spec.bats test/unit/cold_pty_probe_spec.bats test/unit/enter_spec.bats')"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_output --partial '測試基礎設施變更'
+    assert_equal "$(_dispatched)" "${expected}"
+    for spec in cold_group_control cold_pty_probe enter; do
+        _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
+            "test/helper/cold_pty.bash|test/unit/${spec}_spec.bats"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        assert_output --partial '測試基礎設施變更'
+        [[ "$(_dispatched)" != "${expected}" ]]
+        git -C "${TEMP_REPO}" checkout -- script/test/test.sh
     done
 }
 
@@ -568,7 +713,7 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/hook/enforce_milestone_ready_evidence_spec.bats')"
 }
 
-_document_change() {
+_prepare_document_change() {
     local _path="$1"
     shift
     mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
@@ -580,6 +725,16 @@ _document_change() {
     done
     _commit_baseline
     printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+}
+
+_run_changed_successfully() {
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+}
+
+_document_change() {
+    _prepare_document_change "$@"
+    shift
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
     assert_success
@@ -587,7 +742,7 @@ _document_change() {
 }
 
 @test "test.sh --changed maps root documentation to existing documentation guards" {
-    _document_change doc/structure.md test/unit/contract_spec.bats \
+    _document_change doc/structure.md test/unit/structure_tree_spec.bats test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
@@ -597,9 +752,12 @@ _document_change() {
 }
 
 @test "test.sh --changed selects all acceptance documentation guards together" {
-    _document_change doc/acceptance.md test/unit/realbox_window_doc_spec.bats \
-        test/unit/contract_spec.bats test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
-        test/unit/acceptance_51_doc_spec.bats test/unit/backup_acceptance_doc_spec.bats \
+    _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
+        test/unit/realbox_52_doc_spec.bats test/unit/realbox_window_doc_spec.bats \
+        test/unit/acceptance_output_types_spec.bats test/unit/setup_acceptance_doc_spec.bats \
+        test/unit/gate_acceptance_doc_spec.bats test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/m2_acceptance_warning_spec.bats test/unit/acceptance_51_doc_spec.bats test/unit/backup_acceptance_doc_spec.bats \
         test/unit/verify_gate_spec.bats
 }
 
@@ -645,13 +803,43 @@ _document_change() {
         test/unit/backup_acceptance_doc_spec.bats
 }
 
+@test "failed changed runner cannot satisfy a missing selection check" {
+    printf '#!/usr/bin/env bash\nexit 42\n' >"${TEMP_REPO}/script/test/test.sh"
+    run _run_changed_successfully
+    assert_failure
+}
+
 @test "acceptance dispatch check rejects a missing backup guard mapping" {
-    sed -i '/^doc\/acceptance[.]md|test\/unit\/backup_acceptance_doc_spec[.]bats$/d' \
-        "${TEMP_REPO}/script/test/test.sh"
-    run _document_change doc/acceptance.md test/unit/contract_spec.bats \
+    _prepare_document_change doc/acceptance.md test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/backup_acceptance_doc_spec.bats
-    assert_failure
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
+        'doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats'
+    _run_changed_successfully
+    [[ "$(_dispatched)" != *test/unit/backup_acceptance_doc_spec.bats* ]]
+}
+
+@test "test.sh --changed selects the setup acceptance documentation guard" {
+    _document_change doc/acceptance.md test/unit/setup_acceptance_doc_spec.bats \
+        test/unit/contract_spec.bats test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
+
+@test "test.sh --changed selects the setup document guard for its verifier" {
+    _document_change script/verify/setup.sh test/unit/setup_acceptance_doc_spec.bats
+}
+
+@test "test.sh --changed selects the gate acceptance documentation guard" {
+    _document_change doc/acceptance.md test/unit/gate_acceptance_doc_spec.bats \
+        test/unit/contract_spec.bats test/unit/diagram_spec.bats test/unit/justfile_spec.bats
+}
+
+@test "test.sh --changed selects the gate document guard for its verifier" {
+    _document_change script/verify/gate.sh test/unit/gate_acceptance_doc_spec.bats
+}
+
+@test "test.sh --changed maps acceptance output classification guard" {
+    _document_change doc/acceptance.md test/unit/acceptance_output_types_spec.bats \
+        test/unit/contract_spec.bats test/unit/diagram_spec.bats test/unit/justfile_spec.bats
 }
 
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
@@ -802,4 +990,21 @@ _document_change() {
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/job_spec.bats')"
+}
+
+@test "changed DNS wrapper dispatches its spec only when changed" {
+    mkdir -p "${TEMP_REPO}/.agents/script/network" "${TEMP_REPO}/test/unit/script"
+    printf '# wrapper\n' >"${TEMP_REPO}/.agents/script/network/wait-ubuntu-dns.sh"
+    printf '@test "dns" { true; }\n' >"${TEMP_REPO}/test/unit/script/wait_ubuntu_dns_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/.agents/script/network/wait-ubuntu-dns.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/wait_ubuntu_dns_spec.bats')"
+    : >"${FAKE_DOCKER_CALLS}"
+    local mapping='.agents/script/network/wait-ubuntu-dns.sh|test/unit/script/wait_ubuntu_dns_spec.bats'
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${mapping}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" != *wait_ubuntu_dns_spec.bats* ]]
 }

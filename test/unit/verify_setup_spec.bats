@@ -1478,3 +1478,37 @@ _degrade_setup_line() {
     [ ! -s "${out}" ]
     grep -q '^Usage:' "${err}"
 }
+
+@test "per-write checks reject corruption at each previously unchecked setup call" {
+    local _repo _item _call _file _phase
+    for _item in 3.2 3.9 3.10; do
+        case "${_item}" in
+            3.2) _call=2; _phase=after-rewrite ;;
+            3.9) _call=1; _phase=after-write ;;
+            3.10) _call=1; _phase=after-failure ;;
+        esac
+        for _file in ghostty tmux; do
+            [[ "${_item}" != 3.10 || "${_file}" == tmux ]] || continue
+            _repo="$(_repo_copy)"
+            _insert_before 'set -euo pipefail' "${_repo}/script/box/setup.sh" <<'INJECT'
+_corrupt_on_exit() {
+    local count=0 counter="${HOME}/.setup-call-count" target
+    if [[ -f "${counter}" ]]; then read -r count <"${counter}"; fi
+    count=$((count + 1))
+    printf '%s\n' "${count}" >"${counter}"
+    if [[ "${count}" -eq "${VERIFY_MUTATE_CALL}" ]]; then
+        target="${HOME}/.tmux.conf"
+        if [[ "${VERIFY_MUTATE_FILE}" == ghostty ]]; then target="${HOME}/.config/ghostty/config"; fi
+        printf 'corrupted\n' >>"${target}"
+    fi
+}
+trap _corrupt_on_exit EXIT
+INJECT
+            VERIFY_MUTATE_CALL="${_call}" VERIFY_MUTATE_FILE="${_file}" run "${_repo}/script/verify/setup.sh" "${_item}"
+            assert_failure 1
+            assert_output --partial "${_phase}"
+            assert_output --partial "lost the user's own content"
+            rm -rf "${_repo}"
+        done
+    done
+}
