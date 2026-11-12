@@ -1,7 +1,12 @@
 # doc/evidence -- 驗收清單引用的檢查程式
 
-這裡保存 M3 驗收 2.2 的證據判定邏輯與負向範例。執行 `bash doc/evidence/tdd.sh`
-檢查固定的十個 PR；也可傳入 PR 編號，檢查指定的描述。
+這裡保存 M3 驗收 2.2 的證據判定邏輯與負向範例。正式驗收執行
+`just verify gate 2.2`，由 gate 檢查固定十個 PR 的結果及順序。
+也可直接執行 `bash doc/evidence/tdd.sh`，並傳入 PR 編號檢查指定描述；
+直接執行只判斷指定輸入，不替代 gate 的完整集合判準。
+
+`just verify gate 2.4` 每次執行時以 `tdd.awk` 檢查下列兩個負向 fixture；
+各例必須回 exit 1 並印出預期的拒絕判決，若接受負例或輸出不符則驗收失敗。
 
 | 檔案 | 用途 |
 | --- | --- |
@@ -78,7 +83,6 @@ fence 都沒有(`indented-fences=0`),所以「描述本身是縮排的」也排�
 
 當時的判定邏輯是文件裡一段九行的 here-string 函式:只要那段文字在貼上、轉錄或
 執行器處理途中被改寫,判定就會跟著變,而文件本身無法證明自己沒被改寫。邏輯移進
-受版本控制的 `tdd.awk` / `tdd.sh` 之後,驗收清單那一行只剩一次呼叫(現行入口是
-`bash doc/evidence/tdd.sh`),不再帶任何可被
-改寫的 shell 語法;`negative/` 兩個 fixture 與單元測試驗證判定器會拒絕負例。
+受版本控制的 `tdd.awk` / `tdd.sh` 之後,驗收清單不再帶判定器的 shell 語法；現行入口
+`just verify gate 2.2` 呼叫 `tdd.sh` 並檢查完整結果集合;`negative/` 兩個 fixture 與單元測試驗證判定器會拒絕負例。
 根因未解不影響這個處置成立:它針對的是「文件文字即判定邏輯」這個結構問題本身。

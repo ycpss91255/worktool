@@ -76,7 +76,7 @@ DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 # Repo-relative directory for per-case junit reports (issue #827); empty =
 # no report. Each bats tier writes <dir>/<tier>/report.xml next to the TAP
-# stream, which stays exactly what it was (the gate still reads only TAP).
+# stream; successful cases can include a timing suffix. The gate reads TAP.
 WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
 # Repo-relative shard weights ("<tier>/<spec><TAB><ms>", issue #831) for
 # --shard; empty or an empty file = every spec weighs its @test count.
@@ -149,6 +149,8 @@ _required_specs() {
                 unit/test_sh_spec.bats \
                 unit/selfcheck_spec.bats \
                 unit/justfile_spec.bats \
+                unit/m2_acceptance_warning_spec.bats \
+                unit/acceptance_output_types_spec.bats \
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
@@ -185,6 +187,9 @@ _required_specs() {
                 unit/adr/0012_spec.bats \
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \
+                unit/ownership_acceptance_doc_spec.bats \
+                unit/setup_acceptance_doc_spec.bats \
+                unit/gate_acceptance_doc_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -306,7 +311,7 @@ _run_in_container() {
     _host_state_dir
     if [[ "${_flag}" == --ci-lint ]]; then
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
-        if ! git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z > "${_layout_paths}"; then
+        if ! _write_lint_paths "${_layout_paths}"; then
             rm -f "${_layout_paths}"
             _die "could not enumerate repository paths for lint"
         fi
@@ -408,12 +413,46 @@ _run_system_real_in_runner() {
 
 # --- Container side: gates ----------------------------------------------------
 
-# Emit NUL-delimited lintable shell scripts. -print0 keeps paths with odd
-# characters intact.
+# Write repository-relative paths, NUL-delimited to preserve odd characters.
+# A per-command safe.directory permits root to inspect the mounted checkout.
+_write_lint_paths() {
+    local _destination="$1" _path _listing
+    if ! command -v git >/dev/null 2>&1; then
+        _info "git unavailable; falling back to filesystem lint discovery"
+    elif git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+        ls-files --cached --others --exclude-standard -z >"${_destination}" 2>/dev/null; then
+        return 0
+    else
+        _info "Git path listing failed (not an accessible work tree); falling back to filesystem lint discovery"
+    fi
+    _listing="$(mktemp)" || { _err "cannot create filesystem lint discovery snapshot"; return 1; }
+    if ! find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
+        -type f -print0 >"${_listing}"; then
+        rm -f "${_listing}"
+        _err "filesystem lint discovery failed"
+        return 1
+    fi
+    if ! ( while IFS= read -r -d '' _path; do
+        printf '%s\0' "${_path#"${REPO_ROOT}/"}" || exit 1
+    done <"${_listing}" ) >"${_destination}"; then
+        rm -f "${_listing}"
+        _err "cannot write filesystem lint discovery snapshot"
+        return 1
+    fi
+    rm -f "${_listing}"
+}
+
+# Emit existing regular shell scripts from the selected path snapshot.
 _find_lintable_sh() {
-    find "${REPO_ROOT}" \
-        -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.sh' -print0
+    local _path
+    while IFS= read -r -d '' _path; do
+        case "${_path}" in
+            *.sh|*.bats)
+                if [[ -f "${REPO_ROOT}/${_path}" && ! -L "${REPO_ROOT}/${_path}" ]]; then
+                    printf '%s\0' "${REPO_ROOT}/${_path}"
+                fi ;;
+        esac
+    done <"${WORKTOOL_LAYOUT_PATHS}"
 }
 
 _run_shellcheck() {
@@ -422,12 +461,6 @@ _run_shellcheck() {
     while IFS= read -r -d '' _f; do
         _files+=("${_f}")
     done < <(_find_lintable_sh)
-    # *.bats are bash under the hood; check them too (info-level findings
-    # still fail the gate, matching init_ubuntu's lint policy).
-    while IFS= read -r -d '' _f; do
-        _files+=("${_f}")
-    done < <(find "${REPO_ROOT}" -path "${REPO_ROOT}/.git" -prune -o \
-        -type f -name '*.bats' -print0)
 
     if [[ "${#_files[@]}" -eq 0 ]]; then
         _info "  (no shell scripts to check - skipping)"
@@ -439,6 +472,23 @@ _run_shellcheck() {
         || _die "ShellCheck failed - see violations above"
     _info "ShellCheck OK"
 }
+
+# Host lint supplies a snapshot when linked-worktree metadata is outside
+# /source. Direct container callers create their own, with filesystem fallback.
+_run_lint() (
+    if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]]; then
+        WORKTOOL_LAYOUT_PATHS="$(mktemp)"
+        trap 'rm -f "${WORKTOOL_LAYOUT_PATHS}"' EXIT
+        _write_lint_paths "${WORKTOOL_LAYOUT_PATHS}"
+    fi
+    [[ -r "${WORKTOOL_LAYOUT_PATHS}" ]] || _die "lint path snapshot unreadable"
+    export WORKTOOL_LAYOUT_PATHS
+    _run_shellcheck
+    _info "Checking script layout and process artifacts"
+    "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
+        || _die "Script layout check failed"
+    _info "Script layout OK"
+)
 
 # The whole tier and shard verdict share one fail-closed skip policy.
 _has_unexpected_skip() {
@@ -719,8 +769,9 @@ Environment:
   WORKTOOL_TEST_REPORT_DIR
                          repo-relative directory: each bats tier also writes
                          a junit report (per-case times) to <dir>/<tier>/
-                         report.xml; the TAP output is unchanged (default:
-                         none)
+                         report.xml; successful TAP cases may include a
+                         trailing " # in N ms" timing suffix. TAP plan, status
+                         and skip checks are unchanged (default: none)
   WORKTOOL_TEST_RUN_ID   label test containers with worktool.verify-run=<id>
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   SYSTEM_REAL_IMAGE_PREBUILT=1
@@ -845,11 +896,7 @@ _run_ci_gate() {
     shift
     case "${_flag}" in
         --ci-lint)
-            _run_shellcheck
-            _info "Checking script layout and process artifacts"
-            "${REPO_ROOT}/script/test/check-script-layout.sh" --root "${REPO_ROOT}" \
-                || _die "Script layout check failed"
-            _info "Script layout OK"
+            _run_lint
             ;;
         --ci-unit)
             if [[ -n "${_shard}" ]]; then _run_shard unit; else _run_unit "$@"; fi ;;
@@ -912,6 +959,7 @@ test/helper/graph.bash|test/unit/acceptance_tools_spec.bats
 test/helper/verify_tools.bash|test/unit/acceptance_tools_spec.bats
 lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
+lib/config.sh|test/unit/config_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
 lib/log.sh|test/unit/verify_run_signal_spec.bats
@@ -943,6 +991,11 @@ box/dev.ini|test/unit/verify_evidence_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
+lib/enter.sh|test/unit/box_tmux_env_spec.bats
+lib/enter.sh|test/unit/managed_block_spec.bats
+lib/enter.sh|test/unit/setup_spec.bats
+lib/enter.sh|test/unit/config_backup_spec.bats
+lib/enter.sh|test/unit/verify_realbox_spec.bats
 lib/enter.sh|test/unit/enter_spec.bats
 lib/enter.sh|test/unit/verify_setup_spec.bats
 lib/approval.sh|test/unit/approval_spec.bats
@@ -957,6 +1010,7 @@ script/box/assemble.sh|test/unit/assemble_spec.bats
 script/box/assemble.sh|test/integration/assemble_spec.bats
 script/box/assemble.sh|test/system/real_assemble_spec.bats
 script/box/bench.sh|test/unit/bench_spec.bats
+script/box/bench.sh|test/unit/acceptance_51_doc_spec.bats
 script/box/enter.sh|test/unit/enter_spec.bats
 script/box/enter.sh|test/integration/enter_spec.bats
 script/box/setup.sh|test/unit/setup_spec.bats
@@ -965,6 +1019,7 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+test/helper/namespace_rules.jq|test/unit/justfile_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
 lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
@@ -982,10 +1037,33 @@ script/verify/justfile.verify|test/unit/verify_ui_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
+doc/acceptance.md|test/unit/evidence_doc_spec.bats
+doc/evidence/README.md|test/unit/evidence_doc_spec.bats
+doc/evidence/tdd.sh|test/unit/evidence_doc_spec.bats
 script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
 doc/evidence/negative/*.md|test/unit/evidence_tdd_spec.bats
+lib/log.sh|test/unit/realbox_52_doc_spec.bats
+lib/manifest.sh|test/unit/realbox_52_doc_spec.bats
+lib/home.sh|test/unit/realbox_52_doc_spec.bats
+lib/link.sh|test/unit/realbox_52_doc_spec.bats
+lib/enter.sh|test/unit/realbox_52_doc_spec.bats
+lib/config.sh|test/unit/realbox_52_doc_spec.bats
+lib/guard.sh|test/unit/realbox_52_doc_spec.bats
+lib/config_backup.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/config_backup_paths.sh|test/unit/realbox_52_doc_spec.bats
+lib/verify_run.sh|test/unit/realbox_52_doc_spec.bats
+lib/distrobox_manager.sh|test/unit/realbox_52_doc_spec.bats
+lib/realbox_interrupt.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/realbox.sh|test/unit/realbox_52_doc_spec.bats
+test/helper/realbox_window.bash|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_shim.sh|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/realbox_52_doc_spec.bats
+script/box/enter.sh|test/unit/realbox_52_doc_spec.bats
+script/box/setup.sh|test/unit/realbox_52_doc_spec.bats
+script/box/status.sh|test/unit/realbox_52_doc_spec.bats
+doc/acceptance.md|test/unit/realbox_52_doc_spec.bats
 lib/guard.sh|test/unit/verify_realbox_spec.bats
 lib/guard.sh|test/unit/verify_realbox_matrix_spec.bats
 lib/config_backup.sh|test/unit/verify_realbox_spec.bats
@@ -998,9 +1076,23 @@ lib/distrobox_manager.sh|test/unit/verify_realbox_spec.bats
 lib/distrobox_manager.sh|test/unit/verify_realbox_matrix_spec.bats
 lib/realbox_interrupt.sh|test/unit/verify_realbox_spec.bats
 lib/realbox_interrupt.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/log.sh|test/unit/acceptance_51_doc_spec.bats
+lib/enter.sh|test/unit/acceptance_51_doc_spec.bats
+lib/config.sh|test/unit/acceptance_51_doc_spec.bats
+lib/guard.sh|test/unit/acceptance_51_doc_spec.bats
+lib/verify_run.sh|test/unit/acceptance_51_doc_spec.bats
+lib/manifest.sh|test/unit/acceptance_51_doc_spec.bats
+lib/distrobox_manager.sh|test/unit/acceptance_51_doc_spec.bats
+lib/realbox_interrupt.sh|test/unit/acceptance_51_doc_spec.bats
+lib/config_backup.sh|test/unit/acceptance_51_doc_spec.bats
+script/verify/config_backup_paths.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
+script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_group_control_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_pty_probe_spec.bats
+test/helper/cold_pty.bash|test/unit/enter_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_matrix_spec.bats
 test/helper/realbox_window.bash|test/unit/verify_realbox_spec.bats
@@ -1012,9 +1104,14 @@ test/unit/fixture/realbox_matrix_just.sh|test/unit/verify_realbox_matrix_spec.ba
 test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_spec.bats
 test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/acceptance_51_doc_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal.js|test/unit/verify_run_signal_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_run_signal_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
@@ -1037,9 +1134,24 @@ doc/adr/*.md|test/unit/adr/0010_spec.bats
 doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/acceptance.md|test/unit/realbox_window_doc_spec.bats
+doc/acceptance.md|test/unit/acceptance_output_types_spec.bats
+doc/structure.md|test/unit/structure_tree_spec.bats
+doc/acceptance.md|test/unit/setup_acceptance_doc_spec.bats
+script/verify/setup.sh|test/unit/setup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/gate_acceptance_doc_spec.bats
+script/verify/gate.sh|test/unit/gate_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/ownership_acceptance_doc_spec.bats
+script/verify/realbox.sh|test/unit/ownership_acceptance_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
+doc/acceptance.md|test/unit/m2_acceptance_warning_spec.bats
+box/dev.ini|test/unit/acceptance_51_doc_spec.bats
+script/verify/justfile.verify|test/unit/acceptance_51_doc_spec.bats
+doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
+doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats
@@ -1088,6 +1200,7 @@ _changed_hook_path_map() {
 .agents/script/job.sh|test/unit/script/job_spec.bats
 .agents/script/justfile.job|test/unit/script/job_spec.bats
 .agents/script/justfile.job|test/unit/justfile_spec.bats
+.agents/script/network/wait-ubuntu-dns.sh|test/unit/script/wait_ubuntu_dns_spec.bats
 .agents/script/monitor/wait-pr-ci.sh|test/unit/script/wait_pr_ci_spec.bats
 .agents/script/monitor/watch-user-replies.sh|test/unit/script/watch_user_replies_spec.bats
 MAP
@@ -1140,7 +1253,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout acceptance_tools; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout structure_tree acceptance_tools; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

@@ -142,6 +142,30 @@ ROWS
     assert_line 'unit (ubuntu-24.04-arm): 2 shard(s), 3 spec(s), 6 case(s): the union is the whole tier'
 }
 
+@test "the shard verdict fails closed when the skip scanner errors" {
+    _good_union
+    run test_shard_verdict "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
+    assert_success
+    local bin="${BATS_TEST_TMPDIR}/awk-bin"
+    mkdir -p "${bin}"
+    REAL_AWK="$(command -v awk)"
+    export REAL_AWK
+    export FAIL_TAP="${ROOT}/test-report-unit-2-ubuntu-24.04-arm/unit/shard.tap"
+    cat >"${bin}/awk" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -v && "${2:-}" == tier=* && "${!#}" == "${FAIL_TAP}" ]]; then
+    exit 2
+fi
+exec "${REAL_AWK}" "$@"
+STUB
+    chmod +x "${bin}/awk"
+    PATH="${bin}:${PATH}" run --separate-stderr test_shard_verdict \
+        "${ROOT}" unit 2 "${LIST}" "${REQUIRED}" ubuntu-latest ubuntu-24.04-arm
+    assert_failure 1
+    assert_line 'unit (ubuntu-latest): 2 shard(s), 3 spec(s), 6 case(s): the union is the whole tier'
+    [[ "${stderr:-}" == *'unit (ubuntu-24.04-arm): shard 2/2 TAP skip check failed (exit 2)'* ]]
+}
+
 # Break the good union of ubuntu-24.04-arm in way $1; the verdict must fail
 # naming the reason $2 (and still pass the untouched runner).
 _broken() {
