@@ -650,6 +650,26 @@ EOF
     assert_output --partial "unit bats emitted no TAP plan"
 }
 
+@test "_verify_tap fails closed when the skip scanner errors" {
+    local bin="${BATS_TEST_TMPDIR}/bin" tap="${BATS_TEST_TMPDIR}/valid.tap"
+    mkdir -p "${bin}"
+    printf '1..1\nok 1 normal case\n' >"${tap}"
+    REAL_AWK="$(command -v awk)"
+    export REAL_AWK
+    cat >"${bin}/awk" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == -v && "$2" == tier=* ]]; then
+    exit 2
+fi
+exec "${REAL_AWK}" "$@"
+STUB
+    chmod +x "${bin}/awk"
+    PATH="${bin}:${PATH}" run bash -c 'set -euo pipefail; source "$1"; _verify_tap unit "$2" 1' \
+        _ "${TEST_SH}" "${tap}"
+    assert_failure 1
+    assert_output --partial 'unit bats skip check failed (awk exit 2)'
+}
+
 @test "unit: only named opt-in CPU repro skips are accepted" {
     _make_repo_copy
     local bin="${BATS_TEST_TMPDIR}/bin" tier spec stress_case
