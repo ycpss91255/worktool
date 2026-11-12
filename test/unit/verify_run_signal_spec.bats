@@ -89,11 +89,9 @@ signal_child_stop() {
     interrupt_load_start
     local attempt failures=0 trials=60
     sed -i "3i printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${SIGNAL_STATE}/child"
-    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
-        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${SIGNAL_STATE}/signal.js"
     for ((attempt=1; attempt<=trials; attempt++)); do
         rm -f "${SIGNAL_STATE}/ready" "${SIGNAL_STATE}/events"
-        run node "${SIGNAL_STATE}/signal.js" HUP bash "${SIGNAL_STATE}/caller"
+        SIGNAL_DELAY_MAX_MS=10 SIGNAL_POLL_MS=1 run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" HUP bash "${SIGNAL_STATE}/caller"
         if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
             "$(cat "${SIGNAL_STATE}/events")" != $'finished\ncleanup' ]]; then
             failures=$((failures + 1))
