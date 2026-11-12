@@ -1274,3 +1274,16 @@ _copy_namespace_docs() {
         assert_failure
     done
 }
+
+@test "namespace default rejects a failing recipe dependency" {
+    _copy_namespace_docs
+    run _structure_namespace_gaps "${COPY}"
+    assert_success
+    sed -i 's/^default:$/default: fail/' "${COPY}/script/agent/justfile.agent"
+    grep -Fxq 'default: fail' "${COPY}/script/agent/justfile.agent"
+    printf '\nfail:\n    @false\n' >>"${COPY}/script/agent/justfile.agent"
+    run just --justfile "${COPY}/script/agent/justfile.agent" default
+    assert_failure
+    run _structure_namespace_gaps "${COPY}"
+    assert_failure
+}
