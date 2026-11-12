@@ -171,6 +171,22 @@ _root_shape_valid() {
     assert_success
 }
 
+@test "root shape rejects extra declarations and a changed default" {
+    local mutation
+    for mutation in alias setting assignment recipe default; do
+        cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
+        case "$mutation" in
+            alias) printf '\nalias extra := default\n' >>"${COPY}/justfile" ;;
+            setting) printf '\nset quiet := false\n' >>"${COPY}/justfile" ;;
+            assignment) printf "\nextra := 'value'\n" >>"${COPY}/justfile" ;;
+            recipe) printf '\nextra:\n    @echo extra\n' >>"${COPY}/justfile" ;;
+            default) sed -i 's/@just --list/@echo changed/' "${COPY}/justfile" ;;
+        esac
+        run _root_shape_valid "${COPY}"
+        assert_failure
+    done
+}
+
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
     local _m
     for _m in script/test/justfile.test script/box/justfile.box script/verify/justfile.verify .agents/script/justfile.job; do
