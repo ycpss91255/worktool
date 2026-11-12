@@ -591,6 +591,11 @@ _document_change() {
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
+@test "test.sh --changed maps acceptance to its M2 warning guard" {
+    _document_change doc/acceptance.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/m2_acceptance_warning_spec.bats
+}
+
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
     local -a _specs=(test/unit/adr_spec.bats)
     local _number
