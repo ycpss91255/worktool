@@ -1212,3 +1212,44 @@ EOF
     assert_equal "${gaps}" ""
     assert_equal "$rc" 0
 }
+
+_structure_namespace_gaps() {
+    local root="$1" dump
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        printf 'namespace rules: just --dump failed\n' >&2
+        return 1
+    fi
+    jq -er --arg root "$root" \
+        --rawfile structure "${root}/doc/structure.md" \
+        --rawfile design "${root}/doc/design.md" \
+        -f "${REPO_ROOT}/test/helper/namespace_rules.jq" <<<"$dump"
+}
+
+_copy_namespace_docs() {
+    mkdir -p "${COPY}/doc"
+    cp "${REPO_ROOT}/doc/structure.md" "${REPO_ROOT}/doc/design.md" "${COPY}/doc/"
+}
+
+@test "#724: structure namespace rules match module defaults, help and working directories" {
+    run _structure_namespace_gaps "${REPO_ROOT}"
+    assert_success
+}
+
+@test "#724: namespace contract rejects module and design drift" {
+    local mutation
+    for mutation in alias cwd namespace default echo_list extra_failure design; do
+        _make_repo_copy
+        _copy_namespace_docs
+        case "$mutation" in
+            alias) printf '\nalias h := help\n' >>"${COPY}/.agents/script/justfile.job" ;;
+            cwd) sed -i "s|working-directory := .*|working-directory := '../..'|" "${COPY}/.agents/script/worktree/justfile.worktree" ;;
+            namespace) printf "\nmod? extra 'script/agent/justfile.agent'\n" >>"${COPY}/justfile" ;;
+            default) sed -i 's|@just --justfile.*--list|@echo changed|' "${COPY}/script/agent/justfile.agent" ;;
+            echo_list) sed -i 's|@just --justfile.*--list|@echo --list|' "${COPY}/script/agent/justfile.agent" ;;
+            extra_failure) sed -i '/@just --justfile.*--list/a\    @false' "${COPY}/script/agent/justfile.agent" ;;
+            design) sed -i "s/\`job\` 有 \`help\`/\`job\` 有 \`help\`(alias \`h\`)/" "${COPY}/doc/design.md" ;;
+        esac
+        run _structure_namespace_gaps "${COPY}"
+        assert_failure
+    done
+}
