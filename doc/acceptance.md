@@ -415,15 +415,40 @@ prereq-ok
 - 外部證據：`just verify evidence` 查驗固定的 M3 sub-issue PR CI 結果、
   決議紀錄與 blocked review 後續（6.1–6.3）；可傳入項目編號單獨執行，
   `--list` 列出項目。查詢失敗或證據不足不算通過。
+  - 各項可用 `just verify evidence 6.1`、`just verify evidence 6.2` 或
+    `just verify evidence 6.3` 執行；逐列印查驗結果，最後印 `rc=0`
+    表示通過、`rc=1` 表示失敗，缺少必要工具回 `rc=3`。
   - 6.1：#152–#156、#165–#169 的 CI 均通過；#152 早於 arm64 runner，
     其餘 PR 需兩種架構。對應 issue 依序為 #151、#149、#150、#21、
-    #23、#164、#163、#160、#161、#162。
-  - 6.2：查詢指定 issue 的 `[claude]` 留言，檢查各決議關鍵字均存在。
+    #23、#164、#163、#160、#161、#162。每個 PR 的 checks 非空且全部 pass，
+    並恰有一行 `Closes #` 指向對應 issue，十個 issue 互異（`distinct=10`）。
+    #153 起 amd64 與 arm64 的相異 check 名稱數均大於零且相等，兩組名稱不重疊。
+    各列印 `total`、`nonpass`、`amd`、`arm`、`both`、`closes` 與 `issue`；
+    查詢或解析失敗會印 `gh-failed`、`jq-failed`、`grep-failed`，空回應、
+    格式錯誤、數量不符或 `issue-mismatch` 均不通過。
+  - 6.2：查詢指定 issue 的 `[claude]` 留言，檢查各決議關鍵字均存在：
+    #22 須有 `median=<數字> ms`（可含小數）與「維持 docker + 預設 runc」，#148 須有
+    「只用 LTS」與「ubuntu-24.04-arm」，#21 須有「預設 = 直接進盒」與「印 log」。
+    留言查詢涵蓋所有分頁；各列印 `median-ms`、`runc`、`lts-only`、
+    `arm-runner`、`default-enter`、`log` 中對應 issue 的欄位。
+    每格必須為 `1`。`0` 表示未找到決議，`no-comments` 表示沒有該留言，
+    `gh-failed`／`grep-failed` 表示查詢／搜尋失敗，均不通過。
   - 6.3：#156、#165–#169 的最後 `[codex]` 判決需可合併；原本 blocked
     的 #152、#153、#154、#155 分別由 issue #163、#164、#162、#161
     與修復 PR #166、#165、#169、#168 接續，修復 PR 的最後判決需可合併。
-- TDD 證據：`bash doc/evidence/tdd.sh` 檢查十個 sub-issue PR 描述中
-  非空 RED 區塊先於非空 GREEN 區塊；證據內容仍需人類審閱。
+    原 PR 的最後判決須為 `blocked`，其 `[claude]` 留言須指向唯一的對應
+    follow-up issue；查詢回傳的已合併修復 PR 中，恰有一個以 `Closes #`
+    指向該 issue（此查詢未分頁，唯一性限於回傳集合），
+    且須符合上述固定配對。四個 follow-up 與四個修復 PR 各不相同
+    （`distinct-follow-ups=4`、`distinct-fix-prs=4`）。留言查詢涵蓋
+    所有分頁；逐列印原判決、follow-up、修復 PR 與鏈的 `ok`／`BAD`。
+    合法修復鏈可包含 `blocked`；必要判決為 `blocked` 或 `NOT`、鏈為 `BAD`，
+    或出現 `gh-failed`、`no-codex`、`no-follow-up`、`no-fix-pr`、
+    `no-claude-comment`、`grep-failed`、`bad-fix-pr` 均不通過。
+- TDD 證據：`just verify gate 2.2` 檢查十個 sub-issue PR 描述中
+  非空 RED 區塊先於非空 GREEN 區塊及完整結果集合；直接執行
+  `bash doc/evidence/tdd.sh` 可檢查指定 PR，但不替代 gate 的集合判準。
+  證據內容仍需人類審閱。
 
 - [ ] 1.1 使用者介面：`just box` 列出 assemble、bench、default、enter、help、setup、status 七個動作，`just box help` 依序列出五支腳本的 usage。
   - 驗收方式：`just verify ui 1.1; echo rc=$?`。
