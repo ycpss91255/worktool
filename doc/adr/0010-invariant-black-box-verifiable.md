@@ -26,20 +26,20 @@
 機制：
 
 - `just` 是唯一的使用者入口：root `justfile` 只有 `mod?` 行與 `default`，每個 recipe 是把參數原樣交給腳本的薄轉發器，`--help` 與參數驗證都在腳本裡（`doc/design.md`「決策」2026-09-16「just 是使用者的通用介面」的模型規則 1 與 4）。
-- CI 的測試 gate（lint、unit、integration、system、acceptance、system-real）都以 `just test <tier>` 或 `just test system-real` 執行（`.github/workflows/ci.yml`），與維護者在本機跑的是同一個指令。建 image 的 `build-image` job 不在此列：它直接執行 `docker build`，不經 `just test build`（見待補）。
+- CI 的測試 gate（lint、unit、matrix、integration、system、acceptance、system-real）都以 `just test` 的 tier recipe 執行（unit 以分片參數執行）（`.github/workflows/ci.yml`），與維護者在本機跑的是同一個指令。建 image 的 `build-image` job 不在此列：它直接執行 `docker build`，不經 `just test build`（見待補）。
 - agent 端的 hook（`.agents/hook/test-must-use-docker.sh`）擋下在 host 直接跑 bats 或直接呼叫 `script/test/test.sh`，要求改用 `just test`。
 - 人類實機驗收清單（`doc/acceptance.md`）規定清單上的 worktool 動作一律以 `just` 執行。
 
 測試（每一條都是可查的檔名與案例名）：
 
-- `test/unit/justfile_spec.bats` 的「root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
+- `test/unit/justfile_spec.bats` 的「root justfile has only modules and its default recipe」：root `justfile` 沒有 namespace 以外的頂層動作。
 - `test/unit/justfile_spec.bats` 的「no justfile prints usage or a valid: list of its own」：justfile 不自己印 usage 或選項清單，這些只能來自腳本。
 - `test/unit/justfile_spec.bats` 的「just test <verb> forwards exactly --<verb> for every tier verb and build」：每個 `just test` 動詞原樣轉發到 `test.sh`（以替身腳本記錄收到的參數）。
 - `test/unit/justfile_spec.bats` 的「just box assemble --dry-run prints distrobox assemble create --file box/dev.ini via the real script」：經 `just` 呼叫交付的 `assemble.sh`，看到的是使用者會看到的輸出。
 - `test/unit/justfile_spec.bats` 的「just box assemble --bogus is refused by assemble.sh itself (exit 2), not by the justfile」：經 `just` 給錯選項，拒絕與訊息來自腳本本身。
 - `test/unit/justfile_spec.bats` 的「just box setup --dry-run logs the decisions via the real script and writes nothing」：經 `just` 呼叫交付的 `setup.sh`。
 - `test/unit/justfile_spec.bats` 的「just box status via the real script reports the defaults under a throwaway HOME」：經 `just` 呼叫交付的 `status.sh`。
-- `test/unit/justfile_spec.bats` 的「ci.yml drives every gate as just test <tier>, job names unchanged」：`ci.yml` 裡以 `just` 執行的步驟恰好是 `just test ${{ matrix.tier }}` 與 `just test system-real` 兩個。它只檢查 `run: just` 開頭的步驟，不證明 CI 沒有其他不經 `just` 的步驟（見待補）。
+- `test/unit/justfile_spec.bats` 的「ci.yml drives every gate as just test <tier>, job names unchanged」：檢查 gate matrix 的 tier 對應，以及 workflow 中符合指定文字形狀的五個呼叫：逐 tier、unit 分片、system-real、verify-env 與容器中的 `just verify all`。這是文字檢查，不證明 CI 沒有其他不經 `just` 的步驟，也不證明這些步驟已執行。
 - `test/unit/hook/test_must_use_docker_spec.bats` 的「blocks a bare 'bats' run on the host and points at just test」：host 上直接跑 bats 會被擋。
 - `test/unit/hook/test_must_use_docker_spec.bats` 的「blocks a direct test.sh host step instead of just test」：host 上直接呼叫 `test.sh` 會被擋。
 - `test/acceptance/m2_selfcheck_spec.bats` 的「selfcheck catches a wrapper that skips validation」：交付的 self-check 會抓到跳過參數驗證的包裝腳本，驗的是黑箱的判定結果。它直接呼叫 `script/test/selfcheck.sh`，不經 `just test selfcheck`（見待補）。
@@ -49,5 +49,5 @@
 - 系統層與 integration 層的案例（test/system/real_engine_spec.bats、test/integration/assemble_spec.bats、test/integration/setup_spec.bats）直接呼叫交付的 `script/box/*.sh`，不經 `just box ...`。被驗的是交付原檔，但入口不是使用者的入口；待補一條從 `just box assemble` 在真實引擎上 assemble 盒子的案例。
 - 驗收層 test/acceptance/m2_selfcheck_spec.bats 直接呼叫 `selfcheck.sh`，不經 `just test selfcheck`。待補。
 - CI 的建 image 步驟（`build-image` job）直接執行 `docker build`，不經 `just test build`；兩邊目前是同一個 Dockerfile，但沒有測試盯著它們一致。待補。
-- 對外承諾的清單（`doc/contract.md`，#201）尚未進 main；也還沒有機械檢查確認「每一條承諾都對應到至少一個從 `just` 執行的驗收」。待補。
-- 人類驗收的總入口 `just verify all`（#182）目前只合進 M3 里程碑分支、尚未進 main，不列為目前的守護。待補。
+- 對外承諾的清單已在 `doc/contract.md`；還沒有機械檢查確認「每一條承諾都對應到至少一個從 `just` 執行的驗收」。待補。
+- 人類驗收總入口 `just verify all`（#182）已提供非實機驗收；實機項目須另行執行。其存在與 workflow 文字檢查不代表實機驗收或最終 head 已通過。

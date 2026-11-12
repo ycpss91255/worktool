@@ -892,9 +892,17 @@ _52_process_snapshot() {
     done <<<"${_52_ROWS}"
 }
 
+# Return 0 for present, 1 for absent, and 2 for unreadable evidence.
+# Do not use grep -q: it may hide a read error after an early match.
+_52_snapshot_contains() {
+    local rc=0
+    grep -E "^[[:space:]]*$2([[:space:]]|$)" "$1" >/dev/null || rc=$?
+    case "${rc}" in 0|1) return "${rc}" ;; *) return 2 ;; esac
+}
+
 # Return 0 for owned, 1 for definitely not owned, 2 for undetermined.
 _52_window_root() {
-    local pid="$1" parent cwd depth
+    local pid="$1" parent cwd depth rc
     for ((depth=0; depth<64; depth++)); do
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
         parent="${_52_PARENTS[${pid}]:-0}"
@@ -904,9 +912,14 @@ _52_window_root() {
             # that returned decides ownership (#816).
             (( SECONDS < ${_52_DEADLINE:-SECONDS+1} )) || return 2
             cwd="$(timeout -s KILL 1 readlink "/proc/${pid}/cwd" 2>/dev/null)" || return 2
-            if [[ "${cwd}" == "${_52_WINDOW_DIR}" ]] && ! grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before"; then
-                printf '%s\n' "${pid}"
-                return 0
+            if [[ "${cwd}" == "${_52_WINDOW_DIR}" ]]; then
+                rc=0
+                _52_snapshot_contains "${_52_WINDOW_DIR}/before" "${pid}" || rc=$?
+                [[ "${rc}" -ne 2 ]] || return 2
+                if [[ "${rc}" -eq 1 ]]; then
+                    printf '%s\n' "${pid}"
+                    return 0
+                fi
             fi
         fi
         pid="${parent}"
@@ -1005,7 +1018,13 @@ _52_scan_shells() {
         (( SECONDS < _52_DEADLINE )) || break
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
         case "${comm}" in fish|bash|sh|zsh|dash|ksh) ;; *) continue ;; esac
-        grep -qE "^[[:space:]]*${pid}[[:space:]]" "${_52_WINDOW_DIR}/before" && continue
+        rc=0
+        _52_snapshot_contains "${_52_WINDOW_DIR}/before" "${pid}" || rc=$?
+        [[ "${rc}" -ne 0 ]] || continue
+        if [[ "${rc}" -eq 2 ]]; then
+            _52_ownership_unknown
+            return 3
+        fi
         if [[ "${mode}" == apply ]]; then
             root="${apply_root}"
             _52_window_directory "${pid}" || continue
@@ -1242,12 +1261,12 @@ _52_dev_namespace() {
 }
 
 _52_window_evidence() {
-    local _pid="$1" _comm _host _window _dev _before _name
+    local _pid="$1" _comm _host _window _dev _snapshot_rc
     guard_require ghostty ps readlink || return $?
-    while read -r _before _name; do
-        [[ "${_before}" != "${_pid}" ]] \
-            || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
-    done <"${CFGBK_B}/processes-before"
+    _snapshot_rc=0
+    _52_snapshot_contains "${CFGBK_B}/processes-before" "${_pid}" || _snapshot_rc=$?
+    [[ "${_snapshot_rc}" -ne 0 ]] || { guard_fail "fish PID ${_pid} existed before setup; open a new window"; return 1; }
+    [[ "${_snapshot_rc}" -ne 2 ]] || { guard_fail "cannot read process snapshot; window ownership undetermined"; return 1; }
     _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
         || { guard_fail "cannot inspect fish PID ${_pid}"; return 1; }
     [[ "${_comm}" == fish ]] \
@@ -1311,11 +1330,11 @@ _52_confirm_restore() {
 }
 
 _52_restored_window_evidence() {
-    local _pid="$1" _before _name _comm _host _window
-    while read -r _before _name; do
-        [[ "${_before}" != "${_pid}" ]] \
-            || { guard_fail "PID ${_pid} existed before reload confirmation; open a new window"; return 1; }
-    done <"${CFGBK_B}/processes-before-restore-window"
+    local _pid="$1" _snapshot_rc _comm _host _window
+    _snapshot_rc=0
+    _52_snapshot_contains "${CFGBK_B}/processes-before-restore-window" "${_pid}" || _snapshot_rc=$?
+    [[ "${_snapshot_rc}" -ne 0 ]] || { guard_fail "PID ${_pid} existed before reload confirmation; open a new window"; return 1; }
+    [[ "${_snapshot_rc}" -ne 2 ]] || { guard_fail "cannot read process snapshot; window ownership undetermined"; return 1; }
     _comm="$(guard_timed "${TIMEOUT_SHORT}" ps -p "${_pid}" -o comm=)" \
         || { guard_fail "cannot inspect restored window PID ${_pid}"; return 1; }
     [[ -n "${_comm}" ]] || { guard_fail "empty restored window process evidence"; return 1; }
