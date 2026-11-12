@@ -215,6 +215,22 @@ EOF
     assert_line --index 2 "mod? c 'c/justfile.c' # "
 }
 
+@test "#701: design root justfile block matches namespace names, paths and doc comments in order" {
+    local _actual
+    _actual="$(_root_mod_comments "${REPO_ROOT}/justfile")"
+    run awk '
+        /^```just$/ { block = 1; next }
+        block && /^```$/ { exit }
+        block && /^mod[?] / {
+            comment = $0
+            sub(/^[^#]*# /, "", comment)
+            print $1, $2, $3, "# " comment
+        }
+    ' "${REPO_ROOT}/doc/design.md"
+    assert_success
+    assert_output "${_actual}"
+}
+
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
     local _m
     for _m in script/test/justfile.test script/box/justfile.box script/verify/justfile.verify .agents/script/justfile.job; do
