@@ -143,21 +143,92 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe" {
-    assert [ -f "${REPO_ROOT}/justfile" ]
+_root_shape_valid() {
+    local root="$1" dump
+    awk '
+        /^[[:space:]]*(#|$)/ { next }
+        /^mod[?][[:space:]]+[A-Za-z_][A-Za-z0-9_-]*[[:space:]]+\047[^\047]+\047[[:space:]]*$/ && !seen_default { modules++; next }
+        /^default:[[:space:]]*$/ && !seen_default { seen_default = 1; next }
+        /^[[:space:]]+@just --list[[:space:]]*$/ && seen_default && !body { body = 1; next }
+        { exit 1 }
+        END { if (!modules || !seen_default || !body) exit 1 }
+    ' "${root}/justfile" || return 1
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        return 1
+    fi
+    jq -e '
+        (.recipes | keys) == ["default"] and
+        .recipes.default.body == [["@just --list"]] and
+        .recipes.default.dependencies == [] and
+        .recipes.default.parameters == [] and
+        .aliases == {} and .assignments == {}
+    ' <<<"${dump}" >/dev/null
+}
+
+@test "root justfile has only modules and its default recipe" {
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
-    # Everything that is not a comment or blank line, verbatim.
-    run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
+    run _root_shape_valid "${REPO_ROOT}"
     assert_success
-    assert_equal "${#lines[@]}" 8
-    assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
-    assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
-    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
-    assert_line --index 5 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
-    assert_line --index 6 "default:"
-    assert_line --index 7 --regexp '^[[:space:]]+@just --list$'
+}
+
+@test "root shape rejects extra declarations and a changed default" {
+    local mutation
+    for mutation in alias setting assignment recipe default; do
+        cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
+        case "$mutation" in
+            alias) printf '\nalias extra := default\n' >>"${COPY}/justfile" ;;
+            setting) printf '\nset quiet := false\n' >>"${COPY}/justfile" ;;
+            assignment) printf "\nextra := 'value'\n" >>"${COPY}/justfile" ;;
+            recipe) printf '\nextra:\n    @echo extra\n' >>"${COPY}/justfile" ;;
+            default) sed -i 's/@just --list/@echo changed/' "${COPY}/justfile" ;;
+        esac
+        run _root_shape_valid "${COPY}"
+        assert_failure
+    done
+}
+
+_root_mod_comments() {
+    awk '
+        /^# / { comment = substr($0, 3) }
+        /^mod[?] / { print $1, $2, $3, "# " comment }
+        # Only adjacent doc comments belong to a module; clear after printing it.
+        !/^# / { comment = "" }
+    ' "$1"
+}
+
+@test "#701: root module comments do not carry across blank lines or recipe code" {
+    local _fixture="${BATS_TEST_TMPDIR}/justfile.comments"
+    cat >"${_fixture}" <<'EOF'
+# First doc.
+mod? a 'a/justfile.a'
+
+mod? b 'b/justfile.b'
+default:
+    @just --list
+mod? c 'c/justfile.c'
+EOF
+    run _root_mod_comments "${_fixture}"
+    assert_success
+    assert_equal "${#lines[@]}" 3
+    assert_line --index 0 "mod? a 'a/justfile.a' # First doc."
+    assert_line --index 1 "mod? b 'b/justfile.b' # "
+    assert_line --index 2 "mod? c 'c/justfile.c' # "
+}
+
+@test "#701: design root justfile block matches namespace names, paths and doc comments in order" {
+    local _actual
+    _actual="$(_root_mod_comments "${REPO_ROOT}/justfile")"
+    run awk '
+        /^```just$/ { block = 1; next }
+        block && /^```$/ { exit }
+        block && /^mod[?] / {
+            comment = $0
+            sub(/^[^#]*# /, "", comment)
+            print $1, $2, $3, "# " comment
+        }
+    ' "${REPO_ROOT}/doc/design.md"
+    assert_success
+    assert_output "${_actual}"
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
@@ -181,12 +252,56 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the six namespaces and default, nothing else" {
+_listing_has_exact_names() {
+    local expected="$1" actual
+    actual=$(sed -nE 's/^ +([A-Za-z0-9_-]+).*/\1/p' | LC_ALL=C sort)
+    [[ "${actual}" == "${expected}" ]]
+}
+
+@test "just --list shows exactly the loaded namespaces and default" {
+    local dump expected namespace
+    dump=$(just --justfile "${COPY}/justfile" --dump --dump-format json)
+    expected=$(jq -r '(.modules | keys[]), "default"' <<<"${dump}" | LC_ALL=C sort)
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default job test verify worktree "
-    assert_line --regexp '^ +box \.\.\. +# '
-    assert_line --regexp '^ +test \.\.\. +# '
+    local listing="${output}"
+    while IFS= read -r namespace; do
+        assert_line --regexp "^ +${namespace} \\.\\.\\. +# "
+    done < <(jq -r '.modules | keys[]' <<<"$dump")
+    run _listing_has_exact_names "${expected}" <<<"${listing}"
+    assert_success
+}
+
+@test "namespace listing rejects missing or extra entries" {
+    local expected
+    expected=$(printf '%s\n' box default test | LC_ALL=C sort)
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    test ... # tests
+EOF
+    assert_success
+    run _listing_has_exact_names "$(printf '%s\n' default foo2 | LC_ALL=C sort)" <<'EOF'
+Available recipes:
+    default # list
+    foo2 ... # numbered module
+EOF
+    assert_success
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+EOF
+    assert_failure
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    extra ... # extra
+    test ... # tests
+EOF
+    assert_failure
 }
 
 @test "README lists every root namespace" {
