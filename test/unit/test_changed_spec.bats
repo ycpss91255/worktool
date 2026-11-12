@@ -591,6 +591,21 @@ _document_change() {
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
+@test "test.sh --changed selects backup acceptance guard for acceptance documentation" {
+    _document_change doc/acceptance.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/backup_acceptance_doc_spec.bats
+}
+
+@test "acceptance dispatch check rejects a missing backup guard mapping" {
+    sed -i '/^doc\/acceptance[.]md|test\/unit\/backup_acceptance_doc_spec[.]bats$/d' \
+        "${TEMP_REPO}/script/test/test.sh"
+    run _document_change doc/acceptance.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/backup_acceptance_doc_spec.bats
+    assert_failure
+}
+
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
     local -a _specs=(test/unit/adr_spec.bats)
     local _number
