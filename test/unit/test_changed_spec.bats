@@ -35,6 +35,38 @@ _dispatched() {
         "${FAKE_DOCKER_CALLS}"
 }
 
+_remove_exact_row() {
+    local file="$1" row="$2" count rc=0 tmp="${BATS_TEST_TMPDIR}/mapping-row"
+    count="$(grep -Fxc -- "${row}" "${file}")" || rc=$?
+    [[ "${rc}" -le 1 && "${count}" == 1 ]] || return 1
+    ROW="${row}" awk '$0 != ENVIRON["ROW"]' "${file}" >"${tmp}" || return 1
+    cat "${tmp}" >"${file}" || return 1
+    rc=0
+    grep -Fxq -- "${row}" "${file}" || rc=$?
+    [[ "${rc}" == 1 ]]
+}
+
+@test "mapping mutation removes exactly one literal row and preserves other rows" {
+    local file="${BATS_TEST_TMPDIR}/rows" row='.agents/a#@.sh|test/unit/a[1].bats'
+    printf '%s\n' before "${row}" after >"${file}"
+    _remove_exact_row "${file}" "${row}"
+    assert_equal "$(cat "${file}")" "$(printf '%s\n' before after)"
+}
+
+@test "mapping mutation refuses missing or duplicate rows without changing the file" {
+    local file="${BATS_TEST_TMPDIR}/rows" original
+    printf '%s\n' other >"${file}"
+    original="$(cat "${file}")"
+    run _remove_exact_row "${file}" missing
+    assert_failure
+    assert_equal "$(cat "${file}")" "${original}"
+    printf '%s\n' row row >"${file}"
+    original="$(cat "${file}")"
+    run _remove_exact_row "${file}" row
+    assert_failure
+    assert_equal "$(cat "${file}")" "${original}"
+}
+
 @test "changed documentation consistently leaves unknown impact verification to CI" {
     run just --justfile "${REPO_ROOT}/script/test/justfile.test" --list
     assert_success
@@ -400,7 +432,7 @@ _dispatched() {
 }
 
 @test "5.2 dispatch check rejects each missing transitive mapping" {
-    local path row mapping="${TEMP_REPO}/script/test/test.sh" tmp="${BATS_TEST_TMPDIR}/mapping"
+    local path row mapping="${TEMP_REPO}/script/test/test.sh"
     local -a paths=(lib/log.sh lib/manifest.sh lib/home.sh lib/link.sh)
     mkdir -p "${TEMP_REPO}/lib"
     for path in "${paths[@]}"; do
@@ -416,12 +448,7 @@ _dispatched() {
         assert_success
         [[ "$(_dispatched)" == *test/unit/realbox_52_doc_spec.bats* ]]
         row="${path}|test/unit/realbox_52_doc_spec.bats"
-        assert_equal "$(grep -cxF "${row}" "${mapping}")" 1
-        awk -v row="${row}" '$0 != row' "${mapping}" >"${tmp}"
-        cat "${tmp}" >"${mapping}"
-        if grep -qxF "${row}" "${mapping}"; then
-            return 1
-        fi
+        _remove_exact_row "${mapping}" "${row}"
         : >"${FAKE_DOCKER_CALLS}"
         run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
         assert_success
@@ -446,7 +473,8 @@ _dispatched() {
     assert_output --partial '測試基礎設施變更'
     assert_equal "$(_dispatched)" "${expected}"
     for spec in cold_group_control cold_pty_probe enter; do
-        sed -i "/^test\/helper\/cold_pty[.]bash|test\/unit\/${spec}_spec[.]bats$/d" "${TEMP_REPO}/script/test/test.sh"
+        _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
+            "test/helper/cold_pty.bash|test/unit/${spec}_spec.bats"
         : >"${FAKE_DOCKER_CALLS}"
         run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
         assert_success
@@ -760,8 +788,8 @@ _document_change() {
 }
 
 @test "acceptance dispatch check rejects a missing backup guard mapping" {
-    sed -i '/^doc\/acceptance[.]md|test\/unit\/backup_acceptance_doc_spec[.]bats$/d' \
-        "${TEMP_REPO}/script/test/test.sh"
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
+        'doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats'
     run _document_change doc/acceptance.md test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/backup_acceptance_doc_spec.bats
@@ -934,10 +962,7 @@ _document_change() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/wait_ubuntu_dns_spec.bats')"
     : >"${FAKE_DOCKER_CALLS}"
     local mapping='.agents/script/network/wait-ubuntu-dns.sh|test/unit/script/wait_ubuntu_dns_spec.bats'
-    [ "$(grep -Fxc "$mapping" "${TEMP_REPO}/script/test/test.sh")" -eq 1 ]
-    sed -i '\@^\.agents/script/network/wait-ubuntu-dns\.sh|test/unit/script/wait_ubuntu_dns_spec\.bats$@d' "${TEMP_REPO}/script/test/test.sh"
-    run grep -Fxc "$mapping" "${TEMP_REPO}/script/test/test.sh"
-    [ "$status" -eq 1 ]
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${mapping}"
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
     assert_success
     [[ "$(_dispatched)" != *wait_ubuntu_dns_spec.bats* ]]
