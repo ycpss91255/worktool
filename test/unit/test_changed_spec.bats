@@ -230,6 +230,49 @@ _dispatched() {
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
 }
 
+@test "changed dispatches direct config and enter consumers once" {
+    mkdir -p "${TEMP_REPO}/lib"
+    local path spec dispatched
+    for path in lib/config.sh lib/enter.sh lib/unrelated.sh; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    for spec in config config_mutation box_tmux_env managed_block setup config_backup enter verify_realbox; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/config.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    dispatched="$(_dispatched)"
+    [[ "${dispatched}" == *test/unit/config_spec.bats* ]]
+    [[ "${dispatched}" == *test/unit/config_mutation_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/managed_block_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/verify_realbox_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- lib/config.sh
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/enter.sh"
+    printf '# changed\n' >>"${TEMP_REPO}/test/unit/setup_spec.bats"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    dispatched="$(_dispatched)"
+    for spec in box_tmux_env managed_block setup config_backup enter verify_realbox; do
+        [[ "$(tr ' ' '\n' <<<"${dispatched}" | grep -cxF "test/unit/${spec}_spec.bats")" == 1 ]]
+    done
+    [[ "${dispatched}" != *test/unit/config_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- lib/enter.sh test/unit/setup_spec.bats
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/unrelated.sh"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_output --partial "lib/unrelated.sh"
+    dispatched="$(_dispatched)"
+    [[ "${dispatched}" != *test/unit/config_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/managed_block_spec.bats* ]]
+}
+
 @test "test.sh --changed maps backup dependencies to their affected specs" {
     mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify"
     local path spec expected

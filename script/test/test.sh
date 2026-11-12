@@ -949,6 +949,7 @@ _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
+lib/config.sh|test/unit/config_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
 lib/log.sh|test/unit/verify_run_signal_spec.bats
@@ -980,6 +981,11 @@ box/dev.ini|test/unit/verify_evidence_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
+lib/enter.sh|test/unit/box_tmux_env_spec.bats
+lib/enter.sh|test/unit/managed_block_spec.bats
+lib/enter.sh|test/unit/setup_spec.bats
+lib/enter.sh|test/unit/config_backup_spec.bats
+lib/enter.sh|test/unit/verify_realbox_spec.bats
 lib/enter.sh|test/unit/enter_spec.bats
 lib/enter.sh|test/unit/verify_setup_spec.bats
 lib/approval.sh|test/unit/approval_spec.bats
