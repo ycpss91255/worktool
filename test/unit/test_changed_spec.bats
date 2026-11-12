@@ -262,6 +262,49 @@ _remove_exact_row() {
         --ci-lint '--ci-unit test/unit/log_spec.bats')"
 }
 
+@test "changed dispatches direct config and enter consumers once" {
+    mkdir -p "${TEMP_REPO}/lib"
+    local path spec dispatched
+    for path in lib/config.sh lib/enter.sh lib/unrelated.sh; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    for spec in config config_mutation box_tmux_env managed_block setup config_backup enter verify_realbox; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/config.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    dispatched="$(_dispatched)"
+    [[ "${dispatched}" == *test/unit/config_spec.bats* ]]
+    [[ "${dispatched}" == *test/unit/config_mutation_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/managed_block_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/verify_realbox_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- lib/config.sh
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/enter.sh"
+    printf '# changed\n' >>"${TEMP_REPO}/test/unit/setup_spec.bats"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    dispatched="$(_dispatched)"
+    for spec in box_tmux_env managed_block setup config_backup enter verify_realbox; do
+        [[ "$(tr ' ' '\n' <<<"${dispatched}" | grep -cxF "test/unit/${spec}_spec.bats")" == 1 ]]
+    done
+    [[ "${dispatched}" != *test/unit/config_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- lib/enter.sh test/unit/setup_spec.bats
+
+    printf '# changed\n' >>"${TEMP_REPO}/lib/unrelated.sh"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_output --partial "lib/unrelated.sh"
+    dispatched="$(_dispatched)"
+    [[ "${dispatched}" != *test/unit/config_spec.bats* ]]
+    [[ "${dispatched}" != *test/unit/managed_block_spec.bats* ]]
+}
+
 @test "test.sh --changed maps backup dependencies to their affected specs" {
     mkdir -p "${TEMP_REPO}/lib" "${TEMP_REPO}/script/verify"
     local path spec expected
@@ -390,6 +433,25 @@ _remove_exact_row() {
         fi
         git -C "${TEMP_REPO}" checkout -- "${path}"
     done
+}
+
+@test "changed test justfile selects the manifest matrix documentation guard" {
+    local row='script/test/justfile.test|test/unit/manifest_doc_spec.bats'
+    printf '# fixture\n' >"${TEMP_REPO}/script/test/justfile.test"
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/manifest_doc_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/test/justfile.test"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" == *test/unit/manifest_doc_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- script/test/justfile.test
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${row}"
+    _commit_baseline
+    printf '# changed again\n' >>"${TEMP_REPO}/script/test/justfile.test"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" != *test/unit/manifest_doc_spec.bats* ]]
 }
 
 @test "test.sh --changed selects the 5.2 document guard for product libraries" {
@@ -920,7 +982,7 @@ _document_change() {
     local -a _extra
     for _path in doc/manifest.md doc/enter.md doc/design.md doc/workflow.md; do
         case "${_path}" in
-            doc/manifest.md) _extra=(test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
+            doc/manifest.md) _extra=(test/unit/manifest_doc_spec.bats test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
             doc/enter.md) _extra=(test/unit/adr/0007_spec.bats) ;;
             doc/design.md) _extra=(test/unit/adr/0008_spec.bats) ;;
             doc/workflow.md) _extra=(test/unit/workflow_spec.bats) ;;

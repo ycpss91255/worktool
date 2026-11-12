@@ -142,6 +142,7 @@ _required_specs() {
             printf '%s\n' \
                 unit/log_spec.bats \
                 unit/manifest_spec.bats \
+                unit/manifest_doc_spec.bats \
                 unit/assemble_spec.bats \
                 unit/ci_gate_spec.bats \
                 unit/system_real_entry_spec.bats \
@@ -956,6 +957,7 @@ _changed_path_map() {
     cat <<'MAP'
 lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
+lib/config.sh|test/unit/config_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
 lib/log.sh|test/unit/verify_run_signal_spec.bats
@@ -987,6 +989,11 @@ box/dev.ini|test/unit/verify_evidence_spec.bats
 lib/home.sh|test/unit/assemble_spec.bats
 lib/home.sh|test/unit/setup_spec.bats
 lib/home.sh|test/unit/status_spec.bats
+lib/enter.sh|test/unit/box_tmux_env_spec.bats
+lib/enter.sh|test/unit/managed_block_spec.bats
+lib/enter.sh|test/unit/setup_spec.bats
+lib/enter.sh|test/unit/config_backup_spec.bats
+lib/enter.sh|test/unit/verify_realbox_spec.bats
 lib/enter.sh|test/unit/enter_spec.bats
 lib/enter.sh|test/unit/verify_setup_spec.bats
 lib/approval.sh|test/unit/approval_spec.bats
@@ -1010,6 +1017,7 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+script/test/justfile.test|test/unit/manifest_doc_spec.bats
 test/helper/namespace_rules.jq|test/unit/justfile_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
@@ -1148,6 +1156,7 @@ doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
 doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats
 doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
+doc/manifest.md|test/unit/manifest_doc_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats
 doc/enter.md|test/unit/adr/0007_spec.bats

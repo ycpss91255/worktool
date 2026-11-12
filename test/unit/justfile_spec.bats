@@ -400,6 +400,27 @@ _readme_test_matrix_rows() {
     assert_equal "$(_stub_calls)" ""
 }
 
+@test "verify listing names every long option accepted by each group" {
+    local group option entry
+    local -a options
+    _just --list verify
+    assert_success
+    for group in diagram ui setup evidence gate realbox all; do
+        entry="$(printf '%s\n' "${output}" | awk -v group="${group}" '$1 == group { print }')"
+        [[ -n "${entry}" ]]
+        case "${group}" in
+            diagram) options=(--root --list --realbox --help) ;;
+            ui|gate|all) options=(--list --help) ;;
+            setup) options=(--list --allow-real-box --help) ;;
+            evidence) options=(--list --allow-realbox --help) ;;
+            realbox) options=(--list --allow-real-box --repo --issue --comment-tag --box --image --help) ;;
+        esac
+        for option in "${options[@]}"; do
+            printf '%s\n' "${entry}" | grep -Eq "(^|[[:space:],(])${option}([[:space:],)]|$)"
+        done
+    done
+}
+
 @test "bare verify lists checks and says verification did not run" {
     _just verify
     assert_success
