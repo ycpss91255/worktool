@@ -252,12 +252,24 @@ EOF
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the six namespaces and default, nothing else" {
+_listing_has_exact_names() {
+    local expected="$1" actual
+    actual=$(sed -nE 's/^ +([A-Za-z0-9_-]+).*/\1/p' | LC_ALL=C sort)
+    [[ "${actual}" == "${expected}" ]]
+}
+
+@test "just --list shows exactly the loaded namespaces and default" {
+    local dump expected namespace
+    dump=$(just --justfile "${COPY}/justfile" --dump --dump-format json)
+    expected=$(jq -r '(.modules | keys[]), "default"' <<<"${dump}" | LC_ALL=C sort)
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default job test verify worktree "
-    assert_line --regexp '^ +box \.\.\. +# '
-    assert_line --regexp '^ +test \.\.\. +# '
+    local listing="${output}"
+    while IFS= read -r namespace; do
+        assert_line --regexp "^ +${namespace} \\.\\.\\. +# "
+    done < <(jq -r '.modules | keys[]' <<<"$dump")
+    run _listing_has_exact_names "${expected}" <<<"${listing}"
+    assert_success
 }
 
 @test "README lists every root namespace" {
