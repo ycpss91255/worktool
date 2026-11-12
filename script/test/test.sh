@@ -1021,6 +1021,9 @@ script/verify/justfile.verify|test/unit/verify_ui_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
+doc/acceptance.md|test/unit/evidence_doc_spec.bats
+doc/evidence/README.md|test/unit/evidence_doc_spec.bats
+doc/evidence/tdd.sh|test/unit/evidence_doc_spec.bats
 script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
