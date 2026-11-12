@@ -143,21 +143,92 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe" {
-    assert [ -f "${REPO_ROOT}/justfile" ]
+_root_shape_valid() {
+    local root="$1" dump
+    awk '
+        /^[[:space:]]*(#|$)/ { next }
+        /^mod[?][[:space:]]+[A-Za-z_][A-Za-z0-9_-]*[[:space:]]+\047[^\047]+\047[[:space:]]*$/ && !seen_default { modules++; next }
+        /^default:[[:space:]]*$/ && !seen_default { seen_default = 1; next }
+        /^[[:space:]]+@just --list[[:space:]]*$/ && seen_default && !body { body = 1; next }
+        { exit 1 }
+        END { if (!modules || !seen_default || !body) exit 1 }
+    ' "${root}/justfile" || return 1
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        return 1
+    fi
+    jq -e '
+        (.recipes | keys) == ["default"] and
+        .recipes.default.body == [["@just --list"]] and
+        .recipes.default.dependencies == [] and
+        .recipes.default.parameters == [] and
+        .aliases == {} and .assignments == {}
+    ' <<<"${dump}" >/dev/null
+}
+
+@test "root justfile has only modules and its default recipe" {
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
-    # Everything that is not a comment or blank line, verbatim.
-    run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
+    run _root_shape_valid "${REPO_ROOT}"
     assert_success
-    assert_equal "${#lines[@]}" 8
-    assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
-    assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
-    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
-    assert_line --index 5 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
-    assert_line --index 6 "default:"
-    assert_line --index 7 --regexp '^[[:space:]]+@just --list$'
+}
+
+@test "root shape rejects extra declarations and a changed default" {
+    local mutation
+    for mutation in alias setting assignment recipe default; do
+        cp "${REPO_ROOT}/justfile" "${COPY}/justfile"
+        case "$mutation" in
+            alias) printf '\nalias extra := default\n' >>"${COPY}/justfile" ;;
+            setting) printf '\nset quiet := false\n' >>"${COPY}/justfile" ;;
+            assignment) printf "\nextra := 'value'\n" >>"${COPY}/justfile" ;;
+            recipe) printf '\nextra:\n    @echo extra\n' >>"${COPY}/justfile" ;;
+            default) sed -i 's/@just --list/@echo changed/' "${COPY}/justfile" ;;
+        esac
+        run _root_shape_valid "${COPY}"
+        assert_failure
+    done
+}
+
+_root_mod_comments() {
+    awk '
+        /^# / { comment = substr($0, 3) }
+        /^mod[?] / { print $1, $2, $3, "# " comment }
+        # Only adjacent doc comments belong to a module; clear after printing it.
+        !/^# / { comment = "" }
+    ' "$1"
+}
+
+@test "#701: root module comments do not carry across blank lines or recipe code" {
+    local _fixture="${BATS_TEST_TMPDIR}/justfile.comments"
+    cat >"${_fixture}" <<'EOF'
+# First doc.
+mod? a 'a/justfile.a'
+
+mod? b 'b/justfile.b'
+default:
+    @just --list
+mod? c 'c/justfile.c'
+EOF
+    run _root_mod_comments "${_fixture}"
+    assert_success
+    assert_equal "${#lines[@]}" 3
+    assert_line --index 0 "mod? a 'a/justfile.a' # First doc."
+    assert_line --index 1 "mod? b 'b/justfile.b' # "
+    assert_line --index 2 "mod? c 'c/justfile.c' # "
+}
+
+@test "#701: design root justfile block matches namespace names, paths and doc comments in order" {
+    local _actual
+    _actual="$(_root_mod_comments "${REPO_ROOT}/justfile")"
+    run awk '
+        /^```just$/ { block = 1; next }
+        block && /^```$/ { exit }
+        block && /^mod[?] / {
+            comment = $0
+            sub(/^[^#]*# /, "", comment)
+            print $1, $2, $3, "# " comment
+        }
+    ' "${REPO_ROOT}/doc/design.md"
+    assert_success
+    assert_output "${_actual}"
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {
@@ -181,12 +252,56 @@ _listed_names() {
 
 # --- listing -----------------------------------------------------------------
 
-@test "just --list shows the six namespaces and default, nothing else" {
+_listing_has_exact_names() {
+    local expected="$1" actual
+    actual=$(sed -nE 's/^ +([A-Za-z0-9_-]+).*/\1/p' | LC_ALL=C sort)
+    [[ "${actual}" == "${expected}" ]]
+}
+
+@test "just --list shows exactly the loaded namespaces and default" {
+    local dump expected namespace
+    dump=$(just --justfile "${COPY}/justfile" --dump --dump-format json)
+    expected=$(jq -r '(.modules | keys[]), "default"' <<<"${dump}" | LC_ALL=C sort)
     _just --list
     assert_success
-    assert_equal "$(_listed_names)" "agent box default job test verify worktree "
-    assert_line --regexp '^ +box \.\.\. +# '
-    assert_line --regexp '^ +test \.\.\. +# '
+    local listing="${output}"
+    while IFS= read -r namespace; do
+        assert_line --regexp "^ +${namespace} \\.\\.\\. +# "
+    done < <(jq -r '.modules | keys[]' <<<"$dump")
+    run _listing_has_exact_names "${expected}" <<<"${listing}"
+    assert_success
+}
+
+@test "namespace listing rejects missing or extra entries" {
+    local expected
+    expected=$(printf '%s\n' box default test | LC_ALL=C sort)
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    test ... # tests
+EOF
+    assert_success
+    run _listing_has_exact_names "$(printf '%s\n' default foo2 | LC_ALL=C sort)" <<'EOF'
+Available recipes:
+    default # list
+    foo2 ... # numbered module
+EOF
+    assert_success
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+EOF
+    assert_failure
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    extra ... # extra
+    test ... # tests
+EOF
+    assert_failure
 }
 
 @test "README lists every root namespace" {
@@ -932,4 +1047,168 @@ EOF
     run _command_row_gaps "${COPY}"
     assert_failure
     assert_line 'unknown command row: just box fictitious'
+}
+
+_recipe_entry_gaps() {
+    local recipes="$1" aliases="${2:-}" rc=0
+    awk -v recipes="$recipes" -v aliases="$aliases" '
+        /^ +[^[:space:]]+( |$)/ {
+            entries[$1] = 1
+            if (match($0, /\[alias: [^][]*\]$/)) {
+                tag = substr($0, RSTART + 8, RLENGTH - 9)
+                count = split(tag, names, ",")
+                for (i = 1; i <= count; i++) {
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", names[i])
+                    listed_aliases[names[i]] = 1
+                }
+            }
+        }
+        END {
+            count = split(recipes, names, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                name = names[i]
+                if (name != "" && !(name in entries)) {
+                    print "missing recipe entry: " name
+                    missing = 1
+                }
+            }
+            count = split(aliases, names, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                name = names[i]
+                if (name != "" && !(name in entries) && !(name in listed_aliases)) {
+                    print "missing alias entry: " name
+                    missing = 1
+                }
+            }
+            exit missing
+        }
+    ' || rc=$?
+    return "$rc"
+}
+
+_namespace_guidance_gaps() {
+    local root="$1" namespace="$2" root_listing description listing dump module recipes aliases rc=0
+    if ! root_listing=$(just --justfile "${root}/justfile" --working-directory "$root" --list); then
+        printf 'namespace guidance check: root listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! description=$(awk -v ns="$namespace" '
+        /^ +/ && $1 == ns && $2 == "..." {
+            line = $0
+            if (sub(/^ +[^ ]+ \.\.\. +# /, "", line)) print line
+        }
+    ' <<<"$root_listing"); then
+        printf 'namespace guidance check: description extraction failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if [[ -z "$description" ]]; then
+        printf 'no root listing entry: %s\n' "$namespace"
+        return 1
+    fi
+    if [[ "$description" != *"; just --list ${namespace} lists its recipes." ]]; then
+        printf 'no canonical pointer: %s: %s\n' "$namespace" "$description"
+        return 1
+    fi
+    if ! listing=$(just --justfile "${root}/justfile" --working-directory "$root" --list "$namespace"); then
+        printf 'namespace guidance check: namespace listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        printf 'namespace guidance check: just --dump failed\n' >&2
+        return 1
+    fi
+    if ! module=$(jq -c --arg ns "$namespace" '.modules[$ns]' <<<"$dump"); then
+        printf 'namespace guidance check: JSON module extraction failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if [[ "$module" == null ]]; then
+        printf 'module not loaded: %s\n' "$namespace"
+        return 1
+    fi
+    if ! recipes=$(jq -r '.recipes | to_entries[] | select(.value.private != true) | .key' <<<"$module"); then
+        printf 'namespace guidance check: JSON recipe listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! aliases=$(jq -r '.aliases | keys[]' <<<"$module"); then
+        printf 'namespace guidance check: JSON alias listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    _recipe_entry_gaps "$recipes" "$aliases" <<<"$listing" || rc=$?
+    return "$rc"
+}
+
+@test "#707: recipe entry check rejects names that appear only in prose" {
+    local listing='Available recipes:
+    default # Run all.sh with --help first.'
+    run _recipe_entry_gaps "default all help" <<<"$listing"
+    assert_failure
+    assert_line "missing recipe entry: all"
+    assert_line "missing recipe entry: help"
+    refute_line "missing recipe entry: default"
+}
+
+@test "#707: recipe entry check accepts listed entries and inline aliases" {
+    local listing='Available recipes:
+    default # Run all.sh with --help first.
+    all *args # Run everything.
+    help # Show help. [alias: h, hh]'
+    run _recipe_entry_gaps "default all help" "h hh" <<<"$listing"
+    assert_success
+    assert_output ""
+
+    run _recipe_entry_gaps "default all help" "hx" <<<"$listing"
+    assert_failure
+    assert_output "missing alias entry: hx"
+}
+
+@test "#707: namespace guidance rejects a root comment without the canonical pointer" {
+    local root="${BATS_TEST_TMPDIR}/pointer"
+    mkdir -p "${root}/demo"
+    cat >"${root}/justfile" <<'EOF'
+# Demo; see just demo help.
+mod? demo 'demo/justfile.demo'
+default:
+    @just --list
+EOF
+    cat >"${root}/demo/justfile.demo" <<'EOF'
+default:
+    @echo demo
+help:
+    @echo help
+EOF
+    run _namespace_guidance_gaps "$root" demo
+    assert_failure
+    assert_output --partial "no canonical pointer: demo"
+}
+
+@test "#707: namespace guidance accepts the canonical pointer when every recipe is listed" {
+    local root="${BATS_TEST_TMPDIR}/canonical-pointer"
+    mkdir -p "${root}/demo"
+    cat >"${root}/justfile" <<'EOF'
+# Demo; just --list demo lists its recipes.
+mod? demo 'demo/justfile.demo'
+default:
+    @just --list
+EOF
+    cat >"${root}/demo/justfile.demo" <<'EOF'
+default:
+    @echo demo
+help:
+    @echo help
+EOF
+    run _namespace_guidance_gaps "$root" demo
+    assert_success
+    assert_output ""
+}
+
+@test "#707: root namespace guidance covers every current user recipe" {
+    local namespace namespaces gaps="" rc=0
+    run awk '/^mod\?[[:space:]]+/ { print $2 }' "${COPY}/justfile"
+    assert_success
+    namespaces="$output"
+    for namespace in $namespaces; do
+        gaps+="$(_namespace_guidance_gaps "${COPY}" "$namespace")" || rc=$?
+    done
+    assert_equal "${gaps}" ""
+    assert_equal "$rc" 0
 }
