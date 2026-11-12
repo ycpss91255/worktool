@@ -19,7 +19,7 @@ ui *args:
 setup *args:
     ./script/verify/setup.sh "$@"
 
-# Check the M3 external CI and process evidence (args: ITEM, --list, --help).
+# Check the M3 external CI and process evidence (args: ITEM, --allow-realbox, --list, --help).
 evidence *args:
     ./script/verify/evidence.sh "$@"
 
@@ -27,7 +27,7 @@ evidence *args:
 gate *args:
     ./script/verify/gate.sh "$@"
 
-# Run real-machine acceptance checks (requires --allow-real-box for execution).
+# Run real-machine checks (execution requires --allow-real-box; args: ITEM, --list, --allow-real-box, --repo, --issue, --comment-tag, --box, --image, --help).
 realbox *args:
     ./script/verify/realbox.sh "$@"
 
