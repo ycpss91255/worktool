@@ -83,15 +83,30 @@ setup() {
     CODE_EXPR="(github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null))"
 }
 
-@test "CI reference docs describe verify-all conditional gating and indirect privileged execution" {
+_ci_gate_doc_contract() {
+    local doc="$1" section
+    section="$(sed -n '/^## CI$/,/^### /p' "${doc}")" || return 1
+    [[ "${section}" == *'CI 的 2.1／2.3 等待並判讀同一次'* ]] || return 1
+    [[ "${section}" == *'run、同一 PR head SHA 的必要 gate job'* ]] || return 1
+    [[ "${section}" == *'2.3 另檢查 integration 與 system-real 日誌'* ]] || return 1
+    [[ "${section}" == *"\`test-system-real\` 前置 job 以 \`--privileged\` 實跑"* ]] || return 1
+    [[ "${section}" == *"CI 模式的 \`verify-all\` 對 2.1／2.3 只判讀"* ]] || return 1
+    [[ "${section}" == *'這些 job 的結果與日誌，不重跑 2.1／2.3 的測試 tier'* ]] || return 1
+    [[ "${section}" == *'缺少或不符的證據不通過'* ]] || return 1
+    [[ "${section}" == *'不退回重跑；本機則完整執行這兩項'* ]] || return 1
+    [[ "${section}" != *"間接使用 \`--privileged\`"* ]]
+}
+
+@test "CI reference docs describe verify-all conditional gating and same-run evidence" {
     run sed -n '/^## CI$/,/^### /p' "${REPO_ROOT}/doc/structure.md"
     assert_success
     assert_output --partial 'verify-all'
     assert_output --partial 'milestone-gate'
     assert_output --partial 'just verify all'
-    assert_output --partial "間接使用 \`--privileged\`"
     assert_output --partial '普通 PR 與 main push'
     refute_output --partial "**唯一**使用 \`--privileged\`"
+    run _ci_gate_doc_contract "${REPO_ROOT}/doc/structure.md"
+    assert_success
 
     run grep 'ci.yml .*GitHub Actions' "${REPO_ROOT}/doc/structure.md"
     assert_success
@@ -105,6 +120,29 @@ setup() {
     assert_output --partial 'milestone-gate'
     assert_output --partial 'ci-passed'
     assert_output --partial '普通 PR 與 main push'
+}
+
+@test "CI gate documentation rejects missing or obsolete evidence claims" {
+    local doc="${BATS_TEST_TMPDIR}/structure.md"
+    cp "${REPO_ROOT}/doc/structure.md" "${doc}"
+    sed -i 's/CI 的 2.1／2.3 等待並判讀同一次/CI 的 2.1／2.3 重新執行/' "${doc}"
+    run _ci_gate_doc_contract "${doc}"
+    assert_failure
+
+    cp "${REPO_ROOT}/doc/structure.md" "${doc}"
+    sed -i 's/這些 job 的結果與日誌，不重跑 2.1／2.3 的測試 tier/這些 job 的結果，並重跑 2.1／2.3 的測試 tier/' "${doc}"
+    run _ci_gate_doc_contract "${doc}"
+    assert_failure
+
+    cp "${REPO_ROOT}/doc/structure.md" "${doc}"
+    sed -i 's/缺少或不符的證據不通過/缺少或不符的證據也通過/' "${doc}"
+    run _ci_gate_doc_contract "${doc}"
+    assert_failure
+
+    cp "${REPO_ROOT}/doc/structure.md" "${doc}"
+    sed -i "/^## CI$/a verify-all 也間接使用 \`--privileged\`" "${doc}"
+    run _ci_gate_doc_contract "${doc}"
+    assert_failure
 }
 
 # Print the non-comment lines of job $1 (from `  <id>:` under `jobs:` up to
