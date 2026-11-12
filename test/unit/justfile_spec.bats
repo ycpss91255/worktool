@@ -921,3 +921,167 @@ _manifest_manual_matches() {
     run _manifest_manual_matches "${doc}" "${REPO_ROOT}/justfile"
     assert_failure
 }
+
+_recipe_entry_gaps() {
+    local recipes="$1" aliases="${2:-}" rc=0
+    awk -v recipes="$recipes" -v aliases="$aliases" '
+        /^ +[^[:space:]]+( |$)/ {
+            entries[$1] = 1
+            if (match($0, /\[alias: [^][]*\]$/)) {
+                tag = substr($0, RSTART + 8, RLENGTH - 9)
+                count = split(tag, names, ",")
+                for (i = 1; i <= count; i++) {
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", names[i])
+                    listed_aliases[names[i]] = 1
+                }
+            }
+        }
+        END {
+            count = split(recipes, names, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                name = names[i]
+                if (name != "" && !(name in entries)) {
+                    print "missing recipe entry: " name
+                    missing = 1
+                }
+            }
+            count = split(aliases, names, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                name = names[i]
+                if (name != "" && !(name in entries) && !(name in listed_aliases)) {
+                    print "missing alias entry: " name
+                    missing = 1
+                }
+            }
+            exit missing
+        }
+    ' || rc=$?
+    return "$rc"
+}
+
+_namespace_guidance_gaps() {
+    local root="$1" namespace="$2" root_listing description listing dump module recipes aliases rc=0
+    if ! root_listing=$(just --justfile "${root}/justfile" --working-directory "$root" --list); then
+        printf 'namespace guidance check: root listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! description=$(awk -v ns="$namespace" '
+        /^ +/ && $1 == ns && $2 == "..." {
+            line = $0
+            if (sub(/^ +[^ ]+ \.\.\. +# /, "", line)) print line
+        }
+    ' <<<"$root_listing"); then
+        printf 'namespace guidance check: description extraction failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if [[ -z "$description" ]]; then
+        printf 'no root listing entry: %s\n' "$namespace"
+        return 1
+    fi
+    if [[ "$description" != *"; just --list ${namespace} lists its recipes." ]]; then
+        printf 'no canonical pointer: %s: %s\n' "$namespace" "$description"
+        return 1
+    fi
+    if ! listing=$(just --justfile "${root}/justfile" --working-directory "$root" --list "$namespace"); then
+        printf 'namespace guidance check: namespace listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        printf 'namespace guidance check: just --dump failed\n' >&2
+        return 1
+    fi
+    if ! module=$(jq -c --arg ns "$namespace" '.modules[$ns]' <<<"$dump"); then
+        printf 'namespace guidance check: JSON module extraction failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if [[ "$module" == null ]]; then
+        printf 'module not loaded: %s\n' "$namespace"
+        return 1
+    fi
+    if ! recipes=$(jq -r '.recipes | to_entries[] | select(.value.private != true) | .key' <<<"$module"); then
+        printf 'namespace guidance check: JSON recipe listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    if ! aliases=$(jq -r '.aliases | keys[]' <<<"$module"); then
+        printf 'namespace guidance check: JSON alias listing failed: %s\n' "$namespace" >&2
+        return 1
+    fi
+    _recipe_entry_gaps "$recipes" "$aliases" <<<"$listing" || rc=$?
+    return "$rc"
+}
+
+@test "#707: recipe entry check rejects names that appear only in prose" {
+    local listing='Available recipes:
+    default # Run all.sh with --help first.'
+    run _recipe_entry_gaps "default all help" <<<"$listing"
+    assert_failure
+    assert_line "missing recipe entry: all"
+    assert_line "missing recipe entry: help"
+    refute_line "missing recipe entry: default"
+}
+
+@test "#707: recipe entry check accepts listed entries and inline aliases" {
+    local listing='Available recipes:
+    default # Run all.sh with --help first.
+    all *args # Run everything.
+    help # Show help. [alias: h, hh]'
+    run _recipe_entry_gaps "default all help" "h hh" <<<"$listing"
+    assert_success
+    assert_output ""
+
+    run _recipe_entry_gaps "default all help" "hx" <<<"$listing"
+    assert_failure
+    assert_output "missing alias entry: hx"
+}
+
+@test "#707: namespace guidance rejects a root comment without the canonical pointer" {
+    local root="${BATS_TEST_TMPDIR}/pointer"
+    mkdir -p "${root}/demo"
+    cat >"${root}/justfile" <<'EOF'
+# Demo; see just demo help.
+mod? demo 'demo/justfile.demo'
+default:
+    @just --list
+EOF
+    cat >"${root}/demo/justfile.demo" <<'EOF'
+default:
+    @echo demo
+help:
+    @echo help
+EOF
+    run _namespace_guidance_gaps "$root" demo
+    assert_failure
+    assert_output --partial "no canonical pointer: demo"
+}
+
+@test "#707: namespace guidance accepts the canonical pointer when every recipe is listed" {
+    local root="${BATS_TEST_TMPDIR}/canonical-pointer"
+    mkdir -p "${root}/demo"
+    cat >"${root}/justfile" <<'EOF'
+# Demo; just --list demo lists its recipes.
+mod? demo 'demo/justfile.demo'
+default:
+    @just --list
+EOF
+    cat >"${root}/demo/justfile.demo" <<'EOF'
+default:
+    @echo demo
+help:
+    @echo help
+EOF
+    run _namespace_guidance_gaps "$root" demo
+    assert_success
+    assert_output ""
+}
+
+@test "#707: root namespace guidance covers every current user recipe" {
+    local namespace namespaces gaps="" rc=0
+    run awk '/^mod\?[[:space:]]+/ { print $2 }' "${COPY}/justfile"
+    assert_success
+    namespaces="$output"
+    for namespace in $namespaces; do
+        gaps+="$(_namespace_guidance_gaps "${COPY}" "$namespace")" || rc=$?
+    done
+    assert_equal "${gaps}" ""
+    assert_equal "$rc" 0
+}
