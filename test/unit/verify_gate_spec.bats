@@ -1209,6 +1209,33 @@ _diagnostics_producer_uses_shared_interface() {
     done < <(sed -n '/^### 自動測試驗收/,/^- \[ \] 3\. 進盒設定:/s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
 
+_m2_runner_doc_valid() {
+    local _section _source="[script/test/test.sh](../script/test/test.sh)"
+    _section="$(sed -n '/^- \[ \] 1\. 自動測試:/,/^- \[ \] 2\. 交付自檢/p' "$1")"
+    [[ "${_section}" == *"${_source}"* ]] || return 1
+    [[ "${_section}" == *'[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)'* ]] || return 1
+    [[ "${_section}" == *'skip 依 runner 政策判定'* ]] || return 1
+    [[ "${_section}" == *'host unchanged'* ]] || return 1
+    if grep -Eq '\[ci\]|\[system-real\]|required specs OK|^[[:space:]]*1\.\.[0-9]+|[0-9]+ 個必要 spec' <<<"${_section}"; then
+        return 1
+    fi
+}
+
+@test "M2 runner acceptance uses live sources rather than output snapshots" {
+    run _m2_runner_doc_valid "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+}
+
+@test "M2 runner documentation guard rejects snapshots and missing source" {
+    local _doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed '/^  - \[ \] 1\.1 lint:/a\      [ci] required specs OK (135 case(s))' "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
+    run _m2_runner_doc_valid "${_doc}"
+    assert_failure
+    sed 's|test/system/real_engine_spec.bats|test/system/obsolete.bats|g' "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
+    run _m2_runner_doc_valid "${_doc}"
+    assert_failure
+}
+
 @test "single source: documented chain diagnostics equal the source-guarded fixture" {
     local _fixture="${BATS_TEST_TMPDIR}/fixture.diag" _doc="${BATS_TEST_TMPDIR}/doc.diag"
     _system_real_block | grep '^#' >"${_fixture}"
@@ -1560,4 +1587,29 @@ EOF
     _run_ci_item 2.1
     assert_success
     assert_line "reused: test-unit-verdict success run=${CI_RUN} job=900"
+}
+
+@test "CLI: help and list validate trailing unknown arguments" {
+    local option invalid expected rc out="${BATS_TEST_TMPDIR}/stdout" err="${BATS_TEST_TMPDIR}/stderr"
+    for option in --help --list; do
+        for invalid in --bogus 9.9; do
+            if [[ "${invalid}" == --bogus ]]; then
+                expected="unknown option"
+            else
+                expected="unknown item"
+            fi
+            rc=0
+            "${GATE_SH}" "${option}" "${invalid}" >"${out}" 2>"${err}" || rc=$?
+            assert_equal "${rc}" 2
+            [ ! -s "${out}" ]
+            printf "%s\n" "gate.sh: ${expected} '${invalid}' (see --help)" | cmp -s - "${err}"
+        done
+    done
+}
+
+@test "CLI: help takes priority over list after validation" {
+    local out="${BATS_TEST_TMPDIR}/stdout" err="${BATS_TEST_TMPDIR}/stderr"
+    "${GATE_SH}" --list --help >"${out}" 2>"${err}"
+    [ ! -s "${out}" ]
+    grep -q '^Usage:' "${err}"
 }
