@@ -179,12 +179,14 @@ EOF
 
 # A bounded CPU worker, used only inside the test container. timeout owns
 # the process group so an interrupted fixture cannot leave a busy loop behind.
+# Publish ready before the deadline starts, even if the child never gets CPU time.
 _install_cpu_load() {
     cat >"${MOCKBIN}/cpu-load" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'ready\n' >"$2"
 rc=0
-timeout "$1" bash -c 'printf "ready\n" >"$1"; while :; do :; done' _ "$2" || rc=$?
+timeout "$1" bash -c 'while :; do :; done' || rc=$?
 if (( rc == 124 )); then
     exit 0
 fi
@@ -559,6 +561,25 @@ _run_matrix() {
 }
 
 # The load fixture must stop itself even if the matrix fails or is interrupted.
+@test "artificial CPU load is ready even when timeout kills bash before its command starts" {
+    # Non-interactive bash sources BASH_ENV before executing its command.
+    # Stall only the bounded child, so timeout kills it before it can write ready.
+    cat >"${TMP}/stall-child.bash" <<'EOF'
+if [[ -n "${BASH_EXECUTION_STRING:-}" ]]; then
+    while :; do :; done
+fi
+EOF
+    run env BASH_ENV="${TMP}/stall-child.bash" \
+        timeout 3 "${MOCKBIN}/cpu-load" 0.15 "${TMP}/load.ready"
+    assert_success
+    run cat "${TMP}/load.ready"
+    assert_success
+    assert_output "ready"
+    _run_matrix enter 1
+    _run_matrix shell 1
+    _run_matrix inbox 1
+}
+
 @test "artificial CPU load stops on its own within a short deadline" {
     run timeout 3 "${MOCKBIN}/cpu-load" 1 "${TMP}/load.ready"
     assert_success
@@ -671,11 +692,18 @@ teardown() {
 # --- the tool owns its CLI: --help and unknown / invalid options --------------
 
 @test "--help exits 0, names every option and the three metrics, and calls distrobox nothing" {
-    run "${BENCH}" --help
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
     assert_success
+    [[ ! -s "${_out}" ]]
+    run cat "${_err}"
     assert_output --partial "Usage: bench.sh"
+    assert_output --partial "Quiet host:"
+    assert_output --partial "Exit codes:"
+    assert_output --partial "Environment (tests only):"
+    assert_output --partial "BENCH_CLOCK"
     local _opt
-    for _opt in --box --runs --warmup --max-ms --json --shell --help; do
+    for _opt in --box --runs --warmup --max-ms --json --shell --max-wait -h --help; do
         assert_output --partial "${_opt}"
     done
     assert_line --regexp '^ *enter '
@@ -686,11 +714,22 @@ teardown() {
 }
 
 @test "-h is the same as --help" {
-    run "${BENCH}" --help
-    local _long="${output}"
-    run "${BENCH}" -h
+    local _out="${TMP}/out" _long="${TMP}/long" _short="${TMP}/short"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_long}"
     assert_success
-    assert_output "${_long}"
+    [[ ! -s "${_out}" ]]
+    run bash -c '"$1" -h >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_short}"
+    assert_success
+    [[ ! -s "${_out}" ]]
+    run cmp "${_long}" "${_short}"
+    assert_success
+    assert_equal "$(_calls)" ""
+}
+
+@test "help stdout emptiness check rejects a newline" {
+    local _out="${TMP}/out"
+    printf '\n' >"${_out}"
+    [[ -s "${_out}" ]]
 }
 
 @test "an unknown option exits 2 with the documented message on stderr, nothing on stdout, nothing recorded" {
