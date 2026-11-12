@@ -148,6 +148,7 @@ _required_specs() {
                 unit/test_sh_spec.bats \
                 unit/selfcheck_spec.bats \
                 unit/justfile_spec.bats \
+                unit/m2_acceptance_warning_spec.bats \
                 unit/diagram_spec.bats \
                 unit/ci_yml_spec.bats \
                 unit/bench_spec.bats \
@@ -994,6 +995,7 @@ script/box/assemble.sh|test/unit/assemble_spec.bats
 script/box/assemble.sh|test/integration/assemble_spec.bats
 script/box/assemble.sh|test/system/real_assemble_spec.bats
 script/box/bench.sh|test/unit/bench_spec.bats
+script/box/bench.sh|test/unit/acceptance_51_doc_spec.bats
 script/box/enter.sh|test/unit/enter_spec.bats
 script/box/enter.sh|test/integration/enter_spec.bats
 script/box/setup.sh|test/unit/setup_spec.bats
@@ -1019,10 +1021,33 @@ script/verify/justfile.verify|test/unit/verify_ui_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
+doc/acceptance.md|test/unit/evidence_doc_spec.bats
+doc/evidence/README.md|test/unit/evidence_doc_spec.bats
+doc/evidence/tdd.sh|test/unit/evidence_doc_spec.bats
 script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
 doc/evidence/negative/*.md|test/unit/evidence_tdd_spec.bats
+lib/log.sh|test/unit/realbox_52_doc_spec.bats
+lib/manifest.sh|test/unit/realbox_52_doc_spec.bats
+lib/home.sh|test/unit/realbox_52_doc_spec.bats
+lib/link.sh|test/unit/realbox_52_doc_spec.bats
+lib/enter.sh|test/unit/realbox_52_doc_spec.bats
+lib/config.sh|test/unit/realbox_52_doc_spec.bats
+lib/guard.sh|test/unit/realbox_52_doc_spec.bats
+lib/config_backup.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/config_backup_paths.sh|test/unit/realbox_52_doc_spec.bats
+lib/verify_run.sh|test/unit/realbox_52_doc_spec.bats
+lib/distrobox_manager.sh|test/unit/realbox_52_doc_spec.bats
+lib/realbox_interrupt.sh|test/unit/realbox_52_doc_spec.bats
+script/verify/realbox.sh|test/unit/realbox_52_doc_spec.bats
+test/helper/realbox_window.bash|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_shim.sh|test/unit/realbox_52_doc_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/realbox_52_doc_spec.bats
+script/box/enter.sh|test/unit/realbox_52_doc_spec.bats
+script/box/setup.sh|test/unit/realbox_52_doc_spec.bats
+script/box/status.sh|test/unit/realbox_52_doc_spec.bats
+doc/acceptance.md|test/unit/realbox_52_doc_spec.bats
 lib/guard.sh|test/unit/verify_realbox_spec.bats
 lib/guard.sh|test/unit/verify_realbox_matrix_spec.bats
 lib/config_backup.sh|test/unit/verify_realbox_spec.bats
@@ -1035,7 +1060,18 @@ lib/distrobox_manager.sh|test/unit/verify_realbox_spec.bats
 lib/distrobox_manager.sh|test/unit/verify_realbox_matrix_spec.bats
 lib/realbox_interrupt.sh|test/unit/verify_realbox_spec.bats
 lib/realbox_interrupt.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/log.sh|test/unit/acceptance_51_doc_spec.bats
+lib/enter.sh|test/unit/acceptance_51_doc_spec.bats
+lib/config.sh|test/unit/acceptance_51_doc_spec.bats
+lib/guard.sh|test/unit/acceptance_51_doc_spec.bats
+lib/verify_run.sh|test/unit/acceptance_51_doc_spec.bats
+lib/manifest.sh|test/unit/acceptance_51_doc_spec.bats
+lib/distrobox_manager.sh|test/unit/acceptance_51_doc_spec.bats
+lib/realbox_interrupt.sh|test/unit/acceptance_51_doc_spec.bats
+lib/config_backup.sh|test/unit/acceptance_51_doc_spec.bats
+script/verify/config_backup_paths.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
+script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
@@ -1049,6 +1085,7 @@ test/unit/fixture/realbox_matrix_just.sh|test/unit/verify_realbox_matrix_spec.ba
 test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_spec.bats
 test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/acceptance_51_doc_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_matrix_spec.bats
@@ -1082,6 +1119,12 @@ doc/structure.md|test/unit/structure_tree_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
+doc/acceptance.md|test/unit/m2_acceptance_warning_spec.bats
+box/dev.ini|test/unit/acceptance_51_doc_spec.bats
+script/verify/justfile.verify|test/unit/acceptance_51_doc_spec.bats
+doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
+doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats

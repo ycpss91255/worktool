@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # tdd.sh - prove each listed PR body shows RED evidence before GREEN evidence.
 #
-# Asset of doc/acceptance.md item 2.2. The checklist line is
-# `bash doc/evidence/tdd.sh`, so the logic lives here
-# under version control instead of inside the document: nothing an
-# operator's shell, executor or copy/paste does to the checklist text can
-# alter what is checked.
+# Asset of doc/acceptance.md item 2.2. The acceptance entry is
+# `just verify gate 2.2`, which calls this script and checks the complete
+# ordered result set. The checker lives here under version control rather
+# than inside the document. Direct invocation also accepts selected PRs.
 #
 # For every PR number given (default: the M3 sub-issue PRs) the body must
 # contain a non-empty fenced block whose introducing line (one of the five
