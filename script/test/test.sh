@@ -140,6 +140,7 @@ _required_specs() {
     case "$1" in
         unit)
             printf '%s\n' \
+                unit/acceptance_tools_spec.bats \
                 unit/log_spec.bats \
                 unit/manifest_spec.bats \
                 unit/assemble_spec.bats \
@@ -906,6 +907,9 @@ _changed_files() {
 # Format: shell pattern|repo-relative spec path.
 _changed_path_map() {
     cat <<'MAP'
+doc/acceptance.md|test/unit/acceptance_tools_spec.bats
+test/helper/graph.bash|test/unit/acceptance_tools_spec.bats
+test/helper/verify_tools.bash|test/unit/acceptance_tools_spec.bats
 lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
 lib/config.sh|test/unit/verify_setup_spec.bats
@@ -1136,7 +1140,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout acceptance_tools; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done

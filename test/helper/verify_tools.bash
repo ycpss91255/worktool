@@ -4,7 +4,7 @@
 # so the tool list in doc/acceptance.md is compared with the code instead of
 # with a second hand-written list.
 #
-# Loaded by test/unit/acceptance_doc_spec.bats after helper/common
+# Loaded by test/unit/acceptance_tools_spec.bats after helper/common
 # (REPO_ROOT) and helper/graph (graph_modules, _graph_functions).
 #
 #   verify_item_tools <tree> <script>...
