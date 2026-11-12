@@ -186,6 +186,7 @@ _required_specs() {
                 unit/adr/0012_spec.bats \
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \
+                unit/ownership_acceptance_doc_spec.bats \
                 unit/setup_acceptance_doc_spec.bats \
                 unit/gate_acceptance_doc_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
@@ -1127,6 +1128,8 @@ doc/acceptance.md|test/unit/setup_acceptance_doc_spec.bats
 script/verify/setup.sh|test/unit/setup_acceptance_doc_spec.bats
 doc/acceptance.md|test/unit/gate_acceptance_doc_spec.bats
 script/verify/gate.sh|test/unit/gate_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/ownership_acceptance_doc_spec.bats
+script/verify/realbox.sh|test/unit/ownership_acceptance_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
