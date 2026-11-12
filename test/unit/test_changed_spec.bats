@@ -713,7 +713,7 @@ _remove_exact_row() {
         --ci-lint '--ci-unit test/unit/hook/enforce_milestone_ready_evidence_spec.bats')"
 }
 
-_document_change() {
+_prepare_document_change() {
     local _path="$1"
     shift
     mkdir -p "${TEMP_REPO}/$(dirname "${_path}")"
@@ -725,6 +725,16 @@ _document_change() {
     done
     _commit_baseline
     printf '\n# changed\n' >>"${TEMP_REPO}/${_path}"
+}
+
+_run_changed_successfully() {
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+}
+
+_document_change() {
+    _prepare_document_change "$@"
+    shift
     run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' \
         _ "${TEMP_REPO}"
     assert_success
@@ -787,13 +797,20 @@ _document_change() {
         test/unit/backup_acceptance_doc_spec.bats
 }
 
+@test "failed changed runner cannot satisfy a missing selection check" {
+    printf '#!/usr/bin/env bash\nexit 42\n' >"${TEMP_REPO}/script/test/test.sh"
+    run _run_changed_successfully
+    assert_failure
+}
+
 @test "acceptance dispatch check rejects a missing backup guard mapping" {
-    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
-        'doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats'
-    run _document_change doc/acceptance.md test/unit/contract_spec.bats \
+    _prepare_document_change doc/acceptance.md test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/backup_acceptance_doc_spec.bats
-    assert_failure
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" \
+        'doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats'
+    _run_changed_successfully
+    [[ "$(_dispatched)" != *test/unit/backup_acceptance_doc_spec.bats* ]]
 }
 
 @test "test.sh --changed maps acceptance output classification guard" {
