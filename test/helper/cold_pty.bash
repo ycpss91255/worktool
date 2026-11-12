@@ -112,9 +112,9 @@ _cold_default_login() (
         <"${_fifo}" >"${_output}" 2>&1 &
     _child=$!
     trap 'exit 1' HUP INT TERM
-    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
-        _cold_pty_cleanup "${_child}" "${_sid}" || exit 1
-    fi; rm -f "${_fifo}"' EXIT
+    trap '_exit_rc=$?; exec 9>&-; if [[ -n "${_child}" ]]; then
+        _cold_pty_cleanup "${_child}" "${_sid}" || { [[ "${_exit_rc}" -ne 0 ]] || _exit_rc=1; }
+    fi; rm -f "${_fifo}" || { [[ "${_exit_rc}" -ne 0 ]] || _exit_rc=1; }; exit "${_exit_rc}"' EXIT
     local _deadline=$((SECONDS + 10))
     until _sid="$(_cold_pty_session "${_child}")"; do
         if (( SECONDS >= _deadline )); then
