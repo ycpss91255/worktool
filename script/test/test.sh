@@ -140,6 +140,7 @@ _required_specs() {
     case "$1" in
         unit)
             printf '%s\n' \
+                unit/acceptance_tools_spec.bats \
                 unit/log_spec.bats \
                 unit/manifest_spec.bats \
                 unit/manifest_doc_spec.bats \
@@ -955,6 +956,9 @@ _changed_files() {
 # Format: shell pattern|repo-relative spec path.
 _changed_path_map() {
     cat <<'MAP'
+doc/acceptance.md|test/unit/acceptance_tools_spec.bats
+test/helper/graph.bash|test/unit/acceptance_tools_spec.bats
+test/helper/verify_tools.bash|test/unit/acceptance_tools_spec.bats
 lib/log.sh|test/unit/log_spec.bats
 lib/log.sh|test/unit/verify_setup_spec.bats
 lib/config.sh|test/unit/config_spec.bats
@@ -1026,6 +1030,14 @@ lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
 lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
 lib/verify_run.sh|test/unit/verify_gate_spec.bats
 lib/verify_run.sh|test/unit/verify_ui_spec.bats
+justfile|test/unit/verify_list_spec.bats
+script/verify/justfile.verify|test/unit/verify_list_spec.bats
+script/verify/ui.sh|test/unit/verify_list_spec.bats
+script/verify/gate.sh|test/unit/verify_list_spec.bats
+script/verify/setup.sh|test/unit/verify_list_spec.bats
+script/verify/diagram.sh|test/unit/verify_list_spec.bats
+script/verify/realbox.sh|test/unit/verify_list_spec.bats
+script/verify/evidence.sh|test/unit/verify_list_spec.bats
 script/verify/all.sh|test/unit/verify_all_spec.bats
 script/verify/justfile.verify|test/unit/verify_all_spec.bats
 script/verify/gate.sh|test/unit/verify_gate_spec.bats
@@ -1089,6 +1101,9 @@ script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
 script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/interrupt_load.bash|test/unit/verify_stress_spec.bats
+test/unit/verify_run_signal_spec.bats|test/unit/verify_stress_spec.bats
+test/unit/verify_realbox_spec.bats|test/unit/verify_stress_spec.bats
 test/helper/cold_pty.bash|test/unit/cold_group_control_spec.bats
 test/helper/cold_pty.bash|test/unit/cold_pty_probe_spec.bats
 test/helper/cold_pty.bash|test/unit/enter_spec.bats
@@ -1257,7 +1272,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout structure_tree; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout structure_tree acceptance_tools; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done
@@ -1372,6 +1387,12 @@ _run_changed() {
             continue
         fi
         if _add_changed_spec "${_path}"; then
+            # A spec can also be an input to another spec.
+            _mapped="$(_mapped_specs "${_path}")"
+            while IFS= read -r _spec; do
+                [[ -n "${_spec}" ]] || continue
+                _add_changed_spec "${_spec}" 1 "${_path}"
+            done <<<"${_mapped}"
             continue
         fi
         _mapped="$(_mapped_specs "${_path}")"
