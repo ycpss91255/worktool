@@ -78,7 +78,8 @@ install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/000
    enter.sh wrapper、distrobox enter + shell 啟動,即使用者拿到提示字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
    一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
    pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
-   (未判定,不給通過也不給退化;CI 上一樣是紅),見
+   (未判定,不給通過也不給退化;CI 上一樣是紅);若所有 PSI 來源都讀不到,則警告
+   未檢查並照常量測與判定。見
    `doc/adr/0003-latency-gate-inconclusive.md`(issue #181)。CI 實測(docker 29.8.0 +
    預設 runc、warm 容器):amd64 enter 中位數約 88 ms、arm64 約 87 ms,離目標
    有 3 倍餘裕,故維持 docker + runc、不換 runtime;實機數字由人類清單收集
