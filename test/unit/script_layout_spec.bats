@@ -69,3 +69,12 @@ setup() {
     assert_failure 1
     assert_output --partial 'top-level script: script/job.sh'
 }
+
+@test "rejects an artifact with a newline in its path" {
+    local path=$'nested/line\nbreak.log'
+    mkdir -p "${ROOT}/nested"
+    touch "${ROOT}/${path}"
+    run just -f "${REPO_ROOT}/justfile" test script-layout --root "${ROOT}"
+    assert_failure 1
+    assert_output --partial "${path}"
+}
