@@ -97,6 +97,15 @@ _check_structure() {
     grep -qF "且 \`WORKTOOL_STRESS\` 不為 \`1\`、skip 原因完全相符時才允許；設為 \`1\` 時必須執行" "$2"
 }
 
+_check_structure_names() {
+    local rows="$1" structure="$2" dir="$3" bt=$'\x60'
+    awk -v bt="${bt}" '/案例為 / { text=substr($0, index($0, "案例為 ")+length("案例為 ")); text=substr(text, 1, index(text, "；完整 skip")-1); n=split(text, parts, bt); for (i=2; i<=n; i+=2) print parts[i]; found++ } END { if (found != 1) exit 1 }' "${structure}" | LC_ALL=C sort >"${dir}/structure.names" || return 1
+    cut -f1 "${rows}" | LC_ALL=C sort >"${dir}/runner.names"
+    [[ -s "${dir}/structure.names" ]] || return 1
+    [[ "$(uniq -d "${dir}/structure.names")" == '' ]] || return 1
+    diff -u "${dir}/runner.names" "${dir}/structure.names"
+}
+
 _check_adr() {
     awk '/^3\. / { print; found=1 } END { if (!found) exit 1 }' "$2" >"${BATS_TEST_TMPDIR}/adr-decision" || return 1
     _check_structure "$1" "${BATS_TEST_TMPDIR}/adr-decision" || return 1
@@ -107,6 +116,7 @@ _check_adr() {
     _compare_exemptions "${RUNNER}" "${DOC}" "${BATS_TEST_TMPDIR}"
     _check_commands "${DOC}" "${BATS_TEST_TMPDIR}/runner.rows"
     _check_structure "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}"
+    _check_structure_names "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}" "${BATS_TEST_TMPDIR}"
     _check_adr "${BATS_TEST_TMPDIR}/runner.rows" "${ADR}"
 }
 
@@ -188,4 +198,16 @@ _check_adr() {
     cp "${BATS_TEST_DIRNAME}/../../doc/adr/0016-ci-unit-shards-union-verdict.md" "${ADR}"
     sed -i 's/skip 原因完全相符時才允許/skip 均允許/' "${ADR}"
     run _check_adr "${BATS_TEST_TMPDIR}/runner.rows" "${ADR}"; assert_failure
+}
+
+@test "structure names reject missing, extra and duplicate exemptions" {
+    _compare_exemptions "${RUNNER}" "${DOC}" "${BATS_TEST_TMPDIR}"
+    local name bt=$'\x60' original="${BATS_TEST_DIRNAME}/../../doc/structure.md"
+    name="$(cut -f1 "${BATS_TEST_TMPDIR}/runner.rows" | head -n 1)"
+    NAME="${name}" awk '{ p=index($0, ENVIRON["NAME"]); if (p) $0=substr($0,1,p-1) "missing" substr($0,p+length(ENVIRON["NAME"])); print }' "${original}" >"${STRUCTURE}"
+    run _check_structure_names "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}" "${BATS_TEST_TMPDIR}"; assert_failure
+    awk -v bt="${bt}" '/案例為 / { sub(/；完整 skip/, "、" bt "extra case" bt "；完整 skip") } { print }' "${original}" >"${STRUCTURE}"
+    run _check_structure_names "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}" "${BATS_TEST_TMPDIR}"; assert_failure
+    NAME="${name}" awk -v bt="${bt}" '/案例為 / { sub(/；完整 skip/, "、" bt ENVIRON["NAME"] bt "；完整 skip") } { print }' "${original}" >"${STRUCTURE}"
+    run _check_structure_names "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}" "${BATS_TEST_TMPDIR}"; assert_failure
 }
