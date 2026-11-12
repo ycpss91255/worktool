@@ -1180,6 +1180,16 @@ EOF
     done < <(sed -n '/^### 自動測試驗收/,/^- \[ \] 3\. 進盒設定:/s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
 
+@test "M2 runner acceptance uses live sources rather than output snapshots" {
+    local _section
+    _section="$(sed -n '/^- \[ \] 1\. 自動測試:/,/^- \[ \] 2\. 交付自檢/p' "${REPO_ROOT}/doc/acceptance.md")"
+    [[ "${_section}" == *'[script/test/test.sh](../script/test/test.sh)'* ]]
+    [[ "${_section}" == *'[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)'* ]]
+    [[ "${_section}" == *'skip 依 runner 政策判定'* ]]
+    run grep -E '\[ci\]|\[system-real\]|required specs OK|^[[:space:]]*1\.\.[0-9]+|[0-9]+ 個必要 spec' <<<"${_section}"
+    assert_failure 1
+}
+
 @test "single source: documented chain diagnostics equal the source-guarded fixture" {
     local _fixture="${BATS_TEST_TMPDIR}/fixture.diag" _doc="${BATS_TEST_TMPDIR}/doc.diag"
     _system_real_block | grep '^#' >"${_fixture}"
