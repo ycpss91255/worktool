@@ -381,6 +381,71 @@ _remove_exact_row() {
     done
 }
 
+@test "acceptance tool guard maps each document and helper even without the common guard" {
+    local path
+    mkdir -p "${TEMP_REPO}/doc" "${TEMP_REPO}/test/helper"
+    for path in doc/acceptance.md test/helper/graph.bash test/helper/verify_tools.bash; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/acceptance_tools_spec.bats"
+    sed -i 's/ acceptance_tools; do/; do/' "${TEMP_REPO}/script/test/test.sh"
+    run grep -F ' acceptance_tools; do' "${TEMP_REPO}/script/test/test.sh"
+    assert_failure 1
+    _commit_baseline
+    for path in doc/acceptance.md test/helper/graph.bash test/helper/verify_tools.bash; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/acceptance_tools_spec.bats* ]] || fail "missing mapping for ${path}"
+        local row="${path}|test/unit/acceptance_tools_spec.bats" runner="${TEMP_REPO}/script/test/test.sh"
+        run grep -Fxc "${row}" "${runner}"
+        assert_success
+        assert_output 1
+        awk -v row="${row}" '$0 != row' "${runner}" >"${runner}.tmp"
+        mv "${runner}.tmp" "${runner}"
+        chmod +x "${runner}"
+        run grep -Fx "${row}" "${runner}"
+        assert_failure 1
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" != *test/unit/acceptance_tools_spec.bats* ]] || fail "mapping removal did not remove dispatch for ${path}"
+        git -C "${TEMP_REPO}" checkout -- "${path}" script/test/test.sh
+    done
+}
+
+@test "acceptance tool guard is required and selects representative source changes" {
+    local path
+    run bash -c 'source "$1/script/test/test.sh"; _required_specs unit' _ "${REPO_ROOT}"
+    assert_success
+    assert_line 'unit/acceptance_tools_spec.bats'
+    sed -i '/^[[:space:]]*unit\/acceptance_tools_spec\.bats/d' "${TEMP_REPO}/script/test/test.sh"
+    run bash -c 'source "$1/script/test/test.sh"; _required_specs unit' _ "${TEMP_REPO}"
+    assert_success
+    refute_line 'unit/acceptance_tools_spec.bats'
+    cp "${REPO_ROOT}/script/test/test.sh" "${TEMP_REPO}/script/test/test.sh"
+    mkdir -p "${TEMP_REPO}/script/verify" "${TEMP_REPO}/lib"
+    for path in script/verify/setup.sh lib/guard.sh; do printf '# source\n' >"${TEMP_REPO}/${path}"; done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/acceptance_tools_spec.bats"
+    _commit_baseline
+    for path in script/verify/setup.sh lib/guard.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/acceptance_tools_spec.bats* ]] || fail "missing common guard for ${path}"
+        sed -i 's/ acceptance_tools; do/; do/' "${TEMP_REPO}/script/test/test.sh"
+        run grep -F ' acceptance_tools; do' "${TEMP_REPO}/script/test/test.sh"
+        assert_failure 1
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" != *test/unit/acceptance_tools_spec.bats* ]] || fail "guard removal did not remove dispatch for ${path}"
+        git -C "${TEMP_REPO}" checkout -- "${path}" script/test/test.sh
+    done
+}
+
 @test "test.sh --changed selects the evidence documentation guard for each document source" {
     mkdir -p "${TEMP_REPO}/doc/evidence"
     local path
@@ -396,6 +461,7 @@ _remove_exact_row() {
         assert_success
         [[ "$(_dispatched)" == *test/unit/evidence_doc_spec.bats* ]]
         git -C "${TEMP_REPO}" checkout -- "${path}"
+
     done
 }
 
@@ -834,7 +900,8 @@ _document_change() {
 }
 
 @test "test.sh --changed selects all acceptance documentation guards together" {
-    _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
+    _document_change doc/acceptance.md test/unit/acceptance_tools_spec.bats \
+        test/unit/evidence_doc_spec.bats \
         test/unit/realbox_52_doc_spec.bats test/unit/realbox_window_doc_spec.bats \
         test/unit/acceptance_output_types_spec.bats test/unit/setup_acceptance_doc_spec.bats \
         test/unit/gate_acceptance_doc_spec.bats test/unit/ownership_acceptance_doc_spec.bats \
