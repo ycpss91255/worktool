@@ -1168,6 +1168,35 @@ EOF
     done <<<"${_out}"
 }
 
+# The producer must use the same formatter as the acceptance fixture. Check a
+# copied suite too, so the guard itself proves a detached producer is rejected.
+_diagnostics_producer_uses_shared_interface() {
+    local _producer="$1"
+    grep -qFx "source \"\${BATS_TEST_DIRNAME}/../helper/diagnostics.bash\"" "${_producer}" || return 1
+    grep -qF "printf '\${CHAIN_MARKER_FORMAT}'" "${_producer}" || return 1
+    grep -qF "printf '\${HANG_READY_FORMAT}'" "${_producer}" || return 1
+    grep -qF "diagnostic_in_box \"\$1\"" "${_producer}" || return 1
+    grep -qF "diagnostic_hang \"\${_elapsed}\"" "${_producer}" || return 1
+    if grep -qE '^(_log_lines|diagnostic_lines|diagnostic_in_box|diagnostic_hang)\(\)' "${_producer}"; then return 1; fi
+}
+
+@test "single source: real engine uses the shared diagnostics producer" {
+    local _producer="${BATS_TEST_TMPDIR}/real_engine_spec.bats"
+    cp "${REPO_ROOT}/test/system/real_engine_spec.bats" "${_producer}"
+    run _diagnostics_producer_uses_shared_interface "${_producer}"
+    assert_success
+    local _mutation
+    for _mutation in source CHAIN_MARKER_FORMAT HANG_READY_FORMAT diagnostic_in_box diagnostic_hang; do
+        cp "${REPO_ROOT}/test/system/real_engine_spec.bats" "${_producer}"
+        case "${_mutation}" in
+            source) sed -i "s@source \"\${BATS_TEST_DIRNAME}/../helper/diagnostics.bash\"@source /tmp/detached-diagnostics@" "${_producer}" ;;
+            *) sed -i "s/${_mutation}/DETACHED/g" "${_producer}" ;;
+        esac
+        run _diagnostics_producer_uses_shared_interface "${_producer}"
+        assert_failure
+    done
+}
+
 @test "single source: every documented TAP case exists in the real suites" {
     local _names="${BATS_TEST_TMPDIR}/all.names" _line
     find "${REPO_ROOT}/test" -name '*_spec.bats' -exec \
