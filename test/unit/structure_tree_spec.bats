@@ -120,17 +120,23 @@ _check_root_box_comment() {
 @test "root box listing does not promise a future rm command" {
     run _check_root_box_comment "${JUSTFILE}"
     assert_success
-    sed -i '/^# Dev box lifecycle:/s/$/ (M3 adds rm)/' "${JUSTFILE}"
+    sed -i '/^# Dev box lifecycle;/s/$/ (M3 adds rm)/' "${JUSTFILE}"
+    run grep -F 'Dev box lifecycle; just --list box lists its recipes. (M3 adds rm)' "${JUSTFILE}"
+    assert_success
     run _check_root_box_comment "${JUSTFILE}"
     assert_failure
 }
 
 @test "box listing check is scoped and fails if the declaration or comment is absent" {
-    sed -i '/^# Self-test:/s/$/ (M3 adds rm)/' "${JUSTFILE}"
+    sed -i '/^# Self-tests in Docker;/s/$/ (M3 adds rm)/' "${JUSTFILE}"
+    run grep -F 'Self-tests in Docker; just --list test lists its recipes. (M3 adds rm)' "${JUSTFILE}"
+    assert_success
     run _check_root_box_comment "${JUSTFILE}"; assert_success
     sed -i '/^mod? box /d' "${JUSTFILE}"
     run _check_root_box_comment "${JUSTFILE}"; assert_failure
     cp "${ROOT}/justfile" "${JUSTFILE}"
-    sed -i '/^# Dev box lifecycle:/d' "${JUSTFILE}"
+    sed -i '/^# Dev box lifecycle;/d' "${JUSTFILE}"
+    run grep -F 'Dev box lifecycle; just --list box lists its recipes.' "${JUSTFILE}"
+    assert_failure
     run _check_root_box_comment "${JUSTFILE}"; assert_failure
 }

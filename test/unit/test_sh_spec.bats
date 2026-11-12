@@ -169,6 +169,14 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]
 }
 
+@test "test.sh help explains JUnit TAP timing without claiming identical output" {
+    run "${TEST_SH}" --help
+    assert_success
+    assert_output --partial 'trailing " # in N ms" timing suffix'
+    assert_output --partial 'and skip checks are unchanged'
+    refute_output --partial 'the TAP output is unchanged'
+}
+
 @test "test.sh -h is the same as --help" {
     run "${TEST_SH}" --help
     local _long="${output}"

@@ -5367,3 +5367,201 @@ STUB
         [ ! -d "$(_backup_dir)" ]
     done
 }
+
+@test "#1072: unreadable window snapshot never confirms ownership or signals a window" {
+    _auto_window_tools
+    mkdir -p "${STATE}/before-tools"
+    cp "${STUBS}/grep" "${STATE}/before-tools/grep"
+    cat >"${STUBS}/grep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+    if [[ "${arg}" == */window.*/before ]]; then
+        touch "${FAKE_STATE_DIR}/before-fault-hit"
+        printf 'injected before read failure\n' >&2
+        exit 2
+    fi
+done
+exec "${FAKE_STATE_DIR}/before-tools/grep" "$@"
+STUB
+    _realbox_quiet 5.2.1
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/before-fault-hit" ]
+    assert_failure
+    [[ "${stderr}" == *'window ownership undetermined'* ]]
+    [[ "${output}" != *'window-evidence:'* ]]
+    [ ! -e "${STATE}/closed" ]
+    local directory
+    directory="$(find "$(_backup_dir)" -maxdepth 1 -type d -name 'window.*')"
+    [ -f "${directory}/before" ]
+}
+
+@test "#1072: missing setup process list cannot confirm apply window evidence" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    rm -- "${2#--working-directory=}/../processes-before"
+    touch "${FAKE_STATE_DIR}/process-list-removed"
+fi
+STUB
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/process-list-removed" ]
+    assert_failure
+    [[ "${output}" != *'window-evidence:'* ]]
+}
+
+@test "#1072: missing restore process list cannot confirm restored window evidence" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    rm -- "${2#--working-directory=}/../processes-before-restore-window"
+    touch "${FAKE_STATE_DIR}/restore-list-removed"
+fi
+STUB
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    [ -f "${STATE}/restore-list-removed" ]
+    assert_failure
+    [[ "${output}" != *'restore-window-evidence:'* ]]
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#1072: removed window snapshot retains evidence and does not signal" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    rm -- "${2#--working-directory=}/before"
+    touch "${FAKE_STATE_DIR}/window-list-removed"
+fi
+STUB
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/window-list-removed" ]
+    assert_failure
+    [[ "${output}" != *'window-evidence:'* ]]
+    [ ! -e "${STATE}/closed" ]
+    local directory
+    directory="$(find "$(_backup_dir)" -maxdepth 1 -type d -name 'window.*')"
+    [ -d "${directory}" ]
+}
+
+@test "#1072: shell membership error cannot confirm apply evidence" {
+    _auto_window_tools
+    mkdir -p "${STATE}/before-tools"
+    cp "${STUBS}/grep" "${STATE}/before-tools/grep"
+    cat >"${STUBS}/grep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *4242* && "$*" == */before* ]]; then
+    touch "${FAKE_STATE_DIR}/shell-membership-hit"
+    exit 2
+fi
+exec "${FAKE_STATE_DIR}/before-tools/grep" "$@"
+STUB
+    _realbox_quiet 5.2.1
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/shell-membership-hit" ]
+    assert_failure
+    [[ "${output}" != *'window-evidence:'* ]]
+    [[ "${stderr}" == *'window ownership undetermined'* ]]
+}
+
+@test "#1072: tracked window membership error retains evidence without signalling" {
+    _cleanup_cwd_tools
+    mkdir -p "${STATE}/before-tools"
+    cp "${STUBS}/grep" "${STATE}/before-tools/grep"
+    cat >"${STUBS}/grep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "${FAKE_STATE_DIR}/cleanup-ready" && "$*" == *4240* && "$*" == */before* ]]; then
+    touch "${FAKE_STATE_DIR}/cleanup-membership-hit"
+    exit 2
+fi
+exec "${FAKE_STATE_DIR}/before-tools/grep" "$@"
+STUB
+    _realbox_quiet 5.2.1
+    run --separate-stderr "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/cleanup-membership-hit" ]
+    assert_failure 1
+    [[ "${output}" == *'window-evidence:'* ]]
+    [ ! -e "${STATE}/closed" ]
+    local directory
+    directory="$(cat "${STATE}/window-directory")"
+    [ -f "${directory}/before" ]
+    _assert_52_kept_evidence_stderr "${directory}"
+}
+
+@test "#1072: setup process list rejects an existing fish PID" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    printf '4242 fish\n' >>"${2#--working-directory=}/../processes-before"
+    touch "${FAKE_STATE_DIR}/setup-list-populated"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/setup-list-populated" ]
+    assert_failure
+    assert_output --partial 'fish PID 4242 existed before setup'
+    refute_output --partial 'window-evidence:'
+}
+
+@test "#1072: restore process list rejects an existing shell PID" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    _realbox_quiet 5.2.2
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    printf '4344 fish\n' >>"${2#--working-directory=}/../processes-before-restore-window"
+    touch "${FAKE_STATE_DIR}/restore-list-populated"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.3 </dev/null
+    [ -f "${STATE}/restore-list-populated" ]
+    assert_failure
+    assert_output --partial 'PID 4344 existed before reload confirmation'
+    refute_output --partial 'restore-window-evidence:'
+}
+
+@test "#1072: a window root already in the snapshot is not owned" {
+    _auto_window_tools
+    _realbox_quiet 5.2.1
+    cp "${STUBS}/ghostty" "${STATE}/before-ghostty"
+    cat >"${STUBS}/ghostty" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${FAKE_STATE_DIR}/before-ghostty" "$@"
+if [[ "$1" == +new-window ]]; then
+    printf '4240 distrobox\n' >>"${2#--working-directory=}/before"
+    touch "${FAKE_STATE_DIR}/window-list-populated"
+fi
+STUB
+    run "${REALBOX}" --allow-real-box 5.2.2 </dev/null
+    [ -f "${STATE}/window-list-populated" ]
+    assert_failure
+    refute_output --partial 'window-evidence:'
+    [ ! -e "${STATE}/closed" ]
+}
