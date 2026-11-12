@@ -591,6 +591,12 @@ _document_change() {
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
+@test "test.sh --changed selects gate documentation guard for acceptance changes" {
+    _document_change doc/acceptance.md test/unit/contract_spec.bats \
+        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
+        test/unit/verify_gate_spec.bats
+}
+
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
     local -a _specs=(test/unit/adr_spec.bats)
     local _number

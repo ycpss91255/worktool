@@ -127,7 +127,7 @@ prereq-ok
       ```
   - [ ] 1.5 系統 real-engine(docker-in-docker):真的建出可用 dev 盒;host docker 前後不變
     - 預期看到資訊(約 2-4 分鐘)
-      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh)、[script/test/system-real-entry.sh](../script/test/system-real-entry.sh) 與 [test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh)、[script/test/system-real-entry.sh](../script/test/system-real-entry.sh) 與 [test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats) 為準；此項依行為與結束碼驗收，不固定輸出快照。host 前後清單相同時，下方比較指令印出 `host unchanged`。
 
       ```text
       rc=0

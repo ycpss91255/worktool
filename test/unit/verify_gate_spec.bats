@@ -1180,14 +1180,31 @@ EOF
     done < <(sed -n '/^### 自動測試驗收/,/^- \[ \] 3\. 進盒設定:/s/^ *ok [0-9][0-9]* \(.*\)$/\1/p' "${REPO_ROOT}/doc/acceptance.md")
 }
 
-@test "M2 runner acceptance uses live sources rather than output snapshots" {
+_m2_runner_doc_valid() {
     local _section
-    _section="$(sed -n '/^- \[ \] 1\. 自動測試:/,/^- \[ \] 2\. 交付自檢/p' "${REPO_ROOT}/doc/acceptance.md")"
-    [[ "${_section}" == *'[script/test/test.sh](../script/test/test.sh)'* ]]
-    [[ "${_section}" == *'[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)'* ]]
-    [[ "${_section}" == *'skip 依 runner 政策判定'* ]]
-    run grep -E '\[ci\]|\[system-real\]|required specs OK|^[[:space:]]*1\.\.[0-9]+|[0-9]+ 個必要 spec' <<<"${_section}"
-    assert_failure 1
+    _section="$(sed -n '/^- \[ \] 1\. 自動測試:/,/^- \[ \] 2\. 交付自檢/p' "$1")"
+    [[ "${_section}" == *'[script/test/test.sh](../script/test/test.sh)'* ]] || return 1
+    [[ "${_section}" == *'[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)'* ]] || return 1
+    [[ "${_section}" == *'skip 依 runner 政策判定'* ]] || return 1
+    [[ "${_section}" == *'host unchanged'* ]] || return 1
+    if grep -Eq '\[ci\]|\[system-real\]|required specs OK|^[[:space:]]*1\.\.[0-9]+|[0-9]+ 個必要 spec' <<<"${_section}"; then
+        return 1
+    fi
+}
+
+@test "M2 runner acceptance uses live sources rather than output snapshots" {
+    run _m2_runner_doc_valid "${REPO_ROOT}/doc/acceptance.md"
+    assert_success
+}
+
+@test "M2 runner documentation guard rejects snapshots and missing source" {
+    local _doc="${BATS_TEST_TMPDIR}/acceptance.md"
+    sed '/^  - \[ \] 1\.1 lint:/a\      [ci] required specs OK (135 case(s))' "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
+    run _m2_runner_doc_valid "${_doc}"
+    assert_failure
+    sed 's|test/system/real_engine_spec.bats|test/system/obsolete.bats|g' "${REPO_ROOT}/doc/acceptance.md" >"${_doc}"
+    run _m2_runner_doc_valid "${_doc}"
+    assert_failure
 }
 
 @test "single source: documented chain diagnostics equal the source-guarded fixture" {

@@ -1081,6 +1081,7 @@ doc/adr/*.md|test/unit/adr/0013_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
+doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats
