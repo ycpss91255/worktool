@@ -162,8 +162,8 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     run "${TEST_SH}" --help
     assert_success
     local _flag
-    for _flag in --build --lint --unit --matrix --integration --system --system-real \
-        --acceptance --changed --base --filter --help; do
+    for _flag in --build --lint --guards --unit --matrix --integration --system --system-real \
+        --acceptance --changed --base --filter --shard --help; do
         assert_output --partial "${_flag}"
     done
     assert [ ! -e "${FAKE_DOCKER_CALLS}" ]

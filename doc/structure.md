@@ -316,16 +316,22 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 
 - **零特例**:根 `justfile` 只有 `mod?` 行(每個動作一個命名空間)加一個
   `default`(= `just --list`);根層沒有任何其他 recipe。
-- **動作命名的命名空間**:`test`、`box`(永遠不用 ci / cd 這種流程角色);
-  `script/<動作>/` 就是該命名空間的家,`justfile.<動作>` 與它轉發的腳本放在一起。
+- **動作命名的命名空間**：各 module 與腳本位置見下表；不用 ci / cd 這種流程角色。
 - **min -> max**:不帶參數的 `just test` 跑**全部**(CI 跑的一切);子 recipe
   與旗標只用來**縮小**範圍。
 - **薄轉發**:每個 recipe 只是把 `*args` 原封不動(`set positional-arguments`
   + `"$@"`,argv 邊界保留)交給背後的腳本;**所有**驗證、用法文字、選項清單、
   `--help` 都在腳本裡。justfile 永遠不印用法、不印 `valid: ...` 之類的清單。
-- **每個命名空間有自己的 `default` 與 `help`(別名 `h`)**,並以
-  `set working-directory := '../..'` 讓 recipe 一律在 repo 根目錄執行,所以
-  `just` 可以在 repo 的任何子目錄使用(例如 `cd doc && just box assemble --dry-run`)。
+- **每個命名空間有自己的 `default`**；help 與工作目錄依各 module 而定，見下表。
+
+| 命名空間 | module 與腳本目錄 | `default` | help 入口 | `set working-directory` |
+| --- | --- | --- | --- | --- |
+| `test` | `script/test/` | 跑全部 CI 步驟 | `help`（alias `h`） | `'../..'` |
+| `box` | `script/box/` | 列出動詞 | `help`（alias `h`） | `'../..'` |
+| `verify` | `script/verify/` | 列出動詞 | 無；各動詞用 `--help` | `'../..'` |
+| `agent` | `script/agent/` | 列出動詞 | 無；各動詞用 `--help` | `'../..'` |
+| `worktree` | `.agents/script/worktree/` | 列出動詞 | 無；各動詞用 `--help` | `'../../..'` |
+| `job` | `.agents/script/` | 列出動詞 | `help`（無 alias `h`） | `'../..'` |
 
 沒有 `just` 的機器上直接呼叫腳本效果完全相同(`./script/test/test.sh --unit`、
 `./script/box/assemble.sh --dry-run`),`just` 只是它們的介面。
