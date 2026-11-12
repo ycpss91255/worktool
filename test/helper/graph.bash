@@ -49,7 +49,7 @@ _graph_target() {
 }
 
 graph_modules() {
-    local _tree="$1" _f _line _t
+    local _tree="$1" _f _line _t _fd
     local -a _queue=("$2")
     local -A _seen=()
     while (( ${#_queue[@]} > 0 )); do
@@ -58,14 +58,17 @@ graph_modules() {
         [[ -z "${_seen[${_f}]:-}" ]] || continue
         _seen[${_f}]=1
         printf '%s\n' "${_f}"
-        while IFS= read -r _line; do
+        exec {_fd}<"${_tree}/${_f}" || return 1
+        while IFS= read -r _line <&"${_fd}"; do
             [[ "${_line}" =~ ^[[:space:]]*(source|\.)[[:space:]]+([^[:space:]]+) ]] || continue
             if ! _t="$(_graph_target "${BASH_REMATCH[2]}" "$2")"; then
                 printf 'unresolved source line in %s: %s\n' "${_f}" "${_line}" >&2
+                exec {_fd}<&-
                 return 1
             fi
             _queue+=("${_t}")
-        done <"${_tree}/${_f}"
+        done
+        exec {_fd}<&-
     done
 }
 
@@ -100,12 +103,14 @@ _graph_functions() {
 # defined in the modules of their source graph: a script is listed when a
 # function it defines is in that call closure.
 graph_judges() {
-    local _tree="$1" _s _m _mods _defs _name _body _changed _f _judges=""
+    local _tree="$1" _s _m _mods _defs _script_defs _name _body _changed _f _judges=""
     local -A _in=()
     for _s in "${_tree}"/script/*/*.sh; do
         _s="${_s#"${_tree}"/}"
         _mods="$(graph_modules "${_tree}" "${_s}")" || return 1
-        _defs="$(while IFS= read -r _m; do _graph_functions "${_tree}" "${_m}"; done <<<"${_mods}")"
+        _defs="$(while IFS= read -r _m; do
+            _graph_functions "${_tree}" "${_m}" || exit 1
+        done <<<"${_mods}")" || return 1
         _in=([$2]=1)
         _changed=1
         while (( _changed )); do
@@ -121,12 +126,13 @@ graph_judges() {
                 done
             done <<<"${_defs}"
         done
+        _script_defs="$(_graph_functions "${_tree}" "${_s}")" || return 1
         while IFS=$'\t' read -r _name _body; do
             if [[ -n "${_in[${_name}]:-}" ]]; then
                 _judges+="${_s}"$'\n'
                 break
             fi
-        done < <(_graph_functions "${_tree}" "${_s}")
+        done <<<"${_script_defs}"
     done
     [[ -z "${_judges}" ]] || printf '%s' "${_judges}"
     return 0

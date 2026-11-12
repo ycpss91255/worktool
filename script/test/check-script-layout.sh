@@ -32,22 +32,12 @@ if [[ -z "${WORKTOOL_LAYOUT_PATHS:-}" ]] && ! git -C "${ROOT}" rev-parse --show-
     exit 1
 fi
 FAILED=0
-for TREE in script .agents/script; do
-    [[ -d "${ROOT}/${TREE}" ]] || continue
-    while IFS= read -r -d '' FILE; do
-        # #550 specifies this shared entry point outside categorized scripts.
-        [[ "${FILE#"${ROOT}/"}" == .agents/script/job.sh ]] && continue
-        log_error "top-level script: ${FILE#"${ROOT}/"}"
-        FAILED=1
-    done < <(find "${ROOT}/${TREE}" -maxdepth 1 -type f -executable -print0)
-done
 # The artifact pattern table lives here; match every path component.
 ARTIFACT_PATTERNS=('[.]bak$' '[.]orig$' '[.]rej$' '[.]log$' '^_backup$' '^review_log$')
 check_artifact() {
-    local path="$1" component pattern
-    local components=()
-    IFS=/ read -r -a components <<< "${path}"
-    for component in "${components[@]}"; do
+    local path="$1" remaining="$1" component pattern
+    while :; do
+        component="${remaining%%/*}"
         for pattern in "${ARTIFACT_PATTERNS[@]}"; do
             if [[ "${component}" =~ ${pattern} ]]; then
                 log_error "process artifact: ${path}"
@@ -55,6 +45,8 @@ check_artifact() {
                 return 0
             fi
         done
+        [[ "${remaining}" == */* ]] || break
+        remaining="${remaining#*/}"
     done
 }
 # Host lint supplies a snapshot because linked-worktree Git metadata is
@@ -72,6 +64,16 @@ elif [[ ! -f "${PATH_LIST}" || ! -r "${PATH_LIST}" ]]; then
     exit 1
 fi
 while IFS= read -r -d '' FILE; do
+    case "${FILE}" in
+        script/*|.agents/script/*)
+            PARENT="${FILE%/*}"
+            if [[ ( "${PARENT}" == script || "${PARENT}" == .agents/script ) &&
+                  "${FILE}" != .agents/script/job.sh && -f "${ROOT}/${FILE}" &&
+                  ! -L "${ROOT}/${FILE}" && -x "${ROOT}/${FILE}" ]]; then
+                log_error "top-level script: ${FILE}"
+                FAILED=1
+            fi ;;
+    esac
     check_artifact "${FILE}"
 done < "${PATH_LIST}"
 exit "${FAILED}"

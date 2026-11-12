@@ -34,7 +34,7 @@ init_hooks=mkdir -p /etc/fish/conf.d && echo <box/tmux-env.fish 的 base64> | ba
 
 `additional_packages` 目前四個套件的來歷:`ripgrep fzf` 是 M2 為驗證 assemble 流程
 放的最小工具集;`tmux fish` 是 **M3(issue #160)** 加的 —— `just box setup` 預設把
-終端指到 `'<distrobox>' enter dev`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
+終端指到 `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`,#5 的驗收要求「開終端即盒內 fish」,tmux 則是
 使用者進盒後自己開的工具。M3 只裝套件;tmux / fish 的**設定**(dotfiles、主題、
 plugin)留在 M5。
 
@@ -422,7 +422,7 @@ shell**,enter 與 inbox 只報告不判定);`2` 用法錯誤(未知選項以
 
 這支工具**只量測、只在 `--max-ms` 明確給定時才判定**;本工具是 issue #22 從中拆出來
 的量測部分,換不換容器 runtime(runc / crun)的決策留在 #22(結論:CI 實測約 88 ms,
-維持 docker + 預設 runc)。「進盒 < 300 ms」的達標**由系統層 real-engine 組強制**
+維持 docker + 預設 runc)。「進盒 ≤ 300 ms」的達標**由系統層 real-engine 組強制**
 (issue #23;見下方「測試對應」):`test/system/real_engine_spec.bats` 對 DinD 內建出
 的真實 dev 盒實跑 `bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c exit'
 --max-ms 300`(門檻只寫在該 spec 的 `ENTER_MAX_MS` 一處;shell 指標自 M3 issue #160
@@ -497,7 +497,7 @@ issue #129),不再延後到 M5。
     `ghostty +validate-config --config-file=<該檔>` 接受它(marker 行對 ghostty
     是 `#` 註解),`ghostty +show-config`(沒有 `--config-file`,只能靠
     `XDG_CONFIG_HOME`)解析出的**生效** `command` 恰為
-    `'<distrobox 絕對路徑>' enter dev`(後面不接 tmux,issue #179)、`--box work`
+    `'<repo>/script/box/enter.sh' --distrobox '<distrobox 絕對路徑>' --box 'dev'`(後面不接 tmux,issue #179)、`--box work`
     換成該盒名。另有兩個對照案例證明斷言不是
     恆真:`--auto-enter no` 之後那個 command 不再存在,以及亂鍵設定被
     `+validate-config` 以 `unknown field` 拒絕。
@@ -623,7 +623,7 @@ issue #129),不再延後到 M5。
     fzf --version` 印出版本,容器狀態為 `running`;M3(issue #160)再加兩個案例:
     `distrobox enter dev -- tmux -V` 印出 `tmux <版本>`、`distrobox enter dev --
     fish --version` 印出 `fish, version <版本>`,兩個版本都印進 TAP log 當證據
-    (終端 profile 跑 `'<distrobox>' enter dev` 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
+    (終端 profile 經 `script/box/enter.sh` wrapper 得到盒內 fish;tmux 是進盒後自己開的);(d) 進盒延遲 **gate**(M3,issues #150 / #23 / #160):對這個已初始化的
     盒子實跑 `script/box/bench.sh --box dev --runs 5 --warmup 2 --shell 'fish -c
     exit' --max-ms 300`(門檻為 spec 內唯一的 `ENTER_MAX_MS` 常數;shell 指標以盒內
     fish 為準),斷言 exit 0(shell 中位數超過 300 ms 即紅)、
@@ -642,8 +642,8 @@ issue #129),不再延後到 M5。
     (`[INFO] host quiet: <PSI 路徑> ...` 或讀不到 PSI 的 `[WARN]`,issue #181),
     且只接受自己的判定碼(0 / 1),所以 runner 太忙回 3 一樣是紅;(e) **ghostty 鏈**(M3,issue #172):在 runner 內
     用 `xvfb-run -a`(`LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11`)開一個**真的
-    ghostty 視窗**,設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
-    釘住 `gtk-single-instance = false`,command 為
+    ghostty 視窗**,測試設定檔由交付的 `lib/enter.sh` 組出**一個**受管區塊、並在區塊外
+    釘住 `gtk-single-instance = false`,測試自行指定的 command 為
     `distrobox enter dev -- fish <盒內腳本>`(issue #179:中間沒有 tmux);判準是
     **盒內**留下的標記檔(內容含 `fish=<版本>`、`ctrenv=<容器檔>`、
     `mntns=<mount namespace>`、`tmux=no`、`host=<節點名>`),而不是 ghostty 的結束碼
@@ -657,7 +657,9 @@ issue #129),不再延後到 M5。
     `docker inspect dev` 報的 hostname。要講精確:標記檔位於**共享**的 bind-mount
     HOME,不是盒內私有命名空間;撐住「盒內執行」這個結論的是「runner 沒有 fish」
     +「每次啟動前先刪檔」+「整行格式由 fish 語法產生」+「hostname 對得上」這四
-    件事,不是路徑本身。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
+    件事,不是路徑本身。桌面 PATH 案則取 setup 寫出的 wrapper command,附加
+    `-- fish <盒內腳本>` 開真視窗並驗證相同標記;先證明該 PATH 下裸 `distrobox`
+    回 127。issue #179 再加 (e3) 三案,runner 上先開一個 host 端的
     tmux server(session `main`,舊命令 `-A` 會附著的名字;runner 映像因此裝了
     tmux):setup.sh 實際寫出的受管 command 原樣開窗、由 ghostty `input` 把 payload
     打進落地的 shell,標記檔仍須來自盒內 fish;盒內 `tmux` 得到盒子自己的 server
@@ -799,9 +801,9 @@ M2 的人類 gate 依此表逐項填寫。「版本(commit)」填當時審核的
 
 | 項目 | 版本(commit) | 環境 | 預期 | 結果 | 證據 |
 |------|--------------|------|------|------|------|
-| 自動化全綠(lint + unit + integration + system + system-real + acceptance) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:五個 matrix gate 與 `test-system-real` 皆 `success`,無 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
+| 自動化全綠(lint + unit + matrix + integration + system + acceptance + system-real) | main(#146 合併後;審核時填 SHA) | GitHub Actions `ubuntu-latest`;Docker 測試映像 `worktool-test:local`(alpine + bash + bats + shellcheck + distrobox 1.8.2.5)與 DinD runner `worktool-system-real:local`(docker:29.8.0-dind + bash + bats 1.14.0 + distrobox 1.8.2.5) | `ci-passed` 綠:七個 tier 的 CI 結果皆通過,無非預期 skip、無零案例 | 待審核填寫 | main 最新 run 的 checks(`ci-passed` job 記錄;`gh pr checks 146`) |
 | 一鍵自檢 `just test selfcheck`(= `./script/test/selfcheck.sh`)印出 `ALL PASS` | main(#146 合併後;審核時填 SHA) | 任一有 bash + just 的機器(clone 後於 repo 根目錄執行;不需 distrobox;沒有 just 時直接跑 `./script/test/selfcheck.sh`) | 9 個 `PASS` 行 + `ALL PASS`、exit 0 | 待審核填寫 | 貼上 `just test selfcheck; echo rc=$?` 的輸出 |
-| 真實可用盒(`script/box/assemble.sh` 真的 assemble 盒子 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(M2 時 8 案例;M3 加 bench gate 兩案例與 tmux / fish 兩案例後為 12):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
+| 真實可用盒(`script/box/assemble.sh` 真的 assemble 盒子 -> `distrobox enter dev -- rg --version` / `fzf --version` 可執行、第二次 assemble 冪等、`distrobox rm -f dev` 可清理;M3 #160 起再加 `tmux -V` / `fish --version`) | main(#146 合併後;審核時填 SHA) | CI 內 docker-in-docker(`test-system-real` job;`docker run --rm --privileged` 的 runner,巢狀 dockerd + 真實 distrobox 1.8.2.5 + 真實 `ubuntu:26.04`);本機 `just test system-real` 同一 runner | `test/system/real_engine_spec.bats` 全部案例 `ok`(案例數依目前 spec 的 TAP 計畫為準):盒子由 `ubuntu:26.04` 建出、第一次 `distrobox enter` 完成初始化後 `ripgrep` / `fzf`(M3 起再加 `tmux` / `fish`)版本可印出(驗證邊界:套件在第一次 enter 時安裝,不是 assemble 返回時就裝好)、冪等、可清理;巢狀 daemon 內的容器/映像/volume 隨 runner 銷毀,host daemon 只留 runner 映像 `worktool-system-real:local` 與建置快取 | **已由自動化驗證**(不再延後 M5;M5 保留更廣的環境矩陣) | `test-system-real` job 記錄(TAP `1..N` 全 `ok`、結尾 `[ci] system-real bats OK`);本機同指令輸出 |
 
 ## 如何人工驗證(M2,從 clone 到 assemble)
 
@@ -830,8 +832,7 @@ cd worktool
 
 ### 2. 自動測試(全部在 Docker 內,不需 distrobox)
 
-入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`)與各自的一行說明(`test`
-那一行就列了全部子 recipe);裸 `just test` **不是列表**,而是直接跑全部;腳本層的
+入口是 `just`:裸 `just` 列出 namespaces(`test`、`box`、`verify`、`agent`、`worktree`、`job`)與各自的一行說明；`just --list test` 列出 test 的子 recipe。裸 `just test` **不是列表**,而是直接跑全部;腳本層的
 usage 用 `just test help`。第一次可先建測試映像,再依序跑七個 tier;每一步下一行的
 `# 底層:` 標出 recipe 實際轉發到的腳本(沒有 `just` 時可直接執行那一行):
 
@@ -884,14 +885,14 @@ matrix、integration、system、acceptance、system-real,遇到第一個失敗�
     repo 印 `ALL PASS`;壞清單 / 跳過驗證的包裝器被判 `SOME FAILED`),結尾
     `[ci] acceptance bats OK`。
   - `just test system-real`:先看到 `[system-real] dockerd ready after Ns` 與
-    `[system-real] engine 29.8.0 ...`,接著 `1..12` 且 12 項全 `ok`(assemble、第一次 enter
+    `[system-real] engine 29.8.0 ...`,接著 `1..N` 且 N 項全 `ok`(N 依目前 spec 的 TAP 計畫)(assemble、第一次 enter
     完成初始化後 `rg --version`、`fzf --version`、`tmux -V`、`fish --version`、以 fish
     量的進盒延遲 gate 與其負向案例、冪等、`distrobox rm`),結尾
     `[ci] system-real bats OK`、`[system-real] cleanup: containers left in the nested
     daemon: 0`。
-- 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有案例被 `skip`
+- 任一 gate 失敗會以 `[ci] ERROR: ...` 與非零結束碼結束;bats gate 若有非預期的 `skip`
   、根本沒跑到任何案例、或該層任一必要 spec 缺檔/零案例(每層先印
-  `[ci]   required specs OK (N case(s) declared by M file(s))` 才開始跑),同樣視為失敗。
+  `[ci]   required specs OK (N case(s) declared by M file(s))` 才開始跑),同樣視為失敗。只有 unit 的三個 CPU repro 案例在 `WORKTOOL_STRESS` 不為 `1` 且 skip 原因精確為 `set WORKTOOL_STRESS=1 to run CPU repro` 時可略過；設為 `1` 時必須執行。完整名稱與判定見 [`lib/test_shard.sh`](../lib/test_shard.sh)。
 
 ### 3. 手動驗證 assemble 包裝器(不需 distrobox,用 dry-run)
 

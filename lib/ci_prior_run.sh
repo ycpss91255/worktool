@@ -14,7 +14,7 @@
 #
 # Public API:
 #   CI_PRIOR_RUN_CODE_TITLE / CI_PRIOR_RUN_META_TITLE
-#       the run names (`run-name:` of ci.yml) of the two paths.
+#       the legacy run names (`run-name:` of ci.yml) of the two paths.
 #   ci_prior_run_select <current_run_id> <pr_number>   (run records on stdin)
 #       stdin: one `<id>\t<run_number>\t<status>\t<display_title>\t<PR
 #       numbers, space separated>` line per ci.yml run of the head sha.
@@ -53,7 +53,7 @@ _CI_PRIOR_RUN_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./log.sh
 source "${_CI_PRIOR_RUN_LIB_DIR}/log.sh"
 
-# The run-name of each path of ci.yml.
+# The legacy run-name of each path of ci.yml.
 CI_PRIOR_RUN_CODE_TITLE='CI code run'
 CI_PRIOR_RUN_META_TITLE='CI meta run'
 
@@ -102,8 +102,9 @@ ci_prior_run_select() {
             return 1
         fi
         [[ "${_id}" != "${_current}" ]] || continue
-        # Meta runs and runs named before #688 never count.
-        [[ "${_title}" == "${CI_PRIOR_RUN_CODE_TITLE}" ]] || continue
+        # Only the fixed code prefix can identify a new-format run; the
+        # untrusted PR title after the separator never determines the path.
+        [[ "${_title}" == "${CI_PRIOR_RUN_CODE_TITLE}" || "${_title}" == "${CI_PRIOR_RUN_CODE_TITLE} · PR #${_pr} · "* ]] || continue
         [[ " ${_prs} " == *" ${_pr} "* ]] || continue
         if ((_number > _best_number)); then
             _best="${_id}"

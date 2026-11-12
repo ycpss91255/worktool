@@ -434,6 +434,41 @@ EVERYTHING_IN_ORDER="$(printf '%s\n' \
     assert_line --regexp 'test\.sh --ci-unit test/unit/test_sh_spec\.bats$'
 }
 
+_prepare_git_mount_repo() {
+    MOUNT_ROOT="${BATS_TEST_TMPDIR}/mount repo"
+    mkdir -p "${MOUNT_ROOT}/script/test"
+    cp "${TEST_SH}" "${MOUNT_ROOT}/script/test/test.sh"
+    git -C "${MOUNT_ROOT}" init -q
+    git -C "${MOUNT_ROOT}" add .
+    git -C "${MOUNT_ROOT}" -c user.name=Fixture \
+        -c user.email=1+fixture@users.noreply.github.com commit -qm fixture
+}
+
+@test "test.sh mounts linked-worktree common Git metadata read-only for bats gates" {
+    _prepare_git_mount_repo
+    local linked="${BATS_TEST_TMPDIR}/linked repo" tier
+    git -C "${MOUNT_ROOT}" worktree add -q -b linked "${linked}"
+    for tier in unit matrix integration system acceptance; do
+        : >"${FAKE_DOCKER_CALLS}"
+        run "${linked}/script/test/test.sh" "--${tier}"
+        assert_success
+        run cat "${FAKE_DOCKER_CALLS}"
+        assert_output --partial "-v ${MOUNT_ROOT}/.git:${MOUNT_ROOT}/.git:ro"
+    done
+}
+
+@test "test.sh keeps plain-clone bats gates free of extra Git mounts" {
+    _prepare_git_mount_repo
+    local tier
+    for tier in unit matrix integration system acceptance; do
+        : >"${FAKE_DOCKER_CALLS}"
+        run "${MOUNT_ROOT}/script/test/test.sh" "--${tier}"
+        assert_success
+        run cat "${FAKE_DOCKER_CALLS}"
+        refute_output --partial "-v ${MOUNT_ROOT}/.git:"
+    done
+}
+
 @test "test.sh --unit forwards multiple spec paths in order" {
     run "${TEST_SH}" --unit test/unit/test_sh_spec.bats test/unit/ci_gate_spec.bats
     assert_success
@@ -711,4 +746,122 @@ OBSERVER
     assert_failure
     assert_output --partial 'from function `teardown'
     assert_output --partial '/runner/.agents/state/layout-paths.'
+}
+
+_prepare_lint_worktree() {
+    LINT_ROOT="${BATS_TEST_TMPDIR}/lint repo"
+    mkdir -p "${LINT_ROOT}/script/test" "${LINT_ROOT}/.agents/state"
+    cp "${TEST_SH}" "${LINT_ROOT}/script/test/test.sh"
+    cp "${REPO_ROOT}/script/test/check-script-layout.sh" "${LINT_ROOT}/script/test/"
+    mkdir -p "${LINT_ROOT}/lib"
+    cp "${REPO_ROOT}/lib/log.sh" "${REPO_ROOT}/lib/test_shard.sh" "${LINT_ROOT}/lib/"
+    printf '.agents/state/\n' >"${LINT_ROOT}/.gitignore"
+    git -C "${LINT_ROOT}" init -q
+    git -C "${LINT_ROOT}" add .
+}
+
+@test "lint ignores a gitignored ShellCheck violation in .agents/state" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_success
+    assert_output --partial 'ShellCheck OK'
+    refute_output --partial 'scratch.sh'
+    assert [ -f "${LINT_ROOT}/.agents/state/scratch.sh" ]
+}
+
+@test "lint rejects an untracked non-ignored ShellCheck violation" {
+    _prepare_lint_worktree
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/new script.sh"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'new script.sh'
+    assert_output --partial 'SC2164'
+    assert_output --partial 'ShellCheck failed'
+}
+
+@test "lint falls back outside a Git work tree and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    mv "${LINT_ROOT}/.git" "${BATS_TEST_TMPDIR}/git-metadata"
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*not an accessible work tree}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
+
+@test "lint falls back without git and explains why on stderr" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname find mktemp rm shellcheck; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    printf '#!/bin/bash\ncd /missing\n' >"${LINT_ROOT}/.agents/state/scratch.sh"
+    PATH="${bin}" run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert_output --partial 'scratch.sh'
+    assert_output --partial 'SC2164'
+    assert [ "${stderr}" != "${stderr#*git unavailable}" ]
+    assert [ "${stderr}" != "${stderr#*falling back to filesystem lint discovery}" ]
+}
+
+@test "lint rejects failed filesystem discovery without git even after partial output" {
+    bats_require_minimum_version 1.5.0
+    local stderr=""
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname mktemp rm shellcheck; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    ln -s "$(command -v find)" "${bin}/real-find"
+    cat >"${bin}/find" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$2" != -path ]]; then
+    exec real-find "$@"
+fi
+printf '%s\0' "$1/lib/log.sh"
+printf 'find: unreadable subdirectory\n' >&2
+exit 1
+EOF
+    chmod +x "${bin}/find"
+    PATH="${bin}" run --separate-stderr "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_failure 1
+    assert [ "${stderr}" != "${stderr#*git unavailable}" ]
+    assert [ "${stderr}" != "${stderr#*find: unreadable subdirectory}" ]
+    assert [ "${stderr}" != "${stderr#*filesystem lint discovery failed}" ]
+    refute_output --partial 'ShellCheck OK'
+}
+
+@test "lint ignores an executable top-level script excluded by Git" {
+    _prepare_lint_worktree
+    printf 'script/scratch\n' >>"${LINT_ROOT}/.gitignore"
+    printf '#!/bin/bash\n' >"${LINT_ROOT}/script/scratch"
+    chmod +x "${LINT_ROOT}/script/scratch"
+    run "${LINT_ROOT}/script/test/test.sh" --ci-lint
+    assert_success
+    assert_output --partial 'Script layout OK'
+}
+
+@test "lint fails when fallback snapshot cannot be written" {
+    _prepare_lint_worktree
+    local bin="${BATS_TEST_TMPDIR}/no-git-bin" tool
+    mkdir -p "${bin}"
+    for tool in bash dirname find mktemp rm; do
+        ln -s "$(command -v "${tool}")" "${bin}/${tool}"
+    done
+    cat >"${BATS_TEST_TMPDIR}/write-snapshot.sh" <<'SCRIPT'
+source "$1"
+if _write_lint_paths /dev/full; then exit 0; else exit 1; fi
+SCRIPT
+    PATH="${bin}" run bash "${BATS_TEST_TMPDIR}/write-snapshot.sh" "${LINT_ROOT}/script/test/test.sh"
+    assert_failure 1
+    assert_output --partial 'cannot write filesystem lint discovery snapshot'
 }
