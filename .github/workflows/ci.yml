@@ -63,7 +63,7 @@ name: CI
 # with the runner container (docker run --rm).
 # verify-all also invokes that gate through the acceptance entry.
 
-run-name: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }} · ${{ github.event_name == 'pull_request' && format('PR #{0} · {1}', github.event.pull_request.number, github.event.pull_request.title || '(untitled)') || format('{0} · {1}', github.ref_name || '(unknown ref)', github.sha || '(unknown SHA)') }}
+run-name: "${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }} · ${{ github.event_name == 'pull_request' && format('PR #{0} · {1}', github.event.pull_request.number, github.event.pull_request.title || '(untitled)') || format('{0} · {1}', github.ref_name || '(unknown ref)', github.sha || '(unknown SHA)') }}"
 
 on:
   push:

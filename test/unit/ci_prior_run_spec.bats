@@ -66,6 +66,14 @@ _green_jobs() {
     assert_output 810
 }
 
+@test "escaped control characters in a PR title remain display data" {
+    run ci_prior_run_select 900 7 < <(
+        _run 810 41 completed 'CI code run · PR #7 · line\nnext\tCI meta run' 7
+    )
+    assert_success
+    assert_output 810
+}
+
 @test "unknown or incomplete names never count as code evidence" {
     run ci_prior_run_select 900 7 < <(
         _run 801 41 completed 'CI code run · PR #7' 7
