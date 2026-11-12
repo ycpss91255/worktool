@@ -896,3 +896,23 @@ _document_change() {
     assert_success
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/job_spec.bats')"
 }
+
+@test "changed DNS wrapper dispatches its spec only when changed" {
+    mkdir -p "${TEMP_REPO}/.agents/script/network" "${TEMP_REPO}/test/unit/script"
+    printf '# wrapper\n' >"${TEMP_REPO}/.agents/script/network/wait-ubuntu-dns.sh"
+    printf '@test "dns" { true; }\n' >"${TEMP_REPO}/test/unit/script/wait_ubuntu_dns_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/.agents/script/network/wait-ubuntu-dns.sh"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/script/wait_ubuntu_dns_spec.bats')"
+    : >"${FAKE_DOCKER_CALLS}"
+    local mapping='.agents/script/network/wait-ubuntu-dns.sh|test/unit/script/wait_ubuntu_dns_spec.bats'
+    [ "$(grep -Fxc "$mapping" "${TEMP_REPO}/script/test/test.sh")" -eq 1 ]
+    sed -i '\@^\.agents/script/network/wait-ubuntu-dns\.sh|test/unit/script/wait_ubuntu_dns_spec\.bats$@d' "${TEMP_REPO}/script/test/test.sh"
+    run grep -Fxc "$mapping" "${TEMP_REPO}/script/test/test.sh"
+    [ "$status" -eq 1 ]
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" != *wait_ubuntu_dns_spec.bats* ]]
+}
