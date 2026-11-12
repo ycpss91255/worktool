@@ -1056,12 +1056,20 @@ prereq-ok
       ````text stdout
       backup-covers=5/5
       host-state baseline: present=0
+      backup.version=2
+      ghostty.path=<path>
       ghostty=regular
       ghostty.sha=<sha>
+      ghostty-modern.path=<path>
       ghostty-modern=absent-file
+      worktool.path=<path>
       worktool=absent-dir
+      distrobox-conf.path=<path>
       distrobox-conf=absent-dir
+      init-log.path=<path>
       init-log=absent-file
+      directories.sha=<sha>
+      absent-directories.sha=<sha>
       backup=<path> ok=1
       revalidate=1
       preexisting-dev=0
@@ -1099,7 +1107,7 @@ prereq-ok
       cleanup-rc=0
       請維護者自行判斷開窗是否順暢（主觀項目，不影響 rc）。
       ````
-      首次啟動與 setup 的 stderr（setup 診斷僅節錄 auto-enter；另有 terminal、box、設定路徑、寫入與重新載入提示；正常 Docker 新盒的初始化進度可出現多行，依安裝耗時與階段而異）：
+      首次啟動與 setup 的完整 stderr（正常 Docker 新盒的初始化進度可出現多行，依安裝耗時與階段而異）：
       ````text stderr
       phase=first-start
       [INFO] first launch of box 'dev': distrobox installs its packages first - this can take several minutes (timeout 15m00s)
@@ -1107,8 +1115,16 @@ prereq-ok
       [INFO] full init log: <path>
       [INFO] first launch: initialisation complete after <elapsed> - entering the box
       [INFO] auto-enter: yes (user)
+      [INFO] terminal: ghostty (user)
+      [INFO] box: dev (user)
+      [INFO] ghostty config: <path> (config.ghostty absent; legacy fallback)
+      [INFO] distrobox: <path> (absolute path written into the managed command)
+      [INFO] wrote: <path>
+      [INFO] wrote: <path> (managed block: _worktool_n=; _worktool_v=; for _worktool_a in "$@"; do if [ -n "${_worktool_v}" ]; then [ "${_worktool_v}" = n ] && [ -n "${_worktool_a}" ] && _worktool_n="${_worktool_a}"; _worktool_v=; continue; fi; case "${_worktool_a}" in --|-e|--exec) break ;; -n|--name) _worktool_v=n ;; -a|--additional-flags) _worktool_v=a ;; -*) ;; *) _worktool_n="${_worktool_a}" ;; esac; done; [ "${_worktool_n:-${DBX_CONTAINER_NAME:-}}" != 'dev' ] || unset TMUX TMUX_PANE; unset _worktool_a _worktool_n _worktool_v)
+      [INFO] wrote: <path> (managed block: command = '<path>' --distrobox '<path>' --box 'dev')
+      [INFO] Ghostty config changed: a running Ghostty must reload its config (Linux default: Ctrl+Shift+,). Reload is asynchronous; wait until the config takes effect before opening a new window, or start a new Ghostty process first. Keep your existing windows open.
       ````
-      此例的 assemble stub 未記錄 HOME／link，因此 status 如上；實機會依 assemble 保存的 HOME／link 印出對應路徑與狀態。實機每 10 秒可能另印 `[INFO] first launch: <stage> - <elapsed> elapsed - <latest>`。純 just stub 不執行 enter.sh，stderr 僅有 phase 行；雙向比對 spec 使用真實 enter.sh、setup.sh、status.sh 與立即完成的 Docker stub，核對完整 stdout 與節錄的 stderr；setup 的診斷走 stderr。以下保留純 stub 的視窗與還原輸出，供視窗 spec 比對：
+      此例的 assemble stub 未記錄 HOME／link，因此 status 如上；實機會依 assemble 保存的 HOME／link 印出對應路徑與狀態。實機每 10 秒可能另印 `[INFO] first launch: <stage> - <elapsed> elapsed - <latest>`。純 just stub 不執行 enter.sh，stderr 僅有 phase 行；雙向比對 spec 使用真實 enter.sh、setup.sh、status.sh 與立即完成的 Docker stub，核對完整 stdout 與 stderr；setup 的診斷走 stderr。以下保留純 stub 的視窗與還原輸出，供視窗 spec 比對：
       stubbed 非 tty 完整執行的視窗與還原輸出如下（其餘備份明細如上；PID 與 namespace 由 fixture 固定）：
       ```text
       ghostty-reload=1

@@ -332,7 +332,7 @@ _dispatched() {
     for path in "${paths[@]}"; do
         printf '# source\n' >"${TEMP_REPO}/${path}"
     done
-    for path in verify_realbox verify_realbox_matrix; do
+    for path in verify_realbox verify_realbox_matrix realbox_52_doc; do
         printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${path}_spec.bats"
     done
     printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/system/real_assemble_spec.bats"
@@ -345,6 +345,9 @@ _dispatched() {
         expected="$(_dispatched)"
         [[ "${expected}" == *test/unit/verify_realbox_spec.bats* ]]
         [[ "${expected}" == *test/unit/verify_realbox_matrix_spec.bats* ]]
+        if [[ "${path}" == script/verify/realbox.sh || "${path}" == test/helper/realbox_window.bash ]]; then
+            [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        fi
         if [[ "${path}" == script/verify/realbox.sh ]]; then
             assert_output --partial "此改動由 CI 的 system 驗證"
         fi
@@ -353,6 +356,76 @@ _dispatched() {
         else
             refute_output --partial "測試基礎設施變更"
         fi
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects the 5.2 document guard for product libraries" {
+    local path expected
+    for path in lib/enter.sh lib/config.sh; do
+        mkdir -p "${TEMP_REPO}/lib"
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in lib/enter.sh lib/config.sh; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "test.sh --changed selects the 5.2 document guard for transitive inputs" {
+    local path expected
+    local -a paths=(lib/log.sh lib/manifest.sh lib/home.sh lib/link.sh)
+    mkdir -p "${TEMP_REPO}/lib"
+    for path in "${paths[@]}"; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        expected="$(_dispatched)"
+        [[ "${expected}" == *test/unit/realbox_52_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
+}
+
+@test "5.2 dispatch check rejects each missing transitive mapping" {
+    local path row mapping="${TEMP_REPO}/script/test/test.sh" tmp="${BATS_TEST_TMPDIR}/mapping"
+    local -a paths=(lib/log.sh lib/manifest.sh lib/home.sh lib/link.sh)
+    mkdir -p "${TEMP_REPO}/lib"
+    for path in "${paths[@]}"; do
+        printf '# source\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/realbox_52_doc_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        git -C "${TEMP_REPO}" checkout -- script/test/test.sh
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/realbox_52_doc_spec.bats* ]]
+        row="${path}|test/unit/realbox_52_doc_spec.bats"
+        assert_equal "$(grep -cxF "${row}" "${mapping}")" 1
+        awk -v row="${row}" '$0 != row' "${mapping}" >"${tmp}"
+        cat "${tmp}" >"${mapping}"
+        if grep -qxF "${row}" "${mapping}"; then
+            return 1
+        fi
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" != *test/unit/realbox_52_doc_spec.bats* ]]
         git -C "${TEMP_REPO}" checkout -- "${path}"
     done
 }
@@ -610,7 +683,9 @@ _document_change() {
 }
 
 @test "test.sh --changed selects all acceptance documentation guards together" {
-    _document_change doc/acceptance.md test/unit/contract_spec.bats \
+    _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
+        test/unit/realbox_52_doc_spec.bats \
+        test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/m2_acceptance_warning_spec.bats test/unit/acceptance_51_doc_spec.bats test/unit/backup_acceptance_doc_spec.bats \
         test/unit/verify_gate_spec.bats
