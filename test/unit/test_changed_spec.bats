@@ -384,6 +384,17 @@ _dispatched() {
     assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/verify_gate_spec.bats')"
 }
 
+@test "test.sh --changed maps acceptance documentation to its setup and gate guard" {
+    mkdir -p "${TEMP_REPO}/doc"
+    printf '# acceptance\n' >"${TEMP_REPO}/doc/acceptance.md"
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/setup_gate_acceptance_doc_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/doc/acceptance.md"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_equal "$(_dispatched)" "$(printf '%s\n' --ci-lint '--ci-unit test/unit/setup_gate_acceptance_doc_spec.bats')"
+}
+
 @test "test.sh --changed maps the all check to its spec" {
     mkdir -p "${TEMP_REPO}/script/verify"
     printf '# all check\n' >"${TEMP_REPO}/script/verify/all.sh"
