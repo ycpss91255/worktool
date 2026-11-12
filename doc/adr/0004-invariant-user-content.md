@@ -55,7 +55,7 @@ worktool 的核心承諾是重建（#200 定案 2、3）：換機、重灌、升
   - 狀態檔裡使用者自己加的行：`test/unit/setup_spec.bats`:「#199 r4: every setup run x every EOF framing, appending two keys, keeps every foreign byte」與 `test/unit/setup_spec.bats`:「#199 r5: every setup run x every EOF framing, replace-only (all keys present), keeps every byte」檢查 setup 更新或新增自己的鍵時，註解、空白、外來鍵與順序原樣保留。
   - `just box assemble` 寫同一個狀態檔：`test/integration/assemble_spec.bats`:「#198: a successful run records home= and home.source= in the state file, keeping the other lines」（註解行與 `auto-enter` 等使用者的行原樣留下、順序不變，只換掉 `home` 那一對）、`test/integration/assemble_spec.bats`:「#198: a failed distrobox run records nothing」（失敗不寫）、`test/unit/assemble_spec.bats`:「#198: dry-run records nothing in the state file」（試跑不寫）、`test/unit/assemble_spec.bats`:「#198: a stored user home is used when --home is not given; --home still wins」（使用者存的 home 不被預設蓋掉）。
 
-user config 已由 #199／PR #228 交付：`just box assemble` 以 symlink 從 host HOME 帶進盒子 HOME，不複製、不修改 host 那份；同名既有項目不覆蓋。由 `test/integration/assemble_spec.bats`:「#199: an existing entry in the box HOME survives assemble with a warning」與 `test/unit/link_spec.bats`:「a foreign symlink in the box HOME (even a dangling one) is left as is」守住。
+user config 連結已由 #199／PR #228 交付：`just box assemble` 以 symlink 從 host HOME 帶入預設的 `.ssh`、`.gitconfig`、`.gnupg`、`.config/gh` 及狀態檔 `link=` 指定的有效項目，不複製或修改 host 那份；來源不存在、盒內同名項目非預期連結，或盒子 HOME／項目的父目錄不安全時跳過。同名既有項目不覆蓋由 `test/integration/assemble_spec.bats`:「#199: an existing entry in the box HOME survives assemble with a warning」與 `test/unit/link_spec.bats`:「a foreign symlink in the box HOME (even a dangling one) is left as is」守住。
 
 這些測試只證明 `setup.sh` 對 ghostty config、distrobox.conf、狀態檔，以及 `assemble.sh` 對狀態檔與 user config 連結的行為，不能推到其他指令或檔案。以下尚無機制或測試，標為待補：
 

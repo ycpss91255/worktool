@@ -27,7 +27,7 @@
 
 ## 3. worktool 不做的事
 
-- **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，user config 已以 symlink 從 host HOME 帶進盒子 HOME（不複製、不修改，host 那份是唯一一份），由 #199 交付。
+- **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，#199 以 symlink 從 host HOME 帶入預設的 `.ssh`、`.gitconfig`、`.gnupg`、`.config/gh` 及狀態檔 `link=` 指定的有效項目，不複製或修改 host 那份。來源不存在、盒內同名項目非預期連結，或盒子 HOME／項目的父目錄不安全時會跳過。
   - 驗證：`test/integration/assemble_spec.bats`（建立連結與既有項目保留）；`test/unit/link_spec.bats`（既有檔案與外來連結不覆蓋）。
 - **不在 host 用 apt 裝 CLI／TUI 工具。** CLI／TUI 工具一律裝在盒內，盒子清單只有 `box/dev.ini` 一份。
   - 驗證：待驗（尚無檢查「沒有任何腳本在 host 呼叫 apt」的測試）。盒內安裝的部分由 `test/system/real_assemble_spec.bats` 檢查：真實 distrobox 送到容器管理器的建立容器的請求帶有清單裡的套件。
