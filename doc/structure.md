@@ -17,6 +17,11 @@ worktool/
 │   ├── commit_attribution.sh  commit 訊息與 PR 說明署名檢查:事件範圍、違規 SHA 與行、修正提示(#271)
 │   ├── ci_prior_run.sh  CI meta 路徑的前次 code run 判斷(純函式,不呼叫 GitHub API):ci_prior_run_select / ci_prior_run_evaluate / ci_prior_run_expected_jobs(#688)
 │   ├── commit_email.sh  commit email 判斷(純函式):author 必須是 GitHub noreply,committer 為 noreply 或 noreply@github.com(commit_email_evaluate / commit_email_range,#234)
+│   ├── config_backup.sh 驗收設定檔備份與還原
+│   ├── distrobox_manager.sh 容器管理器解析
+│   ├── guard.sh         失敗封閉的狀態原語，區分不存在與無法判定，避免失敗被當作通過
+│   ├── realbox_interrupt.sh 實機驗收中斷清理
+│   ├── verify_run.sh    驗收程序執行與訊號處理
 │   └── enter.sh         自動進盒 helper:路徑(HOME / XDG_CONFIG_HOME)、預設值、執行檔解析與 shell quoting(ghostty / distrobox,issue #175)、設定檔讀取、受管區塊(setup.sh / status.sh 共用)
 ├── box/                 distrobox 盒子清單
 │   └── dev.ini          共用 dev 盒清單(distrobox-assemble 格式;M2 最小工具集)
@@ -28,8 +33,18 @@ worktool/
 │   │   │                        (無旗標 = 全部依序跑);容器內以 --ci-* 跑真正的 gate
 │   │   ├── selfcheck.sh         一鍵自檢(使用者 clone 後執行;dry-run 契約 + 無效清單拒絕)
 │   │   └── system-real-entry.sh DinD runner 入口:起巢狀 dockerd、等就緒、跑 real-engine 組、清理
+│   ├── verify/          驗收指令與共用 helper(just verify ...)
+│   │   ├── justfile.verify 驗收命令轉發
+│   │   ├── all.sh       非實機群組入口
+│   │   ├── ui.sh        使用者介面驗證
+│   │   ├── gate.sh      自動 gate 驗證
+│   │   ├── setup.sh     設定驗證
+│   │   ├── diagram.sh   圖面驗證
+│   │   ├── evidence.sh  外部證據驗證
+│   │   ├── realbox.sh   實機驗收
+│   │   └── config_backup_paths.sh 備份路徑 helper
 │   └── box/             dev 盒生命週期(just box ...)
-│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh(M3 再加 rm)
+│       ├── justfile.box         `box` 命名空間:薄轉發到 assemble.sh / bench.sh / setup.sh / status.sh / enter.sh
 │       ├── assemble.sh          從清單 assemble dev 盒的薄包裝器(--dry-run / --file / --home / --help);建立時指定盒子獨立 HOME
 │       ├── setup.sh             終端自動進盒設定:--auto-enter / --terminal / --box / --distrobox / --dry-run / --help;寫單一設定檔 + Ghostty 受管區塊 `command = '<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box '<盒>'`(wrapper 與 distrobox 都是已 quote 的絕對路徑,#180;不開 tmux、不碰 ~/.tmux.conf,#179),每次另寫 distrobox.conf 受管區塊(進盒時丟掉 TMUX / TMUX_PANE,#179);見 enter.md)
 │       ├── enter.sh             Ghostty 受管命令與手動進盒共用的包裝層(just box enter):首次啟動偵測(docker inspect StartedAt 零值)、說明 + docker logs 指令 + host log、每 10 秒進度、逾時 / 失敗印原因與復原方式、trap 清背景行程,完成後 exec distrobox enter(#180;--box / --distrobox / --timeout / -- 指令 / --help)
@@ -68,7 +83,11 @@ worktool/
 │   │   ├── hook/                 .agents/hook/ 每支 hook 與 lib 的 spec(以 stdin JSON 驅動,跟 Claude Code 呼叫方式相同；含 Stop 回覆語言檢查 #281)
 │   │   ├── script/               .agents/script/ 的 wait-pr-ci.sh / watch-user-replies.sh spec(gh 以 PATH stub 取代)
 │   │   └── fixture/
-│   │       └── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
+│   │       ├── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
+│   │       ├── apt_origin.mjs / workflow_run.mjs  測試伺服器與 workflow fixture
+│   │       ├── realbox_cold_tool.sh / realbox_matrix_just.sh / realbox_shim.sh / realbox_tool.sh
+│   │       ├── verify_setup_just.sh / verify_signal.js / verify_signal_anchor.js
+│   │       └── adr/              9999-invariant-missing-guard.md / 9999-invariant-missing-section.md
 │   ├── matrix/          完整乘積矩陣(bats):CI 必跑、不納入本機推送前 unit gate
 │   │   ├── enforce_milestone_gate_approval_spec.bats
 │   │   └── enforce_no_attribution_spec.bats  no-attribution hook 的完整署名×位置×來源×包裝矩陣(#270)
@@ -87,6 +106,7 @@ worktool/
 │   │   └── m2_selfcheck_spec.bats   script/test/selfcheck.sh 對交付 repo 印 ALL PASS(含負向)
 │   └── helper/          bats 共用 helper
 │       ├── common.bash  路徑常數 + bats-support / bats-assert 載入
+│       ├── diagnostics.bash / interrupt_load.bash / realbox_window.bash  驗收診斷、負載與視窗測試 helper
 │       └── hook.bash    hook spec 共用:hook_json / run_hook / disable_line
 ├── dockerfile/
 │   ├── Dockerfile.test  測試映像(bash + bats + shellcheck + just + jq + 鎖定版 distrobox)
@@ -100,6 +120,10 @@ worktool/
 │   ├── structure.md     本文件
 │   ├── acceptance.md    驗收清單(通用指令 + 各 milestone 的人類驗收項目)
 │   ├── agent/           給 agent skill 讀的設定:issue-tracker.md / triage-labels.md / domain.md
+│   ├── evidence/        驗收證據、TDD 檢查與負向 fixture；保留既有 review 紀錄，新增審查紀錄放 PR 留言或 .agents/state/
+│   │   ├── README.md / verify-image.md / 363-review-round-1.md / 607-review-round-1.md
+│   │   ├── tdd.sh / tdd.awk
+│   │   └── negative/    empty-red-block.md / wrong-order.md
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
 │       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
 │       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、盒子 HOME、ghostty -> enter.sh wrapper -> distrobox enter dev -> fish(不自動開 tmux,#179)
@@ -152,6 +176,8 @@ worktool/
 `script/` 與 `.agents/script/` 的可執行腳本必須放在類型子目錄內，
 不得直接放在頂層；#550 指定的共用 `.agents/script/job.sh` 是唯一例外。
 agent 的 Monitor 腳本放在 `.agents/script/monitor/`。
+
+`.agents/script/network/wait-ubuntu-dns.sh -- <命令>` 在執行前有界等待 Ubuntu 三個來源網域由主機解析；僅檢查主機 resolver，不保證容器 DNS 或服務可用。不得用來包住還原或清理命令。
 `just test lint` 在 Docker 內檢查此規則，違反時列出檔名並失敗；
 `just test script-layout [--root <repo>]` 可指定檢查目錄，參數驗證與 help 由腳本負責。
 
@@ -290,16 +316,22 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 
 - **零特例**:根 `justfile` 只有 `mod?` 行(每個動作一個命名空間)加一個
   `default`(= `just --list`);根層沒有任何其他 recipe。
-- **動作命名的命名空間**:`test`、`box`(永遠不用 ci / cd 這種流程角色);
-  `script/<動作>/` 就是該命名空間的家,`justfile.<動作>` 與它轉發的腳本放在一起。
+- **動作命名的命名空間**：各 module 與腳本位置見下表；不用 ci / cd 這種流程角色。
 - **min -> max**:不帶參數的 `just test` 跑**全部**(CI 跑的一切);子 recipe
   與旗標只用來**縮小**範圍。
 - **薄轉發**:每個 recipe 只是把 `*args` 原封不動(`set positional-arguments`
   + `"$@"`,argv 邊界保留)交給背後的腳本;**所有**驗證、用法文字、選項清單、
   `--help` 都在腳本裡。justfile 永遠不印用法、不印 `valid: ...` 之類的清單。
-- **每個命名空間有自己的 `default` 與 `help`(別名 `h`)**,並以
-  `set working-directory := '../..'` 讓 recipe 一律在 repo 根目錄執行,所以
-  `just` 可以在 repo 的任何子目錄使用(例如 `cd doc && just box assemble --dry-run`)。
+- **每個命名空間有自己的 `default`**；help 與工作目錄依各 module 而定，見下表。
+
+| 命名空間 | module 與腳本目錄 | `default` | help 入口 | `set working-directory` |
+| --- | --- | --- | --- | --- |
+| `test` | `script/test/` | 跑全部 CI 步驟 | `help`（alias `h`） | `'../..'` |
+| `box` | `script/box/` | 列出動詞 | `help`（alias `h`） | `'../..'` |
+| `verify` | `script/verify/` | 列出動詞 | 無；各動詞用 `--help` | `'../..'` |
+| `agent` | `script/agent/` | 列出動詞 | 無；各動詞用 `--help` | `'../..'` |
+| `worktree` | `.agents/script/worktree/` | 列出動詞 | 無；各動詞用 `--help` | `'../../..'` |
+| `job` | `.agents/script/` | 列出動詞 | `help`（無 alias `h`） | `'../..'` |
 
 沒有 `just` 的機器上直接呼叫腳本效果完全相同(`./script/test/test.sh --unit`、
 `./script/box/assemble.sh --dry-run`),`just` 只是它們的介面。
@@ -312,12 +344,15 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just job wait <name> [--max-seconds N]` | 單次阻塞收集結果與尾段／失敗段落；成功 0、失敗 1、仍執行 124、參數錯誤 2 |
 | `just job status <name>` | 不阻塞回報 success／failed／running；退出碼分別 0／1／124 |
 | `just job help [args...]` | job.sh 驗證整份參數後顯示 help |
+| `just worktree` | 列出 worktree 動作 |
+| `just worktree prune-merged [args]` | 清理已合併的 linked worktree，預設預覽 |
 | `just agent` | 列出 agent 啟動動作 |
 | `just agent codex [--help] -- <Codex 參數...>` | `./script/agent/codex.sh`（headless 無 gh 憑證啟動；`--` 後原樣轉發） |
 | `just test` | `./script/test/test.sh`(全部:lint、unit、matrix、integration、system、acceptance、system-real,依序、遇錯即停) |
 | `just test verify-env [--help]` | `./script/test/verify-env.sh [args]`（建置真實驗收映像，驗證 uid 1001 bind mount 的 Git checkout 與 host 工具） |
 | `just test build [args]` | `./script/test/test.sh --build [args]` |
 | `just test lint [args]` | `./script/test/test.sh --lint [args]` |
+| `just test script-layout [args]` | `./script/test/check-script-layout.sh [args]`（檢查腳本版面） |
 | `just test guards [args]` | `./script/test/test.sh --guards [args]`（執行 `test.sh` 的共用全 repo 守門清單） |
 | `just test changed [--base <ref>]` | `./script/test/test.sh --changed [--base <ref>]`（預設比較 `origin/main`；一律跑 lint，執行改到或映射到的 unit 與 matrix spec；改到 `script/`、`lib/`、`box/`、`justfile*`、`doc/adr/` 時加跑整份守門清單；無法判定影響、缺少映射 spec、測試基礎設施變更或無法讀取 diff 時，列出檔名（若可取得）與原因，提示交由 CI 驗證；integration、system、system-real、acceptance 與需建映像的驗證只提示交由 CI） |
 | `just test unit [spec...] [--filter REGEX]` | `./script/test/test.sh --unit [spec...] [--filter REGEX]` |
@@ -339,6 +374,7 @@ verify 例外只適用於可直接解析的呼叫。無受限動作的日常指�
 | `just verify realbox [args]` | `./script/verify/realbox.sh [args]`（實機驗收；執行需 `--allow-real-box`） |
 | `just box` | 列出 box 的動詞(`just --justfile script/box/justfile.box --list`) |
 | `just box assemble [args]` | `./script/box/assemble.sh [args]`(`--dry-run`、`--file <清單>`、`--home <路徑>`、`--help`) |
+| `just box bench [args]` | `./script/box/bench.sh [args]`（效能量測） |
 | `just box setup [args]` | `./script/box/setup.sh [args]`(`--auto-enter yes\|no`、`--terminal ghostty\|none`、`--box <名稱>`、`--distrobox <路徑>`、`--dry-run`、`--help`;見 [`enter.md`](enter.md)) |
 | `just box status [args]` | `./script/box/status.sh [args]`(`--help`) |
 | `just box enter [args]` | `./script/box/enter.sh [args]`(`--box <名稱>`、`--distrobox <路徑>`、`--timeout <秒>`、`-- <指令>...`、`--help`;見 [`enter.md`](enter.md)) |
@@ -483,7 +519,7 @@ acceptance:`m2_selfcheck_spec`),bats 跑之前逐檔確認**存在且至少定�
 (`bats --count`),跑完再確認 TAP 計畫涵蓋這些案例、至少跑了一個、無失敗、無
 非預期的 `skip`:必要 spec 被刪、被清空、被非預期地 `skip` 都不會因為同層還有別的 spec 而被當成
 綠燈;非必要的額外 spec 照常一起跑。例外僅限 unit 的三個具名 CPU 負載重現案例，
-且 `WORKTOOL_STRESS` 不為 `1`、skip 原因完全相符時才允許；設為 `1` 時必須執行。各 bats tier 預設以
+且 `WORKTOOL_STRESS` 不為 `1`、skip 原因完全相符時才允許；設為 `1` 時必須執行。 案例為 `verify_run: HUP under CPU load always finishes before cleanup`、`5.1: group HUP under CPU load finishes before cleanup during assemble and bench`、`timeout cleanup: TERM-ignoring just descendant under CPU load`；完整 skip 原因見 [acceptance.md 2.1](acceptance.md)。各 bats tier 預設以
 `WORKTOOL_TEST_JOBS=4` 並行,跨 spec 也在同一 spec 內並行(#689);案例會與牆鐘期限賽跑、或共用檔案層狀態的 spec 在檔案層級寫 `export BATS_NO_PARALLELIZE_WITHIN_FILE=true`,維持該檔內序列執行。CI 的 bats gate 設 `WORKTOOL_TEST_JOBS=8`(4 vCPU runner 上實測的拐點:arm 的 unit 在 4／8／16 jobs 為 616／503／517 秒)。可在 `just` 前設定正整數
 覆寫(例如 `WORKTOOL_TEST_JOBS=2 just test unit`),無效值在啟動 Docker 或 bats 前以
 exit 2 拒絕。設定 `WORKTOOL_TEST_REPORT_DIR`(checkout 內的相對路徑,不得含 `..`)時,
