@@ -303,3 +303,5 @@ return { issue: A.issue, status, codex: 'ok', claims: claims.length, comment: ch
 //   "sources": ["/path/to/worktool/doc/design.md"],
 //   "timeoutMin": 15
 // }
+
+# Automated fix for issue #782: 5.4 缺內層 5.1 才需要的工具時回 1 而非 3，工具清單也漏列 5.4
