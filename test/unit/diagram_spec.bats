@@ -162,6 +162,24 @@ _source_cell() {
         | sed -E 's/&lt;\/mxCell&gt;.*$//'
 }
 
+# Compare the complete directed stage graph, independent of XML cell order.
+_stage_edges_match() {
+    local file="$1" expected="" actual="" previous="" cell
+    shift
+    for cell in "$@"; do
+        if [[ -n "${previous}" ]]; then
+            expected+="${previous} ${cell}"$'\n'
+        fi
+        previous="${cell}"
+    done
+    actual="$(tr -d '\n' < "${file}" | sed 's/&lt;mxCell /\n&/g' \
+        | grep 'edge=&quot;1&quot;' \
+        | grep 'source=&quot;g_' \
+        | sed -nE 's/.*source=\&quot;(g_[^\&]+)\&quot;.*target=\&quot;(g_[^\&]+)\&quot;.*/\1 \2/p' \
+        | LC_ALL=C sort)" || return 1
+    [[ "${actual}" == "$(printf '%s' "${expected}" | LC_ALL=C sort)" ]]
+}
+
 # --- The #163 wording guard (ONE predicate; real diagram and fixtures) -------
 #
 # Both halves are scoped to the f_test cell: what other cells say never
@@ -572,4 +590,93 @@ _write_fixture_wording_moved() {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "README and flow diagram stage count and order match HOST_STEPS" {
+    run bash -c 'source "$1"; printf "%s\n" "${HOST_STEPS[@]}"' \
+        _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    local -a stages=("${lines[@]}") counts=(零 一 二 三 四 五 六 七 八 九 十)
+    local count="${counts[${#stages[@]}]}" order="" stage cell
+    for stage in "${stages[@]}"; do
+        order+="${order:+、}${stage}"
+    done
+    run cat "${README}"
+    assert_success
+    assert_output --partial "${count}道 gate"
+    assert_output --partial "${order}"
+    run _cell_label_lines "$(_svg flow)" f_test
+    assert_success
+    assert_line "${count}道 gate,全部在 Docker"
+    run _source_cell "$(_svg flow)" f_test
+    assert_success
+    assert_output --partial "${count}道 gate,全部在 Docker"
+    run _cell_label_lines "$(_svg flow)" gates
+    assert_success
+    assert_output --partial "${count}道 gate"
+    run _source_cell "$(_svg flow)" gates
+    assert_success
+    assert_output --partial "${count}道 gate"
+    local rendered="" source=""
+    local -a cells=()
+    for stage in "${stages[@]}"; do
+        case "${stage}" in system-real) cell=g_real ;; *) cell="g_${stage}" ;; esac
+        run _cell_label_lines "$(_svg flow)" "${cell}"
+        assert_success
+        assert_line "${stage}"
+        rendered+="${rendered:+ }${cell}"
+        run _source_cell "$(_svg flow)" "${cell}"
+        assert_success
+        assert_output --partial "value=&quot;${stage}"
+        source+="${source:+ }${cell}"
+        cells+=("${cell}")
+    done
+    run _stage_edges_match "$(_svg flow)" "${cells[@]}"
+    assert_success
+    run bash -c 'grep -oE "data-cell-id=\"g_[^\"]+\"" "$1" | sed -E "s/data-cell-id=\"([^\"]+)\"/\1/" | LC_ALL=C sort | paste -sd " "' _ "$(_svg flow)"
+    assert_success
+    assert_output "$(tr ' ' '\n' <<<"${rendered}" | LC_ALL=C sort | paste -sd ' ')"
+    run bash -c 'grep -oE "id=&quot;g_[^&]+&quot;" "$1" | sed -E "s/id=&quot;([^&]+)&quot;/\1/" | LC_ALL=C sort | paste -sd " "' _ "$(_svg flow)"
+    assert_success
+    assert_output "$(tr ' ' '\n' <<<"${source}" | LC_ALL=C sort | paste -sd ' ')"
+}
+
+@test "flow CI grouped architecture labels count every HOST_STEPS stage" {
+    run bash -c 'source "$1"; printf "%s\n" "${#HOST_STEPS[@]}"' \
+        _ "${REPO_ROOT}/script/test/test.sh"
+    assert_success
+    local -a counts=(零 一 二 三 四 五 六 七 八 九 十)
+    local count="${counts[output]}" cell
+    [[ -n "${count}" ]]
+    for cell in ci_amd64 ci_arm64; do
+        run _cell_label_lines "$(_svg flow)" "${cell}"
+        assert_success
+        assert_line "同一組${count}個 tier"
+        run _source_cell "$(_svg flow)" "${cell}"
+        assert_success
+        assert_output --partial "同一組${count}個 tier"
+    done
+    cell=ci_matrix
+    run _cell_label_lines "$(_svg flow)" "${cell}"
+    assert_success
+    assert_output --partial "兩架構各跑${count}個 tier"
+    assert_output --partial 'unit 分片'
+    assert_output --partial '其餘依 CI leg 分組'
+    run _source_cell "$(_svg flow)" "${cell}"
+    assert_success
+    assert_output --partial "兩架構各跑${count}個 tier"
+    assert_output --partial 'unit 分片'
+    assert_output --partial '其餘依 CI leg 分組'
+}
+
+@test "flow stage order guard rejects an edge bypassing matrix" {
+    local fixture="${BATS_TEST_TMPDIR}/edge.xml"
+    printf '%s\n' \
+        '&lt;mxCell id=&quot;e1&quot; edge=&quot;1&quot; source=&quot;g_unit&quot; target=&quot;g_matrix&quot;&gt;' \
+        '&lt;mxCell id=&quot;e2&quot; edge=&quot;1&quot; source=&quot;g_matrix&quot; target=&quot;g_integration&quot;&gt;' >"${fixture}"
+    run _stage_edges_match "${fixture}" g_unit g_matrix g_integration
+    assert_success
+    printf '%s\n' '&lt;mxCell id=&quot;e3&quot; edge=&quot;1&quot; source=&quot;g_unit&quot; target=&quot;g_integration&quot;&gt;' >>"${fixture}"
+    run _stage_edges_match "${fixture}" g_unit g_matrix g_integration
+    assert_failure
 }
