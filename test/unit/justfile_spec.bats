@@ -143,21 +143,32 @@ _listed_names() {
 
 # --- zero special cases: the root justfile is namespaces + default only ----
 
-@test "root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe" {
-    assert [ -f "${REPO_ROOT}/justfile" ]
+_root_shape_valid() {
+    local root="$1" dump
+    awk '
+        /^[[:space:]]*(#|$)/ { next }
+        /^mod[?][[:space:]]+[A-Za-z_][A-Za-z0-9_-]*[[:space:]]+\047[^\047]+\047[[:space:]]*$/ && !seen_default { modules++; next }
+        /^default:[[:space:]]*$/ && !seen_default { seen_default = 1; next }
+        /^[[:space:]]+@just --list[[:space:]]*$/ && seen_default && !body { body = 1; next }
+        { exit 1 }
+        END { if (!modules || !seen_default || !body) exit 1 }
+    ' "${root}/justfile" || return 1
+    if ! dump=$(just --justfile "${root}/justfile" --dump --dump-format json); then
+        return 1
+    fi
+    jq -e '
+        (.recipes | keys) == ["default"] and
+        .recipes.default.body == [["@just --list"]] and
+        .recipes.default.dependencies == [] and
+        .recipes.default.parameters == [] and
+        .aliases == {} and .assignments == {}
+    ' <<<"${dump}" >/dev/null
+}
+
+@test "root justfile has only modules and its default recipe" {
     assert [ ! -e "${REPO_ROOT}/justfile.ci" ]
-    # Everything that is not a comment or blank line, verbatim.
-    run grep -vE '^[[:space:]]*(#|$)' "${REPO_ROOT}/justfile"
+    run _root_shape_valid "${REPO_ROOT}"
     assert_success
-    assert_equal "${#lines[@]}" 8
-    assert_line --index 0 --regexp "^mod\? test +'script/test/justfile\.test'$"
-    assert_line --index 1 --regexp "^mod\? box +'script/box/justfile\.box'$"
-    assert_line --index 2 --regexp "^mod\? verify +'script/verify/justfile\.verify'$"
-    assert_line --index 3 --regexp "^mod\? agent +'script/agent/justfile\.agent'$"
-    assert_line --index 4 --regexp "^mod\\? worktree +'.agents/script/worktree/justfile\\.worktree'$"
-    assert_line --index 5 --regexp "^mod\\? job +'.agents/script/justfile\\.job'$"
-    assert_line --index 6 "default:"
-    assert_line --index 7 --regexp '^[[:space:]]+@just --list$'
 }
 
 @test "the namespace justfiles live next to their scripts and run from the repo root" {

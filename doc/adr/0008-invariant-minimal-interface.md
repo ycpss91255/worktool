@@ -37,7 +37,7 @@
 
 入口的形狀固定：root `justfile` 只有 namespace，列出來的也只有 namespace：
 
-- `test/unit/justfile_spec.bats`「root justfile is six mod? lines (test, box, verify, agent, worktree, job) and one default recipe」
+- `test/unit/justfile_spec.bats`「root justfile has only modules and its default recipe」
 - `test/unit/justfile_spec.bats`「just --list shows the six namespaces and default, nothing else」
 - `test/unit/justfile_spec.bats`「bare just is just --list」
 
