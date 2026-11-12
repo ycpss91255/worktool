@@ -52,8 +52,8 @@
   - 驗證：待驗（tool config 從 M5 起才進 repo）。盒子定義的單一來源由 `test/integration/assemble_spec.bats` 部分檢查：assemble 預設就是用 `box/dev.ini`。
 - **host 與盒子互不干擾。** 見第 3 節「不寫 host shell 設定」（不變量 3）。
   - 驗證：待驗（同第 3 節）。盒子 HOME 與 host HOME 分開由 `test/system/real_engine_spec.bats` 的 #198 案例檢查。
-- **永不靜默失敗。** 每個自動決策都印 log 且可查（`[INFO] <key>: <value> (default|user)`，事後以 `just box status` 讀回）；失敗必印原因與下一步；結束碼是對外契約：`0` 成功、`1` 功能性失敗、`2` 參數錯誤（`<腳本>: unknown option '<x>' (see --help)`）；進盒延遲量測（`just box bench`）多一個結束碼 `3` 表示主機不夠安靜、**未判定**，既不算通過也不算退化（[ADR 0003](adr/0003-latency-gate-inconclusive.md)）（不變量 4）。
-  - 驗證：`test/unit/justfile_spec.bats`（未知選項由腳本本身以結束碼 2 拒絕）；`test/unit/assemble_spec.bats`、`test/unit/setup_spec.bats`（結束碼 2 與訊息格式、決策 log）；`test/unit/status_spec.bats`（決策與來源讀回）；`test/unit/bench_spec.bats`（主機忙時結束碼 3、不印量測值）。
+- **永不靜默失敗。** 每個自動決策都印 log 且可查（`[INFO] <key>: <value> (default|user)`，事後以 `just box status` 讀回）；失敗必印原因與下一步；結束碼是對外契約：`0` 成功、`1` 功能性失敗、`2` 參數錯誤（`<腳本>: unknown option '<x>' (see --help)`）；進盒延遲量測（`just box bench`）多一個結束碼 `3` 表示主機不夠安靜、**未判定**，既不算通過也不算退化（[ADR 0003](adr/0003-latency-gate-inconclusive.md)）；`just verify realbox` 同樣以結束碼 `3` 表示必要工具、環境或實機驗收證據不可用，或延遲量測未判定，均不算通過（不變量 4）。
+  - 驗證：`test/unit/justfile_spec.bats`（未知選項由腳本本身以結束碼 2 拒絕）；`test/unit/assemble_spec.bats`、`test/unit/setup_spec.bats`（結束碼 2 與訊息格式、決策 log）；`test/unit/status_spec.bats`（決策與來源讀回）；`test/unit/bench_spec.bats`（主機忙時結束碼 3、不印量測值）；`test/unit/verify_realbox_spec.bats`、`test/unit/verify_realbox_matrix_spec.bats`（實機驗收不可用或未判定時結束碼 3）。
 - **使用者介面極少。** 所有使用者動作都經 `just <命名空間> <recipe>`；recipe 的語意一旦發布就不改，改名走別名期（不變量 5）。
   - 驗證：`test/unit/justfile_spec.bats`（根 justfile 只有命名空間、每個 recipe 原封轉發給腳本）；人類驗收見 `doc/acceptance.md` M2 第 0 項。「發布後語意不改」：待驗（尚未發布）。
 - **冪等。** 同一個指令重跑，結果相同：不重複寫入、不累積副作用；已是最新狀態時明確說明 unchanged（不變量 6）。
