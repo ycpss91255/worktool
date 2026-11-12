@@ -478,7 +478,7 @@ prereq-ok
   workflow success 但 job skipped 不算完整驗證,最新非綠燈也不回退舊綠燈。
   `milestone-handover` 的 Head -> Full run -> Scratch 順序使用同一個檢查。
 
-- 自動:進盒延遲量測腳本回報 < 300ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
+- 自動:進盒延遲量測腳本的 shell median ≤ 300 ms;**整條「開窗 -> setup 受管 command -> `enter.sh` wrapper -> `distrobox enter dev` -> 盒內
   fish」鏈在 CI 內無頭驗證**(issue #172),分兩層。#374 延遲 gate 讀取隔離暫存設定中 setup
   實際寫出的受管 command,經 wrapper 量測 enter / shell / inbox;setup 準備不計時,
   shell median 仍以 300 ms 判定。終端**不自動開 tmux**(issue #179:
@@ -487,15 +487,17 @@ prereq-ok
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
     `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
     `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
-    `command` 恰為 `'<distrobox 絕對路徑>' enter dev`,後面不接 tmux
+    `command` 恰為 `'<repo>/script/box/enter.sh' --distrobox '<distrobox 絕對路徑>' --box 'dev'`,後面不接 tmux
     (issue #175:受管 command 寫**已 quote 的**絕對路徑,斷言同時 refute 裸名字
     那一行;另有一案以含空白與 `$(...)` 的安裝路徑證明 quoting 真的擋得住);
     `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
     之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
     斷言不是恆真。
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
-    `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
-    `distrobox enter dev -- fish <script>`,斷言**盒內**留下的標記檔顯示 fish 版本、
+    `xvfb-run -a` 開一個**真的 ghostty 視窗**,以測試寫入的
+    `distrobox enter dev -- fish <script>` 驗證盒內執行;另以 setup 實際寫出的
+    wrapper command 加上 `-- fish <script>` 驗證桌面 PATH 下的完整進盒路徑。
+    兩者皆斷言**盒內**留下的標記檔顯示 fish 版本、
     `tmux=no`、**所用引擎的容器檔存在**(issue #179 寫的 `/run/.containerenv` 是
     podman 的;docker 對應的是 `/.dockerenv`,distrobox 自己也以兩者之一判定在容器
     內——斷言因此 Docker / Podman 通用:要求的是所用引擎的那一個)、寫檔的 fish 所在
@@ -505,7 +507,7 @@ prereq-ok
     先證明,所以回答的只可能是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
     一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
     distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
-    `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
+    `just box setup` 自己解析寫進受管區塊的 wrapper 與 distrobox **絕對路徑**跑完同一條鏈。
     冷啟動(#434、#472):以 host `SHELL=/bin/bash` 建盒,在尚未初始化時
     執行 setup 實際寫出的 Ghostty 受管命令;送出任何輸入前先觀察預設登入
     行程為 fish、mount namespace 等於 dev,並驗證首次初始化持續輸出不同的

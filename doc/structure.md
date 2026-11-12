@@ -102,7 +102,7 @@ worktool/
 │   ├── agent/           給 agent skill 讀的設定:issue-tracker.md / triage-labels.md / domain.md
 │   └── diagram/         README 嵌入的 draw.io 圖;`.drawio.svg` 同時是圖與可編輯原始檔(單一事實來源,
 │       │                純 SVG 文字、無 foreignObject,GitHub 可直接顯示;以 Docker 內的 drawio 匯出,host 不裝 draw.io)
-│       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、盒子 HOME、ghostty -> distrobox enter dev -> fish(不自動開 tmux,#179)
+│       ├── architecture.drawio.svg  架構:host -> distrobox -> dev 盒、盒子 HOME、ghostty -> enter.sh wrapper -> distrobox enter dev -> fish(不自動開 tmux,#179)
 │       ├── flow.drawio.svg          流程:clone -> just test -> just box assemble -> 進盒 -> 日常;CI matrix -> ci-passed
 │       └── milestone.drawio.svg     milestone:M1-M17 順序、每段之間的人類 gate、目前位置
 ├── .agents/             agent 設定的實體檔(repo 層級:不依賴別的 repo、不在使用者層級建立任何東西;#189)
@@ -598,8 +598,9 @@ main push 另跑 `shard-weights` job:以 `lib/shard_weights.sh` 把 unit 與 mat
 - **分流**:`ci.yml` 以同一個運算式(`run-name`、`concurrency`、`route` job 三處逐字相同)
   判定路徑。push、`opened`／`synchronize`／`reopened`、加上 `milestone-gate` 標籤
   (`verify-all` 變成必要)、改 base 的 `edited` 走 **code 路徑**,所有 tier 照跑,
-  run 名稱為 `CI code run`;其餘 edited／labeled／unlabeled 走 **meta 路徑**
-  (`CI meta run`),跳過 build-image、gate、`test-system-real`、`verify-all`。
+  run 名稱以 `CI code run` 開頭;其餘 edited／labeled／unlabeled 走 **meta 路徑**
+  (以 `CI meta run` 開頭),跳過 build-image、gate、`test-system-real`、`verify-all`。
+  PR 名稱後接 `· PR #編號 · 標題`,其他事件後接 `· ref · SHA`;舊版固定名稱仍可識別。
 - **meta 路徑不放水**:policy job(`commit-email`、`commit-attribution` 含 PR 說明、
   `commit-refs`、`review-log`)照跑;新增的 `prior-run` job 以 `lib/ci_prior_run.sh`
   找出同一 head sha、同一 PR **最新一次** code run,要求它已完成且兩個架構的每一條
