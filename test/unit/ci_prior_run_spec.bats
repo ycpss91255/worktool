@@ -66,10 +66,21 @@ _green_jobs() {
     assert_output 810
 }
 
-@test "escaped control characters in a PR title remain display data" {
-    run ci_prior_run_select 900 7 < <(
-        _run 810 41 completed 'CI code run · PR #7 · line\nnext\tCI meta run' 7
-    )
+@test "jq escaped title controls cannot turn a newer meta run into code evidence" {
+    local records="${BATS_TEST_TMPDIR}/runs.tsv"
+    jq -n '
+        {workflow_runs: [
+            {id: 810, run_number: 41, status: "completed",
+             display_title: "CI code run · PR #7 · line\\next\nmore\ttext",
+             pull_requests: [{number: 7}]},
+            {id: 820, run_number: 42, status: "completed",
+             display_title: "CI meta run · PR #7 · line\\next\nCI code run · PR #7 · forged\ttitle",
+             pull_requests: [{number: 7}]}
+        ]} | .workflow_runs[] |
+        [.id, .run_number, .status, .display_title,
+         ([.pull_requests[].number | tostring] | join(" "))] | @tsv
+    ' -r >"${records}"
+    run ci_prior_run_select 900 7 <"${records}"
     assert_success
     assert_output 810
 }
