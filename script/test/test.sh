@@ -76,7 +76,7 @@ DOCKERFILE="${REPO_ROOT}/dockerfile/Dockerfile.test"
 WORKTOOL_TEST_JOBS="${WORKTOOL_TEST_JOBS:-4}"
 # Repo-relative directory for per-case junit reports (issue #827); empty =
 # no report. Each bats tier writes <dir>/<tier>/report.xml next to the TAP
-# stream, which stays exactly what it was (the gate still reads only TAP).
+# stream; successful cases can include a timing suffix. The gate reads TAP.
 WORKTOOL_TEST_REPORT_DIR="${WORKTOOL_TEST_REPORT_DIR:-}"
 # Repo-relative shard weights ("<tier>/<spec><TAB><ms>", issue #831) for
 # --shard; empty or an empty file = every spec weighs its @test count.
@@ -767,8 +767,9 @@ Environment:
   WORKTOOL_TEST_REPORT_DIR
                          repo-relative directory: each bats tier also writes
                          a junit report (per-case times) to <dir>/<tier>/
-                         report.xml; the TAP output is unchanged (default:
-                         none)
+                         report.xml; successful TAP cases may include a
+                         trailing " # in N ms" timing suffix. TAP plan, status
+                         and skip checks are unchanged (default: none)
   WORKTOOL_TEST_RUN_ID   label test containers with worktool.verify-run=<id>
   SYSTEM_REAL_IMAGE      DinD runner image tag (default worktool-system-real:local)
   SYSTEM_REAL_IMAGE_PREBUILT=1
