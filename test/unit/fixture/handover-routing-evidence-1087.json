@@ -1,0 +1,431 @@
+{
+  "source_sha": "cfde27001e17b717144dbfce80594f1d6296aeb6589df1feabbd5da582893603",
+  "runs": [
+    {
+      "id": 43258121138,
+      "run_number": 1830,
+      "display_title": "CI meta run · PR #1087 · M3 人類驗收清單",
+      "status": "completed",
+      "event": "pull_request",
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "path": ".github/workflows/ci.yml",
+      "repository": "ycpss91255/worktool",
+      "pull_requests": [
+        1087
+      ],
+      "route_line": "event pull_request/edited: code path=false"
+    },
+    {
+      "id": 43257942449,
+      "run_number": 1828,
+      "display_title": "CI code run · PR #1087 · M3 人類驗收清單",
+      "status": "completed",
+      "event": "pull_request",
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "path": ".github/workflows/ci.yml",
+      "repository": "ycpss91255/worktool",
+      "pull_requests": [
+        1087
+      ]
+    },
+    {
+      "id": 43257942823,
+      "run_number": 1829,
+      "display_title": "CI code run · PR #1087 · M3 人類驗收清單",
+      "status": "completed",
+      "event": "pull_request",
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "path": ".github/workflows/ci.yml",
+      "repository": "ycpss91255/worktool",
+      "pull_requests": [
+        1087
+      ],
+      "route_line": "event pull_request/opened: code path=true"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "commit-refs",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328531904"
+    },
+    {
+      "name": "route",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328532253"
+    },
+    {
+      "name": "commit-attribution",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328532365"
+    },
+    {
+      "name": "commit-email",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328532398"
+    },
+    {
+      "name": "review-log",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328532971"
+    },
+    {
+      "name": "test-system-real (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328591672"
+    },
+    {
+      "name": "Build test image (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328591790"
+    },
+    {
+      "name": "test-system-real (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328591827"
+    },
+    {
+      "name": "Build test image (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328591920"
+    },
+    {
+      "name": "image-seed (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328594481"
+    },
+    {
+      "name": "prior-run",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328595301"
+    },
+    {
+      "name": "lint-system-acceptance (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834141"
+    },
+    {
+      "name": "lint-system-acceptance (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834199"
+    },
+    {
+      "name": "test-unit 3/4 (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834230"
+    },
+    {
+      "name": "test-matrix (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834233"
+    },
+    {
+      "name": "test-unit 2/4 (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834322"
+    },
+    {
+      "name": "test-unit 4/4 (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834324"
+    },
+    {
+      "name": "test-unit 1/4 (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834357"
+    },
+    {
+      "name": "test-integration (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834359"
+    },
+    {
+      "name": "test-unit 4/4 (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834389"
+    },
+    {
+      "name": "test-unit 3/4 (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834413"
+    },
+    {
+      "name": "test-unit 2/4 (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834483"
+    },
+    {
+      "name": "test-matrix (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834536"
+    },
+    {
+      "name": "test-integration (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328834543"
+    },
+    {
+      "name": "test-unit 1/4 (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131328835019"
+    },
+    {
+      "name": "test-unit-verdict",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131332292124"
+    },
+    {
+      "name": "shard-weights",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131332294778"
+    },
+    {
+      "name": "verify-all (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131332465370"
+    },
+    {
+      "name": "verify-all (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131332465455"
+    },
+    {
+      "name": "ci-passed",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43257942823,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43257942823/job/131334204621"
+    },
+    {
+      "name": "commit-attribution",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334963612"
+    },
+    {
+      "name": "review-log",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334963749"
+    },
+    {
+      "name": "prior-run",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334965126"
+    },
+    {
+      "name": "image-seed (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334967314"
+    },
+    {
+      "name": "Build test image (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334967898"
+    },
+    {
+      "name": "test-system-real (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334968364"
+    },
+    {
+      "name": "${{ matrix.gate }} (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334969704"
+    },
+    {
+      "name": "test-unit ${{ matrix.shard }}/${{ matrix.shards }} (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334970271"
+    },
+    {
+      "name": "test-unit-verdict",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334972270"
+    },
+    {
+      "name": "shard-weights",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334973208"
+    },
+    {
+      "name": "verify-all (${{ matrix.runner }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131334975795"
+    },
+    {
+      "name": "commit-email",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131335027020"
+    },
+    {
+      "name": "commit-refs",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131335030435"
+    },
+    {
+      "name": "route",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131335065523"
+    },
+    {
+      "name": "ci-passed",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 43258121138,
+      "head_sha": "c274ecd0a999d0b644c748fc77c532c5aed5605a",
+      "html_url": "https://github.com/ycpss91255/worktool/actions/runs/43258121138/job/131335092228"
+    }
+  ],
+  "expectedJobs": [
+    "Build test image (ubuntu-latest)",
+    "lint-system-acceptance (ubuntu-latest)",
+    "test-matrix (ubuntu-latest)",
+    "test-integration (ubuntu-latest)",
+    "test-unit 1/4 (ubuntu-latest)",
+    "test-unit 2/4 (ubuntu-latest)",
+    "test-unit 3/4 (ubuntu-latest)",
+    "test-unit 4/4 (ubuntu-latest)",
+    "test-system-real (ubuntu-latest)",
+    "verify-all (ubuntu-latest)",
+    "Build test image (ubuntu-24.04-arm)",
+    "lint-system-acceptance (ubuntu-24.04-arm)",
+    "test-matrix (ubuntu-24.04-arm)",
+    "test-integration (ubuntu-24.04-arm)",
+    "test-unit 1/4 (ubuntu-24.04-arm)",
+    "test-unit 2/4 (ubuntu-24.04-arm)",
+    "test-unit 3/4 (ubuntu-24.04-arm)",
+    "test-unit 4/4 (ubuntu-24.04-arm)",
+    "test-system-real (ubuntu-24.04-arm)",
+    "verify-all (ubuntu-24.04-arm)",
+    "test-unit-verdict"
+  ]
+}

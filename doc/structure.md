@@ -85,6 +85,7 @@ worktool/
 │   │   └── fixture/
 │   │       ├── entry_driver.sh   在隔離 shell 內驅動 system-real-entry.sh 的單一函式
 │   │       ├── apt_origin.mjs / workflow_run.mjs  測試伺服器與 workflow fixture
+│   │       ├── handover-routing-1087.json / handover-routing-evidence-1087.json  交接 CI 路由的真實 check 與 run/job 證據
 │   │       ├── realbox_cold_tool.sh / realbox_matrix_just.sh / realbox_shim.sh / realbox_tool.sh
 │   │       ├── verify_setup_just.sh / verify_signal.js / verify_signal_anchor.js
 │   │       └── adr/              9999-invariant-missing-guard.md / 9999-invariant-missing-section.md
