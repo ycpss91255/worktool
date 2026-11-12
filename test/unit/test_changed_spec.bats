@@ -685,7 +685,7 @@ _document_change() {
 @test "test.sh --changed selects all acceptance documentation guards together" {
     _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
         test/unit/realbox_52_doc_spec.bats \
-        test/unit/contract_spec.bats \
+        test/unit/acceptance_output_types_spec.bats test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/m2_acceptance_warning_spec.bats test/unit/acceptance_51_doc_spec.bats test/unit/backup_acceptance_doc_spec.bats \
         test/unit/verify_gate_spec.bats
@@ -740,6 +740,11 @@ _document_change() {
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/backup_acceptance_doc_spec.bats
     assert_failure
+}
+
+@test "test.sh --changed maps acceptance output classification guard" {
+    _document_change doc/acceptance.md test/unit/acceptance_output_types_spec.bats \
+        test/unit/contract_spec.bats test/unit/diagram_spec.bats test/unit/justfile_spec.bats
 }
 
 @test "test.sh --changed maps ADR documents to shared and individual guards" {
