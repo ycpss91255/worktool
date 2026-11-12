@@ -57,6 +57,42 @@ _check_cleanup() {
 
 @test "cold PTY cleanup after early TERM" { _check_cleanup early; }
 
+_inject_cleanup_failure() {
+    # shellcheck source=test/helper/cold_pty.bash
+    source "${COLD_HELPER}"
+    # shellcheck source=test/helper/cold_pty_failure.bash
+    source "${BATS_TEST_DIRNAME}/../helper/cold_pty_failure.bash"
+    export HOME="${BATS_TEST_TMPDIR}/home" FIRST_ENTER_TIMEOUT=30
+    mkdir -p "${HOME}"
+}
+
+@test "cold login removes its FIFO even when PTY cleanup fails" {
+    _inject_cleanup_failure
+    local _login_result=1
+    run _cold_default_login 'sleep 30'
+    [[ "${status}" -ne 0 ]]
+    [[ "${output}" == *'injected cleanup failure'* ]]
+    [[ ! -e "${HOME}/cold-input" ]]
+}
+
+@test "cold login reports cleanup failure after a successful command" {
+    _inject_cleanup_failure
+    local _login_result=0
+    run _cold_default_login 'read -r line; exit 0'
+    [[ "${status}" -eq 1 ]]
+    [[ "${output}" == *'injected cleanup failure'* ]]
+    [[ ! -e "${HOME}/cold-input" ]]
+}
+
+@test "cold login preserves command failure when cleanup also fails" {
+    _inject_cleanup_failure
+    local _login_result=0
+    run _cold_default_login 'read -r line; exit 17'
+    [[ "${status}" -eq 17 ]]
+    [[ "${output}" == *'injected cleanup failure'* ]]
+    [[ ! -e "${HOME}/cold-input" ]]
+}
+
 @test "session discovery rejects a child before it becomes a session leader" {
     # shellcheck source=test/helper/cold_pty.bash
     source "${COLD_HELPER}"
