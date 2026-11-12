@@ -671,11 +671,18 @@ teardown() {
 # --- the tool owns its CLI: --help and unknown / invalid options --------------
 
 @test "--help exits 0, names every option and the three metrics, and calls distrobox nothing" {
-    run "${BENCH}" --help
+    local _out="${TMP}/out" _err="${TMP}/err"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_err}"
     assert_success
+    [[ ! -s "${_out}" ]]
+    run cat "${_err}"
     assert_output --partial "Usage: bench.sh"
+    assert_output --partial "Quiet host:"
+    assert_output --partial "Exit codes:"
+    assert_output --partial "Environment (tests only):"
+    assert_output --partial "BENCH_CLOCK"
     local _opt
-    for _opt in --box --runs --warmup --max-ms --json --shell --help; do
+    for _opt in --box --runs --warmup --max-ms --json --shell --max-wait -h --help; do
         assert_output --partial "${_opt}"
     done
     assert_line --regexp '^ *enter '
@@ -686,11 +693,22 @@ teardown() {
 }
 
 @test "-h is the same as --help" {
-    run "${BENCH}" --help
-    local _long="${output}"
-    run "${BENCH}" -h
+    local _out="${TMP}/out" _long="${TMP}/long" _short="${TMP}/short"
+    run bash -c '"$1" --help >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_long}"
     assert_success
-    assert_output "${_long}"
+    [[ ! -s "${_out}" ]]
+    run bash -c '"$1" -h >"$2" 2>"$3"' _ "${BENCH}" "${_out}" "${_short}"
+    assert_success
+    [[ ! -s "${_out}" ]]
+    run cmp "${_long}" "${_short}"
+    assert_success
+    assert_equal "$(_calls)" ""
+}
+
+@test "help stdout emptiness check rejects a newline" {
+    local _out="${TMP}/out"
+    printf '\n' >"${_out}"
+    [[ -s "${_out}" ]]
 }
 
 @test "an unknown option exits 2 with the documented message on stderr, nothing on stdout, nothing recorded" {
