@@ -1091,6 +1091,7 @@ doc/adr/*.md|test/unit/adr/0010_spec.bats
 doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/acceptance.md|test/unit/realbox_window_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
