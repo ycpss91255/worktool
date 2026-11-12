@@ -445,6 +445,8 @@ prereq-ok
 
 ## M3 終端自動進盒 + 效能
 
+- 驗收工具:`gh`(已登入,2.1-2.3 / 5.1 / 5.3 / 5.4 / 6.1-6.3 用)、`jq`(5.1 / 5.3 / 5.4 / 6.1 / 6.3 用)、`timeout` / `mktemp` / `sort` / `wc` / `cut` / `sha256sum` / `stat` 等 coreutils 指令、`awk` / `grep` / `sed`,以及 `find`(findutils;3.1 / 3.4 / 3.5 / 3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`diff`(diffutils;3.4 用)、`cmp`(diffutils;3.10-3.13 / 5.1 / 5.2 / 5.2.1-5.2.3 / 5.3 / 5.4 用)、`flock`(util-linux;3.5 用)、`setsid`(util-linux;5.4 用)、`ps`(procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`kill`(PATH 上的外部執行檔,不是 shell 內建,procps;5.2 / 5.2.2 / 5.2.3 / 5.3 用)、`gapplication`(glib;5.2 / 5.2.2 / 5.2.3 / 5.3 用)(各工具括號內的項目由 `test/unit/acceptance_tools_spec.bats` 從腳本的前置檢查推導比對；5.4 每格以子行程執行完整的 5.1，所以也列入 5.1 需要的工具，缺任何一項都在啟動第一格前回退出碼 3);3 需要 host 的 PATH 上有 `distrobox` 與 `ghostty`(setup 解析這兩個絕對路徑寫進決策 log 與受管 command,少一個就沒得驗);5(實機)另需真的建得起盒、開得起 ghostty 視窗。1-2、4、6 不需 distrobox / ghostty。2.1、2.3 僅在 CI 證據模式需要 `gh`；5.2.3 的視窗專用工具僅在備份有 `processes-before` 時需要；缺少時先還原磁碟檔案、保留備份並回 3。少任何一項時,對應的 `just verify ...` 會印 `[UNAVAILABLE] <腳本>: <工具> not found on PATH` 並回非 0(退出碼 3),絕不會靜默跳過而讀成通過。
+
 - 設定備份與還原的完整性檢查假設備份在檢查與還原期間不被並行修改；
   檢查無法驗證沒有可信簽章的資料是否遭一致竄改。
 
