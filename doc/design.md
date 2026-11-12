@@ -174,12 +174,12 @@ namespaces, generic tooling, min->max coverage」(零特例、以動作命名、
 **root `justfile`**(就是這個形狀,沒有別的 recipe;`justfile.ci` 不存在):
 
 ```just
-mod? test 'script/test/justfile.test'   # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
-mod? box 'script/box/justfile.box'
-mod? verify 'script/verify/justfile.verify'
-mod? agent 'script/agent/justfile.agent'
-mod? worktree '.agents/script/worktree/justfile.worktree'
-mod? job '.agents/script/justfile.job'
+mod? test 'script/test/justfile.test' # Self-test: lint + bats tiers in Docker (just test [build|lint|unit|matrix|integration|system|system-real|acceptance|selfcheck])
+mod? box 'script/box/justfile.box' # Dev box lifecycle: just box assemble [--dry-run] [--file X] | bench [--runs N] [--max-ms N] [--json] | setup [--auto-enter yes|no ...] | status | enter [--box N] [-- CMD]
+mod? verify 'script/verify/justfile.verify' # Acceptance checks; just --list verify lists its recipes.
+mod? agent 'script/agent/justfile.agent' # Agent launch without GitHub authentication (headless fallback).
+mod? worktree '.agents/script/worktree/justfile.worktree' # Cleanup merged linked worktrees (dry-run by default).
+mod? job '.agents/script/justfile.job' # Detached agent jobs and compact results.
 
 # Default: list the namespaces.
 default:
