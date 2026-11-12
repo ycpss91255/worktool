@@ -3407,8 +3407,9 @@ _pl_retry_run() {
     run jq -e '.result.status == "sync-blocked" and [.calls[].phase] == ["Sync"] and
         (.result.report.error | contains("verify-all (ubuntu-latest)") and contains("test failed")) and
         (.calls[0].prompt | contains("Check for failures before sleeping or starting another round") and
-            contains("FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, NEUTRAL or SKIPPED") and
-            contains("Exclude only milestone-gate-approval") and
+            contains("FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE or NEUTRAL") and
+            contains("SKIPPED is a failure unless the routing predicate above proves an inactive CI placeholder") and
+            contains("Exclude milestone-gate-approval as before") and
             contains("return its name, URL and concrete failure reason"))' <<<"${output}"
     assert_success
 }
@@ -5317,6 +5318,84 @@ test unit test/unit/pending.bats'
                 else contains("before pushing run lint and only the touched specs") end] | all) and
             ([.calls[] | select(.role | startswith("ci:")) | .prompt |
                 contains("Locally run only just test lint and touched specs")] | all)' <<<"$json"
+        assert_success
+    done
+}
+
+@test "milestone-handover permits only proven inactive CI route placeholders (#1088)" {
+    local sample checks routing replies mutation
+    sample="${REPO_ROOT}/test/unit/fixture/handover-routing-1087.json"
+    routing="$(cat "${REPO_ROOT}/test/unit/fixture/handover-routing-evidence-1087.json")"
+    checks="$(jq -c '[.retained[] | if .name == "evaluate-approval" and .conclusion == "CANCELLED" then .conclusion="SUCCESS" else . end]' "${sample}")"
+    replies="$(_handover_replies | jq --argjson checks "${checks}" --argjson routing "${routing}" '
+        ."sync:".sha="c274ecd0a999d0b644c748fc77c532c5aed5605a" |
+        ."head:".sha=."sync:".sha | ."head:".checks=$checks | ."head:".routing=$routing')"
+    _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${replies}"
+    run jq -e '.result.status == "full-run-not-green"' <<<"${output}"
+    assert_success
+    for mutation in \
+        'map(if .name == "prior-run" then .conclusion="FAILURE" else . end)' \
+        'map(select(.name != "prior-run"))' \
+        'map(if .name == "ci-passed" then .conclusion="SKIPPED" else . end)' \
+        '. + [{name:"unexpected",status:"COMPLETED",conclusion:"SKIPPED"}]'; do
+        replies="$(jq --argjson checks "${checks}" ".\"head:\".checks=(\$checks | ${mutation})" <<<"${replies}")"
+        _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${replies}"
+        run jq -e '.result.status == "head-blocked"' <<<"${output}"
+        assert_success
+    done
+    checks="$(jq -c '.retained' "${sample}")"
+    replies="$(jq --argjson checks "${checks}" '."head:".checks=$checks' <<<"${replies}")"
+    _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${replies}"
+    run jq -e '.result.status == "head-blocked"' <<<"${output}"
+    assert_success
+}
+
+@test "milestone-handover code-only routing still requires code legs (#1088)" {
+    local routing checks replies mutation
+    routing="$(cat "${REPO_ROOT}/test/unit/fixture/handover-routing-evidence-1087.json")"
+    checks="$(jq -c '[.jobs[] | select(.run_id == 43257942823) | {name,status:(.status|ascii_upcase),conclusion:(.conclusion|ascii_upcase),runId:(.run_id|tostring),url:.html_url}]' <<<"${routing}")"
+    replies="$(_handover_replies | jq --argjson checks "${checks}" --argjson routing "${routing}" '
+        ."sync:".sha="c274ecd0a999d0b644c748fc77c532c5aed5605a" |
+        ."head:".sha=."sync:".sha | ."head:".checks=$checks | ."head:".routing=$routing')"
+    _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${replies}"
+    run jq -e '.result.status == "full-run-not-green"' <<<"${output}"
+    assert_success
+    for mutation in 'del(."head:".routing)' \
+        '."head:".routing.jobs |= map(select(.name != "test-unit-verdict"))' \
+        '."head:".routing.jobs |= map(if .name == "test-unit-verdict" then .conclusion="skipped" else . end)' \
+        '."head:".routing.runs |= map(.head_sha="wrong")' \
+        '."head:".routing.source_sha="changed"' \
+        '."head:".routing.expectedJobs += ["new required leg"]' \
+        '."head:".routing.expectedJobs |= .[1:]' \
+        '."head:".routing.jobs |= map(select(.name != "route"))' \
+        '."head:".routing.runs |= map(.repository="other/repo")' \
+        '."head:".routing.runs |= map(.route_line="event pull_request/edited: code path=false")' \
+        '."head:".routing.jobs |= map(if .name == "ci-passed" then .html_url="https://example.invalid/job" else . end)' \
+        '."head:".checks |= map(if .name == "test-unit-verdict" then .conclusion="SKIPPED" else . end)'; do
+        local bad
+        bad="$(jq "${mutation}" <<<"${replies}")"
+        _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${bad}"
+        run jq -e '.result.status == "head-blocked"' <<<"${output}"
+        assert_success
+    done
+}
+
+@test "milestone-handover uses the same CI routing proof at every phase (#1088)" {
+    local checks routing replies stage bad
+    checks="$(jq -c '[.retained[] | if .name == "evaluate-approval" and .conclusion == "CANCELLED" then .conclusion="SUCCESS" else . end]' "${REPO_ROOT}/test/unit/fixture/handover-routing-1087.json")"
+    routing="$(cat "${REPO_ROOT}/test/unit/fixture/handover-routing-evidence-1087.json")"
+    replies="$(_handover_replies | jq --argjson checks "${checks}" --argjson routing "${routing}" '
+        walk(if type=="string" then gsub("(?<!a)a{40}(?!a)";"c274ecd0a999d0b644c748fc77c532c5aed5605a") | gsub("https://github.com/o/r/pull/7#";"https://github.com/ycpss91255/worktool/pull/1087#") else . end) |
+        ."sync:".checks=$checks | ."sync:".routing=$routing |
+        ."head:".checks=$checks | ."head:".routing=$routing |
+        ."evidence:".checks=$checks | ."evidence:".routing=$routing')"
+    _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${replies}"
+    run jq -e '.result.status == "prepared"' <<<"${output}"
+    assert_success
+    for stage in sync head evidence; do
+        bad="$(jq --arg stage "${stage}:" 'del(.[$stage].routing)' <<<"${replies}")"
+        _handover_run '{"repo":"ycpss91255/worktool","repoDir":"/tmp/w","base":"m3/5-acceptance","pr":1087}' "${bad}"
+        run jq -e --arg stage "${stage}" '.result.status == ($stage + "-blocked") or ($stage == "evidence" and .result.status != "prepared")' <<<"${output}"
         assert_success
     done
 }

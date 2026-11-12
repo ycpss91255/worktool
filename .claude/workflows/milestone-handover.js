@@ -67,10 +67,60 @@ const latestChecks = checks => {
     return entries.filter((_, i) => times[i] === newest)
   })
 }
-const checksGreen = checks => Array.isArray(checks) &&
+// A skipped CI routing placeholder is admissible only with same-PR, same-head
+// workflow metadata and the latest code run's complete required job evidence.
+const ciExpectedJobs = () => {
+  const names = ['test-unit-verdict']
+  for (const runner of ['ubuntu-latest', 'ubuntu-24.04-arm']) {
+    names.push(`Build test image (${runner})`, `lint-system-acceptance (${runner})`,
+      `test-matrix (${runner})`, `test-integration (${runner})`,
+      `test-system-real (${runner})`, `verify-all (${runner})`)
+    for (let shard = 1; shard <= 4; shard++) names.push(`test-unit ${shard}/4 (${runner})`)
+  }
+  return names
+}
+const skippedCiPlaceholder = (check, checks, routing, sha) => {
+  if (check?.status !== 'COMPLETED' || check.conclusion !== 'SKIPPED' || !routing || !Array.isArray(routing.runs) || !Array.isArray(routing.jobs)) return false
+  const match = typeof check.url === 'string' && check.url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)\/job\/\d+$/)
+  if (!match || match[1] !== A.repo || !/^\d+$/.test(String(check.runId)) || match[2] !== String(check.runId)) return false
+  if (routing.source_sha !== 'cfde27001e17b717144dbfce80594f1d6296aeb6589df1feabbd5da582893603' || !Array.isArray(routing.expectedJobs) || new Set(routing.expectedJobs).size !== routing.expectedJobs.length || [...routing.expectedJobs].sort().join('\n') !== ciExpectedJobs().sort().join('\n')) return false
+  const valid = r => r && r.repository === A.repo && r.path === '.github/workflows/ci.yml' && r.event === 'pull_request' && r.head_sha === sha &&
+    Array.isArray(r.pull_requests) && r.pull_requests.includes(A.pr) && Number.isSafeInteger(r.run_number) && Number.isSafeInteger(r.id)
+  if (!routing.runs.every(valid)) return false
+  const run = routing.runs.find(r => String(r.id) === String(check.runId))
+  if (!run || run.status !== 'completed') return false
+  const receipt = routing.jobs.filter(j => j.run_id === run.id && j.head_sha === sha && j.name === check.name && j.html_url === check.url)
+  if (receipt.length !== 1 || receipt[0].status !== 'completed' || receipt[0].conclusion !== 'skipped') return false
+  const prefix = `CI code run · PR #${A.pr} · `
+  const metaPrefix = `CI meta run · PR #${A.pr} · `
+  const code = routing.runs.filter(r => r.display_title === 'CI code run' || r.display_title?.startsWith(prefix)).sort((a,b) => b.run_number-a.run_number)
+  if (!code.length || code[0].status !== 'completed' || (code[1] && code[1].run_number === code[0].run_number) || !/^event pull_request\/(opened|synchronize|reopened|labeled|edited): code path=true$/.test(code[0].route_line || '')) return false
+  if (!ciExpectedJobs().every(name => {
+    const matches = routing.jobs.filter(j => j.name === name && j.run_id === code[0].id && j.head_sha === sha)
+    return matches.length === 1 && matches[0].status === 'completed' && matches[0].conclusion === 'success'
+  })) return false
+  const sameRunGreen = name => {
+    const receipts = routing.jobs.filter(j => j.name === name && j.run_id === run.id && j.head_sha === sha)
+    return receipts.length === 1 && receipts[0].status === 'completed' && receipts[0].conclusion === 'success' && checks.some(c => c?.name === name && String(c.runId) === String(run.id) && c.url === receipts[0].html_url && green(c))
+  }
+  if (!sameRunGreen('route') || !sameRunGreen('ci-passed')) return false
+  const isMeta = run.display_title?.startsWith(metaPrefix)
+  const isCode = run.display_title === 'CI code run' || run.display_title?.startsWith(prefix)
+  if (!isMeta && !isCode) return false
+  if (isMeta && !/^event pull_request\/(edited|labeled|unlabeled): code path=false$/.test(run.route_line || '')) return false
+  if (isCode && !/^event pull_request\/(opened|synchronize|reopened|labeled|edited): code path=true$/.test(run.route_line || '')) return false
+  const pushOnly = ['shard-weights', 'image-seed (${{ matrix.runner }})']
+  if (pushOnly.includes(check.name)) return true
+  const metaOnly = ['Build test image (${{ matrix.runner }})', 'test-system-real (${{ matrix.runner }})',
+    '${{ matrix.gate }} (${{ matrix.runner }})', 'test-unit ${{ matrix.shard }}/${{ matrix.shards }} (${{ matrix.runner }})',
+    'test-unit-verdict', 'verify-all (${{ matrix.runner }})']
+  if (isMeta) return metaOnly.includes(check.name) && sameRunGreen('prior-run')
+  return (run.display_title === 'CI code run' || run.display_title?.startsWith(prefix)) && check.name === 'prior-run'
+}
+const checksGreen = (checks, routing, sha) => Array.isArray(checks) &&
   requiredChecks.every(n => checks.some(c => c?.name === n && green(c))) &&
-  checks.every(c => c?.name === 'milestone-gate-approval' || green(c))
-const CHECK_POLICY = `Shared current-head check policy for Sync, Head and Evidence: normalize checks/statuses with name, status, conclusion, url, completedAt and runCreatedAt (the workflow run's creation time; fetch it when absent). Keep only the latest entry per check name before any failure or success decision, using this exact selection rule: ${latestChecks.toString()}. Superseded runs of the same workflow do not count. Compare runCreatedAt for all candidates if any candidate supplies it; otherwise compare completedAt for all candidates. Never compare different timestamp kinds. Missing or ambiguous timestamps retain all candidates and fail closed unless every candidate succeeds. Require both verify-all architecture jobs, ci-passed and every other retained check to be COMPLETED/SUCCESS. Exclude only milestone-gate-approval from waiting, failure and success decisions. Commit statuses are COMPLETED/SUCCESS only for state SUCCESS. Only retained checks can trigger failure, success or waiting. Check for failures before sleeping or starting another round, including the final poll at the total cap. Treat retained commit status FAILURE or ERROR and retained completed check conclusions FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, NEUTRAL or SKIPPED as immediate failures (only SUCCESS is green). Return the retained checks selected by this policy, including retained failures. A latest IN_PROGRESS or QUEUED entry means wait, never green: poll in bounded foreground rounds of at most 540 seconds with a total elapsed wall-clock cap of 7200 seconds (never reset between rounds); Sync uses its existing CI wait budget. Re-query head and checks on every poll, stop on query failure or changed head, and apply this selection rule before deciding failure, success or timeout. Missing checks also wait. At the total cap, return error with pending names, statuses and URLs if still incomplete; never return success while pending.`
+  checks.every(c => c?.name === 'milestone-gate-approval' || green(c) || skippedCiPlaceholder(c, checks, routing, sha))
+const CHECK_POLICY = `Shared current-head check policy for Sync, Head and Evidence: normalize checks/statuses with name, status, conclusion, url, completedAt and runCreatedAt (the workflow run's creation time; fetch it when absent). Keep only the latest entry per check name before any failure or success decision, using this exact selection rule: ${latestChecks.toString()}. Superseded runs of the same workflow do not count. Compare runCreatedAt for all candidates if any candidate supplies it; otherwise compare completedAt for all candidates. Never compare different timestamp kinds. Missing or ambiguous timestamps retain all candidates and fail closed unless every candidate succeeds. Require both verify-all architecture jobs and ci-passed to be COMPLETED/SUCCESS. For skipped CI routing placeholders, fetch paginated ci.yml pull_request runs of this exact head and their workflow path, repository full name, run number, PR numbers, event, title and status, plus the latest code run and each placeholder run jobs and the unique concrete route-job log line \`event pull_request/<action>: code path=<true|false>\` as route_line; execute \`source lib/ci_prior_run.sh; ci_prior_run_expected_jobs true\` and record its output as expectedJobs and sha256sum of the same library as source_sha; return them as routing {runs,jobs} using GitHub API keys id,run_number,display_title,status,event,head_sha,path,repository (full name),pull_requests (numbers),route_line, and job name,status,conclusion,run_id,head_sha,html_url. Include numeric runId in normalized checks. Evaluate skips only through these exact helpers: ${ciExpectedJobs.toString()} and ${skippedCiPlaceholder.toString()}; use the current lib/ci_prior_run.sh expected jobs and reject discrepancies. Exclude milestone-gate-approval as before; all other non-green checks fail unless this predicate proves an inactive CI route. Commit statuses are COMPLETED/SUCCESS only for state SUCCESS. Only retained checks can trigger failure, success or waiting. Check for failures before sleeping or starting another round, including the final poll at the total cap. Treat retained commit status FAILURE or ERROR and retained completed check conclusions FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE or NEUTRAL as immediate failures; SKIPPED is a failure unless the routing predicate above proves an inactive CI placeholder. Return the retained checks selected by this policy, including retained failures. A latest IN_PROGRESS or QUEUED entry means wait, never green: poll in bounded foreground rounds of at most 540 seconds with a total elapsed wall-clock cap of 7200 seconds (never reset between rounds); Sync uses its existing CI wait budget. Re-query head and checks on every poll, stop on query failure or changed head, and apply this selection rule before deciding failure, success or timeout. Missing checks also wait. At the total cap, return error with pending names, statuses and URLs if still incomplete; never return success while pending.`
 
 let RULES = rules(A.repoDir)
 const syncResult = await agent(`${RULES}
@@ -82,13 +132,13 @@ Fetch origin/main. Record pre-merge HEAD. Run git merge-base --is-ancestor origi
 If merge fails, inspect git diff --name-only --diff-filter=U. For conflicts, the implementer may resolve only when the intended behaviour is supported by repo evidence: record each resolution (file, conflicting alternatives, chosen result, rationale and verification) in the sync scratch directory. If any conflict cannot be safely resolved, stop before gates or push and return blocked with every unresolved path and reason; leave the worktree for follow-up. A non-conflict merge failure also stops. After all resolutions, verify no unmerged paths, then complete the merge with git commit -F <literal message file> using the same Refs and noreply rules. Never discard changes or use blanket ours/theirs.
 After merging, run just test guards, only the specs touched by the merge using just test <tier> <spec>, and just test lint sequentially in Docker, BLOCKING in the foreground. Include relevant specs for changed implementation files; record the spec selection and reasons. Respect max 2 worktool-test containers: inspect running count before each gate, wait in the foreground if full, never stop others' containers. No host tests, host installs, whole tiers, Monitor or background. Any gate failure stops before push.
 After merging, push the acceptance branch without force. For both unchanged and merged paths, verify local HEAD equals the remote branch and gh pr view ${A.pr} --repo ${A.repo} --json headRefOid,headRefName,statusCheckRollup returns that same SHA and branch. Wait for checks on this verified head using repeated bounded foreground polling rounds, each at most 540 seconds, with a total elapsed wall-clock cap of 7200 seconds measured from the start of CI waiting (never reset it between rounds). Limit the last round to the remaining total budget. A round expiring is not a CI timeout: continue the next round, even after 1800 seconds, until all checks succeed or the total cap is exhausted; never use Monitor/background or unfiltered --watch, which could wait forever for milestone-gate-approval. Re-query headRefOid at the start and end of every round and every poll, stop on a changed head or query failure. Apply the shared current-head check policy at every poll. Only exhausting the total 7200-second cap is a CI timeout: perform a final fresh head/check query and evaluate failures and success first; if checks are still incomplete, return blocked with the elapsed time and every still-pending check (name, status and URL), including missing required checks as MISSING. Exclude milestone-gate-approval from this pending list. Save the final check snapshot under sync scratch; do not report a single round expiration as timeout. For failures identified by the shared current-head check policy, inspect each failed retained job with gh run view <run-id> --repo ${A.repo} --log-failed and return its name, URL and concrete failure reason, or explain why logs could not be read. Never repair CI or continue to Head after failure. Preserve check lists, job logs, head SHA and gate tails under sync scratch.
-Only after completed green CI, return {state: "unchanged" when no merge was needed, otherwise "synced", repoDir: absolute acceptance worktree path, sha: full current HEAD, checks: normalized current-head checks}; on any failure return {state: "blocked", error: reason}.`, { label: `${RUN_ID} sync:`, phase: 'Sync', agentType: 'general-purpose' })
+Only after completed green CI, return {state: "unchanged" when no merge was needed, otherwise "synced", repoDir: absolute acceptance worktree path, sha: full current HEAD, checks: normalized current-head checks, routing: CI routing evidence}; on any failure return {state: "blocked", error: reason}.`, { label: `${RUN_ID} sync:`, phase: 'Sync', agentType: 'general-purpose' })
 const sync = decode(syncResult)
 if (sync) sync.checks = latestChecks(sync.checks)
 if (!sync || sync.error || !['synced', 'unchanged'].includes(sync.state) ||
     typeof sync.repoDir !== 'string' || !sync.repoDir.startsWith('/') ||
     /[\u0000-\u001f\u007f`]/.test(sync.repoDir) || !/^[0-9a-f]{40}$/.test(sync.sha) ||
-    !checksGreen(sync.checks)) {
+    !checksGreen(sync.checks, sync.routing, sync.sha)) {
   return { pr: A.pr, status: 'sync-blocked', report: sync || 'Sync query failed' }
 }
 A.repoDir = sync.repoDir
@@ -97,13 +147,13 @@ const headResult = await agent(`${RULES}
 ${CHECK_POLICY}
 Resolve PR ${A.pr} using \`gh pr view ${A.pr} --repo ${A.repo} --json headRefOid,labels,body,statusCheckRollup\`.
 Resolve milestoneIssue from ${A.milestoneIssue ?? 'the first Closes/Fixes/Resolves #N in the PR body'}; read that issue's goals using gh issue view --repo ${A.repo}.
-Return {sha: full headRefOid, labels: array of label names, milestoneIssue: positive integer, checks: normalized statusCheckRollup array with name, status, conclusion, url, completedAt, runCreatedAt}. Use the shared current-head check policy for selection and decisions. Missing/query/malformed data is error.`, { label: `${RUN_ID} head:`, phase: 'Head', agentType: 'general-purpose' })
+Return {sha: full headRefOid, labels: array of label names, milestoneIssue: positive integer, checks: normalized statusCheckRollup array with name, status, conclusion, url, completedAt, runCreatedAt, runId, routing: CI routing evidence}. Use the shared current-head check policy for selection and decisions. Missing/query/malformed data is error.`, { label: `${RUN_ID} head:`, phase: 'Head', agentType: 'general-purpose' })
 const head = decode(headResult)
 if (head) head.checks = latestChecks(head.checks)
 if (!head || head.error || head.sha !== sync.sha || !/^[0-9a-f]{40}$/.test(head.sha) || !head.labels?.includes('milestone-gate') ||
     !Number.isInteger(head.milestoneIssue) || head.milestoneIssue < 1 ||
     (A.milestoneIssue !== undefined && head.milestoneIssue !== A.milestoneIssue) ||
-    !checksGreen(head.checks)) {
+    !checksGreen(head.checks, head.routing, head.sha)) {
   return { pr: A.pr, status: 'head-blocked', report: head || 'PR query failed' }
 }
 // #837: nothing is handed over unless the exact head has a green full
@@ -580,10 +630,10 @@ Read doc/workflow.md's single evidence template, milestone goals, ${SCRATCH}/fin
 ## 目標對照
 | 目標 | 使用者實際入口 | 測試或驗收項目 | 證據 |
 |---|---|---|---|
-Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. Treat pendingHuman inconclusive rc=3 as pending, never as a failed required run. If verdict is negative (${verdict}) or any other required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. Separate defects, agent-obtainable evidence gaps and pendingHuman. Never present pendingHuman as passed. Defects: ${JSON.stringify(defects)}; agent-obtainable evidence gaps: ${JSON.stringify(insufficientEvidence)}. Evidence coverage: ${JSON.stringify(coveredEvidence)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {sha: full current head SHA, checks: normalized current-head checks retaining timestamps, evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { sha: { type: 'string' }, checks: { type: 'array', items: { type: 'object' } }, evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['sha', 'checks', 'evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
+Every cell nonempty, original goal text exactly as the goal extractor defines it. Do not present CI/static evidence as real-machine success. Treat pendingHuman inconclusive rc=3 as pending, never as a failed required run. If verdict is negative (${verdict}) or any other required run/restore failed, draft clearly states blocked and cannot declare readiness. Link the final independent verdict ${publication.url} and both verbatim reports ${JSON.stringify(publication.reports)}. List every pending human item explicitly in the ready comment, even when the verdict is positive: ${JSON.stringify(pendingHuman)}. Separate defects, agent-obtainable evidence gaps and pendingHuman. Never present pendingHuman as passed. Defects: ${JSON.stringify(defects)}; agent-obtainable evidence gaps: ${JSON.stringify(insufficientEvidence)}. Evidence coverage: ${JSON.stringify(coveredEvidence)}. List the issues to open for blocking independent reports: ${JSON.stringify(issues)}. Return {sha: full current head SHA, routing: CI routing evidence, checks: normalized current-head checks retaining timestamps and runId, evidenceContent: complete evidence text, readyContent: complete ready draft, error?: reason}.`, { label: `${RUN_ID} evidence:`, phase: 'Evidence', schema: { type: 'object', properties: { sha: { type: 'string' }, routing: { type: 'object' }, checks: { type: 'array', items: { type: 'object' } }, evidenceContent: { type: 'string' }, readyContent: { type: 'string' }, error: { type: 'string' } }, required: ['sha', 'checks', 'evidenceContent', 'readyContent'] }, agentType: 'general-purpose' })
 const evidence = decode(evidenceResult)
 if (evidence) evidence.checks = latestChecks(evidence.checks)
-if (!evidence || evidence.error || evidence.sha !== head.sha || !checksGreen(evidence.checks)) {
+if (!evidence || evidence.error || evidence.sha !== head.sha || !checksGreen(evidence.checks, evidence.routing, head.sha)) {
   return { pr: A.pr, sha: head.sha, status: 'evidence-failed', report: evidence || 'Evidence query failed' }
 }
 const evidenceWrite = evidence && !evidence.error ? await persistArtifacts('Evidence', { 'evidence.md': evidence.evidenceContent, 'ready.md': evidence.readyContent }) : evidence || { error: 'Missing evidence.md / ready.md content' }
