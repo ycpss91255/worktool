@@ -7,10 +7,12 @@ setup() {
     RUNNER="${BATS_TEST_TMPDIR}/runner"
     DOC="${BATS_TEST_TMPDIR}/acceptance"
     STRUCTURE="${BATS_TEST_TMPDIR}/structure"
+    ADR="${BATS_TEST_TMPDIR}/adr"
     cp "${LIB_DIR}/test_shard.sh" "${RUNNER}"
     cp "${LIB_DIR}/log.sh" "${BATS_TEST_TMPDIR}/log.sh"
     cp "${BATS_TEST_DIRNAME}/../../doc/acceptance.md" "${DOC}"
     cp "${BATS_TEST_DIRNAME}/../../doc/structure.md" "${STRUCTURE}"
+    cp "${BATS_TEST_DIRNAME}/../../doc/adr/0016-ci-unit-shards-union-verdict.md" "${ADR}"
 }
 
 _section() {
@@ -95,10 +97,17 @@ _check_structure() {
     grep -qF "且 \`WORKTOOL_STRESS\` 不為 \`1\`、skip 原因完全相符時才允許；設為 \`1\` 時必須執行" "$2"
 }
 
+_check_adr() {
+    awk '/^3\. / { print; found=1 } END { if (!found) exit 1 }' "$2" >"${BATS_TEST_TMPDIR}/adr-decision" || return 1
+    _check_structure "$1" "${BATS_TEST_TMPDIR}/adr-decision" || return 1
+    grep -qF '整層與分片聯集共用' "${BATS_TEST_TMPDIR}/adr-decision"
+}
+
 @test "runner, acceptance table, commands and structure agree" {
     _compare_exemptions "${RUNNER}" "${DOC}" "${BATS_TEST_TMPDIR}"
     _check_commands "${DOC}" "${BATS_TEST_TMPDIR}/runner.rows"
     _check_structure "${BATS_TEST_TMPDIR}/runner.rows" "${STRUCTURE}"
+    _check_adr "${BATS_TEST_TMPDIR}/runner.rows" "${ADR}"
 }
 
 @test "table additions, removals, duplicates and reason changes are rejected" {
@@ -170,4 +179,13 @@ _check_structure() {
     WORKTOOL_STRESS=0 test_shard_has_unexpected_skip unit "${BATS_TEST_TMPDIR}/tap" || rc=$?
     [[ "${rc}" -eq 1 ]]
     run _compare_exemptions "${RUNNER}" "${DOC}" "${BATS_TEST_TMPDIR}"; assert_failure
+}
+
+@test "ADR shard verdict rejects stale counts and missing opt-in policy" {
+    _compare_exemptions "${RUNNER}" "${DOC}" "${BATS_TEST_TMPDIR}"
+    sed -i 's/例外僅限 unit 的三個/例外僅限 unit 的二個/' "${ADR}"
+    run _check_adr "${BATS_TEST_TMPDIR}/runner.rows" "${ADR}"; assert_failure
+    cp "${BATS_TEST_DIRNAME}/../../doc/adr/0016-ci-unit-shards-union-verdict.md" "${ADR}"
+    sed -i 's/skip 原因完全相符時才允許/skip 均允許/' "${ADR}"
+    run _check_adr "${BATS_TEST_TMPDIR}/runner.rows" "${ADR}"; assert_failure
 }
