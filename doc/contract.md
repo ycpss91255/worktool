@@ -27,8 +27,8 @@
 
 ## 3. worktool 不做的事
 
-- **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，user config 之後會以 symlink 從 host HOME 帶進盒子 HOME（不複製、不修改，host 那份是唯一一份），尚未實作，將由 #199 實作。
-  - 驗證：待驗（#199 落地時補測試）。
+- **不管 user config。** `~/.ssh`、金鑰、token 等 worktool 不寫、不進 repo。依 ADR 0002 決策 3，#199 以 symlink 從 host HOME 帶入預設的 `.ssh`、`.gitconfig`、`.gnupg`、`.config/gh` 及狀態檔 `link=` 指定的有效項目，不複製或修改 host 那份。來源不存在、盒內同名項目非預期連結，或盒子 HOME／項目的父目錄不安全時會跳過。
+  - 驗證：`test/integration/assemble_spec.bats`（建立連結與既有項目保留）；`test/unit/link_spec.bats`（既有檔案與外來連結不覆蓋）。
 - **不在 host 用 apt 裝 CLI／TUI 工具。** CLI／TUI 工具一律裝在盒內，盒子清單只有 `box/dev.ini` 一份。
   - 驗證：待驗（尚無檢查「沒有任何腳本在 host 呼叫 apt」的測試）。盒內安裝的部分由 `test/system/real_assemble_spec.bats` 檢查：真實 distrobox 送到容器管理器的建立容器的請求帶有清單裡的套件。
 - **不寫 host shell 設定。** host 與盒子互不干擾：用非 ghostty 開的終端拿到的是 worktool 沒碰過的 host shell。`just box setup` 只寫 worktool 自己的狀態檔與終端設定裡標記的受管區塊（見 [`enter.md`](enter.md)）。盒子使用獨立 HOME 是這條的機制（#196、[ADR 0002](adr/0002-box-owns-its-home.md)）；ADR 0002 也寫明 `--home` 不是隔離，盒內仍能以絕對路徑讀寫 host HOME。
@@ -47,7 +47,7 @@
 以下每條對應第 6 節的一條不變量；性質的完整定義在該不變量的 ADR。
 
 - **使用者寫的內容歸使用者。** worktool 可以新建檔案；在既有檔案只在自己標記的受管區塊內寫；移除時只移除自己寫的；使用者的內容不刪、不覆蓋，要改既有內容先問（不變量 1）。例外是 worktool 自己的狀態檔 `~/.config/worktool/config`：它沒有受管區塊，改以狀態鍵劃分歸屬，狀態鍵所在的行歸 worktool、可以不問就換掉，但使用者存進狀態鍵的選擇要沿用；檔內其他的行照樣歸使用者（[ADR 0004](adr/0004-invariant-user-content.md)）。
-  - 驗證：`test/unit/setup_spec.bats`（受管區塊前後的使用者內容保留；`--auto-enter no` 只移除受管區塊並回報、保留使用者內容；`--dry-run` 不寫；使用者存進狀態鍵的選擇沿用）；`test/integration/assemble_spec.bats`（assemble 只換掉狀態檔的 `home` 那一對，其他行原樣留下）。「要改先問」：待驗。狀態檔裡使用者自己加的行：待驗，目前 `just box setup` 重寫狀態檔時會刪掉它們，違反本條（見 ADR 0004 的待補）。
+  - 驗證：`test/unit/setup_spec.bats`（受管區塊前後的使用者內容保留；`--auto-enter no` 只移除受管區塊並回報、保留使用者內容；`--dry-run` 不寫；使用者存進狀態鍵的選擇沿用）；`test/integration/assemble_spec.bats`（assemble 只換掉狀態檔的 `home` 那一對，其他行原樣留下）。「要改先問」：待驗。狀態檔裡使用者自己加的行由 `test/unit/setup_spec.bats` 的 #199 r4／r5 案例檢查保留。
 - **一個來源。** 盒子定義只有 `box/dev.ini` 一份；tool config 在 repo 內只有一份（不變量 2）。
   - 驗證：待驗（tool config 從 M5 起才進 repo）。盒子定義的單一來源由 `test/integration/assemble_spec.bats` 部分檢查：assemble 預設就是用 `box/dev.ini`。
 - **host 與盒子互不干擾。** 見第 3 節「不寫 host shell 設定」（不變量 3）。
