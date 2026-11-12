@@ -1098,6 +1098,7 @@ box/dev.ini|test/unit/acceptance_51_doc_spec.bats
 script/verify/justfile.verify|test/unit/acceptance_51_doc_spec.bats
 doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
 doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats

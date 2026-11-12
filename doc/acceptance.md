@@ -80,28 +80,23 @@ prereq-ok
       just box assemble --bogus; echo rc=$?
       ```
 
-- [ ] 1. 自動測試:四層 gate 全綠
+- [ ] 1. 自動測試:各層 gate 全綠
   - [ ] 1.1 lint:ShellCheck 零違規
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --lint "$@"
-      [ci]   found 21 script(s)
-      [ci] ShellCheck OK
       rc=0
       ```
     - 驗收方式
       ```bash
       just test lint; echo rc=$?
       ```
-  - [ ] 1.2 單元:8 個必要 spec、135 案例全 ok、無 skip
+  - [ ] 1.2 單元:現行必要 spec 與案例全 ok，skip 依 runner 政策判定
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --unit "$@"
-      [ci]   required specs OK (135 case(s) declared by 8 file(s))
-      1..135
-      ok 1 ...
-      ...(135 行全部 ok;沒有 not ok、沒有 # skip)
-      [ci] unit bats OK
       rc=0
       ```
     - 驗收方式
@@ -110,12 +105,9 @@ prereq-ok
       ```
   - [ ] 1.3 整合:mock distrobox 逐參數記錄,無效清單絕不呼叫 distrobox
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --integration "$@"
-      [ci]   required specs OK (10 case(s) declared by 2 file(s))
-      1..10
-      ...(全部 ok)
-      [ci] integration bats OK
       rc=0
       ```
     - 驗收方式
@@ -124,12 +116,9 @@ prereq-ok
       ```
   - [ ] 1.4 系統 shim:真實 distrobox 1.8.2.5 + 假 container manager
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --system "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] system bats OK
       rc=0
       ```
     - 驗收方式
@@ -138,27 +127,10 @@ prereq-ok
       ```
   - [ ] 1.5 系統 real-engine(docker-in-docker):真的建出可用 dev 盒;host docker 前後不變
     - 預期看到資訊(約 2-4 分鐘)
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh)、[script/test/system-real-entry.sh](../script/test/system-real-entry.sh) 與 [test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats) 為準；此項依行為與結束碼驗收，不固定輸出快照。host 前後清單相同時，下方比較指令印出 `host unchanged`。
+
       ```text
-      ./script/test/test.sh --system-real "$@"
-      [system-real] dockerd ready after 1s
-      [system-real] engine 29.8.0 driver=overlayfs cgroup=cgroupfs/2
-      [ci]   required specs OK (12 case(s) declared by 1 file(s))
-      1..12
-      ok 1 preflight: a real docker engine is live inside the runner
-      ...
-      ok 5 real engine: distrobox enter dev -- rg --version prints a ripgrep version (first start runs distrobox-init + apt)
-      ok 6 real engine: distrobox enter dev -- fzf --version prints a version
-      # tmux: tmux 3.x
-      ok 7 real engine: distrobox enter dev -- tmux -V prints a tmux version (auto-enter prerequisite)
-      # fish: fish, version 4.x
-      ok 8 real engine: distrobox enter dev -- fish --version prints a fish version (auto-enter prerequisite)
-      ...
-      ok 11 real engine: a second assemble.sh run exits 0 and does not duplicate the dev box
-      ok 12 real engine: distrobox rm -f dev removes the box from the engine
-      [ci] system-real bats OK
-      [system-real] cleanup: containers left in the nested daemon: 0
       rc=0
-      host unchanged
       ```
     - 驗收方式
       ```bash
@@ -168,12 +140,9 @@ prereq-ok
       ```
   - [ ] 1.6 交付驗收:直接執行交付的 selfcheck(含負向案例)
     - 預期看到資訊
+      輸出與案例清單以 [script/test/test.sh](../script/test/test.sh) 為準；此項依行為與結束碼驗收，不固定輸出快照。
+
       ```text
-      ./script/test/test.sh --acceptance "$@"
-      [ci]   required specs OK (6 case(s) declared by 1 file(s))
-      1..6
-      ...(全部 ok)
-      [ci] acceptance bats OK
       rc=0
       ```
     - 驗收方式
