@@ -70,15 +70,16 @@ install script 形式)與容器框架。盒子有自己的 HOME(見 `doc/adr/000
 2. bootstrap 順序:host 裝 docker+distrobox(+ `just`,見「決策」)-> host
    install script(驅動/GUI)-> assemble 盒子 -> 設定終端自動進盒。
 3. 版本號:`2.0.0`(worktool 首個對外版本)。
-4. 效能目標:進盒 prompt 感知延遲 < 約 300ms;工具呼叫額外負擔 < 約 50-100ms。
+4. 效能目標:進盒 prompt 感知延遲 ≤ 300 ms;工具呼叫額外負擔 < 約 50-100ms。
    300 ms 這條線由系統層 real-engine gate **強制**(`just test system-real`,
    issue #23):`test/system/real_engine_spec.bats` 對 DinD 內建出的真實 dev 盒跑
-   `just box bench --max-ms 300`(底層 `script/box/bench.sh --box dev --runs 5
-   --warmup 2 --max-ms 300`),shell 中位數(由 setup 寫出的受管 command 經
+   `script/box/bench.sh --box dev --runs 5 --warmup 2
+   --shell 'fish -c exit' --max-ms 300`,shell 中位數(由 setup 寫出的受管 command 經
    enter.sh wrapper、distrobox enter + shell 啟動,即使用者拿到提示字元的感知延遲)超過即 exit 1、gate 紅;門檻只寫在該 spec 的 `ENTER_MAX_MS`
    一處,另有 `--max-ms 1` 的負向案例證明 gate 會咬。量測前先等主機安靜(CPU
    pressure `some avg10 <= 2.00` 連續 5 秒),等不到或量測途中超標即 exit 3
-   (未判定,不給通過也不給退化;CI 上一樣是紅),見
+   (未判定,不給通過也不給退化;CI 上一樣是紅);若所有 PSI 來源都讀不到,則警告
+   未檢查並照常量測與判定。見
    `doc/adr/0003-latency-gate-inconclusive.md`(issue #181)。CI 實測(docker 29.8.0 +
    預設 runc、warm 容器):amd64 enter 中位數約 88 ms、arm64 約 87 ms,離目標
    有 3 倍餘裕,故維持 docker + runc、不換 runtime;實機數字由人類清單收集
@@ -293,7 +294,7 @@ as the task runner」),M1 建骨架時直接沿用了 `justfile` + `justfile.ci`
   一個含 1-2 個工具的盒 + 冒煙測試(含 CI 內 docker-in-docker 的真實引擎冒煙,
   2026-09-16 由 M5 提前;見「測試策略」)。
   Checkpoint:一鍵 assemble 出可用盒。Exit:人類審核。
-- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(< 300ms)。盒內先裝 tmux、fish
+- M3 終端自動進盒 + 效能:進盒機制 + 量測達標(≤ 300 ms)。盒內先裝 tmux、fish
   (issue #160,`box/dev.ini` 的 `additional_packages`):終端 profile 執行
   `'<repo>/script/box/enter.sh' --distrobox '<distrobox>' --box 'dev'`；兩個
   路徑都是已引用的絕對路徑（#175），wrapper 進入盒內 fish；不自動開 tmux(issue #179:

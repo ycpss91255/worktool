@@ -85,4 +85,4 @@
 9. 正確性不綁單一平台（[ADR 0012](adr/0012-invariant-platform-neutral.md)，#210）
 10. 相容性：同一個大版號內不破壞原本的用法（[ADR 0013](adr/0013-invariant-compatibility.md)，#211）
 
-#200 定案時，第 11 條「進盒 < 300 ms」待 #181 定案，本索引不列入；是否補列另行決定。
+#200 定案時暫緩的第 11 條進盒延遲，已由 #181／[ADR 0003](adr/0003-latency-gate-inconclusive.md) 定案：shell median 門檻為 ≤ 300 ms，量測環境不合格以結束碼 3 表示未判定。本索引不列入；是否補列另行決定。
