@@ -90,7 +90,7 @@ _managed_enter() {
     assert_success
     local _cmd
     _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
-    WORKTOOL_INIT_INTERVAL=1 run /bin/sh -c "${_cmd}"
+    WORKTOOL_INIT_INTERVAL=1 run timeout -k 2 15 /bin/sh -c "${_cmd}"
 }
 
 @test "Ghostty managed command keeps reporting cold-init stages and elapsed time before entering without tmux" {
@@ -535,6 +535,55 @@ EOF
     assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
     run enter_fake_logs_alive
     assert_failure
+}
+
+_has_nonzero_init_progress() {
+    grep -Eq 'first launch: .+ - [1-9][0-9]*s elapsed - '
+}
+
+@test "Ghostty managed command times out a stalled non-terminal launch in real time and reaps the follower" {
+    enter_fake_logs '0|distrobox: Installing basic packages...' '0|Unpacking stuck-pkg'
+    local _repo="${BATS_TEST_TMPDIR}/timed-repo" _cmd _finished _elapsed_ms
+    mkdir -p "${_repo}/script/box"
+    cp -R "${REPO_ROOT}/lib" "${_repo}/lib"
+    cp "${REPO_ROOT}/script/box/"{setup.sh,enter.sh,justfile.box} "${_repo}/script/box/"
+    export WAIT_STARTED="${BATS_TEST_TMPDIR}/wait-started"
+    # Mark the actual wait entry, excluding setup and process startup time.
+    sed -i "/^_wait_for_setup() {/a\\    date +%s%N >\"\${WAIT_STARTED}\"" "${_repo}/script/box/enter.sh"
+    run just --justfile "${_repo}/script/box/justfile.box" setup --terminal ghostty --box dev --distrobox "${DISTROBOX}"
+    assert_success
+    _cmd="$(sed -n 's/^command = //p' "${HOME}/.config/ghostty/config")"
+    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT=3 run timeout -k 2 15 /bin/sh -c "${_cmd}"
+    _finished="$(date +%s%N)"
+    assert_failure 1
+    assert [ -s "${WAIT_STARTED}" ]
+    _elapsed_ms=$(((_finished - $(cat "${WAIT_STARTED}")) / 1000000))
+    [[ "${_elapsed_ms}" -ge 0 && "${_elapsed_ms}" -lt 10000 ]] \
+        || fail "3s timeout returned ${_elapsed_ms}ms after wait entry"
+    assert_output --partial "failed: timed out after 3s without container_setup_done"
+    assert_line "[ERROR] init log: ${INIT_LOG}"
+    assert_line "  | Unpacking stuck-pkg"
+    assert_output --partial "distrobox rm -f dev, then open a new terminal"
+    if ! _has_nonzero_init_progress <<<"${output}"; then
+        fail 'managed timeout reported no nonzero init progress'
+    fi
+    refute_output --partial "Press Enter to close this terminal"
+    assert [ ! -e "${FAKE_DISTROBOX_CALLS}" ]
+    assert [ -s "${FAKE_LOGS_PIDFILE}" ]
+    if enter_fake_logs_alive; then
+        fail "the log follower survived the non-terminal timeout"
+    fi
+    # An immediate timeout mutant reaches the same entry marker and fails,
+    # but must not satisfy the nonzero-progress requirement above.
+    sed -i '/date +%s%N/a\    _fail "timed out after 3s without container_setup_done"; return 1' "${_repo}/script/box/enter.sh"
+    rm "${WAIT_STARTED}"
+    WORKTOOL_INIT_INTERVAL=1 WORKTOOL_INIT_TIMEOUT=3 run timeout -k 2 15 /bin/sh -c "${_cmd}"
+    assert_failure 1
+    assert [ -s "${WAIT_STARTED}" ]
+    assert_output --partial 'failed: timed out after 3s without container_setup_done'
+    if _has_nonzero_init_progress <<<"${output}"; then
+        fail 'immediate timeout mutant unexpectedly passed the progress predicate'
+    fi
 }
 
 @test "Ghostty managed command safely quotes repo and distrobox paths and enters a warm named box with one inspect" {

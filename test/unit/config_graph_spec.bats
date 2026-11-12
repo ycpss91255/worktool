@@ -71,6 +71,46 @@ EOF
     [[ "${stderr}" == *'unresolved source line'* ]] || fail "missing graph diagnostic: ${stderr}"
 }
 
+@test "a missing source fails the graph and emits no partial judge list" {
+    local _tree="${BATS_TEST_TMPDIR}/repo" stderr=""
+    mkdir -p "${_tree}/script/a" "${_tree}/script/z"
+    printf '%s\n' 'judge_run() { config_get home; }' >"${_tree}/script/a/judge.sh"
+    cat >"${_tree}/script/z/broken.sh" <<'EOF'
+source "${SCRIPT_DIR}/missing.sh"
+EOF
+
+    run --separate-stderr graph_modules "${_tree}" script/z/broken.sh
+    assert_failure
+    [[ "${stderr}" == *'missing.sh'* ]] || fail "missing file diagnostic: ${stderr}"
+    run --separate-stderr graph_judges "${_tree}" config_get
+    assert_failure
+    assert_output ""
+    [[ "${stderr}" == *'missing.sh'* ]] || fail "missing file diagnostic: ${stderr}"
+}
+
+@test "function extraction failures do not emit a partial judge list" {
+    local _tree="${BATS_TEST_TMPDIR}/repo" _calls="${BATS_TEST_TMPDIR}/calls" stderr=""
+    mkdir -p "${_tree}/script/a" "${_tree}/script/z"
+    printf '%s\n' 'judge_run() { config_get home; }' >"${_tree}/script/a/judge.sh"
+    printf '%s\n' 'other_run() { :; }' >"${_tree}/script/z/other.sh"
+    _graph_functions() {
+        if [[ "$2" == script/z/other.sh ]]; then
+            printf 'call\n' >>"${_calls}"
+            [[ "$(wc -l <"${_calls}")" != "${FAIL_CALL}" ]] || return 1
+        fi
+        awk '/^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/ { fn = $0; sub(/\(.*/, "", fn); print fn "\t" $0 }' "$1/$2"
+    }
+    local FAIL_CALL=1
+    run --separate-stderr graph_judges "${_tree}" config_get
+    assert_failure
+    assert_output ""
+    rm "${_calls}"
+    FAIL_CALL=2
+    run --separate-stderr graph_judges "${_tree}" config_get
+    assert_failure
+    assert_output ""
+}
+
 @test "source graph follows the manager library through home" {
     run graph_modules "${REPO_ROOT}" script/box/assemble.sh
     assert_success

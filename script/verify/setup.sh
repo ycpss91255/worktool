@@ -891,6 +891,7 @@ _item_3_2() {
     "${_env[@]}" bash -c "source \"\$1/lib/config.sh\"; config_set home \"\$HOME/dev-box\" home.source default link .acceptance-user" bash "${REPO_ROOT}" || return 1
     _run_norm "${_env[@]}" just box setup || return 1
     [[ "${LAST_RC}" -eq 0 ]] || _bad=1
+    _expect_user_content 3.2 after-rewrite || _bad=1
     _show_norm_file "${_state}" || return 1
     _expect_only_lines 3.2 "${_state}" "${STATE_FILE_LINES[@]}" \
         'home=<H>/dev-box' 'home.source=default' 'link=.acceptance-user' || _bad=1
@@ -1458,6 +1459,7 @@ _item_3_9() {
     NORM_D="$(_resolve_exec distrobox 'the managed command records its absolute path')" || return $?
     local _env=(env "HOME=${ITEM_H}" "XDG_CONFIG_HOME=${ITEM_H}/.config")
     "${_env[@]}" just box setup --terminal ghostty >/dev/null 2>&1 || return 1
+    _expect_user_content 3.9 after-write || _bad=1
     _before="$(_count_matching 'BEGIN worktool managed block' "${_legacy}")" || return 1
     [[ "${_before}" -eq 1 ]] || return 1
     printf 'font-size = 17\n' >"${_target}" || return 1
@@ -1584,6 +1586,7 @@ _item_3_10() {
     _count="$(_count_matching '^\[ERROR\]' "${ITEM_T}/run.out")" || return 1
     [[ "${_count}" -eq 1 ]] || return 1
     cmp -s "${_file}" "${ITEM_T}/original" || return 1
+    _expect_user_content 3.10 after-failure || return 1
     find "${ITEM_H}/.config/ghostty" -name 'config.??????' >"${ITEM_T}/temps" || return 1
     [[ ! -s "${ITEM_T}/temps" ]] || return 1
     printf 'original=intact temp-files=0\n'
@@ -1756,17 +1759,15 @@ _run_item() {
 }
 
 verify_setup_run() {
-    local _items=() _item
+    local _items=() _item _help=0 _list=0
     # The whole command line is parsed before any check runs.
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h | --help)
-                _usage
-                return 0
+                _help=1
                 ;;
             --list)
-                _list_items
-                return 0
+                _list=1
                 ;;
             --allow-real-box) OPT_ALLOW_REAL_BOX=1 ;;
             -*)
@@ -1784,6 +1785,14 @@ verify_setup_run() {
         esac
         shift
     done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        _list_items
+        return 0
+    fi
     [[ "${#_items[@]}" -gt 0 ]] || _items=("${VERIFY_ITEMS[@]}")
 
     # The checks drive `just`, which must find the repo's justfile.

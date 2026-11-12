@@ -59,6 +59,7 @@ assert_signal_cleanup() {
 
 teardown() {
     interrupt_load_stop
+    _1085_stop_blocked_group
     signal_child_stop
 }
 
@@ -89,11 +90,9 @@ signal_child_stop() {
     interrupt_load_start
     local attempt failures=0 trials=60
     sed -i "3i printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${SIGNAL_STATE}/child"
-    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
-        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${SIGNAL_STATE}/signal.js"
     for ((attempt=1; attempt<=trials; attempt++)); do
         rm -f "${SIGNAL_STATE}/ready" "${SIGNAL_STATE}/events"
-        run node "${SIGNAL_STATE}/signal.js" HUP bash "${SIGNAL_STATE}/caller"
+        SIGNAL_DELAY_MAX_MS=10 SIGNAL_POLL_MS=1 run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" HUP bash "${SIGNAL_STATE}/caller"
         if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
             "$(cat "${SIGNAL_STATE}/events")" != $'finished\ncleanup' ]]; then
             failures=$((failures + 1))
@@ -109,13 +108,115 @@ signal_child_stop() {
     [ "${failures}" -eq 0 ]
 }
 
+_1085_prepare_ignoring_child() {
+    cat >"${SIGNAL_STATE}/child" <<'CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+trap '' INT TERM HUP
+printf '%s\n' "$$" >"${SIGNAL_STATE}/child.pid"
+sleep 30 &
+printf '%s\n' "$!" >"${SIGNAL_STATE}/sleep.pid"
+awk '{print $22}' "/proc/$$/stat" >"${SIGNAL_STATE}/child.start"
+awk '{print $22}' "/proc/$!/stat" >"${SIGNAL_STATE}/sleep.start"
+touch "${SIGNAL_STATE}/ready"
+wait "$!"
+printf 'finished\n' >>"${SIGNAL_STATE}/events"
+CHILD
+    cat >"${SIGNAL_STATE}/kill-observer" <<'OBSERVER'
+source "${LIB_DIR}/log.sh"
+kill() {
+    local rc=0 child_pid row child_group child_start expected_start verified=0
+    local -a fields
+    if [[ "$#" -eq 3 && "$1" == -KILL && "$2" == -- && "$3" == "-${monitor:-}" ]]; then
+        if [[ "${SIGNAL_BLOCK_KILL:-0}" == 1 ]]; then
+            printf '%s\n' "${monitor}" >"${SIGNAL_STATE}/blocked-group"
+            return 1
+        fi
+        if [[ -f "${SIGNAL_STATE}/child.pid" && -f "${SIGNAL_STATE}/child.start" ]]; then
+            read -r child_pid <"${SIGNAL_STATE}/child.pid"
+            read -r expected_start <"${SIGNAL_STATE}/child.start"
+            if [[ "${child_pid}" =~ ^[1-9][0-9]*$ && -r "/proc/${child_pid}/stat" ]] &&
+                IFS= read -r row <"/proc/${child_pid}/stat"; then
+                read -r -a fields <<<"${row##*) }"
+                child_group="${fields[2]:-}" child_start="${fields[19]:-}"
+                [[ "${child_group}" != "${monitor}" || "${child_start}" != "${expected_start}" ]] || verified=1
+            fi
+        fi
+        builtin kill "$@" || rc=$?
+        if [[ "${rc}" -eq 0 && "${verified}" -eq 1 ]]; then
+            printf '%s\n' "${monitor}" >"${SIGNAL_STATE}/killed-group"
+        fi
+        return "${rc}"
+    fi
+    builtin kill "$@"
+}
+OBSERVER
+    sed -i '/^source .*verify_run.sh/r '"${SIGNAL_STATE}"'/kill-observer' "${SIGNAL_STATE}/caller"
+}
+
+_1085_stop_blocked_group() {
+    local pid group row state current file anchor=0 expected
+    local -a fields
+    [[ -f "${SIGNAL_STATE}/blocked-group" ]] || return 0
+    read -r group <"${SIGNAL_STATE}/blocked-group"
+    [[ "${group}" =~ ^[1-9][0-9]*$ ]] || return 1
+    for file in "${SIGNAL_STATE}/child.pid" "${SIGNAL_STATE}/sleep.pid"; do
+        [[ -f "${file}" ]] || return 1
+        read -r pid <"${file}"
+        [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+        if [[ -r "/proc/${pid}/stat" ]]; then
+            IFS= read -r row <"/proc/${pid}/stat" || return 1
+            read -r -a fields <<<"${row##*) }"
+            state="${fields[0]:-}" current="${fields[2]:-}"
+            read -r expected <"${file%.pid}.start" || return 1
+            [[ "${current}" == "${group}" && "${fields[19]:-}" == "${expected}" ]] || return 1
+            [[ "${state}" == Z || "${state}" == X ]] || anchor=1
+        fi
+    done
+    if [[ "${anchor}" -eq 1 ]]; then
+        kill -KILL -- "-${group}" || return 1
+    fi
+    _1085_group_stopped "${group}"
+}
+
+_1085_group_stopped() {
+    local group="$1" rows attempt scan_rc
+    [[ "${group}" =~ ^[1-9][0-9]*$ ]] || return 1
+    for ((attempt=0; attempt<40; attempt++)); do
+        rows="$(timeout -s KILL 1 ps -eo pgid=,stat=)" || return 1
+        scan_rc=0
+        awk -v group="${group}" '
+            NF != 2 || $1 !~ /^[0-9]+$/ || $2 !~ /^[A-Za-z]/ { bad=1 }
+            $1 == group && $2 !~ /^[ZX]/ { found=1 }
+            END { if (bad || NR == 0) exit 2; exit found ? 1 : 0 }
+        ' <<<"${rows}" || scan_rc=$?
+        case "${scan_rc}" in 0) return 0 ;; 1) ;; *) return 1 ;; esac
+        sleep 0.05 || return 1
+    done
+    return 1
+}
+
+_1085_monotonic_nanoseconds() {
+    node -p 'process.hrtime.bigint().toString()'
+}
+
+_1085_within_grace() {
+    (( $2 - $1 < 3000000000 ))
+}
+
 @test "verify_run: a signal-ignoring child is killed within the grace period" {
-    sed -i "s/^trap .*/trap '' INT TERM HUP/" "${SIGNAL_STATE}/child"
-    local start="${SECONDS}"
+    _1085_prepare_ignoring_child
+    local started ended
+    started="$(_1085_monotonic_nanoseconds)"
     run signal_caller INT
     assert_success
     assert_line 'rc=130'
-    [ "$((SECONDS - start))" -lt 3 ]
+    ended="$(_1085_monotonic_nanoseconds)"
+    _1085_within_grace "${started}" "${ended}"
+    [ -s "${SIGNAL_STATE}/killed-group" ]
+    local group
+    read -r group <"${SIGNAL_STATE}/killed-group"
+    _1085_group_stopped "${group}"
     [ "$(cat "${SIGNAL_STATE}/events")" = cleanup ]
     local pid
     read -r pid <"${SIGNAL_STATE}/child.pid"
@@ -123,6 +224,41 @@ signal_child_stop() {
         run grep -E '^[0-9]+ \([^)]*\) Z ' "/proc/${pid}/stat"
         assert_success
     fi
+}
+
+@test "verify_run: monotonic grace rejects a real interval over three seconds" {
+    local started ended
+    started="$(_1085_monotonic_nanoseconds)"
+    sleep 3.1
+    ended="$(_1085_monotonic_nanoseconds)"
+    run _1085_within_grace "${started}" "${ended}"
+    assert_failure
+}
+
+@test "verify_run: monotonic grace accepts under three seconds despite a controlled SECONDS jump" {
+    local start_seconds started ended
+    start_seconds="${SECONDS}"
+    started="$(_1085_monotonic_nanoseconds)"
+    SECONDS=$((start_seconds + 3))
+    ended="$(_1085_monotonic_nanoseconds)"
+    (( SECONDS - start_seconds >= 3 ))
+    run _1085_within_grace "${started}" "${ended}"
+    assert_success
+}
+
+@test "verify_run: blocked group KILL cannot pass the interruption check" {
+    _1085_prepare_ignoring_child
+    SIGNAL_BLOCK_KILL=1 run signal_caller INT
+    local driver_status="${status}" driver_output="${output}" group
+    [ -s "${SIGNAL_STATE}/blocked-group" ]
+    read -r group <"${SIGNAL_STATE}/blocked-group"
+    run _1085_group_stopped "${group}"
+    assert_failure
+    _1085_stop_blocked_group
+    [ "${driver_status}" -ne 0 ]
+    [[ "${driver_output}" == *'timeout-phase=cleanup'* ]]
+    [[ $'\n'"${driver_output}"$'\n' != *$'\nrc=130\n'* ]]
+    [ ! -e "${SIGNAL_STATE}/killed-group" ]
 }
 
 @test "verify_run: interruption removes only this test run's labelled containers" {
@@ -283,4 +419,16 @@ verify_stop_group 999999 TERM
 PROBE
     assert_failure 1
     assert_output --partial 'verify_stop_group: post-KILL wait deadline exceeded (pgid=999999)'
+}
+
+@test "verify_run: real interruption over the grace limit is rejected" {
+    local tree="${BATS_TEST_TMPDIR}/slow-case"
+    mkdir -p "${tree}/test/unit"
+    ln -s "${REPO_ROOT}/test/helper" "${tree}/test/helper"
+    ln -s "${REPO_ROOT}/test/unit/fixture" "${tree}/test/unit/fixture"
+    cp "${BATS_TEST_FILENAME}" "${tree}/test/unit/verify_run_signal_spec.bats"
+    sed -i '/^signal_caller() {$/a\    sleep 3.1' "${tree}/test/unit/verify_run_signal_spec.bats"
+    run bats --filter '^verify_run: a signal-ignoring child is killed within the grace period$' "${tree}/test/unit/verify_run_signal_spec.bats"
+    assert_failure
+    assert_output --partial "_1085_within_grace \"\${started}\" \"\${ended}\""
 }

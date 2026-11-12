@@ -36,7 +36,8 @@
 #
 # This is a library: it defines functions and must be sourced, not executed.
 # It sources lib/enter.sh (same dir), which brings lib/config.sh, the state
-# file's one reader/writer.
+# file's one reader/writer. It also sources lib/distrobox_manager.sh for
+# manager resolution.
 
 # shellcheck source-path=SCRIPTDIR
 _HOME_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -85,7 +86,7 @@ home_path_problem() {
     return 1
 }
 
-# Validate the home lines of state file $1: every occurrence of `home`
+# Validate the configured state file's home lines: every occurrence of `home`
 # meets the --home rules, every `home.source` is default|user, and the
 # two are present together (a lone home.source would resolve to an empty
 # box home). Prints ONE line saying why and returns 1 on the first fault.
@@ -145,8 +146,8 @@ _home_check_pair() {
     return 1
 }
 
-# Record home=$2 and home.source=$3 in state file $1 IN PLACE (lib/config.sh
-# config_set): the two lines are replaced where they are (a duplicate is
+# Record home=$1 and home.source=$2 in the configured state file IN PLACE
+# (lib/config.sh config_set): the two lines are replaced where they are (a duplicate is
 # dropped), or appended; every line another writer owns stays as it was.
 # Atomic, keeps the file's mode.
 home_record() {
