@@ -272,6 +272,38 @@ _listing_has_exact_names() {
     assert_success
 }
 
+@test "namespace listing rejects missing or extra entries" {
+    local expected
+    expected=$(printf '%s\n' box default test | LC_ALL=C sort)
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    test ... # tests
+EOF
+    assert_success
+    run _listing_has_exact_names "$(printf '%s\n' default foo2 | LC_ALL=C sort)" <<'EOF'
+Available recipes:
+    default # list
+    foo2 ... # numbered module
+EOF
+    assert_success
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+EOF
+    assert_failure
+    run _listing_has_exact_names "${expected}" <<'EOF'
+Available recipes:
+    box ... # box
+    default # list
+    extra ... # extra
+    test ... # tests
+EOF
+    assert_failure
+}
+
 @test "README lists every root namespace" {
     local namespace
     while IFS= read -r namespace; do
