@@ -52,22 +52,17 @@ prereq-ok
       just
       ```
   - [ ] 0.2 namespace 清單與 help 都來自底層腳本
-    - 預期看到資訊
+    - 預期看到資訊: `just box` 列出目前的 box 動詞；test 與 assemble 說明的第一行為
       ```text
-      Available recipes:
-          assemble *args # Assemble the dev box from its manifest (args: --dry-run, --file <manifest>, --home <path>, --help; default box/dev.ini, ~/<box>-box).
-          default        # List the box verbs.
-          help           # Show the box wrapper help (assemble.sh --help). [alias: h]
-      ./script/test/test.sh --help
       Usage: test.sh [OPTION...]
-      ./script/box/assemble.sh --help
-      Usage: assemble.sh [--file <manifest>] [--dry-run]
+      Usage: assemble.sh [--file <manifest>] [--home <path>] [--dry-run]
       ```
+      原 M2 清單只有 assemble；目前還有其他動詞，完整清單以 `just box` 的輸出為準。
     - 驗收方式
       ```bash
       just box
       just test help 2>&1 | head -2
-      just box help 2>&1 | head -2
+      just box assemble --help 2>&1 | head -2
       ```
   - [ ] 0.3 錯誤輸入不跑任何東西:未知動作 just 報錯 exit 1;未知選項腳本報錯 exit 2
     - 預期看到資訊
@@ -492,15 +487,17 @@ prereq-ok
   - 第一層(整合層 ghostty 組,不需顯示器,`just test integration`):
     `just box setup` 寫出的受管區塊交給**真的 ghostty** 讀 ——
     `ghostty +validate-config` 接受該檔,`ghostty +show-config` 解析出的生效
-    `command` 恰為 `'<distrobox 絕對路徑>' enter dev`,後面不接 tmux
+    `command` 恰為 `'<repo>/script/box/enter.sh' --distrobox '<distrobox 絕對路徑>' --box 'dev'`,後面不接 tmux
     (issue #175:受管 command 寫**已 quote 的**絕對路徑,斷言同時 refute 裸名字
     那一行;另有一案以含空白與 `$(...)` 的安裝路徑證明 quoting 真的擋得住);
     `--box <name>` 也照樣傳到 ghostty;並以「`--auto-enter no`
     之後不再有該指令」與「亂鍵設定被 `+validate-config` 拒絕」兩個對照案例證明
     斷言不是恆真。
   - 第二層(system-real 組,`just test system-real`):在 DinD 內用
-    `xvfb-run -a` 開一個**真的 ghostty 視窗**,其受管區塊的 command 為
-    `distrobox enter dev -- fish <script>`,斷言**盒內**留下的標記檔顯示 fish 版本、
+    `xvfb-run -a` 開一個**真的 ghostty 視窗**,以測試寫入的
+    `distrobox enter dev -- fish <script>` 驗證盒內執行;另以 setup 實際寫出的
+    wrapper command 加上 `-- fish <script>` 驗證桌面 PATH 下的完整進盒路徑。
+    兩者皆斷言**盒內**留下的標記檔顯示 fish 版本、
     `tmux=no`、**所用引擎的容器檔存在**(issue #179 寫的 `/run/.containerenv` 是
     podman 的;docker 對應的是 `/.dockerenv`,distrobox 自己也以兩者之一判定在容器
     內——斷言因此 Docker / Podman 通用:要求的是所用引擎的那一個)、寫檔的 fish 所在
@@ -510,7 +507,7 @@ prereq-ok
     先證明,所以回答的只可能是盒內那一個)。判準是盒內標記檔,不是 ghostty 的結束碼。issue #175 再加
     一案:把 ghostty 的 PATH 換成桌面工作階段那種(只放得到容器引擎,**沒有**
     distrobox),先以對照斷言證明該 PATH 下裸 `distrobox` 是 127,再用
-    `just box setup` 自己解析寫進受管區塊的**絕對路徑**跑完同一條鏈。
+    `just box setup` 自己解析寫進受管區塊的 wrapper 與 distrobox **絕對路徑**跑完同一條鏈。
     冷啟動(#434、#472):以 host `SHELL=/bin/bash` 建盒,在尚未初始化時
     執行 setup 實際寫出的 Ghostty 受管命令;送出任何輸入前先觀察預設登入
     行程為 fish、mount namespace 等於 dev,並驗證首次初始化持續輸出不同的
@@ -968,6 +965,7 @@ prereq-ok
 ### M3 實機驗收
 
 - [ ] 5. 實機（需要 host 有 distrobox + ghostty；會以 `--home` 在本輪 scratch／backup 目錄內建 dev 盒的獨立 HOME 與 user config symlink，並改動真實設定）。5.1 以 scratch 內的 `XDG_CONFIG_HOME` 隔離 assemble 狀態寫入，並連結真實 config 目錄中除 `worktool/` 以外的所有頂層項目（含隱藏項目），讓 assemble、bench 與清理沿用相同的容器工具儲存位置、連線設定、container manager、使用者設定與 TMUX 隔離區塊；成功、失敗及中斷都不改動真實狀態檔（原本不存在時仍不存在）。5.1／5.2 先拒絕既有同名盒，清理只刪自己建立的盒。5.2 在建盒前備份 setup 可能寫入的五個檔：Ghostty legacy config、config.ghostty、worktool 狀態檔、distrobox.conf、初始化 log（init-log）（PR #232、#351）；任何檔備份不了就拒絕。symlink 及其目標一起備份，還原前確認受管檔的使用者內容仍在。清理失敗回非零；host 沒有 Ghostty 時 5.2 保持未勾。
+  - 5.2 套用（含 5.2.2）在任何套用副作用前先檢查 live 設定仍與備份一致，並驗證完整備份可還原；備份損壞或缺少可驗證的路徑 metadata 時拒絕套用並保留備份。檢查期間及其後不支援並發修改備份。
   - 快取隔離（#511）：5.1 的 assemble、首次初始化與 bench 都將 `XDG_CACHE_HOME` 指向本輪 scratch 的 `cache/`；5.2 由 realbox 執行的 assemble 指向本輪備份目錄的 `cache/`；5.3 decoy 的 create 指向本輪 scratch 的 `cache/`。5.2 的 setup、status 與還原時的 setup 不呼叫產品 enter.sh，不寫初始化 log。這些隔離呼叫及其子行程寫入的初始化 log 都落在本輪目錄，成功清理時隨 scratch／備份一起移除；清理失敗則沿用保留目錄供檢查與重試的規則。realbox 自己的這些呼叫不改動真實 `${XDG_CACHE_HOME:-~/.cache}/worktool`（預設 `~/.cache/worktool`）：原本不存在時仍不存在，既有內容與 mtime 不變，也不以備份後覆寫再還原代替隔離。
   - 盒名由交付的 `box/dev.ini` manifest 決定（目前為 `[dev]`），不支援自訂 manifest。省略 `--box` 時沿用該盒名；`--box <name>` 只能指定相同名稱。若不一致（例如 `--box work`），在任何副作用前以 exit 2 拒絕，stderr 的 `realbox.sh: ...` 訊息會說明 manifest 決定盒名；不呼叫 assemble、distrobox 或 gh。5.3 的 decoy 仍使用 manifest 的盒名。
   - [ ] 5.1 進盒延遲 ≤ 300 ms(以 fish 為準);由 `script/verify/realbox.sh` 自己把三行數字發到 #22,再依留言 id 讀回來比對本輪識別碼與三行數字;中斷(Ctrl-C)與正常結束都會清掉自己建立的盒子,清不掉就失敗。中斷仍為失敗：SIGINT 回 130、SIGTERM 回 143、SIGHUP 回 129，不以清理成功當作驗收通過。assemble、首次初始化或 bench 中斷時，腳本先停止本輪子行程群組，再自行清理並印出 `cleanup-rc=<n>`、`box-state` 與 `host-state` 清理報告；清理失敗優先，以 exit 1 結束。

@@ -704,8 +704,9 @@ STUB
     local started="${SECONDS}"
     run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash \
         "${REALBOX}" --allow-real-box 5.4
-    assert_success
-    assert_line 'rc=137'
+    assert_failure
+    assert_output --partial 'timeout-phase=ready'
+    assert_output --partial 'worker-status=unknown'
     local pid path target parent group session state rest row
     read -r pid <"${MATRIX_STATE}/child.pid"
     # Inspect before teardown can signal the orphan. Bash may keep its script fd.

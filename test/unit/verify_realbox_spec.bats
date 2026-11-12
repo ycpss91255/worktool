@@ -36,6 +36,246 @@ teardown() {
 
 bats_require_minimum_version 1.5.0
 
+_984_not_running() {
+    local pid="$1" proc_status attempt
+    for ((attempt=0; attempt<50; attempt++)); do
+        [[ -r "/proc/${pid}/stat" ]] || return 0
+        IFS= read -r proc_status <"/proc/${pid}/stat" || return 0
+        proc_status="${proc_status##*) }"
+        [[ "${proc_status%% *}" == Z ]] && return 0
+        sleep 0.02
+    done
+    return 1
+}
+
+@test "#984: signal driver reports a no-ready timeout and stops the group" {
+    cat >"${STATE}/no-ready.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 30 &
+echo "$!" >"${SIGNAL_STATE}/descendant.pid"
+wait
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=300" "SIGNAL_CLEANUP_MS=1000"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/no-ready.sh"
+    assert_failure
+    assert_output --partial 'timeout-phase=ready'
+    refute_output --partial 'sent=SIGINT'
+    local pid
+    read -r pid <"${STATE}/descendant.pid"
+    _984_not_running "${pid}"
+}
+
+@test "#984: signal driver reports a cleanup timeout after sending INT" {
+    cat >"${STATE}/stuck-cleanup.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap '' INT
+sleep 30 &
+echo "$!" >"${SIGNAL_STATE}/descendant.pid"
+touch "${SIGNAL_STATE}/ready"
+wait
+wait
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_CLEANUP_MS=300"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/stuck-cleanup.sh"
+    assert_failure
+    assert_output --partial 'sent=SIGINT pgid='
+    assert_output --partial 'timeout-phase=cleanup'
+    local pid
+    read -r pid <"${STATE}/descendant.pid"
+    _984_not_running "${pid}"
+}
+
+@test "#984: ready and cleanup have independent deadlines" {
+    cat >"${STATE}/two-phases.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'kill "${child}" 2>/dev/null; rc=0; wait "${child}" 2>/dev/null || rc=$?; sleep 0.9; exit 130' INT
+sleep 0.9
+sleep 30 & child=$!
+touch "${SIGNAL_STATE}/ready"
+wait "${child}"
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=1500" "SIGNAL_CLEANUP_MS=1500"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/two-phases.sh"
+    assert_success
+    assert_output --partial 'ready-pid='
+    assert_output --partial 'sent=SIGINT pgid='
+    assert_line 'exit-signal=none'
+    assert_line 'rc=130'
+    refute_output --partial 'timeout-phase='
+}
+
+@test "#984: exited leader cannot leave a pipe-holding descendant running" {
+    cat >"${STATE}/orphan.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 130' INT
+(trap '' INT; exec sleep 30) &
+echo "$!" >"${SIGNAL_STATE}/descendant.pid"
+touch "${SIGNAL_STATE}/ready"
+wait
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_CLEANUP_MS=300"
+    local rc=0 pid
+    timeout 3 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/orphan.sh" >"${STATE}/driver.log" 2>&1 || rc=$?
+    read -r pid <"${STATE}/descendant.pid"
+    [[ "${rc}" -ne 0 ]]
+    grep -F 'timeout-phase=cleanup' "${STATE}/driver.log"
+    grep -Fx 'worker-rc=130' "${STATE}/driver.log"
+    _984_not_running "${pid}"
+}
+
+@test "#984: leader exit before ready still bounds a pipe-holding descendant" {
+    cat >"${STATE}/early-exit.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 30 &
+echo "$!" >"${SIGNAL_STATE}/descendant.pid"
+exit 1
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=300" "SIGNAL_CLEANUP_MS=1000"
+    local rc=0 pid
+    timeout 3 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/early-exit.sh" >"${STATE}/driver.log" 2>&1 || rc=$?
+    read -r pid <"${STATE}/descendant.pid"
+    [[ "${rc}" -ne 0 ]]
+    grep -F 'timeout-phase=ready' "${STATE}/driver.log"
+    grep -Fx 'worker-rc=1' "${STATE}/driver.log"
+    _984_not_running "${pid}"
+}
+
+@test "#984 POC: closed-pipe descendant prevents success" {
+    cat >"${STATE}/closed-pipe.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 130' INT
+(trap '' INT; exec >/dev/null 2>&1; exec sleep 30) &
+echo "$!" >"${SIGNAL_STATE}/descendant.pid"
+touch "${SIGNAL_STATE}/ready"
+wait
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_CLEANUP_MS=300"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/closed-pipe.sh"
+    assert_failure
+    assert_output --partial 'timeout-phase=cleanup'
+    local pid
+    read -r pid <"${STATE}/descendant.pid"
+    _984_not_running "${pid}"
+}
+
+@test "#984 POC: missing signal acknowledgement fails within a bound" {
+    cat >"${STATE}/silent-anchor.js" <<'STUB'
+process.send({type: 'worker-start', pid: process.pid, pgid: process.pid});
+process.on('message', () => {});
+process.on('disconnect', () => process.exit(0));
+setInterval(() => {}, 1000);
+STUB
+    touch "${STATE}/ready"
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_ANCHOR=${STATE}/silent-anchor.js"
+    run timeout 8 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash -c :
+    assert_failure 1
+    assert_output --partial 'signal-ack-timeout=1'
+    assert_output --partial 'anchor-exit-timeout=1'
+    assert_output --partial 'worker-status=unknown'
+}
+
+@test "#984 POC: anchor death fails without a stale group signal" {
+    cat >"${STATE}/dead-anchor.js" <<'STUB'
+process.send({type: 'worker-start', pid: process.pid, pgid: process.pid}, () => process.exit(1));
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_ANCHOR=${STATE}/dead-anchor.js"
+    run timeout 8 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash -c :
+    assert_failure 1
+    assert_output --partial 'anchor-disconnected=1'
+    refute_output --partial 'sent=SIGINT'
+}
+
+@test "#984 POC: worker exit before signal cannot pass" {
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000"
+    run timeout 8 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash -c 'exit 0'
+    assert_failure 1
+    assert_output --partial 'worker-closed-before-signal=1'
+    refute_output --partial 'sent=SIGINT'
+}
+
+@test "#984 POC: repeat signal acknowledgement is mandatory" {
+    cat >"${STATE}/early-close-anchor.js" <<'STUB'
+const fs = require('fs');
+process.send({type: 'worker-start', pid: process.pid, pgid: process.pid});
+process.on('message', (message) => {
+    if (message.type === 'signal' && message.id === 1) {
+        process.send({type: 'sent', signal: message.signal, pgid: process.pid, id: 1, delay: 0});
+        fs.writeFileSync(process.env.SIGNAL_STATE + '/cleanup-ready', '');
+    } else if (message.type === 'signal' && message.id === 2) {
+        process.send({type: 'worker-close', code: 0, signal: null});
+    }
+});
+process.on('disconnect', () => process.exit(0));
+setInterval(() => {}, 1000);
+STUB
+    touch "${STATE}/ready"
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_REPEAT=1" "SIGNAL_ANCHOR=${STATE}/early-close-anchor.js"
+    run timeout 8 node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" TERM bash -c :
+    assert_failure 1
+    assert_output --partial 'worker-closed-before-signal=1'
+}
+
+@test "#984 POC: requested signal delay is actually applied" {
+    cat >"${STATE}/delayed.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 130' INT
+touch "${SIGNAL_STATE}/ready"
+while :; do sleep 0.1; done
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_CLEANUP_MS=2000" "SIGNAL_DELAY_MS=300"
+    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash "${STATE}/delayed.sh"
+    assert_success
+    assert_line 'rc=130'
+    local ready sent
+    ready="$(printf '%s\n' "${output}" | sed -n 's/^ready-pid=.*elapsed-ms=//p')"
+    sent="$(printf '%s\n' "${output}" | sed -n 's/^sent=.*elapsed-ms=//p')"
+    [[ "${ready}" =~ ^[0-9]+$ && "${sent}" =~ ^[0-9]+$ ]]
+    (( sent - ready >= 250 ))
+}
+
+@test "#984: complete worker output reaches both streams after signal" {
+    cat >"${STATE}/large-output.js" <<'STUB'
+const fs = require('fs');
+process.on('SIGINT', () => {
+    fs.writeSync(1, 'O'.repeat(1048576) + '\nstdout-end-984\n');
+    fs.writeSync(2, 'E'.repeat(1048576) + '\nstderr-end-984\n');
+    process.exit(130);
+});
+fs.writeFileSync(process.env.SIGNAL_STATE + '/ready', '');
+setInterval(() => {}, 1000);
+STUB
+    export "SIGNAL_STATE=${STATE}" "SIGNAL_READY_MS=2000" "SIGNAL_CLEANUP_MS=5000"
+    cat >"${STATE}/slow-reader.js" <<'STUB'
+process.stdin.on('data', (chunk) => {
+    process.stdin.pause();
+    setTimeout(() => { process.stdout.write(chunk); process.stdin.resume(); }, 2);
+});
+STUB
+    mkfifo "${STATE}/stdout.fifo" "${STATE}/stderr.fifo"
+    node "${STATE}/slow-reader.js" <"${STATE}/stdout.fifo" >"${STATE}/large-out" &
+    local out_reader=$!
+    node "${STATE}/slow-reader.js" <"${STATE}/stderr.fifo" >"${STATE}/large-err" &
+    local err_reader=$! rc=0
+    node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT node "${STATE}/large-output.js" \
+        >"${STATE}/stdout.fifo" 2>"${STATE}/stderr.fifo" || rc=$?
+    wait "${out_reader}"
+    wait "${err_reader}"
+    assert_equal "${rc}" 0
+    grep -Fx 'stdout-end-984' "${STATE}/large-out"
+    grep -Fx 'stderr-end-984' "${STATE}/large-err"
+    grep -Fx 'rc=130' "${STATE}/large-out"
+    grep -F 'sent=SIGINT ' "${STATE}/large-out" >/dev/null
+    [[ "$(wc -c <"${STATE}/large-out")" -ge 1048576 ]]
+    [[ "$(wc -c <"${STATE}/large-err")" -ge 1048576 ]]
+}
+
 @test "realbox fixture: distrobox without arguments succeeds without a shift error" {
     run bash -O shift_verbose "${STUBS}/distrobox"
     assert_success
@@ -234,8 +474,6 @@ PROBE
     [[ "${WORKTOOL_STRESS:-}" == 1 ]] || skip 'set WORKTOOL_STRESS=1 to run CPU repro'
     interrupt_load_start
     local attempt failures=0 trials=60 phase tool
-    sed -e 's/}, 10);/}, 1);/' -e "s/process.kill(-p.pid, 'SIG' + process.argv\[2\]);/setTimeout(() => process.kill(-p.pid, 'SIG' + process.argv[2]), Math.floor(Math.random() * 10));/" \
-        "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" >"${STATE}/signal.js"
     for ((attempt=1; attempt<=trials; attempt++)); do
         if ((attempt % 2)); then phase=assemble; else phase=bench; fi
         for tool in just distrobox; do
@@ -244,7 +482,7 @@ PROBE
         _prepare_group_interrupt "${phase}"
         sed -i "/^    trap /i \\    printf -v FORK_PAYLOAD \"%50000000s\" \"\"; taskset -pc \"\${INTERRUPT_LOAD_CPU}\" \"\$BASHPID\" >/dev/null; exec 9>>\"\${SIGNAL_STATE}/trace\"; BASH_XTRACEFD=9; set -x" "${STUBS}/just"
         rm -f "${STATE}/ready" "${STATE}/events"
-        run node "${STATE}/signal.js" HUP bash "${REALBOX}" --allow-real-box 5.1
+        SIGNAL_DELAY_MAX_MS=10 SIGNAL_POLL_MS=1 run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" HUP bash "${REALBOX}" --allow-real-box 5.1
         if [[ "${status}" -ne 0 || "${output}" != *'rc=129'* ||
             "${output}" != *'cleanup-rc=0'* ||
             "$(cat "${STATE}/events")" != $'finished\ncleanup' ]]; then
@@ -1762,6 +2000,67 @@ STUB
     assert_line "setup-rc=0"
     [ -e "$(_backup_dir)/created-box" ]
 }
+
+_apply_rejects_unrestorable_backup() {
+    local damage="$1" target="${HOME}/ghostty-user-config" before calls reloads windows
+    printf 'preserve user configuration\n' >"${target}"
+    rm "$(_ghostty_config)"
+    ln -s "${target}" "$(_ghostty_config)"
+    _realbox_quiet 5.2.1
+    case "${damage}" in
+        directories) printf 'damaged\n' >>"$(_backup_dir)/directories" ;;
+        legacy) sed -i '/^backup\.version=/d' "$(_backup_dir)/manifest" ;;
+    esac
+    printf 'sentinel\n' >"${HOME}/sentinel"
+    cp -a "${HOME}" "${STATE}/home-before"
+    cp -a "$(_backup_dir)" "${STATE}/backup-before"
+    find "${STATE}/backup-before" -printf '%P %y %m %T@ %l\n' | sort >"${STATE}/backup-meta-before"
+    before="$(stat -c '%a:%y:%s' "${target}")"
+    cp -a "${target}" "${STATE}/target-before"
+    calls="$(_count_calls just)"
+    reloads="$(_count_calls gapplication)"
+    windows="$(_count_calls ghostty)"
+    run "${REALBOX}" --allow-real-box 5.2.2
+    assert_failure
+    assert_equal "$(_count_calls just)" "${calls}"
+    assert_equal "$(_count_calls gapplication)" "${reloads}"
+    assert_equal "$(_count_calls ghostty)" "${windows}"
+    [ -L "$(_ghostty_config)" ]
+    assert_equal "$(readlink "$(_ghostty_config)")" "${target}"
+    assert_equal "$(stat -c '%a:%y:%s' "${target}")" "${before}"
+    cmp "${STATE}/target-before" "${target}"
+    assert_equal "$(cat "${HOME}/sentinel")" sentinel
+    diff -r "${STATE}/home-before" "${HOME}"
+    diff -r "${STATE}/backup-before" "$(_backup_dir)"
+    find "$(_backup_dir)" -printf '%P %y %m %T@ %l\n' | sort >"${STATE}/backup-meta-after"
+    cmp "${STATE}/backup-meta-before" "${STATE}/backup-meta-after"
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+@test "#974: 5.2.2 refuses damaged directory metadata before any apply" {
+    _apply_rejects_unrestorable_backup directories
+}
+
+@test "#974: 5.2.2 refuses legacy path metadata before any apply" {
+    _apply_rejects_unrestorable_backup legacy
+}
+
+@test "#974: restore path cache cannot hide a changed relative cache root" {
+    local first="${BATS_TEST_TMPDIR}/first" second="${BATS_TEST_TMPDIR}/second"
+    mkdir -p "${first}/cache/worktool" "${second}/cache/worktool"
+    printf 'original\n' >"${first}/cache/worktool/dev-init.log"
+    printf 'different\n' >"${second}/cache/worktool/dev-init.log"
+    export "XDG_CACHE_HOME=cache"
+    (cd "${first}" && _realbox_quiet 5.2.1)
+    run bash -c 'cd "$1" && exec "$2" --allow-real-box 5.2.2' _ "${second}" "${REALBOX}"
+    assert_failure
+    assert_equal "$(_count_calls just)" 0
+    assert_equal "$(_count_calls gapplication)" 0
+    assert_equal "$(cat "${second}/cache/worktool/dev-init.log")" different
+    [ -f "$(_backup_dir)/manifest" ]
+}
+
+
 
 @test "5.2.2: no published manifest means nothing is applied" {
     run "${REALBOX}" --allow-real-box 5.2.2
@@ -3425,11 +3724,16 @@ if [[ -e "${SIGNAL_STATE}/replacement" ]]; then
 fi
 exec "${SIGNAL_STATE}/interrupt-distrobox" "$@"
 STUB
-    run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
+    SIGNAL_READY_MS=15000 SIGNAL_WATCHDOG_MS=20000 SIGNAL_TRACE=1 run node "${BATS_TEST_DIRNAME}/fixture/verify_signal.js" INT bash \
         "${REALBOX}" --allow-real-box 5.2
     assert_success
+    assert_output --partial 'ready-pid='
+    assert_output --partial 'sent=SIGINT pgid='
+    printf '# %s\n' "$(printf '%s\n' "${output}" | grep '^ready-pid=')" >&3
+    printf '# %s\n' "$(printf '%s\n' "${output}" | grep '^sent=SIGINT ')" >&3
     assert_line 'rc=1'
     assert_line 'cleanup-rc=1'
+    assert_line 'restore-files-ok=1'
     assert_equal "$(_count_calls 'distrobox rm')" '0'
     assert_equal "$(cat "$(_backup_dir)/created-box")" '0000'
     [ -e "$(_backup_dir)/assemble-started" ]

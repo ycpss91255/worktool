@@ -280,6 +280,9 @@ round 1 拿掉的「裸名字 fallback」同一類問題:**已知壞掉的半套
 
 ### 範例 log
 
+以下為節錄，省略部分診斷與 Ghostty 設定變更後的 reload 提示。
+除另有說明外，Ghostty 範例均以 `config.ghostty` 已存在為前提。
+
 預設（`config.ghostty` 已存在；PATH 上有 `/usr/bin/ghostty`,distrobox 在 `~/.local/bin`):
 
 ```text
@@ -318,7 +321,7 @@ $ just box setup --box work
 [INFO] box: work (user)
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 沒有支援的終端(`terminal: none`):
@@ -354,7 +357,7 @@ $ echo $?
 $ just box setup --distrobox /opt/distrobox/bin/distrobox
 ...
 [INFO] distrobox: /opt/distrobox/bin/distrobox (--distrobox; absolute path written into the managed command)
-[INFO] wrote: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box 'dev')
+[INFO] wrote: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/opt/distrobox/bin/distrobox' --box 'dev')
 ```
 
 還原 host shell(印出還原了什麼;`--auto-enter no` 不寫受管 command,所以不需要
@@ -367,10 +370,10 @@ $ just box setup --auto-enter no
 [INFO] terminal detected: ghostty (ghostty executable /usr/bin/ghostty)
 [INFO] box: work (user)
 [INFO] wrote: /home/me/.config/worktool/config
-[INFO] removed: /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] removed: /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
-沒東西可還原時也會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config (no managed block)`。
+沒東西可還原時也會說明:`[INFO] nothing to remove: /home/me/.config/ghostty/config.ghostty (no managed block)`。
 
 `--dry-run` 只印不寫:
 
@@ -383,7 +386,7 @@ $ just box setup --dry-run --box work
 [INFO] distrobox: /home/me/.local/bin/distrobox (absolute path written into the managed command)
 [INFO] dry-run: would write /home/me/.config/worktool/config
 [INFO] dry-run: would write /home/me/.config/distrobox/distrobox.conf (managed block: for _worktool_a in "$@"; do ... 'work') unset TMUX TMUX_PANE; ...)
-[INFO] dry-run: would write /home/me/.config/ghostty/config (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
+[INFO] dry-run: would write /home/me/.config/ghostty/config.ghostty (managed block: command = '/home/me/worktool/script/box/enter.sh' --distrobox '/home/me/.local/bin/distrobox' --box 'work')
 ```
 
 查目前生效的決策(印到 stdout,沒有 log 標籤,可直接 grep):
@@ -394,7 +397,7 @@ config: /home/me/.config/worktool/config
 auto-enter: yes (default)
 terminal: ghostty (default)
 box: work (user)
-ghostty: /home/me/.config/ghostty/config (managed block: present)
+ghostty: /home/me/.config/ghostty/config.ghostty (managed block: present)
 distrobox.conf: /home/me/.config/distrobox/distrobox.conf (managed block: present)
 wrapper: /home/me/worktool/script/box/enter.sh (recorded in a managed block: runnable)
 distrobox: /home/me/.local/bin/distrobox (recorded in a managed block: runnable)
