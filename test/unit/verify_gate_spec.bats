@@ -1181,9 +1181,9 @@ EOF
 }
 
 _m2_runner_doc_valid() {
-    local _section
+    local _section _source="[script/test/test.sh](../script/test/test.sh)"
     _section="$(sed -n '/^- \[ \] 1\. 自動測試:/,/^- \[ \] 2\. 交付自檢/p' "$1")"
-    [[ "${_section}" == *'[script/test/test.sh](../script/test/test.sh)'* ]] || return 1
+    [[ "${_section}" == *"${_source}"* ]] || return 1
     [[ "${_section}" == *'[test/system/real_engine_spec.bats](../test/system/real_engine_spec.bats)'* ]] || return 1
     [[ "${_section}" == *'skip 依 runner 政策判定'* ]] || return 1
     [[ "${_section}" == *'host unchanged'* ]] || return 1
