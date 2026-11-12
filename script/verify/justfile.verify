@@ -11,6 +11,10 @@ default:
 diagram *args:
     ./script/verify/diagram.sh "$@"
 
+# Check the box namespace interface (args: ITEM, --list, --help).
+ui *args:
+    ./script/verify/ui.sh "$@"
+
 # Check setup and status in a temporary HOME (args: ITEM, --list, --allow-real-box, --help).
 setup *args:
     ./script/verify/setup.sh "$@"
@@ -22,3 +26,11 @@ evidence *args:
 # Check the automated gates and their evidence (args: ITEM, --list, --help).
 gate *args:
     ./script/verify/gate.sh "$@"
+
+# Run real-machine acceptance checks (requires --allow-real-box for execution).
+realbox *args:
+    ./script/verify/realbox.sh "$@"
+
+# Run every non-real-machine acceptance group (args: --list, --help).
+all *args:
+    ./script/verify/all.sh "$@"

@@ -12,7 +12,7 @@
 # script's --help in turn, and an unknown option is refused by the script
 # itself (`<script>.sh: unknown option '<x>' (see --help)`, exit 2). M2 had
 # assemble as the only verb; M3 adds bench (#150, #162), setup / status (#21),
-# enter (#180) and later rm.
+# and enter (#180).
 #
 # The one-line comment above each recipe is what `just --list` shows.
 
@@ -36,7 +36,7 @@ default:
 assemble *args:
     ./script/box/assemble.sh "$@"
 
-# Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --json, --shell CMD, --help; the script validates --box / --shell).
+# Measure the enter latency of the dev box: enter, shell and in-box shell start-up (args: --box NAME, --runs N, --warmup N, --max-ms N, --max-wait N, --json, --shell CMD, --help; the script validates --box / --shell).
 bench *args:
     ./script/box/bench.sh "$@"
 

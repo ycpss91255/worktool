@@ -283,7 +283,7 @@ _trigger_branches() {
     run _job_block gate
     assert_line '    needs: build-image'
     run _job_block verify-all
-    assert_line '    needs: [route, build-image]'
+    assert_line '    needs: [route, build-image, gate, test-unit-verdict, test-system-real]'
 }
 
 @test "the meta path requires a green code run of the same head sha (fail closed)" {
@@ -805,7 +805,7 @@ _leg_names() {
     run _job_block verify-all
     assert_success
     assert_line "    if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')"
-    assert_line '    needs: [route, build-image]'
+    assert_line '    needs: [route, build-image, gate, test-unit-verdict, test-system-real]'
     assert_line --partial 'uses: actions/checkout@'
     assert_line --partial 'uses: actions/download-artifact@'
     assert_line "          name: ${ARTIFACT}"
@@ -817,6 +817,16 @@ _leg_names() {
     assert_line '      issues: read'
     assert_line '      actions: read'
     refute_output --partial '--allow-real-box'
+}
+
+@test "verify-all passes its run, PR head and repository into the acceptance container" {
+    run _job_block verify-all
+    assert_success
+    assert_line '          fetch-depth: 0'
+    assert_line "          WORKTOOL_VERIFY_GATE_RUN: \${{ github.run_id }}"
+    assert_line "          WORKTOOL_VERIFY_GATE_SHA: \${{ github.event.pull_request.head.sha }}"
+    assert_line "          WORKTOOL_VERIFY_GATE_REPO: \${{ github.repository }}"
+    assert_line --regexp '^          docker run --rm .*-e WORKTOOL_VERIFY_GATE_RUN -e WORKTOOL_VERIFY_GATE_SHA -e WORKTOOL_VERIFY_GATE_REPO '
 }
 
 # Execute the checked-in aggregator shell with resolved Actions inputs.

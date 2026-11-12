@@ -256,7 +256,7 @@ args 範例：
 
 `verify-all` 在 amd64 與 arm64 的原生 runner 各自建置 `dockerfile/Dockerfile.ghostty`，再以 `dockerfile/Dockerfile.verify` 補齊 Docker CLI、GitHub CLI、jq、just 與 time，並從該架構的測試映像複用鎖定版 distrobox。CI 先執行 `just test verify-env`，對 bind mount 的 uid 1001 checkout 實跑 `git ls-files` 與必要工具；容器入口只將目前工作目錄加入 Git `safe.directory`，不信任任意 repository。驗收容器內的 Ghostty 是 integration 使用的真實工具；不得以 stub 或略過檢查替代。容器掛載 runner 的 Docker socket，checkout 在容器內外使用相同絕對路徑，讓 `just verify all` 啟動的 Docker gate 讀到同一份程式碼；`GH_TOKEN` 傳入容器供唯讀證據查詢。仍不執行第 5 節，`ci-passed` 仍只在 `milestone-gate` PR 要求兩種架構的 `verify-all` 成功。
 
-#363 的 CI job 驗收需附 GitHub runner 的兩份實跑證據：目前 #157 head 重現 F1 的 RED，以及修正後 head 的 GREEN（兩種架構的 `verify-all` 全部成功）。證據齊全前，CI 變更 PR 使用 `Refs #363`，#363 保持開啟。普通 PR 的 `verify-all` 為 skipped、本機 spec 通過或 workflow 接線正確，都不能代替這兩份證據。
+#363 的最終驗收須在新 milestone 驗收 PR 的固定 head 實跑，附上同一次 CI run 中兩種架構的 `verify-all` 成功證據及必要驗收結果。原 #157 的 F1 修正早於該 job 首次執行，沒有取得 F1 的 CI RED；歷史上實際取得的是缺少 Ghostty 與舊版 `gh` 的環境失敗，見 #363 討論。證據齊全前，CI 變更 PR 使用 `Refs #363`，#363 保持開啟。普通 PR 的 `verify-all` 為 skipped、本機 spec 通過或 workflow 接線正確，都不能代替固定 head 的真實驗收。
 
 ## research-verify
 
