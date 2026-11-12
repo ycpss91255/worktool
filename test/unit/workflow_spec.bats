@@ -2610,16 +2610,18 @@ _scratch_assert_isolated() {
     assert_output --partial '維護者'
 }
 
-@test "CI acceptance tracking keeps issue 363 open until runner RED and GREEN evidence exists" {
+@test "CI acceptance tracking keeps issue 363 open until fixed-head evidence exists" {
     run sed -n '/^### CI job 驗收追蹤(#363)$/,/^## /p' "${REPO_ROOT}/doc/workflow.md"
     assert_success
     assert_output --partial 'Refs #363'
     assert_output --partial '#363 保持開啟'
     assert_output --partial '#157'
     assert_output --partial 'F1'
-    assert_output --partial 'GitHub runner'
+    assert_output --partial "固定 head 實跑，附上同一次 CI run 中兩種架構的 \`verify-all\` 成功證據及必要驗收結果"
+    assert_output --partial '沒有取得 F1 的 CI RED'
+    assert_output --partial '歷史上實際取得的是缺少 Ghostty 與舊版'
     assert_output --partial 'RED'
-    assert_output --partial 'GREEN'
+    assert_output --partial '成功證據'
     assert_output --partial 'skipped'
 }
 
