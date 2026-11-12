@@ -1078,6 +1078,7 @@ doc/adr/*.md|test/unit/adr/0010_spec.bats
 doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/structure.md|test/unit/structure_tree_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
@@ -1181,7 +1182,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout structure_tree; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done
