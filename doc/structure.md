@@ -176,6 +176,8 @@ worktool/
 `script/` 與 `.agents/script/` 的可執行腳本必須放在類型子目錄內，
 不得直接放在頂層；#550 指定的共用 `.agents/script/job.sh` 是唯一例外。
 agent 的 Monitor 腳本放在 `.agents/script/monitor/`。
+
+`.agents/script/network/wait-ubuntu-dns.sh -- <命令>` 在執行前有界等待 Ubuntu 三個來源網域由主機解析；僅檢查主機 resolver，不保證容器 DNS 或服務可用。不得用來包住還原或清理命令。
 `just test lint` 在 Docker 內檢查此規則，違反時列出檔名並失敗；
 `just test script-layout [--root <repo>]` 可指定檢查目錄，參數驗證與 help 由腳本負責。
 
