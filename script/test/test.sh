@@ -1122,6 +1122,7 @@ doc/adr/*.md|test/unit/adr/0010_spec.bats
 doc/adr/*.md|test/unit/adr/0011_spec.bats
 doc/adr/*.md|test/unit/adr/0012_spec.bats
 doc/adr/*.md|test/unit/adr/0013_spec.bats
+doc/acceptance.md|test/unit/realbox_window_doc_spec.bats
 doc/acceptance.md|test/unit/acceptance_output_types_spec.bats
 doc/structure.md|test/unit/structure_tree_spec.bats
 doc/acceptance.md|test/unit/setup_acceptance_doc_spec.bats
