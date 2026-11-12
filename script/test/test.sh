@@ -1075,6 +1075,9 @@ script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
 script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_group_control_spec.bats
+test/helper/cold_pty.bash|test/unit/cold_pty_probe_spec.bats
+test/helper/cold_pty.bash|test/unit/enter_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
 test/helper/interrupt_load.bash|test/unit/verify_realbox_matrix_spec.bats
 test/helper/realbox_window.bash|test/unit/verify_realbox_spec.bats

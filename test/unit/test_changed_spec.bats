@@ -430,6 +430,32 @@ _dispatched() {
     done
 }
 
+@test "test.sh --changed selects exactly the cold PTY consumers" {
+    mkdir -p "${TEMP_REPO}/test/helper"
+    printf '# helper\n' >"${TEMP_REPO}/test/helper/cold_pty.bash"
+    local spec expected
+    for spec in cold_group_control cold_pty_probe enter; do
+        printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/${spec}_spec.bats"
+    done
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/test/helper/cold_pty.bash"
+    expected="$(printf '%s\n' --ci-lint '--ci-unit test/unit/cold_group_control_spec.bats test/unit/cold_pty_probe_spec.bats test/unit/enter_spec.bats')"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    assert_output --partial '測試基礎設施變更'
+    assert_equal "$(_dispatched)" "${expected}"
+    for spec in cold_group_control cold_pty_probe enter; do
+        sed -i "/^test\/helper\/cold_pty[.]bash|test\/unit\/${spec}_spec[.]bats$/d" "${TEMP_REPO}/script/test/test.sh"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        assert_output --partial '測試基礎設施變更'
+        [[ "$(_dispatched)" != "${expected}" ]]
+        git -C "${TEMP_REPO}" checkout -- script/test/test.sh
+    done
+}
+
 @test "test.sh --changed maps the diagram check to its spec" {
     mkdir -p "${TEMP_REPO}/script/verify"
     printf '# diagram check\n' >"${TEMP_REPO}/script/verify/diagram.sh"
