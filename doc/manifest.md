@@ -875,6 +875,7 @@ matrix、integration、system、acceptance、system-real,遇到第一個失敗�
   - `just test unit`:所有測項 `ok`(涵蓋缺 image / 缺名稱 / 檔案不存在 / 純空白名稱 /
     單或雙引號內純空白 image / 引號不成對的 image / image 出現在區段之前 / 多區段
     等案例),結尾 `[ci] unit bats OK`。
+  - `just test matrix`:所有測項 `ok`(完整乘積矩陣),結尾 `[ci] matrix bats OK`。
   - `just test integration`:所有測項 `ok`(含「無效 manifest(缺 image、引號不成對)
     絕不呼叫 distrobox」負向測試),結尾 `[ci] integration bats OK`。
   - `just test system`:所有測項 `ok`(真實 distrobox 1.8.2.5 把 `box/dev.ini` 解析成

@@ -142,6 +142,7 @@ _required_specs() {
             printf '%s\n' \
                 unit/log_spec.bats \
                 unit/manifest_spec.bats \
+                unit/manifest_doc_spec.bats \
                 unit/assemble_spec.bats \
                 unit/ci_gate_spec.bats \
                 unit/system_real_entry_spec.bats \
@@ -186,6 +187,7 @@ _required_specs() {
                 unit/adr/0012_spec.bats \
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \
+                unit/acceptance_doc_spec.bats \
                 unit/ownership_acceptance_doc_spec.bats \
                 unit/setup_acceptance_doc_spec.bats \
                 unit/gate_acceptance_doc_spec.bats \
@@ -1015,6 +1017,7 @@ script/box/setup.sh|test/integration/setup_spec.bats
 script/box/status.sh|test/unit/status_spec.bats
 script/box/status.sh|test/unit/verify_setup_spec.bats
 script/box/justfile.box|test/unit/justfile_spec.bats
+script/test/justfile.test|test/unit/manifest_doc_spec.bats
 test/helper/namespace_rules.jq|test/unit/justfile_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_busy_latency_spec.bats
 lib/verify_busy_latency.awk|test/unit/verify_gate_spec.bats
@@ -1139,6 +1142,10 @@ doc/acceptance.md|test/unit/gate_acceptance_doc_spec.bats
 script/verify/gate.sh|test/unit/gate_acceptance_doc_spec.bats
 doc/acceptance.md|test/unit/ownership_acceptance_doc_spec.bats
 script/verify/realbox.sh|test/unit/ownership_acceptance_doc_spec.bats
+lib/test_shard.sh|test/unit/acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/acceptance_doc_spec.bats
+doc/structure.md|test/unit/acceptance_doc_spec.bats
+doc/adr/0016-ci-unit-shards-union-verdict.md|test/unit/acceptance_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
@@ -1149,6 +1156,7 @@ doc/acceptance.md|test/unit/acceptance_51_doc_spec.bats
 doc/acceptance.md|test/unit/backup_acceptance_doc_spec.bats
 doc/acceptance.md|test/unit/verify_gate_spec.bats
 doc/structure.md|test/unit/adr/0007_spec.bats
+doc/manifest.md|test/unit/manifest_doc_spec.bats
 doc/manifest.md|test/unit/bench_spec.bats
 doc/manifest.md|test/unit/adr/0007_spec.bats
 doc/enter.md|test/unit/adr/0007_spec.bats
