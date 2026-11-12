@@ -591,12 +591,6 @@ _document_change() {
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats test/unit/adr/0007_spec.bats
 }
 
-@test "test.sh --changed maps acceptance documentation to its 5.1 output guard" {
-    _document_change doc/acceptance.md test/unit/contract_spec.bats \
-        test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
-        test/unit/acceptance_51_doc_spec.bats
-}
-
 @test "test.sh --changed selects all acceptance documentation guards together" {
     _document_change doc/acceptance.md test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
