@@ -1,6 +1,7 @@
 # Build the table from just's public JSON interface, including every loaded mod.
 def default_kind:
     if .first != "default" or .recipes.default == null then "missing"
+    elif .recipes.default.dependencies != [] then "unknown"
     elif (.source | ltrimstr($root + "/")) as $source |
          .recipes.default.body as $body |
          (["@just --justfile '", [["call", "source_file"]], "' --list"]) as $self |
