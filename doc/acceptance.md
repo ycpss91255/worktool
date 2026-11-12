@@ -761,7 +761,7 @@ prereq-ok
       ```
   - [ ] 3.2 寫入後由 status 與檔案全文確認直接進盒、distrobox.conf 隔離區塊；狀態檔由共用 config 介面保存，沒有 tmux 決策（PR #232、#228）
     - 寫入後還要出現 Ghostty reload 提示；完整文字以 `script/box/setup.sh` 的 `_ghostty_reload_hint` 為來源，由真實產品 control 與移除提示的負例守住。
-    - 預期看到資訊：`command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`。
+    - 預期看到資訊：`command = '<repo>/script/box/enter.sh' --distrobox '<D>' --box 'dev'`；`ghostty: <H>/.config/ghostty/config (managed block: present)`、`distrobox.conf: <H>/.config/distrobox/distrobox.conf (managed block: present)`、`distrobox: <D> (recorded in a managed block: runnable)`。暫存 HOME 尚未 assemble，故印 `link: box HOME not recorded - user config not linked yet (run: just box assemble)` 與 `home: not recorded (run: just box assemble)`；`user-content after-write: ghostty=intact tmux.conf=intact`；第二次 setup 後另印 `user-content after-rewrite: ghostty=intact tmux.conf=intact`。
       輸出類型：固定判準；本輪路徑代入佔位符後比對，明列的保留與拒絕條件不可省略。
     - 驗收方式
       ```bash
@@ -860,7 +860,7 @@ prereq-ok
       ```bash
       just verify setup 3.9; echo rc=$?
       ```
-      預期 `rc=0`。先確認 legacy 確實有一個區塊，再建立新檔、搬移並比較兩份檔案的使用者內容。3.1–3.8 沒有新檔時仍使用 legacy fallback；兩檔驗證與損壞／多區塊拒絕由 3.4 檢查。
+      預期 `rc=0`。先確認 legacy 確實有一個區塊，並在 staging 後印 `user-content after-write: ghostty=intact tmux.conf=intact`；再建立新檔、搬移並比較兩份檔案的使用者內容。3.1–3.8 沒有新檔時仍使用 legacy fallback；兩檔驗證與損壞／多區塊拒絕由 3.4 檢查。
       host Ghostty 低於 1.3.0 且選用新檔時，必須有 `[WARN] ghostty <版本> does not read <H>/.config/ghostty/config.ghostty (requires 1.3.0 or newer)`；host 沒有執行檔就不查版本（PR #351）。
   - [ ] 3.10 原子寫入失敗不破壞原檔；status 報 absent，重跑補完
     - 驗收方式：`just verify setup 3.10`。只讓 Ghostty profile 的最後 rename 失敗，worktool 狀態檔與 distrobox.conf 仍照實寫入。錯誤必須恰好一次、setup exit 1；原檔逐 byte 相同，沒有 `config.XXXXXX` 殘留。status exit 0 且報 absent，移除故障後 setup exit 0、區塊 present、使用者內容保留。
@@ -877,6 +877,7 @@ prereq-ok
       [ERROR] failed to write <H>/.config/ghostty/config
       error: Recipe `setup` failed on line 45 with exit code 1
       setup-rc=1
+      user-content after-failure: ghostty=intact tmux.conf=intact
       original=intact temp-files=0
       config: <H>/.config/worktool/config
       auto-enter: yes (default)
