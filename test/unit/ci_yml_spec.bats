@@ -258,7 +258,7 @@ _trigger_branches() {
     run grep -cF "${CODE_EXPR}" "${CI_YML}"
     assert_output 3
     run grep -F "${CODE_EXPR}" "${CI_YML}"
-    assert_line "run-name: \${{ ${CODE_EXPR} && 'CI code run' || 'CI meta run' }}"
+    assert_line "run-name: \"\${{ ${CODE_EXPR} && 'CI code run' || 'CI meta run' }} · \${{ github.event_name == 'pull_request' && format('PR #{0} · {1}', github.event.pull_request.number, github.event.pull_request.title || '(untitled)') || format('{0} · {1}', github.ref_name || '(unknown ref)', github.sha || '(unknown SHA)') }}\""
     assert_line "  group: ci-\${{ github.ref }}-\${{ ${CODE_EXPR} && 'code' || 'meta' }}"
     assert_line "          CODE_PATH: \${{ ${CODE_EXPR} && 'true' || 'false' }}"
     run _job_block route
