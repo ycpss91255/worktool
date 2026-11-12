@@ -1011,6 +1011,10 @@ test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_spec.bats
 test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_matrix_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_spec.bats
 test/unit/fixture/verify_signal.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal.js|test/unit/verify_run_signal_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal_anchor.js|test/unit/verify_run_signal_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
