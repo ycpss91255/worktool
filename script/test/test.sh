@@ -1093,6 +1093,9 @@ script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
 script/verify/realbox.sh|test/unit/acceptance_51_doc_spec.bats
 script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
 script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/interrupt_load.bash|test/unit/verify_stress_spec.bats
+test/unit/verify_run_signal_spec.bats|test/unit/verify_stress_spec.bats
+test/unit/verify_realbox_spec.bats|test/unit/verify_stress_spec.bats
 test/helper/cold_pty.bash|test/unit/cold_group_control_spec.bats
 test/helper/cold_pty.bash|test/unit/cold_pty_probe_spec.bats
 test/helper/cold_pty.bash|test/unit/enter_spec.bats
@@ -1376,6 +1379,12 @@ _run_changed() {
             continue
         fi
         if _add_changed_spec "${_path}"; then
+            # A spec can also be an input to another spec.
+            _mapped="$(_mapped_specs "${_path}")"
+            while IFS= read -r _spec; do
+                [[ -n "${_spec}" ]] || continue
+                _add_changed_spec "${_spec}" 1 "${_path}"
+            done <<<"${_mapped}"
             continue
         fi
         _mapped="$(_mapped_specs "${_path}")"
