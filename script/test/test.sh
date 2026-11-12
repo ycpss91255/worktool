@@ -187,6 +187,7 @@ _required_specs() {
                 unit/adr/0013_spec.bats \
                 unit/contract_spec.bats \
                 unit/setup_acceptance_doc_spec.bats \
+                unit/gate_acceptance_doc_spec.bats \
                 unit/hook/hook_bootstrap_spec.bats \
                 unit/hook/subcommand_spec.bats \
                 unit/hook/test_must_use_docker_spec.bats \
@@ -1124,6 +1125,8 @@ doc/acceptance.md|test/unit/acceptance_output_types_spec.bats
 doc/structure.md|test/unit/structure_tree_spec.bats
 doc/acceptance.md|test/unit/setup_acceptance_doc_spec.bats
 script/verify/setup.sh|test/unit/setup_acceptance_doc_spec.bats
+doc/acceptance.md|test/unit/gate_acceptance_doc_spec.bats
+script/verify/gate.sh|test/unit/gate_acceptance_doc_spec.bats
 doc/*.md|test/unit/contract_spec.bats
 doc/*.md|test/unit/diagram_spec.bats
 doc/*.md|test/unit/justfile_spec.bats
