@@ -837,7 +837,8 @@ _document_change() {
     _document_change doc/acceptance.md test/unit/evidence_doc_spec.bats \
         test/unit/realbox_52_doc_spec.bats test/unit/realbox_window_doc_spec.bats \
         test/unit/acceptance_output_types_spec.bats test/unit/setup_acceptance_doc_spec.bats \
-        test/unit/gate_acceptance_doc_spec.bats test/unit/ownership_acceptance_doc_spec.bats test/unit/contract_spec.bats \
+        test/unit/gate_acceptance_doc_spec.bats test/unit/ownership_acceptance_doc_spec.bats \
+        test/unit/acceptance_doc_spec.bats test/unit/contract_spec.bats \
         test/unit/diagram_spec.bats test/unit/justfile_spec.bats \
         test/unit/m2_acceptance_warning_spec.bats test/unit/acceptance_51_doc_spec.bats test/unit/backup_acceptance_doc_spec.bats \
         test/unit/verify_gate_spec.bats
@@ -926,6 +927,25 @@ _document_change() {
 
 @test "test.sh --changed selects the ownership document guard for realbox" {
     _document_change script/verify/realbox.sh test/unit/ownership_acceptance_doc_spec.bats
+}
+
+@test "test.sh --changed selects skip documentation guard for each source" {
+    local path
+    local -a paths=(doc/acceptance.md doc/structure.md doc/adr/0016-ci-unit-shards-union-verdict.md lib/test_shard.sh)
+    for path in "${paths[@]}"; do
+        mkdir -p "${TEMP_REPO}/$(dirname "${path}")"
+        printf '# input\n' >"${TEMP_REPO}/${path}"
+    done
+    printf '@test "guard" { true; }\n' >"${TEMP_REPO}/test/unit/acceptance_doc_spec.bats"
+    _commit_baseline
+    for path in "${paths[@]}"; do
+        printf '# changed\n' >>"${TEMP_REPO}/${path}"
+        : >"${FAKE_DOCKER_CALLS}"
+        run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+        assert_success
+        [[ "$(_dispatched)" == *test/unit/acceptance_doc_spec.bats* ]]
+        git -C "${TEMP_REPO}" checkout -- "${path}"
+    done
 }
 
 @test "test.sh --changed maps acceptance output classification guard" {
