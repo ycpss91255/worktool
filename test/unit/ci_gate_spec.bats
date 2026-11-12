@@ -334,6 +334,7 @@ EOF
     assert_success
     assert_line "unit/log_spec.bats"
     assert_line "unit/manifest_spec.bats"
+    assert_line "unit/manifest_doc_spec.bats"
     assert_line "unit/assemble_spec.bats"
     # The harness specs guard themselves too.
     assert_line "unit/ci_gate_spec.bats"

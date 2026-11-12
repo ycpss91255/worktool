@@ -435,6 +435,25 @@ _remove_exact_row() {
     done
 }
 
+@test "changed test justfile selects the manifest matrix documentation guard" {
+    local row='script/test/justfile.test|test/unit/manifest_doc_spec.bats'
+    printf '# fixture\n' >"${TEMP_REPO}/script/test/justfile.test"
+    printf '@test "fixture" { true; }\n' >"${TEMP_REPO}/test/unit/manifest_doc_spec.bats"
+    _commit_baseline
+    printf '# changed\n' >>"${TEMP_REPO}/script/test/justfile.test"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" == *test/unit/manifest_doc_spec.bats* ]]
+    git -C "${TEMP_REPO}" checkout -- script/test/justfile.test
+    _remove_exact_row "${TEMP_REPO}/script/test/test.sh" "${row}"
+    _commit_baseline
+    printf '# changed again\n' >>"${TEMP_REPO}/script/test/justfile.test"
+    : >"${FAKE_DOCKER_CALLS}"
+    run bash -c 'cd "$1" && ./script/test/test.sh --changed --base main' _ "${TEMP_REPO}"
+    assert_success
+    [[ "$(_dispatched)" != *test/unit/manifest_doc_spec.bats* ]]
+}
+
 @test "test.sh --changed selects the 5.2 document guard for product libraries" {
     local path expected
     for path in lib/enter.sh lib/config.sh; do
@@ -943,7 +962,7 @@ _document_change() {
     local -a _extra
     for _path in doc/manifest.md doc/enter.md doc/design.md doc/workflow.md; do
         case "${_path}" in
-            doc/manifest.md) _extra=(test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
+            doc/manifest.md) _extra=(test/unit/manifest_doc_spec.bats test/unit/bench_spec.bats test/unit/adr/0007_spec.bats) ;;
             doc/enter.md) _extra=(test/unit/adr/0007_spec.bats) ;;
             doc/design.md) _extra=(test/unit/adr/0008_spec.bats) ;;
             doc/workflow.md) _extra=(test/unit/workflow_spec.bats) ;;
