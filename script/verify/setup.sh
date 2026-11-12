@@ -1756,17 +1756,15 @@ _run_item() {
 }
 
 verify_setup_run() {
-    local _items=() _item
+    local _items=() _item _help=0 _list=0
     # The whole command line is parsed before any check runs.
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h | --help)
-                _usage
-                return 0
+                _help=1
                 ;;
             --list)
-                _list_items
-                return 0
+                _list=1
                 ;;
             --allow-real-box) OPT_ALLOW_REAL_BOX=1 ;;
             -*)
@@ -1784,6 +1782,14 @@ verify_setup_run() {
         esac
         shift
     done
+    if [[ "${_help}" -eq 1 ]]; then
+        _usage
+        return 0
+    fi
+    if [[ "${_list}" -eq 1 ]]; then
+        _list_items
+        return 0
+    fi
     [[ "${#_items[@]}" -gt 0 ]] || _items=("${VERIFY_ITEMS[@]}")
 
     # The checks drive `just`, which must find the repo's justfile.

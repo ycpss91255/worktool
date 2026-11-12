@@ -245,3 +245,35 @@ _stub_calls() {
         refute_output --partial 'VERDICT PASS'
     done
 }
+
+@test "every verify group reports an exact missing-tool line and exits 3 through just" {
+    local group missing tool path real just item
+    just="$(command -v just)"
+    for group in ui gate setup diagram evidence realbox; do
+        case "${group}" in
+            ui) missing="grep"; item=1.1 ;;
+            gate) missing="grep"; item=2.1 ;;
+            setup) missing="sed"; item=3.1 ;;
+            diagram) missing="grep"; item=4.1 ;;
+            evidence) missing="gh"; item=6.1 ;;
+            realbox) missing="distrobox"; item=5.1 ;;
+        esac
+        path="${BATS_TEST_TMPDIR}/without-${group}-${missing}"
+        mkdir -p "${path}"
+        for tool in bash sh dirname env just timeout grep sort wc sed find mktemp \
+            docker gh jq awk cut tee date uname mkdir ln distrobox cat rm cmp rmdir; do
+            [[ "${tool}" == "${missing}" ]] && continue
+            # Unavailable unrelated tools must pass preflight but never do work.
+            real="$(command -v "${tool}")" || real=/bin/false
+            ln -s "${real}" "${path}/${tool}"
+        done
+        if [[ "${group}" == realbox ]]; then
+            run env PATH="${path}" "${just}" --justfile "${REPO_ROOT}/justfile" verify "${group}" --allow-real-box "${item}"
+        else
+            run env PATH="${path}" "${just}" --justfile "${REPO_ROOT}/justfile" verify "${group}" "${item}"
+        fi
+        assert_failure 3
+        assert_line "[UNAVAILABLE] ${group}.sh: ${missing} not found on PATH"
+        assert_equal "$(printf '%s\n' "${output}" | grep -cF '[UNAVAILABLE]')" 1
+    done
+}
