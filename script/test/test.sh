@@ -301,7 +301,7 @@ _run_in_container() {
     _ensure_image
     _info "running ${_flag} in ${TEST_IMAGE}"
     local _layout_paths="" _rc=0
-    local _layout_env=()
+    local _layout_env=() _git_mount=()
     _host_state_dir
     if [[ "${_flag}" == --ci-lint ]]; then
         _layout_paths="$(mktemp "${REPO_ROOT}/.agents/state/layout-paths.XXXXXX")"
@@ -310,9 +310,15 @@ _run_in_container() {
             _die "could not enumerate repository paths for lint"
         fi
         _layout_env=(-e "WORKTOOL_LAYOUT_PATHS=/source/.agents/state/${_layout_paths##*/}")
+    elif [[ -f "${REPO_ROOT}/.git" ]]; then
+        local _git_common_dir
+        _git_common_dir="$(git -c "safe.directory=${REPO_ROOT}" -C "${REPO_ROOT}" \
+            rev-parse --path-format=absolute --git-common-dir)" \
+            || _die "cannot resolve Git common directory"
+        _git_mount=(-v "${_git_common_dir}:${_git_common_dir}:ro")
     fi
     docker run --rm "${TEST_RUN_LABEL[@]}" -e WORKTOOL_TEST_JOBS -e WORKTOOL_STRESS -e WORKTOOL_TEST_REPORT_DIR -e WORKTOOL_SHARD_WEIGHTS -e WORKTOOL_FULL_CHECK "${_layout_env[@]}" \
-        -v "${REPO_ROOT}:/source" \
+        -v "${REPO_ROOT}:/source" "${_git_mount[@]}" \
         -w /source \
         "${TEST_IMAGE}" \
         ./script/test/test.sh "${_flag}" "$@" || _rc=$?
@@ -906,9 +912,11 @@ lib/config.sh|test/unit/verify_setup_spec.bats
 lib/guard.sh|test/unit/verify_setup_spec.bats
 lib/log.sh|test/unit/verify_run_signal_spec.bats
 lib/log.sh|test/unit/verify_evidence_spec.bats
+lib/log.sh|test/unit/verify_ui_spec.bats
 lib/guard.sh|test/unit/guard_spec.bats
 lib/guard.sh|test/unit/verify_gate_spec.bats
 lib/guard.sh|test/unit/verify_diagram_spec.bats
+lib/guard.sh|test/unit/verify_ui_spec.bats
 lib/guard.sh|test/unit/verify_evidence_spec.bats
 lib/guard.sh|test/unit/config_backup_spec.bats
 lib/guard.sh|test/unit/config_backup_dangling_spec.bats
@@ -959,9 +967,14 @@ lib/verify_ci_gate.sh|test/unit/verify_ci_gate_spec.bats
 lib/verify_ci_gate.sh|test/unit/verify_gate_spec.bats
 lib/verify_run.sh|test/unit/verify_run_signal_spec.bats
 lib/verify_run.sh|test/unit/verify_gate_spec.bats
+lib/verify_run.sh|test/unit/verify_ui_spec.bats
+script/verify/all.sh|test/unit/verify_all_spec.bats
+script/verify/justfile.verify|test/unit/verify_all_spec.bats
 script/verify/gate.sh|test/unit/verify_gate_spec.bats
 script/verify/justfile.verify|test/unit/verify_gate_spec.bats
 script/verify/diagram.sh|test/unit/verify_diagram_spec.bats
+script/verify/ui.sh|test/unit/verify_ui_spec.bats
+script/verify/justfile.verify|test/unit/verify_ui_spec.bats
 script/verify/setup.sh|test/unit/verify_setup_spec.bats
 test/unit/fixture/verify_setup_just.sh|test/unit/verify_setup_spec.bats
 script/verify/justfile.verify|test/unit/verify_setup_spec.bats
@@ -969,6 +982,35 @@ script/verify/evidence.sh|test/unit/verify_evidence_spec.bats
 doc/evidence/tdd.sh|test/unit/evidence_tdd_spec.bats
 doc/evidence/tdd.awk|test/unit/evidence_tdd_spec.bats
 doc/evidence/negative/*.md|test/unit/evidence_tdd_spec.bats
+lib/guard.sh|test/unit/verify_realbox_spec.bats
+lib/guard.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/config_backup.sh|test/unit/verify_realbox_spec.bats
+lib/config_backup.sh|test/unit/verify_realbox_matrix_spec.bats
+script/verify/config_backup_paths.sh|test/unit/verify_realbox_spec.bats
+script/verify/config_backup_paths.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/verify_run.sh|test/unit/verify_realbox_spec.bats
+lib/verify_run.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/distrobox_manager.sh|test/unit/verify_realbox_spec.bats
+lib/distrobox_manager.sh|test/unit/verify_realbox_matrix_spec.bats
+lib/realbox_interrupt.sh|test/unit/verify_realbox_spec.bats
+lib/realbox_interrupt.sh|test/unit/verify_realbox_matrix_spec.bats
+script/verify/realbox.sh|test/unit/verify_realbox_spec.bats
+script/verify/realbox.sh|test/unit/verify_realbox_matrix_spec.bats
+script/verify/realbox.sh|test/system/real_assemble_spec.bats
+test/helper/interrupt_load.bash|test/unit/verify_realbox_spec.bats
+test/helper/interrupt_load.bash|test/unit/verify_realbox_matrix_spec.bats
+test/helper/realbox_window.bash|test/unit/verify_realbox_spec.bats
+test/helper/realbox_window.bash|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/realbox_cold_tool.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_cold_tool.sh|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/realbox_matrix_just.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_matrix_just.sh|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_shim.sh|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_spec.bats
+test/unit/fixture/realbox_tool.sh|test/unit/verify_realbox_matrix_spec.bats
+test/unit/fixture/verify_signal.js|test/unit/verify_realbox_spec.bats
+test/unit/fixture/verify_signal.js|test/unit/verify_realbox_matrix_spec.bats
 script/verify/justfile.verify|test/unit/justfile_spec.bats
 MAP
     _changed_hook_path_map
@@ -1094,7 +1136,7 @@ _add_changed_spec() {
 _guard_specs() {
     local _spec
     for _spec in config_owner config_mutation config_mutation_part2 config_mutation_part3 config_validate config_graph \
-        adr ci_gate justfile test_changed test_sh contract diagram agent_config script_layout; do
+        adr ci_gate justfile test_changed test_sh contract diagram verify_ui verify_all agent_config script_layout; do
         [[ ! -f "${REPO_ROOT}/test/unit/${_spec}_spec.bats" ]] \
             || printf 'test/unit/%s_spec.bats\n' "${_spec}"
     done
@@ -1197,6 +1239,13 @@ _run_changed() {
             continue
         fi
         if _is_test_infrastructure "${_path}"; then
+            # Shared helpers still require CI's full coverage, but run their
+            # explicitly mapped specs locally as well.
+            _mapped="$(_mapped_specs "${_path}")"
+            while IFS= read -r _spec; do
+                [[ -n "${_spec}" ]] || continue
+                _add_changed_spec "${_spec}" 1 "${_path}"
+            done <<<"${_mapped}"
             _info "此改動由 CI 的 unit 驗證：${_path}（測試基礎設施變更；全部 tier 交給 CI）"
             _full_fallback=1
             continue

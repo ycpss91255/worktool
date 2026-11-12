@@ -532,7 +532,8 @@ jobs:
     if: needs.route.outputs.code == 'true' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'milestone-gate')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
-    needs: [route, build-image]
+    # Acceptance items 2.1 and 2.3 inspect the gate jobs of this run.
+    needs: [route, build-image, gate, test-unit-verdict, test-system-real]
     permissions:
       contents: read
       pull-requests: read
@@ -546,6 +547,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download test image (${{ matrix.runner }})
         uses: actions/download-artifact@v4
@@ -568,11 +571,14 @@ jobs:
         env:
           TEST_IMAGE_PREBUILT: "1"
           GH_TOKEN: ${{ github.token }}
+          WORKTOOL_VERIFY_GATE_RUN: ${{ github.run_id }}
+          WORKTOOL_VERIFY_GATE_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKTOOL_VERIFY_GATE_REPO: ${{ github.repository }}
         # Docker gates mount the checkout through the runner's daemon, so
         # its absolute path must be identical inside and outside this container.
         run: |
           set -euo pipefail
-          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI \
+          docker run --rm -e TEST_IMAGE_PREBUILT -e GH_TOKEN -e CI -e WORKTOOL_VERIFY_GATE_RUN -e WORKTOOL_VERIFY_GATE_SHA -e WORKTOOL_VERIFY_GATE_REPO \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${PWD}:${PWD}" -w "${PWD}" \
             worktool-verify:local -c 'just verify all'
