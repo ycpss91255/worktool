@@ -195,6 +195,28 @@ _checks_per_promise() {
     assert_success
 }
 
+_latency_index_is_settled() {
+    local index
+    index="$(awk '/^## 6\. / { on=1; next } /^## / { on=0 } on { print }' "$1")"
+    [[ "${index}" == *'#181'*'adr/0003-latency-gate-inconclusive.md'*'定案'* ]] || return 1
+    [[ "${index}" != *'待 #181 定案'* ]]
+}
+
+@test "the invariant index records the settled latency decision (#728)" {
+    run _latency_index_is_settled "${CONTRACT}"
+    assert_success
+}
+
+@test "the latency index guard rejects a pending decision and a missing index reference" {
+    local copy="${BATS_TEST_TMPDIR}/contract.md"
+    sed 's/已由 #181／/待 #181 定案，另見 /' "${CONTRACT}" >"${copy}"
+    run _latency_index_is_settled "${copy}"
+    assert_failure
+    sed '/^#200 定案時暫緩/s@adr/0003-latency-gate-inconclusive.md@adr/removed.md@' "${CONTRACT}" >"${copy}"
+    run _latency_index_is_settled "${copy}"
+    assert_failure
+}
+
 @test "doc/structure.md lists doc/contract.md in its tree" {
     run sed -n '/^## 目錄結構/,/^## /p' "${REPO_ROOT}/doc/structure.md"
     assert_success
@@ -225,4 +247,14 @@ _checks_per_promise() {
     run bash -c 'source "$1" && _required_specs unit' _ "${REPO_ROOT}/script/test/test.sh"
     assert_success
     assert_line "unit/$(basename -- "${BATS_TEST_FILENAME}")"
+}
+
+@test "verify exit 3 covers unavailable checks and inconclusive latency" {
+    run bash -c 'grep -A1 "^- \*\*永不靜默失敗" "$1"' _ "${CONTRACT}"
+    assert_success
+    assert_output --partial "\`just verify\` 系列以結束碼 \`3\`"
+    assert_output --partial '必要工具、環境或驗收證據不可用'
+    assert_output --partial '延遲量測因主機不夠安靜而未判定'
+    assert_output --partial 'test/unit/verify_all_spec.bats'
+    assert_output --partial 'test/unit/verify_gate_spec.bats'
 }

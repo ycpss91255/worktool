@@ -1,4 +1,17 @@
 # Helpers for supervising the two sessions created by timeout and script.
+# Return 0 while a group is present, 1 when absent, 2 when the listing is
+# unavailable or malformed. Zombies remain present until reaped.
+_cold_pty_group_present() {
+    local group="$1" limit="$2" rows pid pgid state extra found=0
+    rows="$(timeout -s KILL "${limit}" ps -eo pid=,pgid=,stat=)" || return 2
+    [[ -n "${rows}" ]] || return 2
+    while read -r pid pgid state extra; do
+        [[ "${pid}" =~ ^[1-9][0-9]*$ && "${pgid}" =~ ^[0-9]+$ && -n "${state}" && -z "${extra}" ]] || return 2
+        [[ "${pgid}" != "${group}" ]] || found=1
+    done <<<"${rows}"
+    [[ "${found}" -eq 1 ]]
+}
+
 _cold_pty_session() {
     local _launcher="$1" _pid _parent _sid _script='' _snapshot
     _snapshot="$(ps -eo pid=,ppid=,sid=)" || return 2
@@ -68,10 +81,29 @@ _cold_pty_cleanup() {
         sleep 0.1
     done
     if wait "${_launcher}" 2>/dev/null; then :; fi
-    if kill -0 -- "-${_launcher}" 2>/dev/null; then
-        printf 'cold launcher group %s did not stop\n' "${_launcher}" >&2
-        return 1
-    fi
+    local _group_rc _remaining
+    while :; do
+        _remaining=$((_deadline - SECONDS))
+        if (( _remaining <= 0 )); then
+            printf 'cold launcher group %s did not stop\n' "${_launcher}" >&2
+            return 1
+        fi
+        _group_rc=0
+        _cold_pty_group_present "${_launcher}" "${_remaining}" || _group_rc=$?
+        if (( SECONDS >= _deadline )); then
+            printf 'cold launcher group %s did not stop before deadline\n' "${_launcher}" >&2
+            return 1
+        fi
+        case "${_group_rc}" in
+            1) break ;;
+            2) printf 'cannot inspect cold launcher group %s\n' "${_launcher}" >&2; return 1 ;;
+        esac
+        if (( SECONDS >= _deadline )); then
+            printf 'cold launcher group %s did not stop\n' "${_launcher}" >&2
+            return 1
+        fi
+        sleep 0.1 || { printf 'cold launcher group retry pause failed\n' >&2; return 1; }
+    done
     return "${_error}"
 }
 
@@ -112,9 +144,9 @@ _cold_default_login() (
         <"${_fifo}" >"${_output}" 2>&1 &
     _child=$!
     trap 'exit 1' HUP INT TERM
-    trap 'exec 9>&-; if [[ -n "${_child}" ]]; then
-        _cold_pty_cleanup "${_child}" "${_sid}" || exit 1
-    fi; rm -f "${_fifo}"' EXIT
+    trap '_exit_rc=$?; exec 9>&-; if [[ -n "${_child}" ]]; then
+        _cold_pty_cleanup "${_child}" "${_sid}" || { [[ "${_exit_rc}" -ne 0 ]] || _exit_rc=1; }
+    fi; rm -f "${_fifo}" || { [[ "${_exit_rc}" -ne 0 ]] || _exit_rc=1; }; exit "${_exit_rc}"' EXIT
     local _deadline=$((SECONDS + 10))
     until _sid="$(_cold_pty_session "${_child}")"; do
         if (( SECONDS >= _deadline )); then

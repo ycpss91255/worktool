@@ -31,8 +31,8 @@ name: CI
 # leg-carrying job finished with `success` - for a matrix job that result
 # is green only when every one of its legs is; a skipped, cancelled or
 # missing leg does not read as green. (Inside each bats gate, test.sh
-# likewise fails on a missing or emptied required spec, on skipped cases
-# and on zero cases.)
+# likewise fails on a missing or emptied required spec, unexpected skips
+# and zero cases; the named unit CPU repro exceptions are in lib/test_shard.sh.)
 # Milestone PRs additionally require every verify-all leg to succeed;
 # other PRs and main pushes do not require that conditional job.
 #
@@ -63,7 +63,7 @@ name: CI
 # with the runner container (docker run --rm).
 # verify-all also invokes that gate through the acceptance entry.
 
-run-name: ${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }}
+run-name: "${{ (github.event_name != 'pull_request' || github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'milestone-gate') || (github.event.action == 'edited' && github.event.changes.base != null)) && 'CI code run' || 'CI meta run' }} · ${{ github.event_name == 'pull_request' && format('PR #{0} · {1}', github.event.pull_request.number, github.event.pull_request.title || '(untitled)') || format('{0} · {1}', github.ref_name || '(unknown ref)', github.sha || '(unknown SHA)') }}"
 
 on:
   push:
@@ -337,7 +337,9 @@ jobs:
   # hash, pairwise disjoint specs whose union is exactly the test/unit list
   # of THIS checkout, every required spec present with cases, and every
   # shard's plan equal to its specs' case counts with that many ok lines
-  # and no failure or skip (lib/test_shard.sh). It is a leg: ci-passed and
+  # and no failure or unexpected skip. Named unit CPU repro cases may skip
+  # only with stress disabled and the exact reason (lib/test_shard.sh).
+  # It is a leg: ci-passed and
   # the meta path's prior-run require it.
   # The records are fetched by name, not by pattern (issue #890): a pattern
   # download takes whatever the run's artifact listing holds at that moment,
